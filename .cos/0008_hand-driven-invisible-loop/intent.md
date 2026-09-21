@@ -17,6 +17,14 @@ Author: Bao Do. Status: accepted.
 > mệnh đề vào một unit và chịu giá; đưa autonomous vào ngay unit này; đo bằng một unit công
 > việc thật chạy trọn trong app; hạn 2026-09-28.
 
+> **Bổ sung ngày 2026-09-21, sau khi intent và spec đã accepted và commit (`60d24df`,
+> `22cf939`), và trước khi có dòng code nào.** Tác giả thêm một ràng buộc về giao diện:
+> "lưu ý làm ui/ux nữa", "tôi muốn có ux/ui đẹp xin mịn". Nó nằm ở `## Constraints`, mục
+> cuối. **Kết quả ở `## Proposed outcome` không đổi** — vẫn ba mệnh đề cũ, vẫn hạn
+> 2026-09-28. Ghi ở đây vì harness không có bước sửa đổi: `0003` đã đặt tiền lệ rằng ghi đè
+> một artifact đã `accepted` là một lựa chọn chứ không phải quy trình, và nó chấp nhận được
+> lần này đúng vì chưa có code nào đứng trên nó.
+
 ## Problem
 
 Repo này là một harness cho AI-native SDLC, và nó không chạy được ở đâu ngoài terminal.
@@ -149,6 +157,15 @@ Spec không được lật chúng; spec chỉ được nói chúng tốn gì.
   chạy `git`. Đây là lật tư thế `cos_baodo/config.py:44`, và phải lật ra mặt.
 - **(tác giả) Ba mệnh đề đi chung, hạn 2026-09-28.** Không tách thành ba unit.
 - **(tác giả) Chưa có auth.** Loopback, một người dùng, không TLS, không đăng nhập.
+- **(tác giả) Giao diện phải đạt một sàn craft đo được.** Thêm ngày 2026-09-21. Hôm nay
+  app **chưa khai báo theme bao giờ**: `cos_baodo/cos_baodo.py:266` là
+  `rx.App(api_transformer=_api)`, không `theme=`, không `style=`, và trong cả gói không có
+  một lần dùng `rx.theme`, `rx.color`, `color_mode` hay `breakpoints` nào. Trang đang chạy
+  trên mặc định của thư viện, chỉ light, không dark, không responsive. Sàn tối thiểu: theme
+  khai báo tường minh; đổi được light/dark; không tràn ngang ở ba bề rộng màn hình; tương
+  phản chữ thân bài đạt **4.5:1** (WCAG 2.1 AA — *nguồn ngoài repo, unverifiable ở đây*).
+  **"Đẹp" thì vẫn không đo được, và ràng buộc này không giả vờ đo nó** — xem
+  `## Open questions` mục 10, vẫn mở.
 - **Mở tool không được làm `0007` thành vô nghĩa.** `0007` tồn tại vì mặc định đang nói dối.
   Việc mở phải là một lựa chọn hiện ra ở từng bước, không phải một công tắc toàn cục bật sẵn,
   và mặc định của session chat vẫn phải là không tool. Một bản sửa làm `0007` không còn kiểm

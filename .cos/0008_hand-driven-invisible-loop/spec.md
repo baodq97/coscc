@@ -9,6 +9,12 @@ Intent: intent.md. Author: Bao Do. Status: accepted.
 > (5) không chạm bề mặt an toàn — **fail**, và đây là cái ép mạnh nhất: unit này mở tool ghi,
 > tool exec, và đường tới credential git. Không skip.
 
+> **Bổ sung ngày 2026-09-21, sau khi file này đã accepted và commit (`22cf939`), trước khi
+> có dòng code nào.** `intent.md` nhận thêm một ràng buộc của tác giả về giao diện. Spec
+> này lớn thêm đúng phần đó: `## Requirements` có mục **Giao diện** với R22–R25,
+> `## Out of scope` bỏ dòng loại trừ thẩm mỹ, và C7 viết lại cho khớp. Requirement khác
+> không đổi; Design không đổi.
+
 ## Requirements
 
 Mỗi requirement dưới đây truy về đúng một mệnh đề của `intent.md ## Proposed outcome`,
@@ -86,6 +92,24 @@ ghi trong ngoặc. Requirement nào không truy được thì đã bị cắt.
   đạt bằng một phép kiểm mức HTTP.
 - **R21.** `npm test` vẫn xanh, vẫn không cần trình duyệt, vẫn không cần toolchain
   JavaScript. Năm lệnh chứng minh cũ vẫn xanh với đúng những mệnh đề chúng đang khẳng định.
+
+### Giao diện (ràng buộc tác giả, thêm 2026-09-21)
+
+Bốn requirement này **không** truy về ba mệnh đề của kết quả — chúng truy về ràng buộc tác
+giả vừa thêm ở `intent.md ## Constraints`. Đây là một lần nới invariant 1 của `write-spec`,
+vốn đòi mọi requirement truy về `## Proposed outcome`. Ghi ra vì nó là lựa chọn, không phải
+sơ suất: hỏng R22–R25 thì unit vẫn đạt kết quả đã hứa, và tác giả vẫn không có thứ họ muốn.
+
+- **R22.** App khai báo theme tường minh. `rx.App` nhận `theme=rx.theme(...)` với
+  `accent_color`, `gray_color`, `radius`, `scaling` đặt rõ, không để mặc định thư viện.
+  Hôm nay con số là **0** lần dùng `rx.theme` trong `cos_baodo/*.py`.
+- **R23.** Đổi được light/dark từ trang, và lựa chọn ấy sống qua việc tải lại trang. Màu
+  không hardcode hex: chỗ nào cần một sắc độ thì đi qua `rx.color(...)` để nó theo mode.
+- **R24.** Không tràn ngang ở **ba** bề rộng viewport: **390px**, **768px**, **1280px**.
+  *Ba số này là chọn, không đo* — chúng là mốc điện thoại, tablet và laptop thường gặp, và
+  tồn tại để biến "responsive" thành một phép kiểm chứ không phải một tính từ.
+- **R25.** Tương phản chữ thân bài đạt **4.5:1** ở cả light và dark. Nguồn: WCAG 2.1 AA.
+  ***Unverifiable trong repo*** — chuẩn nằm ngoài, và con số lấy từ đó.
 
 ## Design
 
@@ -195,7 +219,9 @@ một dòng `Status:` ở đầu, prose tiếng Việt, heading tiếng Anh.
   để bấm, không dựng cái bấm hộ. Người chọn chế độ và khởi động từng bước.
 - **`gitops.py` mở rộng.** Không có `branch`, `commit`, `push` ở tầng Python.
 - **Sửa `0006` hay `0005` C2.** Hai bản app trên cùng working folder vẫn nhìn xuyên qua nhau.
-- **Chất lượng thị giác của trang.** Xem C7 — đây là chỗ unit này cố ý không hứa gì.
+- **Thẩm mỹ vượt quá sàn của R22–R25.** Sàn craft thì đo được và nằm trong phạm vi. Cái
+  còn lại — bố cục có đẹp không, có "xịn mịn" không — vẫn là phán đoán, vẫn không có phép
+  đo, và unit này không hứa. Xem C7.
 - **Hook `PreToolUse` cho harness.** `.claude/harness.md` nói một hook sẽ biến gate từ lời
   khuyên thành luật; unit này không dựng nó.
 
@@ -246,10 +272,14 @@ nên R7 đòi bỏ nó cho bước autonomous. Nhưng `max_turns=1` hiện đang
 có biên rõ ràng, và bỏ nó ở nhầm chỗ thì một session chat cũng thành nhiều lượt. Giới hạn mới
 (R11) phải gắn vào `StagePolicy`, không phải thay giá trị toàn cục.
 
-**C7 — không mệnh đề nào của kết quả bắt trang phải dùng được.**
-`intent.md` open question 10 nêu; spec này không đóng được. R1 đến R21 đều xanh được với một
-trang xấu và khó dùng, và nỗi đau khởi đầu — "thà dùng terminal còn hơn" — sống sót qua cả
-unit. Ghi ở đây thay vì bịa một số đo giả cho thẩm mỹ.
+**C7 — sàn craft thì đo được; "đẹp" thì vẫn không, và hai thứ đó không thay nhau được.**
+R22–R25 đóng được phần cứng của `intent.md` open question 10: theme tường minh, dark/light,
+ba bề rộng, tương phản AA. Cả bốn đều có phép kiểm, và cả bốn đều là **điều kiện cần**.
+Chúng không phải điều kiện đủ: một trang qua hết R22–R25 vẫn có thể xấu, rối, và vẫn khiến
+tác giả thà mở terminal. Không có số đo nào cho phần còn lại, và spec này không bịa một cái
+ra. Chủ sở hữu quyết: tác giả, bằng mắt, sau khi nhìn trang thật — và nếu muốn phần ấy cũng
+có thể **đỏ** được thì nó cần intent riêng với kết quả riêng, không phải thêm một dòng vào
+đây.
 
 **C8 — hai bản parse trạng thái là rủi ro, và thiết kế mới chỉ giảm chứ không xoá.**
 `Board` gọi `cos.mjs status --json` thay vì chép luật parse sang Python, nên luật chỉ có một
