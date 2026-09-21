@@ -1,5 +1,5 @@
 # Plan: Move the stack, then manage workspaces on it
-Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
 Thứ tự ở đây có một ý duy nhất: **đổi nền và thêm năng lực không được trộn vào nhau.** Bước
 1 hỏi nền mới có sống được trong repo này không, và có quyền dừng cả unit. Bước 3 đổi tên
@@ -147,6 +147,38 @@ nếu bước 1 xác nhận được.
 11. **Đóng unit.** Sửa `.claude/CLAUDE.md`: dòng 17 ("no build step") thành mô tả đúng, kèm
     lệnh build thật và ai chạy nó; dòng 20-21 trỏ đúng gói mới; `## Commands` có lệnh chạy
     app mới. Chạy `## Proof`. Đặt `Status: done` chỉ sau khi nó xanh.
+    **Đã làm 2026-09-21.** `cos_baodo/run.py` + `[project.scripts] cos-baodo` là lệnh chạy
+    thật, và nó trả lời câu còn treo ở bước 1: không dùng `reflex run`, mà mount bản build
+    vào cùng app ASGI rồi để uvicorn bind `config.host`. Đo lại: đúng **một** socket
+    `127.0.0.1:8791`, không có gì trên `:3000`, `/` trả 200 và `/api/*` trả 200. `## Proof`
+    xanh cả bốn lệnh.
+
+## What actually happened
+
+Bốn thứ đáng ghi, vì không cái nào đoán được trước khi chạy.
+
+**Reflex lật tư thế mạng của `0002` mà không ai thấy.** `backend_host` mặc định
+`'0.0.0.0'`. Ghim được backend, nhưng chế độ dev của Reflex chạy vite không nhận host, nên
+cách duy nhất giữ được `spec.md` R5 là bỏ hẳn chế độ hai cổng: mount bản build vào cùng app
+ASGI, một cổng, loopback. R5 vẫn đậu **đúng như đã viết** — tiêu chí của nó là "không cổng
+nào của app bind ra ngoài loopback", và chạy một cổng thì tiêu chí đó đúng. Chỉ phần văn
+xuôi "Reflex phục vụ hai cổng" là không còn mô tả đúng cách chạy.
+
+**Bước 4 đổi hành vi, và test của `0002` bắt được.** Gộp validation vào async generator
+biến một `Refused` từ dòng lỗi NDJSON sau 200 thành 400 — xoá đúng cái ranh giới mà
+docstring của `post_send` viết ra. Tách thành `check_send` và `stream`.
+
+**Hai lớp cùng hỏi một câu và trả lời khác nhau.** `sessions.py:159` giữ cổng gác riêng gọi
+thẳng `config.is_workspace`, nên workspace trong store qua được cổng của service rồi bị từ
+chối ở lớp dưới. Đây đúng là thứ `spec.md` R10 sinh ra để chặn, và nó có sẵn từ `0002`.
+Không test nào thấy; chỉ một lần clone thật rồi mở session mới lòi ra. Cổng gác giữ lại,
+nhưng câu hỏi thì dùng chung.
+
+**`from_env` lặng lẽ thêm cwd vào danh sách.** Chạy với working folder và không khai báo
+`COS_WORKSPACES` thì repo tự thành workspace, và số đếm 2 đọc ra 3. Fallback giờ chỉ áp
+dụng khi không có working folder — `0002` không đổi.
+
+Hai lỗi sau không unit test nào bắt được ở hình dạng cũ. Cả hai giờ có test hồi quy.
 
 ## Risks
 

@@ -24,3 +24,8 @@ module-name = "cos_baodo"
 dev = [
     "httpx>=0.28.1",
 ]
+
+[project.scripts]
+# `spec.md` R2. The entry point also pins how the app is served: one ASGI app on one
+# loopback port with the compiled frontend mounted, not `reflex run` -- see run.py.
+cos-baodo = "cos_baodo.run:main"
