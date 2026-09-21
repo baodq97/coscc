@@ -127,6 +127,24 @@ Làm trước bước 6 vì board vẽ trên nền này; làm sau thì phải s�
 *Kiểm:* `uv run cos-build` chạy được; trang render ở `390px`, `768px`, `1280px` không tràn
 ngang; đổi light/dark được và lựa chọn sống qua reload.
 
+*Đã làm. Bốn chỗ đi khác plan, ghi theo invariant 8:*
+(a) **Thêm `cos_baodo/ui.py` (new)**, không có trong `## Files that change`. Theme, type
+scale và các khối dựng chung nằm đó để bước 6 dùng lại; `cos_baodo.py` giữ phần hành vi.
+(b) **Theme khai báo ở `rxconfig.py`, không ở `rx.App`.** Reflex 0.9.11 trả cảnh báo
+deprecation cho `App(theme=...)` và nói nó biến mất ở 1.0, chỉ sang
+`rx.plugins.RadixThemesPlugin` — đo ngày 2026-09-21 bằng chính lần build. Tài liệu trên web
+vẫn dạy lối cũ; gói đã cài là nguồn thật. `rxconfig.py` cũng chưa có trong danh sách file.
+(c) **Bốn phép kiểm R22–R25 vào `verify_0004.py` ngay bây giờ**, không đợi bước 11: chúng
+là thứ chứng minh bước này, và để tới cuối thì bước này không có bằng chứng.
+(d) **Thêm một "canary" cho phép đo tràn ngang.** Đo ngày 2026-09-21: xoá hẳn khung cuộn
+của bảng mà phép kiểm vẫn xanh — cảnh test chỉ có 2 workspace tên ngắn nên không đủ rộng để
+tràn. Phép kiểm vì thế tự chèn một khối 3000px và đòi bị bắt, trước khi được tin.
+
+*Hai hồi quy phép kiểm bắt được:* trang vẽ lại làm mất dòng "N workspace(s)" mà
+`scripts/verify_0004.py:248` chờ đúng chữ; và phép đo tương phản đầu tiên đọc `body`, nơi
+Reflex không đặt màu gì — ra 1.00:1. Màu của theme nằm trên node `.radix-themes`, nên phép
+đo chuyển sang chữ thật trên trang và lấy trường hợp tệ nhất.
+
 **6. Trang: board và timeline. Đây là "state moving" nhìn thấy được.**
 Tám cột, mỗi unit một hàng, mỗi ô một trạng thái; timeline của một unit theo spec R15. Vẫn
 chưa chạy được bước nào — trang chỉ hiện và đổi chế độ.

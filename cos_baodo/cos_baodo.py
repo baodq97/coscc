@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import reflex as rx
 
+from cos_baodo import ui
 from cos_baodo.api import build
 from cos_baodo.service import Invalid
 
@@ -150,15 +151,28 @@ class State(rx.State):
 
 
 def _row(row: rx.Var) -> rx.Component:
+    """One workspace. The chosen one is marked on the row rather than somewhere else."""
+    chosen = State.cwd == row["path"]
     return rx.table.row(
         rx.table.cell(
-            rx.hstack(
-                rx.text(row["name"], weight="bold"),
-                rx.cond(row["missing"], rx.badge("missing", color_scheme="red")),
-                rx.badge(row["source"]),
-                spacing="2",
-                align="center",
-            )
+            rx.vstack(
+                rx.hstack(
+                    rx.text(row["name"], weight="bold", size="2"),
+                    rx.cond(chosen, rx.badge("in use", color_scheme="iris", variant="solid")),
+                    rx.cond(row["missing"], rx.badge("missing", color_scheme="red")),
+                    rx.cond(
+                        row["source"] == "env",
+                        rx.badge("env", color_scheme="gray", variant="surface"),
+                    ),
+                    spacing="2",
+                    align="center",
+                    wrap="wrap",
+                ),
+                ui.mono(row["path"], size="1"),
+                spacing="1",
+                align="start",
+            ),
+            white_space="nowrap",
         ),
         rx.table.cell(
             rx.input(
@@ -166,17 +180,26 @@ def _row(row: rx.Var) -> rx.Component:
                 placeholder="label",
                 on_blur=lambda v: State.relabel(row["name"], v),
                 disabled=row["source"] == "env",
-            )
+                size="2",
+                variant="soft",
+            ),
+            min_width="180px",
         ),
-        rx.table.cell(rx.text(row["path"], size="1", color_scheme="gray")),
         rx.table.cell(
             rx.hstack(
-                rx.button("use", on_click=State.choose(row["path"]), variant="soft"),
+                rx.button(
+                    rx.cond(chosen, "in use", "use"),
+                    on_click=State.choose(row["path"]),
+                    variant=rx.cond(chosen, "solid", "soft"),
+                    size="2",
+                ),
                 rx.button(
                     "pull",
                     on_click=State.pull(row["name"]),
                     disabled=row["source"] == "env",
                     variant="soft",
+                    size="2",
+                    loading=State.busy,
                 ),
                 rx.button(
                     "remove",
@@ -184,84 +207,162 @@ def _row(row: rx.Var) -> rx.Component:
                     disabled=row["source"] == "env",
                     color_scheme="red",
                     variant="soft",
+                    size="2",
                 ),
                 spacing="2",
+                wrap="wrap",
+            ),
+            white_space="nowrap",
+        ),
+        background=rx.cond(chosen, rx.color("iris", 3), "transparent"),
+    )
+
+
+def _workspaces() -> rx.Component:
+    add_form = rx.flex(
+        rx.input(
+            placeholder="name",
+            value=State.new_name,
+            on_change=State.on_name,
+            size="2",
+            flex="1 1 140px",
+        ),
+        rx.input(
+            placeholder="label (optional)",
+            value=State.new_label,
+            on_change=State.on_label,
+            size="2",
+            flex="1 1 140px",
+        ),
+        rx.input(
+            placeholder="https://… (leave empty to adopt a folder already there)",
+            value=State.new_url,
+            on_change=State.on_url,
+            size="2",
+            flex="2 1 240px",
+        ),
+        rx.button("add", on_click=State.add, loading=State.busy, size="2"),
+        gap="2",
+        width="100%",
+        wrap="wrap",
+        align="center",
+    )
+
+    return ui.section(
+        "Workspaces",
+        ui.card(
+            rx.cond(
+                State.count > 0,
+                ui.scroll_x(
+                    rx.table.root(
+                        rx.table.header(
+                            rx.table.row(
+                                rx.table.column_header_cell("workspace"),
+                                rx.table.column_header_cell("label"),
+                                rx.table.column_header_cell(""),
+                            )
+                        ),
+                        rx.table.body(rx.foreach(State.rows, _row)),
+                        variant="ghost",
+                        size="2",
+                        width="100%",
+                    )
+                ),
+                # An empty list is a state worth designing, not a blank area.
+                rx.vstack(
+                    rx.text("No workspaces yet.", weight="medium"),
+                    ui.muted("Add a folder already under the working folder, or clone one by URL."),
+                    spacing="1",
+                    padding="10px 2px",
+                ),
+            ),
+            rx.box(height="14px"),
+            add_form,
+        ),
+        actions=rx.hstack(
+            ui.muted("working folder"),
+            ui.mono(State.working_dir),
+            ui.muted("·"),
+            # `scripts/verify_0004.py:248` waits for this exact phrasing. It is the one
+            # number the app could not answer before `0003`, so the proof watches for it
+            # on the page rather than only over HTTP — do not reword it casually.
+            ui.muted(State.count.to_string() + " workspace(s)"),
+            spacing="2",
+            align="center",
+            wrap="wrap",
+        ),
+    )
+
+
+def _chat() -> rx.Component:
+    return ui.section(
+        "Chat",
+        ui.card(
+            rx.cond(
+                State.cwd != "",
+                rx.vstack(
+                    rx.cond(
+                        State.reply != "",
+                        rx.box(
+                            rx.text(State.reply, white_space="pre-wrap"),
+                            width="100%",
+                            padding="12px 14px",
+                            border_radius="10px",
+                            background=rx.color("gray", 3),
+                        ),
+                        ui.muted("Ask something about this workspace."),
+                    ),
+                    rx.flex(
+                        rx.input(
+                            placeholder="prompt",
+                            value=State.prompt,
+                            on_change=State.on_prompt,
+                            size="2",
+                            flex="1 1 240px",
+                        ),
+                        rx.button("send", on_click=State.send, loading=State.busy, size="2"),
+                        gap="2",
+                        width="100%",
+                        wrap="wrap",
+                    ),
+                    spacing="3",
+                    width="100%",
+                ),
+                rx.vstack(
+                    rx.text("Pick a workspace first.", weight="medium"),
+                    ui.muted("Press “use” on a row above — chat runs inside that folder."),
+                    spacing="1",
+                    padding="10px 2px",
+                ),
             )
+        ),
+        actions=rx.cond(
+            State.cwd != "",
+            rx.hstack(ui.muted("cwd"), ui.mono(State.cwd), spacing="2", align="center", wrap="wrap"),
+            rx.fragment(),
         ),
     )
 
 
 def index() -> rx.Component:
-    return rx.container(
-        rx.vstack(
-            rx.heading("cos-baodo"),
-            rx.text(
-                "working folder: ",
-                rx.code(State.working_dir),
-                "  ·  ",
-                State.count.to_string(),
-                " workspace(s)",
-                size="2",
-            ),
-            rx.cond(
-                State.error != "",
-                rx.callout(State.error, color_scheme="red", width="100%"),
-            ),
-            rx.heading("Workspaces", size="4"),
-            rx.table.root(
-                rx.table.header(
-                    rx.table.row(
-                        rx.table.column_header_cell("name"),
-                        rx.table.column_header_cell("label"),
-                        rx.table.column_header_cell("path"),
-                        rx.table.column_header_cell(""),
-                    )
-                ),
-                rx.table.body(rx.foreach(State.rows, _row)),
+    return ui.page(
+        rx.cond(
+            State.error != "",
+            rx.callout(
+                State.error,
+                icon="triangle_alert",
+                color_scheme="red",
+                variant="surface",
                 width="100%",
             ),
-            rx.hstack(
-                rx.input(
-                    placeholder="name",
-                    value=State.new_name,
-                    on_change=State.on_name,
-                ),
-                rx.input(
-                    placeholder="label (optional)",
-                    value=State.new_label,
-                    on_change=State.on_label,
-                ),
-                rx.input(
-                    placeholder="https://… (leave empty to adopt an existing folder)",
-                    value=State.new_url,
-                    on_change=State.on_url,
-                    width="100%",
-                ),
-                rx.button("add", on_click=State.add, loading=State.busy),
-                width="100%",
-                spacing="2",
-            ),
-            rx.divider(),
-            rx.heading("Chat", size="4"),
-            rx.text("cwd: ", rx.code(State.cwd), size="2"),
-            rx.hstack(
-                rx.input(
-                    placeholder="prompt",
-                    value=State.prompt,
-                    on_change=State.on_prompt,
-                    width="100%",
-                ),
-                rx.button("send", on_click=State.send, loading=State.busy),
-                width="100%",
-            ),
-            rx.cond(State.reply != "", rx.card(rx.text(State.reply), width="100%")),
-            spacing="4",
-            width="100%",
         ),
-        size="4",
+        _workspaces(),
+        _chat(),
         on_mount=State.load,
     )
 
 
-app = rx.App(api_transformer=_api)
+# The theme is configured in `rxconfig.py` through `RadixThemesPlugin`, because 0.9.11
+# deprecates `App(theme=...)` and removes it at 1.0. The global style still belongs here.
+app = rx.App(api_transformer=_api, style=ui.GLOBAL_STYLE)
 app.add_page(index, title="cos-baodo")

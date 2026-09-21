@@ -20,11 +20,18 @@ A relative `api_url` would be the right answer and Reflex rejects it: `api_url="
 the production build with `TypeError: Invalid URL`. So the address is read from the same
 config the app serves itself on, and `run.py` refuses to start if the build it finds was
 made for a different port.
+
+The theme lives here rather than on `rx.App`. `0008` R22 requires it to be declared
+explicitly, and 0.9.11 answers `App(theme=...)` with a deprecation warning pointing at
+`RadixThemesPlugin` and saying it goes away at 1.0 — measured on 2026-09-21 by building
+with it. The published guides still show the `rx.App` form, so the installed package is
+what this follows.
 """
 
 import reflex as rx
 
 from cos_baodo.config import from_env
+from cos_baodo.ui import THEME
 
 _c = from_env()
 
@@ -32,4 +39,5 @@ config = rx.Config(
     app_name="cos_baodo",
     backend_host=_c.host,
     api_url=f"http://{_c.host}:{_c.port}",
+    plugins=[rx.plugins.RadixThemesPlugin(theme=THEME)],
 )
