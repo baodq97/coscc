@@ -64,9 +64,39 @@ nếu bước 1 xác nhận được.
    `spec.md`, và có thể phải quay lại `intent.md` — đây là `spec.md` open question 12, và
    nó chưa được kiểm lần nào.
 
+   **Đã chạy 2026-09-21. Ba ý xanh, một ý buộc đổi cách chạy app.**
+   **(a) Xanh.** `reflex run` biên dịch xong trong repo đã có `package.json`,
+   `node_modules/` và `channel/`; log in `App running at: http://localhost:3000/`.
+   **(b) Xanh.** `/ping/` trả `"pong"` (sau một 307 sang `/ping`) và `/api/health` trả
+   `{"ok":true}`, cùng cổng backend.
+   **(d) Xanh.** `httpx.ASGITransport` gọi được `/api/health` khi **chưa có** `.web/` và
+   **chưa** chạy `reflex run`. Giả định lớn nhất của plan này đứng vững: lệnh kiểm không
+   cần toolchain JavaScript.
+   **(c) Đỏ như đã viết, và đây là thứ đáng giá nhất bước này tìm ra.**
+   `Config.__dataclass_fields__["backend_host"].default` là `'0.0.0.0'`; `ss -ltn` xác nhận
+   `0.0.0.0:8000` trước khi `rxconfig.py` ghim lại. `0002` mặc định ngược lại
+   (`app/config.py:55`), nên **nhận Reflex vào là tự động lật tư thế mạng của `0002`**, mà
+   không dòng code nào của app trông có vẻ sai.
+   Ghim được backend, **không ghim được frontend**: chế độ dev chạy vite bằng `run dev` và
+   chỉ truyền `PORT`, không truyền host — `ss -ltn` cho `*:3000`. Reflex 0.9.11 không có
+   trường cấu hình nào cho host của frontend.
+   Lối đi đã kiểm: `__REFLEX_MOUNT_FRONTEND_COMPILED_APP=1` gắn bản build tĩnh vào **cùng
+   một app ASGI** với backend. Trong tiến trình, `/`, `/api/health` và `/ping` đều trả 200
+   trên **một** app, và cổng duy nhất là `127.0.0.1:8000`.
+   **Hệ quả: chế độ dev hai cổng không phải cách chạy được của app này, và `spec.md` R5
+   phải đổi từ "cả hai cổng loopback" sang "đúng một cổng, loopback".** Đổi một spec đã
+   accepted sau khi đã có code là thứ `intent.md` gọi là ngoại lệ — tác giả quyết.
+   **Chưa giải:** `reflex run --env prod --backend-only` kèm biến đó vẫn trả 404 ở `/`.
+   Đường chạy đã kiểm được là app ASGI dạng factory, không phải lệnh `reflex run`; bước 11
+   phải ghi đúng lệnh chạy thật.
+
 2. **uv đúng chuẩn, trước khi có gì để mất.** `[dependency-groups]` cho `httpx` và test,
    `[project.scripts]`, `.python-version`, `.gitignore` thêm `.web/`, commit lockfile
    frontend.
+   **Lệch khỏi plan, đã xảy ra ở bước 1:** `.gitignore` thêm `.web/` và `httpx` vào
+   `[dependency-groups]` đều phải làm sớm, vì bước 1 chạy Reflex (sinh `.web/`) và ý (d)
+   cần `httpx`. Phần còn lại của bước 2 — `[project.scripts]`, `.python-version`, commit
+   `reflex.lock/` — vẫn chưa làm.
    Kiểm: `uv sync --locked` chạy sạch; `git status --short` không thấy `.web/`.
 
 3. **Đổi tên gói, không đổi một hành vi nào.** `app/` → `cos_baodo/`, sửa mọi `from app.`,
