@@ -51,7 +51,17 @@ COS_WORKING_DIR=~/projects uv run cos-baodo               # then http://127.0.0.
 uv run python scripts/verify_0002.py                      # proof for 0002; creates real sessions
 uv run python scripts/verify_0003.py                      # proof for 0003; clones, creates sessions
 uv run python scripts/verify_0004.py                      # proof for 0004; needs a browser and a free port
+uv run python scripts/verify_0005.py                      # proof for 0005; 4 processes at once, creates a session
 ```
+
+`verify_0005.py` spawns four copies of itself writing to one working folder and checks
+that all 20 entries survive, then opens a real session and checks that `pull` refuses
+while it is live. Concurrent writes to the workspace list are locked with `flock` on a
+file beside the store, and the wait is bounded at 10 seconds — a busy folder gives an
+error naming it, never a hang. **The lock and the `pull` refusal both cover this process
+only.** Two copies of the app on one working folder still see past each other for
+sessions, so `pull` can change files under the other's turn; that is recorded in
+`.cos/0005_silent-concurrent-loss/spec.md` C2 and not fixed.
 
 `verify_0004.py` is the only check that opens the page in a real browser, and the only one
 that needs `COS_PORT` free — the bundle hardcodes its own address, so this proof cannot

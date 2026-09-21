@@ -1,5 +1,5 @@
 # Plan: Prove the loss first, then close it
-Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
 Thứ tự ở đây có một ý: **lệnh chứng minh được viết trước bản sửa, và nó phải đỏ.** Một phép
 kiểm cho cuộc đua mà chưa từng thấy cuộc đua thua thì không ai biết nó có đo đúng thứ không.
@@ -107,3 +107,61 @@ Con số **4** và **5** lấy từ `intent.md`. Muốn đổi thì sửa ở đ
 - **Không khoá lúc đọc danh sách** (`spec.md` open question 6). `rename` là nguyên tử nên
   người đọc thấy bản cũ hoặc bản mới, không thấy nửa vời.
 - **Không lo máy không POSIX** (`spec.md` C4).
+
+## What actually happened
+
+Năm bước chạy đúng thứ tự đã viết, không bước nào phải đảo.
+
+**Bước 1 đỏ đúng như cần.** Trên cây chưa sửa, 4 tiến trình × 5 workspace để lại **8 trên
+20** mục, không một dòng lỗi nào ở đâu. Đó là con số `intent.md` nói là chưa đo được; nay
+đo được rồi, và nó tệ hơn mức "một vài mục".
+
+**Bước 2 làm mệnh đề 1 xanh.** Khoá `flock` trên `.cos-baodo.lock`, bao trọn
+`entries()` + `_write()`. Một chỗ phải đổi so với kế hoạch: hạn chờ chuyển từ tham số mặc
+định `LOCK_TIMEOUT` sang đọc tại lúc gọi, vì tham số mặc định bị gắn lúc định nghĩa hàm nên
+test không rút ngắn được — một test phải chờ đủ 10 giây là một test không ai chạy.
+
+Test giữ khoá bằng **tiến trình con thật**, không phải descriptor thứ hai trong cùng tiến
+trình. Cái thứ hai sẽ xanh kể cả khi khoá quay về `threading.Lock`, tức là kiểm đúng thứ
+không cần kiểm. Có thêm một test khẳng định khoá **chết theo tiến trình giữ nó** — đó là
+dạng duy nhất của `spec.md` R3 không phụ thuộc vào việc ai đó nhớ nhả khoá.
+
+**Bước 4 suýt xanh vì lý do sai.** Test đầu tiên dùng thư mục trống làm workspace, và nó
+xanh — nhưng `gitops.pull` trả về **trước khi** sinh tiến trình nếu thư mục không phải repo,
+nên khẳng định "không có `git` nào chạy" đúng dù bỏ hẳn phần kiểm tra session. Đổi sang
+`git init` thật thì gỡ phần kiểm tra ra là đỏ ngay với đúng thông báo.
+
+Hai phép sabotage được chạy thật: bỏ lời gọi `fcntl.flock` (test khoá đỏ, "Busy not
+raised"), và bỏ câu hỏi về session trong `pull_workspace` (test đỏ, "git ran despite a live
+session"). Phép so đường dẫn **không** được sabotage — nó chỉ có test khẳng định, nên độ
+tin của nó thấp hơn hai cái kia.
+
+**`spec.md` C6 giữ nguyên.** `verify_0003.py` vẫn `pull` trước khi tạo session nên R6 không
+chạm tới nó — xanh, chạy sau bước 4. Thứ tự tình cờ ấy vẫn chưa được ai viết thành ràng
+buộc; nó sẽ vỡ vào ngày có người đổi thứ tự trong file đó vì một lý do không liên quan.
+
+## Proof result
+
+Chạy ngày 2026-09-21, trên `main`:
+
+```
+npm test                          136 tests, OK
+scripts/verify_0002.py            PASS — 5 mệnh đề, 2 project
+scripts/verify_0003.py            PASS — 3 mệnh đề, 2 workspace
+scripts/verify_0005.py            PASS — 3 dòng, cả hai mệnh đề
+```
+
+`verify_0004.py` chạy tay theo `spec.md` R9, ngoài chuỗi trên: cổng mặc định đang bị một
+tiến trình khác giữ, nên build và chạy ở `COS_PORT=8795` rồi build lại về 8790. **PASS**, cả
+4 dòng, gồm cả dòng nói rằng phép kiểm biết đỏ.
+
+## What is still open
+
+- **`spec.md` C2** — `pull` vẫn cắt dưới chân session của **tiến trình khác**. Khoá store là
+  liên tiến trình; câu hỏi về session thì không. Đóng nó cần một dấu hiệu trên đĩa, tức một
+  cơ chế nữa, và `intent.md` không cho phép. Người quyết là tác giả.
+- **`spec.md` C3** — 10 giây là chọn, chưa đo. Nên xem lại sau lần chạy thật đầu tiên.
+- **`spec.md` C4** — `flock` là giả định POSIX, và nó sẽ vỡ lúc khoá chứ không lúc cài đặt.
+- **`spec.md` open question 5** — bị từ chối rồi thì trang vẫn chưa có cách đóng session.
+  Một lỗi đúng, nhưng là ngõ cụt.
+- **`spec.md` C6** — thứ tự trong `verify_0003.py` vẫn là tình cờ, không phải ràng buộc.
