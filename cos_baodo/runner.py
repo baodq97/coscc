@@ -151,6 +151,17 @@ def check_reply(text: str) -> str:
     return body + "\n"
 
 
+# How the SDK says a turn ran out of room. `terminal_reason` is the field that carries it;
+# older CLIs leave it unset and put a hint in `subtype`, so both are folded into one string
+# before this looks at it.
+CEILING_MARKERS = ("max_turns", "max_budget", "budget")
+
+
+def _hit_ceiling(terminal: str) -> bool:
+    text = (terminal or "").lower()
+    return any(marker in text for marker in CEILING_MARKERS)
+
+
 class Denials:
     """Counts what a step was refused, and keeps the first few reasons.
 
@@ -233,6 +244,7 @@ class Runner:
 
         denials = Denials()
         collected = ""
+        terminal = ""
         session_id = ""
         cost: dict[str, Any] = {}
         outcome = "failed"
@@ -256,6 +268,7 @@ class Runner:
                 else:
                     session_id = payload.get("session_id", "")
                     cost = payload.get("cost", {}) or {}
+                    terminal = str(payload.get("terminal_reason") or "")
 
             if grant.app_writes_artifact:
                 (directory / artifact).write_text(check_reply(collected), encoding="utf-8")
@@ -270,8 +283,20 @@ class Runner:
             outcome = "done"
         except (RunError, Refused) as e:
             detail = str(e)
+            # A step stopped by its own ceiling did not fail in the ordinary sense — it was
+            # bounded. `journal.OUTCOMES` keeps the two apart so a reader can tell a defect
+            # from a limit working as intended (`0008` R11).
+            if _hit_ceiling(terminal):
+                outcome, detail = "exhausted", f"stopped at the ceiling: {terminal} — {detail}"
         except Exception as e:  # surfaced as data; the process keeps serving
             detail = f"{type(e).__name__}: {e}"
+            if _hit_ceiling(terminal):
+                outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
+        else:
+            if _hit_ceiling(terminal):
+                # It wrote something, but it ran out of room doing it. Saying `done` here
+                # would hide that the work may be half finished.
+                outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         finally:
             if self.journal is not None:
                 self.journal.finished(

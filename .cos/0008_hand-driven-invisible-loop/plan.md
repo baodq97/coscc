@@ -295,6 +295,29 @@ Lệnh chứng minh viết sau cùng vì nó khẳng định kết quả của c
 "driven by hand" (`harness.md:16`) không còn đúng với hai bước.
 *Kiểm:* mục `## Proof` dưới đây.
 
+*Đã dựng. Chạy ngày 2026-09-22, kết quả: **exit 1**.* Chi tiết, vì con số gộp giấu mất
+chỗ nào đứng được:
+
+- **Mệnh đề 1 — đạt.** `gate` trả lời đủ tám tên, từ chối `deploy`, `rollback` và tên rỗng.
+  Trước đó nó phải chứng minh mình **biết nói không**: một unit rỗng bị chặn ở `spec`. Đây
+  là bài học của `0004`, viết thành một dòng.
+- **Mệnh đề 7 — đạt.** Một bước `impl` với `max_turns=1` chạm trần và trả `exhausted`, kèm
+  lý do, không treo. Hạ trần là **sửa số trong bảng grant**, không phải nhánh code thứ hai.
+- **Mệnh đề 5 — KHÔNG đạt, và đây là `0007`.** Session của một giai đoạn chữ, grant rỗng,
+  vẫn nhận `microsoft-learn` và `claude.ai Claude Docs` cùng ba tool `mcp__…`. `--tools`
+  chỉ đặt tên cho tập built-in nên không trừ được MCP. `0007` có plan accepted, chưa có
+  dòng code nào. Mệnh đề này còn đỏ tới khi `0007` xong.
+- **Mệnh đề 2, 3, 4, 6 — bỏ qua, vì repo không có remote.** `git remote -v` vẫn rỗng
+  (Risk 2). Script đòi `COS_PROOF_REPO` trỏ tới một repo mà tác giả **đồng ý** cho nó push
+  và mở PR; không có mặc định, vì với ra ngoài máy là quyết định của tác giả.
+
+*Một phát hiện đáng ghi hơn cả kết quả:* đo `tools` trong message `init` **không đáng tin
+một mình**. Hai lần chạy liên tiếp, cùng máy cùng tham số: lần đầu ba tool, lần sau **không
+tool nào**, trong khi cả hai lần đều có đúng hai MCP server gắn vào. Danh sách tool chạy đua
+với lúc server kết nối xong, nên một lần đọc sớm sẽ báo "0 tool" cho một session không hề
+rỗng — đúng kiểu xanh giả mà `0004` đã dạy. Mệnh đề 5 vì vậy hỏi **cả hai**: 0 tool **và**
+0 server. Nếu chỉ giữ vế đầu thì `0008` đã tự cấp cho mình một dấu xanh.
+
 ## Risks
 
 Xếp theo bán kính, rộng nhất trước.
@@ -361,6 +384,10 @@ hỏng, `2` môi trường chưa sẵn sàng (không có remote, không có `gh`
 5. Một bước bất kỳ trong sáu giai đoạn chữ báo **0 tool** trong `init`.
 6. Tổng token của unit nháp khác 0, và bằng tổng các bước.
 7. Vượt trần lượt cho ra trạng thái `exhausted`, không phải treo.
+
+Thiếu remote **không** làm cả lệnh im. Mệnh đề 1, 5 và 7 không cần remote nên vẫn chạy và
+vẫn in phán quyết; chỉ 2, 3, 4, 6 bị bỏ qua. Đó là câu trong Risk 2 — "chín phần mười vẫn
+chạy" — viết thành cơ chế thay vì để làm lời hứa.
 
 Bốn mệnh đề giao diện (R22–R25) **không** nằm trong `verify_0008.py`, vì chúng cần một
 trình duyệt thật. Chúng vào `scripts/verify_0004.py`, cùng chỗ với mệnh đề live của R20:

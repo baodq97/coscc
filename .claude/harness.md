@@ -10,10 +10,19 @@ A session in the middle of a stage does not need it.
 ## What this is
 
 A local implementation of the AI-native SDLC described in `ai-native-sdlc-playbook.md`,
-covering the first three stages: Plan, Design, Build. It is also the template — copy
-`.claude/` into another repository and the loop works there.
+covering all eight stages: idea, intent, spec, plan, impl, pr, review, ship. It is also the
+template — copy `.claude/` into another repository and the loop works there.
 
-It is driven by hand. There are no hooks, no CI and no scheduled jobs.
+It was three stages until `0008` (2026-09-22) widened it to eight. The five units closed
+under the three-stage loop still read as finished, because `plan.md: done` is terminal in
+`cos.mjs` and `idea` gates nothing — widening the loop was not allowed to reopen work that
+had already been proved.
+
+There are no hooks, no CI and no scheduled jobs. It is driven by hand **except for two
+stages**: `impl` and `pr` can be set to `autonomous` on the board in `cos_baodo/`, and then
+the app runs them itself with a bounded grant. Everything else is a person starting a step.
+Nothing starts the next step when one finishes — the board gives you a place to press, not
+something that presses for you.
 
 What is mechanical lives in `.claude/scripts/cos.mjs`; what is judgement lives in the skills.
 The split matters for how much each can be trusted. Whether an intent is accepted is a fact
@@ -26,11 +35,24 @@ is a question the session is asked to ask, and each skill states that limit on i
 
 ## The loop
 
-| Stage | Skill | Artifact | Reads |
-|---|---|---|---|
-| Plan | `write-intent` | `intent.md` | nothing |
-| Design | `write-spec` | `spec.md` | accepted `intent.md` |
-| Build | `write-plan` | `plan.md` | accepted `intent.md` + accepted `spec.md` |
+| Stage | Skill | Artifact | Reads | Optional |
+|---|---|---|---|---|
+| `idea` | `write-idea` | `idea.md` | nothing | yes |
+| `intent` | `write-intent` | `intent.md` | `idea.md`, if there is one | no |
+| `spec` | `write-spec` | `spec.md` | accepted `intent.md` | no |
+| `plan` | `write-plan` | `plan.md` | accepted `intent.md` + settled `spec.md` | no |
+| `impl` | `write-impl` | `impl.md` | accepted `plan.md` | no |
+| `pr` | `write-pr` | `pr.md` | `impl.md` | no |
+| `review` | `write-review` | `review.md` | `pr.md` | no |
+| `ship` | `write-ship` | `ship.md` | `review.md` | no |
+
+`idea` is the one optional stage, and it gates nothing. Its absence means only that nobody
+wrote a note before the intent.
+
+The eight rows above are a restatement of one array — `STAGES` in
+`.claude/scripts/cos.mjs:24-33`. That array is the authoritative copy: it decides the
+artifact names, the statuses each may carry, what the gate demands and what `status`
+proposes next. Adding a stage is editing it, and then this table.
 
 `cos-status` reads the tree and reports where every unit stands. It writes nothing.
 
@@ -54,8 +76,10 @@ artifacts.
 
 ## The gate
 
-Every artifact carries `Status: draft | accepted | rejected`; `plan.md` may additionally be
-`done`.
+Every artifact carries `Status: draft | accepted | rejected`. Two carry one more each:
+`spec.md` may be `skipped`, and `plan.md` and `impl.md` may be `done`. The authoritative
+list is the `statuses` field on each entry of `STAGES` in `.claude/scripts/cos.mjs:24-33`;
+a status outside it is reported as a problem rather than guessed at.
 
 The agent writes the artifact, accepts it and commits it. `Status: accepted` therefore
 records readiness, not approval: it says the agent believes the file is finished, and
@@ -88,10 +112,18 @@ considered.
 
 ```
 node .claude/scripts/cos.mjs status               # every unit and its one next action
+node .claude/scripts/cos.mjs status --json        # the same, plus the stage list, for a reader
 node .claude/scripts/cos.mjs gate <unit> <stage>  # 0 open, 1 blocked with reasons, 2 misuse
 node .claude/scripts/cos.mjs new-path <slug>      # allocates number, validates slug
+node .claude/scripts/cos.mjs --root <dir> status  # another repository's units, these rules
 node --test '.claude/scripts/*.test.mjs'          # the script's own tests
 ```
+
+`--root` exists for one reason and it is a boundary, not a convenience. The board in
+`cos_baodo/` reads a workspace's `.cos/` by pointing **its own** copy of this script at that
+directory. It never executes the `cos.mjs` it finds there: a workspace is a repository
+somebody cloned from a URL they typed, so the copy inside it is someone else's code, and
+running it would hand that code everything the app process has.
 
 `cos.mjs` is the only thing that decides whether a gate is open, which makes it an oracle
 the rest of the harness defers to — so it is tested. The tests cover the cases where
@@ -118,10 +150,13 @@ are instructions to the model, not artifacts to be reviewed.
   step anywhere checks the agent's work before it ships.
 - **Hooks.** The gates are advisory by choice. Tightening one means adding a `PreToolUse`
   hook that blocks `Write`/`Edit` while `plan.md` is `draft` — one file, not a rewrite.
-- **Stages 4 to 6** (Test, Deploy, Maintain), and with them `REVIEW.md`, the eval suite,
-  CI integration and `bands.yaml`.
-- **A feedback loop.** There is no application code, so `make test` has nothing to run. A
-  verifier subagent is only worth writing once a real command can fail.
+- **A review anyone has to pass.** `write-review` exists and `review.md` gates `ship`, but
+  the reviewer is the same agent that wrote the code, and `accepted` is self-issued. A green
+  `review` cell is a chair with nobody in it. That is recorded in
+  `.cos/0008_hand-driven-invisible-loop/spec.md` C5 and it is the weakest joint in the loop.
+- **Anything that starts the next stage on its own.** An accepted artifact does not light
+  the gate after it. A person chooses the mode and presses the button, every time.
+- **The eval suite, CI integration and `bands.yaml`** from the playbook.
 
 ## Copying this into another repository
 

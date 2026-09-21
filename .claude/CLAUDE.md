@@ -33,11 +33,14 @@ something now that the repository has two languages in it — verified once, on 
 by making a Python test fail and watching `npm test` go red.
 
 The `cos_baodo/` web app lists, creates and resumes Claude Code sessions across projects
-(`0002`), and manages the workspaces themselves — add, label, remove, clone, pull latest
-(`0003`). It binds loopback only, and its sessions are **chat only — no tools** by default;
+(`0002`), manages the workspaces themselves — add, label, remove, clone, pull latest
+(`0003`), and shows each workspace's work units as a board whose steps it can run
+(`0008`). It binds loopback only, and its sessions are **chat only — no tools** by default;
 `cos_baodo/config.py` is the single place that reads configuration, and the defaults there
-are a safety posture rather than a suggestion. Each session it creates spends account
-quota, so nothing that talks to it belongs in an unattended loop.
+are a safety posture rather than a suggestion. The one exception is a board step set to
+`autonomous`, which gets a named, bounded grant from `cos_baodo/policy.py` — never from the
+config. Each session it creates spends account quota, so nothing that talks to it belongs
+in an unattended loop.
 
 `COS_WORKING_DIR` is the one root under which workspaces may be created, and it is
 **deliberately not settable over HTTP** — there is no setter outside `from_env`, so a
@@ -52,6 +55,7 @@ uv run python scripts/verify_0002.py                      # proof for 0002; crea
 uv run python scripts/verify_0003.py                      # proof for 0003; clones, creates sessions
 uv run python scripts/verify_0004.py                      # proof for 0004; needs a browser and a free port
 uv run python scripts/verify_0005.py                      # proof for 0005; 4 processes at once, creates a session
+COS_PROOF_REPO=<url> uv run python scripts/verify_0008.py # proof for 0008; runs a whole unit, pushes, opens a PR
 ```
 
 `verify_0005.py` spawns four copies of itself writing to one working folder and checks
@@ -69,6 +73,34 @@ move to a spare port the way the others do. Stop the app before running it, or b
 run both at another port. Its exit codes are worth knowing: `0` pass, `1` the page is
 broken, `2` the environment is not ready (no browser, stale build, port in use). It creates
 no session, so unlike the other two it spends no quota.
+
+**The board (`0008`).** The page also shows every work unit of the open workspace as eight
+cells, and can run a step. Three modules carry it, and the split is the point:
+
+- `cos_baodo/board.py` reads a workspace's `.cos/` by running **this repository's**
+  `.claude/scripts/cos.mjs` with `--root`. It never runs the `cos.mjs` inside the
+  workspace — that file belongs to a repository somebody cloned. Same reasoning applies to
+  the stage rules: `cos_baodo/runner.py` builds its prompts from **this** repository's
+  `.claude/skills/`, never the workspace's.
+- `cos_baodo/policy.py` is the grant table: what a step may do, keyed by `(stage, mode)`.
+  It is deliberately **outside `Config`**, so the four knobs keep meaning what they meant.
+  The default is the locked position: no tools, no commands, one turn, no budget. Only
+  `("impl", "autonomous")` and `("pr", "autonomous")` carry anything, and `pr` carries a
+  warning string that the page shows before the button is pressed, because its capability
+  comes from this machine's own `gh` login and reaches every repository that login reaches.
+- `cos_baodo/journal.py` is an append-only JSONL log beside the store — modes, starts,
+  finishes, denials and cost. Appends are `flock`-ed and `O_APPEND`, so four processes
+  writing at once keep all their records.
+
+The six prose stages get **no tools in either mode**. A session with no tools cannot write
+a file, so for those the app writes the artifact from the reply and the session only
+returns text. `.cos/0008_hand-driven-invisible-loop/plan.md` Risk 1 records that this
+contradicts one sentence of that unit's `## Design`, and why the sentence is the wrong half.
+
+`verify_0008.py` is the only proof that pushes anything anywhere. It needs `COS_PROOF_REPO`
+set to a repository you are willing to have it push a branch to and open a pull request on;
+there is no default, and unset means exit 2 with claims 2, 3, 4 and 6 skipped. Claims 1, 5
+and 7 still run without it. It spends real quota — eight sessions, one with a $5 ceiling.
 
 **The build bakes in the port.** The compiled page hardcodes the address it opens its
 `/_event` WebSocket against, so a build made for one port serves a page that renders and
@@ -93,11 +125,17 @@ claude --dangerously-load-development-channels server:webchannel   # then http:/
 
 ## The loop
 
-One unit of work per `.cos/NNNN_<slug>/` directory, holding `intent.md`, `spec.md` and
-`plan.md` and nothing else.
+One unit of work per `.cos/NNNN_<slug>/` directory, holding its artifacts and nothing else:
+`idea.md`, `intent.md`, `spec.md`, `plan.md`, `impl.md`, `pr.md`, `review.md`, `ship.md`.
+Any other file in that directory is reported as a problem.
 
-`write-intent` → `write-spec` → `write-plan`, each gated on the one before.
-`cos-status` reports where everything stands.
+`write-idea` → `write-intent` → `write-spec` → `write-plan` → `write-impl` → `write-pr` →
+`write-review` → `write-ship`, each gated on the one before. `idea` is optional and gates
+nothing; `plan.md: done` is terminal, which is what kept the five units closed under the
+old three-stage loop reading as finished when `0008` widened it to eight.
+
+`cos-status` reports where everything stands. `.claude/scripts/cos.mjs:24-33` is the one
+place the loop is defined — the table in `.claude/harness.md` restates it, nothing else may.
 
 ## Invariants
 

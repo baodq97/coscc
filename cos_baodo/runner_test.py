@@ -212,6 +212,55 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
             self.assertEqual(row["session_id"], "s-1")
             self.assertEqual(row["cost"]["output_tokens"], 7)
 
+    def test_a_step_stopped_by_its_ceiling_is_exhausted_not_done(self):
+        """`0008` R11. A bound doing its job must not read as a bug, or as success."""
+
+        class RanOut:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "# Spec: x\nStatus: draft.\n")
+                yield ("done", {"session_id": "s-3", "cost": {}, "terminal_reason": "max_turns"})
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d)
+            r = Runner(sessions=RanOut(), journal=journal)
+
+            async def go():
+                out = []
+                async for item in r.run(
+                    workspace=d, journal_key=d, unit=UNIT, stage="spec",
+                    artifact="spec.md", stages=STAGES, mode="manual",
+                ):
+                    out.append(item)
+                return out
+
+            _, payload = asyncio.run(go())[-1]
+            self.assertEqual(payload["outcome"], "exhausted")
+            self.assertIn("ceiling", payload["error"])
+            self.assertEqual(journal.timeline(d, UNIT)[0]["outcome"], "exhausted")
+
+    def test_an_ordinary_finish_is_not_mistaken_for_a_ceiling(self):
+        class Normal:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                yield ("done", {"session_id": "s-4", "cost": {}, "terminal_reason": "completed"})
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            r = Runner(sessions=Normal(), journal=Journal(d))
+
+            async def go():
+                out = []
+                async for item in r.run(
+                    workspace=d, journal_key=d, unit=UNIT, stage="spec",
+                    artifact="spec.md", stages=STAGES, mode="manual",
+                ):
+                    out.append(item)
+                return out
+
+            _, payload = asyncio.run(go())[-1]
+            self.assertEqual(payload["outcome"], "done")
+
     def test_a_missing_unit_refuses_before_a_session_exists(self):
         with tempfile.TemporaryDirectory() as d:
             r = Runner(sessions=None, journal=None)

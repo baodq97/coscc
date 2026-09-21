@@ -305,6 +305,7 @@ class Sessions:
         turn: dict[str, float] = {}
         turns = 0
         duration_ms = 0
+        terminal = ""
         await live.client.query(text)
         async for message in live.client.receive_response():
             if isinstance(message, AssistantMessage):
@@ -323,6 +324,12 @@ class Sessions:
                 live.spent = total
                 turns += int(getattr(message, "num_turns", 0) or 0)
                 duration_ms += int(getattr(message, "duration_ms", 0) or 0)
+                # Why the loop stopped. A turn that ran into its ceiling has to be
+                # distinguishable from one that finished, or `0008` R11 turns a bounded
+                # failure back into a silent one.
+                terminal = getattr(message, "terminal_reason", None) or (
+                    getattr(message, "subtype", "") or ""
+                )
 
         if session_id and resolved != session_id:
             # Never observed, but the failure C7 describes is silent, so it is checked
@@ -345,7 +352,13 @@ class Sessions:
         cost["cost_usd"] = round(turn.get("cost_usd", 0.0), 6)
         yield (
             "done",
-            {"session_id": resolved, "text": "".join(collected), "cwd": cwd, "cost": cost},
+            {
+                "session_id": resolved,
+                "text": "".join(collected),
+                "cwd": cwd,
+                "cost": cost,
+                "terminal_reason": terminal,
+            },
         )
 
     async def send(self, cwd: str, text: str, session_id: str | None = None) -> dict[str, Any]:
