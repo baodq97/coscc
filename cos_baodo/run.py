@@ -11,7 +11,11 @@ which defaults to `127.0.0.1`. One port to check, and `ss -ltn` can check it.
 
 Build the frontend first:
 
-    uv run reflex export --frontend-only --no-zip
+    uv run cos-build
+
+That wrapper exists rather than `reflex export` so the build leaves a fingerprint; this
+function refuses to serve a bundle that does not match the source it claims to be built
+from. See `cos_baodo/build.py`.
 """
 
 from __future__ import annotations
@@ -22,56 +26,31 @@ import sys
 MOUNT_FLAG = "__REFLEX_MOUNT_FRONTEND_COMPILED_APP"
 
 
-def _build_targets(built, expected: str) -> bool:
-    """Does the compiled bundle point at `host:port`?
-
-    A string search over the built assets, which is crude and is the point: it checks the
-    artifact that actually ships rather than re-deriving what it should contain.
-    """
-    for path in built.rglob("*.js"):
-        try:
-            if expected in path.read_text(errors="ignore"):
-                return True
-        except OSError:
-            continue
-    return False
-
-
 def main() -> None:
     # Set before importing the app: Reflex reads it while composing the ASGI stack.
     os.environ.setdefault(MOUNT_FLAG, "1")
 
     import uvicorn
 
+    from cos_baodo import build
     from cos_baodo.config import from_env
 
     config = from_env()
 
-    from reflex.utils import prerequisites
-
-    built = prerequisites.get_web_dir() / "build" / "client"
-    if not (built / "index.html").is_file():
-        print(
-            "the frontend is not built yet — run:\n"
-            "    uv run reflex export --frontend-only --no-zip",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
-
-    # The compiled page bakes in the address it opens its /_event WebSocket against
-    # (see rxconfig.py). Serving it from a different port produces a page that renders
-    # and then shows "Connection Error" with a perfectly healthy API behind it — a
-    # failure no HTTP check can see, which is why this guard is here rather than a
-    # comment. Found on 2026-09-21 by driving the page with a browser.
-    expected = f"{config.host}:{config.port}"
-    if not _build_targets(built, expected):
-        print(
-            f"the built frontend was not made for {expected} — rebuild with the same "
-            f"settings:\n"
-            f"    COS_HOST={config.host} COS_PORT={config.port} "
-            f"uv run reflex export --frontend-only --no-zip",
-            file=sys.stderr,
-        )
+    # One question, one place that answers it. The compiled page bakes in the address it
+    # opens its /_event WebSocket against, so serving a bundle built elsewhere renders a
+    # page that never connects while the API behind it stays perfectly healthy — a
+    # failure no HTTP check can see (found 2026-09-21 by driving the page with a
+    # browser). The same fingerprint also catches a bundle older than the page source,
+    # which is `spec.md` C3 of `0004`.
+    #
+    # This used to grep the compiled JS for "host:port". That answered a narrower
+    # question, and answered it separately from `scripts/verify_0004.py` — the
+    # arrangement `0003` paid to learn about when `sessions.py` kept its own gate.
+    built = build.web_dir() / "build" / "client"
+    state, message = build.check(config, built)
+    if state != build.OK:
+        print(message, file=sys.stderr)
         raise SystemExit(2)
 
     print(f"cos-baodo on http://{config.host}:{config.port}")
