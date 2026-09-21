@@ -66,9 +66,9 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: a
    commit is a plan written backwards from the code.
 8. When the implementation departs from the plan, update `plan.md` in the same commit as
    the departure. The plan is the record of what was built, not of what was first imagined.
-9. Accept it and commit it on a branch, never on `main`. `accepted` here means you judged it
-   finished; the human's approval happens at the PR. Set `done` only when the work has
-   shipped and the proof has run.
+9. Accept it and commit it. `accepted` means you judged it finished, and nothing checks that
+   judgement — so `## Proof` is the only thing that can contradict you. Set `done` only when
+   the work has shipped and that command has passed.
 
 ## Done when
 

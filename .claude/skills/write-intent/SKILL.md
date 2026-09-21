@@ -55,8 +55,8 @@ Author: <name>. Status: accepted.
    not softened.
 5. Cite only a file committed in this repository, by path and line range.
 6. No solution design. Problem, outcome, constraints, open questions. The spec decides how.
-7. Accept it and commit it on a branch, never on `main`. `accepted` here means you judged it
-   finished; it is not the originator's approval, and the PR is where that happens.
+7. Accept it and commit it. `accepted` means you judged it finished, not that the originator
+   approved it — they still have to read it, and nothing in the repository makes them.
 8. Interrogation still comes first. Accepting your own file removes the check that used to
    catch a thin intent, so the questions in invariant 2 are now the only thing standing in
    for it — ask them before writing, not after.

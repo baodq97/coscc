@@ -84,8 +84,8 @@ Intent: intent.md. Author: <name>. Status: accepted.
    empty section here usually means the boundary was never thought about.
 7. Every figure names its source or is marked unverifiable. Cite only a file committed in
    this repository, by path and line range.
-8. Accept it and commit it on a branch, never on `main`. `accepted` here means you judged it
-   finished; it is not the human's approval, and the PR is where that happens.
+8. Accept it and commit it. `accepted` means you judged it finished — no one else will look,
+   so the `## Concerns` section is where a doubt gets recorded instead of resolved by you.
 
 ## Done when
 
