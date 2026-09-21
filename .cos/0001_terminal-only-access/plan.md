@@ -51,6 +51,12 @@ còn chạy song song mà so sánh (`spec.md` open question 5).
    tương tác. Vì vậy bước 2 phải do con người chạy trong một session thật, và mọi bước sau
    phụ thuộc vào nó cũng vậy.
 
+   **Lệch thứ hai, 2026-09-21:** bước 3 và bước 6 được làm trước khi bước 2 xanh. Cả hai
+   chỉ đọc và ghi file, không chạm gì vào hợp đồng channel, nên chúng không thể bị bước 2
+   làm sai. Lệnh dừng gắn ở bước 2 áp dụng cho trường hợp hợp đồng **hỏng**; hiện nó đang
+   **chờ người**, không phải hỏng. Nếu bước 2 hỏng thật thì hai bước này vẫn đúng, chỉ là
+   đứng chờ một thiết kế khác.
+
 3. **Transcript trước giao diện.** Viết `channel/transcript.mjs`: nối tiếp một bản ghi JSON
    mỗi dòng, gồm thời điểm ISO-8601, hướng (`in`/`out`), định danh session, nội dung, và
    trạng thái giao (`written` khi đã ghi ra transport, `delivered` khi session đã phản hồi).
