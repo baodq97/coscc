@@ -19,18 +19,14 @@ Reflex reserves `/ping/`, `/_event` and `/_upload`. Nothing here may use them.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from cos_baodo.config import Config, from_env
 from cos_baodo.service import Invalid, Service
 from cos_baodo.sessions import Refused, Sessions
-
-PUBLIC = Path(__file__).parent / "public"
 
 
 def _bad(message: str, status: int = 400) -> JSONResponse:
@@ -172,14 +168,9 @@ def build(config: Config | None = None) -> FastAPI:
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
 
-    # Step 9 removes this route: once the page is built from Python components, `/` has to
-    # fall through to Reflex's compiled-frontend mount, and a route defined here would win
-    # over it. Until then it serves `0002`'s page so this step changes nothing.
-    @api.get("/")
-    async def get_index() -> Any:
-        return FileResponse(PUBLIC / "index.html")
-
-    api.mount("/static", StaticFiles(directory=PUBLIC), name="static")
+    # No route for `/` and no static mount. The page is built from Python components
+    # (`spec.md` R8), and `/` has to fall through to Reflex's compiled-frontend mount —
+    # a route defined here would win over it and the page would never render.
 
     @api.on_event("shutdown")
     async def _close() -> None:

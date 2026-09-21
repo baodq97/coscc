@@ -116,10 +116,14 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lines[-1]["type"], "error")
         self.assertIn("not created by this app", lines[-1]["error"])
 
-    async def test_the_page_is_served(self):
-        r = await self.client.get("/")
-        self.assertEqual(r.status_code, 200)
-        self.assertIn("cos-baodo", r.text)
+    async def test_the_api_app_does_not_own_the_page(self):
+        """`spec.md` R8, from the API side.
+
+        `/` must stay unclaimed here. Reflex mounts this app as the outer one, so a route
+        for `/` defined in FastAPI would win over the compiled-frontend mount and the
+        Python-built page would never render. 404 from the bare API app is correct.
+        """
+        self.assertEqual((await self.client.get("/")).status_code, 404)
 
 
 class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
@@ -220,6 +224,24 @@ class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post("/api/workspaces", json={"name": "repo"})
         self.assertEqual(r.status_code, 400)
         self.assertIn("COS_WORKING_DIR", r.json()["error"])
+
+
+class NoHandWrittenMarkup(unittest.TestCase):
+    """`spec.md` R8 as a standing check, not just a one-off in the proof."""
+
+    def test_the_app_ships_no_hand_written_html_or_css(self):
+        repo = Path(__file__).resolve().parent.parent
+        found = [
+            p.relative_to(repo)
+            for p in list(repo.glob("cos_baodo/**/*.html")) + list(repo.glob("cos_baodo/**/*.css"))
+        ]
+        self.assertEqual(found, [], f"hand-written markup is back: {found}")
+
+    def test_0001s_page_is_untouched(self):
+        # `spec.md` R7: channel/public/index.html is hand-written but is not this app's
+        # page, so R8 does not reach it and removing it is forbidden.
+        repo = Path(__file__).resolve().parent.parent
+        self.assertTrue((repo / "channel" / "public" / "index.html").is_file())
 
 
 class Loopback(unittest.TestCase):
