@@ -10,10 +10,10 @@ import unittest
 from unittest import mock
 
 import claude_agent_sdk as sdk
-from aiohttp.test_utils import AioHTTPTestCase
+import httpx
 
+from cos_baodo.api import build
 from cos_baodo.config import Config
-from cos_baodo.web import build
 
 
 def _info(session_id="s1", cwd="/tmp"):
@@ -24,55 +24,68 @@ def _info(session_id="s1", cwd="/tmp"):
     )
 
 
-class Surface(AioHTTPTestCase):
-    async def get_application(self):
-        return build(Config(workspaces=("/tmp",)))
+class Surface(unittest.IsolatedAsyncioTestCase):
+    """Driven over ASGI, the same way `scripts/verify_0002.py` drives it.
+
+    No socket and no lifespan: the transport speaks to the app object directly, which is
+    also the object Reflex mounts. A test that needed a port would be testing something
+    the proof does not exercise.
+    """
+
+    async def asyncSetUp(self):
+        self.app = build(Config(workspaces=("/tmp",)))
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
 
     async def test_workspaces_lists_what_was_configured(self):
-        body = await (await self.client.get("/api/workspaces")).json()
+        body = (await self.client.get("/api/workspaces")).json()
         self.assertEqual(body["workspaces"], ["/tmp"])
 
     async def test_no_route_leaks_configuration(self):
         # spec.md C3: a long-lived credential is in this process. The knobs and the
         # environment must not be readable over the port.
-        body = await (await self.client.get("/api/workspaces")).text()
+        body = (await self.client.get("/api/workspaces")).text
         for leak in ("TOKEN", "bypass", "permission_mode", "tools"):
             self.assertNotIn(leak, body)
 
     async def test_sessions_refuses_a_directory_outside_the_workspaces(self):
         r = await self.client.get("/api/sessions", params={"cwd": "/etc"})
-        self.assertEqual(r.status, 400)
-        self.assertIn("workspace", (await r.json())["error"])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("workspace", r.json()["error"])
 
     async def test_history_refuses_a_directory_outside_the_workspaces(self):
         r = await self.client.get(
             "/api/history", params={"cwd": "/etc", "session_id": "s1"}
         )
-        self.assertEqual(r.status, 400)
+        self.assertEqual(r.status_code, 400)
 
     async def test_history_requires_a_session_id(self):
         r = await self.client.get("/api/history", params={"cwd": "/tmp"})
-        self.assertEqual(r.status, 400)
+        self.assertEqual(r.status_code, 400)
 
     async def test_send_refuses_a_directory_outside_the_workspaces(self):
         r = await self.client.post("/api/send", json={"cwd": "/etc", "text": "hi"})
-        self.assertEqual(r.status, 400)
+        self.assertEqual(r.status_code, 400)
 
     async def test_send_requires_text(self):
         r = await self.client.post("/api/send", json={"cwd": "/tmp", "text": "  "})
-        self.assertEqual(r.status, 400)
+        self.assertEqual(r.status_code, 400)
 
     async def test_send_rejects_a_non_json_body(self):
         r = await self.client.post(
-            "/api/send", data="notjson", headers={"Content-Type": "application/json"}
+            "/api/send", content="notjson", headers={"Content-Type": "application/json"}
         )
-        self.assertEqual(r.status, 400)
+        self.assertEqual(r.status_code, 400)
 
     async def test_a_foreign_session_is_marked_read_only_not_hidden(self):
         # spec.md C1: terminal sessions are visible because the read layer sees them, but
         # the page has to be able to tell which ones it may write to.
         with mock.patch.object(sdk, "list_sessions", return_value=[_info()]):
-            body = await (await self.client.get("/api/sessions", params={"cwd": "/tmp"})).json()
+            body = (await self.client.get("/api/sessions", params={"cwd": "/tmp"})).json()
         self.assertEqual(len(body["sessions"]), 1)
         self.assertFalse(body["sessions"][0]["resumable"])
 
@@ -82,15 +95,15 @@ class Surface(AioHTTPTestCase):
         r = await self.client.post(
             "/api/send", json={"cwd": "/tmp", "text": "hi", "session_id": "not-ours"}
         )
-        self.assertEqual(r.status, 200)
-        lines = [json.loads(x) for x in (await r.text()).splitlines() if x.strip()]
+        self.assertEqual(r.status_code, 200)
+        lines = [json.loads(x) for x in r.text.splitlines() if x.strip()]
         self.assertEqual(lines[-1]["type"], "error")
         self.assertIn("not created by this app", lines[-1]["error"])
 
     async def test_the_page_is_served(self):
         r = await self.client.get("/")
-        self.assertEqual(r.status, 200)
-        self.assertIn("cos-baodo", await r.text())
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("cos-baodo", r.text)
 
 
 class Loopback(unittest.TestCase):

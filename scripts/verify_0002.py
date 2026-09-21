@@ -22,11 +22,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import aiohttp
-from aiohttp import web
+import httpx
 
+from cos_baodo.api import build
 from cos_baodo.config import Config
-from cos_baodo.web import build
 
 PROJECTS = 2  # from intent.md. Change it there, not here.
 
@@ -47,12 +46,13 @@ async def _send(http, base, cwd, text, session_id=None):
     stopping at the status code would read a failure as a success.
     """
     payload = {"cwd": cwd, "text": text, "session_id": session_id}
-    async with http.post(f"{base}/api/send", json=payload) as r:
-        if r.status != 200:
-            return {"error": (await r.json()).get("error", f"HTTP {r.status}")}
+    async with http.stream("POST", f"{base}/api/send", json=payload) as r:
+        if r.status_code != 200:
+            await r.aread()
+            return {"error": r.json().get("error", f"HTTP {r.status_code}")}
         result = {"text": ""}
-        async for raw in r.content:
-            line = raw.decode().strip()
+        async for raw in r.aiter_lines():
+            line = raw.strip()
             if not line:
                 continue
             ev = json.loads(line)
@@ -66,8 +66,8 @@ async def _send(http, base, cwd, text, session_id=None):
 
 
 async def _get(http, base, path, **params):
-    async with http.get(f"{base}{path}", params=params) as r:
-        return await r.json()
+    r = await http.get(f"{base}{path}", params=params)
+    return r.json()
 
 
 def _make_second_project(root: Path) -> Path:
@@ -95,18 +95,16 @@ async def run() -> int:
 
     config = Config(workspaces=tuple(workspaces))
     app = build(config)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, config.host, 0)
-    await site.start()
-    port = next(s.getsockname()[1] for s in site._server.sockets)
-    base = f"http://{config.host}:{port}"
+    # The app is driven in-process over ASGI rather than over a socket. Same routes, same
+    # app object Reflex mounts — and no port, no frontend build, no Node. `plan.md` step 1
+    # check (d) is what made this the shape of the proof.
+    base = "http://proof"
 
     created: dict[str, str] = {}
     counts: dict[str, int] = {}
     try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=300)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=base, timeout=300
         ) as http:
             # --- claim 1: listing is per project, with no cross-contamination ---
             listings = {}
@@ -152,7 +150,9 @@ async def run() -> int:
                 f.check("claim 5 (history kept)", after >= counts.get(cwd, 0),
                         f"{cwd}: {counts.get(cwd)} messages before, {after} after")
     finally:
-        await runner.cleanup()
+        # ASGITransport does not run lifespan events, so the shutdown hook that closes the
+        # CLI subprocesses has to be called directly. Leaking them was a named risk.
+        await app.state.sessions.close_all()
         shutil.rmtree(tmp, ignore_errors=True)
 
     if f:
