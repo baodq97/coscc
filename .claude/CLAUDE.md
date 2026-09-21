@@ -27,8 +27,9 @@ One unit of work per `.cos/NNNN_<slug>/` directory, holding `intent.md`, `spec.m
 
 - Set `Status: accepted` when the artifact is finished, then commit it. `accepted` records
   that the agent judged it ready — it is not a human's approval and must not be read as one.
-- Never commit to `main`. Work on a branch and open a PR; the review there is the only
-  human check left in the loop, so nothing may go round it.
+- There is no review step. Commits land on `main` and `accepted` is self-issued, so the only
+  things still checking the work are `cos.mjs gate`, the tests, and the invariants in each
+  skill. Treat those as the last line, not as formalities.
 - Ask `cos.mjs gate` before a stage, and stop when it exits non-zero. Fix what it names;
   do not reason your way past it.
 - No code while `plan.md` is `draft`. Accept the plan in its own commit first, so the

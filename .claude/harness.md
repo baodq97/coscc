@@ -61,11 +61,15 @@ The agent writes the artifact, accepts it and commits it. `Status: accepted` the
 records readiness, not approval: it says the agent believes the file is finished, and
 nothing more. A reader who takes it as a human's sign-off is reading it wrong.
 
-Approval lives at the pull request instead. That is now the only point where a human stands
-between a proposal and the thing it authorizes, which makes two rules load-bearing rather
-than stylistic: nothing is committed to `main`, and no branch is merged without being read.
-Drop either and there is no human left anywhere in the loop — the agent proposes, approves,
-implements and ships, and `accepted` is a word it wrote about its own work.
+There is no approval step anywhere. The author works alone and commits to `main`, so the
+agent proposes, accepts, implements and ships, and `accepted` is a word it wrote about its
+own work.
+
+What is left is not separation of duties but three weaker things: `cos.mjs gate` holding the
+stages in order, the tests, and the author reading an artifact because they want to rather
+than because anything stops them. That is a deliberate trade — speed for the only control
+the repository had. Anyone copying this template should make that trade on purpose too,
+rather than inheriting it.
 
 ## Spec skip
 
@@ -108,9 +112,10 @@ are instructions to the model, not artifacts to be reviewed.
 
 - **An in-repo acceptance gate.** Until 2026-09-21 a skill wrote `draft` and only a human
   could type `accepted`; that edit was the whole separation of duties available here. It was
-  removed on purpose, on the grounds that review happens at the pull request instead. The
-  cost is written down so a copy of this template is not read as never having had one: if
-  the PR step is skipped, or a branch is merged unread, nothing anywhere checks the agent.
+  removed on purpose — first in favour of review at the pull request, then, once the author
+  confirmed they work alone and commit straight to `main`, in favour of nothing. Written
+  down so a copy of this template is not read as never having had a gate: as it stands, no
+  step anywhere checks the agent's work before it ships.
 - **Hooks.** The gates are advisory by choice. Tightening one means adding a `PreToolUse`
   hook that blocks `Write`/`Edit` while `plan.md` is `draft` — one file, not a rewrite.
 - **Stages 4 to 6** (Test, Deploy, Maintain), and with them `REVIEW.md`, the eval suite,
