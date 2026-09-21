@@ -87,8 +87,10 @@ tiến trình của app; session mở trong terminal là tiến trình khác. Ap
 của session terminal qua lớp đọc, nên nó sẽ hiện ra trong danh sách — nhưng gửi prompt vào đó
 là **tạo một tiến trình mới nối tiếp bản ghi cũ**, không phải nói chuyện với cái terminal
 đang mở. Nếu cả hai cùng chạy trên một session, hai tiến trình cùng ghi vào một transcript.
-Điều gì xảy ra thì chưa biết — xem open question 3. **ĐÃ QUYẾT:** chặn, cho tới khi open
-question 3 được kiểm bằng chạy thật. App chỉ mở lại session do chính nó tạo ra.
+**ĐÃ QUYẾT, và open question 3 đã kiểm:** chặn. Hai tiến trình cùng mở lại một session thì
+một lượt biến mất, không lỗi, không dấu vết. App chỉ mở lại session do chính nó tạo ra.
+Muốn chạm vào session của terminal thì cần một cơ chế khoá — và đó là một đơn vị công việc
+riêng, không phải một knob lật lên.
 
 **C2 — ĐÃ QUYẾT: chat only.** Tác giả chọn hồ sơ agent đầu tiên là **chat thuần, không tool
 nào** — kể cả tool đọc. Kết quả trong `intent.md` không đòi đọc hay sửa file, nên tư thế an
@@ -110,10 +112,11 @@ Bốn knob của unit này, kèm mặc định — **mặc định là tư thế
 | Tool cho session tạo từ web | **không có tool nào** | `intent.md` không cần tool để đạt kết quả |
 | Ghi và chạy lệnh | **tắt** | bật thì cổng loopback có quyền sửa máy |
 | Bỏ qua duyệt hoàn toàn | **tắt, và không bật được qua HTTP** | một bề mặt tự nâng quyền cho chính nó thì cổng gác vô nghĩa |
-| Mở lại session app không tạo ra | **tắt** | xem C1 — tắt vì *chưa kiểm*, không phải vì nguy hiểm |
+| Mở lại session app không tạo ra | **tắt** | xem C1 — đã kiểm, và nó mất dữ liệu im lặng |
 
-Dòng cuối khác ba dòng trên: nó tắt vì open question 3 chưa được kiểm, nên kiểm xong là bật
-được. Ghi rõ để sau này không ai tưởng đó là nỗi sợ vô cớ.
+Dòng cuối ban đầu tắt vì open question 3 chưa được kiểm. Đã kiểm ngày 2026-09-21, và lý do
+đổi: nó tắt vì **mở lại đồng thời nuốt mất một lượt mà không báo lỗi**. Đây không còn là
+thận trọng tạm thời; bật nó lên đòi một cơ chế khoá mà unit này không có.
 
 **C3 — Token dài hạn nằm trong tiến trình web.** `CLAUDE_CODE_OAUTH_TOKEN` là thông tin xác
 thực sống lâu, giờ nằm trong môi trường của một tiến trình đang nghe HTTP. Bất kỳ đường nào
@@ -159,9 +162,18 @@ trong code. Loại agent thứ hai sẽ cần intent của nó.
    liệu thật của repo này. Không cần DB.
 2. **Đã trả lời** (`intent.md` OQ4): session không sống sót theo nghĩa tiến trình; nó là
    transcript trên đĩa. "Mở lại" là dựng lại. Xem C1 cho hệ quả.
-3. **Mới, và chặn C1:** hai tiến trình cùng mở lại một session thì transcript ra sao — hỏng,
-   xen kẽ, hay cái sau ghi đè? Chưa kiểm. Plan phải kiểm trước khi cho phép mở lại bất kỳ
-   session nào không do app tạo ra.
+3. **ĐÃ KIỂM 2026-09-21, và câu trả lời xấu hơn dự đoán.** Spike: tạo một session (2
+   message), rồi mở lại **đồng thời** từ hai tiến trình, mỗi tiến trình gửi một prompt khác
+   nhau. Kết quả: cả hai nhận **cùng `session_id`**, **không tiến trình nào nhận được lỗi**,
+   và transcript sau đó có **4 message thay vì 6** — một trong hai lượt **biến mất hoàn
+   toàn**. Không có bản ghi nào của nó, không có cảnh báo, không có gì.
+
+   Nghĩa là mở lại đồng thời **mất dữ liệu trong im lặng**. Client thua cuộc tin rằng lượt
+   của nó đã xong, vì nó nhận được phản hồi bình thường; chỉ có transcript là không giữ.
+
+   Đây là một lần chạy, không phải một định luật — có thể có lần xen kẽ khác. Nhưng "đôi khi
+   nuốt mất một lượt mà không báo" đã đủ để kết luận, vì thứ cần chứng minh là *an toàn*,
+   không phải *thỉnh thoảng hỏng*.
 4. **Còn mở** (`intent.md` OQ1): lệnh nào chạy hết mọi test sau khi có Python? Xem C5.
 5. **Còn mở** (`intent.md` OQ3): app giữ gì giữa các lần tải trang? Nếu trang lại chỉ là
    khung nhìn thì câu hỏi "reload mất sạch" quay lại nguyên vẹn ở tầng khác — khác `0001` ở
