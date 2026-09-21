@@ -1,8 +1,8 @@
 # The harness
 
-Reference for how this repository runs a unit of work. `CLAUDE.md` carries only the rules
-that must hold in every session; everything explaining *why* lives here, and everything
-that applies to one stage lives in that stage's skill.
+Reference for how this repository runs a unit of work. `.claude/CLAUDE.md` carries only
+the rules that must hold in every session; everything explaining *why* lives here, and
+everything that applies to one stage lives in that stage's skill.
 
 Read this when setting the harness up, changing it, or copying it into another repository.
 A session in the middle of a stage does not need it.
@@ -11,7 +11,7 @@ A session in the middle of a stage does not need it.
 
 A local implementation of the AI-native SDLC described in `ai-native-sdlc-playbook.md`,
 covering the first three stages: Plan, Design, Build. It is also the template — copy
-`CLAUDE.md` and `.claude/` into another repository and the loop works there.
+`.claude/` into another repository and the loop works there.
 
 It is driven by hand. There are no hooks, no CI and no scheduled jobs.
 
@@ -62,7 +62,7 @@ That edit is the approval and the commit is the record of it.
 This is the whole separation of duties available to a solo developer. There is no reviewer
 and no branch protection, so the only thing standing between a proposal and its
 authorization is that a human, not the agent, types the word. An agent that sets its own
-gate has removed the gate, which is why that one rule sits in `CLAUDE.md` rather than here.
+gate has removed the gate, which is why that rule sits in `CLAUDE.md` rather than here.
 
 ## Spec skip
 
@@ -80,12 +80,10 @@ considered.
 ## The scripts
 
 ```
-cos=.claude/scripts/cos.mjs
-
-node $cos status                # table of every unit and its one next action
-node $cos gate <unit> <stage>   # exit 0 open, 1 blocked with reasons, 2 misuse
-node $cos new-path <slug>       # allocates the number, validates the slug
-node --test '.claude/scripts/*.test.mjs'   # the script's own tests
+node .claude/scripts/cos.mjs status               # every unit and its one next action
+node .claude/scripts/cos.mjs gate <unit> <stage>  # 0 open, 1 blocked with reasons, 2 misuse
+node .claude/scripts/cos.mjs new-path <slug>      # allocates number, validates slug
+node --test '.claude/scripts/*.test.mjs'          # the script's own tests
 ```
 
 `cos.mjs` is the only thing that decides whether a gate is open, which makes it an oracle
@@ -114,9 +112,15 @@ are instructions to the model, not artifacts to be reviewed.
 
 ## Copying this into another repository
 
-Take `CLAUDE.md` and `.claude/`. Everything the harness needs lives in those two paths, which
-is why the scripts sit under `.claude/scripts/` rather than at the root — a repository of its
-own is free to keep a `scripts/` directory without colliding. Add that repository's real
-build, test and lint commands to `## Commands` in `CLAUDE.md` — that section is what lets a
-session check its own work without asking. Adjust the output language rule if the reviewer
-there reads English. Everything else transfers unchanged.
+Copy `.claude/`. That is the whole harness — instructions, skills, scripts and this
+reference — so nothing lands in the host repository's own tree and nothing collides with a
+`scripts/` or `docs/` directory it already has.
+
+Claude Code loads `.claude/CLAUDE.md` as project instructions the same way it loads a root
+`CLAUDE.md`, so no import, symlink or root file is needed to make it take effect. Keep the
+root free for whatever the repository itself wants there.
+
+Then add that repository's real build, test and lint commands to `## Commands` in
+`.claude/CLAUDE.md` — that section is what lets a session check its own work without
+asking. Adjust the output language rule if the reviewer there reads English. Everything
+else transfers unchanged.

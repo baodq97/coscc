@@ -1,20 +1,19 @@
 # cos-baodo
 
 Local AI-native SDLC harness, and the template for it.
-Reference: `docs/harness.md`. Each stage's rules live in its own skill.
+Reference: `.claude/harness.md`. Each stage's rules live in its own skill.
 
 ## Commands
 
 ```
-cos=.claude/scripts/cos.mjs
-
-node --test '.claude/scripts/*.test.mjs'   # all green; never skip or delete a failing test
-node $cos status                           # where every unit of work stands
-node $cos gate <unit> <stage>              # exit 0 = stage may proceed
-node $cos new-path <slug>                  # next work unit path
+node --test '.claude/scripts/*.test.mjs'
+node .claude/scripts/cos.mjs status               # where every unit stands
+node .claude/scripts/cos.mjs gate <unit> <stage>  # exit 0 = stage may proceed
+node .claude/scripts/cos.mjs new-path <slug>      # next work unit path
 ```
 
-No application code yet. Add its build, test and lint commands here when it arrives.
+Tests must be green before any task is reported complete; never skip or delete a failing
+one. No application code yet — add its build, test and lint commands here when it arrives.
 
 ## The loop
 
