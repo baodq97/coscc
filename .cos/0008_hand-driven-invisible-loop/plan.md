@@ -99,6 +99,15 @@ mốc thời gian, session id, số token, số lần từ chối tool.
 *Kiểm:* `journal_test.py` gồm một ca nhiều tiến trình cùng ghi — cùng hình dạng phép đo của
 `scripts/verify_0005.py` nhưng ở mức unit test — và khẳng định không mất mục.
 
+*Đã làm, và một chỗ đi khác plan — ghi theo invariant 8:* **không dùng temp-rename, dùng
+`O_APPEND`.** Plan viết "ghi temp rồi rename" vì đó là cách `store.py` làm. Nhưng store
+thay cả file mỗi lần ghi, còn journal chỉ nối thêm một dòng; temp-rename ở đây sẽ chép lại
+toàn bộ log mỗi sự kiện. Quan trọng hơn: cái `0005` đo được là mất mát do **đọc-rồi-ghi xen
+kẽ**, và một phép nối không có bước đọc, nên lớp lỗi đó vắng mặt về mặt cấu trúc chứ không
+phải bị phòng thủ. `flock` vẫn giữ — nó đóng khung một bản ghi để hai người ghi không cài
+răng lược nửa dòng, và cho người đọc một ảnh chụp nhất quán — nhưng nó là lớp thứ hai.
+Test bốn tiến trình × 5 bản ghi: đủ 20, và mỗi dòng đều parse được.
+
 **4. Board lên API, chỉ đọc cộng đổi chế độ.**
 `service.py` thêm `board(cwd)` và `set_mode(cwd, unit, stage, mode)`; `api.py` thêm
 `GET /api/board` và `POST /api/board/mode`. Route không quyết gì (`api.py:12-13`).
