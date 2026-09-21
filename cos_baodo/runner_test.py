@@ -152,7 +152,7 @@ class ProseStagesCarryNothing(unittest.TestCase):
 class AFailedStepIsRecordedAsFailed(unittest.TestCase):
     def test_a_session_that_returns_nothing_writes_no_artifact_and_says_why(self):
         class Silent:
-            async def stream(self, cwd, text, session_id=None, max_turns=1):
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("done", {"session_id": "s-9", "cost": {"input_tokens": 5}})
 
         with tempfile.TemporaryDirectory() as d:
@@ -182,7 +182,7 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
 
     def test_a_good_reply_becomes_the_artifact_and_is_recorded_done(self):
         class Replies:
-            async def stream(self, cwd, text, session_id=None, max_turns=1):
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "# Spec: x\n")
                 yield ("chunk", "Status: accepted.\n")
                 yield ("done", {"session_id": "s-1", "cost": {"output_tokens": 7}})

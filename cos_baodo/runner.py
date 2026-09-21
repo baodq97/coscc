@@ -23,8 +23,10 @@ import re
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+import claude_agent_sdk as sdk
+
 from cos_baodo.journal import Journal
-from cos_baodo.policy import Grant, grant_for, is_prose_stage
+from cos_baodo.policy import Grant, decide, grant_for, is_prose_stage
 from cos_baodo.sessions import Refused, Sessions
 
 # Where a unit lives, and what may be a unit name. Same shape `cos.mjs` enforces; matched
@@ -69,7 +71,12 @@ def _read(path: Path) -> str:
 
 
 def build_prompt(
-    workspace: str | Path, unit: str, stage: str, stages: list[str], artifact: str
+    workspace: str | Path,
+    unit: str,
+    stage: str,
+    stages: list[str],
+    artifact: str,
+    writes_own: bool = False,
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -100,13 +107,27 @@ def build_prompt(
             parts.append(f"# The {earlier} it follows\n\n{text}")
             break
 
-    parts.append(
-        f"# Your task\n\n"
-        f"Write `{artifact}` for the work unit `{unit}`.\n\n"
-        "Reply with the file's complete contents and nothing else — no preamble, no code "
-        "fence, no commentary. The first lines must carry the `Status:` line the rules "
-        "above describe. Prose in Vietnamese; filenames and headings in English."
-    )
+    location = Path(COS_DIR) / unit / artifact
+    if writes_own:
+        # A stage with tools does the work and then records it. Asking it to *reply* with
+        # the file as well would mean the file and the reply could disagree.
+        parts.append(
+            f"# Your task\n\n"
+            f"Do the work this unit's plan authorises, in the repository at "
+            f"`{Path(workspace).expanduser().resolve()}`, then write `{location}` "
+            "recording what you did.\n\n"
+            "That file must carry the `Status:` line the rules above describe. Prose in "
+            "Vietnamese; filenames and headings in English. Write it yourself with your "
+            "tools — do not paste it into your reply."
+        )
+    else:
+        parts.append(
+            f"# Your task\n\n"
+            f"Write `{artifact}` for the work unit `{unit}`.\n\n"
+            "Reply with the file's complete contents and nothing else — no preamble, no "
+            "code fence, no commentary. The first lines must carry the `Status:` line the "
+            "rules above describe. Prose in Vietnamese; filenames and headings in English."
+        )
     return "\n\n---\n\n".join(parts), included
 
 
@@ -128,6 +149,43 @@ def check_reply(text: str) -> str:
     if not STATUS_RE.search(body):
         raise RunError("the reply carries no `Status:` line, so the gate could not read it")
     return body + "\n"
+
+
+class Denials:
+    """Counts what a step was refused, and keeps the first few reasons.
+
+    Counting matters more than it looks. A step that finished having been told no fifty
+    times did not do what it was asked; it worked around it, and the journal is the only
+    place that difference is visible afterwards.
+    """
+
+    KEEP = 5
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.reasons: list[str] = []
+
+    def record(self, tool: str, reason: str) -> None:
+        self.count += 1
+        if len(self.reasons) < self.KEEP:
+            self.reasons.append(f"{tool}: {reason}")
+
+
+def permission_gate(grant: Grant, workspace: str, denials: Denials):
+    """The callback the SDK asks before every tool call.
+
+    This is the enforcement `spec.md` R10 asks for, and it is separate from the tool list
+    on purpose: `0007` measured that the list does not cover every source of capability.
+    """
+
+    async def can_use_tool(tool: str, tool_input: dict, context: Any):
+        reason = decide(grant, tool, tool_input or {}, workspace)
+        if reason:
+            denials.record(tool, reason)
+            return sdk.PermissionResultDeny(message=reason)
+        return sdk.PermissionResultAllow()
+
+    return can_use_tool
 
 
 class Runner:
@@ -162,14 +220,18 @@ class Runner:
             # somehow acquired tools would silently stop being covered by `0007`.
             raise RunError(f"{stage} is a prose stage and must not carry tools")
 
-        prompt, included = build_prompt(workspace, unit, stage, stages, artifact)
+        prompt, included = build_prompt(
+            workspace, unit, stage, stages, artifact, writes_own=not grant.app_writes_artifact
+        )
 
         if self.journal is not None:
             self.journal.started(
                 journal_key, unit, stage, mode,
                 prompt_chars=len(prompt), included=included,
+                granted=list(grant.tools), max_turns=grant.max_turns,
             )
 
+        denials = Denials()
         collected = ""
         session_id = ""
         cost: dict[str, Any] = {}
@@ -177,7 +239,16 @@ class Runner:
         detail = ""
         try:
             async for kind, payload in self.sessions.stream(
-                workspace, prompt, None, max_turns=grant.max_turns
+                workspace,
+                prompt,
+                None,
+                max_turns=grant.max_turns,
+                # Only pass a list and a gate when something was actually granted. A step
+                # with an empty grant gets exactly the session the app makes by default,
+                # which is the one `0007` is about.
+                can_use_tool=permission_gate(grant, workspace, denials) if grant.opens_anything else None,
+                tools=list(grant.tools) if grant.opens_anything else None,
+                max_budget_usd=grant.max_budget_usd or None,
             ):
                 if kind == "chunk":
                     collected += payload
@@ -185,8 +256,17 @@ class Runner:
                 else:
                     session_id = payload.get("session_id", "")
                     cost = payload.get("cost", {}) or {}
-            body = check_reply(collected)
-            (directory / artifact).write_text(body, encoding="utf-8")
+
+            if grant.app_writes_artifact:
+                (directory / artifact).write_text(check_reply(collected), encoding="utf-8")
+            else:
+                # The session had the tools to write it. Believing it did, rather than
+                # looking, is how a step reports success for a file that is not there.
+                written = directory / artifact
+                if not written.exists():
+                    raise RunError(f"the step did not write {artifact}")
+                if not STATUS_RE.search(written.read_text(encoding="utf-8", errors="replace")):
+                    raise RunError(f"{artifact} carries no `Status:` line")
             outcome = "done"
         except (RunError, Refused) as e:
             detail = str(e)
@@ -199,6 +279,8 @@ class Runner:
                     session_id=session_id,
                     artifact=artifact if outcome == "done" else None,
                     detail=detail or None,
+                    denials=denials.count,
+                    denied=denials.reasons or None,
                     **cost,
                 )
 

@@ -154,7 +154,13 @@ def _cumulative(message: Any) -> dict[str, float]:
 
 
 def _options(
-    config: Config, cwd: str, resume: str | None, max_turns: int = 1
+    config: Config,
+    cwd: str,
+    resume: str | None,
+    max_turns: int = 1,
+    can_use_tool: Any = None,
+    tools: list[str] | None = None,
+    max_budget_usd: float | None = None,
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
@@ -168,9 +174,12 @@ def _options(
     a chat turn must not quietly become several. The default is still 1, so every caller
     that does not ask gets the old behaviour (`0008` plan.md C6).
     """
-    return ClaudeAgentOptions(
+    options = ClaudeAgentOptions(
         cwd=cwd,
-        tools=config.effective_tools(),
+        # A board step brings its own list from `policy.Grant`; everything else gets the
+        # app default, which is empty. `tools=[]` and `tools=None` mean different things to
+        # the SDK, so the distinction is `is None`, not truthiness.
+        tools=config.effective_tools() if tools is None else list(tools),
         permission_mode=config.permission_mode(),
         resume=resume,
         fork_session=False,  # spec.md C7 — R3 needs the same id back, not a branch
@@ -178,6 +187,14 @@ def _options(
         max_turns=max(1, int(max_turns)),
         setting_sources=None,  # no project/user settings can widen the tool list
     )
+    if can_use_tool is not None:
+        # The second layer, and the one that matters. `0007` measured eleven MCP tools
+        # reaching a session created with `tools=[]`, because `--tools` names the built-in
+        # set only. This callback is on the path every call takes, whatever declared it.
+        options.can_use_tool = can_use_tool
+    if max_budget_usd:
+        options.max_budget_usd = float(max_budget_usd)
+    return options
 
 
 def _resolve(directory: str) -> Path | None:
@@ -241,7 +258,14 @@ class Sessions:
         self._created_here.add(session_id)
 
     async def stream(
-        self, cwd: str, text: str, session_id: str | None = None, max_turns: int = 1
+        self,
+        cwd: str,
+        text: str,
+        session_id: str | None = None,
+        max_turns: int = 1,
+        can_use_tool: Any = None,
+        tools: list[str] | None = None,
+        max_budget_usd: float | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -266,7 +290,12 @@ class Sessions:
             live = self._live.get(session_id) if session_id else None
             if live is None:
                 client = ClaudeSDKClient(
-                    options=_options(self.config, cwd, session_id, max_turns)
+                    options=_options(
+                        self.config, cwd, session_id, max_turns,
+                        can_use_tool=can_use_tool,
+                        tools=tools,
+                        max_budget_usd=max_budget_usd,
+                    )
                 )
                 await client.connect()
                 live = Live(client=client, session_id=session_id or "", cwd=cwd)

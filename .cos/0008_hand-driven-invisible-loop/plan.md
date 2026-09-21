@@ -233,6 +233,36 @@ lượt và 5.00 USD (spec R11) gắn vào `StagePolicy`, **không** thay giá t
 *Kiểm:* một bước `impl` sửa được một file trong workspace nháp và ghi `impl.md`; một bước
 `spec` chạy ngay sau đó vẫn báo 0 tool; mọi lần từ chối tool đếm được trong journal.
 
+*Đã làm, chạy thật ngày 2026-09-22.* Workspace nháp có `greet.py` chỉ chứa `pass`. Bước
+`impl` ở chế độ `autonomous` sửa nó thành `return "xin chao"`, ghi `impl.md`, tốn
+**$0.447198 trong 19 lượt**, và **bị từ chối 4 lần**:
+
+```
+Bash: this step may not run 'echo'
+Bash: this step may not run 'assert'
+Write: writing outside the workspace is not allowed: /tmp/step9-…/proof.py
+Bash: this step may not run 'rm'
+```
+
+Lần thứ ba là lần đáng giá: agent thử ghi ra **ngoài** workspace, vào đúng working folder
+một cấp trên, và bị chặn. Ranh giới không phải lý thuyết.
+
+*Hai lỗ của chính tôi mà lần chạy ấy lộ ra, đã vá:*
+(a) **Chuyển hướng ra file lọt lưới.** `echo` bị cấm oan trong khi `echo x > /etc/foo` sẽ
+**qua** được, vì phép tách không nhìn dấu `>`. Giờ mọi chuyển hướng ra file bị từ chối —
+bước đã có `Write`/`Edit` để tạo file — và `echo`, `printf`, `test`, `which`, `pwd`,
+`sort`, `uniq` vào danh sách cho phép.
+(b) **`2>&1` bị chặn nhầm.** Dấu `&` trong nó bị đọc là dấu ngăn lệnh, nên `1` thành một
+"lệnh" không được phép. Chuyển hướng giữa các mô tả tệp giờ được gỡ trước khi tách.
+
+*Một chỗ đi khác plan:* `Runner` **không** tự ghi artifact cho `impl`, vì bước này có tool
+và tự ghi được; `Runner` kiểm lại file có tồn tại và có dòng `Status:` không. Tin rằng nó đã
+ghi mà không nhìn là cách một bước báo thành công cho một file không có thật.
+
+*Giới hạn còn nguyên (Risk 3):* danh sách theo từ đầu không bó được `git` hay `npm` bị sai
+khiến. `cos_baodo/policy_test.py` có một test **khẳng định** `git push --force` qua được
+danh sách — viết ra thành test đang xanh chứ không để ngầm.
+
 **10. `pr` autonomous. Bước duy nhất chạm ra ngoài máy.**
 Grant exec giới hạn ở `git` và `gh`, luật trên chuỗi lệnh chốt tại đây (spec C3). Trang
 hiện rõ, **trước khi bước chạy**, rằng bước này dùng credential `gh` mức máy (spec C4).
