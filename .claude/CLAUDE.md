@@ -16,7 +16,11 @@ Tests must be green before any task is reported complete; never skip or delete a
 one. There is no build step — the channel runs from source — and no linter. Do not invent a
 command for either; add one here if one ever exists.
 
-The web channel registers only in an interactive session, never under `--print`:
+Run the web channel from an interactive session. Two `--print` runs on 2026-09-21 loaded
+the server but never registered the channel, with no log line and no error. The documented
+behaviour is that `-p` is supported, so the likely cause is the development flag's
+confirmation dialog, which cannot be drawn headlessly — unverified, and worth retesting
+before anyone builds on it:
 
 ```
 claude --dangerously-load-development-channels server:webchannel   # then http://127.0.0.1:8789
