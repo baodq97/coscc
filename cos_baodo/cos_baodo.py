@@ -52,6 +52,7 @@ class UnitRow:
     next: str = ""
     blocked: bool = False
     tokens: str = ""
+    usd: str = ""
     cells: list[Cell] = dataclasses.field(default_factory=list)
 
 
@@ -66,6 +67,7 @@ class Run:
     outcome: str = ""
     session_id: str = ""
     tokens: str = ""
+    usd: str = ""
 
 _api = build()
 _service = _api.state.service
@@ -129,9 +131,30 @@ class State(rx.State):
 
     @staticmethod
     def _tokens(cost: dict) -> str:
-        """Input plus output, as one number. The breakdown lives in the timeline."""
-        total = int(cost.get("input_tokens") or 0) + int(cost.get("output_tokens") or 0)
+        """Every token the turn was billed for, as one number.
+
+        Cache reads and cache writes are included because they are billed. Showing only
+        input plus output would report a cache-heavy session as nearly free, which is the
+        opposite of what a cost display is for.
+        """
+        total = sum(
+            int(cost.get(name) or 0)
+            for name in (
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "cache_creation_tokens",
+            )
+        )
         return f"{total:,}" if total else "—"
+
+    @staticmethod
+    def _usd(cost: dict) -> str:
+        usd = float(cost.get("cost_usd") or 0.0)
+        if not usd:
+            return ""
+        # Under a cent still has to read as a number, not as $0.00.
+        return f"${usd:.4f}" if usd < 0.01 else f"${usd:.2f}"
 
     async def _board(self):
         """Read the board for the chosen workspace. Yields so the page can paint."""
@@ -155,6 +178,7 @@ class State(rx.State):
                 next=u["next"],
                 blocked=bool(u["blocked"]),
                 tokens=self._tokens(u.get("cost") or {}),
+                usd=self._usd(u.get("cost") or {}),
                 cells=[
                     Cell(
                         stage=row["stage"],
@@ -191,6 +215,7 @@ class State(rx.State):
                 outcome=r.get("outcome") or "—",
                 session_id=r.get("session_id") or "—",
                 tokens=self._tokens(r.get("cost") or {}),
+                usd=self._usd(r.get("cost") or {}),
             )
             for r in data["runs"]
         ]
@@ -539,7 +564,15 @@ def _unit_row(unit: rx.Var) -> rx.Component:
             white_space="nowrap",
         ),
         rx.foreach(unit.cells, _cell),
-        rx.table.cell(ui.muted(unit.tokens), white_space="nowrap"),
+        rx.table.cell(
+            rx.hstack(
+                ui.muted(unit.tokens),
+                rx.cond(unit.usd != "", ui.muted(unit.usd, color=rx.color("amber", 11))),
+                spacing="2",
+                align="center",
+            ),
+            white_space="nowrap",
+        ),
         rx.table.cell(ui.muted(unit.next), white_space="nowrap"),
         on_click=State.pick(unit.name),
         cursor="pointer",
@@ -583,6 +616,7 @@ def _run_row(run: rx.Var) -> rx.Component:
         rx.table.cell(rx.badge(run.outcome, size="1", variant="soft"), white_space="nowrap"),
         rx.table.cell(ui.mono(run.session_id, size="1"), white_space="nowrap"),
         rx.table.cell(ui.muted(run.tokens), white_space="nowrap"),
+        rx.table.cell(ui.muted(run.usd, color=rx.color("amber", 11)), white_space="nowrap"),
     )
 
 
@@ -625,6 +659,7 @@ def _detail() -> rx.Component:
                                 rx.table.column_header_cell("outcome"),
                                 rx.table.column_header_cell("session"),
                                 rx.table.column_header_cell("tokens"),
+                                rx.table.column_header_cell("cost"),
                             )
                         ),
                         rx.table.body(rx.foreach(State.runs, _run_row)),

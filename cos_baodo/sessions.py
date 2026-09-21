@@ -14,7 +14,7 @@ on disk, not attaching to something still running.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +105,52 @@ class Live:
     client: ClaudeSDKClient
     session_id: str
     cwd: str
+    # What this session had cost as of the last turn. See `_cumulative` for why a running
+    # total has to be kept here rather than read fresh each time.
+    spent: dict[str, float] = field(default_factory=dict)
+
+
+# What one turn cost, in the shape `journal.COST_FIELDS` adds up.
+COST_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+)
+
+# How `ResultMessage.model_usage` spells them. Its keys come through verbatim from the CLI
+# and are camelCase; ours are not, and translating in one place keeps that from spreading.
+_USAGE_KEYS = {
+    "input_tokens": "inputTokens",
+    "output_tokens": "outputTokens",
+    "cache_read_tokens": "cacheReadInputTokens",
+    "cache_creation_tokens": "cacheCreationInputTokens",
+}
+
+
+def _cumulative(message: Any) -> dict[str, float]:
+    """Everything this *session* has spent so far, summed over models.
+
+    **`model_usage` is cumulative, not per-turn.** Measured on 2026-09-21 by running two
+    turns on one client: `cacheReadInputTokens` came back 1608 then 5512, and
+    `total_cost_usd` 0.0169 then 0.0363 — each reading is the session to date. Adding them
+    up per turn would therefore double-count, which is exactly the failure `plan.md` Risk 4
+    names: the total looks measured and is wrong.
+
+    The top-level `usage` dict is not the answer either. It reports only the last iteration
+    within a turn — the same run showed `input_tokens: 2` where `model_usage` showed 1171.
+
+    So the cumulative figure is what the SDK gives honestly, and a turn's own cost is the
+    difference between two of them. `stream` does that subtraction.
+    """
+    total = {name: 0.0 for name in COST_FIELDS}
+    total["cost_usd"] = float(getattr(message, "total_cost_usd", None) or 0.0)
+    for entry in (getattr(message, "model_usage", None) or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        for name, key in _USAGE_KEYS.items():
+            total[name] += float(entry.get(key) or 0)
+    return total
 
 
 def _options(config: Config, cwd: str, resume: str | None) -> ClaudeAgentOptions:
@@ -216,6 +262,9 @@ class Sessions:
 
         resolved = live.session_id
         collected: list[str] = []
+        turn: dict[str, float] = {}
+        turns = 0
+        duration_ms = 0
         await live.client.query(text)
         async for message in live.client.receive_response():
             if isinstance(message, AssistantMessage):
@@ -227,6 +276,13 @@ class Sessions:
                     resolved = message.session_id
             elif isinstance(message, sdk.ResultMessage):
                 resolved = message.session_id or resolved
+                # The one message carrying what this cost. `0002` read `session_id` off it
+                # and dropped the rest, so every turn the app ran was unaccounted for.
+                total = _cumulative(message)
+                turn = {k: total[k] - live.spent.get(k, 0.0) for k in total}
+                live.spent = total
+                turns += int(getattr(message, "num_turns", 0) or 0)
+                duration_ms += int(getattr(message, "duration_ms", 0) or 0)
 
         if session_id and resolved != session_id:
             # Never observed, but the failure C7 describes is silent, so it is checked
@@ -241,7 +297,16 @@ class Sessions:
         live.session_id = resolved
         self._live[resolved] = live
         self._created_here.add(resolved)
-        yield ("done", {"session_id": resolved, "text": "".join(collected), "cwd": cwd})
+        cost = {name: int(turn.get(name, 0.0)) for name in COST_FIELDS}
+        cost["turns"] = turns
+        cost["duration_ms"] = duration_ms
+        # Kept as a float and rounded rather than truncated: a turn can cost less than a
+        # cent, and `int()` would report every one of those as free.
+        cost["cost_usd"] = round(turn.get("cost_usd", 0.0), 6)
+        yield (
+            "done",
+            {"session_id": resolved, "text": "".join(collected), "cwd": cwd, "cost": cost},
+        )
 
     async def send(self, cwd: str, text: str, session_id: str | None = None) -> dict[str, Any]:
         """`stream` collected into one result, for callers that do not want the pieces."""

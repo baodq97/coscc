@@ -60,6 +60,26 @@ COST_FIELDS = (
     "duration_ms",
 )
 
+# Money is the one field that is not a whole number. A turn can cost less than a cent, so
+# truncating it to an integer would report most of them as free.
+COST_USD = "cost_usd"
+USD_PLACES = 6
+
+
+def _add_cost(into: dict[str, Any], values: dict[str, Any]) -> None:
+    """Add one cost record into a running total, keeping USD a float."""
+    for field_name in COST_FIELDS:
+        into[field_name] = int(into.get(field_name, 0)) + int(values.get(field_name) or 0)
+    into[COST_USD] = round(
+        float(into.get(COST_USD, 0.0)) + float(values.get(COST_USD) or 0.0), USD_PLACES
+    )
+
+
+def _zero_cost() -> dict[str, Any]:
+    out: dict[str, Any] = {name: 0 for name in COST_FIELDS}
+    out[COST_USD] = 0.0
+    return out
+
 
 class Busy(RuntimeError):
     """Another process held the journal for too long. Raised rather than waited out."""
@@ -258,7 +278,9 @@ class Journal:
                 row["denials"] = int(item.get("denials") or 0)
                 if item.get("session_id"):
                     row["session_id"] = item.get("session_id")
-                row["cost"] = {f: int(item.get(f) or 0) for f in COST_FIELDS}
+                cost = _zero_cost()
+                _add_cost(cost, item)
+                row["cost"] = cost
         return rows
 
     def totals(self, workspace: str, unit: str, timeout: float | None = None) -> dict[str, Any]:
@@ -267,26 +289,20 @@ class Journal:
         Added rather than stored. A stored total is a second number that can disagree with
         the first, and the point of the requirement is that it cannot.
         """
-        per_stage: dict[str, dict[str, int]] = {}
+        per_stage: dict[str, dict[str, Any]] = {}
         for row in self.timeline(workspace, unit, timeout=timeout):
             stage = row.get("stage") or ""
-            bucket = per_stage.setdefault(stage, {f: 0 for f in COST_FIELDS})
-            for field, value in (row.get("cost") or {}).items():
-                if field in bucket:
-                    bucket[field] += int(value or 0)
+            _add_cost(per_stage.setdefault(stage, _zero_cost()), row.get("cost") or {})
 
-        total = {f: 0 for f in COST_FIELDS}
+        total = _zero_cost()
         for bucket in per_stage.values():
-            for field in total:
-                total[field] += bucket[field]
+            _add_cost(total, bucket)
         return {"per_stage": per_stage, "total": total}
 
 
-def totals_of(rows: Iterable[dict[str, Any]]) -> dict[str, int]:
+def totals_of(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Add the cost of some timeline rows. Exposed so a caller can total a subset."""
-    out = {f: 0 for f in COST_FIELDS}
+    out = _zero_cost()
     for row in rows:
-        for field, value in (row.get("cost") or {}).items():
-            if field in out:
-                out[field] += int(value or 0)
+        _add_cost(out, row.get("cost") or {})
     return out

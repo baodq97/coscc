@@ -171,6 +171,27 @@ dồn, trang hiện tổng theo bước và theo unit.
 *Kiểm:* unit test với `ResultMessage` dựng sẵn cho phép cộng; và một session thật qua
 `verify_0008.py` cho R18 (tổng khác 0).
 
+*Đã làm, và Risk 4 đóng bằng số đo thật.* Chạy hai lượt trên một client ngày 2026-09-21:
+
+| | lượt 1 | lượt 2 |
+|---|---|---|
+| `usage.cache_read_input_tokens` | 1608 | 3904 |
+| `model_usage.cacheReadInputTokens` | 1608 | **5512** |
+| `total_cost_usd` | 0.016909 | **0.036336** |
+
+`model_usage` và `total_cost_usd` **cộng dồn cả session**, không phải của lượt. Cộng chúng
+qua từng lượt cho 7120 token cache-read trong khi session dùng 5512 — cao hơn 29%, và không
+có gì trong con số ấy trông bất thường. Còn `usage` ở tầng trên **cũng không phải** câu trả
+lời: nó chỉ là iteration cuối trong lượt (`input_tokens: 2` trong khi `model_usage` báo
+1171). Nên chi phí của một lượt = **hiệu hai lần đọc cộng dồn**, và `Live.spent` giữ lần
+đọc trước. `cos_baodo/cost_test.py` phát lại đúng hai con số này, gồm một test khẳng định
+phép cộng ngây thơ cho 7120 chứ không phải 5512.
+
+*Hai chỗ đi khác plan:* (a) thêm trường `cost_usd` dạng số thực bên cạnh các trường token
+nguyên — một lượt tốn dưới một xu, `int()` sẽ báo mọi lượt như vậy là miễn phí; (b) số token
+hiển thị gồm **cả cache read và cache creation** vì chúng đều bị tính tiền, hiển thị mỗi
+input+output sẽ báo một session nặng cache là gần như không tốn gì.
+
 **8. `StagePolicy` + `Runner`, sáu giai đoạn chữ, **không tool nào**.**
 `policy.py` là bảng tra thuần hàm, không đọc env, không sửa được qua HTTP. Sáu giai đoạn
 `idea`, `intent`, `spec`, `plan`, `review`, `ship` trả grant rỗng ở cả hai chế độ.

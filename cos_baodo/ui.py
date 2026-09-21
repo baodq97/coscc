@@ -70,7 +70,10 @@ def mono(text, **props) -> rx.Component:
 
 
 def muted(text, **props) -> rx.Component:
-    return rx.text(text, size="1", color=rx.color("gray", 11), **props)
+    """Secondary text. `gray 11` is the lowest step that still clears AA on `gray 1`."""
+    props.setdefault("size", "1")
+    props.setdefault("color", rx.color("gray", 11))
+    return rx.text(text, **props)
 
 
 def card(*children, **props) -> rx.Component:
