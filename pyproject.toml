@@ -29,3 +29,6 @@ dev = [
 # `spec.md` R2. The entry point also pins how the app is served: one ASGI app on one
 # loopback port with the compiled frontend mounted, not `reflex run` -- see run.py.
 cos-baodo = "cos_baodo.run:main"
+# Building through here rather than calling `reflex export` directly is what leaves the
+# fingerprint that `run.py` and `scripts/verify_0004.py` check. See cos_baodo/build.py.
+cos-build = "cos_baodo.build:main"
