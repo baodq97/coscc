@@ -5,7 +5,6 @@ suite stays free to run in a loop; what needs a real session is the proof comman
 is run deliberately.
 """
 
-import asyncio
 import tempfile
 import unittest
 from pathlib import Path
