@@ -42,8 +42,22 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
 
     async def test_workspaces_lists_what_was_configured(self):
+        # `0003` R13 widened this from a list of paths to a list of entries carrying
+        # name, label, source and missing, plus the count the app could not answer
+        # before. `paths` is kept so the older shape still reads.
         body = (await self.client.get("/api/workspaces")).json()
-        self.assertEqual(body["workspaces"], ["/tmp"])
+        self.assertEqual(body["paths"], ["/tmp"])
+        self.assertEqual(body["count"], 1)
+        entry = body["workspaces"][0]
+        self.assertEqual(entry["path"], "/tmp")
+        self.assertEqual(entry["source"], "env")
+        self.assertFalse(entry["missing"])
+
+    async def test_an_env_workspace_is_marked_as_such(self):
+        # It matters that a caller can tell: an env entry cannot be renamed or removed
+        # from the app, and showing a delete button for one would be a lie.
+        body = (await self.client.get("/api/workspaces")).json()
+        self.assertTrue(all(e["source"] == "env" for e in body["workspaces"]))
 
     async def test_no_route_leaks_configuration(self):
         # spec.md C3: a long-lived credential is in this process. The knobs and the

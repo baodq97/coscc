@@ -52,6 +52,11 @@ class Config:
     resume_foreign_sessions: bool = False
 
     workspaces: tuple[str, ...] = field(default_factory=tuple)
+    # `0003`. The one root under which workspaces may be created, read here and nowhere
+    # else. `spec.md` R11: no route, event handler or component can set it, because the
+    # only way in is `from_env`, and a request has no path to that function. Unset means
+    # the store is off and the app behaves exactly as `0002` did.
+    working_dir: str | None = None
     host: str = "127.0.0.1"
     port: int = 8790
     model: str | None = None
@@ -94,6 +99,11 @@ class Config:
         return False
 
 
+def _dir(env: dict[str, str], name: str) -> str | None:
+    raw = (env.get(_ENV_PREFIX + name) or "").strip()
+    return raw or None
+
+
 def from_env(env: dict[str, str] | None = None) -> Config:
     """Build the config. The only reader of the environment in this app.
 
@@ -108,6 +118,7 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         bypass_permissions=_flag(e, "BYPASS_PERMISSIONS", False),
         resume_foreign_sessions=_flag(e, "RESUME_FOREIGN_SESSIONS", False),
         workspaces=_list(e, "WORKSPACES") or (str(Path.cwd()),),
+        working_dir=_dir(e, "WORKING_DIR"),
         host=e.get(_ENV_PREFIX + "HOST", "127.0.0.1"),
         port=int(e.get(_ENV_PREFIX + "PORT", "8790")),
         model=e.get(_ENV_PREFIX + "MODEL") or None,

@@ -8,6 +8,8 @@ drift visible as a missing test rather than as a bug only one entry point has.
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -56,6 +58,85 @@ class WhatCountsAsInvalid(unittest.TestCase):
 
     def test_check_send_accepts_real_text(self):
         self.assertIsNone(_service().check_send(REPO, "hello"))
+
+
+class TheGateWithAStore(unittest.TestCase):
+    """`spec.md` R21 end to end: the gate, not just the store, must hold.
+
+    The store tests prove a bad entry is dropped on read. These prove that dropping it
+    actually closes every working path, which is the claim that matters.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def _svc(self):
+        config = Config(workspaces=(), working_dir=str(self.root))
+        return Service(config, Sessions(config))
+
+    def test_a_stored_workspace_passes_the_gate(self):
+        (self.root / "repo").mkdir()
+        s = self._svc()
+        s.store.add("repo", "My repo")
+        self.assertEqual(s.sessions_for(str(self.root / "repo"))["cwd"], str(self.root / "repo"))
+
+    def test_a_hand_edited_entry_pointing_outside_closes_every_path(self):
+        s = self._svc()
+        s.store.path.write_text(json.dumps({
+            "version": 1, "workspaces": [{"name": "/etc"}, {"name": "../../etc"}],
+        }))
+        for call in (
+            lambda: s.sessions_for("/etc"),
+            lambda: s.history("/etc", "abc"),
+            lambda: s.check_send("/etc", "hi"),
+        ):
+            with self.assertRaises(Invalid):
+                call()
+
+    def test_a_sibling_of_the_working_folder_is_refused(self):
+        s = self._svc()
+        s.store.add("repo")
+        with self.assertRaises(Invalid):
+            s.check_send(str(self.root.parent), "hi")
+
+    def test_a_subdirectory_nobody_added_is_refused(self):
+        (self.root / "stray").mkdir()
+        s = self._svc()
+        with self.assertRaises(Invalid):
+            s.check_send(str(self.root / "stray"), "hi")
+
+    def test_removing_a_workspace_closes_the_gate_again(self):
+        (self.root / "repo").mkdir()
+        s = self._svc()
+        s.store.add("repo")
+        s.sessions_for(str(self.root / "repo"))
+        s.store.remove("repo")
+        with self.assertRaises(Invalid):
+            s.check_send(str(self.root / "repo"), "hi")
+
+    def test_no_working_folder_means_no_store_and_0002_behaviour(self):
+        config = Config(workspaces=(REPO,))
+        s = Service(config, Sessions(config))
+        self.assertIsNone(s.store)
+        self.assertEqual(s.workspaces()["paths"], [REPO])
+
+    def test_the_count_is_reported_and_tracks_both_sources(self):
+        (self.root / "a").mkdir()
+        config = Config(workspaces=(REPO,), working_dir=str(self.root))
+        s = Service(config, Sessions(config))
+        self.assertEqual(s.workspaces()["count"], 1)
+        s.store.add("a")
+        self.assertEqual(s.workspaces()["count"], 2)
+        s.store.remove("a")
+        self.assertEqual(s.workspaces()["count"], 1)
+
+    def test_a_missing_directory_is_flagged_not_hidden(self):
+        s = self._svc()
+        s.store.add("gone")
+        row = next(r for r in s.workspaces()["workspaces"] if r["name"] == "gone")
+        self.assertTrue(row["missing"])
 
 
 class NoWebFrameworkLeaksIn(unittest.TestCase):

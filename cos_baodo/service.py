@@ -15,12 +15,14 @@ HTTP, an error banner for the page — and neither gets to invent a different re
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from cos_baodo import sessions as reader
 from cos_baodo.config import Config
 from cos_baodo.sessions import Sessions
+from cos_baodo.store import BadName, Store
 
 
 class Invalid(Exception):
@@ -31,11 +33,51 @@ class Invalid(Exception):
 class Service:
     config: Config
     sessions: Sessions
+    store: Store | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        # No working folder means no store, and the app behaves exactly as `0002` did.
+        # That is what keeps `scripts/verify_0002.py` running unchanged (`spec.md` R6).
+        self.store = Store(self.config.working_dir) if self.config.working_dir else None
 
     # -- workspaces ---------------------------------------------------------
 
     def workspaces(self) -> dict[str, Any]:
-        return {"workspaces": list(self.config.workspaces)}
+        """Both sources, with the count the app could not answer before `0003`.
+
+        `source` is carried per entry rather than merged away: an env workspace cannot be
+        renamed or removed from here, and a caller has to be able to tell.
+        """
+        rows: list[dict[str, Any]] = []
+        for path in self.config.workspaces:
+            rows.append(
+                {
+                    "name": Path(path).name,
+                    "path": path,
+                    "label": "",
+                    "source": "env",
+                    "missing": not Path(path).expanduser().is_dir(),
+                }
+            )
+        if self.store is not None:
+            for entry in self.store.entries():
+                target = self.store.path_of(entry.name)
+                rows.append(
+                    {
+                        "name": entry.name,
+                        "path": str(target),
+                        "label": entry.label,
+                        "source": "store",
+                        "missing": not target.is_dir(),
+                    }
+                )
+        return {
+            "working_dir": self.config.working_dir,
+            "count": len(rows),
+            "workspaces": rows,
+            # Kept so `0002`'s shape still reads: it only ever asked for paths.
+            "paths": [r["path"] for r in rows],
+        }
 
     # -- sessions -----------------------------------------------------------
 
@@ -45,9 +87,14 @@ class Service:
         `spec.md` R21 wants this asked on every read rather than cached, because after
         `0003` the workspace list is no longer fixed for the life of the process.
         """
-        if not self.config.is_workspace(cwd):
-            raise Invalid(f"not a configured workspace: {cwd}")
-        return cwd
+        if self.config.is_workspace(cwd):
+            return cwd
+        # The store half. Membership is recomputed from the working folder every time,
+        # so editing the file by hand cannot widen what this accepts — the entry has to
+        # name a segment, and the segment has to resolve back under the root.
+        if self.store is not None and self.store.resolves_to_entry(cwd):
+            return cwd
+        raise Invalid(f"not a configured workspace: {cwd}")
 
     def sessions_for(self, cwd: str, limit: int | None = None) -> dict[str, Any]:
         self._workspace_or_refuse(cwd)
