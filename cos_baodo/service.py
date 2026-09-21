@@ -22,10 +22,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from cos_baodo import board as board_reader
 from cos_baodo import gitops
 from cos_baodo import sessions as reader
+from cos_baodo.board import Unavailable
 from cos_baodo.config import Config
 from cos_baodo.gitops import GitError
+from cos_baodo.journal import BadRecord, Busy, Journal
 from cos_baodo.sessions import Sessions
 from cos_baodo.store import BadName, Store, require_name
 
@@ -197,6 +200,110 @@ class Service:
         except GitError as e:
             raise Invalid(str(e)) from e
         return {"name": name, "output": output}
+
+    # -- board --------------------------------------------------------------
+
+    def _journal(self) -> Journal | None:
+        """The run log, or `None` when there is no working folder to keep it in.
+
+        Unset `COS_WORKING_DIR` and the app behaves as `0002` did — which now also means
+        the board is read-only: there is nowhere to record a mode, so every step reads
+        `manual` and nothing can be started. That is the safe direction to fail in.
+        """
+        return Journal(self.config.working_dir) if self.config.working_dir else None
+
+    @staticmethod
+    def _journal_key(cwd: str) -> str:
+        """How a workspace is named in the journal.
+
+        The resolved path, not a store name: an env-declared workspace has no name at all
+        (`config.is_workspace`), and a path is the one identifier both kinds have. The
+        cost is that moving a workspace detaches its history from it.
+        """
+        return str(Path(cwd).expanduser().resolve())
+
+    async def board(self, cwd: str) -> dict[str, Any]:
+        """Every unit in this workspace, each with its eight stages, modes and cost.
+
+        The status of a stage comes from the artifact and the mode comes from the journal,
+        and they are joined here rather than stored together. Storing them together is how
+        a board starts disagreeing with the files it claims to describe.
+        """
+        self._workspace_or_refuse(cwd)
+        try:
+            data = await board_reader.read(cwd)
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+
+        journal = self._journal()
+        key = self._journal_key(cwd)
+        modes: dict[tuple[str, str], str] = {}
+        if journal is not None:
+            try:
+                modes = journal.modes(key)
+            except Busy as e:
+                raise Invalid(str(e)) from e
+
+        for unit in data["units"]:
+            for row in unit["stages"]:
+                # `manual` is the default because starting work is a decision someone has
+                # to make, not one an unset value should make for them.
+                row["mode"] = modes.get((unit["name"], row["stage"]), "manual")
+            unit["cost"] = (
+                journal.totals(key, unit["name"])["total"] if journal is not None else {}
+            )
+
+        data["recording"] = journal is not None
+        data["read_only_because"] = (
+            None if journal is not None
+            else "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR"
+        )
+        return data
+
+    async def set_mode(self, cwd: str, unit: str, stage: str, mode: str) -> dict[str, Any]:
+        """Choose how one step runs. Validated against the board, not against a second list."""
+        self._workspace_or_refuse(cwd)
+        journal = self._journal()
+        if journal is None:
+            raise Invalid(
+                "no working folder is set, so a mode cannot be recorded — set COS_WORKING_DIR"
+            )
+
+        try:
+            data = await board_reader.read(cwd)
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+
+        found = next((u for u in data["units"] if u["name"] == unit), None)
+        if found is None:
+            raise Invalid(f"no such work unit in this workspace: {unit}")
+        if stage not in data["stages"]:
+            raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
+
+        try:
+            journal.set_mode(self._journal_key(cwd), unit, stage, mode)
+        except BadRecord as e:
+            raise Invalid(str(e)) from e
+        except Busy as e:
+            raise Invalid(str(e)) from e
+        return {"cwd": cwd, "unit": unit, "stage": stage, "mode": mode}
+
+    def timeline(self, cwd: str, unit: str) -> dict[str, Any]:
+        """What has happened to one unit, oldest first (`spec.md` R15)."""
+        self._workspace_or_refuse(cwd)
+        journal = self._journal()
+        if journal is None:
+            return {"cwd": cwd, "unit": unit, "runs": [], "cost": {}}
+        key = self._journal_key(cwd)
+        try:
+            return {
+                "cwd": cwd,
+                "unit": unit,
+                "runs": journal.timeline(key, unit),
+                "cost": journal.totals(key, unit)["total"],
+            }
+        except Busy as e:
+            raise Invalid(str(e)) from e
 
     # -- sessions -----------------------------------------------------------
 

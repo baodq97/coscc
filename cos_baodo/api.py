@@ -106,6 +106,42 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.get("/api/board")
+    async def get_board(request: Request) -> Any:
+        """R1. Every unit of one workspace, with all eight stages on each."""
+        try:
+            return await service.board(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/board/mode")
+    async def set_board_mode(request: Request) -> Any:
+        """R5. The only thing the board writes, and it writes it to the journal."""
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        try:
+            return await service.set_mode(
+                str(body.get("cwd", "")),
+                str(body.get("unit", "")),
+                str(body.get("stage", "")),
+                str(body.get("mode", "")),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/timeline")
+    async def get_timeline(request: Request) -> Any:
+        """R15. What happened to one unit, oldest first."""
+        try:
+            return service.timeline(
+                request.query_params.get("cwd", ""),
+                request.query_params.get("unit", ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.get("/api/sessions")
     async def get_sessions(request: Request) -> Any:
         """R1. Sessions of one project, and only that project."""
