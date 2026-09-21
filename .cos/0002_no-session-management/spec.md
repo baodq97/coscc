@@ -58,8 +58,14 @@ trong thiết kế chảy ra từ câu này.
 | HTTP → lớp đọc | thư mục, hoặc định danh session | danh sách session, hoặc lịch sử |
 | Lớp phiên → đĩa | không do app ghi | SDK tự ghi transcript |
 
-**Trạng thái cục bộ của app chỉ có một thứ:** danh sách thư mục nào được coi là workspace.
-Đó là vài dòng, không phải cơ sở dữ liệu. Nội dung hội thoại không nằm trong đó (R6).
+**Trạng thái cục bộ của app chỉ có hai thứ:** danh sách thư mục nào được coi là workspace, và
+bốn knob ở C2. Đó là vài dòng, không phải cơ sở dữ liệu. Nội dung hội thoại không nằm trong
+đó (R6).
+
+**Nguồn cấu hình nằm sau một chỗ nối.** Tác giả đã nêu hướng dài hạn là một kho cấu hình
+trung tâm, khi có nhiều hồ sơ agent chứ không chỉ chat. Unit này không dựng kho đó — bốn
+knob chưa đủ để biện minh cho một schema và một dependency. Nhưng việc đọc cấu hình đi qua
+đúng một chỗ, để đổi nguồn về sau là đổi một chỗ, không phải viết lại. Xem C8.
 
 **Không có kho dữ liệu thứ hai.** Session store của SDK là nguồn sự thật. Xem C6.
 
@@ -81,15 +87,33 @@ tiến trình của app; session mở trong terminal là tiến trình khác. Ap
 của session terminal qua lớp đọc, nên nó sẽ hiện ra trong danh sách — nhưng gửi prompt vào đó
 là **tạo một tiến trình mới nối tiếp bản ghi cũ**, không phải nói chuyện với cái terminal
 đang mở. Nếu cả hai cùng chạy trên một session, hai tiến trình cùng ghi vào một transcript.
-Điều gì xảy ra thì chưa biết — xem open question 3. **Tác giả quyết** có chặn việc này hay
-để mở.
+Điều gì xảy ra thì chưa biết — xem open question 3. **ĐÃ QUYẾT:** chặn, cho tới khi open
+question 3 được kiểm bằng chạy thật. App chỉ mở lại session do chính nó tạo ra.
 
-**C2 — Permission prompt không có terminal để hiện ra.** `0001` chỉ *nói chuyện* với session
+**C2 — ĐÃ QUYẾT: chat only.** Tác giả chọn hồ sơ agent đầu tiên là **chat thuần, không tool
+nào** — kể cả tool đọc. Kết quả trong `intent.md` không đòi đọc hay sửa file, nên tư thế an
+toàn nhất ở đây không đánh đổi phạm vi lấy bất cứ thứ gì. Quyết định này đóng câu hỏi dưới
+đây; phần còn lại giữ nguyên vì nó là lý do khiến mặc định phải là chat only, và là thứ phải
+đọc lại trước khi ai đó nới nó.
+
+**C2b — Vì sao mặc định phải chặt đến vậy.** `0001` chỉ *nói chuyện* với session
 có sẵn; `0002` **tạo** session chạy được lệnh và sửa được file. Khi Claude cần duyệt một
 tool, ở đây không có terminal nào để hỏi. Ba lối, và không lối nào miễn phí: chặn hẳn tool
 ghi; mở sẵn một tập tool hẹp; hoặc bật chế độ bỏ qua duyệt, tức trao cho một cổng loopback
-quyền chạy lệnh không cần hỏi. **Đây là câu hỏi an toàn thật sự của unit này. Tác giả quyết,
-và spec này từ chối chọn hộ.**
+quyền chạy lệnh không cần hỏi. **Đây là câu hỏi an toàn thật sự của unit này**, và đó là lý do
+mặc định là chat only.
+
+Bốn knob của unit này, kèm mặc định — **mặc định là tư thế an toàn, không phải gợi ý**:
+
+| Knob | Mặc định | Vì sao |
+|---|---|---|
+| Tool cho session tạo từ web | **không có tool nào** | `intent.md` không cần tool để đạt kết quả |
+| Ghi và chạy lệnh | **tắt** | bật thì cổng loopback có quyền sửa máy |
+| Bỏ qua duyệt hoàn toàn | **tắt, và không bật được qua HTTP** | một bề mặt tự nâng quyền cho chính nó thì cổng gác vô nghĩa |
+| Mở lại session app không tạo ra | **tắt** | xem C1 — tắt vì *chưa kiểm*, không phải vì nguy hiểm |
+
+Dòng cuối khác ba dòng trên: nó tắt vì open question 3 chưa được kiểm, nên kiểm xong là bật
+được. Ghi rõ để sau này không ai tưởng đó là nỗi sợ vô cớ.
 
 **C3 — Token dài hạn nằm trong tiến trình web.** `CLAUDE_CODE_OAUTH_TOKEN` là thông tin xác
 thực sống lâu, giờ nằm trong môi trường của một tiến trình đang nghe HTTP. Bất kỳ đường nào
@@ -116,6 +140,19 @@ phải mặc định. **Muốn thêm kho, phải nêu được thứ session sto
 mà **tách nhánh sang định danh mới**. R3 đòi định danh khớp chính xác, nên nhánh đó phải
 tắt. Bật nhầm thì mọi thứ vẫn chạy, chỉ có kết quả của unit là sai — và sai im lặng.
 
+**C8 — Kho cấu hình trung tâm là hướng đã nêu, không phải phạm vi.** Tác giả muốn cấu hình
+về sau đọc từ một kho trung tâm, phục vụ nhiều hồ sơ agent. Đúng hướng khi số hồ sơ và số
+knob lớn lên; sai lúc này vì `0002` có bốn knob và một hồ sơ. Rủi ro của việc hoãn là chỗ
+nối bị bỏ quên và cấu hình rải khắp code — nên nó là một yêu cầu về hình dạng, không phải
+lời hứa suông. Rủi ro của việc làm sớm là dựng schema cho thứ chưa biết hình dạng, rồi phải
+đổi schema khi hồ sơ thứ hai xuất hiện.
+
+**C9 — "Hồ sơ agent" là khái niệm mới, chưa được `intent.md` cho phép.** Nó xuất hiện khi
+tác giả nói "loại agent đầu tiên là chat only", tức sẽ có loại thứ hai. Unit này **không**
+dựng cơ chế nhiều hồ sơ — một yêu cầu không được intent nào cho phép thì bị cắt, không phải
+biện minh. Cái nó làm là không đóng cửa: tập tool là cấu hình, không phải hằng số nằm rải
+trong code. Loại agent thứ hai sẽ cần intent của nó.
+
 ## Open questions
 
 1. **Đã trả lời** (`intent.md` OQ2): lịch sử lấy từ session store của SDK, đã kiểm bằng dữ
@@ -129,5 +166,8 @@ tắt. Bật nhầm thì mọi thứ vẫn chạy, chỉ có kết quả của u
 5. **Còn mở** (`intent.md` OQ3): app giữ gì giữa các lần tải trang? Nếu trang lại chỉ là
    khung nhìn thì câu hỏi "reload mất sạch" quay lại nguyên vẹn ở tầng khác — khác `0001` ở
    chỗ lần này lịch sử đọc lại được từ đĩa, nên nó giải được, nhưng phải cố ý giải.
-6. **Mới:** chọn chế độ duyệt tool nào (C2)? Đây là câu tác giả phải trả lời trước khi plan
-   được viết, vì nó quyết định app có quyền gì trên máy.
+6. **Đã trả lời** (C2): chat only, không tool nào. Mở rộng tập tool sẽ cần xem lại C2b
+   trước, vì đó là chỗ ghi vì sao mặc định chặt như vậy.
+7. **Mới:** hồ sơ agent thứ hai sẽ cần gì mà chat only không có? Chưa biết, và chưa cần
+   biết — nhưng câu trả lời quyết định kho cấu hình ở C8 nên có hình dạng nào. Đợi tác giả
+   mô tả thêm trước khi đoán.
