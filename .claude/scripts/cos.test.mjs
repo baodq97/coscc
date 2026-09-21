@@ -57,7 +57,7 @@ test('an unknown stage is refused, not treated as open', () => {
 })
 
 test('nextAction names one action per state', () => {
-  assert.match(nextAction(unit({ 'intent.md': art('draft') })).action, /human accepts intent/)
+  assert.match(nextAction(unit({ 'intent.md': art('draft') })).action, /accept intent/)
   assert.match(nextAction(unit({ 'intent.md': art('accepted') })).action, /write-spec/)
   assert.match(
     nextAction(unit({ 'intent.md': art('accepted'), 'spec.md': art('skipped') })).action,

@@ -24,13 +24,14 @@ Choosing the slug is still yours: lowercase, hyphenated, naming the problem rath
 solution, and fixed from now on. The directory holds nothing else until the intent is
 accepted.
 
-`Status` is one of `draft`, `accepted` or `rejected`. Write `draft`.
+`Status` is one of `draft`, `accepted` or `rejected`. Write `accepted` once the file meets
+`## Done when` below; write `draft` and say what is missing if it does not.
 
 ## Template
 
 ````markdown
 # Intent: <title>
-Author: <name>. Status: draft.
+Author: <name>. Status: accepted.
 
 ## Problem
 
@@ -54,9 +55,11 @@ Author: <name>. Status: draft.
    not softened.
 5. Cite only a file committed in this repository, by path and line range.
 6. No solution design. Problem, outcome, constraints, open questions. The spec decides how.
-7. Leave `Status: draft`. The originator corrects it and the originator commits it.
-8. Nothing downstream exists yet — no spec, no plan, no code — until this intent is
-   accepted.
+7. Accept it and commit it on a branch, never on `main`. `accepted` here means you judged it
+   finished; it is not the originator's approval, and the PR is where that happens.
+8. Interrogation still comes first. Accepting your own file removes the check that used to
+   catch a thin intent, so the questions in invariant 2 are now the only thing standing in
+   for it — ask them before writing, not after.
 
 ## Done when
 
@@ -65,11 +68,12 @@ tell whether the outcome was met without asking anyone.
 
 ## Next
 
-`write-spec`, once the human has set `Status: accepted` on this file and committed it.
+`write-spec`, once this file is accepted and committed.
 
-Name it when you finish and stop there. Do not run it yourself, and do not run it on a
-draft — the acceptance is the authorization, so a chain that runs without it is a chain
-with no gate in it.
+You may run it yourself. Nothing now separates the two stages, so the separation has to come
+from you: finish the intent, commit it, and re-read it before writing a spec against it.
+Never run `write-spec` on a `draft` — a file you have not judged finished cannot authorize
+the thing after it.
 
 ## Limit
 

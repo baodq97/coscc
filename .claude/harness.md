@@ -35,8 +35,9 @@ is a question the session is asked to ask, and each skill states that limit on i
 `cos-status` reads the tree and reports where every unit stands. It writes nothing.
 
 Each stage ends by committing an artifact, and that commit is what starts the next stage.
-The chain of commits is the audit trail: what was asked for, what the agent produced, and
-who approved it.
+The chain of commits is the audit trail of what was asked for and what the agent produced.
+Who approved it is recorded by the merge, not by the commits — every commit in the chain is
+the agent's.
 
 ## Work units
 
@@ -56,13 +57,15 @@ artifacts.
 Every artifact carries `Status: draft | accepted | rejected`; `plan.md` may additionally be
 `done`.
 
-A skill writes `draft` and leaves it there. The human edits it to `accepted` and commits.
-That edit is the approval and the commit is the record of it.
+The agent writes the artifact, accepts it and commits it. `Status: accepted` therefore
+records readiness, not approval: it says the agent believes the file is finished, and
+nothing more. A reader who takes it as a human's sign-off is reading it wrong.
 
-This is the whole separation of duties available to a solo developer. There is no reviewer
-and no branch protection, so the only thing standing between a proposal and its
-authorization is that a human, not the agent, types the word. An agent that sets its own
-gate has removed the gate, which is why that rule sits in `CLAUDE.md` rather than here.
+Approval lives at the pull request instead. That is now the only point where a human stands
+between a proposal and the thing it authorizes, which makes two rules load-bearing rather
+than stylistic: nothing is committed to `main`, and no branch is merged without being read.
+Drop either and there is no human left anywhere in the loop — the agent proposes, approves,
+implements and ships, and `accepted` is a word it wrote about its own work.
 
 ## Spec skip
 
@@ -103,6 +106,11 @@ are instructions to the model, not artifacts to be reviewed.
 
 ## What is deliberately not built
 
+- **An in-repo acceptance gate.** Until 2026-09-21 a skill wrote `draft` and only a human
+  could type `accepted`; that edit was the whole separation of duties available here. It was
+  removed on purpose, on the grounds that review happens at the pull request instead. The
+  cost is written down so a copy of this template is not read as never having had one: if
+  the PR step is skipped, or a branch is merged unread, nothing anywhere checks the agent.
 - **Hooks.** The gates are advisory by choice. Tightening one means adding a `PreToolUse`
   hook that blocks `Write`/`Edit` while `plan.md` is `draft` — one file, not a rewrite.
 - **Stages 4 to 6** (Test, Deploy, Maintain), and with them `REVIEW.md`, the eval suite,

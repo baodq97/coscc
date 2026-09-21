@@ -54,7 +54,7 @@ create a new work unit and do not renumber the existing one.
 
 ````markdown
 # Spec: <title>
-Intent: intent.md. Author: <name>. Status: draft.
+Intent: intent.md. Author: <name>. Status: accepted.
 
 ## Requirements
 
@@ -84,7 +84,8 @@ Intent: intent.md. Author: <name>. Status: draft.
    empty section here usually means the boundary was never thought about.
 7. Every figure names its source or is marked unverifiable. Cite only a file committed in
    this repository, by path and line range.
-8. Leave `Status: draft`. The human corrects it, accepts it and commits it.
+8. Accept it and commit it on a branch, never on `main`. `accepted` here means you judged it
+   finished; it is not the human's approval, and the PR is where that happens.
 
 ## Done when
 
@@ -93,13 +94,13 @@ them later is already written down under `## Concerns`.
 
 ## Next
 
-`write-plan`, once the human has set `Status: accepted` on this file and committed it. If
-the spec was skipped instead, `write-plan` runs on the accepted intent alone and records
-the reason.
+`write-plan`, once this file is accepted and committed. If the spec was skipped instead,
+`write-plan` runs on the accepted intent alone and records the reason.
 
-Name it when you finish and stop there. Do not run it yourself, and do not run it on a
-draft — the acceptance is the authorization, so a chain that runs without it is a chain
-with no gate in it.
+You may run it yourself. Nothing now separates the two stages, so the separation has to come
+from you: finish the spec, commit it, and re-read it before planning against it. Never run
+`write-plan` on a `draft` — a file you have not judged finished cannot authorize the thing
+after it.
 
 ## Limit
 

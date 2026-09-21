@@ -34,7 +34,7 @@ One file, `.cos/NNNN_<slug>/plan.md`, in the directory the intent already occupi
 
 ````markdown
 # Plan: <title>
-Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: draft.
+Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: accepted.
 
 ## Files that change
 
@@ -61,12 +61,14 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: d
    overlooked.
 6. An engineer who never saw this conversation implements the change from this file alone.
    That is the bar; if the plan needs you present to be understood, it is not finished.
-7. No code until `Status: accepted`. The plan authorizes the implementation, so it cannot
-   be written alongside it.
+7. No code until `Status: accepted`, and accept it in its own commit. The plan authorizes
+   the implementation, so it cannot be written alongside it — a plan and its code in one
+   commit is a plan written backwards from the code.
 8. When the implementation departs from the plan, update `plan.md` in the same commit as
    the departure. The plan is the record of what was built, not of what was first imagined.
-9. Leave `Status: draft`. The human corrects it, accepts it and commits it. Set `done` only
-   when the work has shipped and the proof has run.
+9. Accept it and commit it on a branch, never on `main`. `accepted` here means you judged it
+   finished; the human's approval happens at the PR. Set `done` only when the work has
+   shipped and the proof has run.
 
 ## Done when
 
@@ -75,8 +77,8 @@ from the proof alone whether they finished it.
 
 ## Next
 
-Implementation, once `gate <NNNN_slug> implement` exits 0 — which it does only after the
-human has accepted this file.
+Implementation, once `gate <NNNN_slug> implement` exits 0 — which it does only after this
+file is accepted and committed.
 
 Work the steps in the order written, run the command under `## Proof`, and set
 `Status: done` only after that command has passed.

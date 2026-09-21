@@ -31,9 +31,9 @@ decided to skip it and `spec.md` records why; that is a settled state, not a gap
 
 The table gives one next action per unit. Name it and stop there.
 
-Reporting that a stage is ready is not the same as the human deciding to run it, so do not
-invoke the next skill and do not accept anything on their behalf. When the action is
-`human accepts <file>`, that is theirs alone.
+Reporting that a stage is ready is not the same as being asked to run it. Name the action
+and stop; a status report is read to decide what to do next, and a session that starts
+doing it has answered a question nobody asked.
 
 When there are no work units, say so and name `write-intent` as the way to open one.
 

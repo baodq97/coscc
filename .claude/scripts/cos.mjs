@@ -81,7 +81,7 @@ const settled = (s) => s === 'accepted' || s === 'skipped'
 // saying so is the difference between "write it" and "fix the one line at the top of it".
 const missing = (u, f) => (present(u, f) ? `${f} exists but carries no Status line` : `${f} does not exist`)
 
-// One action per unit, and it is always either a human decision or a named skill.
+// One action per unit: a named skill, or the one edit that unblocks the file.
 export function nextAction(unit) {
   const intent = statusOf(unit, 'intent.md')
   const spec = statusOf(unit, 'spec.md')
@@ -93,7 +93,7 @@ export function nextAction(unit) {
       : { blocked: true, action: 'write-intent — the unit has no intent.md' }
   }
   if (intent === 'rejected') return { blocked: false, action: 'closed — intent rejected' }
-  if (intent === 'draft') return { blocked: true, action: 'human accepts intent.md' }
+  if (intent === 'draft') return { blocked: true, action: 'finish and accept intent.md' }
 
   if (!spec) {
     return present(unit, 'spec.md')
@@ -101,7 +101,7 @@ export function nextAction(unit) {
       : { blocked: true, action: 'write-spec — it assesses whether to skip first' }
   }
   if (spec === 'rejected') return { blocked: false, action: 'closed — spec rejected' }
-  if (spec === 'draft') return { blocked: true, action: 'human accepts spec.md' }
+  if (spec === 'draft') return { blocked: true, action: 'finish and accept spec.md' }
 
   if (!plan) {
     return present(unit, 'plan.md')
@@ -109,7 +109,7 @@ export function nextAction(unit) {
       : { blocked: true, action: 'write-plan' }
   }
   if (plan === 'rejected') return { blocked: false, action: 'closed — plan rejected' }
-  if (plan === 'draft') return { blocked: true, action: 'human accepts plan.md' }
+  if (plan === 'draft') return { blocked: true, action: 'finish and accept plan.md' }
   if (plan === 'accepted') return { blocked: false, action: 'implementation starts' }
   return { blocked: false, action: 'finished' }
 }

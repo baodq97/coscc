@@ -25,10 +25,14 @@ One unit of work per `.cos/NNNN_<slug>/` directory, holding `intent.md`, `spec.m
 
 ## Invariants
 
-- Never set `Status: accepted`. Write `draft` and hand it back; that edit is the human's.
-- Ask `cos.mjs gate` before a stage, and stop when it exits non-zero. Do not reason your
-  way past it, and do not change a status to open your own gate.
-- No code while `plan.md` is `draft`. An unaccepted plan authorizes nothing.
+- Set `Status: accepted` when the artifact is finished, then commit it. `accepted` records
+  that the agent judged it ready — it is not a human's approval and must not be read as one.
+- Never commit to `main`. Work on a branch and open a PR; the review there is the only
+  human check left in the loop, so nothing may go round it.
+- Ask `cos.mjs gate` before a stage, and stop when it exits non-zero. Fix what it names;
+  do not reason your way past it.
+- No code while `plan.md` is `draft`. Accept the plan in its own commit first, so the
+  authorization is separable from the thing it authorizes.
 - Take work unit paths from `cos.mjs new-path`. Never guess a number.
 - Cut a figure that has no source. Do not soften it.
 - Cite only a file committed in this repository, by path and line range.
