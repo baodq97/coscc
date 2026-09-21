@@ -75,6 +75,16 @@ Intent: intent.md. Author: <name>. Status: draft.
 An engineer can plan against this file alone, and every concern that would have stopped
 them later is already written down under `## Concerns`.
 
+## Next
+
+`write-plan`, once the human has set `Status: accepted` on this file and committed it. If
+the spec was skipped instead, `write-plan` runs on the accepted intent alone and records
+the reason.
+
+Name it when you finish and stop there. Do not run it yourself, and do not run it on a
+draft — the acceptance is the authorization, so a chain that runs without it is a chain
+with no gate in it.
+
 ## Limit
 
 This is advisory, and nothing forces a session to comply with it. These invariants hold

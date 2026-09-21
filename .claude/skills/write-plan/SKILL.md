@@ -70,6 +70,15 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: d
 The work could be handed to someone else with no conversation attached, and you could tell
 from the proof alone whether they finished it.
 
+## Next
+
+Implementation, once the human has set `Status: accepted` on this file and committed it.
+Work the steps in the order written, run the command under `## Proof`, and set
+`Status: done` only after that command has passed.
+
+If the implementation departs from the plan, update `plan.md` in the same commit. Do not
+start on a draft — an unaccepted plan authorizes nothing.
+
 ## Limit
 
 This is advisory, and nothing forces a session to comply with it. These invariants hold

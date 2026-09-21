@@ -36,9 +36,25 @@ missing.
 ## What counts as blocked
 
 - An artifact at `draft` blocks the stage after it, and the human accepting it unblocks it.
+  The action is theirs, not yours: name it, do not perform it.
 - An artifact at `rejected` closes the unit. Say so; do not propose continuing it.
 - A `plan.md` at `accepted` is not blocked — it is work ready to start.
 - A `plan.md` at `done` is finished. Report it, do not propose anything for it.
+
+## Naming the next action
+
+| State | Next action |
+|---|---|
+| no work units | `write-intent` opens one |
+| `intent.md` draft | human accepts it |
+| `intent.md` accepted, no spec | `write-spec`, which first assesses whether to skip |
+| `spec.md` draft | human accepts it |
+| `spec.md` accepted or skipped, no plan | `write-plan` |
+| `plan.md` draft | human accepts it |
+| `plan.md` accepted | implementation starts |
+
+Name one action per unit. Do not invoke the skill yourself — reporting that a stage is
+ready is not the same as the human deciding to run it.
 
 ## Done when
 
