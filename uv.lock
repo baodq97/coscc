@@ -343,9 +343,9 @@ wheels = [
 ]
 
 [[package]]
-name = "cos-baodo-app"
+name = "cos-baodo"
 version = "0.0.1"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "claude-agent-sdk" },
