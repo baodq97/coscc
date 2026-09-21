@@ -12,9 +12,12 @@ later costs a rewrite.
 
 ## Before writing
 
-Read `.cos/NNNN_<slug>/intent.md`. If its `Status` is not `accepted`, stop. Say which work
-unit you read, what its status is, and that the intent must be accepted first. Do not write
-the spec anyway, and do not change the status yourself.
+```
+node .claude/scripts/cos.mjs gate <NNNN_slug> spec
+```
+
+Exit 0 means proceed. Anything else means stop and report what it printed — it names what
+is missing. Do not write the spec anyway, and do not change a status to open your own gate.
 
 Then run the skip assessment. Report all five criteria with a verdict on each:
 
@@ -25,9 +28,22 @@ Then run the skip assessment. Report all five criteria with a verdict on each:
 5. Nothing in auth, PII or the security surface is touched.
 
 All five pass means the spec *may* be skipped. Say so and let the human decide — the
-decision is theirs, not yours. If they skip it, write nothing; the plan will record
-`Spec: skipped (<reason>)`. Any criterion failing means write the spec, and name the
+decision is theirs, not yours. Any criterion failing means write the spec, and name the
 criterion that forced it.
+
+A skip is still written down. Record it as `spec.md` with `Status: skipped`, the reason,
+and the assessment that produced it:
+
+````markdown
+# Spec: <title>
+Intent: intent.md. Author: <name>. Status: skipped.
+
+## Why skipped
+<the criteria, and who decided>
+````
+
+A skip that leaves no file is indistinguishable later from a spec nobody got round to
+writing, and the gate ahead cannot tell those apart either.
 
 ## Output
 
@@ -87,5 +103,9 @@ with no gate in it.
 
 ## Limit
 
-This is advisory, and nothing forces a session to comply with it. These invariants hold
-only until a deterministic check stands behind them.
+The gate is decided by a script, so the answer does not vary with how carefully a session
+reads. What stays advisory is the invocation: nothing forces a session to run it, or to
+stop when it exits non-zero. A `PreToolUse` hook would.
+
+The invariants above are advisory throughout — they describe judgement, and no script
+checks them.

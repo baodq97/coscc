@@ -11,14 +11,17 @@ it is what authorizes the code.
 
 ## Before writing
 
-Read `.cos/NNNN_<slug>/intent.md` and `.cos/NNNN_<slug>/spec.md`.
+```
+node .claude/scripts/cos.mjs gate <NNNN_slug> plan
+```
 
-- The intent must be `Status: accepted`. If it is not, stop and say so.
-- The spec must be `Status: accepted`, unless the human deliberately skipped it. If the
-  spec exists but is still `draft`, stop. If no spec exists, ask whether it was skipped and
-  why, then record that reason in the plan. Do not assume a missing spec means it was
-  skipped — it more often means nobody has written it yet.
-- Never change a status yourself to unblock your own work.
+Exit 0 means proceed. Anything else means stop and report what it printed. The gate clears
+on an accepted spec or on one marked `skipped`; a missing `spec.md` does not clear it,
+because a spec nobody wrote looks exactly like a spec someone decided to skip. Never change
+a status yourself to unblock your own work.
+
+Then read `intent.md` and `spec.md` in full — the gate checks that they are settled, not
+what they say.
 
 Read the files the plan will touch before naming them. A plan built from a guess at what
 the code looks like is a plan the first step invalidates.
@@ -72,7 +75,9 @@ from the proof alone whether they finished it.
 
 ## Next
 
-Implementation, once the human has set `Status: accepted` on this file and committed it.
+Implementation, once `gate <NNNN_slug> implement` exits 0 — which it does only after the
+human has accepted this file.
+
 Work the steps in the order written, run the command under `## Proof`, and set
 `Status: done` only after that command has passed.
 
@@ -81,5 +86,9 @@ start on a draft — an unaccepted plan authorizes nothing.
 
 ## Limit
 
-This is advisory, and nothing forces a session to comply with it. These invariants hold
-only until a deterministic check stands behind them.
+The gate is decided by a script, so the answer does not vary with how carefully a session
+reads. What stays advisory is the invocation: nothing forces a session to run it, or to
+stop when it exits non-zero. A `PreToolUse` hook would.
+
+The invariants above are advisory throughout — they describe judgement, and no script
+checks them.

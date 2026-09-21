@@ -5,7 +5,16 @@ Reference: `docs/harness.md`. Each stage's rules live in its own skill.
 
 ## Commands
 
-None — no application code yet. Add build, test and lint here when it arrives.
+```
+cos=.claude/scripts/cos.mjs
+
+node --test '.claude/scripts/*.test.mjs'   # all green; never skip or delete a failing test
+node $cos status                           # where every unit of work stands
+node $cos gate <unit> <stage>              # exit 0 = stage may proceed
+node $cos new-path <slug>                  # next work unit path
+```
+
+No application code yet. Add its build, test and lint commands here when it arrives.
 
 ## The loop
 
@@ -18,10 +27,10 @@ One unit of work per `.cos/NNNN_<slug>/` directory, holding `intent.md`, `spec.m
 ## Invariants
 
 - Never set `Status: accepted`. Write `draft` and hand it back; that edit is the human's.
-- Never act on a `draft`. Read the upstream status first, and if it is not `accepted`, stop
-  and say what is missing.
+- Ask `cos.mjs gate` before a stage, and stop when it exits non-zero. Do not reason your
+  way past it, and do not change a status to open your own gate.
 - No code while `plan.md` is `draft`. An unaccepted plan authorizes nothing.
-- Never guess a work unit number. List `.cos/` first.
+- Take work unit paths from `cos.mjs new-path`. Never guess a number.
 - Cut a figure that has no source. Do not soften it.
 - Cite only a file committed in this repository, by path and line range.
 - Inside `.cos/`: English filenames and headings, Vietnamese prose. Everywhere else,

@@ -13,9 +13,16 @@ A local implementation of the AI-native SDLC described in `ai-native-sdlc-playbo
 covering the first three stages: Plan, Design, Build. It is also the template — copy
 `CLAUDE.md` and `.claude/` into another repository and the loop works there.
 
-It is driven by hand. There are no hooks, no CI and no scheduled jobs, which means every
-rule is advisory: it holds because the session read it, not because anything blocked the
-action. Each skill states this limit on itself.
+It is driven by hand. There are no hooks, no CI and no scheduled jobs.
+
+What is mechanical lives in `.claude/scripts/cos.mjs`; what is judgement lives in the skills.
+The split matters for how much each can be trusted. Whether an intent is accepted is a fact
+the script reads off disk the same way every time. Whether a spec is any good is not, and no
+script pretends otherwise.
+
+Even the mechanical half stays advisory in one respect: nothing forces a session to run the
+script, or to stop when it exits non-zero. A `PreToolUse` hook would. Until then the gate
+is a question the session is asked to ask, and each skill states that limit on itself.
 
 ## The loop
 
@@ -64,6 +71,29 @@ rule that the human makes the call rather than the agent, live in
 `.claude/skills/write-spec/SKILL.md`. That file is the authoritative copy — do not restate
 the criteria elsewhere, because two copies drift and the drift is silent.
 
+A skip still produces a `spec.md`, carrying `Status: skipped` and the reason. This is not
+ceremony. A skip that left no file would be indistinguishable a month later from a spec
+nobody got round to writing, and the gate ahead could not tell them apart either — it would
+have to either block real skipped work or wave through work whose design was never
+considered.
+
+## The scripts
+
+```
+cos=.claude/scripts/cos.mjs
+
+node $cos status                # table of every unit and its one next action
+node $cos gate <unit> <stage>   # exit 0 open, 1 blocked with reasons, 2 misuse
+node $cos new-path <slug>       # allocates the number, validates the slug
+node --test '.claude/scripts/*.test.mjs'   # the script's own tests
+```
+
+`cos.mjs` is the only thing that decides whether a gate is open, which makes it an oracle
+the rest of the harness defers to — so it is tested. The tests cover the cases where
+being wrong would be quiet: a status line shadowed by prose later in the file, a file that
+exists but carries no status, a skipped spec against a missing one, and numbering from the
+highest existing unit rather than the count of them.
+
 ## Output language
 
 Inside `.cos/`: filenames, directory names and headings in English; the prose under each
@@ -84,7 +114,9 @@ are instructions to the model, not artifacts to be reviewed.
 
 ## Copying this into another repository
 
-Take `CLAUDE.md` and `.claude/skills/`. Fill in `## Commands` in `CLAUDE.md` with that
-repository's real build, test and lint commands — that section is what lets a session check
-its own work without asking. Adjust the output language rule if the reviewer there reads
-English. Everything else transfers unchanged.
+Take `CLAUDE.md` and `.claude/`. Everything the harness needs lives in those two paths, which
+is why the scripts sit under `.claude/scripts/` rather than at the root — a repository of its
+own is free to keep a `scripts/` directory without colliding. Add that repository's real
+build, test and lint commands to `## Commands` in `CLAUDE.md` — that section is what lets a
+session check its own work without asking. Adjust the output language rule if the reviewer
+there reads English. Everything else transfers unchanged.

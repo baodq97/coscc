@@ -11,11 +11,17 @@ from them: an intent derived from a design it was meant to judge can no longer k
 
 ## Output
 
-One file, `.cos/NNNN_<slug>/intent.md`.
+One file, `intent.md`, in the directory the script names:
 
-`NNNN` is four digits: list `.cos/`, take the highest number present, add one. Never guess
-it. The slug is lowercase and hyphenated, contains no underscore, names the problem rather
-than the solution, and is fixed now. The directory holds nothing else until the intent is
+```
+node .claude/scripts/cos.mjs new-path <slug>
+```
+
+It allocates the number and rejects a malformed slug. Use the path it prints; do not
+compose one yourself and do not guess the number.
+
+Choosing the slug is still yours: lowercase, hyphenated, naming the problem rather than the
+solution, and fixed from now on. The directory holds nothing else until the intent is
 accepted.
 
 `Status` is one of `draft`, `accepted` or `rejected`. Write `draft`.
@@ -67,5 +73,6 @@ with no gate in it.
 
 ## Limit
 
-This is advisory, and nothing forces a session to comply with it. These invariants hold
-only until a deterministic check stands behind them.
+The script allocates the number and validates the slug, so those two cannot go wrong
+silently. Everything else here is advisory: nothing forces a session to run it, and no
+check reads the prose it writes.
