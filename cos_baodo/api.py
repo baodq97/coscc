@@ -64,6 +64,52 @@ def build(config: Config | None = None) -> FastAPI:
     async def get_workspaces() -> Any:
         return service.workspaces()
 
+    @api.post("/api/workspaces")
+    async def add_workspace(request: Request) -> Any:
+        """Adopt a directory under the working folder, or clone one into it.
+
+        The working folder itself is never a parameter — it comes from the environment
+        and nowhere else (`spec.md` R11). A body naming one is ignored, not overridden.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        try:
+            return await service.add_workspace(
+                str(body.get("name", "")),
+                label=str(body.get("label", "") or ""),
+                repo_url=(body.get("repo_url") or None),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.patch("/api/workspaces/{name}")
+    async def set_label(name: str, request: Request) -> Any:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        try:
+            return service.set_label(name, str(body.get("label", "") or ""))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.delete("/api/workspaces/{name}")
+    async def remove_workspace(name: str) -> Any:
+        """Removes the entry. The directory on disk is left alone (`spec.md` R18)."""
+        try:
+            return service.remove_workspace(name)
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/workspaces/{name}/pull")
+    async def pull_workspace(name: str) -> Any:
+        try:
+            return await service.pull_workspace(name)
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.get("/api/sessions")
     async def get_sessions(request: Request) -> Any:
         """R1. Sessions of one project, and only that project."""
