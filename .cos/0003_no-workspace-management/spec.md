@@ -1,231 +1,286 @@
-# Spec: Workspaces managed under one env-declared working folder
+# Spec: Workspace management on a Reflex/FastAPI stack with no hand-written HTML
 Intent: intent.md. Author: Bao Do. Status: accepted.
+
+> **Viết lại ngày 2026-09-21.** Bản đầu (`06f2e6e`) chỉ nói về workspace trên nền aiohttp.
+> `intent.md` đã được tác giả mở rộng sang nền và giao diện; file này thay bản đó.
 
 ## Requirements
 
-Mỗi yêu cầu truy về chuỗi đo ở `intent.md:38-41`: clone 2 → đếm 2 → label → khởi động lại →
-vẫn 2 và label còn → pull latest → session trong mỗi workspace → xoá một → còn 1 → khởi
-động lại → vẫn 1.
+Ba nhóm, đúng ba mệnh đề của `intent.md:49-59`. Nhóm A là mệnh đề 1 (nền đã chuyển), nhóm B
+là mệnh đề 2 (không còn HTML viết tay), nhóm C là mệnh đề 3 (workspace quản lý được).
 
-**R1 — Working folder là một gốc, khai báo bằng env.** `COS_WORKING_DIR` đọc trong
-`from_env` và không ở đâu khác. Không route nào đặt, trả về đường dẫn tuyệt đối của nó để
-sửa, hay nhận nó làm tham số. Kiểm được: không có setter nào ngoài `from_env`; một request
-gửi kèm `working_dir` bị bỏ qua hoàn toàn, không phải bị ghi đè.
+### A. Nền
 
-**R2 — Workspace được định danh bằng `name`, không bằng đường dẫn.** `name` là **một đoạn
+**R1 — Layout phẳng, một gói.** Gói Python tên `cos_baodo` nằm ở gốc repo, cạnh
+`rxconfig.py` với `app_name="cos_baodo"`. Thư mục `app/` không còn tồn tại. Kiểm được:
+`app/` vắng mặt trong `git ls-files`, và `import cos_baodo` chạy.
+
+**R2 — uv theo chuẩn hiện hành.** `pyproject.toml` có `[dependency-groups]` (không dùng
+`[tool.uv.dev-dependencies]`), có `[project.scripts]` cho lệnh chạy app, và repo có
+`.python-version`. `uv.lock` và lockfile frontend của Reflex được commit; `.web/` nằm trong
+`.gitignore`. Kiểm được: `uv sync --locked` chạy sạch trên cây vừa clone.
+
+**R3 — `npm test` vẫn là một lệnh chạy hết.** `test:python` không còn khoá cứng `-s app`.
+Sau unit này `.claude/CLAUDE.md:20-21` phải mô tả đúng lệnh thật. Kiểm được: `npm test`
+xanh, và thêm một file `*_test.py` mới vào gói vẫn được nhặt.
+
+**R4 — JSON API và trang nằm cùng một tiến trình.** API mount vào Reflex qua
+`api_transformer`. Không route nào của app dùng `/ping/`, `/_event` hay `/_upload` — Reflex
+giữ ba đường đó. Kiểm được: một tiến trình duy nhất phục vụ cả `/api/*` lẫn trang; gọi
+`/api/workspaces` và `/ping/` trên cùng cổng backend đều trả lời.
+
+**R5 — Cả hai cổng của Reflex chỉ loopback.** Reflex phục vụ frontend và backend trên hai
+cổng khác nhau. `0002` R5 chỉ nói về một. Cả hai phải bind `127.0.0.1`. Kiểm được: `ss -ltn`
+không thấy `0.0.0.0` hay `::` trên cổng nào của app.
+
+**R6 — Lệnh kiểm của `0002` giữ nguyên mệnh đề.** `scripts/verify_0002.py` được đổi thư
+viện client và đường import; **các mệnh đề nó khẳng định không đổi, không nới, không bớt**.
+Kiểm được: đọc diff — mọi thay đổi phải là client hoặc import; và nó xanh.
+
+**R7 — `0001` không bị đụng.** `channel/`, `evidence/0001_terminal-only-access/` và
+`scripts/verify-0001.mjs` giữ nguyên, kể cả `channel/public/index.html` — nó là HTML viết
+tay nhưng **không** phải trang của app, nên R8 không áp lên nó.
+
+### B. Giao diện
+
+**R8 — Không còn HTML hay CSS viết tay cho trang của app.** `app/public/index.html` (151
+dòng) bị xoá và không có file cùng loại thay thế. Kiểm được: sau unit này, không file
+`.html` hay `.css` nào trong repo phục vụ giao diện của app; file `.html` duy nhất còn lại
+là `channel/public/index.html` của `0001` (R7). Tài nguyên tĩnh dạng ảnh/font trong
+`assets/` không tính.
+
+**R9 — Giao diện có đủ phần để dùng.** Dựng bằng component Python: danh sách workspace kèm
+label và cờ `missing`; chỗ nhập để thêm hoặc clone; chỗ xoá; chỗ pull; và khung hội thoại
+của `0002`. Kiểm được: mỗi phần gọi xuống đúng lớp dịch vụ ở `## Design`, và không phần nào
+gọi thẳng `git` hay đĩa.
+
+**R10 — Một lớp dịch vụ, hai lối vào.** Trang (event handler của Reflex) và JSON API
+**không** được hiện thực song song. Cả hai gọi cùng một lớp dịch vụ; route HTTP là vỏ mỏng.
+Kiểm được: không có logic nghiệp vụ nào nằm trong route hay trong event handler — thấy một
+nhánh xử lý ở một bên mà bên kia không có là hỏng.
+
+### C. Workspace
+
+**R11 — Working folder là một gốc, khai báo bằng env.** `COS_WORKING_DIR` đọc trong
+`from_env` và không ở đâu khác. Không route, event handler hay component nào đặt được nó.
+Kiểm được: không có setter ngoài `from_env`; một request gửi kèm `working_dir` bị bỏ qua
+hoàn toàn, không phải bị ghi đè.
+
+**R12 — Workspace định danh bằng `name`, không bằng đường dẫn.** `name` là **một đoạn
 đường dẫn duy nhất**: chỉ `[A-Za-z0-9._-]`, dài 1–64 ký tự, không phải `.` hay `..`. Đường
 dẫn thật luôn là `working_dir / name` và **không bao giờ** đến từ request. Kiểm được:
-`../x`, `/etc`, `a/b`, chuỗi rỗng, tên 65 ký tự — tất cả bị từ chối 400, và không có input
-nào tạo ra được một đường dẫn nằm ngoài `working_dir`.
+`../x`, `/etc`, `a/b`, chuỗi rỗng, tên 65 ký tự — tất cả bị từ chối 400, và không input nào
+tạo ra được đường dẫn ngoài `working_dir`.
 
-**R3 — Đếm và liệt kê.** Một đường đọc trả về số workspace và danh sách, mỗi mục gồm `name`,
-đường dẫn, `label`, nguồn (`env` hay `store`), và cờ `missing` khi thư mục không còn trên
-đĩa. Kiểm được: số trả về khớp đúng 2 → 1 trong chuỗi đo.
+**R13 — Đếm và liệt kê.** Một đường đọc trả về số workspace và danh sách, mỗi mục gồm
+`name`, đường dẫn, `label`, nguồn (`env` hay `store`), và cờ `missing`. Kiểm được: số trả
+về khớp đúng 2 → 1 trong chuỗi đo.
 
-**R4 — Thêm.** Hai cách, cùng một đường: kèm `repo_url` thì clone; không kèm thì nhận một
-thư mục đã có sẵn dưới `working_dir`. Cả hai được `intent.md:92` cho phép — "thêm" và
-"clone" là hai mục riêng trên dòng phạm vi. Kiểm được: sau khi thêm, `name` xuất hiện ở R3
-và `working_dir / name` tồn tại.
+**R14 — Thêm.** Hai cách, cùng một đường: kèm `repo_url` thì clone; không kèm thì nhận một
+thư mục đã có sẵn dưới `working_dir`. Cả hai được `intent.md` cho phép — "thêm" và "clone"
+là hai mục riêng trên dòng phạm vi.
 
-**R5 — Clone chỉ `https://`, không tương tác, môi trường tối thiểu.** `git` được gọi bằng
-argv (không qua shell), subcommand cố định, không nhận cờ nào từ người dùng, `repo_url`
-phải bắt đầu bằng `https://` và không bắt đầu bằng `-`. Tiến trình `git` nhận một môi
-trường **dựng mới**, chỉ gồm `PATH`, `HOME`, `GIT_TERMINAL_PROMPT=0` và một `GIT_ASKPASS`
-luôn thất bại — không kế thừa môi trường của app. Kiểm được: repo riêng tư trả về lỗi
-trong vòng thời gian chờ thay vì treo; `CLAUDE_CODE_OAUTH_TOKEN` và mọi biến `COS_*` không
-có trong môi trường tiến trình con.
+**R15 — Clone chỉ `https://`, không tương tác, môi trường tối thiểu.** `git` gọi bằng argv
+(không qua shell), subcommand cố định, không nhận cờ từ người dùng, `repo_url` phải bắt đầu
+bằng `https://` và không bắt đầu bằng `-`. Tiến trình `git` nhận môi trường **dựng mới**:
+`PATH`, `HOME`, `GIT_TERMINAL_PROMPT=0`, và một `GIT_ASKPASS` luôn thất bại. Kiểm được:
+repo riêng tư trả lỗi trong hạn thời gian thay vì treo; `CLAUDE_CODE_OAUTH_TOKEN` và mọi
+biến `COS_*` không có trong môi trường tiến trình con.
 
-**R6 — Clone hoặc thành công trọn vẹn, hoặc không để lại gì.** Clone đi vào một thư mục tạm
-dưới `working_dir` rồi mới đổi tên sang `name`. Thất bại thì thư mục tạm bị dọn và không có
-mục nào được ghi vào store. Kiểm được: ép clone hỏng (URL không tồn tại), sau đó R3 trả về
-đúng số cũ và `working_dir` không có thư mục thừa.
+**R16 — Clone hoặc trọn vẹn, hoặc không để lại gì.** Clone vào thư mục tạm dưới
+`working_dir` rồi mới đổi tên sang `name`; thất bại thì dọn tạm và không ghi store. Kiểm
+được: ép clone hỏng, sau đó R13 trả về số cũ và `working_dir` không có thư mục thừa.
 
-**R7 — Sửa label.** `label` là chuỗi ≤ 200 ký tự, sửa được, và không ảnh hưởng đường dẫn hay
-định danh. Kiểm được: đặt label, đọc lại đúng chuỗi đó.
+**R17 — Sửa label.** Chuỗi ≤ 200 ký tự, không ảnh hưởng đường dẫn hay định danh.
 
-**R8 — Xoá là gỡ khỏi danh sách, không xoá đĩa.** Xoá một workspace bỏ mục của nó khỏi
-store; thư mục trên đĩa **không** bị đụng tới. Kiểm được: sau khi xoá, R3 còn 1 mục và
+**R18 — Xoá là gỡ khỏi danh sách, không xoá đĩa.** Kiểm được: sau khi xoá, R13 còn 1 mục và
 `working_dir / name` vẫn tồn tại.
 
-**R9 — Trạng thái sống qua khởi động lại, không cần biến môi trường nào đổi.** Dựng lại app
-từ đúng môi trường cũ thì danh sách và label còn nguyên. Kiểm được: đây là hai mắt xích
-"tắt bật lại" trong chuỗi đo, và store phải là thứ duy nhất mang trạng thái đó.
+**R19 — Trạng thái sống qua khởi động lại, không cần biến môi trường nào đổi.** Store là
+thứ duy nhất mang trạng thái đó.
 
-**R10 — `pull latest` chạy được và báo thất bại ra ngoài.** `git -C <path> pull --ff-only`,
-cùng ràng buộc môi trường như R5. Không fast-forward được (cây bẩn, nhánh phân kỳ) là **lỗi
-được trả về**, không phải im lặng. Kiểm được: pull một workspace sạch thì thành công; làm
-bẩn cây rồi pull thì nhận lỗi có nội dung.
+**R20 — `pull latest` chạy được và báo thất bại ra ngoài.** `git -C <path> pull --ff-only`,
+cùng ràng buộc môi trường như R15. Không fast-forward được là **lỗi trả về**, không im
+lặng.
 
-**R11 — Ranh giới workspace không nới ra.** `is_workspace` vẫn là cổng gác của mọi đường
-làm việc (`app/web.py:44`, `:60`, `:85`). Sau unit này nó nhận một path khi và chỉ khi path
-đó nằm trong danh sách env **hoặc** giải ra đúng `working_dir / name` của một mục trong
-store. Việc kiểm phải làm **lúc đọc**, mỗi lần, chứ không phải lúc ghi. Kiểm được: sửa tay
-file store để trỏ ra ngoài `working_dir`, mọi đường làm việc vẫn từ chối.
+**R21 — Ranh giới workspace không nới ra.** `is_workspace` vẫn là cổng gác của mọi đường
+làm việc. Nó nhận một path khi và chỉ khi path đó nằm trong danh sách env **hoặc** giải ra
+đúng `working_dir / name` của một mục trong store. Kiểm **lúc đọc**, mỗi lần. Kiểm được:
+sửa tay file store để trỏ ra ngoài `working_dir`, mọi đường làm việc vẫn từ chối.
 
-**R12 — Session không đổi tư thế.** Session vẫn chat only, không tool nào
-(`app/config.py:44-47`). Không knob nào của `0002` bị lật. Kiểm được: `effective_tools()`
-vẫn rỗng trong chuỗi đo, và session tạo trong mỗi workspace vẫn trả lời được.
+**R22 — Session không đổi tư thế.** Vẫn chat only, không tool nào. Không knob nào của
+`0002` bị lật. Kiểm được: `effective_tools()` rỗng trong suốt chuỗi đo.
 
-**R13 — Chứng minh không cần trình duyệt, chỉ loopback.** Toàn bộ chuỗi đo chạy qua đúng bề
-mặt HTTP mà tab dùng, như `0002` R4 (`.cos/0002_no-session-management/spec.md:23-25`), và
-vẫn chỉ bind `127.0.0.1`.
-
-**R14 — `0002` còn xanh.** `scripts/verify_0002.py` dựng `Config` thẳng
-(`scripts/verify_0002.py:96`) và không biết gì về working folder. Nó phải chạy nguyên trạng
-sau unit này.
+**R23 — Một lệnh, ba mệnh đề, không cần trình duyệt.** Toàn bộ `intent.md:49-59` chạy trong
+một lệnh trả non-zero khi bất kỳ mệnh đề nào hỏng.
 
 ## Design
 
 **Cách chặn đường thoát ra ngoài gốc là hình dạng dữ liệu, không phải một hàm kiểm.** Store
 chỉ lưu `name` — một đoạn đường dẫn. Không có đường dẫn tuyệt đối nào trong store, nên
-không có gì để một file bị sửa tay trỏ ra ngoài `working_dir`. Đường dẫn được **dựng ra**
-từ gốc mỗi lần đọc. Kiểm containment vẫn còn (R11) như lớp thứ hai, nhưng lớp thứ nhất là
-việc không tồn tại một chỗ nào để đặt `/etc` vào. Mọi thứ khác trong thiết kế chảy ra từ
-câu này.
+không có gì để một file bị sửa tay trỏ ra ngoài `working_dir`. Đường dẫn được **dựng ra** từ
+gốc mỗi lần đọc. Kiểm containment vẫn còn (R21) như lớp thứ hai, nhưng lớp thứ nhất là việc
+không tồn tại một chỗ nào để đặt `/etc` vào.
 
-**Bốn lớp.** Ba lớp của `0002` giữ nguyên vai trò; unit này thêm một lớp và sửa một cổng
-gác.
+**Cách chặn trang và API trôi khỏi nhau cũng là hình dạng, không phải kỷ luật.** Lớp dịch
+vụ là nơi duy nhất có logic; route HTTP và event handler của Reflex đều là vỏ. R10 tồn tại
+vì hai lối vào cùng một năng lực là cách chắc chắn nhất để một lối được sửa còn lối kia
+không.
 
-- **Lớp store (mới).** Đọc và ghi danh sách workspace. Không biết HTTP, không biết `git`.
-  Ghi bằng file tạm rồi `rename`, và nối tiếp nhau bằng một khoá trong tiến trình, để hai
-  request đồng thời không cắt đuôi nhau.
-- **Lớp git (mới).** Gọi `git` bằng argv với môi trường dựng mới (R5). Chỉ hai thao tác:
-  clone và pull. Không nhận cờ, không nhận subcommand từ ngoài.
-- **Lớp cấu hình.** `app/config.py` vẫn là nơi duy nhất đọc môi trường
-  (`app/config.py:97-103`). Nó nay trả lời `is_workspace` bằng hợp của hai nguồn: danh sách
-  env bất biến, và store. Đây là chỗ `app/config.py:1-11` dự trù khi nói đổi nguồn cấu hình
-  là đổi một chỗ.
-- **Lớp HTTP.** Thêm các đường ghi cho danh sách workspace. Cùng bề mặt phục vụ cả tab lẫn
-  lệnh kiểm, không có đường riêng cho test — lý do như `0002`.
+**Sáu lớp.**
+
+- **Lớp cấu hình.** Nơi duy nhất đọc môi trường. Trả lời `is_workspace` bằng hợp của danh
+  sách env bất biến và store.
+- **Lớp store.** Đọc/ghi danh sách workspace. Ghi bằng file tạm rồi `rename`, nối tiếp bằng
+  một khoá trong tiến trình.
+- **Lớp git.** Gọi `git` bằng argv với môi trường dựng mới. Chỉ clone và pull.
+- **Lớp phiên.** Giữ nguyên từ `0002`: mỗi session một client SDK, vòng đời do app quyết.
+- **Lớp dịch vụ.** Nơi duy nhất có logic nghiệp vụ. Bốn lớp trên chỉ được gọi từ đây.
+- **Lớp trình bày.** Hai lối vào, không logic: route JSON của FastAPI mount qua
+  `api_transformer`, và các event handler của Reflex vẽ trang.
 
 **Ranh giới và dữ liệu đi qua.**
 
 | Ranh giới | Đi vào | Đi ra |
 |---|---|---|
-| Trình duyệt → HTTP | `name`, `label`, `repo_url` | số đếm, danh sách, lỗi |
-| HTTP → store | `name`, `label` | mục, hoặc danh sách mục |
-| HTTP → git | `name`, `repo_url` | thành công, hoặc lỗi có nội dung |
+| Trình duyệt → Reflex `/_event` | thao tác của người dùng | cập nhật state, trang vẽ lại |
+| Lệnh kiểm → `/api/*` | `name`, `label`, `repo_url`, prompt | số đếm, danh sách, luồng phản hồi |
+| Lớp trình bày → lớp dịch vụ | tham số đã hợp lệ hoá | kết quả, hoặc lỗi có nội dung |
+| Lớp dịch vụ → git | `name`, `repo_url` | thành công, hoặc lỗi |
 | git → mạng | `repo_url` | nội dung repo |
-| store → đĩa | mục | file JSON dưới `working_dir` |
-| cấu hình → mọi cổng gác | một path | thuộc/không thuộc |
+| Lớp dịch vụ → store | mục | file JSON dưới `working_dir` |
+| Lớp phiên → đĩa | không do app ghi | SDK tự ghi transcript |
 
-**Store nằm ngoài repo, dưới chính working folder.** Trả lời `intent.md:105-106` (OQ5):
-không commit, vì nó chứa những gì người dùng đã clone về máy mình. Đặt dưới `working_dir`
-để nó đi cùng cái gốc mà nó mô tả, và để không có trạng thái nào của app nằm ở chỗ thứ ba.
-File mang một số `version` để lần đổi hình dạng sau không phải đoán.
+**Store nằm ngoài repo, dưới chính working folder.** Trả lời `intent.md` OQ5: không commit,
+vì nó chứa những gì người dùng đã clone về máy mình. File mang một số `version`.
 
 **Hai nguồn workspace, thứ tự rõ ràng.** `COS_WORKSPACES` của `0002` không bị bỏ và không
-được tự động chuyển vào store. Một path thuộc nếu nó có ở một trong hai nguồn. Khi
-`COS_WORKING_DIR` không được đặt, lớp store tắt hẳn và app cư xử đúng như `0002` — đó là
-cách R14 được giữ.
+được tự động chuyển vào store. Khi `COS_WORKING_DIR` không đặt, lớp store tắt hẳn và app cư
+xử đúng như `0002` — đó là cách R6 được giữ.
 
-**"Khởi động lại" trong lệnh kiểm** là dựng lại app từ đúng môi trường cũ, không phải dựng
-lại từ một `Config` tạo trong bộ nhớ. Nếu trạng thái sống sót qua một lần dựng lại như thế
-thì nó đến từ đĩa chứ không từ tiến trình, và đó là toàn bộ điều R9 cần chứng minh.
-
-**Không có kho dữ liệu thứ hai cho session.** Store chỉ chứa workspace và label. Session
-store của SDK vẫn là nguồn sự thật cho hội thoại
-(`.cos/0002_no-session-management/spec.md:135-141`).
+**"Khởi động lại" trong lệnh kiểm** là dựng lại app từ đúng môi trường cũ. Nếu trạng thái
+sống sót qua đó thì nó đến từ đĩa, và đó là toàn bộ điều R19 cần chứng minh.
 
 ## Out of scope
 
-- **Đăng ký một thư mục bất kỳ trên máy bằng đường dẫn tuyệt đối.** `intent.md:70-75` cấm.
-  Project nằm ngoài gốc vẫn đi qua `COS_WORKSPACES`. Xem C4 — đây là chỗ đau nhất của
-  thiết kế này.
-- **Clone repo riêng tư.** Cần credential, và app không có chỗ hỏi. R5 chọn thất bại nhanh
-  thay vì treo. `intent.md:97-99` (OQ1) được trả lời theo nghĩa "không treo", không theo
-  nghĩa "làm được".
-- **`git` ngoài clone và pull.** Branch, commit, push, fetch, checkout, submodule. Chúng
-  thuộc intent sau, và intent đó phải bật tool cho session trước
-  (`intent.md:80-82`).
+- **Đăng ký thư mục bất kỳ bằng đường dẫn tuyệt đối.** `intent.md` cấm. Project ngoài gốc
+  vẫn đi qua `COS_WORKSPACES`. Xem C4.
+- **Clone repo riêng tư.** R15 chọn thất bại nhanh thay vì treo.
+- **`git` ngoài clone và pull.**
 - **Bật tool cho session.** Bốn knob của `0002` giữ nguyên mặc định
   (`.cos/0002_no-session-management/spec.md:112-115`).
-- **Hiện branch, trạng thái sạch/bẩn, số commit đi sau** trong danh sách. Hữu ích, nhưng là
-  năng lực thứ ba và tác giả đã cắt nó khi chọn phạm vi git.
-- **Xoá thư mục khỏi đĩa.** Xem R8 và C6.
-- **Tự động dọn workspace trỏ vào thư mục đã mất.** Hiện cờ `missing`, không tự xoá.
-- **Nhiều người dùng, đăng nhập, TLS, giao diện đẹp.** Như `0002`.
+- **Hiện branch, trạng thái sạch/bẩn, số commit đi sau.**
+- **Xoá thư mục khỏi đĩa.** Xem R18 và C6.
+- **Tự động dọn workspace trỏ vào thư mục đã mất.**
+- **Sửa 13 trích dẫn chết trong `.cos/0002_no-session-management/plan.md`.** Xem C14.
+- **Giao diện đẹp như một mục tiêu riêng.** Thứ đo được là R8 và R9; "đẹp" không đo được và
+  không nằm trong kết quả.
+- **Nhiều người dùng, đăng nhập, TLS.**
 
 ## Concerns
 
 **C1 — `is_workspace` mất chỗ dựa cũ.** Ở `0002` nó đứng được một phần nhờ danh sách bất
-biến suốt đời tiến trình (`app/config.py:82-94`). Sau unit này danh sách đổi được trong lúc
-chạy, nên cùng một hàm phải chịu tải lớn hơn. Câu trả lời của thiết kế là R2 và R11: không
-lưu đường dẫn, dựng từ gốc, kiểm lúc đọc. **Chỗ này hỏng thì mọi thứ khác trong `0002` hỏng
-theo**, vì cả ba đường làm việc đều gọi nó.
+biến suốt đời tiến trình (`app/config.py:82-94`). Câu trả lời của thiết kế là R12 và R21.
+Chỗ này hỏng thì mọi thứ khác trong `0002` hỏng theo.
 
-**C2 — App lần đầu chạy tiến trình ngoài và lần đầu chạm mạng.** `0002` không làm cả hai.
-`.cos/0002_no-session-management/spec.md:121-125` (C3) nói rõ: đường nào trong app chạy lệnh
-theo chữ người dùng gửi là đường làm lộ token. R5 là câu trả lời trực tiếp cho câu đó — argv
-chứ không shell, subcommand cố định, môi trường dựng mới chứ không kế thừa. Đây là yêu cầu
-an toàn trung tâm của unit này, không phải một chi tiết hiện thực.
+**C2 — App lần đầu chạy tiến trình ngoài và lần đầu chạm mạng.**
+`.cos/0002_no-session-management/spec.md:121-125` (C3) nói rõ: đường nào chạy lệnh theo chữ
+người dùng gửi là đường làm lộ token. R15 là câu trả lời trực tiếp — argv chứ không shell,
+subcommand cố định, môi trường dựng mới chứ không kế thừa.
 
-**C3 — Thời gian chờ là một quyết định, không phải một phép đo.** Clone và pull phải có hạn
-thời gian, nếu không một repo lớn hoặc một host im lặng giữ mãi một request. Con số đề xuất:
-**120 giây cho clone, 60 giây cho pull**. **Không có nguồn** — đây là lựa chọn ở đây, chưa
-đo lần nào trên repo thật, và là thứ nên chỉnh sau lần chạy đầu chứ không nên tin.
+**C3 — Thời gian chờ là quyết định, không phải phép đo.** Đề xuất **120 giây cho clone, 60
+giây cho pull**. **Không có nguồn** — chọn ở đây, chưa đo lần nào, nên chỉnh sau lần chạy
+đầu chứ đừng tin.
 
-**C4 — Unit này không giải hết vấn đề mà `intent.md` nêu, và đó là một mâu thuẫn có thật.**
-`intent.md:6-9` than rằng thêm một project nghĩa là tắt app, sửa env, bật lại. Với ràng buộc
-gốc-bằng-env ở `intent.md:70-72`, điều đó **vẫn đúng** cho mọi project đang nằm ngoài
-`working_dir` — tức tất cả project hiện có. Chỉ project sinh ra dưới gốc mới thoát.
+**C4 — Unit này không giải hết vấn đề mà `intent.md` nêu.** Với gốc-bằng-env, mọi project
+đang nằm ngoài `working_dir` **vẫn** phải sửa env và khởi động lại — tức tất cả project hiện
+có. Ba lối: (a) chấp nhận và chuyển dần project về dưới gốc; (b) cho `COS_WORKING_DIR` nhận
+nhiều gốc, vẫn env; (c) cho đăng ký đường dẫn tuyệt đối. **Người quyết là tác giả**, vì (b)
+và (c) sửa constraint trong intent chứ không sửa thiết kế. Không ai quyết thì mặc định là
+(a), và khi đó phải nói thẳng rằng vấn đề chỉ được giải một nửa.
 
-Ba lối, và spec này **không** chọn: (a) chấp nhận, và chuyển dần project về dưới gốc; (b)
-cho `COS_WORKING_DIR` nhận nhiều gốc, vẫn env, vẫn không đặt được qua HTTP; (c) cho đăng ký
-đường dẫn tuyệt đối, tức bỏ ràng buộc `intent.md:70-75`. **Người quyết là tác giả**, vì (b)
-và (c) đều sửa constraint trong intent chứ không phải sửa thiết kế. Nếu không ai quyết,
-mặc định là (a) — và khi đó phải nói thẳng rằng vấn đề chỉ được giải một nửa.
+**C5 — Clone dở dang.** R16 chọn thứ tự clone-vào-tạm → rename → ghi store, nên trạng thái
+xấu nhất là một thư mục tạm bị bỏ quên, không phải một workspace hỏng. Thư mục tạm bỏ quên
+vẫn là rác **chưa ai dọn**.
 
-**C5 — Clone dở dang.** Một clone bị ngắt giữa chừng để lại thư mục lưng chừng trong
-`working_dir`, và nếu store đã ghi trước thì danh sách có một mục không dùng được. R6 chọn
-thứ tự clone-vào-tạm → rename → ghi store, nên trạng thái xấu nhất là một thư mục tạm bị bỏ
-quên, không phải một workspace hỏng. Thư mục tạm bị bỏ quên vẫn là rác **chưa ai dọn**.
+**C6 — Xoá không đụng đĩa là quyết định, và nó sẽ gây khó chịu.** App không có undo, còn
+một thư mục clone có thể chứa công việc chưa commit. Hậu quả: `working_dir` đầy dần thư mục
+không còn trong danh sách. Chọn giữa rác và mất việc; unit này chọn rác.
 
-**C6 — Xoá không đụng đĩa là quyết định, và nó sẽ gây khó chịu.** Người dùng bấm xoá sẽ có
-lúc nghĩ là thư mục biến mất. Lý do chọn: app không có undo, còn một thư mục clone có thể
-chứa công việc chưa commit. Hậu quả: `working_dir` sẽ đầy dần những thư mục không còn trong
-danh sách. Đây là lựa chọn giữa rác và mất việc, và unit này chọn rác.
-
-**C7 — `pull --ff-only` sẽ thất bại thường xuyên, và đó là hành vi đúng.** Cây bẩn, nhánh
-phân kỳ, không có upstream — tất cả đều là lỗi. Rủi ro không nằm ở việc nó thất bại mà ở
-việc nó thất bại **im lặng**; R10 đòi lỗi phải ra tới người gọi. Thêm một chỗ chưa ai nghĩ
-hết: pull vào một workspace đang có session chạy dở sẽ đổi file dưới chân Claude giữa lượt.
-Không có khoá nào ngăn, và unit này không dựng.
+**C7 — `pull --ff-only` sẽ thất bại thường xuyên, và đó là hành vi đúng.** Rủi ro nằm ở
+việc nó thất bại **im lặng**; R20 đòi lỗi ra tới người gọi. Thêm một chỗ chưa ai nghĩ hết:
+pull vào workspace đang có session chạy dở sẽ đổi file dưới chân Claude giữa lượt. Không có
+khoá nào ngăn, và unit này không dựng.
 
 **C8 — Store là trạng thái đầu tiên app tự sở hữu.** `0002` cố ý không có
 (`.cos/0002_no-session-management/spec.md:61`). Một khi có file để ghi, cám dỗ ghi thêm
-message, tóm tắt, thứ tự session vào đó là có thật — và
-`.cos/0002_no-session-management/spec.md:135-141` (C6) đã viết sẵn lý do không được:
-nguồn sự thật của hội thoại là cái Claude thực sự đọc. Store này chỉ được chứa workspace và
-label.
+message vào đó là có thật, và
+`.cos/0002_no-session-management/spec.md:135-141` (C6) đã viết sẵn lý do không được. Store
+này chỉ được chứa workspace và label.
 
-**C9 — Đây chưa phải kho cấu hình trung tâm ở `0002` C8.**
-`.cos/0002_no-session-management/spec.md:146-151` nói tới một kho phục vụ nhiều hồ sơ agent.
-Store ở đây lưu workspace, không lưu knob, không lưu hồ sơ. Bốn knob vẫn chỉ đọc từ env.
-Nhầm hai thứ này là cách một file JSON nhỏ lớn lên thành schema chưa ai thiết kế.
+**C9 — Đây chưa phải kho cấu hình trung tâm ở `0002` C8.** Store lưu workspace, không lưu
+knob, không lưu hồ sơ agent. Bốn knob vẫn chỉ đọc từ env.
 
 **C10 — Hạn mức vẫn không được đếm.** `.cos/0002_no-session-management/spec.md:127-128`
-(C4) còn nguyên hiệu lực, và unit này thêm hai thứ tiêu được: băng thông và đĩa. Một vòng
-lặp hỏng gọi clone tốn nhiều hơn một vòng lặp hỏng gọi chat.
+còn nguyên hiệu lực, và unit này thêm băng thông, đĩa, và một toolchain Node.
+
+**C11 — Đường người dùng thật sự bấm vẫn là đường không ai chứng minh, chỉ là lật ngược.**
+`app/web.py:3-5` phản đối route chỉ dùng cho test, vì đó là route không ai chạy thật. Sau
+unit này, lệnh kiểm chạy `/api/*` còn người dùng chạy `/_event` của Reflex — nên cái không
+được chứng minh lại chính là **cái người dùng dùng**. R10 là thứ duy nhất đang giữ hai lối
+khỏi trôi khỏi nhau, và R10 là một quy ước về cấu trúc, **không phải một phép kiểm tự
+động**. Đây là món nợ rõ ràng nhất mà unit này tạo ra. Người quyết có chấp nhận nó không là
+tác giả; spec này không tự đóng.
+
+**C12 — Repo có bước biên dịch, và `.claude/CLAUDE.md:17` nói là không có.** Dòng đó còn
+cấm bịa ra lệnh build. Reflex biên dịch frontend sang JavaScript. File đó phải được sửa cho
+đúng — lách bằng cách không gọi nó là build step thì chỉ là nói dối chậm hơn.
+
+**C13 — Unit này viết lại bằng chứng duy nhất của một unit đã đóng.**
+`scripts/verify_0002.py` là thứ duy nhất chứng minh `0002` từng đạt. R6 giới hạn thay đổi ở
+client và import, nhưng không có gì **ép** điều đó ngoài người đọc diff. Cùng loại rủi ro mà
+`.claude/CLAUDE.md` chặn cho `0001` bằng cách cấm xoá `channel/` — chỉ là ở đây không có
+lệnh cấm nào tương đương.
+
+**C14 — 13 trích dẫn sẽ chết và unit này không sửa.**
+`.cos/0002_no-session-management/plan.md` trỏ vào `app/*.py` ở 13 chỗ; sau R1 chúng trỏ vào
+hư không. Sửa nghĩa là viết lại một artifact đã ký; không sửa nghĩa là harness có trích dẫn
+hỏng, trong khi chính nó đòi "cite only a file committed in this repository". Không lối nào
+sạch. Unit này chọn không sửa và ghi lại ở đây; **tác giả quyết** nếu muốn khác.
+
+**C15 — Reflex kéo theo một toolchain không phải Python.** Node/bun, thư mục `.web/`, một
+lockfile frontend phải commit, và lần chạy đầu cần mạng để tải. Trước unit này repo chạy
+được từ source không cần gì ngoài `uv sync` và `npm test`. Sau nó thì không.
+
+**C16 — Streaming có hai đường và chúng dễ lệch.** `0002` stream NDJSON qua `/api/send`
+(`app/web.py:90-107`). Trang Reflex sẽ stream bằng state update, không bằng NDJSON. R10 đòi
+cả hai đi qua cùng lớp dịch vụ, nhưng hình dạng dữ liệu hai bên vẫn khác nhau — và chỗ lệch
+sẽ xuất hiện ở xử lý lỗi giữa chừng, đúng chỗ `app/web.py:70-74` cảnh báo rằng status đã
+gửi trước khi lỗi xảy ra.
 
 ## Open questions
 
-1. **Đã trả lời** (`intent.md:97-99`, OQ1): clone repo riêng tư nằm ngoài phạm vi. R5 chọn
-   thất bại nhanh và rõ thay vì treo chờ một mật khẩu không ai gõ được. Credential cần một
-   intent riêng.
-2. **Đã trả lời** (`intent.md` OQ2): metadata chỉ có `label`. Nguồn, cờ `missing` và đường
-   dẫn là thứ tính ra lúc đọc, không lưu. Mỗi trường lưu thêm là một trường phải di trú.
-3. **Đã trả lời** (`intent.md` OQ3): xoá là gỡ khỏi danh sách. Xem R8 và C6.
-4. **Đã trả lời** (`intent.md` OQ4): hiện cờ `missing`, không tự dọn, và từ chối tạo session
-   trong đó. Tự dọn là thao tác không hồi phục được dựa trên một suy đoán.
-5. **Đã trả lời** (`intent.md` OQ5): file JSON dưới `working_dir`, không commit.
-6. **Còn mở** (`intent.md` OQ6): docstring sai của `with_workspaces`
-   (`app/config.py:117-118` so với `scripts/verify_0002.py:96`). Sửa docstring là một dòng;
-   câu hỏi thật là hàm đó còn nên tồn tại không khi store đã có. Plan quyết.
-7. **Còn mở, và là câu ở C4:** một gốc hay nhiều gốc? Trả lời "nhiều" thì sửa `intent.md:70`
-   và phần lớn vấn đề gốc được giải ngay; trả lời "một" thì unit này giải một nửa và phải
-   ghi rõ như vậy. Đợi tác giả.
-8. **Còn mở:** hai app cùng chạy trên một `working_dir` thì store bị hai tiến trình ghi.
-   Khoá trong tiến trình không đủ. Chưa gặp, vì đây là công cụ một người — nhưng `0002` OQ3
-   đã cho thấy chính xác kiểu hỏng này mất dữ liệu im lặng
-   (`.cos/0002_no-session-management/spec.md:165-176`), nên nó đáng ghi trước khi đáng sửa.
+1. **Đã trả lời** (`intent.md` OQ1): clone repo riêng tư ngoài phạm vi. R15 chọn thất bại
+   nhanh và rõ thay vì treo chờ một mật khẩu không ai gõ được.
+2. **Đã trả lời** (OQ2): metadata chỉ có `label`. Nguồn, cờ `missing` và đường dẫn là thứ
+   tính lúc đọc, không lưu.
+3. **Đã trả lời** (OQ3): xoá là gỡ khỏi danh sách. Xem R18 và C6.
+4. **Đã trả lời** (OQ4): hiện cờ `missing`, không tự dọn, và từ chối tạo session trong đó.
+5. **Đã trả lời** (OQ5): file JSON dưới `working_dir`, không commit.
+6. **Còn mở** (OQ6): `with_workspaces` — sửa docstring hay bỏ hẳn? Store đã làm thay việc
+   của nó. Plan quyết.
+7. **Còn mở** (OQ7, và là C14): 13 trích dẫn chết. Tác giả quyết.
+8. **Còn mở** (OQ8, và là C11): lấy gì chứng minh đường người dùng thật sự bấm? Một lựa
+   chọn là kiểm giao diện bằng công cụ điều khiển trình duyệt — nhưng `intent.md` đã đặt
+   "không cần trình duyệt" thành một phần của kết quả, nên nó sẽ là một unit riêng với một
+   lý do riêng.
+9. **Còn mở** (OQ9, và là C12): `.claude/CLAUDE.md:17` sửa thành gì? Nếu có lệnh build thì
+   nó phải được ghi cạnh `npm test` và phải có ai đó chạy nó — nếu không, nó là một lệnh
+   trong tài liệu mà không ai gọi.
+10. **Còn mở, và là câu ở C4:** một gốc hay nhiều gốc?
+11. **Còn mở:** hai app cùng chạy trên một `working_dir` thì store bị hai tiến trình ghi.
+    Khoá trong tiến trình không đủ. `0002` OQ3 đã cho thấy chính xác kiểu hỏng này mất dữ
+    liệu im lặng (`.cos/0002_no-session-management/spec.md:165-176`).
+12. **Còn mở:** Reflex có chạy được với layout phẳng mà gói tên khác `app_name` không, và có
+    chịu được việc `rxconfig.py` sống cạnh một repo đã có `package.json` và `channel/`
+    không? Chưa kiểm. Plan phải kiểm trước khi xây gì lên trên.
