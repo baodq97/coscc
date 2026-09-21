@@ -1,5 +1,5 @@
 # Plan: A localhost web channel into a running Claude Code session
-Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
 Concern C1 trong `spec.md` đã được tác giả quyết: **tự viết, không dùng `fakechat`**, lý do
 là cần chỗ để tích hợp sâu về sau. `fakechat` là một tab chat rồi hết, không có bề mặt để

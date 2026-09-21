@@ -6,14 +6,21 @@ Reference: `.claude/harness.md`. Each stage's rules live in its own skill.
 ## Commands
 
 ```
-node --test '.claude/scripts/*.test.mjs'
+npm test                                          # node --test over channel/ and .claude/scripts/
 node .claude/scripts/cos.mjs status               # where every unit stands
 node .claude/scripts/cos.mjs gate <unit> <stage>  # exit 0 = stage may proceed
 node .claude/scripts/cos.mjs new-path <slug>      # next work unit path
 ```
 
 Tests must be green before any task is reported complete; never skip or delete a failing
-one. No application code yet — add its build, test and lint commands here when it arrives.
+one. There is no build step — the channel runs from source — and no linter. Do not invent a
+command for either; add one here if one ever exists.
+
+The web channel registers only in an interactive session, never under `--print`:
+
+```
+claude --dangerously-load-development-channels server:webchannel   # then http://127.0.0.1:8789
+```
 
 ## The loop
 
