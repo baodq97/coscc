@@ -246,6 +246,13 @@ Con số 2 lấy từ `intent.md`. Muốn đổi thì sửa ở đó, không s�
 
 ## What this plan does not do
 
+- **`spec.md` OQ6 đã trả lời sau khi đóng unit, ngày 2026-09-21: bỏ `with_workspaces`.**
+  Spec giao cho plan quyết và plan đã đóng mà chưa quyết — đây là chỗ bù. Hàm đó là mutator
+  cấu hình duy nhất, docstring nói nó phục vụ lệnh kiểm trong khi lệnh kiểm dựng `Config`
+  thẳng, và chỉ test của chính nó còn gọi. Store đã nhận việc đổi danh sách workspace, nên
+  một đường thứ hai là một thứ nữa phải suy nghĩ. Xoá, thay bằng một test khẳng định không
+  còn mutator nào. Cùng commit: `rxconfig.py` trích `app/config.py:55`, một đường dẫn không
+  còn tồn tại sau bước 3 — sửa thành `cos_baodo/config.py:60`.
 - **Không sửa 13 trích dẫn chết trong `.cos/0002_no-session-management/plan.md`**
   (`spec.md` C14). Sửa là viết lại một artifact đã ký. Tác giả quyết; plan này không tự
   quyết hộ.

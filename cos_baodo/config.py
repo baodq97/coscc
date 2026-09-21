@@ -13,7 +13,7 @@ turning it on hands a loopback port a capability it does not need to reach the o
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Tools that write to disk or run commands. Kept as a named set so that knob 2 has teeth:
@@ -130,8 +130,3 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         port=int(e.get(_ENV_PREFIX + "PORT", "8790")),
         model=e.get(_ENV_PREFIX + "MODEL") or None,
     )
-
-
-def with_workspaces(config: Config, workspaces: list[str]) -> Config:
-    """Used by the proof command, which creates its second project in a temp directory."""
-    return replace(config, workspaces=tuple(workspaces))

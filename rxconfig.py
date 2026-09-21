@@ -6,7 +6,7 @@ the repo root, which is why there is no `src/`.
 `backend_host` is set explicitly because Reflex 0.9.11 defaults it to `0.0.0.0` — verified
 on 2026-09-21 by reading `Config.__dataclass_fields__["backend_host"].default`, and by
 `ss -ltn` showing `0.0.0.0:8000` before this line existed. `0002` defaulted the other way
-(`app/config.py:55`), so adopting Reflex silently reverses that posture. `spec.md` R5 is
+(`cos_baodo/config.py:60`), so adopting Reflex silently reverses that posture. `spec.md` R5 is
 the requirement this line answers; deleting it must be a visible edit.
 """
 

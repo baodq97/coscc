@@ -7,7 +7,7 @@ value that drifts because nobody was watching.
 
 import unittest
 
-from cos_baodo.config import Config, from_env, with_workspaces
+from cos_baodo.config import Config, from_env
 
 
 class DefaultsAreTheSafePosture(unittest.TestCase):
@@ -54,12 +54,17 @@ class Knob3IsReachableOnlyFromTheEnvironment(unittest.TestCase):
         with self.assertRaises(Exception):
             c.bypass_permissions = True  # type: ignore[misc]
 
-    def test_the_helper_that_does_exist_cannot_touch_the_knobs(self):
-        # with_workspaces is the one mutator the app has. Show it leaves knobs alone.
-        c = with_workspaces(from_env({"COS_BYPASS_PERMISSIONS": "1"}), ["/tmp/a"])
-        self.assertEqual(c.workspaces, ("/tmp/a",))
-        self.assertTrue(c.bypass_permissions)
-        self.assertFalse(with_workspaces(from_env({}), ["/tmp/a"]).bypass_permissions)
+    def test_there_is_no_mutator_left_on_the_config(self):
+        """`0003` OQ6, answered by deleting rather than documenting.
+
+        `with_workspaces` was the app's one config mutator. Its docstring claimed the
+        proof command used it; the proof built a `Config` directly and never called it, so
+        only its own test kept it alive. The store now owns changing the workspace list,
+        and a second way to do it would be a second thing to reason about.
+        """
+        import cos_baodo.config as config
+
+        self.assertFalse([n for n in dir(config) if n.startswith("with_")])
 
 
 class Knob4GuardsResume(unittest.TestCase):
