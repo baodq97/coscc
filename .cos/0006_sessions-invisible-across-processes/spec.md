@@ -128,18 +128,34 @@ Lớp `git` không đổi và vẫn không biết gì về session.
 
 ## Concerns
 
-**C1 — Cái hại đang được chặn hôm nay là giả định, không phải quan sát. Đây là điều đáng
-đọc kỹ nhất trong file này.** Session mặc định là **chat thuần, không tool nào**
-(`cos_baodo/config.py:44-45`). Một session không tool thì **không đọc file nào trong
-workspace** — transcript nằm ở kho của SDK, không nằm trong thư mục. Nên hôm nay, `pull` đổi
-file trong một workspace đang có session sống **không cắt gì cả**: không có ai đang đọc.
+**C1 — Session "chat thuần" vẫn đọc file trong workspace, và app đang hiểu sai vì sao.**
+Bản đầu của C1 viết rằng cái hại này là giả định: không tool thì không đọc file, nên `pull`
+chẳng cắt gì. **Sai.** Kiểm lại trước khi viết plan thì ra ngược lại, và chỗ sai không nằm
+trong lập luận mà nằm trong code.
 
-Nghĩa là unit này không sửa một lỗi ai đó quan sát được; nó dựng một bảo đảm **trước khi**
-knob 1 được bật. Điều đó có thể đúng — bật tool là một dòng env, và lúc ấy lỗi sẽ im lặng
-đúng như `intent.md` mô tả. Nhưng phải nói ra, vì `.cos/0005_silent-concurrent-loss/spec.md:31-45`
-nhóm B cũng đứng trên cùng giả định ấy mà không nói, và vì repo này có luật cắt con số không
-nguồn. **Người quyết là tác giả**: nếu câu trả lời là "chưa cần", việc đúng là dừng ở đây và
-ghi lý do, không phải làm rồi gọi nó là sửa lỗi.
+`cos_baodo/sessions.py:126` truyền `setting_sources=None` kèm chú thích "no project/user
+settings can widen the tool list". `claude-agent-sdk` 0.2.157 (ghim ở `uv.lock:179-180`)
+nói ngược: `None` nghĩa là **nạp hết** — user, project, local — và `[]` mới là tắt. Tài liệu
+của chính trường đó còn ghi rằng phải có `"project"` thì `CLAUDE.md` mới được nạp; `None`
+bao gồm `"project"`.
+
+Nên một session, dù không tool nào, vẫn đọc `CLAUDE.md` và `.claude/settings.json` **trong
+workspace**. `git pull` đổi được cả hai. Cái hại của `intent.md` là thật, không phải chờ ai
+bật knob 1.
+
+Hai điều phải tách cho rõ, vì chúng không cùng số phận:
+
+- **Kết luận "không tool nào" vẫn đúng**, nhưng nhờ một trường khác: `tools=[]` là tập nền
+  của built-in tool, và SDK nói `allowed_tools` chỉ quyết định có hỏi quyền hay không. Không
+  có settings nào thêm built-in tool vào một tập nền rỗng.
+- **Lý do ghi trong chú thích thì sai**, và nó sai theo hướng nguy hiểm: người đọc tiếp theo
+  sẽ tưởng `setting_sources=None` là một lớp khoá. Nó là mặc định của CLI.
+
+**Chưa kiểm, và nằm ngoài unit này:** `.claude/settings.json` của một workspace có thể khai
+MCP server. Nếu settings được nạp thì đó là một đường mở rộng năng lực **không đi qua**
+`tools`, tức lập luận "tập nền rỗng" không che nó. Đây là bề mặt an toàn của
+`.cos/0002_no-session-management/spec.md` C2, không phải của `0006`. **Người quyết là tác
+giả** — nó đáng một unit riêng, và nó không nên bị sửa lẫn vào đây.
 
 **C2 — Sửa xong vẫn không khớp với câu người dùng nói.** Với họ, "tôi đang mở session trong
 `foo`" là một câu. Sau unit này nó là hai: session của app thì thấy, session `claude` gõ ở
@@ -175,7 +191,12 @@ Linux qua WSL; một working folder đặt trên `/mnt/c` là tình huống rấ
 này và **chưa kiểm**. Nếu khoá im lặng không có tác dụng ở đó thì mọi phép kiểm vẫn xanh trên
 `/home` và sai ở chỗ người ta thật sự để code. Đáng kiểm một lần trong lúc làm.
 
-**C8 — Phép kiểm dễ xanh vì sai lý do.** `intent.md` open question 5 lo phải dàn cuộc đua
+**C8 — `CLAUDE.md` của chính repo này nằm trong một workspace người ta sẽ `pull`.** Hệ quả
+trực tiếp của C1, và đáng nói riêng vì nó là trường hợp gần nhất: `cos-baodo` tự nó là một
+workspace hợp lệ. Một `pull` trên nó trong lúc có session sống đổi đúng file mà session đang
+đọc để biết luật của repo.
+
+**C9 — Phép kiểm dễ xanh vì sai lý do.** `intent.md` open question 5 lo phải dàn cuộc đua
 đúng lúc A ở giữa một lượt. Hình dạng ở `## Design` **xoá** lo đó: dấu hiệu sống bằng đời
 client nên không cần bắt đúng khoảnh khắc. Đổi lại là một cái bẫy khác — nếu lệnh kiểm chạy
 hai tiến trình mà chúng không thật sự dùng chung working folder, mọi mệnh đề sẽ xanh mà
@@ -189,7 +210,7 @@ cho thấy kết quả đúng.
    `## Design`; R11 là phép kiểm.
 3. **Còn mở** (OQ3, và là C5): bị từ chối rồi thì làm gì. Rộng hơn `0005` OQ5 một bậc.
 4. **Đã trả lời** (OQ4, và là C6): có, `flock` nặng thêm một bậc. C7 là phần chưa kiểm.
-5. **Đã trả lời** (OQ5): không cần dàn cuộc đua nữa — xem C8 cho cái bẫy thay thế.
+5. **Đã trả lời** (OQ5): không cần dàn cuộc đua nữa — xem C9 cho cái bẫy thay thế.
 6. **Mới:** hai app chạy với **hai** `COS_WORKING_DIR` khác nhau nhưng trỏ vào cùng một
    workspace qua symlink thì sao? Dấu hiệu nằm theo working folder, nên chúng sẽ là hai file
    khác nhau và không thấy nhau. Hẹp, nhưng nó là đúng lỗ này ở một hình dạng khác.
