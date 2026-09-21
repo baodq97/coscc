@@ -43,6 +43,14 @@ còn chạy song song mà so sánh (`spec.md` open question 5).
    Kiểm: `curl -X POST localhost:8789 -d 'spike'` và thẻ `<channel>` chứa `spike` xuất hiện
    trong session. **Nếu bước này hỏng, dừng lại và sửa `spec.md`, đừng đi tiếp.**
 
+   **Lệch so với dự kiến, ghi lại ngày 2026-09-21:** bước này **không chạy được bằng agent**.
+   Ở chế độ `--print`, với cả `--channels` lẫn cờ dev, debug log không hề có dòng đăng ký
+   channel nào — không "registered", không "skipped", không cả lỗi allowlist — trong khi
+   server vẫn kết nối MCP bình thường và khai báo đúng `experimental: {"claude/channel": {}}`
+   (kiểm trực tiếp bằng một lời gọi `initialize`). Channel dường như chỉ sống trong session
+   tương tác. Vì vậy bước 2 phải do con người chạy trong một session thật, và mọi bước sau
+   phụ thuộc vào nó cũng vậy.
+
 3. **Transcript trước giao diện.** Viết `channel/transcript.mjs`: nối tiếp một bản ghi JSON
    mỗi dòng, gồm thời điểm ISO-8601, hướng (`in`/`out`), định danh session, nội dung, và
    trạng thái giao (`written` khi đã ghi ra transport, `delivered` khi session đã phản hồi).
@@ -90,6 +98,12 @@ ngay từ bước 3, không phải thêm vào sau.
 **Cờ dev mỗi lần khởi động.** Channel tự viết không nằm trong allowlist, nên mỗi session đều
 qua một hộp thoại toàn màn hình. Dấu hiệu: bạn ngừng dùng nó sau vài ngày — tức vấn đề trong
 `intent.md` chưa được giải dù con số 10 đã đạt.
+
+**Không tự kiểm được từ trong session.** Channel không đăng ký ở chế độ headless (xem lệch
+ghi ở bước 2), nên không có cách nào chạy `## Proof` đầu-cuối bằng một lệnh không người
+trông. Dấu hiệu: đã thấy rồi — hai lần chạy `-p` đều im lặng. Hệ quả: phần chứng minh của
+đơn vị công việc này buộc phải có người ngồi đó, và điều đó cần được nhớ khi sau này muốn tự
+động hoá.
 
 **Node đi đường ít người đi hơn.** Ví dụ chính thức viết bằng Bun. SDK không phụ thuộc
 runtime, nhưng phần HTTP và luồng đẩy thì có. Dấu hiệu: bước 4 hoặc 5 sa lầy quá lâu. Lối

@@ -1,0 +1,12 @@
+{
+  "name": "cos-baodo",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test 'channel/*.test.mjs' '.claude/scripts/*.test.mjs'"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}
