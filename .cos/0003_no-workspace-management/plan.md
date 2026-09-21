@@ -205,6 +205,21 @@ thật từ `https://github.com/octocat/Hello-World.git` (đĩa + store + hàng 
 cho đủ. Bằng chứng thường trực cho trang vẫn chưa có, và nó là một unit riêng, vì
 `intent.md` đặt "không cần trình duyệt" thành một phần của kết quả.
 
+## C4 closed as accepted, 2026-09-21
+
+`spec.md` C4 nêu mâu thuẫn thật: một gốc khai báo bằng env nghĩa là mọi project **đang có**
+ngoài gốc vẫn phải sửa `COS_WORKSPACES` rồi khởi động lại — đúng điều `intent.md:6-9` than
+phiền. Spec liệt ba lối và không chọn, vì hai trong ba sửa constraint của intent.
+
+**Tác giả chọn (a): chấp nhận.** Lý do nêu ngày 2026-09-21: project từ nay đều **triển khai
+mới hoặc clone mới** vào gốc, nên tập "project cũ nằm ngoài gốc" là hữu hạn và đang co lại,
+không phải một lớp vấn đề thường trực.
+
+Ghi là **đã quyết**, không phải **chưa làm**. Khác biệt có ý nghĩa: một mâu thuẫn được cân
+nhắc rồi chấp nhận thì không cần ai mở lại, còn một việc bị bỏ dở thì cần. Nếu về sau xuất
+hiện một project không thể chuyển về dưới gốc, đó là lúc lối (b) — nhiều gốc, vẫn env — đáng
+một intent riêng.
+
 ## C3 and C14 answered, 2026-09-21
 
 Làm như bảo trì trong phạm vi `0003`, **không mở unit mới**. Căn cứ: `spec.md` C3 đã nói
