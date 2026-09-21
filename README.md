@@ -1,7 +1,9 @@
 # cos-baodo
 
 A local AI-native SDLC harness: a unit of work moves from `intent.md` to `spec.md` to
-`plan.md`, each artifact accepted by a human and committed before the next begins.
+`plan.md`, each artifact accepted and committed before the next begins. The agent writes
+those artifacts and accepts its own, so `Status: accepted` records readiness rather than
+approval; `.claude/harness.md` explains what was traded away for that and what is left.
 
 The harness is entirely inside `.claude/`:
 
@@ -13,10 +15,12 @@ The harness is entirely inside `.claude/`:
 | `.claude/scripts/` | The mechanical checks — numbering, gates, status — and their tests. |
 
 Work units live in `.cos/NNNN_<slug>/`. `docs/` holds the playbook this is built from.
+`channel/` is the first thing the harness built: a web page on localhost that talks to a
+running Claude Code session, with `evidence/` holding the transcript it was measured by.
 
 ```
 node .claude/scripts/cos.mjs status   # where everything stands
-node --test '.claude/scripts/*.test.mjs'
+npm test                              # the harness scripts and the channel
 ```
 
 Copying it into another repository means copying `.claude/`. Nothing else is needed, and
