@@ -44,6 +44,8 @@ class Service:
         # No working folder means no store, and the app behaves exactly as `0002` did.
         # That is what keeps `scripts/verify_0002.py` running unchanged (`spec.md` R6).
         self.store = Store(self.config.working_dir) if self.config.working_dir else None
+        # One question, asked in two places. See `Sessions.membership`.
+        self.sessions.membership = self._is_member
 
     # -- workspaces ---------------------------------------------------------
 
@@ -183,18 +185,22 @@ class Service:
 
     # -- sessions -----------------------------------------------------------
 
+    def _is_member(self, cwd: str) -> bool:
+        """The single membership question: env list, or a store entry under the root."""
+        if self.config.is_workspace(cwd):
+            return True
+        return self.store is not None and self.store.resolves_to_entry(cwd)
+
     def _workspace_or_refuse(self, cwd: str) -> str:
         """The single gate. Every capability below goes through it.
 
         `spec.md` R21 wants this asked on every read rather than cached, because after
         `0003` the workspace list is no longer fixed for the life of the process.
         """
-        if self.config.is_workspace(cwd):
-            return cwd
-        # The store half. Membership is recomputed from the working folder every time,
-        # so editing the file by hand cannot widen what this accepts — the entry has to
-        # name a segment, and the segment has to resolve back under the root.
-        if self.store is not None and self.store.resolves_to_entry(cwd):
+        # Recomputed from the working folder every time, so editing the store by hand
+        # cannot widen what this accepts — the entry has to name a segment, and the
+        # segment has to resolve back under the root.
+        if self._is_member(cwd):
             return cwd
         raise Invalid(f"not a configured workspace: {cwd}")
 

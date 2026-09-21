@@ -131,6 +131,15 @@ class Sessions:
 
     def __init__(self, config: Config):
         self.config = config
+        # Who counts as a workspace. Defaults to the env list, and `Service` replaces it
+        # with the union of env and store (`spec.md` R21).
+        #
+        # `0003` found the reason this has to be injected rather than hardcoded: this
+        # layer used to ask `config.is_workspace` directly, so a store-backed workspace
+        # passed the service gate and was refused here — two implementations of one
+        # question, which is exactly what R10 exists to prevent. The guard stays (it is
+        # the last thing before a CLI process is spawned); only the answer is shared.
+        self.membership = config.is_workspace
         self._live: dict[str, Live] = {}
         self._created_here: set[str] = set()
         self._lock = asyncio.Lock()
@@ -156,7 +165,7 @@ class Sessions:
 
         Creates the session when `session_id` is None (R2), resumes it otherwise (R3).
         """
-        if not self.config.is_workspace(cwd):
+        if not self.membership(cwd):
             raise Refused(f"not a configured workspace: {cwd}")
         if session_id is not None and not self.config.may_resume(self.created_here(session_id)):
             # spec.md C1. The transcript is visible in the listing, but writing to it

@@ -112,13 +112,20 @@ def from_env(env: dict[str, str] | None = None) -> Config:
     function. There is deliberately no setter.
     """
     e = dict(os.environ if env is None else env)
+    working_dir = _dir(e, "WORKING_DIR")
+    declared = _list(e, "WORKSPACES")
+    # The cwd fallback is `0002` behaviour and stays for `0002`: with no working folder and
+    # nothing declared, the app is about the directory it was started in. But once a
+    # working folder exists, an undeclared `COS_WORKSPACES` means *none* — silently adding
+    # cwd would put the repo in the list and make a count of "2" read as "3".
+    fallback = () if working_dir else (str(Path.cwd()),)
     return Config(
         tools=_list(e, "TOOLS"),
         allow_write_and_exec=_flag(e, "ALLOW_WRITE_AND_EXEC", False),
         bypass_permissions=_flag(e, "BYPASS_PERMISSIONS", False),
         resume_foreign_sessions=_flag(e, "RESUME_FOREIGN_SESSIONS", False),
-        workspaces=_list(e, "WORKSPACES") or (str(Path.cwd()),),
-        working_dir=_dir(e, "WORKING_DIR"),
+        workspaces=declared or fallback,
+        working_dir=working_dir,
         host=e.get(_ENV_PREFIX + "HOST", "127.0.0.1"),
         port=int(e.get(_ENV_PREFIX + "PORT", "8790")),
         model=e.get(_ENV_PREFIX + "MODEL") or None,

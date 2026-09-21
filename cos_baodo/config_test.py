@@ -102,5 +102,22 @@ class WorkspaceMembership(unittest.TestCase):
         self.assertTrue(c.is_workspace("/tmp/./"))
 
 
+class TheCwdFallback(unittest.TestCase):
+    """`0003` found this the hard way: the fallback made a count of 2 read as 3."""
+
+    def test_no_working_folder_still_falls_back_to_cwd(self):
+        # `0002` behaviour, unchanged. verify_0002.py depends on it.
+        self.assertEqual(len(from_env({}).workspaces), 1)
+
+    def test_a_working_folder_with_nothing_declared_means_no_env_workspaces(self):
+        c = from_env({"COS_WORKING_DIR": "/tmp/ws"})
+        self.assertEqual(c.workspaces, ())
+        self.assertEqual(c.working_dir, "/tmp/ws")
+
+    def test_declared_workspaces_are_kept_alongside_a_working_folder(self):
+        c = from_env({"COS_WORKING_DIR": "/tmp/ws", "COS_WORKSPACES": "/a,/b"})
+        self.assertEqual(c.workspaces, ("/a", "/b"))
+
+
 if __name__ == "__main__":
     unittest.main()
