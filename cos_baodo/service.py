@@ -29,6 +29,7 @@ from cos_baodo.board import Unavailable
 from cos_baodo.config import Config
 from cos_baodo.gitops import GitError
 from cos_baodo.journal import BadRecord, Busy, Journal
+from cos_baodo.policy import grant_for
 from cos_baodo.runner import RunError, Runner
 from cos_baodo.sessions import Sessions
 from cos_baodo.store import BadName, Store, require_name
@@ -250,6 +251,11 @@ class Service:
                 # `manual` is the default because starting work is a decision someone has
                 # to make, not one an unset value should make for them.
                 row["mode"] = modes.get((unit["name"], row["stage"]), "manual")
+                grant = grant_for(row["stage"], row["mode"])
+                # Carried to the page so `spec.md` C4 can be met where the button is: what
+                # a step will be allowed to do has to be readable before it is started.
+                row["grants"] = list(grant.tools)
+                row["warning"] = grant.warning
             unit["cost"] = (
                 journal.totals(key, unit["name"])["total"] if journal is not None else {}
             )

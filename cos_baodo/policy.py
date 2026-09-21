@@ -48,6 +48,11 @@ class Grant:
     # Whether the app writes the artifact from the reply (prose stages) or the session
     # writes it itself (stages that touch code).
     app_writes_artifact: bool = True
+    # Shown on the page *before* the step is started. `spec.md` C4: a capability that comes
+    # from the machine's own configuration is exactly the kind that is invisible in an app,
+    # and this unit opens one on purpose — so it has to be said out loud where the button
+    # is, not only in a design document.
+    warning: str = ""
 
     @property
     def opens_anything(self) -> bool:
@@ -68,6 +73,24 @@ IMPL_COMMANDS = (
     "echo", "printf", "test", "which", "pwd", "sort", "uniq",
 )
 
+# What `pr` may run. Shorter than `impl`'s on purpose: this step proposes a change that
+# already exists, so it needs version control and the reading to describe it, and nothing
+# that builds or installs.
+PR_COMMANDS = (
+    "git", "gh",
+    "ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "diff",
+    "echo", "printf", "test", "which", "pwd",
+)
+
+# Said on the page before the step starts. `gh` is logged in at the machine level — checked
+# on 2026-09-21, account `baodq97` in `~/.config/gh/hosts.yml` — so a step that may run it
+# can reach every repository that account can reach, not only this workspace. That is the
+# same shape of hazard `0007` is about, opened deliberately this time.
+PR_WARNING = (
+    "This step runs `git` and `gh` with the GitHub login already on this machine. "
+    "That reaches every repository that account can reach, not just this workspace."
+)
+
 # Only pairs that appear here get anything. Everything else — every prose stage, every
 # stage in `manual`, and anything invented later — falls through to `Grant()`.
 GRANTS: dict[tuple[str, str], Grant] = {
@@ -77,6 +100,14 @@ GRANTS: dict[tuple[str, str], Grant] = {
         max_turns=50,
         max_budget_usd=5.0,
         app_writes_artifact=False,
+    ),
+    ("pr", "autonomous"): Grant(
+        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
+        commands=PR_COMMANDS,
+        max_turns=30,
+        max_budget_usd=3.0,
+        app_writes_artifact=False,
+        warning=PR_WARNING,
     ),
 }
 

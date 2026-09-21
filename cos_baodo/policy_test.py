@@ -118,6 +118,33 @@ class CommandsAreCheckedSegmentBySegment(unittest.TestCase):
         self.assertEqual(decide(IMPL, "Bash", {"command": "npm test"}, "/tmp"), "")
 
 
+class ThePrStepSaysWhatItWillReach(unittest.TestCase):
+    PR = grant_for("pr", "autonomous")
+
+    def test_it_may_run_git_and_gh_and_not_a_package_manager(self):
+        self.assertEqual(check_command(self.PR, "git push -u origin HEAD"), "")
+        self.assertEqual(check_command(self.PR, "gh pr create --fill"), "")
+        # `pr` proposes a change that already exists; it has no reason to build or install.
+        for bad in ("npm install x", "uv run python -m pytest"):
+            self.assertIn("may not run", check_command(self.PR, bad), bad)
+
+    def test_it_carries_a_warning_and_impl_does_not(self):
+        # `spec.md` C4: the capability comes from the machine's own gh login, so it has to
+        # be readable before the step starts rather than only in a design document.
+        self.assertIn("gh", self.PR.warning.lower())
+        self.assertIn("every repository", self.PR.warning)
+        self.assertEqual(IMPL.warning, "")
+
+    def test_manual_carries_neither_tools_nor_warning(self):
+        manual = grant_for("pr", "manual")
+        self.assertFalse(manual.opens_anything)
+        self.assertEqual(manual.warning, "")
+
+    def test_its_ceilings_are_lower_than_impls(self):
+        self.assertLess(self.PR.max_turns, IMPL.max_turns)
+        self.assertLess(self.PR.max_budget_usd, IMPL.max_budget_usd)
+
+
 class TheKnownLimit(unittest.TestCase):
     def test_an_allowed_binary_can_still_be_told_to_do_a_lot(self):
         """`plan.md` Risk 3, written down as a passing test rather than left implied.

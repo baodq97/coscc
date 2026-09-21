@@ -44,6 +44,8 @@ class Cell:
     mode: str = "manual"
     color: str = "gray"
     started: bool = False
+    grants: str = ""
+    warning: str = ""
 
 
 @dataclasses.dataclass
@@ -191,6 +193,8 @@ class State(rx.State):
                         mode=row["mode"],
                         color=STATUS_COLOR.get(row["status"], "gray"),
                         started=row["status"] != "not started",
+                        grants=", ".join(row.get("grants") or []),
+                        warning=row.get("warning") or "",
                     )
                     for row in u["stages"]
                 ],
@@ -651,6 +655,15 @@ def _mode_control(cell: rx.Var) -> rx.Component:
             variant="soft",
             size="1",
         ),
+        # `spec.md` C4. What a step will be allowed to do is readable before it is
+        # started, next to the button that starts it — not only in a design document.
+        rx.cond(
+            cell.grants != "",
+            rx.tooltip(
+                rx.icon("key-round", size=13, color=rx.color("amber", 10)),
+                content=cell.grants,
+            ),
+        ),
         width="100%",
         align="center",
         gap="2",
@@ -690,6 +703,20 @@ def _detail() -> rx.Component:
                     u.name == State.picked,
                     rx.vstack(
                         rx.foreach(u.cells, _mode_control),
+                        rx.foreach(
+                            u.cells,
+                            lambda c: rx.cond(
+                                c.warning != "",
+                                rx.callout(
+                                    c.stage + " — " + c.warning,
+                                    icon="shield-alert",
+                                    color_scheme="amber",
+                                    variant="surface",
+                                    size="1",
+                                    width="100%",
+                                ),
+                            ),
+                        ),
                         spacing="2",
                         width="100%",
                     ),

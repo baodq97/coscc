@@ -270,6 +270,25 @@ hiện rõ, **trước khi bước chạy**, rằng bước này dùng credentia
 *Kiểm:* mở được một PR thật. **Bước này không kiểm được cho tới khi repo có remote** — xem
 Risk 2.
 
+*Đã dựng, chưa chứng minh được.* `git remote -v` đo lại ngày 2026-09-22: **vẫn rỗng**. Nên
+R7 không đạt, mệnh đề 1 không đạt, và vì ba mệnh đề đi chung nên **cả unit không đạt** — đúng
+cái giá `intent.md` đã ghi khi chọn gộp. Tôi không tự tạo remote: đó là một hành động ra
+ngoài máy và là quyết định của tác giả, không phải của bước này.
+
+*Những gì đã dựng và kiểm được không cần remote:*
+- Grant `("pr", "autonomous")`: `git` và `gh`, **không** `npm`/`uv` — bước này đề xuất một
+  thay đổi đã có sẵn, nó không có lý do gì để build hay cài. Trần thấp hơn `impl`:
+  30 lượt, $3.00.
+- **Cảnh báo hiện ra trước khi bấm** (`spec.md` C4): panel hiện một callout nói bước này
+  chạy `git`/`gh` bằng đăng nhập GitHub sẵn có của máy, và nó **với tới mọi repo tài khoản
+  đó với tới, không riêng workspace này**. Mỗi ô có grant cũng có một biểu tượng chìa khoá
+  liệt kê tool được cấp. Năng lực đến từ cấu hình mức máy phải nhìn thấy được **trong app** —
+  đó là nguyên văn bài học của `0007`.
+- Test khẳng định `manual` không mang tool lẫn cảnh báo, và `impl` không mang cảnh báo của
+  `pr`.
+
+*Việc còn lại cho tác giả:* cấp một remote cho `cos-baodo`, rồi chạy bước `pr` một lần.
+
 **11. `verify_0008.py`, rồi tài liệu.**
 Lệnh chứng minh viết sau cùng vì nó khẳng định kết quả của cả chín bước trên. Rồi sửa
 `.claude/CLAUDE.md` và `.claude/harness.md` cho khớp thực tế — tám giai đoạn, và câu
