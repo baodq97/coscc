@@ -8,11 +8,15 @@ contents decide which directories the app will work in.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from cos_baodo.store import BadName, Store, clean_label, require_name, valid_name
+from cos_baodo.store import BadName, Busy, Store, clean_label, require_name, valid_name
 
 
 class NamesThatMayNotBecomePaths(unittest.TestCase):
@@ -135,6 +139,100 @@ class ListOperations(unittest.TestCase):
             s.add("repo")
             leftovers = [p.name for p in Path(d).glob(".cos-baodo-*.tmp")]
             self.assertEqual(leftovers, [])
+
+
+HOLDER = """
+import fcntl, sys, time
+fd = open(sys.argv[1], "a+")
+fcntl.flock(fd, fcntl.LOCK_EX)
+sys.stdout.write("held\\n")
+sys.stdout.flush()
+time.sleep(60)
+"""
+
+
+class TheLockIsAcrossProcesses(unittest.TestCase):
+    """`spec.md` R1-R4. `0005` measured the old arrangement losing 12 of 20 entries.
+
+    These use a real child process, not a second descriptor in this one. The loss being
+    fixed was between processes, and a same-process stand-in would pass even if the lock
+    were a threading lock again.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def _holder(self, store: Store) -> subprocess.Popen:
+        """A child holding the lock. Returns once it says it has it."""
+        store.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        child = subprocess.Popen(
+            [sys.executable, "-c", HOLDER, str(store.lock_path)],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        self.assertEqual(child.stdout.readline().strip(), "held", "child never took the lock")
+        return child
+
+    def test_waiting_for_a_held_lock_ends_in_an_error_not_a_hang(self):
+        """`spec.md` R2. The deadline exists to turn a hang into something sayable."""
+        store = Store(self.root)
+        self._holder(store)
+        with mock.patch("cos_baodo.store.LOCK_TIMEOUT", 0.5):
+            began = time.monotonic()
+            with self.assertRaises(Busy) as e:
+                store.add("second")
+            waited = time.monotonic() - began
+        self.assertGreaterEqual(waited, 0.5, "it gave up before the deadline it was given")
+        self.assertLess(waited, 5.0, "it did not give up")
+        # spec.md C7: a timeout reads like a broken app unless it says what is happening.
+        self.assertIn("holding", str(e.exception))
+        self.assertIn(str(self.root), str(e.exception))
+
+    def test_the_lock_dies_with_the_process_holding_it(self):
+        """`spec.md` R3 in the form that needs nobody to remember anything.
+
+        A crashed writer must not wedge the working folder. `flock` is released by the
+        kernel when the last descriptor closes, which is why it was chosen over a lock
+        file whose existence means "held".
+        """
+        store = Store(self.root)
+        child = self._holder(store)
+        child.kill()
+        child.wait()
+        with mock.patch("cos_baodo.store.LOCK_TIMEOUT", 5.0):
+            store.add("after")
+        self.assertEqual([e.name for e in store.entries()], ["after"])
+
+    def test_the_lock_is_released_even_when_the_body_raises(self):
+        """A failure inside the transaction must not be a failure of the next one."""
+        store = Store(self.root)
+        store.add("a")
+        with self.assertRaises(ValueError):
+            with store.transaction():
+                raise ValueError("boom")
+        with mock.patch("cos_baodo.store.LOCK_TIMEOUT", 5.0):
+            store.add("b")  # would sit on the deadline if the lock had leaked
+        self.assertEqual({e.name for e in store.entries()}, {"a", "b"})
+
+    def test_the_lock_file_is_never_read_as_data(self):
+        """`spec.md` R4. Two files, because the store is replaced by rename on every write."""
+        store = Store(self.root)
+        store.add("a")
+        self.assertTrue(store.lock_path.is_file())
+        self.assertNotEqual(store.lock_path, store.path)
+        store.lock_path.write_text('{"workspaces": [{"name": "ghost"}]}')
+        self.assertEqual({e.name for e in store.entries()}, {"a"})
+
+    def test_deleting_the_lock_file_does_not_lose_data(self):
+        store = Store(self.root)
+        store.add("a")
+        store.lock_path.unlink()
+        store.add("b")
+        self.assertEqual({e.name for e in store.entries()}, {"a", "b"})
 
 
 if __name__ == "__main__":
