@@ -16,8 +16,8 @@ from pathlib import Path
 
 from aiohttp import web
 
-from cos_baodo import sessions
 from cos_baodo.config import Config, from_env
+from cos_baodo.service import Invalid, Service
 from cos_baodo.sessions import Refused, Sessions
 
 PUBLIC = Path(__file__).parent / "public"
@@ -26,6 +26,7 @@ PUBLIC = Path(__file__).parent / "public"
 # handler should be a lookup error here and not a silent None.
 CONFIG = web.AppKey("config", Config)
 SESSIONS = web.AppKey("sessions", Sessions)
+SERVICE = web.AppKey("service", Service)
 
 
 def _bad(message: str, status: int = 400) -> web.Response:
@@ -33,37 +34,29 @@ def _bad(message: str, status: int = 400) -> web.Response:
 
 
 async def get_workspaces(request: web.Request) -> web.Response:
-    config: Config = request.app[CONFIG]
-    return web.json_response({"workspaces": list(config.workspaces)})
+    return web.json_response(request.app[SERVICE].workspaces())
 
 
 async def get_sessions(request: web.Request) -> web.Response:
     """R1. Sessions of one project, and only that project."""
-    config: Config = request.app[CONFIG]
-    cwd = request.query.get("cwd", "")
-    if not config.is_workspace(cwd):
-        return _bad(f"not a configured workspace: {cwd}")
-    rows = sessions.list_for_directory(cwd, limit=_limit(request))
-    owned = request.app[SESSIONS]
-    for row in rows:
-        # The list shows terminal sessions too — the read layer sees them. This flag is
-        # what tells the page which of them it may actually write to (spec.md C1).
-        row["resumable"] = config.may_resume(owned.created_here(row["session_id"]))
-    return web.json_response({"cwd": cwd, "sessions": rows})
+    try:
+        body = request.app[SERVICE].sessions_for(
+            request.query.get("cwd", ""), limit=_limit(request)
+        )
+    except Invalid as e:
+        return _bad(str(e))
+    return web.json_response(body)
 
 
 async def get_history(request: web.Request) -> web.Response:
     """R6. Read back from the SDK's store, never from a copy of our own."""
-    config: Config = request.app[CONFIG]
-    cwd = request.query.get("cwd", "")
-    session_id = request.query.get("session_id", "")
-    if not config.is_workspace(cwd):
-        return _bad(f"not a configured workspace: {cwd}")
-    if not session_id:
-        return _bad("session_id is required")
-    return web.json_response(
-        {"session_id": session_id, "messages": sessions.history(session_id, cwd)}
-    )
+    try:
+        body = request.app[SERVICE].history(
+            request.query.get("cwd", ""), request.query.get("session_id", "")
+        )
+    except Invalid as e:
+        return _bad(str(e))
+    return web.json_response(body)
 
 
 async def post_send(request: web.Request) -> web.StreamResponse:
@@ -73,7 +66,6 @@ async def post_send(request: web.Request) -> web.StreamResponse:
     streaming has begun arrives as an `error` line rather than an HTTP code. Callers must
     read to the last line to know whether it worked.
     """
-    config: Config = request.app[CONFIG]
     try:
         body = await request.json()
     except (json.JSONDecodeError, ValueError):
@@ -82,10 +74,13 @@ async def post_send(request: web.Request) -> web.StreamResponse:
     cwd = str(body.get("cwd", ""))
     text = str(body.get("text", ""))
     session_id = body.get("session_id") or None
-    if not config.is_workspace(cwd):
-        return _bad(f"not a configured workspace: {cwd}")
-    if not text.strip():
-        return _bad("text is required")
+
+    try:
+        # Only what can be decided before any output. A `Refused` raised once streaming
+        # has started is data, not a status code — see the docstring above.
+        request.app[SERVICE].check_send(cwd, text)
+    except Invalid as e:
+        return _bad(str(e))
 
     response = web.StreamResponse(headers={"Content-Type": "application/x-ndjson"})
     await response.prepare(request)
@@ -94,7 +89,7 @@ async def post_send(request: web.Request) -> web.StreamResponse:
         await response.write(json.dumps(obj).encode() + b"\n")
 
     try:
-        async for kind, payload in request.app[SESSIONS].stream(cwd, text, session_id):
+        async for kind, payload in request.app[SERVICE].stream(cwd, text, session_id):
             if kind == "chunk":
                 await line({"type": "chunk", "text": payload})
             else:
@@ -132,6 +127,7 @@ def build(config: Config | None = None) -> web.Application:
     app = web.Application()
     app[CONFIG] = config
     app[SESSIONS] = Sessions(config)
+    app[SERVICE] = Service(config, app[SESSIONS])
     app.router.add_get("/", get_index)
     app.router.add_get("/api/workspaces", get_workspaces)
     app.router.add_get("/api/sessions", get_sessions)
