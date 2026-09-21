@@ -64,6 +64,17 @@ còn ba cột cố định. `cos.test.mjs` mở rộng cùng lúc.
 cho năm tên mới; `cos.mjs gate 0008_hand-driven-invisible-loop pr` trả lời thay vì
 `unknown stage`.
 
+*Đã làm, và ba chỗ đi khác plan — ghi theo invariant 8:*
+(a) **`implement` giữ làm alias của `impl`.** `.claude/skills/write-plan/SKILL.md` còn viết
+tên cũ; bỏ nó là khoá gate của `0006` và `0007`, đúng Risk 5. Một dòng bảng tra, có test.
+(b) **`idea` là tuỳ chọn và không gác gì.** Bắt nó thành bắt buộc sẽ đánh dấu cả 8 unit
+trên đĩa là dang dở, vì `readUnit` xưa nay vẫn đòi mỗi unit mở bằng một intent. Nó là chỗ
+ghi một ý nghĩ có trước intent, và vắng mặt chỉ có nghĩa là không ai ghi.
+(c) **`settled` nhận thêm `done`.** Trước đây chỉ `accepted`/`skipped`. Một `plan.md` đã
+`done` là đi xa hơn `accepted`, nên nó không được chặn giai đoạn sau. Đổi lại,
+`nextAction` giữ `plan.md: done` là **tận cùng**, để năm unit đã đóng không bị mở lại —
+chúng vẫn đọc là `finished`.
+
 **2. `Board` — đọc trạng thái vào Python, không chép luật.**
 `board.py` gọi `cos.mjs status --json` bằng tiến trình con và dựng mô hình tám bước. Không
 parse Markdown ở Python. Workspace không có `.claude/scripts/cos.mjs` thì trả board rỗng

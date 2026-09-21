@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseStatus, parseSkipReason, checkGate, nextAction, nextNumber } from './cos.mjs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit, STAGE_NAMES } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
 const art = (status) => ({ status, skipReason: null })
@@ -99,4 +102,74 @@ test('an unreadable artifact is distinguished from a missing one', () => {
   const absent = unit({})
   assert.match(checkGate(absent, 'spec').need[0], /does not exist/)
   assert.match(nextAction(absent).action, /write-intent/)
+})
+
+// --- eight stages ------------------------------------------------------------
+
+test('every stage name opens a gate, and a ninth does not', () => {
+  assert.deepEqual(STAGE_NAMES, ['idea', 'intent', 'spec', 'plan', 'impl', 'pr', 'review', 'ship'])
+  for (const name of STAGE_NAMES) {
+    assert.doesNotMatch(checkGate(unit({}), name).need.join(' '), /unknown stage/, `${name} should be a known stage`)
+  }
+  assert.match(checkGate(unit({}), 'deploy').need[0], /unknown stage/)
+})
+
+test('implement still names the impl stage, because a skill still says it', () => {
+  const full = { 'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('accepted') }
+  assert.equal(checkGate(unit(full), 'implement').ok, true)
+  assert.deepEqual(checkGate(unit(full), 'implement'), checkGate(unit(full), 'impl'))
+})
+
+test('idea gates nothing — the eight units on disk were opened without one', () => {
+  assert.equal(checkGate(unit({}), 'idea').ok, true)
+  assert.equal(checkGate(unit({}), 'intent').ok, true)
+  // and it never appears as the next action, because a missing idea is not a gap
+  assert.match(nextAction(unit({})).action, /write-intent/)
+})
+
+test('a later stage needs the earlier ones behind it', () => {
+  const upToPlan = { 'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('accepted') }
+  assert.equal(checkGate(unit(upToPlan), 'pr').ok, false)
+  assert.match(checkGate(unit(upToPlan), 'pr').need[0], /impl\.md does not exist/)
+
+  const withImpl = { ...upToPlan, 'impl.md': art('accepted') }
+  assert.equal(checkGate(unit(withImpl), 'pr').ok, true)
+  assert.equal(checkGate(unit({ ...withImpl, 'pr.md': art('accepted') }), 'review').ok, true)
+})
+
+test('a done artifact is behind us, not in the way', () => {
+  // `done` is strictly further along than `accepted`, so it must not block what follows.
+  const done = { 'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('done') }
+  assert.equal(checkGate(unit(done), 'impl').ok, true)
+})
+
+test('nextAction walks past an accepted plan into the new stages', () => {
+  const base = { 'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('accepted') }
+  assert.match(nextAction(unit({ ...base, 'impl.md': art('accepted') })).action, /write-pr/)
+  assert.match(
+    nextAction(unit({ ...base, 'impl.md': art('accepted'), 'pr.md': art('accepted') })).action,
+    /write-review/,
+  )
+  const shipped = { ...base, 'impl.md': art('accepted'), 'pr.md': art('accepted'), 'review.md': art('accepted'), 'ship.md': art('accepted') }
+  assert.equal(nextAction(unit(shipped)).action, 'finished')
+})
+
+test('a rejection in a late stage closes the unit, same as an early one', () => {
+  const base = { 'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('accepted') }
+  const r = nextAction(unit({ ...base, 'impl.md': art('rejected') }))
+  assert.equal(r.blocked, false)
+  assert.match(r.action, /closed — impl rejected/)
+})
+
+test('the five new artifacts are read, not reported as unexpected files', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cos-stages-'))
+  for (const f of ['idea.md', 'intent.md', 'spec.md', 'plan.md', 'impl.md', 'pr.md', 'review.md', 'ship.md']) {
+    writeFileSync(join(dir, f), 'Status: accepted.\n')
+  }
+  const u = readUnit(dir, '0009_widened')
+  assert.deepEqual(u.problems, [])
+  assert.equal(Object.keys(u.artifacts).length, 8)
+
+  writeFileSync(join(dir, 'notes.md'), 'x')
+  assert.match(readUnit(dir, '0009_widened').problems[0], /unexpected file\(s\): notes\.md/)
 })
