@@ -50,6 +50,12 @@ uv run python scripts/verify_0002.py                      # proof for 0002; crea
 uv run python scripts/verify_0003.py                      # proof for 0003; clones, creates sessions
 ```
 
+**The build bakes in the port.** The compiled page hardcodes the address it opens its
+`/_event` WebSocket against, so a build made for one port serves a page that renders and
+then shows "Connection Error" with a perfectly healthy API behind it. Build and run with
+the same `COS_HOST`/`COS_PORT`; `cos-baodo` refuses to start if they disagree. This was
+found on 2026-09-21 by driving the page with a browser — no HTTP-level check could see it.
+
 **Start it with `cos-baodo`, not `reflex run`.** Reflex's dev mode serves the page from a
 vite server that binds every interface, and 0.9.11 has no setting for its host — measured
 on 2026-09-21, `ss -ltn` showed `*:3000`. `cos-baodo` mounts the compiled frontend into the

@@ -180,6 +180,31 @@ dụng khi không có working folder — `0002` không đổi.
 
 Hai lỗi sau không unit test nào bắt được ở hình dạng cũ. Cả hai giờ có test hồi quy.
 
+## C11 came true, 2026-09-21
+
+`spec.md` C11 said the page would be the one path no command proves, and that R10 was a
+convention rather than a check. Đã kiểm bằng Playwright sau khi unit đã `done`, và nó tìm
+ra đúng một lỗi mà **cả ba mệnh đề của `## Proof` đều không thấy**:
+
+Trang tải, render đủ, rồi đứng im với **"Connection Error"**. API phía sau hoàn toàn khoẻ.
+Nguyên nhân: bản biên dịch của Reflex **nhúng cứng** địa chỉ mở WebSocket `/_event`, mặc
+định `http://localhost:8000` (`api_url`). Chạy app ở cổng khác là trang không bao giờ nối
+được — `on_mount` không chạy, danh sách workspace không bao giờ tải.
+
+`api_url` tương đối là câu trả lời đúng và Reflex không nhận: `api_url="/"` làm production
+build đổ với `TypeError: Invalid URL`. Nên `rxconfig.py` đọc địa chỉ từ chính
+`cos_baodo/config.py`, và `run.py` **từ chối khởi động** nếu bản build tìm thấy được làm cho
+một cổng khác — cái bẫy "build một cổng, chạy cổng khác" bị chặn ở chỗ nó gây hại.
+
+Sau khi sửa, mọi đường của R9 đã đi qua trình duyệt thật: nhận thư mục có sẵn (0 → 1, label,
+badge `store`, đúng path), `pull` hỏng hiện nguyên văn lỗi git (R20/C7 ở tầng UI), clone
+thật từ `https://github.com/octocat/Hello-World.git` (đĩa + store + hàng trên trang), `remove`
+(2 → 1, store gỡ mục, **thư mục vẫn còn** — R18), và chat trả về `READY`.
+
+**Điều này không đóng C11.** Nó chứng minh C11 là mối lo đúng chứ không phải một dòng viết
+cho đủ. Bằng chứng thường trực cho trang vẫn chưa có, và nó là một unit riêng, vì
+`intent.md` đặt "không cần trình duyệt" thành một phần của kết quả.
+
 ## Risks
 
 **Bước 1 đỏ, và nền đã nằm trong một intent đã accepted.** Đây là rủi ro tôi muốn không phải
