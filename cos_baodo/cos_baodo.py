@@ -15,11 +15,57 @@ created") would start answering differently depending on which door you came thr
 
 from __future__ import annotations
 
+import dataclasses
+
 import reflex as rx
 
 from cos_baodo import ui
 from cos_baodo.api import build
 from cos_baodo.service import Invalid
+
+# How a status reads at a glance. `not started` is deliberately the quietest: most cells on
+# most boards are it, and a board where everything shouts says nothing.
+STATUS_COLOR = {
+    "accepted": "grass",
+    "done": "iris",
+    "draft": "amber",
+    "skipped": "gray",
+    "rejected": "red",
+    "not started": "gray",
+}
+
+
+@dataclasses.dataclass
+class Cell:
+    """One stage of one unit, as the board shows it."""
+
+    stage: str = ""
+    status: str = ""
+    mode: str = "manual"
+    color: str = "gray"
+    started: bool = False
+
+
+@dataclasses.dataclass
+class UnitRow:
+    name: str = ""
+    next: str = ""
+    blocked: bool = False
+    tokens: str = ""
+    cells: list[Cell] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass
+class Run:
+    """One row of a unit's timeline (`spec.md` R15)."""
+
+    stage: str = ""
+    mode: str = ""
+    started: str = ""
+    ended: str = ""
+    outcome: str = ""
+    session_id: str = ""
+    tokens: str = ""
 
 _api = build()
 _service = _api.state.service
@@ -42,6 +88,16 @@ class State(rx.State):
     prompt: str = ""
     reply: str = ""
 
+    # The board. `stages` comes from the backend rather than being written here, because
+    # the eight stages are defined once, in `.claude/scripts/cos.mjs`.
+    stages: list[str] = []
+    units: list[UnitRow] = []
+    board_note: str = ""
+    recording: bool = False
+
+    picked: str = ""
+    runs: list[Run] = []
+
     # Explicit setters. Reflex 0.9 dropped the implicit `set_<var>` handlers, and writing
     # them out is clearer anyway: every way the page can change state is a named method.
     @rx.event
@@ -61,9 +117,94 @@ class State(rx.State):
         self.prompt = v
 
     @rx.event
-    def choose(self, path: str):
+    async def choose(self, path: str):
         self.cwd = path
         self.reply = ""
+        self.picked = ""
+        self.runs = []
+        async for _ in self._board():
+            yield
+
+    # -- board ---------------------------------------------------------------
+
+    @staticmethod
+    def _tokens(cost: dict) -> str:
+        """Input plus output, as one number. The breakdown lives in the timeline."""
+        total = int(cost.get("input_tokens") or 0) + int(cost.get("output_tokens") or 0)
+        return f"{total:,}" if total else "—"
+
+    async def _board(self):
+        """Read the board for the chosen workspace. Yields so the page can paint."""
+        if not self.cwd:
+            self.stages, self.units, self.board_note = [], [], ""
+            return
+        try:
+            data = await _service.board(self.cwd)
+        except Invalid as e:
+            self.stages, self.units = [], []
+            self.board_note = str(e)
+            yield
+            return
+
+        self.stages = list(data["stages"])
+        self.recording = bool(data["recording"])
+        self.board_note = data.get("read_only_because") or data.get("empty_because") or ""
+        self.units = [
+            UnitRow(
+                name=u["name"],
+                next=u["next"],
+                blocked=bool(u["blocked"]),
+                tokens=self._tokens(u.get("cost") or {}),
+                cells=[
+                    Cell(
+                        stage=row["stage"],
+                        status=row["status"],
+                        mode=row["mode"],
+                        color=STATUS_COLOR.get(row["status"], "gray"),
+                        started=row["status"] != "not started",
+                    )
+                    for row in u["stages"]
+                ],
+            )
+            for u in data["units"]
+        ]
+        yield
+
+    @rx.event
+    async def pick(self, unit: str):
+        """Open one unit. Clicking the open one closes it again."""
+        self.picked = "" if self.picked == unit else unit
+        self.runs = []
+        if not self.picked:
+            return
+        try:
+            data = _service.timeline(self.cwd, self.picked)
+        except Invalid as e:
+            self.error = str(e)
+            return
+        self.runs = [
+            Run(
+                stage=r.get("stage") or "",
+                mode=r.get("mode") or "",
+                started=r.get("started") or "",
+                ended=r.get("ended") or "(running)",
+                outcome=r.get("outcome") or "—",
+                session_id=r.get("session_id") or "—",
+                tokens=self._tokens(r.get("cost") or {}),
+            )
+            for r in data["runs"]
+        ]
+
+    @rx.event
+    async def set_mode(self, unit: str, stage: str, mode: str):
+        self.error = ""
+        try:
+            await _service.set_mode(self.cwd, unit, stage, mode)
+        except Invalid as e:
+            self.error = str(e)
+            return
+        async for _ in self._board():
+            yield
 
     def _reload(self) -> None:
         data = _service.workspaces()
@@ -81,9 +222,12 @@ class State(rx.State):
         ]
 
     @rx.event
-    def load(self):
+    async def load(self):
         self.error = ""
         self._reload()
+        yield
+        async for _ in self._board():
+            yield
 
     @rx.event
     async def add(self):
@@ -344,6 +488,215 @@ def _chat() -> rx.Component:
     )
 
 
+def _cell(cell: rx.Var) -> rx.Component:
+    """One stage of one unit: what it says, and whether it is set to run itself.
+
+    The mode is shown as a mark on the cell rather than as a control in it. Sixty-four
+    controls in a grid is not a board, it is a form — the controls live in the panel that
+    opens when a unit is picked.
+    """
+    return rx.table.cell(
+        rx.tooltip(
+            rx.hstack(
+                rx.cond(
+                    cell.started,
+                    rx.badge(cell.status, color_scheme=cell.color, variant="soft", size="1"),
+                    # A stage nobody has reached is the common case — on a fresh unit it is
+                    # seven cells out of eight. Spelling out "not started" eight times per
+                    # row pushed the `next` column off the side of the card at 1280px,
+                    # which is the column that says what to do. So it is a mark, and the
+                    # words are in the tooltip.
+                    rx.text("·", color=rx.color("gray", 8), size="2", weight="bold"),
+                ),
+                rx.cond(
+                    cell.mode == "autonomous",
+                    rx.icon("zap", size=12, color=rx.color("amber", 10)),
+                ),
+                spacing="1",
+                align="center",
+            ),
+            content=cell.stage + ": " + cell.status + " · " + cell.mode,
+        ),
+        white_space="nowrap",
+    )
+
+
+def _unit_row(unit: rx.Var) -> rx.Component:
+    picked = State.picked == unit.name
+    return rx.table.row(
+        rx.table.cell(
+            rx.hstack(
+                rx.icon(
+                    "chevron-right",
+                    size=14,
+                    color=rx.color("gray", 10),
+                    transform=rx.cond(picked, "rotate(90deg)", "none"),
+                ),
+                rx.text(unit.name, weight="medium", size="2"),
+                spacing="2",
+                align="center",
+            ),
+            white_space="nowrap",
+        ),
+        rx.foreach(unit.cells, _cell),
+        rx.table.cell(ui.muted(unit.tokens), white_space="nowrap"),
+        rx.table.cell(ui.muted(unit.next), white_space="nowrap"),
+        on_click=State.pick(unit.name),
+        cursor="pointer",
+        background=rx.cond(picked, rx.color("iris", 3), "transparent"),
+        _hover={"background": rx.color("gray", 3)},
+    )
+
+
+def _mode_control(cell: rx.Var) -> rx.Component:
+    """Manual or autonomous, for one stage of the picked unit."""
+    return rx.hstack(
+        rx.text(cell.stage, size="2", weight="medium", width="72px"),
+        rx.badge(
+            cell.status,
+            color_scheme=cell.color,
+            variant=rx.cond(cell.started, "soft", "outline"),
+            size="1",
+        ),
+        rx.spacer(),
+        rx.segmented_control.root(
+            rx.segmented_control.item("manual", value="manual"),
+            rx.segmented_control.item("auto", value="autonomous"),
+            value=cell.mode,
+            on_change=lambda v: State.set_mode(State.picked, cell.stage, v),
+            size="1",
+            disabled=~State.recording,
+        ),
+        width="100%",
+        align="center",
+        gap="2",
+        wrap="wrap",
+    )
+
+
+def _run_row(run: rx.Var) -> rx.Component:
+    return rx.table.row(
+        rx.table.cell(rx.text(run.stage, size="2", weight="medium"), white_space="nowrap"),
+        rx.table.cell(ui.muted(run.mode), white_space="nowrap"),
+        rx.table.cell(ui.muted(run.started), white_space="nowrap"),
+        rx.table.cell(ui.muted(run.ended), white_space="nowrap"),
+        rx.table.cell(rx.badge(run.outcome, size="1", variant="soft"), white_space="nowrap"),
+        rx.table.cell(ui.mono(run.session_id, size="1"), white_space="nowrap"),
+        rx.table.cell(ui.muted(run.tokens), white_space="nowrap"),
+    )
+
+
+def _detail() -> rx.Component:
+    """The picked unit: how each stage should run, and what has happened to it."""
+    return ui.card(
+        rx.vstack(
+            rx.hstack(
+                rx.heading(State.picked, size="2"),
+                rx.spacer(),
+                rx.button(
+                    "close", on_click=State.pick(State.picked), variant="ghost", size="1"
+                ),
+                width="100%",
+                align="center",
+            ),
+            rx.foreach(
+                State.units,
+                lambda u: rx.cond(
+                    u.name == State.picked,
+                    rx.vstack(
+                        rx.foreach(u.cells, _mode_control),
+                        spacing="2",
+                        width="100%",
+                    ),
+                ),
+            ),
+            rx.separator(width="100%"),
+            rx.heading("Timeline", size="2"),
+            rx.cond(
+                State.runs.length() > 0,
+                ui.scroll_x(
+                    rx.table.root(
+                        rx.table.header(
+                            rx.table.row(
+                                rx.table.column_header_cell("stage"),
+                                rx.table.column_header_cell("mode"),
+                                rx.table.column_header_cell("started"),
+                                rx.table.column_header_cell("ended"),
+                                rx.table.column_header_cell("outcome"),
+                                rx.table.column_header_cell("session"),
+                                rx.table.column_header_cell("tokens"),
+                            )
+                        ),
+                        rx.table.body(rx.foreach(State.runs, _run_row)),
+                        variant="ghost",
+                        size="1",
+                        width="100%",
+                    )
+                ),
+                ui.muted("Nothing has run for this unit yet."),
+            ),
+            spacing="3",
+            width="100%",
+        ),
+        background=rx.color("gray", 1),
+    )
+
+
+def _board() -> rx.Component:
+    return ui.section(
+        "Board",
+        rx.cond(
+            State.board_note != "",
+            rx.callout(State.board_note, icon="info", variant="surface", size="1", width="100%"),
+        ),
+        rx.cond(
+            State.units.length() > 0,
+            rx.vstack(
+                ui.card(
+                    ui.scroll_x(
+                        rx.table.root(
+                            rx.table.header(
+                                rx.table.row(
+                                    rx.table.column_header_cell("unit"),
+                                    rx.foreach(
+                                        State.stages,
+                                        lambda s: rx.table.column_header_cell(s),
+                                    ),
+                                    rx.table.column_header_cell("tokens"),
+                                    rx.table.column_header_cell("next"),
+                                )
+                            ),
+                            rx.table.body(rx.foreach(State.units, _unit_row)),
+                            variant="ghost",
+                            size="1",
+                            width="100%",
+                        )
+                    )
+                ),
+                rx.cond(State.picked != "", _detail()),
+                spacing="3",
+                width="100%",
+            ),
+            rx.cond(
+                State.cwd != "",
+                rx.fragment(),
+                ui.card(
+                    rx.vstack(
+                        rx.text("Pick a workspace to see its board.", weight="medium"),
+                        ui.muted("The board reads the .cos/ directory of the chosen workspace."),
+                        spacing="1",
+                    )
+                ),
+            ),
+        ),
+        actions=rx.cond(
+            State.recording,
+            rx.fragment(),
+            rx.badge("read only", color_scheme="amber", variant="surface"),
+        ),
+    )
+
+
 def index() -> rx.Component:
     return ui.page(
         rx.cond(
@@ -357,6 +710,7 @@ def index() -> rx.Component:
             ),
         ),
         _workspaces(),
+        _board(),
         _chat(),
         on_mount=State.load,
     )

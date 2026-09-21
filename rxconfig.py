@@ -40,4 +40,7 @@ config = rx.Config(
     backend_host=_c.host,
     api_url=f"http://{_c.host}:{_c.port}",
     plugins=[rx.plugins.RadixThemesPlugin(theme=THEME)],
+    # The framework's badge sits fixed in the corner of every screen and overlaps content
+    # on a short viewport. This app is one person's loopback tool, not a showcase.
+    show_built_with_reflex=False,
 )

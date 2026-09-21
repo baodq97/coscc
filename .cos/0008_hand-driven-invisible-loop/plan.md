@@ -151,6 +151,19 @@ chưa chạy được bước nào — trang chỉ hiện và đổi chế độ
 *Kiểm:* `uv run cos-build` rồi `uv run python scripts/verify_0004.py` xanh; mắt thấy 8 unit,
 8 cột.
 
+*Đã làm.* Board vẽ 8 unit × 8 giai đoạn; bấm một unit mở panel có segmented control
+manual/auto cho từng giai đoạn và bảng timeline. Đo bằng trình duyệt thật ngày 2026-09-22:
+tràn ngang **0px** ở 390px, chế độ tối đúng.
+
+*Ba chỗ đi khác plan, ghi theo invariant 8:*
+(a) **Ô "not started" là một dấu chấm, không phải chữ.** Vẽ đủ chữ tám lần mỗi hàng đẩy cột
+`next` — cột nói phải làm gì tiếp — ra khỏi mép thẻ ở 1280px. Chữ đầy đủ nằm trong tooltip.
+(b) **Chế độ không nằm trong ô của bảng.** 64 control trong một lưới là một cái form, không
+phải một cái board. Chúng ở trong panel mở ra khi chọn một unit; trên bảng chế độ
+`autonomous` chỉ là một dấu tia chớp.
+(c) **Tắt badge "Built with Reflex"** (`show_built_with_reflex=False`). Nó cố định ở góc
+mọi màn hình và đè lên nội dung ở viewport thấp.
+
 **7. Token: giữ lại thứ đang bị vứt.**
 `stream` giữ `ResultMessage` thay vì lấy mỗi `session_id` (`sessions.py:228`); payload
 `done` mang input/output/cache token, USD, số lượt, thời lượng (spec R16). Journal cộng

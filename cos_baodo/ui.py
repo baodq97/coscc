@@ -74,16 +74,17 @@ def muted(text, **props) -> rx.Component:
 
 
 def card(*children, **props) -> rx.Component:
-    """A bordered surface. Border rather than shadow: it reads the same in both modes."""
-    return rx.box(
-        *children,
-        background=rx.color("gray", 2),
-        border=f"1px solid {rx.color('gray', 6)}",
-        border_radius="12px",
-        padding=rx.breakpoints(initial="12px", sm="18px"),
-        width="100%",
-        **props,
-    )
+    """A bordered surface. Border rather than shadow: it reads the same in both modes.
+
+    Defaults are `setdefault`, not fixed, so a caller can nest one card inside another and
+    change the surface without the two definitions fighting.
+    """
+    props.setdefault("background", rx.color("gray", 2))
+    props.setdefault("border", f"1px solid {rx.color('gray', 6)}")
+    props.setdefault("border_radius", "12px")
+    props.setdefault("padding", rx.breakpoints(initial="12px", sm="18px"))
+    props.setdefault("width", "100%")
+    return rx.box(*children, **props)
 
 
 def section(title: str, *children, actions: rx.Component | None = None, **props) -> rx.Component:
