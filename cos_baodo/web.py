@@ -16,9 +16,9 @@ from pathlib import Path
 
 from aiohttp import web
 
-from app import sessions
-from app.config import Config, from_env
-from app.sessions import Refused, Sessions
+from cos_baodo import sessions
+from cos_baodo.config import Config, from_env
+from cos_baodo.sessions import Refused, Sessions
 
 PUBLIC = Path(__file__).parent / "public"
 

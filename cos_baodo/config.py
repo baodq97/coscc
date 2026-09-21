@@ -2,7 +2,7 @@
 
 `spec.md` C8 argues for a central config store later and against building it now: four
 knobs do not justify a schema. What this module buys is that changing the source later is
-one edit here, not a search through the app. Nothing else in `app/` may read the
+one edit here, not a search through the app. Nothing else in `cos_baodo/` may read the
 environment.
 
 The defaults are the safe posture from `spec.md` C2, not suggestions. Each is off because

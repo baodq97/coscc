@@ -7,7 +7,7 @@ value that drifts because nobody was watching.
 
 import unittest
 
-from app.config import Config, from_env, with_workspaces
+from cos_baodo.config import Config, from_env, with_workspaces
 
 
 class DefaultsAreTheSafePosture(unittest.TestCase):

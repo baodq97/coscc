@@ -20,7 +20,7 @@ from typing import Any
 import claude_agent_sdk as sdk
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, TextBlock
 
-from app.config import Config
+from cos_baodo.config import Config
 
 
 class Refused(Exception):

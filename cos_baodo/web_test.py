@@ -12,8 +12,8 @@ from unittest import mock
 import claude_agent_sdk as sdk
 from aiohttp.test_utils import AioHTTPTestCase
 
-from app.config import Config
-from app.web import build
+from cos_baodo.config import Config
+from cos_baodo.web import build
 
 
 def _info(session_id="s1", cwd="/tmp"):
@@ -96,7 +96,7 @@ class Surface(AioHTTPTestCase):
 class Loopback(unittest.TestCase):
     def test_the_default_bind_is_loopback(self):
         # R5. Asserted here as well as in config_test because this is where it is used.
-        from app.config import from_env
+        from cos_baodo.config import from_env
         self.assertEqual(from_env({}).host, "127.0.0.1")
 
 

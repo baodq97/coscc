@@ -25,8 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import aiohttp
 from aiohttp import web
 
-from app.config import Config
-from app.web import build
+from cos_baodo.config import Config
+from cos_baodo.web import build
 
 PROJECTS = 2  # from intent.md. Change it there, not here.
 

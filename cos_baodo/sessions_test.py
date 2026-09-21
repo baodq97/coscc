@@ -11,8 +11,8 @@ from unittest import mock
 
 import claude_agent_sdk as sdk
 
-from app.config import Config
-from app.sessions import Refused, Sessions, _options, _text_of, history, list_for_directory
+from cos_baodo.config import Config
+from cos_baodo.sessions import Refused, Sessions, _options, _text_of, history, list_for_directory
 
 
 def _info(session_id="s1", cwd="/p", summary="sum", **kw):
@@ -148,7 +148,7 @@ class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
         s = Sessions(Config(workspaces=("/tmp",), resume_foreign_sessions=True))
         # Gets past the guard and fails later, at connect — which is the point: the
         # refusal is no longer what stops it.
-        with mock.patch("app.sessions.ClaudeSDKClient", side_effect=RuntimeError("connect")):
+        with mock.patch("cos_baodo.sessions.ClaudeSDKClient", side_effect=RuntimeError("connect")):
             with self.assertRaises(RuntimeError):
                 await s.send("/tmp", "hi", session_id="not-ours")
 
