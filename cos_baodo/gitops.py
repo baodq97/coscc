@@ -16,8 +16,8 @@ Four rules, each answering `spec.md` R15:
    cannot reach a process that talks to the network.
 4. **A deadline.** A silent host must not hold a request forever.
 
-The timeouts are choices, not measurements (`spec.md` C3 — no source). They were picked
-here and should be adjusted after real use rather than trusted.
+The timeouts were invented when this was written (`0003` spec.md C3 recorded them as
+having no source). They now have one — see `CLONE_TIMEOUT`.
 """
 
 from __future__ import annotations
@@ -27,6 +27,23 @@ import os
 import shutil
 from pathlib import Path
 
+# Measured 2026-09-21 on this machine and network, cloning over https:
+#
+#     Hello-World      1.14s    ~0 MB      pull 0.83s
+#     Spoon-Knife      1.18s    ~0 MB      pull 0.88s
+#     click            4.19s    7.8 MB     pull 0.84s
+#     requests         4.80s   19.2 MB     pull 0.92s
+#
+# That is roughly 4 MB/s, and a pull with nothing to fetch costs about a second
+# regardless of size. **Unverifiable beyond this machine:** one network, one day, four
+# public repositories — it bounds the ordinary case and says nothing about a slow link.
+#
+# So these are not the measurement, they are derived from it: at the measured throughput
+# 120s covers about 480 MB of clone and 60s about 240 MB of fetch. Both are far larger
+# than anything a person would reasonably open in a chat tool, which is the point — the
+# deadline exists to stop a silent host holding a request forever, not to police size.
+# Lower them and an ordinary clone starts failing; the measurement above is what says
+# how much room there is before that happens.
 CLONE_TIMEOUT = 120.0
 PULL_TIMEOUT = 60.0
 

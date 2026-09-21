@@ -1,6 +1,25 @@
 # Plan: A chat-only web app over the Agent SDK
 Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
+> **Đọc đường dẫn trong file này theo bảng sau.** `0003` đổi tên gói `app/` thành
+> `cos_baodo/` (commit `81295b9`), nên 13 trích dẫn dưới đây trỏ vào đường dẫn không còn
+> tồn tại. Chúng **không được sửa**: file này ghi lại việc đã làm vào lúc đã làm, và viết
+> lại nó thành `cos_baodo/` sẽ thành một bản ghi sai theo kiểu khác — nói rằng các file được
+> tạo ở chỗ mà lúc ấy chúng không ở.
+>
+> | Viết trong file này | Nay nằm ở |
+> |---|---|
+> | `app/__init__.py` | `cos_baodo/__init__.py` |
+> | `app/config.py` | `cos_baodo/config.py` |
+> | `app/config_test.py` | `cos_baodo/config_test.py` |
+> | `app/sessions.py` | `cos_baodo/sessions.py` |
+> | `app/sessions_test.py` | `cos_baodo/sessions_test.py` |
+> | `app/web.py` | `cos_baodo/api.py` (đổi framework ở `0003` bước 5) |
+> | `app/web_test.py` | `cos_baodo/api_test.py` |
+> | `app/public/index.html` | đã xoá ở `0003` bước 9 — trang nay là `cos_baodo/cos_baodo.py` |
+>
+> Đây là câu trả lời cho `spec.md` C14 của `0003`.
+
 Hồ sơ agent đầu tiên là **chat thuần, không tool nào** (`spec.md` C2). Kết quả trong
 `intent.md` không cần tool, nên mặc định an toàn nhất không tốn phạm vi.
 

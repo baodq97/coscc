@@ -205,6 +205,31 @@ thật từ `https://github.com/octocat/Hello-World.git` (đĩa + store + hàng 
 cho đủ. Bằng chứng thường trực cho trang vẫn chưa có, và nó là một unit riêng, vì
 `intent.md` đặt "không cần trình duyệt" thành một phần của kết quả.
 
+## C3 and C14 answered, 2026-09-21
+
+Làm như bảo trì trong phạm vi `0003`, **không mở unit mới**. Căn cứ: `spec.md` C3 đã nói
+thẳng hai con số nên được chỉnh "sau lần chạy đầu", và C14 giao cho tác giả — tác giả đã
+quyết. Cách đọc khác là hai việc này đáng một unit riêng; tôi chọn không, và ghi lại để
+người sau cân nhắc chứ không phải đoán.
+
+**C3 — hai con số giờ có nguồn.** Đo ngày 2026-09-21 trên máy này, mạng này, clone qua
+https: `Hello-World` 1.14s (~0 MB), `Spoon-Knife` 1.18s (~0 MB), `click` 4.19s (7.8 MB),
+`requests` 4.80s (19.2 MB); `pull --ff-only` khi không có gì để lấy tốn ~0.85s bất kể kích
+thước. Tức khoảng **4 MB/s**.
+
+Giá trị **không đổi** — 120s và 60s giữ nguyên — nhưng lý do thì đổi hẳn: ở thông lượng đo
+được, 120s phủ khoảng 480 MB clone và 60s phủ khoảng 240 MB fetch. Phép đo chỉ chặn được
+cận dưới: nó nói hai con số ấy **không quá nhỏ** cho repo thường, và **không nói gì** về một
+đường truyền chậm. Điều đó được ghi ngay trong `cos_baodo/gitops.py` cùng ngày đo, vì một
+con số có nguồn mà giấu giới hạn của nguồn thì vẫn là một con số đáng ngờ.
+
+**C14 — 13 trích dẫn chết được bắc cầu, không sửa.**
+`.cos/0002_no-session-management/plan.md` nhận một bảng tra ở đầu file, ánh xạ `app/*` sang
+chỗ hiện tại kèm commit đổi tên (`81295b9`). Không viết lại các trích dẫn trong thân file:
+file đó ghi việc đã làm vào lúc đã làm, và đổi chúng thành `cos_baodo/` sẽ biến nó thành một
+bản ghi sai kiểu khác — nói rằng các file được tạo ở chỗ mà lúc ấy chúng không ở. Người đọc
+theo được, bản ghi vẫn đúng.
+
 ## Risks
 
 **Bước 1 đỏ, và nền đã nằm trong một intent đã accepted.** Đây là rủi ro tôi muốn không phải
