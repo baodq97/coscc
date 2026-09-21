@@ -169,7 +169,12 @@ class Service:
         return {"removed": name, "count": len(self.workspaces()["workspaces"])}
 
     async def pull_workspace(self, name: str) -> dict[str, Any]:
-        """Fast-forward only. A failure comes back with its output — `spec.md` R20."""
+        """Fast-forward only. A failure comes back with its output — `spec.md` R20.
+
+        Refused outright while a session is live here (`0005` R6). The refusal is an
+        `Invalid` like every other reason a pull fails, so it reaches the page through the
+        path `0003` R20 already built rather than through one of its own — `0005` R8.
+        """
         store = self._store_or_refuse()
         self._name_or_refuse(name)
         if not any(e.name == name for e in store.entries()):
@@ -177,6 +182,16 @@ class Service:
         target = store.path_of(name)
         if not target.is_dir():
             raise Invalid(f"workspace directory is missing: {target}")
+        # `0005` R6, and this has to come before `gitops`: a fast-forward rewrites files
+        # under a turn that is already reading them, and the turn cannot be told. The
+        # answer covers this process only (`0005` C2) — a second app holding a session
+        # here is not seen, and the pull will go ahead.
+        live = self.sessions.live_in(str(target))
+        if live:
+            raise Invalid(
+                f"workspace {name} has {len(live)} live session(s) — "
+                "pull would change files under them. Finish or reload, then try again."
+            )
         try:
             output = await gitops.pull(target)
         except GitError as e:
