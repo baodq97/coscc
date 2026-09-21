@@ -82,6 +82,16 @@ kèm lý do, không ném lỗi.
 *Kiểm:* `board_test.py` chạy trên chính `.cos/` của repo này, khẳng định 8 unit và 8 bước
 mỗi unit, và khẳng định một thư mục không có harness trả rỗng có lý do.
 
+*Đã làm, và một chỗ đi khác plan — ghi theo invariant 8:* **app không bao giờ chạy
+`cos.mjs` của workspace.** Plan viết "workspace không có `.claude/scripts/cos.mjs` thì trả
+board rỗng", tức là ngầm định workspace **có** thì chạy cái đó. Đó là lỗ hổng: workspace là
+repo `clone` từ một URL người ta gõ (`0003`), nên file ấy là code của repo đó, và chạy nó
+trao cho một repo lạ mọi thứ tiến trình này có — vượt qua toàn bộ knob ở
+`cos_baodo/config.py`. Thay vào đó `cos.mjs` nhận cờ `--root <dir>`, và app chạy **bản của
+chính nó** trỏ vào `.cos/` của workspace. Cái giá, ghi ra: một workspace dùng phiên bản
+harness khác sẽ được đọc bằng danh sách giai đoạn của app này, không phải của nó. Có test
+trồng một `cos.mjs` độc trong workspace và khẳng định nó không hề chạy.
+
 **3. `Journal` — chỗ của thứ không phải artifact.**
 `journal.py` dùng lại nguyên cơ chế đã trả giá ở `0005`: ghi temp rồi `rename`, `flock`
 trên file riêng, chờ có trần (`cos_baodo/store.py:16-22`, `:42-49`). Ghi chế độ mỗi bước,

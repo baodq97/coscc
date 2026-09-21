@@ -87,11 +87,16 @@ export function readUnit(dir, name) {
   return unit
 }
 
-export function readAll() {
-  if (!existsSync(COS)) return []
-  return readdirSync(COS, { withFileTypes: true })
+// `cosDir` is a parameter because this file is also the template: the app reads another
+// workspace's units by pointing **its own** copy of these rules at that workspace, rather
+// than executing the copy it finds there. A workspace is a repository cloned from a URL a
+// user typed, so its `.claude/scripts/cos.mjs` is someone else's code; running it would
+// hand it everything this process has.
+export function readAll(cosDir = COS) {
+  if (!existsSync(cosDir)) return []
+  return readdirSync(cosDir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
-    .map((e) => readUnit(join(COS, e.name), e.name))
+    .map((e) => readUnit(join(cosDir, e.name), e.name))
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
@@ -174,12 +179,13 @@ const cell = (u, f) => {
   return CODE[status] ?? '?'
 }
 
-function cmdStatus(json) {
-  const units = readAll()
+function cmdStatus(json, cosDir) {
+  const units = readAll(cosDir)
   const rows = units.map((u) => ({ ...u, next: nextAction(u) }))
 
   if (json) {
-    console.log(JSON.stringify({ units: rows }, null, 2))
+    // The stage list ships with the data so a reader never has to keep its own copy of it.
+    console.log(JSON.stringify({ root: cosDir, stages: STAGES, units: rows }, null, 2))
     return 0
   }
 
@@ -204,12 +210,12 @@ function cmdStatus(json) {
   return 0
 }
 
-function cmdGate(unitName, stage) {
+function cmdGate(unitName, stage, cosDir) {
   if (!unitName || !stage) {
     console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}>`)
     return 2
   }
-  const dir = join(COS, unitName)
+  const dir = join(cosDir, unitName)
   if (!existsSync(dir)) {
     console.error(`No such work unit: ${unitName}`)
     return 2
@@ -224,7 +230,7 @@ function cmdGate(unitName, stage) {
   return 1
 }
 
-function cmdNewPath(slug) {
+function cmdNewPath(slug, cosDir) {
   if (!slug) {
     console.error('usage: cos.mjs new-path <slug>')
     return 2
@@ -235,21 +241,34 @@ function cmdNewPath(slug) {
     console.error('  because the underscore separates the number from the slug.')
     return 2
   }
-  console.log(`.cos/${nextNumber(readAll())}_${slug}`)
+  console.log(`.cos/${nextNumber(readAll(cosDir))}_${slug}`)
   return 0
 }
 
 // Only when run as a command. Importing this file for tests must not exit the process.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [cmd, ...rest] = process.argv.slice(2)
+  const argv = process.argv.slice(2)
+
+  // `--root <dir>` reads another repository's units with these rules. Without it, the
+  // repository this script lives in.
+  const rootAt = argv.indexOf('--root')
+  if (rootAt !== -1 && !argv[rootAt + 1]) {
+    console.error('--root needs a directory')
+    process.exit(2)
+  }
+  const cosDir = rootAt === -1 ? COS : join(resolve(argv[rootAt + 1]), '.cos')
+  // Stripped before the command is read, so `--root` may sit on either side of it.
+  const words = rootAt === -1 ? argv : argv.filter((_, i) => i !== rootAt && i !== rootAt + 1)
+  const [cmd, ...rest] = words
+
   const run = {
-    status: () => cmdStatus(rest.includes('--json')),
-    gate: () => cmdGate(rest[0], rest[1]),
-    'new-path': () => cmdNewPath(rest[0]),
+    status: () => cmdStatus(rest.includes('--json'), cosDir),
+    gate: () => cmdGate(rest[0], rest[1], cosDir),
+    'new-path': () => cmdNewPath(rest[0], cosDir),
   }[cmd]
 
   if (!run) {
-    console.error('usage: cos.mjs <status [--json] | gate <unit> <stage> | new-path <slug>>')
+    console.error('usage: cos.mjs [--root <dir>] <status [--json] | gate <unit> <stage> | new-path <slug>>')
     process.exit(2)
   }
   process.exit(run())
