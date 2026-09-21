@@ -131,6 +131,47 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.post("/api/board/run")
+    async def run_step(request: Request) -> Any:
+        """R7. Streams NDJSON exactly as `/api/send` does — chunks, then one done.
+
+        The same rule applies about the status line: anything decidable before output is a
+        status code, and a refusal after streaming starts arrives as an `error` line.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+
+        cwd, unit = str(body.get("cwd", "")), str(body.get("unit", ""))
+        stage = str(body.get("stage", ""))
+        stream = service.run_step(cwd, unit, stage)
+        try:
+            # Pull the first item here so a refusal that happens before any output is still
+            # a 400. An async generator does nothing until it is advanced.
+            first = await stream.__anext__()
+        except Invalid as e:
+            return _bad(str(e))
+        except StopAsyncIteration:
+            return _bad("the step produced nothing")
+
+        async def lines() -> AsyncIterator[bytes]:
+            def out(obj: dict[str, Any]) -> bytes:
+                return json.dumps(obj).encode() + b"\n"
+
+            try:
+                for kind, payload in (first,):
+                    yield out({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
+                async for kind, payload in stream:
+                    if kind == "chunk":
+                        yield out({"type": "chunk", "text": payload})
+                    else:
+                        yield out({"type": "done", **payload})
+            except Exception as e:
+                yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
     @api.get("/api/timeline")
     async def get_timeline(request: Request) -> Any:
         """R15. What happened to one unit, oldest first."""

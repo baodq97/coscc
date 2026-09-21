@@ -153,13 +153,20 @@ def _cumulative(message: Any) -> dict[str, float]:
     return total
 
 
-def _options(config: Config, cwd: str, resume: str | None) -> ClaudeAgentOptions:
+def _options(
+    config: Config, cwd: str, resume: str | None, max_turns: int = 1
+) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
     `fork_session=False` is the line `spec.md` C7 warns about: the forking flavour of
     resume returns a *new* id, every other part of the app keeps working, and R3 fails
     silently. It is written out rather than left to the default so that deleting it is a
     visible edit.
+
+    `max_turns` is a parameter rather than the constant it was, because `0008` R11 puts the
+    ceiling on the step: a board step that has to edit files cannot finish in one turn, and
+    a chat turn must not quietly become several. The default is still 1, so every caller
+    that does not ask gets the old behaviour (`0008` plan.md C6).
     """
     return ClaudeAgentOptions(
         cwd=cwd,
@@ -168,7 +175,7 @@ def _options(config: Config, cwd: str, resume: str | None) -> ClaudeAgentOptions
         resume=resume,
         fork_session=False,  # spec.md C7 — R3 needs the same id back, not a branch
         model=config.model,
-        max_turns=1,
+        max_turns=max(1, int(max_turns)),
         setting_sources=None,  # no project/user settings can widen the tool list
     )
 
@@ -233,7 +240,9 @@ class Sessions:
         """
         self._created_here.add(session_id)
 
-    async def stream(self, cwd: str, text: str, session_id: str | None = None):
+    async def stream(
+        self, cwd: str, text: str, session_id: str | None = None, max_turns: int = 1
+    ):
         """Send one prompt and yield the reply as it arrives.
 
         Yields ``("chunk", text)`` zero or more times, then exactly one
@@ -256,7 +265,9 @@ class Sessions:
         async with self._lock:
             live = self._live.get(session_id) if session_id else None
             if live is None:
-                client = ClaudeSDKClient(options=_options(self.config, cwd, session_id))
+                client = ClaudeSDKClient(
+                    options=_options(self.config, cwd, session_id, max_turns)
+                )
                 await client.connect()
                 live = Live(client=client, session_id=session_id or "", cwd=cwd)
 

@@ -29,6 +29,7 @@ from cos_baodo.board import Unavailable
 from cos_baodo.config import Config
 from cos_baodo.gitops import GitError
 from cos_baodo.journal import BadRecord, Busy, Journal
+from cos_baodo.runner import RunError, Runner
 from cos_baodo.sessions import Sessions
 from cos_baodo.store import BadName, Store, require_name
 
@@ -287,6 +288,49 @@ class Service:
         except Busy as e:
             raise Invalid(str(e)) from e
         return {"cwd": cwd, "unit": unit, "stage": stage, "mode": mode}
+
+    async def run_step(self, cwd: str, unit: str, stage: str) -> AsyncIterator[tuple[str, Any]]:
+        """Run one step of one unit, streaming the reply as it arrives.
+
+        Everything this needs — the stage order, the artifact filename, the mode — comes
+        from one board read, so a step cannot run against a different idea of the unit
+        than the one the page is showing.
+        """
+        self._workspace_or_refuse(cwd)
+        journal = self._journal()
+        if journal is None:
+            raise Invalid(
+                "no working folder is set, so a run cannot be recorded — set COS_WORKING_DIR"
+            )
+
+        try:
+            data = await board_reader.read(cwd)
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+
+        found = next((u for u in data["units"] if u["name"] == unit), None)
+        if found is None:
+            raise Invalid(f"no such work unit in this workspace: {unit}")
+        row = next((r for r in found["stages"] if r["stage"] == stage), None)
+        if row is None:
+            raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
+
+        key = self._journal_key(cwd)
+        mode = journal.modes(key).get((unit, stage), "manual")
+        runner = Runner(self.sessions, journal)
+        try:
+            async for item in runner.run(
+                workspace=cwd,
+                journal_key=key,
+                unit=unit,
+                stage=stage,
+                artifact=row["file"],
+                stages=list(data["stages"]),
+                mode=mode,
+            ):
+                yield item
+        except RunError as e:
+            raise Invalid(str(e)) from e
 
     def timeline(self, cwd: str, unit: str) -> dict[str, Any]:
         """What has happened to one unit, oldest first (`spec.md` R15)."""

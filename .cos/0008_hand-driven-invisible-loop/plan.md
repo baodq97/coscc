@@ -202,6 +202,29 @@ session, và **app ghi artifact từ văn bản agent trả về** — xem Risk 
 *Kiểm:* chạy bước `spec` từ trang trên một unit nháp; `spec.md` xuất hiện với dòng
 `Status:`; thông điệp `init` của session ấy báo **0 tool**.
 
+*Đã làm.* Chạy thật ngày 2026-09-22 trên một unit nháp: board đọc 1 unit / 8 giai đoạn →
+đặt `spec` thành `autonomous` → bước chạy → `spec.md` ra đời với `Status: accepted.`, prose
+tiếng Việt heading tiếng Anh → board đọc lại báo `spec: accepted` → sổ ghi
+**$0.154759**, 2901 in / 4488 out / 1608 cache-read / 2725 cache-create. Trả về
+`included: ['intent.md']` — đó là R4, đo được chứ không phải tin.
+
+*Ba chỗ đi khác plan, ghi theo invariant 8:*
+(a) **`max_turns` thành tham số ngay ở bước này**, không đợi bước 9 — `Runner` cần trần từ
+policy trước khi có bước autonomous nào. Mặc định vẫn 1, nên mọi caller cũ không đổi hành vi
+(plan C6).
+(b) **Thêm route `POST /api/board/run` và nút `run` trên panel**, cùng một ô hiện tiến trình
+live. Plan xếp phần live ở bước 6, nhưng không có gì để hiện cho tới khi có thứ chạy được.
+Handler dùng `rx.event(background=True)`: một generator event thường giữ khoá state suốt
+lượt, nên một bước dài sẽ khoá cả trang — đúng cái R14 cấm.
+(c) **`policy.GRANTS` rỗng.** Bước 9 và 10 đổ vào. Tới lúc này mọi giai đoạn ở mọi chế độ
+đều là chat không tool, deny-by-default: một cặp (giai đoạn, chế độ) không có tên trong bảng
+nhận `Grant()` rỗng, nên một giai đoạn nghĩ ra ngày mai là **khoá**, không phải mở.
+
+*Một điều phải nói thẳng:* grant rỗng là thứ **app** kiểm soát. Session vẫn nhận MCP tool từ
+cấu hình mức máy cho tới khi `0007` được implement — đó là toàn bộ nội dung của `0007`, và là
+lý do `spec.md` C1 khuyến nghị làm nó trước. Mệnh đề "0 tool" của bước này chỉ đạt hoàn toàn
+sau khi `0007` xong.
+
 **9. `impl` autonomous.**
 Grant khác rỗng lần đầu: tool ghi và exec, giới hạn trong thư mục workspace. Cưỡng chế ở
 `can_use_tool`, không chỉ ở danh sách truyền vào — lý do là phép đo của `0007`. Trần 50

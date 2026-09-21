@@ -100,6 +100,11 @@ class State(rx.State):
     picked: str = ""
     runs: list[Run] = []
 
+    # "<unit>/<stage>" while a step is running, empty otherwise. One at a time: two steps
+    # writing into one unit would race on the same files.
+    running: str = ""
+    run_log: str = ""
+
     # Explicit setters. Reflex 0.9 dropped the implicit `set_<var>` handlers, and writing
     # them out is clearer anyway: every way the page can change state is a named method.
     @rx.event
@@ -194,10 +199,8 @@ class State(rx.State):
         ]
         yield
 
-    @rx.event
-    async def pick(self, unit: str):
-        """Open one unit. Clicking the open one closes it again."""
-        self.picked = "" if self.picked == unit else unit
+    def _load_timeline(self) -> None:
+        """Read the picked unit's runs. Plain method, so both handlers can call it."""
         self.runs = []
         if not self.picked:
             return
@@ -219,6 +222,45 @@ class State(rx.State):
             )
             for r in data["runs"]
         ]
+
+    @rx.event
+    def pick(self, unit: str):
+        """Open one unit. Clicking the open one closes it again."""
+        self.picked = "" if self.picked == unit else unit
+        self._load_timeline()
+
+    @rx.event(background=True)
+    async def run_step(self, unit: str, stage: str):
+        """Run one step, streaming what comes back.
+
+        `background=True` is the difference between a board and a frozen page. A generator
+        event handler holds the state lock for its whole life, so a step that takes minutes
+        would lock every other control (`spec.md` R14). A background handler takes the lock
+        in short bursts, which is why every write below sits inside `async with self`.
+        """
+        async with self:
+            self.running = f"{unit}/{stage}"
+            self.run_log = ""
+            self.error = ""
+
+        try:
+            async for kind, payload in _service.run_step(self.cwd, unit, stage):
+                async with self:
+                    if kind == "chunk":
+                        self.run_log += payload
+                    elif payload.get("error"):
+                        self.error = payload["error"]
+        except Invalid as e:
+            async with self:
+                self.error = str(e)
+        finally:
+            # Re-read rather than patch. The artifact on disk is the truth about a stage's
+            # status, and this is the moment it changed.
+            async with self:
+                self.running = ""
+                async for _ in self._board():
+                    pass
+                self._load_timeline()
 
     @rx.event
     async def set_mode(self, unit: str, stage: str, mode: str):
@@ -600,6 +642,15 @@ def _mode_control(cell: rx.Var) -> rx.Component:
             size="1",
             disabled=~State.recording,
         ),
+        rx.button(
+            rx.cond(State.running == State.picked + "/" + cell.stage, "running…", "run"),
+            on_click=State.run_step(State.picked, cell.stage),
+            # One step at a time, and never while another is going: two steps writing into
+            # one unit would race on the same files.
+            disabled=(State.running != "") | ~State.recording,
+            variant="soft",
+            size="1",
+        ),
         width="100%",
         align="center",
         gap="2",
@@ -642,6 +693,38 @@ def _detail() -> rx.Component:
                         spacing="2",
                         width="100%",
                     ),
+                ),
+            ),
+            # Live output, `spec.md` R13. It appears while a step runs and stays after it
+            # so a failure can be read, rather than vanishing with the spinner.
+            rx.cond(
+                State.run_log != "",
+                rx.box(
+                    rx.hstack(
+                        rx.cond(
+                            State.running != "",
+                            rx.hstack(
+                                rx.spinner(size="1"),
+                                ui.muted(State.running),
+                                spacing="2",
+                                align="center",
+                            ),
+                            ui.muted("last run"),
+                        ),
+                        width="100%",
+                    ),
+                    rx.text(
+                        State.run_log,
+                        white_space="pre-wrap",
+                        size="1",
+                        font_family="ui-monospace, SFMono-Regular, Menlo, monospace",
+                    ),
+                    width="100%",
+                    max_height="260px",
+                    overflow_y="auto",
+                    padding="10px 12px",
+                    border_radius="10px",
+                    background=rx.color("gray", 3),
                 ),
             ),
             rx.separator(width="100%"),
