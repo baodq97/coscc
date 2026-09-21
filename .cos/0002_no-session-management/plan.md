@@ -1,5 +1,5 @@
 # Plan: A chat-only web app over the Agent SDK
-Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
 Hồ sơ agent đầu tiên là **chat thuần, không tool nào** (`spec.md` C2). Kết quả trong
 `intent.md` không cần tool, nên mặc định an toàn nhất không tốn phạm vi.
