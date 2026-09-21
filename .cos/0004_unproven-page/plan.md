@@ -1,5 +1,5 @@
 # Plan: Build a page check, then prove it can fail
-Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
 Thứ tự ở đây có một ý: **dấu vân tay bản build phải có trước phép đo trang.** Không có nó,
 mọi bước sau đo một thứ có thể không phải thứ đang chạy — đúng `spec.md` C3, và đúng hình
@@ -68,6 +68,29 @@ vân tay chỉ cần *ghi lại* nó đã build với gì.
    (dấu vân tay), thêm `verify_0004.py` vào danh sách lệnh kiểm kèm ghi chú rằng nó cần một
    cổng thật. Chạy `## Proof`. Đặt `Status: done` chỉ sau khi nó xanh.
 
+## What actually happened
+
+**Bước 3, 4, 5 về chung một commit.** Chúng cùng nằm trong một file, và tách ra sẽ là một
+script chỉ dò trình duyệt rồi thoát — kiểm được nhưng vô nghĩa. Khả năng kiểm từng phần
+không mất: lệnh in kết quả từng mệnh đề.
+
+**Thêm một mệnh đề không có trong plan: "cảnh hỏng vẫn render trang thật".** Viết xong bước
+5 thì thấy nó có thể xanh vì lý do sai — thư mục build rỗng thì máy chủ tĩnh trả 404, dữ
+liệu sống vắng mặt vì chẳng có trang nào, và negative control báo đạt trong khi không đo gì.
+Đó đúng là hình dạng lời nói dối unit này sinh ra để bắt, nên lệnh phải tự kiểm trang có
+render không trước khi kết luận. Đã kiểm tay một lần (máy chủ tĩnh trả 200, 10KB, đúng trang
+của app) rồi mới đưa thành mệnh đề để lần sau không cần tay nữa.
+
+**Đã chứng minh lệnh đỏ được, bằng một trang hỏng thật.** Gỡ `on_mount=State.load` khỏi
+trang, build lại, chạy: thoát **1**, và nó nói `the working folder … never appeared on the
+page`. Phục hồi thì xanh lại. Đây là thứ phân biệt lệnh này với một con dấu.
+
+**`spec.md` C1 cắn ngay lần chạy đầu.** Cổng 8790 đang bị một tiến trình khác của tác giả
+giữ — `python -m app.web`, bản trước khi đổi tên ở `0003`, vẫn sống kèm hai tiến trình
+`claude` con. Lệnh thoát **2** với đúng lý do, không phải 1. Không tắt tiến trình ấy; build
+và chạy proof ở cổng 8799 thay thế. Ma sát này là thật, và `spec.md` open question 7 vẫn
+mở.
+
 ## Risks
 
 **Cảnh hỏng không thật sự hỏng, và lệnh xanh vì lý do sai.** Đây là rủi ro tôi muốn không
@@ -110,6 +133,10 @@ npm test \
   && uv run cos-build \
   && uv run python scripts/verify_0004.py
 ```
+
+Hai lệnh cuối cần `COS_PORT` trống. Ngày 2026-09-21 cổng mặc định đang bị chiếm, nên chúng
+được chạy với `COS_PORT=8799` — cùng giá trị cho cả build lẫn proof, vì bản build nhúng
+cổng. Đặt biến ấy cho cả hai là cách hợp lệ để chạy `## Proof` trên một máy đang mở app.
 
 Bốn lệnh đầu là `spec.md` R8 và R9: thêm một bằng chứng mà không làm đổ thứ có sẵn, và
 `npm test` vẫn không cần trình duyệt. `uv run cos-build` đứng ngay trước lệnh cuối vì lệnh

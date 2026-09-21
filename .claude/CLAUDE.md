@@ -8,7 +8,7 @@ Reference: `.claude/harness.md`. Each stage's rules live in its own skill.
 ```
 npm test                                          # every test, both runtimes
 uv sync                                           # Python deps, after a fresh clone
-uv run reflex export --frontend-only --no-zip     # build the page; see "Build step" below
+uv run cos-build                                  # build the page; see "Build step" below
 node .claude/scripts/cos.mjs status               # where every unit stands
 node .claude/scripts/cos.mjs gate <unit> <stage>  # exit 0 = stage may proceed
 node .claude/scripts/cos.mjs new-path <slug>      # next work unit path
@@ -18,11 +18,13 @@ Tests must be green before any task is reported complete; never skip or delete a
 one. There is no linter; do not invent a command for one.
 
 **Build step.** There is one, since `0003`. The page is Reflex, which compiles to
-JavaScript, and `uv run cos-baodo` refuses to start until it has been built. Nothing runs
-it automatically: `npm test` does not, because the proofs drive the ASGI app in-process and
-never need a compiled frontend — that is deliberate, and it is what keeps the test command
-free of a JavaScript toolchain. Run it by hand after changing anything under
-`cos_baodo/cos_baodo.py`, and before running the app.
+JavaScript. Build with `uv run cos-build`, not `reflex export` — the wrapper records a
+fingerprint of what it built from, and both `cos-baodo` and `scripts/verify_0004.py`
+**refuse to run against a bundle that does not match the source**. Without that, editing
+the page and forgetting to rebuild leaves every check passing against the previous bundle.
+Nothing runs the build automatically: `npm test` does not, because `verify_0002` and
+`verify_0003` drive the ASGI app in-process and never need a compiled frontend — that is
+deliberate, and it is what keeps the test command free of a JavaScript toolchain.
 
 `npm test` covers both runtimes: `test:node` over `channel/` and `.claude/scripts/`, then
 `test:python` over `cos_baodo/`. Adding a Python test file under `cos_baodo/` named
@@ -44,11 +46,19 @@ from the root on every read, which is why a hand-edited store cannot point the a
 `/etc`. Leave `COS_WORKING_DIR` unset and the app behaves exactly as `0002` did.
 
 ```
-uv run reflex export --frontend-only --no-zip             # build the page first
+uv run cos-build                                          # build the page first
 COS_WORKING_DIR=~/projects uv run cos-baodo               # then http://127.0.0.1:8790
 uv run python scripts/verify_0002.py                      # proof for 0002; creates real sessions
 uv run python scripts/verify_0003.py                      # proof for 0003; clones, creates sessions
+uv run python scripts/verify_0004.py                      # proof for 0004; needs a browser and a free port
 ```
+
+`verify_0004.py` is the only check that opens the page in a real browser, and the only one
+that needs `COS_PORT` free — the bundle hardcodes its own address, so this proof cannot
+move to a spare port the way the others do. Stop the app before running it, or build and
+run both at another port. Its exit codes are worth knowing: `0` pass, `1` the page is
+broken, `2` the environment is not ready (no browser, stale build, port in use). It creates
+no session, so unlike the other two it spends no quota.
 
 **The build bakes in the port.** The compiled page hardcodes the address it opens its
 `/_event` WebSocket against, so a build made for one port serves a page that renders and
