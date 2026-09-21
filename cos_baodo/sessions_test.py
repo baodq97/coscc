@@ -6,13 +6,23 @@ is run deliberately.
 """
 
 import asyncio
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import claude_agent_sdk as sdk
 
 from cos_baodo.config import Config
-from cos_baodo.sessions import Refused, Sessions, _options, _text_of, history, list_for_directory
+from cos_baodo.sessions import (
+    Live,
+    Refused,
+    Sessions,
+    _options,
+    _text_of,
+    history,
+    list_for_directory,
+)
 
 
 def _info(session_id="s1", cwd="/p", summary="sum", **kw):
@@ -154,6 +164,59 @@ class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
 
     async def test_closing_nothing_is_not_an_error(self):
         await Sessions(Config()).close_all()
+
+
+class WhichWorkspacesHaveSomeoneInThem(unittest.TestCase):
+    """`0005` R6. The question `pull` has to ask before it touches a workspace."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        self.addCleanup(self.tmp.cleanup)
+        self.a = self.root / "a"
+        self.b = self.root / "b"
+        self.a.mkdir()
+        self.b.mkdir()
+        self.s = Sessions(Config())
+
+    def _live(self, session_id: str, cwd: Path) -> None:
+        # The client is never touched by `live_in`, so a stand-in is enough here. A real
+        # one would spend quota to test a dict lookup.
+        self.s._live[session_id] = Live(client=object(), session_id=session_id, cwd=str(cwd))
+
+    def test_an_empty_list_when_nothing_is_open(self):
+        self.assertEqual(self.s.live_in(str(self.a)), [])
+
+    def test_the_session_in_that_directory_and_only_that_one(self):
+        self._live("in-a", self.a)
+        self._live("in-b", self.b)
+        self.assertEqual(self.s.live_in(str(self.a)), ["in-a"])
+        self.assertEqual(self.s.live_in(str(self.b)), ["in-b"])
+
+    def test_every_session_in_the_directory_not_just_the_first(self):
+        self._live("one", self.a)
+        self._live("two", self.a)
+        self.assertEqual(sorted(self.s.live_in(str(self.a))), ["one", "two"])
+
+    def test_the_same_directory_written_differently_is_the_same_directory(self):
+        """A string compare would let `pull` through on `a/../a` — R6 by accident."""
+        self._live("in-a", self.a)
+        self.assertEqual(self.s.live_in(f"{self.a}/../a"), ["in-a"])
+        self.assertEqual(self.s.live_in(f"{self.a}/"), ["in-a"])
+
+    def test_a_parent_directory_does_not_count_as_that_session(self):
+        """`pull` on the working folder must not be refused by a session one level down."""
+        self._live("in-a", self.a)
+        self.assertEqual(self.s.live_in(str(self.root)), [])
+
+    def test_an_unresolvable_directory_is_no_sessions_rather_than_a_crash(self):
+        self._live("in-a", self.a)
+        self.assertEqual(self.s.live_in("\x00"), [])
+
+    def test_closing_the_session_empties_it(self):
+        self._live("in-a", self.a)
+        self.s._live.pop("in-a")
+        self.assertEqual(self.s.live_in(str(self.a)), [])
 
 
 if __name__ == "__main__":

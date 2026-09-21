@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import claude_agent_sdk as sdk
@@ -126,6 +127,18 @@ def _options(config: Config, cwd: str, resume: str | None) -> ClaudeAgentOptions
     )
 
 
+def _resolve(directory: str) -> Path | None:
+    """The directory as one comparable value, or `None` if it is not a path at all.
+
+    `ValueError` is caught alongside `OSError` because an embedded null raises that one,
+    not the other — and a crash here would turn a question about sessions into a 500.
+    """
+    try:
+        return Path(directory).expanduser().resolve()
+    except (OSError, ValueError):
+        return None
+
+
 class Sessions:
     """Holds the live clients. One per session id, created on demand."""
 
@@ -146,6 +159,25 @@ class Sessions:
 
     def created_here(self, session_id: str) -> bool:
         return session_id in self._created_here
+
+    def live_in(self, directory: str) -> list[str]:
+        """Session ids with a live client in this directory, newest registration last.
+
+        `0005` R6: `pull` rewrites files under a running turn, so the service asks this
+        before it lets `git` near a workspace.
+
+        **It sees this process only.** `_live` is a dict in memory, so a second app on the
+        same working folder is invisible here and `pull` will proceed under its session.
+        That is `0005` C2, recorded and not fixed — closing it needs a mark on disk, which
+        `intent.md` did not authorise. Do not read an empty list as "nobody is working".
+
+        Compared by resolved path, not by string: the caller builds the directory from the
+        store and `stream` was given whatever the browser sent.
+        """
+        target = _resolve(directory)
+        if target is None:
+            return []
+        return [sid for sid, live in self._live.items() if _resolve(live.cwd) == target]
 
     def adopt(self, session_id: str) -> None:
         """Record a session as this app's.
