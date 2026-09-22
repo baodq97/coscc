@@ -297,9 +297,23 @@ def claim_5() -> bool:
 # --------------------------------------------------------------------------
 
 
+HARNESS_SECTION = "## Branches, tags and releases"
+
+
 def claim_6() -> bool:
-    text = read(".claude/harness.md")
-    missing = [t for t in TYPES if re.search(rf"`{t}`", text) is None]
+    whole = read(".claude/harness.md")
+    # Scoped to the new section, and whole-word. Searching the whole file would pass on
+    # words like "test" and "build" that this document has always used for other things,
+    # which would make the claim true before anything was written.
+    # Anchored to the start of a line. Plain `partition` found the cross-reference to this
+    # section that sits 77 lines above it in running prose, and measured the paragraph
+    # around that instead.
+    start = re.search(rf"^{re.escape(HARNESS_SECTION)}$", whole, re.MULTILINE)
+    text = whole[start.end():].partition("\n## ")[0] if start else ""
+    if not text:
+        return say(False, "the harness carries a branch and release section",
+                   f"no {HARNESS_SECTION!r} heading")
+    missing = [t for t in TYPES if re.search(rf"\b{t}\b", text) is None]
     if missing:
         return say(False, "the harness names all ten branch types", ", ".join(missing))
     gaps = []
