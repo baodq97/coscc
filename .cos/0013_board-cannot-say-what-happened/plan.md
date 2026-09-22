@@ -40,6 +40,13 @@ năm là mở lại một quyết định `coscc/policy.py:3-8` đã đóng.
    `user_version` thấp hơn (`coscc/data.py:286-310`), và mọi câu lệnh đều `IF NOT EXISTS`,
    nên không cần viết migration riêng. **Kiểm được:** mở `~/.cos/cos.db` hiện có (có
    `workspaces`, `runs` 0 dòng) và thấy version thành 2 cùng hai bảng mới, không mất dữ liệu.
+
+   **Departure, 2026-09-22 (bước 2).** Đo trên **bản sao** của `~/.cos/cos.db`, không phải
+   bản gốc. Lý do chính là Risk 3 xảy ra ngay lúc đo: bản `v0.2.3` đang cài và đang chạy như
+   systemd service dùng đúng file đó, và nâng nó lên version 2 là làm app đang chạy ném
+   `Incompatible` cho tới khi có bản mới. Bản sao chứng minh đúng cùng một điều — một DB v1
+   do bản đã phát hành ghi ra thì nâng được và không mất dòng nào — mà không làm hỏng thứ
+   đang chạy. DB thật sẽ được nâng khi bản mang thay đổi này được cài.
 3. **`history.py`: ghi thêm-only và phép chiếu.** **Kiểm được:** test xoá dòng chuyển trạng
    thái cuối của một unit và thấy trạng thái hiện tại lùi về giá trị trước — đó là R1, và nó
    chỉ xanh được nếu không tồn tại cột trạng thái nào.
