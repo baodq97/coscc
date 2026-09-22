@@ -103,8 +103,16 @@ async def read(workspace: str | Path, timeout: float = TIMEOUT) -> dict[str, Any
             stdin=asyncio.subprocess.DEVNULL,
         )
     except (OSError, ValueError) as e:
-        # No node on PATH is the ordinary case here, and it must name itself.
-        raise Unavailable(f"could not run node: {e}") from e
+        # No node on PATH is the ordinary case here, and it must name itself -- *with the
+        # PATH it looked on*. Measured 2026-09-22 under the systemd user service this app
+        # installs as: `node` was on the machine, at `~/.nvm/versions/node/v24.20.0/bin`,
+        # and the service's PATH was the systemd user default, which contains no nvm. The
+        # message without this suffix said only "could not run node" and sent a reader
+        # looking for a missing program that was not missing. `docs/install.md` carries the
+        # fix; this is what points at it.
+        raise Unavailable(
+            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
+        ) from e
 
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)

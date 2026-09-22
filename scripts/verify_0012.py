@@ -101,7 +101,14 @@ def http_json(path: str) -> tuple[bool, object]:
 
 
 def gate_rows(workspace: str) -> tuple[bool, set]:
-    """`(unit, stage, status)` as the harness in the workspace reports it."""
+    """`(unit, stage, status)` as the harness in the workspace reports it.
+
+    One derivation is applied here, and only one: an artifact the gate does not mention
+    is `not started`. That is `coscc/board.py:76`, and `board.py:65-68` records it as a
+    reading of the absence rather than something stored. Copying it is what keeps the
+    comparison about the two sides agreeing instead of about who spells an empty cell how;
+    copying anything *else* the app does would make this claim compare the app with itself.
+    """
     script = REPO / ".claude" / "scripts" / "cos.mjs"
     try:
         done = subprocess.run(
@@ -114,7 +121,7 @@ def gate_rows(workspace: str) -> tuple[bool, set]:
         return False, {(done.stderr or done.stdout).strip()[:300]}
     data = json.loads(done.stdout)
     return True, {
-        (unit["name"], stage["file"].removesuffix(".md"), entry.get("status") or "")
+        (unit["name"], stage["file"].removesuffix(".md"), entry.get("status") or "not started")
         for unit in data.get("units", [])
         for stage in data.get("stages", [])
         for entry in [(unit.get("artifacts") or {}).get(stage["file"]) or {}]
@@ -146,6 +153,22 @@ def main() -> int:
         print(f"the service at {URL} has no workspace to measure", file=sys.stderr)
         return EXIT_ENV
     workspace = spaces["paths"][0]
+
+    # `node` on *this* shell's PATH is not the question. The Board is read by the service,
+    # and the service is a systemd user unit whose PATH is the systemd default. Measured
+    # 2026-09-22: node was on the machine, under `~/.nvm/`, and the service could not see
+    # it. That is a machine this proof cannot measure, not a release that is broken --
+    # `scripts/verify_0003.py:8-14`, and the whole reason exit 2 exists.
+    probed_ok, probed = http_json(f"/api/board?cwd={workspace}")
+    if not probed_ok and "could not run node" in str(probed):
+        print(
+            f"the service at {URL} cannot run node — its PATH has none.\n"
+            f"  {probed}\n"
+            "  docs/install.md, under ## Prerequisites, says how to put one there.",
+            file=sys.stderr,
+        )
+        return EXIT_ENV
+
     print(f"measuring {python}\n      against {URL}, workspace {workspace}\n")
 
     results = []
@@ -173,7 +196,7 @@ def main() -> int:
         ))
 
     # --- claim 2: its board is the workspace's own gate ---
-    got_board, payload = http_json(f"/api/board?cwd={workspace}")
+    got_board, payload = probed_ok, probed
     got_gate, expected = gate_rows(workspace)
     if not got_board:
         results.append(say(False, "the board agrees with the gate in the workspace", str(payload)))

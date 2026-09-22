@@ -51,7 +51,26 @@ viết lại trước, không phải sửa kèm.
    Cài bằng `uv tool install --force dist/coscc-0.2.2-py3-none-any.whl` — **giữ nguyên số
    version**. Bump version là việc của ship stage, và `cos.mjs check-version` canh năm chỗ
    phải khớp nhau, nên bump ở đây là tự mở một lỗi khác.
-9. **`impl.md`**, ghi số đo thật của bước 7 và 8.
+8b. **Đi lệch khỏi plan, ghi lúc nó xảy ra (2026-09-22).** Bước 8 chạy xong thì packaging
+   đúng — claim 1, 3, 4 xanh — nhưng Board vẫn đỏ với
+   `could not run node: No such file or directory: 'node'`. Không phải lỗi đóng gói: `node`
+   **có** trên máy, ở `~/.nvm/versions/node/v24.20.0/bin/node`, còn service systemd chạy với
+   PATH mặc định của systemd user, nơi không bao giờ có nvm. Một cái bẫy thật cho bất kỳ ai
+   cài node bằng nvm, và không thứ gì trong repo này nói tới nó.
+
+   Ba việc thêm, đều nằm trong ràng buộc của `spec.md` (không đụng nội dung luật, stage list
+   hay `GRANTS`):
+   - `coscc/board.py` nêu luôn PATH đã tìm trong lời từ chối. Thông báo cũ gửi người đọc đi
+     tìm một chương trình không hề thiếu.
+   - `docs/install.md` ghi cái bẫy nvm và một dòng sửa.
+   - `scripts/verify_0012.py` phân biệt "service không chạy được node" là **exit 2**, không
+     phải một claim đỏ — đó là một cái máy proof không đo được, không phải một bản phát hành
+     hỏng (`scripts/verify_0003.py:8-14`).
+
+   Rồi làm đúng thứ tài liệu vừa viết, trên chính máy này, và đó là lần đầu dòng hướng dẫn
+   đó được thử.
+
+9. **`impl.md`**, ghi số đo thật của bước 7, 8 và 8b.
 
 ## Risks
 

@@ -35,7 +35,25 @@ full:
   JavaScript. Without `node` on `PATH` the Board answers
   `could not run node: [Errno 2] No such file or directory: 'node'` and the other five
   screens carry on working. `scripts/install.sh` does not install it and does not refuse
-  without it. Any `node` your distribution ships will do.
+  without it. Any `node` your distribution ships will do — but see the trap below if yours
+  came from `nvm`.
+
+**If `node` came from `nvm`, the service will not find it.** `nvm` puts `node` under your
+home directory and puts it on `PATH` from your shell's startup files; a systemd user
+service reads neither. Measured 2026-09-22 on the machine this was written on: `node` was
+at `~/.nvm/versions/node/v24.20.0/bin/node`, `command -v node` answered instantly in a
+terminal, and the service's own `PATH` was the systemd default with no `nvm` anywhere in
+it — so the Board failed while every check a person would think to run said node was
+installed. The fix is one line in your env file
+(`${XDG_CONFIG_HOME:-$HOME/.config}/coscc/env`), then
+`systemctl --user restart coscc`:
+
+```sh
+PATH=/home/you/.nvm/versions/node/v24.20.0/bin:/usr/local/bin:/usr/bin:/bin
+```
+
+Use the directory `dirname "$(command -v node)"` prints. A `node` installed by your
+distribution's package manager lands in `/usr/bin` and needs none of this.
 
 **You do not need Node, npm or bun to *build* anything**, and that is a different sentence
 from the bullet above. The release wheel carries the frontend already compiled, so nothing
