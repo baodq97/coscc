@@ -329,10 +329,24 @@ while [ "$waited" -lt 90 ]; do
     fi
     exit 0
   fi
-  if [ "$(systemctl --user is-active coscc)" = "failed" ]; then
+  # `is-active` alone almost never catches a crash loop. The unit above carries
+  # Restart=on-failure, so a service that dies on every start spends its time cycling
+  # through activating/active and is only briefly `failed` -- measured 2026-09-22 on a
+  # packaged install that could not serve at all: this branch never fired, and the run
+  # instead sat out the full timeout below. NRestarts is the honest signal, and it only
+  # moves when systemd has actually had to restart the thing.
+  state=$(systemctl --user is-active coscc 2>/dev/null || true)
+  restarts=$(systemctl --user show -p NRestarts --value coscc 2>/dev/null || true)
+  crash_looping=no
+  case "$restarts" in
+    ''|*[!0-9]*) ;;
+    *) [ "$restarts" -ge 2 ] && crash_looping=yes ;;
+  esac
+  if [ "$state" = "failed" ] || [ "$crash_looping" = yes ]; then
     printf '\n'
-    echo "install.sh: coscc failed to start. What it said:" >&2
-    journalctl --user -u coscc -n 30 --no-pager >&2 || true
+    echo "install.sh: coscc is not staying up (state=$state, restarts=${restarts:-?})." >&2
+    echo "install.sh: what it said:" >&2
+    journalctl --user -u coscc -n 40 --no-pager >&2 || true
     exit 1
   fi
   printf '.'
@@ -342,6 +356,9 @@ done
 
 printf '\n'
 echo "install.sh: coscc did not answer within ${waited}s. It may still be starting." >&2
-echo "install.sh: check with  systemctl --user status coscc" >&2
-echo "install.sh:             journalctl --user -u coscc -n 50" >&2
+# Print the log rather than telling somebody to go and find it. Anyone who has just met
+# this program is the least equipped person to be handed two commands and a shrug.
+echo "install.sh: the last thing it logged:" >&2
+journalctl --user -u coscc -n 40 --no-pager >&2 || true
+echo "install.sh: check again with  systemctl --user status coscc" >&2
 exit 1

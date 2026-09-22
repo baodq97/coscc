@@ -31,6 +31,13 @@ full:
   logged in. Get it from Anthropic's own instructions; there is nothing coscc-specific
   about that step.
 
+**You do not need Node, npm or bun.** The release wheel carries the frontend already
+compiled, so nothing on this machine builds JavaScript. That is worth stating because it is
+the one prerequisite this project got wrong: the first wheel built for this unit installed
+cleanly on a machine with no Node, reported `active`, and served nothing at all — Reflex
+re-runs its compile on every start unless the wheel carries the build state that lets it
+skip. `.cos/0011_no-install-path-on-a-clean-machine/impl.md` records the measurement.
+
 ## Install
 
 ```sh
