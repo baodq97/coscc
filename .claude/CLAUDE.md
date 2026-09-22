@@ -81,9 +81,11 @@ uv run python scripts/verify_0006.py                      # proof for 0006; brow
 
 `verify_0004.py` spawns four copies of itself writing to one working folder and checks
 that all 20 entries survive, then opens a real session and checks that `pull` refuses
-while it is live. It was re-run on SQLite on 2026-09-22 and still measures 20 of 20 —
-`0006 spec.md` C2 is explicit that swapping the mechanism does not carry the old proof
-across. **The `pull` refusal covers this process only.** Two copies of the app on one
+while it is live. It was re-run on SQLite on 2026-09-22 and still measures 20 of 20, and
+re-run again the same day on Python 3.14.4 — the interpreter carries `sqlite3` with it, so
+a bump moves the ground under that figure. `0006 spec.md` C2 is explicit that swapping the
+mechanism does not carry the old proof across, and the same holds for swapping the
+interpreter. **The `pull` refusal covers this process only.** Two copies of the app on one
 working folder still see past each other for sessions, so `pull` can change files under
 the other's turn; that is recorded in `.cos/0004_silent-concurrent-loss/spec.md` C2 and not
 fixed. Concurrent *writes* are now SQLite's problem rather than `flock`'s.
