@@ -5,7 +5,7 @@ location is read from the environment in `config.from_env` and nowhere else. Thi
 is the only place that turns that setting into a path, opens the database, or knows the
 schema. Everything above it asks for a `Data` and gets handed something already correct.
 
-**Why SQLite here at all.** `0004` measured what the previous arrangement cost: four
+**Why SQLite here at all.** The previous arrangement was measured, and it cost: four
 processes adding five workspaces each to one JSON file left 8 of 20, silently. The fix
 then was `flock` around the whole read-modify-write. SQLite is a different mechanism for
 the same property, and `spec.md` C2 is explicit that it does not inherit the proof —
@@ -25,7 +25,7 @@ reason: turn an indefinite block into an error, not wait for anyone.
 transaction takes a read lock first and tries to upgrade on the first write, and an
 upgrade that loses the race is aborted rather than retried. Every read-modify-write in
 this app therefore declares itself a writer up front. This is the exact shape of the bug
-`0004` found, moved into a different mechanism, which is why it gets a paragraph instead
+that measurement found, moved into a different mechanism, which is why it gets a paragraph instead
 of a line.
 """
 
@@ -333,8 +333,8 @@ class Data:
     ) -> None:
         """Run a one-shot import of `source`, inside the caller's transaction.
 
-        `Store` and `Journal` both bring a pre-`0006` file in, and both did the same three
-        things around the part that differs. `0006 spec.md` R8 is the requirement; these
+        `Store` and `Journal` both bring a pre-SQLite file in, and both did the same three
+        things around the part that differs. `spec.md` R8 is the requirement; these
         are the properties that make it safe to call on every path in:
 
         - the cheapest possible exit for the common case is one `stat` and no query, which

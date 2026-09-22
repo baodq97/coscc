@@ -42,11 +42,11 @@ def main() -> None:
     # page that never connects while the API behind it stays perfectly healthy — a
     # failure no HTTP check can see (found 2026-09-21 by driving the page with a
     # browser). The same fingerprint also catches a bundle older than the page source,
-    # which is `spec.md` C3 of `0003`.
+    # which is `spec.md` C3.
     #
     # This used to grep the compiled JS for "host:port". That answered a narrower
     # question, and answered it separately from `scripts/verify_0003.py` — the
-    # arrangement `0002` paid to learn about when `sessions.py` kept its own gate.
+    # arrangement this repo paid to learn about when `sessions.py` kept its own gate.
     built = build.web_dir() / "build" / "client"
     state, message = build.check(config, built)
     if state != build.OK:

@@ -52,12 +52,12 @@ class Config:
     resume_foreign_sessions: bool = False
 
     workspaces: tuple[str, ...] = field(default_factory=tuple)
-    # `0002`. The one root under which workspaces may be created, read here and nowhere
+    # The one root under which workspaces may be created, read here and nowhere
     # else. `spec.md` R11: no route, event handler or component can set it, because the
     # only way in is `from_env`, and a request has no path to that function. Unset means
-    # the store is off and the app behaves exactly as `0001` did.
+    # the store is off and the app behaves as it did before there was one.
     working_dir: str | None = None
-    # `0006`. Where the app keeps its *own* state -- the SQLite database and the object
+    # Where the app keeps its *own* state -- the SQLite database and the object
     # folder. Unset means `~/.cos` (`cos_baodo/data.py`). It is a separate setting from
     # `working_dir` on purpose: `spec.md` R4 keeps workspaces out of it, so backing one up
     # is not backing up the other, and `spec.md` C1 says that out loud because it is the
@@ -117,13 +117,14 @@ def from_env(env: dict[str, str] | None = None) -> Config:
     behind "not settable over HTTP" (`spec.md` C2): a request has no path to this
     function. There is deliberately no setter.
 
-    `0006` adds `data_dir` on the same terms and for the same reason. A request that could
+    `data_dir` is here on the same terms and for the same reason. A request that could
     move the data directory could point the app at a database somebody else wrote.
     """
     e = dict(os.environ if env is None else env)
     working_dir = _dir(e, "WORKING_DIR")
     declared = _list(e, "WORKSPACES")
-    # The cwd fallback is `0001` behaviour and stays for `0001`: with no working folder and
+    # The cwd fallback predates the store and stays for the sessions that rely on it:
+    # with no working folder and
     # nothing declared, the app is about the directory it was started in. But once a
     # working folder exists, an undeclared `COS_WORKSPACES` means *none* — silently adding
     # cwd would put the repo in the list and make a count of "2" read as "3".

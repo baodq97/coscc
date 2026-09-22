@@ -1,10 +1,10 @@
 """The app: one page, one ASGI app, one loopback port.
 
-Until `0006` this file held a second page — the one `0001` through `0005` built — and
-`fragmented-product-experience`'s prototype sat beside it at `/prototype`. `0006 spec.md` R19 replaced both with
+This file once held a second page — the one the earlier units built — and
+a prototype sat beside it at `/prototype`. `spec.md` R19 replaced both with
 one: the prototype's shape, on the real service. The old page's components and state are
 gone rather than kept around, because two front ends are two things to fix every time and
-only one of them ever gets fixed (`0006 spec.md` C3 records what that costs).
+only one of them ever gets fixed (`spec.md` C3 records what that costs).
 
 What is left here is registration. The page is `cos_baodo/screens.py`, its state is
 `cos_baodo/state.py`, and the business logic is where it always was, in

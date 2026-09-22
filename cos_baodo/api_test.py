@@ -44,7 +44,7 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
 
     async def test_workspaces_lists_what_was_configured(self):
-        # `0002` R13 widened this from a list of paths to a list of entries carrying
+        # R13 widened this from a list of paths to a list of entries carrying
         # name, label, source and missing, plus the count the app could not answer
         # before. `paths` is kept so the older shape still reads.
         body = (await self.client.get("/api/workspaces")).json()
@@ -208,7 +208,7 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
 
 
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
-    """`0001` behaviour: no store, and the write routes say why rather than crashing."""
+    """Without a store: the write routes say why rather than crashing."""
 
     async def asyncSetUp(self):
         self.app = build(Config(workspaces=("/tmp",)))

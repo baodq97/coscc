@@ -76,7 +76,7 @@ def claim_1() -> Claim:
     )
     c.check("no markup under cos_baodo/", not found, ", ".join(found))
     c.check(
-        "0001's page is gone",
+        "the superseded page is gone",
         not (REPO / "cos_baodo" / "public" / "index.html").exists(),
     )
     return c
@@ -99,7 +99,7 @@ def claim_2() -> Claim:
         c.check("a real workspace passes the gate", _passes(service, str(root / "real")))
 
         # Hand-edit: the store is the user's, and this is what they could type into it
-        # with `sqlite3` on the command line. Since `0006` that is a table rather than a
+        # with `sqlite3` on the command line. That is now a table rather than a
         # file, and the claim is unchanged: the names are rejected on read.
         hand = Store(root, root)
         with hand.data.write() as conn:

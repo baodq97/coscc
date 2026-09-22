@@ -5,7 +5,7 @@
 recorded in `.cos/0006_demo-data-and-no-durable-store/impl.md`. What they had in common was
 never the claims: it was the port check, the build guard, the browser launcher and the
 app-under-test runner, which were copied verbatim from the first into the second. Two copies
-of a boot loop drift the moment one of them needs a fix, and `0003`'s already has.
+of a boot loop drift the moment one of them needs a fix, and one already has.
 
 Nothing here decides anything about a proof. It starts an app, stops it, and refuses the
 environment early enough that "chromium is not installed" is never reported as "the page is
@@ -78,7 +78,7 @@ def require_build(config) -> Path:
 
 
 def require_browser():
-    """`0003 spec.md` R7: never download. Say where we looked and what to run."""
+    """`spec.md` R7: never download. Say where we looked and what to run."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -143,7 +143,7 @@ class RealApp:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
                 self.proc.wait(timeout=10)
-        # A restart, and `0003`'s broken scene, both need the address actually released —
+        # A restart, and the broken scene, both need the address actually released —
         # a lingering server would let the next page connect and make the claim vacuous.
         wait_closed(self.config.host, self.config.port)
 

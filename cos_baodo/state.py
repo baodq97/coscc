@@ -1,6 +1,6 @@
 """Everything the page shows, and nothing it decides.
 
-`0002 spec.md` R10 is the rule this module answers to: the page and the JSON API are two
+`spec.md` R10 is the rule this module answers to: the page and the JSON API are two
 entry points to one capability, so no handler here validates anything, builds a path, or
 decides what counts as a workspace. Each one calls `Service`, turns `Invalid` into a line
 of text, and stops. A conditional about business state in this file is a bug in
@@ -219,7 +219,7 @@ def _title_of(unit_name: str) -> str:
 
     The slug is the only human-written name a unit has before its artifacts are read, and
     reading eight files per card to find a better one would make opening the board cost a
-    directory walk. `0006 harness` fixes the slug at creation for exactly this reason.
+    directory walk. The harness fixes the slug at creation for exactly this reason.
     """
     _, _, slug = unit_name.partition("_")
     words = (slug or unit_name).replace("-", " ").strip()
@@ -739,7 +739,7 @@ class StudioState(rx.State):
     @rx.event
     def filter_work(self, value: str | list[str]):
         # `rx.segmented_control` hands back a list when it is multi-select. This one is
-        # not, and `fragmented-product-experience` shipped a version that accepted a list and then indexed a string.
+        # not, and the prototype shipped a version that accepted a list and then indexed a string.
         if not isinstance(value, str) or value not in ("All work", "Autonomous", "Needs review"):
             self.notice = "Choose one of the work filters."
             return
@@ -848,7 +848,7 @@ class StudioState(rx.State):
 
     @rx.event
     async def remove_workspace(self):
-        """De-lists only. The directory stays on disk — `0002 spec.md` R18."""
+        """De-lists only. The directory stays on disk — `spec.md` R18."""
         name, self.remove_name = self.remove_name, ""
         if not name:
             return

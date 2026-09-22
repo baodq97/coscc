@@ -1,11 +1,11 @@
 """The six screens, built from Python components.
 
-`0002 spec.md` R8: no hand-written HTML or CSS serves this app. Everything below is Python.
+`spec.md` R8: no hand-written HTML or CSS serves this app. Everything below is Python.
 
-These screens began as `fragmented-product-experience`'s prototype and keep its shape, its spacing and most of its
-words. What changed is where every value comes from: `fragmented-product-experience` read `prototype_data.py`, and
+These screens began as a prototype and keep its shape, its spacing and most of its
+words. What changed is where every value comes from: the prototype read `prototype_data.py`, and
 nothing here reads anything but `StudioState`, which reads `Service`. That swap is the
-whole of `0006 spec.md` R12.
+whole of `spec.md` R12.
 
 Three things are said on the page rather than only in a document, and each is a
 requirement rather than a flourish:
@@ -13,7 +13,7 @@ requirement rather than a flourish:
 - **R17.** Before a step can be started, the screen shows the tools that step would be
   granted and the warning attached to them. A capability that comes from this machine's own
   `gh` login is invisible in an app unless somebody puts it next to the button.
-- **C8.** `fragmented-product-experience`'s equivalent button ran a simulation and cost nothing. This one calls a
+- **C8.** The prototype's equivalent button ran a simulation and cost nothing. This one calls a
   real model. It says so before it is pressed, not after.
 - **C7.** The six prose stages get no tools, so the app writes the artifact from the reply.
   The screen says that plainly rather than letting it look like the agent wrote the file.
@@ -143,7 +143,7 @@ def _topbar() -> rx.Component:
                   color_scheme="gray", aria_label="Search the studio",
                   display=rx.breakpoints(initial="none", md="flex")),
         rx.cond(P.loading, rx.spinner(size="2")),
-        # `0005` R23: the mode has to be changeable from the page and survive a reload.
+        # `spec.md` R23: the mode has to be changeable from the page and survive a reload.
         # `scripts/verify_0003.py` looks for this id.
         rx.box(rx.color_mode.button(), id="color-mode"),
         align="center", gap="12px", width="100%", min_height="68px",
@@ -153,7 +153,7 @@ def _topbar() -> rx.Component:
 
 
 def _status_bar() -> rx.Component:
-    """Where the data is. `0006 spec.md` C1: two roots, and a backup of one is not both."""
+    """Where the data is. `spec.md` C1: two roots, and a backup of one is not both."""
     return rx.flex(
         rx.hstack(
             rx.icon("folder", size=13, color=s.MUTED),
@@ -905,7 +905,7 @@ def _detail_dialog() -> rx.Component:
                                         value=P.next_cell.mode, on_change=P.set_mode, size="1",
                                     ),
                                 ),
-                                # `0006 spec.md` R17: what the step may do, before it runs.
+                                # `spec.md` R17: what the step may do, before it runs.
                                 s.panel(
                                     s.eyebrow("WHAT THIS STEP WOULD BE ALLOWED TO DO"),
                                     rx.hstack(

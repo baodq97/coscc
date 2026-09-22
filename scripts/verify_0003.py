@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Proof for .cos/0003_unproven-page, against the page `0006` replaced it with.
+"""Proof for .cos/0003_unproven-page, against the page that replaced it.
 
 Exits 0 only when the page is reachable **and** the check that says so can be made to
-fail. `0002` closed with three green claims sitting on top of a dead page, so measuring
+fail. An earlier unit closed with three green claims sitting on top of a dead page, so measuring
 only the good case is the mistake this command exists to not repeat.
 
 Exit codes are kept apart deliberately (`spec.md` R1):
@@ -124,7 +124,7 @@ def page_renders(browser, url: str) -> str:
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
         try:
-            # The shell, not a heading. `0006` replaced the page and a heading is the
+            # The shell, not a heading. The page was replaced and a heading is the
             # kind of thing a redesign moves; the shell is the thing that either mounted
             # or did not.
             page.wait_for_selector("#studio-shell", timeout=PAGE_TIMEOUT_MS)
@@ -144,7 +144,7 @@ def live_data_reaches_the_page(browser, url: str, working_dir: str, count: int) 
     `on_mount` only runs if the WebSocket connected — so their presence *is* the
     connection, observed rather than inferred from a label.
 
-    `0006` moved both onto `#working-dir` and `#workspace-count`. The phrasing of the
+    Both moved onto `#working-dir` and `#workspace-count`. The phrasing of the
     count — "N workspace(s)" — is still the exact string this waits for.
     """
     page = browser.new_page()
@@ -168,15 +168,15 @@ def live_data_reaches_the_page(browser, url: str, working_dir: str, count: int) 
         page.close()
 
 
-# --- the craft floor (`0005` R22-R25) ----------------------------------------
+# --- the craft floor (`spec.md` R22-R25) -------------------------------------
 #
 # These four are the only measurable part of "the page should be good". They are
-# necessary, not sufficient, and `0005` spec.md C7 says so in as many words: a page can
+# necessary, not sufficient, and `spec.md` C7 says so in as many words: a page can
 # pass every one of them and still be unpleasant. They live here rather than in
 # `verify_0005.py` because each one needs a real browser — a layout that overflows and a
 # colour that fails contrast are both invisible to an HTTP check.
 
-# Phone, tablet, laptop. `0005` R24 fixes these three.
+# Phone, tablet, laptop. `spec.md` R24 fixes these three.
 WIDTHS = (390, 768, 1280)
 
 # WCAG 2.1 AA for body text. The standard is the source; the number is not ours.
@@ -292,7 +292,7 @@ def the_page_meets_the_craft_floor(browser, url: str) -> str:
         page.set_viewport_size({"width": WIDTHS[-1], "height": 900})
         page.wait_for_timeout(200)
 
-        # R23 — the mode changes from the page, and survives a reload. `0006` put the
+        # R23 — the mode changes from the page, and survives a reload. The page puts the
         # control in the top bar; before that it was on the Settings screen only.
         toggle = page.locator("#color-mode button").first
         if toggle.count() == 0:

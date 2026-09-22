@@ -61,7 +61,7 @@ class Service:
     store: Store | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        # No working folder means no store, and the app behaves exactly as `0001` did.
+        # No working folder means no store, and the app behaves as it did before one existed.
         # That is what keeps `scripts/verify_0001.py` running unchanged (`spec.md` R6).
         self.store = (
             Store(self.config.working_dir, self.config.data_dir)
@@ -74,7 +74,7 @@ class Service:
     # -- workspaces ---------------------------------------------------------
 
     def workspaces(self) -> dict[str, Any]:
-        """Both sources, with the count the app could not answer before `0002`.
+        """Both sources, with the count the app could not answer before the store existed.
 
         `source` is carried per entry rather than merged away: an env workspace cannot be
         renamed or removed from here, and a caller has to be able to tell.
@@ -106,7 +106,7 @@ class Service:
             "working_dir": self.config.working_dir,
             "count": len(rows),
             "workspaces": rows,
-            # Kept so `0001`'s shape still reads: it only ever asked for paths.
+            # Kept so the original shape still reads: it only ever asked for paths.
             "paths": [r["path"] for r in rows],
         }
 
@@ -195,9 +195,9 @@ class Service:
     async def pull_workspace(self, name: str) -> dict[str, Any]:
         """Fast-forward only. A failure comes back with its output — `spec.md` R20.
 
-        Refused outright while a session is live here (`0004` R6). The refusal is an
+        Refused outright while a session is live here (`spec.md` R6). The refusal is an
         `Invalid` like every other reason a pull fails, so it reaches the page through the
-        path `0002` R20 already built rather than through one of its own — `0004` R8.
+        path R20 already built rather than through one of its own — R8.
         """
         store = self._store_or_refuse()
         self._name_or_refuse(name)
@@ -206,9 +206,9 @@ class Service:
         target = store.path_of(name)
         if not target.is_dir():
             raise Invalid(f"workspace directory is missing: {target}")
-        # `0004` R6, and this has to come before `gitops`: a fast-forward rewrites files
+        # R6, and this has to come before `gitops`: a fast-forward rewrites files
         # under a turn that is already reading them, and the turn cannot be told. The
-        # answer covers this process only (`0004` C2) — a second app holding a session
+        # answer covers this process only (`spec.md` C2) — a second app holding a session
         # here is not seen, and the pull will go ahead.
         live = self.sessions.live_in(str(target))
         if live:
@@ -227,7 +227,7 @@ class Service:
     def _journal(self) -> Journal | None:
         """The run log, or `None` when there is no working folder to keep it in.
 
-        Unset `COS_WORKING_DIR` and the app behaves as `0001` did — which now also means
+        Unset `COS_WORKING_DIR` and the app behaves as it did before the store — which now also means
         the board is read-only: there is nowhere to record a mode, so every step reads
         `manual` and nothing can be started. That is the safe direction to fail in.
         """
@@ -390,7 +390,7 @@ class Service:
         """The single gate. Every capability below goes through it.
 
         `spec.md` R21 wants this asked on every read rather than cached, because after
-        `0002` the workspace list is no longer fixed for the life of the process.
+        the workspace list is no longer fixed for the life of the process.
         """
         # Recomputed from the working folder every time, so editing the store by hand
         # cannot widen what this accepts — the entry has to name a segment, and the
@@ -404,7 +404,7 @@ class Service:
         rows = reader.list_for_directory(cwd, limit=limit)
         for row in rows:
             # Terminal sessions show up here too — the read layer sees them. This flag is
-            # what tells a caller which of them it may write to (`0001` spec.md C1).
+            # what tells a caller which of them it may write to (`spec.md` C1).
             row["resumable"] = self.config.may_resume(
                 self.sessions.created_here(row["session_id"])
             )
@@ -422,7 +422,7 @@ class Service:
     def check_send(self, cwd: str, text: str) -> None:
         """Everything a caller can reject with a status code, decided before any output.
 
-        Split out from `stream` on purpose. `0001` draws a hard line between two kinds of
+        Split out from `stream` on purpose. The design draws a hard line between two kinds of
         failure: an invalid request is a status code, while a refusal that surfaces once
         the reply is already streaming has to arrive as data, because the status line is
         long gone (`web.py` docstring on `post_send`). Validating inside an async
@@ -447,8 +447,8 @@ class Service:
 
     # -- activity, usage and settings ---------------------------------------
     #
-    # `0006` adds three read-only methods. `0006 spec.md` said `Service` would not change,
-    # and this is the one place it does — recorded as a departure in `0006 plan.md`. The
+    # Three read-only methods. `spec.md` said `Service` would not change,
+    # and this is the one place it does — recorded as a departure in `plan.md`. The
     # alternative was to let the new page read `Journal` and `policy` directly, and that
     # would break the rule this module exists for (see the module docstring), which is a
     # far worse trade than three methods that only read.
@@ -540,7 +540,7 @@ class Service:
     def settings(self) -> dict[str, Any]:
         """The safety posture, as something a screen can render. Read only.
 
-        `0006 spec.md` R18: this screen shows the four knobs and the grant table and can
+        `spec.md` R18: this screen shows the four knobs and the grant table and can
         change neither. There is no setter here for the same reason there is none in
         `config.from_env` — a request that could turn a knob is a request that could turn
         it on.

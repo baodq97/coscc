@@ -1,6 +1,6 @@
 """Tests for the data root, weighted towards the two things that would fail silently.
 
-`spec.md` C2 says SQLite does not inherit the proof `0004` produced for the file lock.
+`spec.md` C2 says SQLite does not inherit the proof produced for the file lock.
 The concurrency claim itself is `scripts/verify_0004.py` — four real processes. What this
 file covers is everything around it that a unit test can actually decide: the schema
 refusal, the directory mode, the one-shot migration mark, and that `write()` really does

@@ -2,7 +2,7 @@
 
 Two properties carry the weight here. The prompt has to contain the stage before it
 (`spec.md` R4), and a prose stage has to run with nothing — no tools in either mode, which
-is `spec.md` R9 and the reason `chat-only-sessions-have-tools` can still be checked after this unit lands.
+is `spec.md` R9 and the reason the zero-tool default can still be checked.
 
 Nothing here creates a session. What the guards do before a process is spawned is exactly
 what is worth testing cheaply; a real run belongs to `scripts/verify_0005.py`.
@@ -124,7 +124,7 @@ class ProseStagesCarryNothing(unittest.TestCase):
     def test_a_prose_stage_that_somehow_gained_tools_refuses_to_run(self):
         """Belt and braces against a future edit to the grant table.
 
-        A prose stage with tools would stop being covered by `chat-only-sessions-have-tools` without anything
+        A prose stage with tools would stop being covered without anything
         failing, so the runner checks rather than trusting the table it just read.
         """
         original = dict(policy.GRANTS)
@@ -213,7 +213,7 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
             self.assertEqual(row["cost"]["output_tokens"], 7)
 
     def test_a_step_stopped_by_its_ceiling_is_exhausted_not_done(self):
-        """`0005` R11. A bound doing its job must not read as a bug, or as success."""
+        """R11. A bound doing its job must not read as a bug, or as success."""
 
         class RanOut:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):

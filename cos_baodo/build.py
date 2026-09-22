@@ -1,6 +1,6 @@
 """Building the page, and the one place that answers "is the build current?".
 
-`0002` shipped a manual build step, and `spec.md` C3 named what that costs: edit the page,
+The build step is manual, and `spec.md` C3 named what that costs: edit the page,
 forget to rebuild, and every check opens the previous bundle, finds it healthy, and reports
 success. That is the same failure this unit exists to stop — green evidence about something
 that is not what is running — only harder to see.

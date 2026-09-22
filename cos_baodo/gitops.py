@@ -1,6 +1,6 @@
 """Running `git`, with the smallest surface that does the job.
 
-`0001` spec.md C3 said it plainly: any path in this app that runs a command from text the
+`spec.md` C3 said it plainly: any path in this app that runs a command from text the
 user sent is the path that leaks the login token. This module is that path, so it is built
 to make the leak impossible rather than unlikely.
 
@@ -16,7 +16,7 @@ Four rules, each answering `spec.md` R15:
    cannot reach a process that talks to the network.
 4. **A deadline.** A silent host must not hold a request forever.
 
-The timeouts were invented when this was written (`0002` spec.md C3 recorded them as
+The timeouts were invented when this was written (`spec.md` C3 recorded them as
 having no source). They now have one — see `CLONE_TIMEOUT`.
 """
 

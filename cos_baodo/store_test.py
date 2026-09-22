@@ -1,10 +1,10 @@
 """Tests for the workspace list, weighted towards what must NOT happen.
 
-`0002 spec.md` R12 and R21 are the reason this file is longer than the module deserves:
+`spec.md` R12 and R21 are the reason this file is longer than the module deserves:
 the store is the first thing in the app a user edits by hand, and the first thing whose
 contents decide which directories the app will work in.
 
-`0006` moved it from a JSON file under the working folder into the app's SQLite database.
+It moved from a JSON file under the working folder into the app's SQLite database.
 Every test here that was about the *shape* of the file is now about the shape of the table,
 and the ones about `flock` are about `BEGIN IMMEDIATE`. The claims did not change; the
 thing they are claimed of did.
@@ -87,7 +87,7 @@ class AHandEditedStoreCannotWidenTheBoundary(unittest.TestCase):
                 )
 
     def test_an_entry_naming_an_outside_path_is_dropped(self):
-        """`0002 spec.md` R21, at the store layer.
+        """`spec.md` R21, at the store layer.
 
         Writing `/etc` or `../x` into the table by hand must not make it a workspace. The
         name is rejected on read, so the entry simply does not exist.
@@ -133,7 +133,7 @@ class ListOperations(unittest.TestCase):
             self.assertEqual([e.name for e in Store(d, d).entries()], ["b"])
 
     def test_remove_does_not_touch_the_directory(self):
-        # `0002 spec.md` R18 and C6: the app has no undo and a clone may hold uncommitted work.
+        # `spec.md` R18 and C6: the app has no undo and a clone may hold uncommitted work.
         with tempfile.TemporaryDirectory() as d:
             store = Store(d, d)
             target = store.path_of("repo")
@@ -181,7 +181,7 @@ class ListOperations(unittest.TestCase):
 
 
 class TheOneShotImportFromJson(unittest.TestCase):
-    """`0006 spec.md` R8. A machine set up before this unit keeps its workspaces."""
+    """`spec.md` R8. A machine set up before this unit keeps its workspaces."""
 
     @staticmethod
     def _legacy(root: Path, *entries: dict) -> None:
@@ -230,7 +230,7 @@ class TheOneShotImportFromJson(unittest.TestCase):
             self.assertEqual(Store(d, d).entries(), [])
 
     def test_no_file_means_no_migration_row_at_all(self):
-        """The common case after `0006` must not pay for the migration."""
+        """The common case must not pay for the migration."""
         with tempfile.TemporaryDirectory() as d:
             store = Store(d, d)
             store.add("fresh")
@@ -261,7 +261,7 @@ time.sleep(60)
 
 
 class TheTransactionIsAcrossProcesses(unittest.TestCase):
-    """`0004` measured the old arrangement losing 12 of 20 entries.
+    """The old arrangement was measured losing 12 of 20 entries.
 
     These use a real child process, not a second connection in this one. The loss being
     fixed was between processes, and a same-process stand-in would pass even if the
@@ -292,7 +292,7 @@ class TheTransactionIsAcrossProcesses(unittest.TestCase):
         return child
 
     def test_waiting_for_a_held_database_ends_in_an_error_not_a_hang(self):
-        """`0006 spec.md` R10. The deadline turns a hang into something sayable."""
+        """`spec.md` R10. The deadline turns a hang into something sayable."""
         store = Store(self.root, self.root)
         self._holder(store)
         with mock.patch("cos_baodo.store.LOCK_TIMEOUT", 0.5):
@@ -302,7 +302,7 @@ class TheTransactionIsAcrossProcesses(unittest.TestCase):
             waited = time.monotonic() - began
         self.assertGreaterEqual(waited, 0.4, "it gave up before the deadline it was given")
         self.assertLess(waited, 5.0, "it did not give up")
-        # `0004 spec.md` C7: a timeout reads like a broken app unless it says what is
+        # `spec.md` C7: a timeout reads like a broken app unless it says what is
         # happening, and which file it is happening to.
         self.assertIn("holding", str(caught.exception))
         self.assertIn(str(store.data.db_path), str(caught.exception))

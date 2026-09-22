@@ -12,7 +12,7 @@ Exit codes follow `scripts/verify_0003.py:49`:
     2  the environment is not ready — no remote to open a pull request against,
        no `gh`, no `node`, no `claude`
 
-Two of those codes carry the same weight here as they do in `0003`: a `pr` step that cannot
+Two of those codes carry the same weight here as in the page proof: a `pr` step that cannot
 run because this repository has no remote (`spec.md` C2, `plan.md` Risk 2) is **not** the
 same fact as a `pr` step that ran and failed, and collapsing them would report a missing
 remote as a broken app. Every claim prints its own verdict regardless, so a `2` still says
@@ -68,7 +68,7 @@ ARTIFACTS = {
     "idea": "idea.md", "intent": "intent.md", "spec": "spec.md", "plan": "plan.md",
     "impl": "impl.md", "pr": "pr.md", "review": "review.md", "ship": "ship.md",
 }
-# Only these two carry tools. The other six are the ones `chat-only-sessions-have-tools` is about.
+# Only these two carry tools. The other six are the prose stages.
 AUTONOMOUS = ("impl", "pr")
 
 # A second unit, used once, to run a step into its ceiling on purpose.
@@ -189,7 +189,7 @@ def claim_1() -> Claim:
         directory = root / ".cos" / UNIT
         directory.mkdir(parents=True)
 
-        # Before anything is written, the gate has to be capable of saying no. `0003`
+        # Before anything is written, the gate has to be capable of saying no. That
         # closed on a check that could not fail; this is that lesson, one line long.
         blocked = _gate(root, UNIT, "spec")
         c.check(
@@ -253,7 +253,7 @@ async def _run_step(http, cwd: str, unit: str, stage: str, mode: str) -> dict:
     one. `refused` means the request never got as far as a run.
 
     Both calls go through the HTTP surface the browser uses. There is no test-only path
-    into the runner, for the same reason `0001` gave: a path nobody walks proves nothing.
+    into the runner, for the same reason given before: a path nobody walks proves nothing.
     """
     status, body = await _json(
         http, "POST", "/api/board/mode",
@@ -293,7 +293,7 @@ async def _init_tools(config, cwd: str) -> tuple[list[str], list[str]]:
 
     Built with the app's own `_options`, with exactly the arguments `Runner` passes for a
     stage whose grant is empty. Asking the grant table instead would only prove the table
-    agrees with itself; `chat-only-sessions-have-tools` measured that the table is not the whole answer.
+    agrees with itself; the table was measured, and it is not the whole answer.
     """
     grant = policy.grant_for("spec", "autonomous")
     options = _options(
@@ -343,9 +343,9 @@ async def claim_5(config, cwd: str) -> Claim:
     if servers:
         c.note(
             f"mcp servers reaching a session whose grant is empty: {', '.join(servers)}. "
-            "That is `chat-only-sessions-have-tools` — accepted plan, no implementation. `--tools` names the "
+            "The zero-tool default is not enforced against MCP. `--tools` names the "
             "built-in set only, so it cannot subtract these. The grant is empty; the "
-            "session is not, and this claim stays red until `chat-only-sessions-have-tools` lands."
+            "session is not, and this claim stays red until that is closed."
         )
     return c
 

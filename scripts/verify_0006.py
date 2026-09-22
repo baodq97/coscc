@@ -9,7 +9,7 @@ started again. This command is that sentence, executed.
     1  at least one did not
     2  the environment is not ready — no browser, no build, stale build, port in use
 
-Exit 2 is kept apart from exit 1 for the reason `0003` gives: collapsing them would report
+Exit 2 is kept apart from exit 1 for the reason the page proof gives: collapsing them would report
 "chromium is not installed" as "the page is broken".
 
 **It spends a little account quota.** Flow 4 sends one short prompt, because a chat flow
@@ -196,7 +196,7 @@ def flow_2_board(page) -> Flow:
 def flow_3_artifact_and_timeline(page) -> Flow:
     f = Flow(3, "read a unit's artifact and its timeline")
 
-    # The drawer opens on Overview, and only the open tab is in the document. `0006 spec.md`
+    # The drawer opens on Overview, and only the open tab is in the document. `spec.md`
     # R17 lives here, so it is measured before anything switches away from it.
     grants = page.locator("#next-grants")
     f.check("the next step's grant is shown before the button",

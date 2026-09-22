@@ -3,7 +3,7 @@
 `plan.md` Risk 3 is the concern these stand against, and it is not fully answerable: a
 first-word allowlist does not bound what `git` can be told to do. What is testable is that
 the obvious ways past it are closed, that writes cannot leave the workspace, and that a
-tool nobody granted is refused whatever declared it — which is the shape `chat-only-sessions-have-tools` measured.
+tool nobody granted is refused whatever declared it — which is the shape that was measured.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ class OnlyImplAndOnlyAutonomous(unittest.TestCase):
 
 class AToolNobodyGrantedIsRefused(unittest.TestCase):
     def test_an_mcp_tool_is_refused_by_construction(self):
-        # `chat-only-sessions-have-tools` measured eleven of these arriving at a session created with `tools=[]`.
+        # Eleven of these were measured arriving at a session created with `tools=[]`.
         # They are refused here because their names can never be in a grant.
         for tool in (
             "mcp__claude_ai_Claude_Docs__delete",
