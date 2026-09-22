@@ -89,12 +89,19 @@ bắt buộc giải nén trước khi tìm. Cái **không** phát hiện đượ
 mặc định.
 
 **2. Đổi mặc định `host` làm rộng bề mặt mạng của một bản cài đã có, lúc update.** Đây là
-rủi ro tôi muốn không phải viết ra. Người cài hôm nay, không đặt `COS_HOST`, đang ở
-`127.0.0.1`; chạy lại `install.sh` cho bản mới thì mặc định trôi sang `0.0.0.0` và máy họ mở
-ra mạng mà không ai nói gì. Cách chặn, và nó là một requirement lên `install.sh` chứ không
-phải một lời nhắc: **lần cài đầu tiên ghi `COS_HOST` thành một dòng tường minh trong `env`**,
-nên về sau không có mặc định nào trôi được nữa. Cái phát hiện được: bước 11, nếu proof chạy
-kịch bản update trên một máy đã cài bản cũ — và nó phải chạy kịch bản đó.
+rủi ro tôi muốn không phải viết ra: người đang chạy bản cũ mà không đặt `COS_HOST` thì đang
+ở `127.0.0.1`, và chạy lại `install.sh` cho bản mới sẽ để mặc định trôi sang `0.0.0.0` —
+máy họ mở ra mạng mà không ai nói gì.
+
+**Hôm nay nó không có dân số.** Đo ngày 2026-09-22: `v0.1.0` có **0** asset, nên không tồn
+tại đường nào để ai đó đã cài; người khởi xướng xác nhận cùng ngày. Dân số xuất hiện đúng
+vào lần update đầu tiên, tức bản ngay sau unit này.
+
+Cách chặn vẫn giữ, và nó là một requirement lên `install.sh` chứ không phải một lời nhắc:
+**lần cài đầu tiên ghi `COS_HOST` thành một dòng tường minh trong `env`**, nên về sau không
+có mặc định nào trôi được nữa. Giữ nó vì nó tốn một dòng và vì thứ nó bảo vệ là bản kế tiếp,
+không phải bản này. Cái phát hiện được: bước 11, nếu proof chạy kịch bản update trên một máy
+đã cài bản cũ — và nó phải chạy kịch bản đó.
 
 **3. `REFLEX_WEB_WORKDIR` đặt sau khi import app.** Reflex đọc nó lúc dựng ASGI stack, nên
 đặt muộn một dòng là mount trỏ vào `.web` không tồn tại và trang trả 404 trong khi API vẫn
