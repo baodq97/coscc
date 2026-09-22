@@ -65,7 +65,7 @@ trả lời được.
 
 2. **Log chuyển trạng thái — chỉ ghi thêm.** Không `UPDATE`, không `DELETE` trong đường đi
    bình thường. Trạng thái hiện tại là truy vấn trên log, không phải một giá trị được lưu.
-   Nó sống cùng chỗ với dữ liệu hiện có: `coscc/data.py:75-119` đã có cơ chế schema theo
+   Nó sống cùng chỗ với dữ liệu hiện có: `coscc/data.py:75-118` đã có cơ chế schema theo
    từng câu lệnh và version nằm ở `PRAGMA user_version`, nên thêm bảng đi theo đường đã có
    chứ không dựng đường mới.
 
