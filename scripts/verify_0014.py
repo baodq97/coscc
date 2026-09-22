@@ -138,6 +138,10 @@ def run_stage(client: httpx.Client, cwd: str, unit: str, stage: str) -> dict:
         return {"outcome": "failed", "error": f"mode: {told.text}"}
 
     last: dict = {}
+    # The tail of what the session actually said. A failed step used to come back as its
+    # reason alone — "the reply carries no `Status:` line" — with the reply itself thrown
+    # away along with the run's temporary data root, which left nothing to diagnose from.
+    tail = ""
     with client.stream(
         "POST", "/api/board/run",
         json={"cwd": cwd, "unit": unit, "stage": stage},
@@ -154,13 +158,15 @@ def run_stage(client: httpx.Client, cwd: str, unit: str, stage: str) -> dict:
                 continue
             # The field is `type`, and `done` carries the payload flattened beside it
             # (`coscc/api.py` run route). An `error` line is the stream giving up.
+            if item.get("type") == "chunk":
+                tail = (tail + str(item.get("text") or ""))[-600:]
             if item.get("type") in ("done", "error"):
                 last = item
     if not last:
-        return {"outcome": "failed", "error": "the stream ended with no result"}
+        return {"outcome": "failed", "error": "the stream ended with no result", "tail": tail}
     if last.get("type") == "error":
-        return {"outcome": "failed", "error": last.get("error", "")}
-    return last
+        return {"outcome": "failed", "error": last.get("error", ""), "tail": tail}
+    return {**last, "tail": tail}
 
 
 def main() -> int:
@@ -267,7 +273,9 @@ def main() -> int:
                 if done.get("outcome") != "done":
                     results.append(say(
                         False, f"every stage after intent ran ({', '.join(ran) or 'none'})",
-                        f"{stage}: {str(done.get('error') or done.get('outcome'))[:300]}",
+                        f"{stage}: {str(done.get('error') or done.get('outcome'))[:300]}\n"
+                        f"      what the session actually said, last 600 chars:\n"
+                        f"      {done.get('tail') or '(nothing)'}",
                     ))
                     break
                 ran.append(stage)

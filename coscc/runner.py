@@ -144,6 +144,22 @@ def build_prompt(
     return "\n\n---\n\n".join(parts), included
 
 
+# How much of an unusable reply to keep beside the reason it was refused. Long enough to
+# show whether the artifact is in there behind a preamble; short enough that a journal row
+# stays a row. Chosen, not measured.
+REPLY_KEPT = 2000
+
+
+def _with_reply(reason: str, collected: str) -> str:
+    """The reason a step failed, with the reply that caused it when there is one."""
+    body = (collected or "").strip()
+    if not body:
+        return reason
+    kept = body[-REPLY_KEPT:]
+    more = "" if len(body) <= REPLY_KEPT else f" (last {REPLY_KEPT} of {len(body)} chars)"
+    return f"{reason}\n--- what the session replied{more} ---\n{kept}"
+
+
 def check_reply(text: str) -> str:
     """The reply, ready to be written, or a reason it is not an artifact.
 
@@ -302,13 +318,20 @@ class Runner:
             outcome = "done"
         except (RunError, Refused) as e:
             detail = str(e)
+            # What the session said, kept. Until `0014` a prose step that produced an
+            # unusable reply threw it away: the money was spent, the artifact was not
+            # written, and the only record was the reason. A reply with no `Status:` line
+            # is often a good artifact with a preamble in front of it, and a person who
+            # can see it can decide that in a second — measured 2026-09-22, when a `spec`
+            # step failed this way inside a paid proof run and left nothing to look at.
+            detail = _with_reply(detail, collected)
             # A step stopped by its own ceiling did not fail in the ordinary sense — it was
             # bounded. `journal.OUTCOMES` keeps the two apart so a reader can tell a defect
             # from a limit working as intended (`spec.md` R11).
             if _hit_ceiling(terminal):
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal} — {detail}"
         except Exception as e:  # surfaced as data; the process keeps serving
-            detail = f"{type(e).__name__}: {e}"
+            detail = _with_reply(f"{type(e).__name__}: {e}", collected)
             if _hit_ceiling(terminal):
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         else:

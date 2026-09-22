@@ -338,3 +338,64 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnUnusableReplyIsKeptBesideTheReason(unittest.TestCase):
+    """`0014`. A paid step that produced nothing usable must not throw the reply away.
+
+    Measured 2026-09-22 inside a proof run that spends real money: a `spec` step failed
+    with *"the reply carries no `Status:` line"* and the reply went with the run's
+    temporary data root. Nothing was left to say whether the artifact had been there
+    behind a preamble, and the only way to find out was to pay again.
+    """
+
+    class NoStatus:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "Here is the spec you asked for:\n\n")
+            yield ("chunk", "# Spec: a problem\n\n## Requirements\n\nR1 — something.\n")
+            yield ("done", {"session_id": "s-9", "cost": {}})
+
+    def test_the_reply_comes_back_with_the_refusal(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            r = Runner(sessions=self.NoStatus(), journal=journal)
+
+            async def go():
+                out = []
+                async for item in r.run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d,
+                    unit=UNIT, stage="spec", artifact="spec.md", stages=STAGES, mode="manual",
+                ):
+                    out.append(item)
+                return out
+
+            _, payload = asyncio.run(go())[-1]
+            self.assertNotEqual(payload["outcome"], "done")
+            self.assertIn("no `Status:` line", payload["error"])
+            self.assertIn("R1 — something.", payload["error"])
+            # And it is in the run log too, so it survives the page being closed.
+            [row] = journal.timeline(d, UNIT)
+            self.assertIn("R1 — something.", row.get("detail") or "")
+
+    def test_a_step_that_said_nothing_at_all_adds_no_empty_section(self):
+        class Silent:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("done", {"session_id": "s-0", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            r = Runner(sessions=Silent(), journal=Journal(d, d))
+
+            async def go():
+                out = []
+                async for item in r.run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d,
+                    unit=UNIT, stage="spec", artifact="spec.md", stages=STAGES, mode="manual",
+                ):
+                    out.append(item)
+                return out
+
+            _, payload = asyncio.run(go())[-1]
+            self.assertIn("returned nothing", payload["error"])
+            self.assertNotIn("what the session replied", payload["error"])
