@@ -1,5 +1,5 @@
 # Intent: The page can be broken while every proof stays green
-Author: Bao Do. Status: accepted.
+Author: Bao Do. Type: feat. Status: accepted.
 
 ## Problem
 

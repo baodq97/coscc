@@ -1,5 +1,5 @@
 # Intent: The repository says things about itself that are no longer true
-Author: Bao Do. Status: accepted.
+Author: Bao Do. Type: chore. Status: accepted.
 
 > Khung vấn đề do agent viết. Lời của người khởi xướng chỉ có hai câu — "giúp tôi kiểm tra
 > xem còn technical dept nào không?" và "P0 sẽ thay đổi nên bỏ qua. Tiến hành lên plan

@@ -51,6 +51,14 @@ Bảy `SKILL.md` còn lại — spec R4. `coscc/` — unit này không chạm co
 Một dòng header mỗi file, không chạm câu nào khác. Type đọc từ nội dung từng unit, không
 đoán từ tiêu đề: `0001`–`0006` là `feat` (đều thêm năng lực mới), `0007` là `chore` (sửa
 tuyên bố và nâng phiên bản), `0008` là `chore` (đổi tên và publish).
+
+> **Departure, 2026-09-22.** `0004` được gán `fix`, không phải `feat`. Risk 2 dưới đây bảo
+> đọc `## Problem` trước khi gõ, và lần đọc đó cho câu trả lời khác câu đoán ở trên: *"Two
+> writers at once lose work without saying so"* là một khuyết tật có sẵn, và `plan.md` của
+> nó (`## Files that change`) sửa `store.py`, `sessions.py`, `service.py` — không thêm màn
+> hình hay lệnh nào cho người dùng. `0003` giữ `feat` sau cùng phép đọc: nó thêm
+> `cos_baodo/build.py` mà `run.py` phụ thuộc vào, tức một năng lực mới, chứ không chỉ thêm
+> một proof. Bảy type còn lại đúng như đã viết.
 *Kiểm:* `grep -L "Type:" .cos/*/intent.md` trả **0 file**; `git diff --stat` cho **8 file,
 +8 −8**; mỗi `unit-branch` in ra một tên mà `check-branch` nhận.
 

@@ -1,5 +1,5 @@
 # Intent: publish under a name that is not a person's
-Author: Bao Do. Status: accepted.
+Author: Bao Do. Type: chore. Status: accepted.
 
 > **Sửa ngày 2026-09-22, sau khi bản đầu đã accepted và commit (`9280d33`).** Người khởi
 > xướng cho biết `cos` **không** phải một chữ viết tắt vô nghĩa: nó là **Chief of Staff**,

@@ -1,5 +1,5 @@
 # Intent: Workspaces must be declared by hand, on a stack that cannot show them
-Author: Bao Do. Status: accepted.
+Author: Bao Do. Type: feat. Status: accepted.
 
 > **Sửa ngày 2026-09-21, sau khi bản đầu đã accepted và commit (`c34adfc`).** Tác giả bổ
 > sung ba ràng buộc về nền: cấu trúc uv, Reflex/FastAPI thay aiohttp, và giao diện dựng

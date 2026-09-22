@@ -1,5 +1,5 @@
 # Intent: No way to manage sessions from the web page
-Author: Bao Do. Status: accepted.
+Author: Bao Do. Type: feat. Status: accepted.
 
 ## Problem
 
