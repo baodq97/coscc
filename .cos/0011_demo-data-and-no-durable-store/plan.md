@@ -142,6 +142,32 @@ npm test \
 `verify_0004.py` và `verify_0011.py` cần `COS_PORT` trống và một browser; dừng app trước
 khi chạy. Cả hai không được chạy đồng thời.
 
+## Departures from this plan
+
+Ghi tại thời điểm xảy ra, theo `write-plan` invariant 8.
+
+1. **`Service` có thêm sáu method chỉ-đọc** (`activity`, `usage`, `settings`, `artifact`,
+   `preferences`, `set_preference`). `spec.md` `## Design` viết "`Service` không đổi". Cách
+   khác là để trang đọc thẳng `Journal`, `policy` và file artifact — tức là phá đúng quy
+   tắc mà `cos_baodo/service.py:1-13` tồn tại để giữ. Sáu method chỉ đọc là cái giá rẻ hơn.
+   `set_preference` có ghi, và nó chỉ nhận các khóa trong một danh sách trắng.
+
+2. **`journal.py` cũng nhập một lần từ JSONL.** `spec.md` R8 chỉ nói tới
+   `.cos-baodo.json`. Bỏ qua nhật ký cũ sẽ mất lịch sử trên một máy đã dùng trước `0011`;
+   cơ chế y hệt, một dòng migration key khác.
+
+3. **Lane trên board không dùng `blocked` của harness.** Đo ngày 2026-09-22 bằng
+   `cos.mjs status --json` trên chính repo này: `blocked` là `true` cho **mọi** unit chưa
+   xong (`.claude/scripts/cos.mjs:122-135`), nên lane "Needs review" nuốt cả 6 unit và hai
+   lane kia rỗng vĩnh viễn. Lane giờ đọc từ trạng thái artifact: có `draft` hoặc có
+   `problems` thì mới là cần xem lại. Ghi lại vì đây là một hiểu nhầm dễ lặp.
+
+4. **Phiên bản schema nằm ở `PRAGMA user_version`, không phải bảng `schema_version`.**
+   Bảng buộc mỗi lần mở kết nối phải đọc bảng, và `CREATE TABLE IF NOT EXISTS` chạy mỗi
+   lần mở là một lần xin khoá ghi. Xem Risk 1 và commit `ce60485`.
+
+5. **`ui.py` bị cắt còn `THEME` + `GLOBAL_STYLE`.** Các helper còn lại chỉ trang cũ dùng.
+
 ## What was chosen against
 
 - **Không** giữ trang cũ song song. Người khởi xướng chọn thay thế ngày 2026-09-22; giữ

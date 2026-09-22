@@ -130,7 +130,7 @@ class WhatTheFingerprintCovers(unittest.TestCase):
         self.assertEqual(
             set(build._SOURCES), {
                 "cos_baodo/cos_baodo.py", "cos_baodo/ui.py", "cos_baodo/studio.py",
-                "cos_baodo/prototype.py", "cos_baodo/prototype_data.py", "rxconfig.py",
+                "cos_baodo/screens.py", "cos_baodo/state.py", "rxconfig.py",
             }
         )
 

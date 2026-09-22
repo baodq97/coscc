@@ -39,7 +39,12 @@ from cos_baodo.journal import (
     zero_cost,
 )
 from cos_baodo.policy import GRANTS, PROSE_STAGES, grant_for
-from cos_baodo.runner import RunError, Runner
+from cos_baodo.runner import RunError, Runner, unit_dir
+
+# The eight artifact filenames, in stage order. Taken from the stage list the board
+# reports rather than written again here would be better; the board read is async and
+# this method is not, so the names are repeated and this comment is the warning.
+STAGE_FILES = ("idea", "intent", "spec", "plan", "impl", "pr", "review", "ship")
 from cos_baodo.sessions import Sessions
 from cos_baodo.store import BadName, Store, require_name
 
@@ -568,3 +573,47 @@ class Service:
             ],
             "prose_stages": list(PROSE_STAGES),
         }
+
+    # -- artifacts and preferences ------------------------------------------
+
+    def artifact(self, cwd: str, unit: str, stage: str) -> dict[str, Any]:
+        """The text of one stage's artifact, or why there is none.
+
+        The path is built by `runner.unit_dir`, which validates the unit name against the
+        `NNNN_slug` shape. That is the same function the runner uses, so a name this
+        refuses is a name no step could run against either — one rule, not two.
+        """
+        self._workspace_or_refuse(cwd)
+        stages = {s: f"{s}.md" for s in STAGE_FILES}
+        filename = stages.get(stage)
+        if filename is None:
+            raise Invalid(f"no such stage: {stage}")
+        try:
+            path = unit_dir(cwd, unit) / filename
+        except RunError as e:
+            raise Invalid(str(e)) from e
+        if not path.is_file():
+            return {"unit": unit, "stage": stage, "file": filename, "text": "", "exists": False}
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            raise Invalid(f"could not read {filename}: {e}") from e
+        return {"unit": unit, "stage": stage, "file": filename, "text": text, "exists": True}
+
+    # Which preferences the page may keep. An open key/value store reachable from a
+    # request is a place to put anything; this is the list of things the Settings screen
+    # actually remembers, and nothing else is writable.
+    PREFERENCES = {"density": "comfortable", "screen": "overview", "board_view": "Board"}
+
+    def preferences(self) -> dict[str, Any]:
+        data = Data(self.config.data_dir)
+        stored = data.prefs()
+        return {k: stored.get(k, default) for k, default in self.PREFERENCES.items()}
+
+    def set_preference(self, key: str, value: Any) -> dict[str, Any]:
+        if key not in self.PREFERENCES:
+            raise Invalid(f"not a stored preference: {key}")
+        if not isinstance(value, (str, int, float, bool)):
+            raise Invalid("a preference must be a simple value")
+        Data(self.config.data_dir).set_pref(key, value)
+        return {"key": key, "value": value}

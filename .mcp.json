@@ -1,5 +1,0 @@
-{
-  "mcpServers": {
-    "webchannel": { "command": "node", "args": ["./channel/server.mjs"] }
-  }
-}

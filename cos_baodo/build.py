@@ -10,7 +10,7 @@ the page asks here first. `run.py` refuses to start on a stale build; `verify_00
 refuses to measure one.
 
 **What the fingerprint covers, and what it cannot.** The compiled bundle is decided by the
-component tree in `cos_baodo/cos_baodo.py`, the shared theme and prototype presentation/data
+component tree in `cos_baodo/screens.py`, its state, the shared theme and presentation
 modules, `rxconfig.py` (which bakes in the backend address), and the Reflex version that
 compiled it. Those inputs are fingerprinted. Anything else
 that could change the output — a plugin, an environment variable read during the build —
@@ -37,8 +37,8 @@ _SOURCES = (
     "cos_baodo/cos_baodo.py",
     "cos_baodo/ui.py",
     "cos_baodo/studio.py",
-    "cos_baodo/prototype.py",
-    "cos_baodo/prototype_data.py",
+    "cos_baodo/screens.py",
+    "cos_baodo/state.py",
     "rxconfig.py",
 )
 
