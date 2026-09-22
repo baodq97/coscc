@@ -76,6 +76,8 @@ Tất cả trên **Python 3.14.4**, `reflex 0.9.12`, ngày 2026-09-22.
 | `uv run cos-build` | exit 0, **0** dòng chứa `Deprecat`, 6 source file |
 | `uv run python scripts/verify_0003.py` | exit **0**, 5/5 claim, kể cả negative control |
 | `uv run python scripts/verify_0004.py` | exit **0**, **20 trên 20** entry sống sót |
+| `uv run python scripts/verify_0001.py` | exit **0**, 5/5 claim, 2 project |
+| `uv run python scripts/verify_0002.py` | exit **0**, 3/3 claim, 2 workspace, có clone thật |
 | `npm outdated` | rỗng |
 | `uv pip list --outdated` | **4** dòng, từ 15 (xem dưới) |
 
@@ -133,10 +135,15 @@ kiểm mọi citation trong repo. Sau unit này cái thứ năm vẫn trôi đư
 bố nó chặn settings của user/project; SDK nói `None` là nạp mọi nguồn. Người khởi xướng để
 ngoài scope. Nó vẫn là món lớn nhất còn mở trong repo.
 
-**Ba proof chưa chạy lại, và khoảng trống rộng thêm.** `verify_0001.py`, `verify_0002.py`,
-`verify_0005.py` chưa ai chạy sau khi đổi sang SQLite **và** giờ cũng chưa chạy trên Python
-3.14. Quyết định để ngoài scope ngày 2026-09-22; bước 10 làm khoảng trống ấy rộng ra chứ không
-hẹp lại.
+**Còn một proof chưa chạy lại, không phải ba.** Tác giả đổi ý ngày 2026-09-22 sau khi thấy
+bước 10 làm khoảng trống rộng ra, nên `verify_0001.py` và `verify_0002.py` được chạy: cả hai
+exit **0** trên Python 3.14.4 + Reflex 0.9.12, và đó cũng là lần đầu chúng chạy sau khi `0006`
+đổi kho dữ liệu sang SQLite — hai lần đổi nền được đóng bằng một lần chạy.
+
+Còn `verify_0005.py`. Nó **không** bị chặn bởi quota mà bởi một quyết định chưa ai ra: nó cần
+`COS_PROOF_REPO` và một remote để push, và repo này không có remote. Cùng một lý do khiến `pr`,
+`review`, `ship` không unit nào đạt được. Nên board chạy một step thật vẫn là đường duy nhất
+trong repo đi qua cả lần đổi SQLite lẫn lần đổi interpreter mà không ai chứng minh.
 
 **Một dòng noise mới từ build.** `reflex 0.9.12` báo `SitemapPlugin` được bật mặc định mà
 không khai trong `rxconfig.py`. Nó không phải deprecation, nên R12 vẫn đạt; tắt nó hay khai nó

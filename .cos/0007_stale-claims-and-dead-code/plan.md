@@ -133,9 +133,9 @@ trên 3.14, và `.claude/CLAUDE.md:85` phải nói ngày đo cùng interpreter c
   sau unit này cái citation thứ tư vẫn trôi được mà không ai biết.
 - **Không sửa `setting_sources`.** Người khởi xướng nói nó sẽ đổi. Nó vẫn là món lớn nhất còn
   mở.
-- **Không chạy `verify_0001.py`, `verify_0002.py`, `verify_0005.py`.** Quyết định của tác giả
-  ngày 2026-09-22. Bước 10 làm khoảng trống này rộng thêm chứ không hẹp lại: ba lệnh ấy giờ
-  chưa được chạy trên cả cơ chế mới **và** interpreter mới.
+- ~~**Không chạy `verify_0001.py`, `verify_0002.py`, `verify_0005.py`.**~~ **Đổi ý sau bước
+  12.** Tác giả cho chạy hai cái đầu khi thấy bước 10 làm khoảng trống rộng thêm; cả hai exit
+  0 trên 3.14. `verify_0005.py` vẫn ngoài scope, nhưng vì không có remote chứ không vì quota.
 - **Không tạo remote**, nên unit này cũng sẽ dừng ở `impl`, giống `0006`.
 - **Không tách `screens.py` và `state.py`.**
 - **Không lên Python 3.15.** Còn là release candidate.
