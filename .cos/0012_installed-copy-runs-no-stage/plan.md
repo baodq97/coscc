@@ -1,5 +1,5 @@
 # Plan: one place answers where the rules are, and the release refuses to ship without them
-Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
 ## Files that change
 
