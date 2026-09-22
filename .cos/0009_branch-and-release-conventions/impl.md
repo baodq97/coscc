@@ -1,8 +1,8 @@
 # Impl: The convention, its four commands, and the first branch to obey it
 Intent: intent.md. Plan: plan.md. Author: Bao Do. Status: accepted.
 
-Bảy commit trên `feat/branch-and-release-conventions`, `e2c18e9..HEAD`, ngày 2026-09-22.
-**14 file, +1194 −46.** Branch này là bản dùng thử đầu tiên của chính quy ước nó viết ra.
+Mười ba commit trên `feat/branch-and-release-conventions`, squash thành `82d599d` ngày
+2026-09-22. **15 file, +1344 −46.** Branch này là bản dùng thử đầu tiên của chính quy ước nó viết ra.
 
 ## What was built
 
@@ -125,6 +125,19 @@ release không cần action nào.
     này. `required_approving_review_count` là **0** — repo này không có người thứ hai để
     duyệt, và đòi một chữ ký không có ai ký là tự khoá mình ra ngoài.
 
+12. **C12 báo xanh trên một câu hỏi chưa bao giờ được hỏi.** `review.md` finding 1: mốc
+    thời gian của ruleset mang offset `+07:00`, dấu `+` trong query string giải mã thành dấu
+    cách, GitHub nhận mốc hỏng và trả rỗng, `all([])` là `True`. Claim in ra *"all **0**
+    commits"* và PASS, ngay sau lần merge đầu tiên. Đây là **lần thứ năm** trong unit này
+    proof tự sai, và là lần thứ **hai** nó sai theo hướng đạt chứ không theo hướng đỏ. Sửa
+    trên `fix/proof-0009-vacuous-claim`.
+13. **Phần miễn trừ trong `intent.md` không cần dùng tới.** Ba artifact của unit này được
+    commit vào `main` **cục bộ** và `main` chưa bao giờ được push, nên chúng nằm trong pull
+    request và đi qua cùng một cổng. `origin/main` đi từ `89e7ed1` thẳng tới `82d599d`. Kết
+    quả mạnh hơn dự định nhưng do tai nạn thứ tự push; đính chính ở `intent.md`.
+14. **Branch đóng unit đổi tên** từ `docs/close-0009` sang `fix/proof-0009-vacuous-claim`,
+    vì nó mang một bản vá thật chứ không chỉ artifact. `plan.md` bước 16 sửa theo.
+
 ## What was measured
 
 Tất cả ngày 2026-09-22, trên branch.
@@ -153,6 +166,12 @@ Tất cả ngày 2026-09-22, trên branch.
 | `gh api .../rulesets` trước | `[]` |
 | — sau | một ruleset `active` id **23815312**, năm rule |
 | `git push origin HEAD:main` | **rejected**, `GH013: Repository rule violations` — negative control, chạy thật |
+| `gh pr merge 1 --squash --delete-branch` | `MERGED`, 13 commit → **`82d599d`**, branch xoá |
+| `git log --merges --since=2026-09-22 main` | **0** — không merge commit nào |
+| `git log -1 --format=%B 82d599d \| wc -l` | **235** dòng — cả 13 thông điệp commit còn nguyên |
+| `git diff <tip branch> origin/main` | **rỗng** — squash giữ đúng từng byte |
+| `gh release list` | **2 dòng**: `v0.1.0` Latest, `v0.1.0-rc.1` Pre-release |
+| `uv run python scripts/verify_0009.py`, cuối | **exit 0, 13/13** |
 
 **Ba claim còn đỏ, và không claim nào trong đó là code.** C10 ruleset cộng squash-only, C11
 hai release, C12 mọi commit vào `main` qua PR. Cả ba cần bước 11–14: merge, bật ruleset, đẩy
