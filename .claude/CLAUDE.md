@@ -167,6 +167,15 @@ rather than by number, because the numbers now belong to different units:
 `fragmented-product-experience`, `stage-records-without-actions`. `channel/`, `evidence/`
 and `scripts/verify-0001.mjs` went with the first of them; git history keeps all of it.
 
+**Four units were closed by hand and did not run the last three stages.** `0005`, `0006`,
+`0007` and `0008` carry `plan.md: done`, which `cos.mjs:123` treats as terminal, so
+`cos-status` calls them finished while their `pr`, `review` and `ship` cells stay empty.
+That is a bypass, set deliberately on 2026-09-22, and each of the four `plan.md` files
+carries the reason at the top. The short version: they were finished before the repository
+had a remote, `cos.mjs:31` gives stage `pr` no `skipped` status, and `write-pr` requires
+`draft` when no pull request exists — which never clears `gate review`. Compare their rows
+with `0009`, which ran all eight for real.
+
 `cos-status` reports where everything stands. `.claude/scripts/cos.mjs:25-34` is the one
 place the loop is defined — the table in `.claude/harness.md` restates it, nothing else may.
 
