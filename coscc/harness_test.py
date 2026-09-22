@@ -146,6 +146,15 @@ class AWheelIsChecked(unittest.TestCase):
             complaints = harness.wheel_complaints(wheel)
             self.assertTrue(any("settings" in c for c in complaints), complaints)
 
+    def test_a_skill_named_after_settings_is_not_mistaken_for_one(self):
+        # The first version of the leak check matched the substring "settings" anywhere in
+        # the path, which would have refused a release over a perfectly ordinary skill. A
+        # check that fires on correct input gets deleted, and then it checks nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            names = list(RUNNABLE) + ["coscc/_harness/skills/write-settings/SKILL.md"]
+            wheel = _wheel(Path(tmp) / "skill.whl", names)
+            self.assertEqual(harness.wheel_complaints(wheel), [])
+
     def test_something_that_is_not_a_wheel_is_one_complaint_not_a_traceback(self):
         with tempfile.TemporaryDirectory() as tmp:
             junk = Path(tmp) / "not.whl"

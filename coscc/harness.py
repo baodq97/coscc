@@ -159,7 +159,16 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     # The copy step takes two named directories, never `.claude/` whole. This is what says
     # so out loud: `.claude/settings.local.json` is a personal file (`.gitignore:19`) and a
     # wheel is published. `plan.md` Risk 6.
-    leaked = sorted(n for n in names if n.startswith(_posix(_HARNESS) + "/") and "settings" in n)
+    # Matched on the basename and the extension, not on the substring. `"settings" in n`
+    # was the first version of this line and it would refuse a release over a skill
+    # legitimately named `write-settings` -- a check that fires on correct input is worse
+    # than the check it replaced, because the way past it is to delete it.
+    leaked = sorted(
+        n for n in names
+        if n.startswith(_posix(_HARNESS) + "/")
+        and Path(n).name.startswith("settings")
+        and n.endswith(".json")
+    )
     if leaked:
         out.append(f"carries settings files that must never be published: {', '.join(leaked)}")
     return out

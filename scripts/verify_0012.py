@@ -202,6 +202,15 @@ def main() -> int:
         results.append(say(False, "the board agrees with the gate in the workspace", str(payload)))
     elif not got_gate:
         results.append(say(False, "the board agrees with the gate in the workspace", str(expected)))
+    elif not expected:
+        # Nothing to compare is not the same as the two sides agreeing. A workspace with
+        # no `.cos/` would make this claim pass without measuring anything, which is the
+        # shape of green evidence about nothing that `coscc/build.py:3-6` warns about.
+        print(
+            f"the workspace {workspace} holds no work units — nothing to compare",
+            file=sys.stderr,
+        )
+        return EXIT_ENV
     else:
         actual = board_rows(payload)
         results.append(say(
