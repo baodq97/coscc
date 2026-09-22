@@ -27,11 +27,28 @@ accepted.
 `Status` is one of `draft`, `accepted` or `rejected`. Write `accepted` once the file meets
 `## Done when` below; write `draft` and say what is missing if it does not.
 
+`Type` is what kind of work this is, and it decides the branch the work happens on:
+
+```
+feat  fix  docs  refactor  test  chore  perf  build  ci  revert
+```
+
+The set is closed. Pick the one that names the change a reader would see, not the effort
+it took. Then take the branch name from the script rather than typing it:
+
+```
+node .claude/scripts/cos.mjs unit-branch <NNNN_slug>
+```
+
+It reads the `Type` you just wrote, joins it to the slug, and prints `<type>/<slug>`. That
+is the whole point of the field: a branch composed by hand drifts from the unit it belongs
+to on the second try.
+
 ## Template
 
 ````markdown
 # Intent: <title>
-Author: <name>. Status: accepted.
+Author: <name>. Type: <type>. Status: accepted.
 
 ## Problem
 
@@ -55,9 +72,11 @@ Author: <name>. Status: accepted.
    not softened.
 5. Cite only a file committed in this repository, by path and line range.
 6. No solution design. Problem, outcome, constraints, open questions. The spec decides how.
-7. Accept it and commit it. `accepted` means you judged it finished, not that the originator
+7. `Type` is one of the ten, and it is not decoration: `unit-branch` refuses a type it does
+   not know, so a wrong one stops the branch from being named at all.
+8. Accept it and commit it. `accepted` means you judged it finished, not that the originator
    approved it — they still have to read it, and nothing in the repository makes them.
-8. Interrogation still comes first. Accepting your own file removes the check that used to
+9. Interrogation still comes first. Accepting your own file removes the check that used to
    catch a thin intent, so the questions in invariant 2 are now the only thing standing in
    for it — ask them before writing, not after.
 

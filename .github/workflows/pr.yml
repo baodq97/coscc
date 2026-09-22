@@ -1,0 +1,55 @@
+# The first workflow this repository ever had. Two things about it are load bearing and
+# neither is visible in a green check:
+#
+#   `permissions` is declared rather than inherited, and it is read-only. A workflow with
+#   no `permissions` block gets whatever the repository default is, which is a setting
+#   somebody can widen later without touching this file.
+#
+#   Every third-party action is pinned to a commit SHA. A tag is a movable pointer in
+#   somebody else's repository, so `@v5` is a promise from them rather than a fact about
+#   what runs here. The comment after each pin records which tag it was at the time.
+#
+# It is `pull_request`, never `pull_request_target`: the latter runs the workflow from the
+# base branch with a writable token while checking out the fork's code, which is how a
+# fork's pull request ends up with write access to this repository.
+#
+# This is not a gate. Nothing blocks a merge on it — see `.claude/harness.md`,
+# `## What is deliberately not built`.
+name: pr
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  branch-name:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: The source branch follows the grammar in .claude/harness.md
+        # `github.head_ref` is the branch the pull request comes from. The check is the
+        # same one that runs locally, from the same file, so CI and `cos.mjs` cannot
+        # disagree about what a valid name is.
+        run: node .claude/scripts/cos.mjs check-branch "$HEAD_REF"
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          python-version: '3.14'
+      - run: uv sync --frozen
+      - name: The version is in step across all five places
+        run: node .claude/scripts/cos.mjs check-version
+      # Both runtimes. A green result here measures a different interpreter patch than the
+      # one every proof in `scripts/` was measured on, so it does not replace running the
+      # same command locally.
+      - run: npm test

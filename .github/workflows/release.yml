@@ -1,0 +1,48 @@
+# A tag push is what makes a release; nothing here decides the version. The tag grammar is
+# not reimplemented in YAML either — `cos.mjs check-tag` prints `prerelease` or `release`,
+# and this file reads that. Two copies of a grammar drift, and the one in a workflow drifts
+# unobserved because nobody runs it locally.
+#
+# `contents: write` is the narrowest thing that can create a release, and it is the only
+# permission granted. `gh` is preinstalled on the runner, so creating the release needs no
+# third-party action at all.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: The tag follows the grammar, and says which kind it is
+        id: kind
+        run: |
+          set -euo pipefail
+          kind=$(node .claude/scripts/cos.mjs check-tag "$GITHUB_REF_NAME")
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+
+      # A release built from a tag that disagrees with pyproject.toml would ship a number
+      # nothing else in the repository carries.
+      - name: The tag agrees with the five declared versions
+        run: node .claude/scripts/cos.mjs check-version
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KIND: ${{ steps.kind.outputs.kind }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            $([ "$KIND" = prerelease ] && echo --prerelease || echo --latest)

@@ -3,6 +3,7 @@
 // disk: which artifacts exist, what status each carries, which gate that clears. Judgement
 // — whether a spec should be skipped, whether a plan is good — stays with the skills.
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -166,6 +167,91 @@ export function nextNumber(units) {
   return String(max + 1).padStart(4, '0')
 }
 
+// --- git conventions ---------------------------------------------------------
+
+// Everything from here to the command section is pure: it takes strings and returns
+// strings. Reading a file or asking git happens in the commands below, which is what lets
+// the whole grammar be tested without a repository to test it against.
+
+// The ten Conventional Commits types, reused rather than invented: the unit that added
+// this asked for the common convention, not a local one. The set is closed because an open
+// set checks nothing, and it will refuse a name somebody wants at least once.
+export const BRANCH_TYPES = ['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'perf', 'build', 'ci', 'revert']
+
+const SLUG_MAX = 60
+const TYPE_LIST = () => BRANCH_TYPES.join(', ')
+
+// `null` when the name is fine, otherwise the rule it broke. A boolean here would make
+// every rejection say the same thing, and the point of a convention is to name what is
+// wrong with the name you chose.
+export function branchProblem(name) {
+  if (!name) return 'no branch name'
+  if (name === 'main') return 'main is the trunk, not a work branch'
+  const slash = name.indexOf('/')
+  if (slash === -1) return `no type prefix: expected <type>/<slug>, type one of ${TYPE_LIST()}`
+  const type = name.slice(0, slash)
+  const slug = name.slice(slash + 1)
+  if (!BRANCH_TYPES.includes(type)) return `"${type}" is not one of ${TYPE_LIST()}`
+  if (!slug) return 'the slug is empty'
+  if (slug.includes('/')) return 'the slug carries a second slash'
+  if (slug.length > SLUG_MAX) return `the slug is ${slug.length} characters, over the ${SLUG_MAX} allowed`
+  if (!SLUG_RE.test(slug)) return 'the slug takes lowercase letters, digits and single hyphens'
+  return null
+}
+
+// `vX.Y.Z`, or `vX.Y.Z-rc.N` for a prerelease. Leading zeros are refused so that one
+// release has one spelling: `v0.01.0` and `v0.1.0` would otherwise be two tags nobody
+// could tell apart in a list.
+const TAG_RE = /^v(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/
+
+export function tagProblem(name) {
+  if (!name) return 'no tag name'
+  const m = name.match(TAG_RE)
+  if (!m) return 'expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease'
+  for (const part of [m[1], m[2], m[3]]) {
+    if (part.length > 1 && part.startsWith('0')) return `"${part}" carries a leading zero`
+  }
+  if (m[4] !== undefined && (m[4].startsWith('0') || m[4] === '0')) {
+    return 'the release candidate number starts at 1'
+  }
+  return null
+}
+
+export const isPrerelease = (name) => !tagProblem(name) && name.includes('-rc.')
+export const tagVersion = (name) => (tagProblem(name) ? null : name.slice(1).split('-')[0])
+
+// `pyproject.toml` is the source and the rest are copies. Naming a source matters more
+// than the comparison: "they disagree" is not actionable until something says which one is
+// right.
+export const VERSION_SOURCE = 'pyproject.toml'
+
+export function versionProblem(found) {
+  const source = found[VERSION_SOURCE]
+  if (!source) return `${VERSION_SOURCE} declares no version`
+  const off = Object.entries(found)
+    .filter(([place, value]) => place !== VERSION_SOURCE && value !== source)
+    .map(([place, value]) => `${place} is ${value === null || value === undefined ? 'unreadable' : value}`)
+  return off.length ? `${VERSION_SOURCE} says ${source}, but ${off.join('; ')}` : null
+}
+
+// The unit's own header, read the way `parseStatus` reads its neighbour on the same line.
+export function parseType(text) {
+  const m = text.match(/\bType:\s*([A-Za-z]+)/)
+  return m ? m[1].toLowerCase() : null
+}
+
+// A unit's branch is derived, never typed. `0009_branch-and-release-conventions` carrying
+// `Type: feat` can only be `feat/branch-and-release-conventions`, so the branch name and
+// the unit name cannot drift apart.
+export function unitBranch(unitName, intentText) {
+  const match = String(unitName ?? '').match(UNIT_RE)
+  if (!match) return { error: `"${unitName}" does not match NNNN_<slug>` }
+  const type = parseType(intentText ?? '')
+  if (!type) return { error: `${unitName}/intent.md declares no Type: — one of ${TYPE_LIST()}` }
+  if (!BRANCH_TYPES.includes(type)) return { error: `"${type}" is not one of ${TYPE_LIST()}` }
+  return { branch: `${type}/${match[2]}` }
+}
+
 // --- commands ----------------------------------------------------------------
 
 const dash = '—'
@@ -230,6 +316,141 @@ function cmdGate(unitName, stage, cosDir) {
   return 1
 }
 
+// --- reading the version out of four files, two formats, no parser ------------
+
+// No TOML parser ships with node and this repository adds no dependency for one, so the
+// two lockfiles and `pyproject.toml` are read by hand. The reading is narrow on purpose:
+// a single regex over a whole file finds `version` lines belonging to somebody else's
+// package, which is exactly how the first draft of `scripts/verify_0009.py` came to report
+// a dependency's number as this project's.
+const tomlString = (text, key) => text.match(new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, 'm'))?.[1] ?? null
+
+function tomlTable(text, header) {
+  const lines = text.split('\n')
+  const start = lines.findIndex((l) => l.trim() === header)
+  if (start === -1) return null
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((l) => /^\s*\[/.test(l))
+  return (end === -1 ? rest : rest.slice(0, end)).join('\n')
+}
+
+// `uv.lock` holds one `[[package]]` table per locked dependency, each with its own
+// `version`. Only the one naming this project counts.
+function lockedVersion(text, name) {
+  for (const block of text.split(/^\[\[package\]\]\s*$/m).slice(1)) {
+    if (tomlString(block, 'name') === name) return tomlString(block, 'version')
+  }
+  return null
+}
+
+const jsonAt = (text, path) => {
+  try {
+    return path.reduce((v, k) => v?.[k], JSON.parse(text))
+  } catch {
+    return null
+  }
+}
+
+const slurp = (rel) => (existsSync(join(ROOT, rel)) ? readFileSync(join(ROOT, rel), 'utf8') : '')
+
+// Five numbers in four files. `package-lock.json` carries two, in separate keys that can
+// disagree with each other.
+export function declaredVersions(readFile = slurp) {
+  const pyproject = readFile('pyproject.toml')
+  const project = tomlTable(pyproject, '[project]') ?? ''
+  const name = tomlString(project, 'name')
+  const lock = readFile('package-lock.json')
+  return {
+    'pyproject.toml': tomlString(project, 'version'),
+    'package.json': jsonAt(readFile('package.json'), ['version']),
+    'uv.lock': name ? lockedVersion(readFile('uv.lock'), name) : null,
+    'package-lock.json': jsonAt(lock, ['version']),
+    "package-lock.json packages['']": jsonAt(lock, ['packages', '', 'version']),
+  }
+}
+
+// --- commands that describe this checkout -------------------------------------
+
+function git(...args) {
+  try {
+    return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  } catch {
+    return null
+  }
+}
+
+function cmdCheckBranch(name) {
+  const subject = name ?? git('rev-parse', '--abbrev-ref', 'HEAD')
+  if (subject === null) {
+    console.error('not a git checkout, and no branch name was given')
+    return 2
+  }
+  const problem = branchProblem(subject)
+  if (problem) {
+    console.error(`"${subject}" is not a work branch: ${problem}`)
+    return 1
+  }
+  console.log(subject)
+  return 0
+}
+
+function cmdCheckTag(name) {
+  if (!name) {
+    console.error('usage: cos.mjs check-tag <vX.Y.Z | vX.Y.Z-rc.N>')
+    return 2
+  }
+  const problem = tagProblem(name)
+  if (problem) {
+    console.error(`"${name}" is not a release tag: ${problem}`)
+    return 1
+  }
+  // The release workflow reads this line instead of comparing the string itself, so the
+  // grammar has one implementation rather than one here and one in YAML.
+  console.log(isPrerelease(name) ? 'prerelease' : 'release')
+  return 0
+}
+
+function cmdCheckVersion() {
+  const found = declaredVersions()
+  const problem = versionProblem(found)
+  if (problem) {
+    console.error(`the version is not in step: ${problem}`)
+    for (const [place, value] of Object.entries(found)) console.error(`  ${place}: ${value ?? '(unreadable)'}`)
+    return 1
+  }
+  const version = found[VERSION_SOURCE]
+  // A tag on HEAD is a fifth declaration, and it only exists sometimes.
+  const tag = (git('tag', '--points-at', 'HEAD') ?? '').split('\n').find((t) => t && !tagProblem(t))
+  if (tag && tagVersion(tag) !== version) {
+    console.error(`the version is not in step: ${VERSION_SOURCE} says ${version}, but the tag on HEAD is ${tag}`)
+    return 1
+  }
+  console.log(tag ? `${version} (${tag} on HEAD)` : version)
+  return 0
+}
+
+function cmdUnitBranch(unitName, cosDir) {
+  if (!unitName) {
+    console.error('usage: cos.mjs unit-branch <NNNN_slug>')
+    return 2
+  }
+  const intent = join(cosDir, unitName, 'intent.md')
+  if (!existsSync(intent)) {
+    console.error(`No such work unit: ${unitName}`)
+    return 2
+  }
+  const { branch, error } = unitBranch(unitName, readFileSync(intent, 'utf8'))
+  if (error) {
+    console.error(error)
+    return 1
+  }
+  console.log(branch)
+  return 0
+}
+
+// The three commands above answer about this checkout, so `--root` is refused for them.
+const LOCAL_ONLY = new Set(['check-branch', 'check-tag', 'check-version'])
+
 function cmdNewPath(slug, cosDir) {
   if (!slug) {
     console.error('usage: cos.mjs new-path <slug>')
@@ -265,11 +486,32 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     status: () => cmdStatus(rest.includes('--json'), cosDir),
     gate: () => cmdGate(rest[0], rest[1], cosDir),
     'new-path': () => cmdNewPath(rest[0], cosDir),
+    'unit-branch': () => cmdUnitBranch(rest[0], cosDir),
+    'check-branch': () => cmdCheckBranch(rest[0]),
+    'check-tag': () => cmdCheckTag(rest[0]),
+    'check-version': () => cmdCheckVersion(),
   }[cmd]
 
   if (!run) {
-    console.error('usage: cos.mjs [--root <dir>] <status [--json] | gate <unit> <stage> | new-path <slug>>')
+    console.error('usage: cos.mjs [--root <dir>] <command>')
+    console.error('  reading a .cos/ (these take --root):')
+    console.error('    status [--json] | gate <unit> <stage> | new-path <slug> | unit-branch <unit>')
+    console.error('  describing this checkout (these do not):')
+    console.error('    check-branch [name] | check-tag <tag> | check-version')
     process.exit(2)
   }
+
+  // `--root` exists so the app can read **another repository's** `.cos/` with this
+  // repository's rules rather than running the copy it finds over there. A command that
+  // reports on git, or on the version files beside this script, has no such meaning: given
+  // `--root` it would quietly answer about this checkout while naming somebody else's, and
+  // that is worse than refusing. So the flag stops at the line between "reads a `.cos/`"
+  // and "describes the checkout this script lives in".
+  if (rootAt !== -1 && LOCAL_ONLY.has(cmd)) {
+    console.error(`--root does not apply to \`${cmd}\`: it reports on the checkout this script lives in,`)
+    console.error(`  not on a .cos/ somewhere else. Run it from the repository you mean.`)
+    process.exit(2)
+  }
+
   process.exit(run())
 }

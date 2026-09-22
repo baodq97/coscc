@@ -1,5 +1,5 @@
 # Intent: Work reaches main with no convention, and nothing is ever released
-Author: Bao Do. Status: accepted.
+Author: Bao Do. Type: feat. Status: accepted.
 
 > **Sửa ngày 2026-09-22, sau khi bản đầu đã accepted và commit (`ff5634d`).** Viết `spec.md`
 > làm lộ ra rằng `## Proposed outcome` tự làm mình sai: nó lấy mốc "hôm nay" và đòi mọi commit
@@ -39,11 +39,17 @@ là đây không phải một quy ước bị phá, mà là một khoảng trố
 `.claude/harness.md:94` ghi tình trạng hiện tại như một sự thật chứ không như một lựa chọn
 đã cân: *"The author works alone and commits to `main`."*
 
-### Version khai hai chỗ và không gì giữ chúng bằng nhau
+### Version khai bốn chỗ và không gì giữ chúng bằng nhau
 
-`pyproject.toml:3` và `package.json:3` cùng ghi `0.0.1`. Chúng bằng nhau lúc này, và không có
-lệnh, test hay check nào làm cho điều đó tiếp tục đúng. Không có tag nào, nên cũng không có
-chỗ thứ ba để đối chiếu — một bản phát hành hiện không có số hiệu nào cả.
+`pyproject.toml:3`, `package.json:3`, `uv.lock:151`, và `package-lock.json:3` cùng `:9` —
+tất cả ghi `0.0.1`. Hai chỗ sau là file sinh ra, nhưng chúng vẫn mang con số và vẫn lệch
+được. Chúng bằng nhau lúc này, và không có lệnh, test hay check nào làm cho điều đó tiếp tục
+đúng. Không có tag nào, nên cũng không có chỗ thứ năm để đối chiếu — một bản phát hành hiện
+không có số hiệu nào cả.
+
+> **Sửa cùng ngày, lúc viết `plan.md`.** Bản đầu của mục này viết "hai chỗ" và nêu hai file.
+> Đọc `uv.lock` và `package-lock.json` cho thấy bốn. Con số cũ không sai về hướng — không gì
+> giữ chúng bằng nhau — nhưng nó sai về lượng, và một check dựng theo nó sẽ bỏ sót hai nơi.
 
 ### Vì sao hai việc này là một unit
 
@@ -111,6 +117,36 @@ Ngày **2026-10-13 là do file này đặt**, không phải do người khởi x
 7. **Không sửa artifact đã `accepted` trong `.cos/`.** Cùng tiền lệ đã dùng ở `0008`:
    `.cos/0002_no-workspace-management/spec.md:245-250`.
 8. **Repo đã public.** Mọi thứ unit này thêm vào — kể cả file CI — là công khai ngay khi push.
+9. **Mỗi work unit khai type của nó, và tên branch suy ra từ đó.** Người khởi xướng nêu:
+   *"các intent/ work unit cũng nên biết type nó là gì nhỉ?"* Hiện `intent.md` mang
+   `Author:` và `Status:` và không gì khác; `.claude/scripts/cos.mjs:12` khoá tên thư mục ở
+   `NNNN_slug` — **0** chỗ trong repo nói một unit thuộc loại gì. Không có ràng buộc này thì
+   tên branch là một lựa chọn độc lập với tên unit, và hai cái sẽ trôi khỏi nhau. Nơi khai và
+   cách xử lý 8 unit đã đóng là việc của spec.
+10. **`main` chỉ nhận squash merge.** Người khởi xướng nêu: *"thêm 1 rule chỉ squash merge"*,
+   nói đúng lúc pull request đầu tiên sắp được merge bằng một merge commit. Hiện repo bật cả
+   ba cách — `allow_merge_commit`, `allow_rebase_merge`, `allow_squash_merge` đều `true`, đo
+   bằng `gh api repos/baodq97/coscc` ngày 2026-09-22 — và không cách nào bị chặn. Hệ quả cần
+   nói thẳng: một branch công việc có tám commit sẽ thành **một** commit trên `main`, nên
+   lịch sử từng bước của nó chỉ còn trong pull request. Chỗ đặt rule và cách cưỡng chế là
+   việc của spec.
+
+> **Sửa ngày 2026-09-22, lần thứ ba, trước khi viết dòng code đầu tiên.** Thêm constraint 9
+> theo lời người khởi xướng, và file này nhận `Type: feat` ngay trên header — nó là unit đầu
+> tiên khai, và là thứ tên branch của chính nó sẽ được suy ra.
+>
+11. **Branch phải đứng trên `main` mới nhất trước khi merge, và cập nhật bằng rebase.**
+   Người khởi xướng nêu: *"à yêu cầu rebase update latest so với main trước nữa"*. Hiện
+   không gì đòi điều đó: `gh pr view 1` trả `mergeStateStatus: CLEAN` trong khi CI đã chạy
+   trên một nền có thể đã cũ. Hệ quả: một pull request xanh **không** chứng minh được `main`
+   sau khi merge cũng xanh, vì hai thay đổi độc lập cùng pass rồi hỏng khi đứng cạnh nhau.
+   Cập nhật bằng **rebase** chứ không bằng merge `main` vào branch, vì constraint 10 vừa cấm
+   merge commit — hai quy tắc này phải cùng chiều. Cơ chế là việc của spec.
+
+> **Sửa lần thứ tư, ngay trước khi merge pull request đầu tiên.** Constraint 10. Nó đến muộn
+> hơn ba lần kia — `impl.md` và `pr.md` đã viết xong — nhưng nó đến *trước* lần merge đầu
+> tiên, và đó là lần duy nhất còn kịp: sau khi một merge commit nằm trên `main` thì quy tắc
+> chỉ còn áp cho tương lai chứ không còn mô tả được lịch sử.
 
 ## Open questions
 

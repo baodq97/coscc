@@ -36,29 +36,41 @@ Kiểm bằng bảng, mỗi dòng là một test:
 | `feat/a--b` | **từ chối** — gạch ngang đôi |
 | `feat/foo/bar` | **từ chối** — hai dấu gạch chéo |
 
-**R2 — Ngữ pháp tag.** Release là `vX.Y.Z`. Prerelease là `vX.Y.Z-rc.N` với `N` ≥ 1. Không
-chấp nhận dạng khác. `v0.1.0` nhận; `0.1.0` từ chối (thiếu `v`); `v0.1` từ chối; `v0.1.0-rc`
-từ chối (thiếu số).
+**R2 — Ngữ pháp tag, và `cos.mjs` khai một lệnh kiểm nó.** Release là `vX.Y.Z`. Prerelease là
+`vX.Y.Z-rc.N` với `N` ≥ 1. Không chấp nhận dạng khác. `v0.1.0` nhận; `0.1.0` từ chối (thiếu
+`v`); `v0.1` từ chối; `v0.1.0-rc` từ chối (thiếu số); `v0.1.0-rc.0` từ chối (`N` phải ≥ 1).
+
+> **Sửa cùng ngày, lúc chạy proof lần đầu.** Bản đầu của R2 chỉ nêu ngữ pháp, không nêu lệnh
+> — R3 và R4 khai hai lệnh, R13 khai lệnh thứ ba, và tag không có lệnh nào. Hệ quả: workflow
+> của R8 phải tự quyết định prerelease bằng một phép so chuỗi của riêng nó, và ngữ pháp tag
+> có **hai** bản cài đặt trôi độc lập — đúng thứ R4 tồn tại để chặn, ở một chỗ khác. Vậy có
+> lệnh thứ tư, và workflow gọi nó thay vì tự đoán.
 
 **R3 — `cos.mjs` khai một lệnh kiểm tên branch.** Nhận một tên làm tham số, hoặc đọc branch
 đang checkout khi không có tham số. Exit `0` nhận, `1` từ chối kèm lý do nêu tên quy tắc bị
 phạm. Kiểm: tám dòng của bảng R1 chạy qua lệnh này và cho đúng tám kết quả đó.
 
-**R4 — `cos.mjs` khai một lệnh kiểm version đồng bộ.** So `pyproject.toml` với
-`package.json`; khi có tag `vX.Y.Z` trên HEAD thì so cả ba. Exit `0` khi khớp, `1` khi lệch
-kèm giá trị của từng bên. Kiểm: sửa một trong hai file thành số khác thì lệnh phải đỏ —
-negative control, và nó phải được chạy chứ không chỉ được mô tả.
+**R4 — `cos.mjs` khai một lệnh kiểm version đồng bộ, trên bốn chỗ.** `pyproject.toml:3`,
+`package.json:3`, `uv.lock:151` và `package-lock.json:3`+`:9` đều mang số; khi có tag
+`vX.Y.Z` trên HEAD thì so cả năm. Exit `0` khi khớp, `1` khi lệch kèm giá trị của từng bên.
+Kiểm: sửa **bất kỳ** chỗ nào trong bốn chỗ thành số khác thì lệnh phải đỏ — negative control,
+chạy thật chứ không chỉ mô tả.
 
-**R5 — Hai lệnh mới có test trong `.claude/scripts/cos.test.mjs`.** File này hiện có **23**
+> **Sửa cùng ngày, lúc viết `plan.md`.** Bản đầu của R4 chỉ nêu hai file, vì `intent.md` đếm
+> hai. Đọc code lúc lập kế hoạch cho thấy bốn: hai file khai bằng tay và hai lockfile sinh
+> ra. Một check dựng theo con số cũ sẽ để hai nơi trôi tự do — đúng thứ R4 tồn tại để chặn.
+> `intent.md` đã sửa theo.
+
+**R5 — Bốn lệnh mới có test trong `.claude/scripts/cos.test.mjs`.** File này hiện có **23**
 test và `npm test` chạy nó. Sau unit này số test tăng, và `npm run test:node` vẫn xanh. Đây
-là điều kiện để hai lệnh đó không phải là prose: văn hoá repo ghi ở `.claude/harness.md:149-166`
+là điều kiện để bốn lệnh đó không phải là prose: văn hoá repo ghi ở `.claude/harness.md:149-166`
 là mọi invariant đều advisory trừ thứ có script kiểm.
 
-**R6 — Hai lệnh mới không nhận `--root`.** `cos.mjs` hiện nhận `--root <dir>` và
+**R6 — Ba lệnh mới không nhận `--root`.** `cos.mjs` hiện nhận `--root <dir>` và
 `coscc/board.py:90` dùng nó để trỏ script vào **`.cos/` của repo người khác**;
 `coscc/board.py:48` ghi rằng script "reads files and prints JSON. It needs no secret, so it
 is given none". Một lệnh đọc git mà tôn trọng `--root` sẽ đi đọc trạng thái git của bản
-checkout của người khác. Kiểm: gọi lệnh mới kèm `--root` bị từ chối với exit khác 0.
+checkout của người khác. Kiểm: gọi ba lệnh đó kèm `--root` bị từ chối với exit khác 0, và lệnh của R13 thì nhận.
 
 **R7 — Một workflow chạy trên pull request.** Kiểm tên branch nguồn theo R1, và chạy
 `npm test`. `permissions` khai tường minh ở mức tối thiểu; mọi action bên thứ ba ghim theo
@@ -74,8 +86,55 @@ trả về `[]`. Kiểm: `gh api repos/baodq97/coscc/rulesets` trả về ít nh
 `main` đòi pull request; và một lần `git push` thẳng lên `main` bị từ chối. **Đây là một cài
 đặt của repository, không phải một file** — xem C1.
 
+**R14 — và pull request đó chỉ vào được bằng squash.** `intent.md` constraint 10. Cưỡng chế ở
+**hai** chỗ, vì chúng chặn hai thứ khác nhau:
+
+| Chỗ | Chặn gì | Không chặn gì |
+|---|---|---|
+| Setting của repo: `allow_merge_commit=false`, `allow_rebase_merge=false` | bỏ hai nút khỏi giao diện và khỏi `gh pr merge` | bật lại được bằng một lần click, và không nói gì về commit đã có |
+| Ruleset: `required_linear_history` | **từ chối** một merge commit vào `main`, kể cả khi setting bị bật lại | không biết squash khác rebase |
+
+Một mình setting là một thói quen; một mình ruleset cho phép rebase merge — nó chỉ đòi lịch
+sử tuyến tính. Cả hai cùng để lại đúng một đường vào.
+
+Đo ngày 2026-09-22, trước khi sửa: cả ba `allow_merge_commit`, `allow_rebase_merge`,
+`allow_squash_merge` đều `true`, và `delete_branch_on_merge` là `false`.
+
+Kiểm: `gh api repos/baodq97/coscc` trả `allow_squash_merge: true` và hai cái kia `false`;
+ruleset mang rule `required_linear_history`. Cái giá, nói ra ở đây: tám commit của branch này
+sẽ thành **một** commit trên `main`, và lịch sử từng bước chỉ còn đọc được trong pull request
+— xem C9.
+
+**R15 — branch phải đứng trên `main` mới nhất, và CI phải xanh trên nền đó.**
+`intent.md` constraint 11. Cơ chế: rule `required_status_checks` trong cùng ruleset của R9,
+với `strict_required_status_checks_policy: true`. `strict` là nửa quan trọng — không có nó,
+rule chỉ đòi check xanh ở đâu đó, còn có nó thì check phải xanh **trên một branch đã có
+`main` mới nhất bên dưới**.
+
+Hai context bắt buộc: `branch-name` và `tests`, đúng tên hai job của `.github/workflows/pr.yml`.
+Tên sai thì pull request không bao giờ merge được, nên chúng được đối chiếu với
+`gh pr checks` chứ không chép từ trí nhớ.
+
+Cập nhật bằng **rebase**, không bằng merge `main` vào branch: `gh pr update-branch --rebase`.
+R14 vừa cấm merge commit trên `main`, và một merge commit trong branch rồi bị squash đi thì
+không vi phạm gì — nhưng để hai quy tắc cùng chiều, và để `git log` của branch còn đọc được,
+cách cập nhật là rebase.
+
+**Điều này đảo thứ tự của `plan.md`.** Ruleset phải bật **trước** lần merge đầu tiên, không
+phải sau: một cổng bật sau khi pull request đầu tiên đã đi qua là một cổng mà pull request đó
+chưa từng đi qua, và C12 sẽ đo từ một mốc nằm sau chính thứ nó định đo.
+
+Kiểm: ruleset mang `required_status_checks` với `strict_required_status_checks_policy: true`
+và hai context đó; `gh pr view --json mergeStateStatus` trả `BEHIND` khi branch cũ.
+
+> **Sửa ngày 2026-09-22, lần thứ ba, ngay trước lần merge đầu tiên.** R14 thêm theo
+> `intent.md` constraint 10. Nó đến sau khi `impl.md` và `pr.md` đã viết, nhưng trước khi có
+> merge commit nào trên `main` — và đó là lần cuối còn kịp, vì sau đó quy tắc chỉ áp được cho
+> tương lai. R15 thêm ngay sau, và nó đảo thứ tự bước 11 với bước 12 của `plan.md`.
+
 **R10 — Harness ghi quy ước.** `.claude/harness.md` có một mục mới nói ngữ pháp branch, ngữ
-pháp tag, và hai lệnh kiểm. Kiểm: mục đó nêu đủ mười type của R1 và cả hai dạng tag của R2.
+pháp tag, bốn lệnh, và trường `Type:`. Kiểm: mục đó nêu đủ mười type của R1, cả hai dạng tag
+của R2, và một câu nói ruleset không đi theo bản copy (C1).
 
 **R11 — Nguồn sự thật của version, và ba chỗ khớp nhau.** `pyproject.toml` là nguồn;
 `package.json` là bản sao; tag dựng từ nguồn. Xem C5 — người khởi xướng yêu cầu "đồng bộ" mà
@@ -87,6 +146,29 @@ bật ruleset trở đi** đều qua pull request — không phải "từ hôm n
 `## Proposed outcome` đã sửa đúng chỗ đó: artifact của chính unit này vào thẳng `main` trước
 khi cổng tồn tại, và được miễn. Hôm nay: **0** release, **0** tag, **0** PR, **137** commit
 đều vào thẳng `main`. Đây là outcome của `intent.md`, nguyên văn.
+
+**R13 — `intent.md` khai type, và tên branch suy ra từ unit.** `intent.md` constraint 9.
+Type khai trên dòng header, cùng chỗ `Author:` và `Status:` đang ở — **không** trong tên thư
+mục, vì `.claude/scripts/cos.mjs:12` khoá `UNIT_RE` ở `^(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)$`
+và đổi nó là đổi tên 9 thư mục đã tồn tại. Dạng: `Type: <type>.`, với `type` thuộc đúng tập
+mười của R1.
+
+Từ đó, branch của một unit là **suy ra chứ không đặt tay**: `<type>/<slug>`, trong đó `slug`
+là phần sau `NNNN_`. `0009_branch-and-release-conventions` với `Type: feat` cho
+`feat/branch-and-release-conventions`, và tên ấy thoả R1 mà không cần ai kiểm lại bằng mắt.
+
+**Tuỳ chọn cho `0001`–`0008`, bắt buộc từ `0009`.** Tám unit kia đã `accepted` và đã đóng;
+backfill chúng là sửa artifact đã ký, đúng thứ `.cos/0008_personal-name-blocks-publishing/intent.md`
+constraint 4 cấm, đổi lấy gần như không gì — chúng không có branch nào để đối chiếu. Thiếu
+`Type:` trên một unit cũ **không** là lỗi; thiếu trên một unit mới thì là.
+
+Kiểm: `cos.mjs` đọc được type, in ra tên branch suy ra cho một unit, và **từ chối** một type
+ngoài tập mười. `0009` hiện khai `Type: feat` (`intent.md:2`); tám unit còn lại khai **0** lần.
+
+> **Sửa ngày 2026-09-22, lần thứ hai, trước dòng code đầu tiên.** R13 thêm theo `intent.md`
+> constraint 9. Nó không mở rộng outcome — R12 vẫn là phép đo nghiệm thu — mà đóng một chỗ hở
+> trong R1: ngữ pháp tên branch không nói tên *nào* là đúng cho một công việc cụ thể, nên hai
+> tên đều hợp lệ mà chỉ một cái khớp unit.
 
 ## Design
 
@@ -113,6 +195,12 @@ không chạy file `cos.mjs` nằm trong repo mà ai đó đã clone. Hai lệnh
 phải nằm **ngoài** đường `--root` — R6. Cách chia: `--root` tiếp tục chỉ áp cho các lệnh đọc
 `.cos/`; lệnh đọc git luôn làm việc trên thư mục hiện tại.
 
+Lệnh của R13 nằm **bên kia** ranh giới đó: nó chỉ đọc `intent.md` và tên thư mục, đúng loại
+việc `--root` sinh ra để làm, nên nó nhận `--root` như `status` và `gate`. Bốn lệnh mới, ba
+bên này một bên kia — và đường kẻ là "lệnh mô tả bản checkout này hay mô tả một `.cos/`",
+không phải "mới hay cũ". Lệnh kiểm tag không chạm git, nhưng nó trả lời về tag của repo đang
+đứng, nên nó ở cùng phía với hai lệnh kia.
+
 ### Quy ước đi theo harness, nhưng thứ cưỡng chế thì không
 
 `intent.md` constraint 1 đặt quy ước vào `.claude/` để nó được copy. Copy được: ngữ pháp,
@@ -123,7 +211,8 @@ này như một chỗ hở chứ không như một chi tiết.
 
 ### Luồng của một unit sau khi có quy ước
 
-Cắt branch `<type>/<slug>` từ `main` → commit → push → mở PR → CI kiểm tên và chạy test →
+`write-intent` khai `Type:` → cắt branch `<type>/<slug>`, tên lấy từ lệnh của R13 chứ không
+gõ tay → commit → push → mở PR → CI kiểm tên và chạy test →
 merge → xoá branch. Release: chọn version, cập nhật `pyproject.toml`, đồng bộ `package.json`,
 merge qua PR, rồi đẩy tag `vX.Y.Z-rc.N` để có prerelease và `vX.Y.Z` để có release.
 
@@ -187,6 +276,22 @@ rào đó phải có test — một rào không có test là một câu trong fi
 không rơi vào `feat|fix|docs|refactor|test|chore|perf|build|ci|revert` sẽ không đặt được tên
 branch, và lối thoát duy nhất là sửa harness. Đó là chủ ý — một tập mở thì không kiểm được gì
 — nhưng nó sẽ gây vướng ít nhất một lần.
+
+**C9 — Squash xoá lịch sử từng bước, và đó là thứ repo này vẫn coi trọng.** R14 là lựa chọn
+của người khởi xướng và nó có giá. Tám commit của branch này — proof đỏ trước, hàm thuần, bốn
+lệnh, harness, version, workflow, `impl.md`, `pr.md` — được viết theo thứ tự đó **cố ý**, và
+`plan.md` `## Order of work` nói mỗi bước phải để lại một trạng thái kiểm được. Sau squash,
+`main` mang một commit và thứ tự ấy chỉ còn trong pull request, tức trên GitHub chứ không
+trong git. Một bản clone không có mạng đọc `git log` sẽ không thấy proof từng đỏ trước. Đánh
+đổi này **chưa từng được cân** trong repo — `0008` đã viết lại history để gỡ một tài liệu,
+nhưng chưa bao giờ bỏ bớt commit. **Người khởi xướng quyết**, và đã quyết.
+
+**C8 — R13 chết nếu `write-intent` không đòi `Type:`.** Template ở
+`.claude/skills/write-intent/SKILL.md` hiện in header là `Author: <name>. Status: accepted.`
+và không gì khác, nên một session làm đúng skill sẽ viết ra một `intent.md` thiếu type. Một
+lệnh đọc type mà không ai viết type là một lệnh luôn trả về rỗng. Vậy R13 kéo theo một sửa
+đổi trong skill, và đó là **file thứ tư trong `.claude/` mà unit này chạm** ngoài `harness.md`,
+`cos.mjs`, `cos.test.mjs`.
 
 ## Open questions
 

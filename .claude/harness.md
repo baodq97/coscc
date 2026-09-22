@@ -56,7 +56,7 @@ is a question the session is asked to ask, and each skill states that limit on i
 wrote a note before the intent.
 
 The eight rows above are a restatement of one array — `STAGES` in
-`.claude/scripts/cos.mjs:24-33`. That array is the authoritative copy: it decides the
+`.claude/scripts/cos.mjs:25-34`. That array is the authoritative copy: it decides the
 artifact names, the statuses each may carry, what the gate demands and what `status`
 proposes next. Adding a stage is editing it, and then this table.
 
@@ -84,16 +84,18 @@ artifacts.
 
 Every artifact carries `Status: draft | accepted | rejected`. Two carry one more each:
 `spec.md` may be `skipped`, and `plan.md` and `impl.md` may be `done`. The authoritative
-list is the `statuses` field on each entry of `STAGES` in `.claude/scripts/cos.mjs:24-33`;
+list is the `statuses` field on each entry of `STAGES` in `.claude/scripts/cos.mjs:25-34`;
 a status outside it is reported as a problem rather than guessed at.
 
 The agent writes the artifact, accepts it and commits it. `Status: accepted` therefore
 records readiness, not approval: it says the agent believes the file is finished, and
 nothing more. A reader who takes it as a human's sign-off is reading it wrong.
 
-There is no approval step anywhere. The author works alone and commits to `main`, so the
-agent proposes, accepts, implements and ships, and `accepted` is a word it wrote about its
-own work.
+There is no approval step anywhere. The author works alone, so the agent proposes,
+accepts, implements and ships, and `accepted` is a word it wrote about its own work.
+Since `0009` the work does at least travel through a branch and a pull request rather than
+straight onto `main` — see `## Branches, tags and releases`. That changes the route, not
+the reviewer: the pull request is opened, approved and merged by the same party.
 
 What is left is not separation of duties but three weaker things: `cos.mjs gate` holding the
 stages in order, the tests, and the author reading an artifact because they want to rather
@@ -162,7 +164,120 @@ are instructions to the model, not artifacts to be reviewed.
   `.cos/0005_hand-driven-invisible-loop/spec.md` C5 and it is the weakest joint in the loop.
 - **Anything that starts the next stage on its own.** An accepted artifact does not light
   the gate after it. A person chooses the mode and presses the button, every time.
-- **The eval suite, CI integration and `bands.yaml`** from the playbook.
+- **CI that decides anything.** `0009` added two workflows, and neither is a gate: one
+  checks a branch name and runs the tests, the other builds a release from a tag. Nothing
+  blocks a merge on them, and a green check still measures a different interpreter than the
+  one the proofs were measured on.
+- **The eval suite and `bands.yaml`** from the source material this harness was built from.
+  That document is not in this repository and is not quoted here.
+
+## Branches, tags and releases
+
+Added by `0009`. The grammar lives here so a copy of `.claude/` carries it; **the thing that
+enforces it does not travel with the harness**. Read that sentence twice before relying on
+any of this in another repository — the only mechanism that actually stops a commit is a
+GitHub ruleset, which is a setting on one repository and is in no file.
+
+### Branch names
+
+`<type>/<slug>`. Ten types, and the set is closed:
+
+```
+feat  fix  docs  refactor  test  chore  perf  build  ci  revert
+```
+
+The slug is lowercase letters, digits and single hyphens, up to 60 characters. `main` is
+the trunk and is not a work branch. A work branch is cut from `main`, merged through a pull
+request, and deleted.
+
+**Merged as a squash, and only as a squash.** A work branch arrives on `main` as one
+commit. Two settings hold that and they refuse different things: the repository allows only
+`allow_squash_merge`, which takes the other two buttons away, and the ruleset carries
+`required_linear_history`, which refuses a merge commit even if somebody puts the buttons
+back. Neither alone is enough — a setting is one click from being undone, and linear
+history on its own still permits a rebase merge.
+
+The cost is real and is not hidden here: the step-by-step history of a branch — proof
+written red first, then the code, then the record — survives only in the pull request,
+which lives on GitHub rather than in git. A clone with no network reads one commit.
+
+**On the latest `main`, updated by rebase.** The ruleset requires its status checks in
+`strict` mode, which means they have to be green on a branch that already has the current
+`main` underneath. Without that, two changes can each pass on their own and break the
+moment they stand next to each other, and both of them merge. When a pull request falls
+behind:
+
+```
+gh pr update-branch --rebase
+```
+
+Rebase, not a merge of `main` into the branch — the branch would pick up a merge commit,
+and although squashing removes it before it reaches `main`, keeping the two rules pointing
+the same way is worth more than the shortcut.
+
+Do not compose the name. Every unit declares `Type:` on its `intent.md` header, and the
+branch follows from the unit:
+
+```
+node .claude/scripts/cos.mjs unit-branch 0009_branch-and-release-conventions
+# feat/branch-and-release-conventions
+node .claude/scripts/cos.mjs check-branch            # the branch you are on
+node .claude/scripts/cos.mjs check-branch feat/thing # a name you are considering
+```
+
+`Type:` is required for units opened after `0009` and absent from the eight before it,
+which were closed before the field existed and are not backfilled.
+
+### Tags and releases
+
+`vX.Y.Z` is a release. `vX.Y.Z-rc.N`, with `N` starting at 1, is a prerelease. Nothing else
+is a tag this repository recognises, and leading zeros are refused so one release has one
+spelling.
+
+```
+node .claude/scripts/cos.mjs check-tag v0.1.0-rc.1   # prints: prerelease
+node .claude/scripts/cos.mjs check-tag v0.1.0        # prints: release
+```
+
+Pushing a tag is what builds the release. The workflow asks `check-tag` whether it is a
+prerelease rather than comparing the string itself, so the grammar has one implementation
+instead of one here and one in YAML.
+
+### The version, and the five places that carry it
+
+`pyproject.toml` is the source. `package.json`, `uv.lock` and the two keys in
+`package-lock.json` are copies, and nothing makes them agree on its own:
+
+```
+node .claude/scripts/cos.mjs check-version
+```
+
+It names the source in the failure, because "they disagree" is not actionable until
+something says which one is right. A tag on `HEAD` is compared too, when there is one.
+
+### Which commands take `--root`
+
+`--root <dir>` exists so this repository's rules can read **another** repository's `.cos/`
+without running the copy of `cos.mjs` found over there. It therefore applies to the
+commands that read a `.cos/` — `status`, `gate`, `new-path`, `unit-branch` — and is
+**refused** by the three that report on the checkout this script lives in: `check-branch`,
+`check-tag`, `check-version`. Given `--root`, those would quietly answer about here while
+naming somewhere else.
+
+### What does not come with the copy
+
+| Where it is checked | What it cannot do |
+|---|---|
+| `cos.mjs`, locally | block anything — it returns an exit code and is run by choice |
+| A workflow on GitHub | block a `git push` straight to `main`; no pull request, no workflow |
+| A repository ruleset | know anything about the grammar or the version |
+| A repository setting | survive being switched back on |
+| A required status check | run at all, if its context name does not match a job |
+
+Copying `.claude/` brings the grammar, the four commands and their tests. It does **not**
+bring `.github/workflows/`, which sits outside `.claude/`, and it does not bring the
+ruleset, which is a setting rather than a file. A fresh copy of this harness therefore has
+a convention that nothing enforces until somebody rebuilds those two legs by hand.
 
 ## Copying this into another repository
 

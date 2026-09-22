@@ -122,7 +122,7 @@ run a step. Three modules carry it, and the split is the point:
 
 The board's four lanes do **not** use the harness's `blocked` flag. Measured on 2026-09-22:
 `cos.mjs` returns `blocked: true` for every unit that is not finished
-(`.claude/scripts/cos.mjs:122-135`), so mapping it onto a lane called *Needs review* puts
+(`.claude/scripts/cos.mjs:123-136`), so mapping it onto a lane called *Needs review* puts
 every unfinished unit there and leaves the other lanes empty. `coscc/state.py` reads
 the lanes off the artifact statuses instead.
 
@@ -167,7 +167,7 @@ rather than by number, because the numbers now belong to different units:
 `fragmented-product-experience`, `stage-records-without-actions`. `channel/`, `evidence/`
 and `scripts/verify-0001.mjs` went with the first of them; git history keeps all of it.
 
-`cos-status` reports where everything stands. `.claude/scripts/cos.mjs:24-33` is the one
+`cos-status` reports where everything stands. `.claude/scripts/cos.mjs:25-34` is the one
 place the loop is defined — the table in `.claude/harness.md` restates it, nothing else may.
 
 ## Invariants
