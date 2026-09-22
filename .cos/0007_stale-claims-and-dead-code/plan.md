@@ -243,7 +243,13 @@ Ghi khi chúng xảy ra, theo `write-plan` invariant 8. `impl.md` gom lại.
    `cos_baodo/run.py` và `cos_baodo/cos_baodo.py` là chết, trong khi xoá cái nào cũng làm app
    không chạy: chúng được gọi qua `cos-baodo = "cos_baodo.run:main"` ở `pyproject.toml` và
    `"cos_baodo.cos_baodo:app"` ở `cos_baodo/run.py:61`.
-4. **Citation trôi thứ tư, không sửa.** `.cos/0005_hand-driven-invisible-loop/spec.md:291`
+4. **`.gitignore` phải là fixed point của `reflex init`.** Bước 9 bỏ `.web` và giữ `.web/`;
+   bước 12 cho thấy `uv run cos-build` chạy `reflex init` bên trong và **thêm lại `.web`**,
+   nên bản dedup sống được đúng tới lần build kế tiếp và C10 đỏ lại. Đảo chiều: giữ `.web` —
+   dòng mà Reflex tự ghi — và bỏ `.web/` của ta. Đo bằng md5 trước và sau một lần
+   `cos-build`: không đổi. Đây là loại trôi mà `intent.md` mục 13 nêu, chỉ khác là nguồn của
+   nó là một công cụ chứ một người.
+5. **Citation trôi thứ tư, không sửa.** `.cos/0005_hand-driven-invisible-loop/spec.md:291`
    trỏ `cos_baodo/store.py:16-18` — cùng đích cũ như mục 4 của `intent.md`, và dòng đó giờ tả
    row SQLite. Nó là hiện thân cụ thể của "mục thứ mười bốn" mà `intent.md` OQ2 đoán trước.
    Tác giả chọn ghi lại chứ không chạm artifact accepted thứ hai.
