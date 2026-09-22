@@ -195,7 +195,7 @@ class Denials:
             self.reasons.append(f"{tool}: {reason}")
 
 
-def permission_gate(grant: Grant, workspace: str, denials: Denials):
+def permission_gate(grant: Grant, workspace: str, denials: Denials, unit_dir: str | None = None):
     """The callback the SDK asks before every tool call.
 
     This is the enforcement `spec.md` R10 asks for, and it is separate from the tool list
@@ -203,7 +203,7 @@ def permission_gate(grant: Grant, workspace: str, denials: Denials):
     """
 
     async def can_use_tool(tool: str, tool_input: dict, context: Any):
-        reason = decide(grant, tool, tool_input or {}, workspace)
+        reason = decide(grant, tool, tool_input or {}, workspace, unit_dir)
         if reason:
             denials.record(tool, reason)
             return sdk.PermissionResultDeny(message=reason)
@@ -273,7 +273,11 @@ class Runner:
                 # Only pass a list and a gate when something was actually granted. A step
                 # with an empty grant gets exactly the session the app makes by default,
                 # which is the one the zero-tool default is about.
-                can_use_tool=permission_gate(grant, workspace, denials) if grant.opens_anything else None,
+                can_use_tool=(
+                    permission_gate(grant, workspace, denials, str(directory))
+                    if grant.opens_anything
+                    else None
+                ),
                 tools=list(grant.tools) if grant.opens_anything else None,
                 max_budget_usd=grant.max_budget_usd or None,
             ):

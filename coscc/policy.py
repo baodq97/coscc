@@ -194,11 +194,33 @@ def _paths_in(tool_input: dict) -> list[str]:
     return out
 
 
-def decide(grant: Grant, tool: str, tool_input: dict, workspace: str) -> str:
+def decide(
+    grant: Grant,
+    tool: str,
+    tool_input: dict,
+    workspace: str,
+    unit_dir: str | None = None,
+) -> str:
     """"" if this call may proceed, else the reason it may not.
 
     Checked in this order on purpose: the tool has to be granted at all before anything
     about its arguments matters.
+
+    **`unit_dir` widens the write boundary by exactly one directory, and `0014` `spec.md`
+    C2 is why it had to.** A step that writes its own artifact — `impl` and `pr`, the two
+    with `app_writes_artifact=False` — used to write it inside the workspace. `0014` moved
+    every artifact into the product's own store so that nothing of coscc's lands in a
+    repository a team shares, and that put the file the step must write outside the only
+    place the step may write.
+
+    Two properties keep this from being a hole. It is **one** directory, not a prefix of
+    the store: a step may write its own unit's files and no other unit's. And the path is
+    not the caller's — it comes from `coscc/units.py`, built from the data root (which is
+    read from the environment, `coscc/config.py`) and a workspace that already passed the
+    membership gate. There is no route from a request to this value.
+
+    `None` means no second root, which is the shape every prose stage runs with: they are
+    granted no write tools at all, so the question never arises for them.
     """
     from pathlib import Path
 
@@ -212,15 +234,21 @@ def decide(grant: Grant, tool: str, tool_input: dict, workspace: str) -> str:
             return reason
 
     if tool in WRITE_TOOLS:
-        try:
-            root = Path(workspace).expanduser().resolve()
-        except OSError:
+        roots = []
+        for candidate in (workspace, unit_dir):
+            if not candidate:
+                continue
+            try:
+                roots.append(Path(candidate).expanduser().resolve())
+            except OSError:
+                return "the workspace path could not be resolved"
+        if not roots:
             return "the workspace path could not be resolved"
         for raw in _paths_in(tool_input):
             try:
                 target = Path(raw).expanduser().resolve()
             except OSError:
                 return f"that path could not be resolved: {raw}"
-            if target != root and root not in target.parents:
+            if not any(target == root or root in target.parents for root in roots):
                 return f"writing outside the workspace is not allowed: {raw}"
     return ""
