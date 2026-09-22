@@ -26,8 +26,31 @@ trích dẫn có số dòng lớn hơn 41 nay trỏ vào nội dung khác. Nhữ
 `STORE_FILENAME`, `_import_legacy`, `_load_legacy`, `_needs_import` hoặc `legacy_path` trỏ
 vào thứ **không còn tồn tại**; đó là điều `0008 spec.md` R3 cố ý làm, không phải hỏng.
 
-**Tên cũ vẫn nằm trong history.** `0008 intent.md` constraint 5 giữ nguyên 121 commit đầu,
-nên `git log -p` vẫn đọc ra tên cũ. Outcome của unit đó đo trên tree, không trên history.
+**Tên cũ vẫn nằm trong history.** Việc viết lại history ở cuối `0008` chỉ **bỏ hai đường
+dẫn**, không đụng nội dung, nên `git log -p` vẫn đọc ra tên cũ. Outcome của unit đó đo trên
+tree, không trên history.
+
+## Every seven-character hash quoted before 0008 is dead
+
+Sát lúc publish, `0008` viết lại toàn bộ history để gỡ hai thứ khỏi mọi commit:
+
+- `docs/ai-native-sdlc-playbook.md` — 611 dòng văn bản của Anthropic giữ nguyên văn, không
+  ghi nguồn, hot-link bốn ảnh từ CDN của họ. Nó nằm ở **commit đầu tiên**. Đường dẫn nay là
+  một stub trỏ về bản gốc.
+- `.claude/settings.local.json.tmp.*` — cấu hình máy lọt vào commit do `git add -A`.
+
+Cả 134 commit giữ nguyên thứ tự và thông điệp nhưng **đổi hash**. Nên **44 trích dẫn SHA**
+nằm rải trong `.cos/` — ví dụ `0001 plan.md:5` trích `81295b9`, `0002 intent.md:4` trích
+`c34adfc` — nay không phân giải được nữa.
+
+Chúng **không được vá tại chỗ**, cùng lý do với phần trên: vá nghĩa là sửa artifact đã ký, và
+`0008 spec.md` C5 đã đo rằng làm thế còn hỏng thêm các trích dẫn số dòng trỏ vào chính những
+file ấy. Một hash không phân giải được là một bản ghi *thiếu*, còn một artifact bị sửa sau khi
+ký là một bản ghi *sai*. Unit này chọn cái thứ nhất.
+
+Bản history trước khi viết lại được giữ trong một git bundle ngoài repo, trên máy tác giả. Nó
+không có ở đây và không ai ngoài đó tra được — đó là cái giá của việc gỡ nội dung của người
+khác khỏi một repo công khai.
 
 ## Why the artifacts were not rewritten
 

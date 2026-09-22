@@ -8,9 +8,9 @@ description: Write the ship.md that records what went out, when, and how it is b
 `ship.md` closes a unit. It records what actually went out and what would tell you it went
 wrong, which is the part every other artifact assumed and none of them wrote down.
 
-It is also where the loop turns over: `docs/ai-native-sdlc-playbook.md` describes a
-breached control band in production writing the next `intent.md`. This file is where that
-band is stated, so there is something for a later observation to be breached *against*.
+It is also where the loop turns over. A control band breached in production is what writes
+the next `intent.md`, and this file is where the band is stated — so there is something for
+a later observation to be breached *against*.
 
 ## Before writing
 

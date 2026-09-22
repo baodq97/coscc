@@ -201,6 +201,26 @@ quota, không tạo session**. Nó **PASS**, cả negative control. Dòng kia l�
 socket.io méo của tôi, không phải lỗi. Chạy lại sau bước 8 trên data root đã dọn: vẫn PASS.
 Sáu proof còn lại vẫn không chạy.
 
+### Lệch so với plan, ghi lúc quét trước khi publish
+
+**Viết lại history — đảo `intent.md` constraint 5.** Một lần quét trước bước 10 tìm ra hai
+thứ không nên ra công khai: `docs/ai-native-sdlc-playbook.md`, 611 dòng văn bản của Anthropic
+giữ nguyên văn, không ghi nguồn, hot-link bốn ảnh từ CDN của họ, nằm ở **commit đầu tiên**;
+và `.claude/settings.local.json.tmp.*`, lọt vào `fc7f968` do chính `git add -A` của tôi. Cả
+hai bị gỡ khỏi **toàn bộ 134 commit** bằng `git filter-repo` chạy qua `uvx` (không thêm
+dependency nào vào repo). Backup là một git bundle ngoài repo, tạo trước khi chạy. Hệ quả đã
+đo và chấp nhận: **44 trích dẫn SHA** trong `.cos/` chết, `BASE` của proof đổi từ `b923bba`
+sang `fa7d47c`, và `.cos/RENAMES.md` ghi một lần cho tất cả. Đường dẫn playbook nay là một
+stub trỏ về bản gốc, nên 5 trích dẫn hiện có vẫn phân giải.
+
+**Một skill không được phụ thuộc vào `docs/` — lỗi có sẵn, người khởi xướng chỉ ra.**
+`.claude/skills/write-ship/SKILL.md` trích dẫn `docs/ai-native-sdlc-playbook.md`, trong khi
+`.claude/harness.md:168-170` tuyên bố copy `.claude/` là đủ và *"nothing lands in the host
+repository's own tree"*. Một skill trỏ ra ngoài `.claude/` thì chết ngay khi template được
+copy sang repo khác. Câu đó viết lại bằng lời của chính skill, không trích dẫn file nào.
+`harness.md` giữ liên kết tới bản gốc bằng **URL** — một URL chạy được ở mọi repo, một đường
+dẫn tương đối thì không. Quét lại: **0** chỗ trong `.claude/skills/` còn trỏ ra ngoài.
+
 ### Chọn không làm
 
 - **Không chạy lại sáu proof cũ.** `spec.md` `## Out of scope`. Chúng tốn quota thật, cần

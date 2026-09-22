@@ -55,7 +55,12 @@ NEW = "coscc"
 
 # The commit this unit started from: the parent of its first artifact commit. C11 and C12
 # diff against it. `.cos/0008_personal-name-blocks-publishing/plan.md` pins the same point.
-BASE = "b923bba"
+#
+# It was `b923bba` until the history rewrite late in this unit, which purged a third-party
+# document and a stray settings file from all 134 commits and so gave every one of them a
+# new hash. Any seven-character hash quoted in an artifact written before that rewrite is
+# dead; `.cos/RENAMES.md` says so once rather than each artifact saying it separately.
+BASE = "fa7d47c"
 
 # --------------------------------------------------------------------------
 # helpers

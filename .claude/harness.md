@@ -14,8 +14,9 @@ fixed.
 
 ## What this is
 
-A local implementation of the AI-native SDLC described in `ai-native-sdlc-playbook.md`,
-covering all eight stages: idea, intent, spec, plan, impl, pr, review, ship. It is also the
+A local implementation of the AI-native SDLC described in [Anthropic's AI-Native SDLC
+playbook](https://claude.com/blog/the-ai-native-sdlc-playbook), covering all eight stages:
+idea, intent, spec, plan, impl, pr, review, ship. It is also the
 template — copy `.claude/` into another repository and the loop works there.
 
 It was three stages until `0005` (2026-09-22) widened it to eight. The five units closed

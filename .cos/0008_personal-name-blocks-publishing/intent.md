@@ -131,10 +131,23 @@ cả đều đã sạch tên riêng.
    lại một artifact đã ký... Không lối nào sạch. Unit này chọn không sửa"*. Kết quả là bảng
    tra ở `.cos/0001_no-session-management/plan.md:4-21`, nơi 13 trích dẫn cũ được giữ
    nguyên vì viết lại sẽ thành *"một bản ghi sai theo kiểu khác"*. Unit này theo tiền lệ đó.
-5. **History giữ nguyên.** 121 commit được push y nguyên. Hệ quả phải nói thẳng: `cos_baodo`
-   vẫn tra ra được bằng `git log -p` sau khi public, vĩnh viễn. Người khởi xướng đã cân
-   nhắc viết lại history và chọn không. `git filter-repo` cũng không có trên máy này (đo
-   2026-09-22), nên lựa chọn này còn tránh thêm một dependency.
+5. **History bị viết lại — sửa 2026-09-22, sau `14fad47`.** Bản trước của mục này nói history
+   giữ nguyên, và nó đúng cho tới khi một lần quét trước khi publish tìm ra hai thứ không
+   nên ra công khai: `docs/ai-native-sdlc-playbook.md`, 611 dòng văn bản của Anthropic giữ
+   nguyên văn không ghi nguồn và hot-link bốn ảnh từ CDN của họ, nằm ngay ở **commit đầu
+   tiên**; và `.claude/settings.local.json.tmp.*`, một file cấu hình máy lọt vào commit do
+   `git add -A`. Tree không xoá được chúng khỏi quá khứ, và public thì quá khứ đọc được.
+
+   Người khởi xướng chọn viết lại. `git filter-repo` chạy qua `uvx` nên không thêm
+   dependency nào vào repo. **134 commit giữ nguyên số lượng và nội dung thông điệp, nhưng
+   tất cả đổi hash.** Hệ quả đã đo và chấp nhận: **44 trích dẫn SHA** trong `.cos/` đang
+   phân giải đúng nay chết hết, gồm `0001 plan.md:5` (`81295b9`), `0002 intent.md:4`
+   (`c34adfc`) và các artifact của chính `0008`; constraint 4 cấm vá chúng tại chỗ, nên
+   `.cos/RENAMES.md` ghi một lần cho tất cả.
+
+   **Điều này không làm `baodo` biến mất khỏi history.** Việc viết lại chỉ bỏ hai đường dẫn,
+   không đụng nội dung, nên tên cũ vẫn tra ra được bằng `git log -p`. Outcome vẫn đo trên
+   tree, đúng như đã viết.
 6. **Đường import legacy bị xóa hẳn**, không phải đổi tên. `STORE_FILENAME`,
    `_import_legacy` và bốn test đi kèm bị bỏ. Nội dung file legacy đã nằm trong `cos.db` từ
    `0006`, và không bản clone nào trong tương lai có file tiền-`0006`. Tiền lệ: `0007` xóa
