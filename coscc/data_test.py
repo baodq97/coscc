@@ -9,6 +9,7 @@ serialise a read-modify-write rather than merely appearing to.
 
 from __future__ import annotations
 
+import ast
 import sqlite3
 import stat
 import subprocess
@@ -282,6 +283,57 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
         Data()
         self.assertEqual(Path("~/.cos").expanduser().exists(), before)
 
+    def test_no_test_builds_a_journal_store_or_history_without_a_data_root(self):
+        """The guard for the mistake above, at the only place it can be made.
+
+        `Journal`, `Store` and `History` all take the data root as a second argument and
+        all default it to `Data(None)`, which is `~/.cos`. That default is right in
+        production and wrong in every test, and the docstring at
+        `coscc/journal.py:108-109` has said so since the class was written.
+
+        It happened anyway. `coscc/runner_test.py:321` read `Journal(Path(d) / "cos.db")`
+        — one argument, where every other call in that file passes two — and for as long
+        as the schema only ever grew, nothing noticed: the suite opened the developer's
+        real database and quietly did nothing to it. `0013` took `SCHEMA_VERSION` to 2,
+        and the same line then **upgraded** that database on every `npm test`, after which
+        the installed `v0.2.3` answered 500 on every route that reads it while
+        `/api/health` still said `ok`. Measured 2026-09-22 on the machine this was written
+        on.
+
+        **Parsed, not matched.** The first version of this check was a regular expression
+        and it did not catch the line it was written for: the argument was
+        `Path(d) / "cos.db"`, which carries its own brackets, and the expression excluded
+        them. Reverting the fix and watching the check stay green is how that was found.
+        `ast` sees the call rather than the characters, so an argument of any shape counts
+        as one argument.
+
+        What it still cannot see: a call built through a helper, or one handed a variable
+        that happens to be `None`. Narrow on purpose — it catches the exact shape that has
+        already cost something once.
+        """
+        watched = {"Journal", "Store", "History"}
+        offenders = []
+        for path in sorted(Path(__file__).resolve().parent.glob("*_test.py")):
+            source = path.read_text(encoding="utf-8")
+            for node in ast.walk(ast.parse(source, filename=str(path))):
+                if not isinstance(node, ast.Call):
+                    continue
+                name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                if name not in watched:
+                    continue
+                gives_root = len(node.args) >= 2 or any(
+                    keyword.arg == "data" for keyword in node.keywords
+                )
+                if node.args and not gives_root:
+                    offenders.append(
+                        f"{path.name}:{node.lineno}: {name}(...) with no data root"
+                    )
+        self.assertEqual(
+            offenders,
+            [],
+            "these build a data-root-taking class with one argument, so they write into "
+            "the real ~/.cos:\n  " + "\n  ".join(offenders),
+        )
 
 if __name__ == "__main__":
     unittest.main()
