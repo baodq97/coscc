@@ -380,3 +380,40 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         self.assertFalse(found["recording"])
         self.assertEqual(found["transitions"], [])
         self.assertFalse(service.units_with_history(REPO)["recording"])
+
+    def test_a_unit_holding_rows_from_two_state_sets_says_so(self):
+        """`spec.md` C5: said out loud rather than refused, because refusing a read
+        would hide the only evidence that the two sets were ever mixed."""
+        import json
+
+        from coscc import states
+        from coscc.history import History
+
+        other = self.root / "other.json"
+        other.write_text(
+            json.dumps(
+                {
+                    "name": "two-step",
+                    "absent": "nowhere",
+                    "settled": ["closed"],
+                    "stages": [
+                        {"name": "ticket", "artifact": "ticket.txt", "statuses": ["open", "closed"]}
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self._log().record(REPO, "0001_a-problem", "intent.md", "draft")
+        History(self.work, self.root / "data", machine=states.load(other)).record(
+            REPO, "0001_a-problem", "ticket.txt", "open"
+        )
+
+        found = self.service.unit_history(REPO, "0001_a-problem")
+        self.assertEqual(found["written_under"], ["coscc-default", "two-step"])
+        self.assertIn("two-step", found["mixed_state_sets"])
+
+    def test_one_state_set_reports_no_mixture(self):
+        self._log().record(REPO, "0001_a-problem", "intent.md", "draft")
+        found = self.service.unit_history(REPO, "0001_a-problem")
+        self.assertEqual(found["written_under"], ["coscc-default"])
+        self.assertIsNone(found["mixed_state_sets"])

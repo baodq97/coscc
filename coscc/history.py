@@ -279,6 +279,29 @@ class History:
             current[row["artifact"]] = row["to_state"]
         return current
 
+    def machines_in(
+        self, workspace: str, unit: str | None = None, timeout: float | None = None
+    ) -> list[str]:
+        """Which state sets the stored rows were written under, first-seen first.
+
+        `spec.md` C5 is the reason this is asked rather than assumed. A log written under
+        one set and read under another compares states that never meant the same thing,
+        and the failure *runs* rather than stopping: every query returns rows, and the
+        words in them simply mean something else. A caller that finds more than this
+        instance's own name here must say so rather than carry on comparing.
+        """
+        sql = (
+            "SELECT machine, MIN(id) AS first_seen FROM transitions "
+            "WHERE root = ? AND workspace = ?"
+        )
+        args: list[Any] = [self._root, workspace]
+        if unit is not None:
+            sql += " AND unit = ?"
+            args.append(unit)
+        sql += " GROUP BY machine ORDER BY first_seen"
+        with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
+            return [row["machine"] for row in conn.execute(sql, args).fetchall()]
+
     def units(self, workspace: str, timeout: float | None = None) -> list[str]:
         """Every unit this working folder has any transition for, first-seen first."""
         seen: list[str] = []

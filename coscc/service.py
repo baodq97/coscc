@@ -416,6 +416,8 @@ class Service:
                 "unit": unit,
                 "recording": False,
                 "machine": "",
+                "written_under": [],
+                "mixed_state_sets": None,
                 "transitions": [],
                 "state": {},
                 "settled_edits": 0,
@@ -430,13 +432,27 @@ class Service:
             sessions = history.sessions_of(key, unit)
             outputs = history.outputs(key, unit)
             counts = history.output_counts(key, unit)
+            written_under = history.machines_in(key, unit)
         except Busy as e:
             raise Invalid(str(e)) from e
+        # `spec.md` C5. Rows written under one state set and read under another compare
+        # words that never meant the same thing, and nothing about that failure looks like
+        # a failure -- every query still returns rows. Said out loud in the payload rather
+        # than refused, because refusing a *read* would hide the only evidence there is.
+        # A caller that goes on to compare these against another source must stop here.
+        foreign = [name for name in written_under if name != history.machine.name]
         return {
             "cwd": cwd,
             "unit": unit,
             "recording": True,
             "machine": history.machine.name,
+            "written_under": written_under,
+            "mixed_state_sets": (
+                None if not foreign
+                else f"this unit holds transitions written under {', '.join(foreign)}, "
+                     f"but is being read under {history.machine.name} — the states in "
+                     "those rows do not mean what they appear to mean here"
+            ),
             "transitions": rows,
             "state": state,
             "settled_edits": len(settled_edits(rows, history.machine)),

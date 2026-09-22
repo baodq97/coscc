@@ -284,3 +284,22 @@ class ADifferentStateSetDrivesAUnitEndToEnd(Fixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhichStateSetTheRowsWereWrittenUnder(Fixture):
+    """`spec.md` C5. Two sets in one log is a failure that otherwise runs silently."""
+
+    def test_one_set_reports_only_itself(self):
+        self.history.record(WS, UNIT, "intent.md", "draft")
+        self.assertEqual(self.history.machines_in(WS, UNIT), ["coscc-default"])
+
+    def test_rows_from_two_sets_are_both_named_in_the_order_they_arrived(self):
+        self.history.record(WS, UNIT, "intent.md", "draft")
+        self.other_history().record(WS, UNIT, "ticket.txt", "open")
+        self.assertEqual(self.history.machines_in(WS, UNIT), ["coscc-default", "two-step"])
+
+    def test_it_is_answered_per_unit(self):
+        self.other_history().record(WS, "0002_another", "ticket.txt", "open")
+        self.history.record(WS, UNIT, "intent.md", "draft")
+        self.assertEqual(self.history.machines_in(WS, UNIT), ["coscc-default"])
+        self.assertEqual(self.history.machines_in(WS), ["two-step", "coscc-default"])
