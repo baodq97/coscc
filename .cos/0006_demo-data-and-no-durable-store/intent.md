@@ -1,5 +1,5 @@
 # Intent: The approved experience runs on invented data and remembers nothing
-Author: Claude Opus 5. Status: accepted.
+Author: Claude Opus 5. Type: feat. Status: accepted.
 
 > Người khởi xướng, ngày 2026-09-22: "read commit mới nhất đó là prototype cho project
 > này. tôi thấy khá ưng ý rồi. tôi muốn bulk impl để hoàn thành nhanh nhất, với stacks

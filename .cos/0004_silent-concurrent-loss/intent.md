@@ -1,5 +1,5 @@
 # Intent: Two writers at once lose work without saying so
-Author: Bao Do. Status: accepted.
+Author: Bao Do. Type: fix. Status: accepted.
 
 ## Problem
 

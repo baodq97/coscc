@@ -60,6 +60,7 @@ export function parseSkipReason(text) {
 
 export function readUnit(dir, name) {
   const unit = { name, artifacts: {}, problems: [] }
+  let intentText = null
   const match = name.match(UNIT_RE)
   if (!match) {
     unit.problems.push(`directory name does not match NNNN_<slug>`)
@@ -72,6 +73,7 @@ export function readUnit(dir, name) {
     const path = join(dir, file)
     if (!existsSync(path)) continue
     const text = readFileSync(path, 'utf8')
+    if (file === 'intent.md') intentText = text
     const status = parseStatus(text)
     if (status === null) {
       unit.problems.push(`${file} carries no Status line`)
@@ -84,6 +86,15 @@ export function readUnit(dir, name) {
   const stray = readdirSync(dir).filter((f) => !ARTIFACTS.includes(f))
   if (stray.length) unit.problems.push(`unexpected file(s): ${stray.join(', ')}`)
   if (!unit.artifacts['intent.md']) unit.problems.push(`no intent.md — every unit opens with one`)
+  else {
+    // Same distinction `missing()` draws below: a header with no `Type:` is a different
+    // repair from a header that declares one nothing accepts. Both are reported and
+    // neither is blocked — `checkGate` does not read this.
+    const type = parseType(intentText)
+    if (type === null) unit.problems.push(`intent.md declares no Type — add "Type: <${BRANCH_TYPES[0]}|…>" to its header`)
+    else if (!BRANCH_TYPES.includes(type)) unit.problems.push(`intent.md has type "${type}", not one of ${BRANCH_TYPES.join(', ')}`)
+    else unit.type = type
+  }
 
   return unit
 }

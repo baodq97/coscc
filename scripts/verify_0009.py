@@ -301,7 +301,7 @@ HARNESS_SECTION = "## Branches, tags and releases"
 
 
 def claim_6() -> bool:
-    whole = read(".claude/harness.md")
+    whole = read(".claude/CLAUDE.md")
     # Scoped to the new section, and whole-word. Searching the whole file would pass on
     # words like "test" and "build" that this document has always used for other things,
     # which would make the claim true before anything was written.

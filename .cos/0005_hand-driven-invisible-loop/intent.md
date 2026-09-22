@@ -1,5 +1,5 @@
 # Intent: The loop is driven by hand and shows nothing of itself
-Author: Bao Do. Status: accepted.
+Author: Bao Do. Type: feat. Status: accepted.
 
 > Lời của tác giả, nguyên văn, ngày 2026-09-21 — invariant 1 của `write-intent` đòi người
 > khởi xướng nói trước, và đây là chỗ ghi lại:

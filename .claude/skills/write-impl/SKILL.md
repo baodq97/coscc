@@ -16,8 +16,8 @@ diff is a description of lines rather than of a change.
 node .claude/scripts/cos.mjs gate <NNNN_slug> impl
 ```
 
-Exit 0 means proceed. The gate clears on an accepted plan; `implement` is accepted as an
-alias for the same stage, because `write-plan/SKILL.md` still names it that way.
+Exit 0 means proceed. The gate clears on an accepted plan. `implement` is accepted as an
+alias for the same stage name.
 
 ## Output
 

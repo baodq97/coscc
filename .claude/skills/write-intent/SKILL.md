@@ -44,6 +44,10 @@ It reads the `Type` you just wrote, joins it to the slug, and prints `<type>/<sl
 is the whole point of the field: a branch composed by hand drifts from the unit it belongs
 to on the second try.
 
+It reads that `Type` **from disk**, and exits 2 with `No such work unit` while the file is
+missing — so it cannot answer until `intent.md` has been written. Write the file, then ask
+for the name, then cut the branch, and commit nothing before that branch exists.
+
 ## Template
 
 ````markdown
