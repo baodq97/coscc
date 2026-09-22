@@ -37,7 +37,6 @@ from coscc.sessions import Refused, Sessions
 UNIT_RE = re.compile(r"^\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*$")
 COS_DIR = ".cos"
 
-
 # An artifact has to carry one of these on its first line, or the gate cannot read it and
 # `cos.mjs` will report the unit as broken. Checked before anything is written.
 STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+)")

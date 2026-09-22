@@ -8,12 +8,12 @@ rather than re-reading the Markdown.
 **Which copy it runs is the security decision here.** A workspace is a repository cloned
 from a URL somebody typed, so `<workspace>/.claude/scripts/cos.mjs` is a file that
 repository controls. Executing it would hand a cloned repo everything this process has,
-which is past every knob in `coscc/config.py`. This module therefore runs **the copy
-that ships with the app** -- `coscc/harness.py` is what makes that sentence true, and
-before 0012 it was not: no copy shipped -- pointed at the workspace's `.cos/` with
-`--root`. The cost is
-real and worth naming: a workspace that uses a different version of the harness is read
-with this app's stage list, not its own.
+which is past every knob in `coscc/config.py`. This module therefore runs **the copy that
+ships with the app**, pointed at the workspace's `.cos/` with `--root`. `coscc/harness.py`
+is what makes that sentence true, and until 0012 it was not: the wheel shipped no copy at
+all, and this module answered 400 on every read. The cost of running our own copy is real
+and worth naming: a workspace that uses a different version of the harness is read with
+this app's stage list, not its own.
 
 The board reports; it never writes. What a step costs and which session ran it belong to
 the journal, and what a stage *says* belongs to the artifact on disk. This module only
@@ -28,12 +28,11 @@ import os
 from pathlib import Path
 from typing import Any
 
+# Which copy of the harness, and where it is, is `coscc/harness.py`'s question and is not
+# asked again here. Until 0012 this module computed `parent.parent / ".claude"` for itself
+# and `coscc/runner.py` computed the same thing separately -- one formula in two places,
+# which is how a single packaging omission arrived as two unrelated-looking symptoms.
 from coscc import harness
-
-# Which copy, and where it is, is `coscc/harness.py`'s question -- not asked again here.
-# Until 0012 this line computed `parent.parent` for itself and `coscc/runner.py:39`
-# computed the same thing separately, which is how one packaging omission arrived as two
-# unrelated-looking symptoms.
 
 # Measured 2026-09-21 on this machine: five runs over the eight units in this repository
 # took 0.05s each, node v24.20.0. Ten seconds is therefore about two hundred times the
