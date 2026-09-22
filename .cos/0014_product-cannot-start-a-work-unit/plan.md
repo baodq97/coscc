@@ -37,7 +37,20 @@ liệt kê là đã gửi.
 | `coscc/screens.py` | ô nhập slug + brief, nút tạo; nút cắt nhánh; câu giải thích C1 | R8 |
 | `coscc/state.py` | handler cho hai nút đó | R8 |
 | `scripts/verify_0014.py` | **(new)** proof, chỉ gọi HTTP | R9 |
+| `coscc/harness.py` | `child_env()` — một bản duy nhất của môi trường `cos.mjs` chạy trong, vì nay có hai người gọi | R1 |
+| `coscc/journal.py` | `_fold` mang `detail` vào dòng timeline, thay vì bỏ rơi nó | bước 8 |
+| `scripts/proof_harness.py` | stdout line-buffered, để một proof nửa tiếng xem được trong lúc chạy | bước 8 |
+| `.claude/skills/write-pr/SKILL.md` | nửa còn thiếu của bước 6: `git push`, `gh pr create`, `gh pr merge` | bước 8 |
 | `.claude/rules/coscc-app.md` | dòng proof + hazard | R9 |
+
+**Bốn dòng — `harness.py`, `journal.py`, `proof_harness.py`, `write-pr/SKILL.md` — được
+thêm muộn, 2026-09-23, trong cùng commit với `impl.md`.** `write-plan` bất biến 8 đòi sửa
+bảng này trong cùng commit với chỗ lệch: `harness.py` lệch từ bước 1 (`ec0a829`), ba dòng
+kia từ bước 8. Chi tiết trong `impl.md` `## Where the plan was departed from` mục 2.
+
+**Hai dòng của bảng gốc không đúng như đã viết:** `coscc/board_test.py` không tồn tại —
+file phải sửa là `coscc/board_api_test.py`; và `.claude/rules/coscc-app.md` chỉ được sửa ở
+commit của `impl.md`, không phải ở bước 7 cùng `verify_0014.py`.
 
 Mọi đường dẫn không đánh `(new)` đã kiểm là có thật, 2026-09-22.
 
