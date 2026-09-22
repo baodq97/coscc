@@ -46,11 +46,10 @@ class TheDirectoryIsMadeForYou(unittest.TestCase):
             Data(root).ensure_dir()
             self.assertEqual(stat.S_IMODE(root.stat().st_mode), 0o700)
 
-    def test_the_database_and_objects_sit_inside_it(self):
+    def test_the_database_sits_inside_it(self):
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             self.assertEqual(data.db_path.parent, data.root)
-            self.assertEqual(data.objects_dir.parent, data.root)
 
 
 class TheSchemaRefusesToGuess(unittest.TestCase):

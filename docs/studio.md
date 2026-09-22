@@ -19,7 +19,7 @@ Two roots, and they are not the same thing.
 
 | Root | Holds | Set by |
 |---|---|---|
-| `COS_DATA_DIR`, default `~/.cos` | The app's own state: `cos.db` and `objects/` | environment only |
+| `COS_DATA_DIR`, default `~/.cos` | The app's own state: `cos.db` | environment only |
 | `COS_WORKING_DIR` | The workspaces themselves — somebody's git checkouts | environment only |
 
 Backing up one does **not** back up the other. The Settings screen prints both for that

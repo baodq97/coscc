@@ -51,7 +51,6 @@ SCHEMA_VERSION = 1
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
-OBJECTS_DIRNAME = "objects"
 
 # Seconds. Matches the file-lock timeout this replaced; see the module docstring.
 BUSY_TIMEOUT = 10.0
@@ -150,7 +149,6 @@ class Data:
     def __init__(self, root: str | os.PathLike[str] | None = None):
         self.root = Path(root or DEFAULT_DIR).expanduser().resolve()
         self.db_path = self.root / DB_FILENAME
-        self.objects_dir = self.root / OBJECTS_DIRNAME
         # Threads inside one process still serialise here. It is not what keeps two
         # processes apart -- SQLite does that -- but it is cheap and it keeps a single
         # process from spending its busy timeout fighting itself.

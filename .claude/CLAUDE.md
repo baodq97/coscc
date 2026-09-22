@@ -49,7 +49,7 @@ config. Each session it creates spends account quota, so nothing that talks to i
 in an unattended loop.
 
 **Two roots, and they are not the same thing.** `COS_DATA_DIR` (default `~/.cos`) holds the
-app's own state: `cos.db` and `objects/`. `COS_WORKING_DIR` holds the workspaces — somebody
+app's own state: `cos.db`. `COS_WORKING_DIR` holds the workspaces — somebody
 else's git checkouts. Backing up one does not back up the other, and the Settings screen
 prints both for that reason. **Neither is settable over HTTP**: `config.from_env` is the
 only reader of the environment and there is no setter, so a request has no path to either.
@@ -65,7 +65,6 @@ statement on every connection**, and `BEGIN IMMEDIATE` around every read-modify-
 Getting the order wrong was measured on 2026-09-22 — `PRAGMA journal_mode=WAL` before
 `busy_timeout` failed about one run in ten with `database is locked`. The schema version
 lives in `PRAGMA user_version`, so opening an existing database is one read and no lock.
-`cos_baodo/objects.py` stores blobs under their own SHA-256, written through a `rename`.
 `Store` and `Journal` kept their interfaces and changed their backing; a `.cos-baodo.json`
 or `.cos-journal.jsonl` from before `0006` is imported once and **never deleted**.
 
