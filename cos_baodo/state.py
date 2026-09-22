@@ -91,6 +91,10 @@ class Cell:
     grants: str = ""
     warning: str = ""
     opens_tools: bool = False
+    # `idea` is the one optional stage and it gates nothing. Carried here so the run
+    # button can skip it: the board card says "Next: write-pr" and a button offering to
+    # run `idea` beside it is two answers to one question.
+    optional: bool = False
 
 
 @dataclasses.dataclass
@@ -383,9 +387,16 @@ class StudioState(rx.State):
 
     @rx.var
     def next_stage(self) -> str:
-        """The first stage with no artifact. What the run button would run."""
-        for cell in self.current_unit.cells:
-            if not cell.started:
+        """The stage the run button would run: the first required one with no artifact.
+
+        Optional stages are stepped over. `idea` is the only one, it gates nothing, and
+        offering to run it on a unit whose card reads "Next: write-pr" would put two
+        answers to one question on the same screen — seen on 2026-09-22 in a screenshot,
+        which is the only place it was visible.
+        """
+        cells = self.current_unit.cells
+        for cell in cells:
+            if not cell.started and not cell.optional:
                 return cell.stage
         return ""
 
@@ -499,6 +510,7 @@ class StudioState(rx.State):
                     mode=row["mode"],
                     color=STATUS_COLOR.get(row["status"], "gray"),
                     started=row["status"] != "not started",
+                    optional=bool(row.get("optional")),
                     grants=", ".join(row.get("grants") or []) or "no tools",
                     warning=row.get("warning") or "",
                     opens_tools=bool(row.get("grants")),

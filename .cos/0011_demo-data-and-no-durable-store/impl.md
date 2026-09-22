@@ -106,6 +106,12 @@ vẫn còn nguyên nội dung cũ.
 grant đọc từ `policy.py`, `#data-dir` hiện `/home/bd/.cos`, **0** lỗi JavaScript.
 Screenshot sáu màn ở light và dark, một ở 390px, và ngăn kéo work unit đã được chụp.
 
+**Lỗi thứ ba, chỉ nhìn thấy trong ảnh chụp.** Ngăn kéo work unit ghi "Run idea" trong khi
+thẻ của chính unit đó ghi "Next: write-pr": nút chạy lấy stage trống *đầu tiên*, mà `idea`
+là stage tuỳ chọn và không gate gì. Hai câu trả lời cho một câu hỏi, trên cùng một màn
+hình. Sửa bằng cách bỏ qua stage tuỳ chọn; xác nhận lại trong trình duyệt: nút giờ đọc
+"Run pr — spends quota". Không một proof nào bắt được lỗi này — nó chỉ lộ ra khi nhìn ảnh.
+
 **Hai lỗi thật do chính việc viết proof tìm ra**, cả hai đã sửa trong `0fac3c4`: tab
 Overview của ngăn kéo là nơi chứa phần hiển thị grant, và Reflex chỉ render tab đang mở —
 nên R17 phải được đo trước khi chuyển tab; và một lần làm mới danh sách hội thoại trông như
