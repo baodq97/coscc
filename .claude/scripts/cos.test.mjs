@@ -120,7 +120,7 @@ test('implement still names the impl stage, because a skill still says it', () =
   assert.deepEqual(checkGate(unit(full), 'implement'), checkGate(unit(full), 'impl'))
 })
 
-test('idea gates nothing — the eight units on disk were opened without one', () => {
+test('idea gates nothing — every unit on disk was opened without one', () => {
   assert.equal(checkGate(unit({}), 'idea').ok, true)
   assert.equal(checkGate(unit({}), 'intent').ok, true)
   // and it never appears as the next action, because a missing idea is not a gap

@@ -1,9 +1,11 @@
 # cos-baodo
 
-A local AI-native SDLC harness: a unit of work moves from `intent.md` to `spec.md` to
-`plan.md`, each artifact accepted and committed before the next begins. The agent writes
-those artifacts and accepts its own, so `Status: accepted` records readiness rather than
-approval; `.claude/harness.md` explains what was traded away for that and what is left.
+A local AI-native SDLC harness: a unit of work moves through eight stages — `idea.md`,
+`intent.md`, `spec.md`, `plan.md`, `impl.md`, `pr.md`, `review.md`, `ship.md` — each
+artifact accepted and committed before the next begins. `idea.md` is optional and gates
+nothing; the other seven are gated on the one before. The agent writes those artifacts and
+accepts its own, so `Status: accepted` records readiness rather than approval;
+`.claude/harness.md` explains what was traded away for that and what is left.
 
 The harness is entirely inside `.claude/`:
 
@@ -11,7 +13,7 @@ The harness is entirely inside `.claude/`:
 |---|---|
 | `.claude/CLAUDE.md` | The rules that hold in every session. Claude Code loads it automatically. |
 | `.claude/harness.md` | How the loop works and why. Read this first. |
-| `.claude/skills/` | One skill per stage, plus `cos-status`. |
+| `.claude/skills/` | One skill per stage — `write-idea` through `write-ship` — plus `cos-status`. |
 | `.claude/scripts/` | The mechanical checks — numbering, gates, status — and their tests. |
 
 Work units live in `.cos/NNNN_<slug>/`. `docs/` holds the playbook this is built from.
