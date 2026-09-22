@@ -62,6 +62,18 @@ không kèm vế phân biệt còn tệ hơn một câu sai, vì người đọc
 đang ở thế giới nào. Hai chỗ còn lại — `coscc/build.py:125` và `coscc/build_test.py:72` —
 đã nằm trong bước 4.
 
+**Ghi chú thứ hai, 2026-09-22 trong lúc implement — plan invariant 8.** Bước 4 được viết để
+dựng một marker đóng gói khai `packaged: true`, theo `spec.md` `## Design` phần 2. Đọc code
+xong thì thấy **không ai sẽ đọc nó**. `git grep` cho ra đúng hai chỗ gọi `build.check()`
+ngoài test — `coscc/run.py` và `scripts/proof_harness.py:72-73` — và cả hai đều là đường
+checkout; `run.py` rẽ nhánh trên `frontend.is_packaged()` **trước khi** hỏi `build.py` bất
+cứ điều gì. Câu hỏi mà marker trả lời, "bundle có cũ hơn source không", cũng mất nghĩa
+trong một wheel: hai thứ đi chung một file nên không lệch nhau được.
+
+Nên marker không được dựng. Lý do ghi ở đây và trong docstring của `coscc/build.py`, chứ
+không phải để người đọc sau tưởng là bỏ sót. `spec.md` `## Design` phần 2 là chỗ duy nhất
+mô tả nó, và nó sai — ghi ra chứ không sửa file đã accepted.
+
 `coscc/_web/` không có trong bảng nào: nó là sản phẩm của bước build, không phải file được
 commit.
 
@@ -76,7 +88,8 @@ commit.
 3. **`coscc/run.py` gọi hai thứ đó**, đặt `REFLEX_WEB_WORKDIR` trước khi import app. Đường
    checkout phải không đổi hành vi. Kiểm: `npm test`, và `uv run python scripts/verify_0003.py`
    vẫn xanh.
-4. **`coscc/build.py` + `build_test.py`** — marker đóng gói và nhánh `check()` của nó.
+4. **`coscc/build.py` + `build_test.py`** — **phạm vi thu lại trong lúc làm, xem ghi chú
+   dưới đây.** Không có marker đóng gói; hai file chỉ nhận vế phân biệt checkout/đóng gói.
    Kiểm: `npm test`.
 5. **`coscc/config.py` đổi mặc định host, `run.py` đổi banner.** Tách khỏi bước 3 vì nó đổi
    hành vi mạng chứ không đổi cách phục vụ file, và nó phải xem lại được một mình. Kiểm:
