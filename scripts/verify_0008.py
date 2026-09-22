@@ -57,12 +57,6 @@ NEW = "coscc"
 # diff against it. `.cos/0008_personal-name-blocks-publishing/plan.md` pins the same point.
 BASE = "b923bba"
 
-# `spec.md` R10, measured outside `.cos/` on purpose — a whole-repo count drifts every time
-# this unit commits another artifact, which is `spec.md` C9.
-ENV_PREFIX_LINES, ENV_PREFIX_FILES = 70, 20
-COS_MJS_FILES = 21
-
-
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
@@ -89,23 +83,47 @@ def grep_files(pattern: str, *pathspec: str) -> list[str]:
     return [ln for ln in out.stdout.splitlines() if ln]
 
 
-def grep_files_cs(pattern: str, *pathspec: str) -> list[str]:
-    """Case-sensitive. `-i` on the environment prefix also matches the old package name,
-    which is how a 110-line count became 537 while this unit was being specified."""
-    out = git("grep", "-l", pattern, "--", *(pathspec or (".",)))
-    if out.returncode not in (0, 1):
-        raise RuntimeError(out.stderr.strip() or "git grep failed")
-    return [ln for ln in out.stdout.splitlines() if ln]
-
-
-def grep_lines_cs(pattern: str, *pathspec: str) -> list[str]:
-    out = git("grep", "-n", pattern, "--", *(pathspec or (".",)))
-    if out.returncode not in (0, 1):
-        raise RuntimeError(out.stderr.strip() or "git grep failed")
-    return [ln for ln in out.stdout.splitlines() if ln]
-
-
 OUTSIDE = (".", ":!.cos")
+
+# C2 compares against BASE rather than a pinned total. The first version of this file pinned
+# 70 lines / 20 files and went red for two reasons that were both correct behaviour: this
+# proof mentions the prefix six times while checking it, and step 2 of `plan.md` added a
+# docstring that names `COS_DATA_DIR`. A pinned total answers "did anybody write this string
+# again", which nobody asked. The claim is that the rename did not take the prefix with it,
+# so the test is per-file and one-directional: every file that had it still has it.
+SELF = "scripts/verify_0008.py"
+
+
+def counts_at(rev: str | None, pattern: str) -> dict[str, int]:
+    """`file -> occurrences`, with the package rename folded out of the paths."""
+    args = ["grep", "-c", pattern]
+    if rev:
+        args.append(rev)
+    out = git(*args, "--", ".", ":!.cos", f":!{SELF}")
+    if out.returncode not in (0, 1):
+        raise RuntimeError(out.stderr.strip() or "git grep failed")
+    found: dict[str, int] = {}
+    for line in out.stdout.splitlines():
+        if not line:
+            continue
+        path, _, n = line.rpartition(":")
+        if rev:
+            path = path.split(":", 1)[1] if path.startswith(f"{rev}:") else path
+        if path.startswith(f"{OLD_PKG}/"):
+            path = f"{NEW}/" + path[len(OLD_PKG) + 1:]
+        found[path] = int(n)
+    return found
+
+
+def kept(pattern: str, label: str) -> bool:
+    then, now = counts_at(BASE, pattern), counts_at(None, pattern)
+    lost = sorted(f for f in then if f not in now)
+    thinned = sorted(f"{f} {then[f]}->{now[f]}" for f in then if f in now and now[f] < then[f])
+    return say(
+        not lost and not thinned,
+        f"the rename took no {label} with it ({len(then)} files had it)",
+        "; ".join(["gone: " + ", ".join(lost)] * bool(lost) + thinned),
+    )
 
 
 def read(rel: str) -> str:
@@ -130,20 +148,8 @@ def claim_1() -> bool:
 
 
 def claim_2() -> bool:
-    prefix_lines = grep_lines_cs("COS_", *OUTSIDE)
-    prefix_files = grep_files_cs("COS_", *OUTSIDE)
-    mjs_files = grep_files_cs(r"cos\.mjs", *OUTSIDE)
-
-    ok = say(
-        len(prefix_lines) == ENV_PREFIX_LINES and len(prefix_files) == ENV_PREFIX_FILES,
-        f"the COS_ prefix is untouched ({ENV_PREFIX_LINES} lines / {ENV_PREFIX_FILES} files)",
-        f"found {len(prefix_lines)} lines / {len(prefix_files)} files",
-    )
-    ok &= say(
-        len(mjs_files) == COS_MJS_FILES,
-        f"cos.mjs is still referenced by {COS_MJS_FILES} files outside .cos/",
-        f"found {len(mjs_files)}",
-    )
+    ok = kept("COS_", "COS_ prefix")
+    ok &= kept(r"cos\.mjs", "reference to cos.mjs")
     data = read(f"{NEW}/data.py")
     ok &= say('DEFAULT_DIR = "~/.cos"' in data, "the data root is still ~/.cos")
     ok &= say('DB_FILENAME = "cos.db"' in data, "the database is still cos.db")

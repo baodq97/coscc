@@ -175,6 +175,32 @@ clone mới đếm đúng số commit của local.
 > câu: còn một số dương, ai cần thì tự đo, không ai được trích lại. Đó cũng là điều R11 đã
 > yêu cầu; bước 12 chỉ đang thôi mâu thuẫn với nó.
 
+### Lệch so với plan, ghi lúc chạy bước 7-9
+
+**C2 hỏi sai câu, và phải viết lại.** Bản đầu pin hai con số của `spec.md` R10 — `COS_` 70
+dòng / 20 file, `cos.mjs` 21 file — rồi đỏ ở bước 9 với 77/22 và 22. Cả hai lần tăng đều là
+**hành vi đúng**: chính `verify_0008.py` nhắc `COS_` sáu lần trong lúc đi kiểm nó, và test
+thay thế ở bước 2 có một docstring nhắc `COS_DATA_DIR`. Một tổng pin sẵn trả lời câu "có ai
+viết lại chuỗi này không", mà không ai hỏi câu đó. Câu cần hỏi là **việc đổi tên có mang
+`COS_` đi theo không** — nên C2 nay so từng file với `BASE`, gập đường dẫn đổi tên ra, và chỉ
+đỏ khi một file **mất** thứ nó từng có. Thêm mention mới thì không sao. Hai helper chỉ phục
+vụ cách đếm cũ cũng bị bỏ theo.
+
+**Tôi commit một file temp ở bước 6.** `git add -A` kéo theo
+`.claude/settings.local.json.tmp.*` vào commit `fc7f968`. Đã `git rm --cached`. Và hoá ra
+`.claude/settings.local.json` chỉ được ignore bởi gitignore **toàn cục của máy này**
+(`/home/bd/.config/git/ignore`) — một bản clone của repo public sẽ không có nó, nên hai dòng
+đã được thêm vào `.gitignore` của repo. Việc này nhỏ nhưng nó chỉ thành vấn đề *vì* unit này
+đang đem repo ra công khai.
+
+**Chạy `verify_0003.py` dù `spec.md` để nó ngoài phạm vi.** Sau bước 7, log app in một dòng
+`[Reflex Frontend Exception] ... frontend/backend state mismatch`. `.claude/CLAUDE.md` ghi
+rằng loại lỗi này "no HTTP-level check could see it", nên một tín hiệu thật đáng giá hơn một
+ranh giới phạm vi — và `verify_0003.py` là phép kiểm duy nhất trả lời được mà **không tốn
+quota, không tạo session**. Nó **PASS**, cả negative control. Dòng kia là do request
+socket.io méo của tôi, không phải lỗi. Chạy lại sau bước 8 trên data root đã dọn: vẫn PASS.
+Sáu proof còn lại vẫn không chạy.
+
 ### Chọn không làm
 
 - **Không chạy lại sáu proof cũ.** `spec.md` `## Out of scope`. Chúng tốn quota thật, cần
