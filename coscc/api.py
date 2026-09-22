@@ -115,6 +115,58 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.post("/api/units")
+    async def create_unit(request: Request) -> Any:
+        """`0014` R1. Start a work unit. The first route that makes something.
+
+        `brief` is the originator's own words and becomes the unit's `idea.md`, which is
+        what the intent step reads. `write-intent` invariant 1 asks for exactly that, and
+        until now there was no way to give it to the app at all.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return service.create_unit(
+                str(body.get("cwd") or ""),
+                str(body.get("slug") or ""),
+                str(body.get("brief") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/units/branch")
+    async def start_branch(request: Request) -> Any:
+        """`0014` R4. Cut this unit's branch in the workspace.
+
+        The only route in this app that writes to somebody else's git.
+        `coscc/gitops.py` carries the list of what that is allowed to be, because
+        `coscc/policy.py` covers sessions and this runs with the app's own authority.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.start_branch(
+                str(body.get("cwd") or ""), str(body.get("unit") or "")
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/branch")
+    async def get_branch(request: Request) -> Any:
+        """Which branch the workspace is on."""
+        try:
+            return await service.branch_here(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.get("/api/board")
     async def get_board(request: Request) -> Any:
         """R1. Every unit of one workspace, with all eight stages on each."""
