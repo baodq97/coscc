@@ -1,5 +1,5 @@
 # Plan: the state set first, then the log, then the history that fills it
-Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
 ## Files that change
 
