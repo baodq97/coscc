@@ -105,10 +105,32 @@ ruleset mang rule `required_linear_history`. Cái giá, nói ra ở đây: tám 
 sẽ thành **một** commit trên `main`, và lịch sử từng bước chỉ còn đọc được trong pull request
 — xem C9.
 
+**R15 — branch phải đứng trên `main` mới nhất, và CI phải xanh trên nền đó.**
+`intent.md` constraint 11. Cơ chế: rule `required_status_checks` trong cùng ruleset của R9,
+với `strict_required_status_checks_policy: true`. `strict` là nửa quan trọng — không có nó,
+rule chỉ đòi check xanh ở đâu đó, còn có nó thì check phải xanh **trên một branch đã có
+`main` mới nhất bên dưới**.
+
+Hai context bắt buộc: `branch-name` và `tests`, đúng tên hai job của `.github/workflows/pr.yml`.
+Tên sai thì pull request không bao giờ merge được, nên chúng được đối chiếu với
+`gh pr checks` chứ không chép từ trí nhớ.
+
+Cập nhật bằng **rebase**, không bằng merge `main` vào branch: `gh pr update-branch --rebase`.
+R14 vừa cấm merge commit trên `main`, và một merge commit trong branch rồi bị squash đi thì
+không vi phạm gì — nhưng để hai quy tắc cùng chiều, và để `git log` của branch còn đọc được,
+cách cập nhật là rebase.
+
+**Điều này đảo thứ tự của `plan.md`.** Ruleset phải bật **trước** lần merge đầu tiên, không
+phải sau: một cổng bật sau khi pull request đầu tiên đã đi qua là một cổng mà pull request đó
+chưa từng đi qua, và C12 sẽ đo từ một mốc nằm sau chính thứ nó định đo.
+
+Kiểm: ruleset mang `required_status_checks` với `strict_required_status_checks_policy: true`
+và hai context đó; `gh pr view --json mergeStateStatus` trả `BEHIND` khi branch cũ.
+
 > **Sửa ngày 2026-09-22, lần thứ ba, ngay trước lần merge đầu tiên.** R14 thêm theo
 > `intent.md` constraint 10. Nó đến sau khi `impl.md` và `pr.md` đã viết, nhưng trước khi có
 > merge commit nào trên `main` — và đó là lần cuối còn kịp, vì sau đó quy tắc chỉ áp được cho
-> tương lai.
+> tương lai. R15 thêm ngay sau, và nó đảo thứ tự bước 11 với bước 12 của `plan.md`.
 
 **R10 — Harness ghi quy ước.** `.claude/harness.md` có một mục mới nói ngữ pháp branch, ngữ
 pháp tag, bốn lệnh, và trường `Type:`. Kiểm: mục đó nêu đủ mười type của R1, cả hai dạng tag

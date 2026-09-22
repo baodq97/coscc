@@ -201,6 +201,20 @@ The cost is real and is not hidden here: the step-by-step history of a branch �
 written red first, then the code, then the record — survives only in the pull request,
 which lives on GitHub rather than in git. A clone with no network reads one commit.
 
+**On the latest `main`, updated by rebase.** The ruleset requires its status checks in
+`strict` mode, which means they have to be green on a branch that already has the current
+`main` underneath. Without that, two changes can each pass on their own and break the
+moment they stand next to each other, and both of them merge. When a pull request falls
+behind:
+
+```
+gh pr update-branch --rebase
+```
+
+Rebase, not a merge of `main` into the branch — the branch would pick up a merge commit,
+and although squashing removes it before it reaches `main`, keeping the two rules pointing
+the same way is worth more than the shortcut.
+
 Do not compose the name. Every unit declares `Type:` on its `intent.md` header, and the
 branch follows from the unit:
 
@@ -258,6 +272,7 @@ naming somewhere else.
 | A workflow on GitHub | block a `git push` straight to `main`; no pull request, no workflow |
 | A repository ruleset | know anything about the grammar or the version |
 | A repository setting | survive being switched back on |
+| A required status check | run at all, if its context name does not match a job |
 
 Copying `.claude/` brings the grammar, the four commands and their tests. It does **not**
 bring `.github/workflows/`, which sits outside `.claude/`, and it does not bring the

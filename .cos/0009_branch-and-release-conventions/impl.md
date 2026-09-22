@@ -106,6 +106,25 @@ release không cần action nào.
    khác nhau — setting bỏ hai cái nút, ruleset `required_linear_history` từ chối merge commit
    kể cả khi nút được bật lại.
 
+10. **Branch phải đứng trên `main` mới nhất, cập nhật bằng rebase.** Người khởi xướng: *"à
+    yêu cầu rebase update latest so với main trước nữa"*. `intent.md` constraint 11,
+    `spec.md` R15, `plan.md` bước 11–12 và Risk 9. Cơ chế là `required_status_checks` ở chế
+    độ **`strict`** — không có `strict` thì rule chỉ đòi check xanh ở đâu đó, có `strict`
+    thì check phải xanh trên một branch đã có `main` mới nhất bên dưới. Không có nó, hai
+    thay đổi độc lập cùng pass rồi hỏng khi đứng cạnh nhau, và cả hai đều merge được.
+
+    **Điều này đảo bước 11 với bước 12 của `plan.md`.** Ruleset phải bật **trước** lần merge
+    đầu tiên: một cổng bật sau khi pull request đầu tiên đã đi qua là một cổng mà pull
+    request đó chưa từng đi qua, và C12 sẽ đo từ một mốc nằm sau chính thứ nó định đo.
+
+11. **Ruleset mang năm rule, không phải ba.** `plan.md` bước 12 kể ba. Hai cái thêm vào lúc
+    viết payload: `deletion` và `non_fast_forward` — không có chúng thì `main` vẫn xoá được
+    và vẫn force-push được, tức là cổng chỉ chặn đúng lối đi thẳng mà để ngỏ hai lối vòng.
+    Rule `pull_request` còn mang `allowed_merge_methods: ["squash"]`, nên squash-only có
+    **ba** chân chứ không hai: setting của repo, `required_linear_history`, và chính rule
+    này. `required_approving_review_count` là **0** — repo này không có người thứ hai để
+    duyệt, và đòi một chữ ký không có ai ký là tự khoá mình ra ngoài.
+
 ## What was measured
 
 Tất cả ngày 2026-09-22, trên branch.
@@ -130,6 +149,10 @@ Tất cả ngày 2026-09-22, trên branch.
 | `gh pr checks 1` | `branch-name` pass 9s, `tests` pass 25s |
 | — log của job `tests` trên runner | **55** node + **256** python, chạy thật |
 | `gh api repos/baodq97/coscc`, trước bước 11 | cả ba cách merge `true`; `delete_branch_on_merge` `false` |
+| — sau | `allow_squash_merge: true`, hai cái kia `false`, `delete_branch_on_merge: true` |
+| `gh api .../rulesets` trước | `[]` |
+| — sau | một ruleset `active` id **23815312**, năm rule |
+| `git push origin HEAD:main` | **rejected**, `GH013: Repository rule violations` — negative control, chạy thật |
 
 **Ba claim còn đỏ, và không claim nào trong đó là code.** C10 ruleset cộng squash-only, C11
 hai release, C12 mọi commit vào `main` qua PR. Cả ba cần bước 11–14: merge, bật ruleset, đẩy

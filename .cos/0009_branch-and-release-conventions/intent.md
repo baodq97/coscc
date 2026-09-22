@@ -135,6 +135,14 @@ Ngày **2026-10-13 là do file này đặt**, không phải do người khởi x
 > theo lời người khởi xướng, và file này nhận `Type: feat` ngay trên header — nó là unit đầu
 > tiên khai, và là thứ tên branch của chính nó sẽ được suy ra.
 >
+11. **Branch phải đứng trên `main` mới nhất trước khi merge, và cập nhật bằng rebase.**
+   Người khởi xướng nêu: *"à yêu cầu rebase update latest so với main trước nữa"*. Hiện
+   không gì đòi điều đó: `gh pr view 1` trả `mergeStateStatus: CLEAN` trong khi CI đã chạy
+   trên một nền có thể đã cũ. Hệ quả: một pull request xanh **không** chứng minh được `main`
+   sau khi merge cũng xanh, vì hai thay đổi độc lập cùng pass rồi hỏng khi đứng cạnh nhau.
+   Cập nhật bằng **rebase** chứ không bằng merge `main` vào branch, vì constraint 10 vừa cấm
+   merge commit — hai quy tắc này phải cùng chiều. Cơ chế là việc của spec.
+
 > **Sửa lần thứ tư, ngay trước khi merge pull request đầu tiên.** Constraint 10. Nó đến muộn
 > hơn ba lần kia — `impl.md` và `pr.md` đã viết xong — nhưng nó đến *trước* lần merge đầu
 > tiên, và đó là lần duy nhất còn kịp: sau khi một merge commit nằm trên `main` thì quy tắc

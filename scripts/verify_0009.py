@@ -429,8 +429,23 @@ def claim_10() -> bool:
     ruleset = ruleset_on_main()
     if ruleset is None:
         problems.append("no active ruleset on main carries a pull_request rule")
-    elif not any(r.get("type") == "required_linear_history" for r in ruleset.get("rules", [])):
-        problems.append("the ruleset allows a merge commit onto main")
+    else:
+        rules = {r.get("type"): r for r in ruleset.get("rules", [])}
+        if "required_linear_history" not in rules:
+            problems.append("the ruleset allows a merge commit onto main")
+        checks = rules.get("required_status_checks")
+        if not checks:
+            problems.append("the ruleset requires no status check")
+        else:
+            params = checks.get("parameters", {})
+            if not params.get("strict_required_status_checks_policy"):
+                # Without strict, the checks may have been green on a stale base: two
+                # changes that each pass alone and break side by side both merge.
+                problems.append("the status checks are not strict, so a stale branch merges")
+            contexts = {c.get("context") for c in params.get("required_status_checks", [])}
+            for want in ("branch-name", "tests"):
+                if want not in contexts:
+                    problems.append(f"{want!r} is not a required check")
 
     # Two legs, and they refuse different things. The setting takes the other two buttons
     # away; the ruleset refuses a merge commit even if somebody puts them back. Either one
@@ -448,7 +463,7 @@ def claim_10() -> bool:
 
     return say(
         not problems,
-        "main takes commits only through a pull request, and only as a squash",
+        "main takes commits only through a pull request, squashed, on a fresh base",
         "; ".join(problems),
     )
 

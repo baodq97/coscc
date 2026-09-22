@@ -128,19 +128,30 @@ Stage `pr`. Đây là `pr.md` đầu tiên trong repo có URL thay vì một l�
 không có.
 *Kiểm:* `cos.mjs gate 0009_branch-and-release-conventions review` exit 0.
 
-**11. Squash-only trước, rồi merge PR, xoá branch.** *(Thứ tự là cái quan trọng — Risk 8.)*
-Đặt `allow_merge_commit=false` và `allow_rebase_merge=false` trên repo trước khi merge, để
-lần merge đầu tiên của repo **là** một squash chứ không phải một ngoại lệ được tha. Bật cả
-`delete_branch_on_merge`. Rồi `gh pr merge --squash --delete-branch`.
+**11. Squash-only, rồi ruleset, rồi mới merge.** *(Thứ tự là cái quan trọng — Risk 8. Bước
+này và bước 12 đã **đảo chỗ** so với bản đầu; lý do ở `spec.md` R15.)*
+
+a. Đặt `allow_merge_commit=false`, `allow_rebase_merge=false`, `delete_branch_on_merge=true`
+   trên repo, để lần merge đầu tiên **là** một squash chứ không phải một ngoại lệ được tha.
+b. Bật ruleset của bước 12 — **trước** khi merge, không sau. Một cổng bật sau khi pull
+   request đầu tiên đã đi qua là một cổng mà pull request đó chưa từng đi qua.
+c. `gh pr update-branch --rebase` nếu branch đã cũ.
+d. `gh pr merge --squash --delete-branch`.
+
 *Kiểm:* `gh api repos/baodq97/coscc` trả `allow_squash_merge: true` và hai cái kia `false`;
-`gh pr view 1 --json state` trả `MERGED`; `main` nhận **một** commit chứ không tám;
+`gh pr view 1 --json state` trả `MERGED`; `main` nhận **một** commit chứ không mười ba;
 `git log --merges main` không có commit mới; branch biến mất khỏi remote.
 
-**12. Bật ruleset trên `main`.** *(Khó lùi — Risk 2.)*
-Hai rule: `pull_request`, và `required_linear_history`. Rule thứ hai là chân thứ hai của
-R14 — setting của bước 11 bỏ hai cái nút, ruleset **từ chối** một merge commit kể cả khi ai
-đó bật lại nút. Hiện `gh api repos/baodq97/coscc/rulesets` trả `[]`.
-*Kiểm:* lệnh đó trả về một ruleset `active` áp cho `main` mang cả hai rule; và một lần
+**12. Ruleset trên `main` — ba rule.** *(Khó lùi — Risk 2. Chạy ở bước 11b.)*
+`pull_request`; `required_linear_history`, chân thứ hai của R14, từ chối merge commit kể cả
+khi ai đó bật lại hai cái nút; và `required_status_checks` với
+`strict_required_status_checks_policy: true` cùng hai context `branch-name` và `tests`,
+là R15. Hiện `gh api repos/baodq97/coscc/rulesets` trả `[]`.
+
+Hai context phải khớp **đúng** tên job trong `.github/workflows/pr.yml`, nên chúng được đối
+chiếu với `gh pr checks 1` chứ không chép từ trí nhớ: tên sai thì pull request không bao giờ
+merge được.
+*Kiểm:* lệnh đó trả về một ruleset `active` áp cho `main` mang cả ba rule; và một lần
 `git push` thẳng lên `main` bị **từ chối** — negative control, chạy thật.
 
 **13. Tag prerelease.**
@@ -211,6 +222,12 @@ sử `main` thay vì chỉ tương lai. Đóng cửa sổ đó là một merge c
 C10 sẽ xanh trong khi `git log --merges` kể chuyện khác.
 *Dấu hiệu:* `git log --merges main` có một commit sau ngày hôm nay.
 
+**9. Hai context của `required_status_checks` sai tên thì PR không merge được, và triệu
+chứng trông như GitHub hỏng.** Chúng là chuỗi tự do trong API; GitHub không đối chiếu với
+workflow nào. Một context không bao giờ được report sẽ nằm `pending` vĩnh viễn.
+*Dấu hiệu:* `gh pr view --json mergeStateStatus` trả `BLOCKED` trong khi `gh pr checks` xanh
+hết.
+
 **7. Cái tôi muốn không phải viết ra.** Unit này đặt một cổng lên `main` trong một repo mà
 **bốn unit đã kẹt sau một cổng khác** — `cos.mjs:30` không cho stage `pr` một status nghĩa là
 "không áp dụng", nên `0005`–`0008` không với tới `review`. Sau bước 12, repo có **hai** chỗ
@@ -242,7 +259,7 @@ Mười ba claim:
 | C7 | Hai workflow parse được; `permissions` khai tường minh; **0** action bên thứ ba ghim theo tag. |
 | C8 | `0009/intent.md` khai `Type: feat`, lệnh của R13 in ra `feat/branch-and-release-conventions`, và một type ngoài tập mười bị từ chối. |
 | C9 | `.claude/skills/write-intent/SKILL.md` template đòi `Type:`. |
-| C10 | `gh api repos/baodq97/coscc/rulesets` trả về một ruleset `active` áp cho `main`, mang cả `pull_request` lẫn `required_linear_history`; và repo cho phép **chỉ** squash. |
+| C10 | `gh api repos/baodq97/coscc/rulesets` trả về một ruleset `active` áp cho `main`, mang `pull_request`, `required_linear_history`, và `required_status_checks` ở chế độ `strict`; và repo cho phép **chỉ** squash. |
 | C11 | `gh release list` trả **hai dòng**; `v0.1.0-rc.1` là prerelease, `v0.1.0` không; tag `v0.1.0` nằm trên `main`. |
 | C12 | Mọi commit vào `main` **từ commit bật ruleset trở đi** đều có một pull request đã merge chứa nó. |
 | C13 | `npm test` xanh. |
