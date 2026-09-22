@@ -1,5 +1,5 @@
 # Plan: build the proof first, then the wheel, then the service
-Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
 Hai open question của `spec.md` được chốt ở đây, vì cả hai quyết định file nào bị chạm.
 
@@ -260,6 +260,31 @@ Thoát **1** là một trong các điều trên sai. Thoát **2** là môi trư�
 không có `COS_PROOF_TARGET`, không có chromium, máy đích không có systemd. Ba mã giữ riêng
 vì gộp 2 vào 1 sẽ báo "chưa đưa máy đích vào" thành "bản cài hỏng", đúng cái `verify_0003.py`
 được viết ra để không lặp lại.
+
+**Ghi chú thứ sáu, 2026-09-22 — kết quả bước 11, và hai lỗi nữa trong chính proof.**
+`scripts/verify_0011.py` thoát **0** với 17 claim xanh, trên `bd@192.168.15.101`, ngược
+`/releases/latest/` thật. `ship.md` ghi từng con số.
+
+Ba lần chạy mới tới đó, và hai lần đầu dừng ở proof chứ không ở sản phẩm:
+
+1. **Nó hỏi trình duyệt trước khi máy boot xong.** `reboot_and_wait` trả về ngay khi sshd
+   trả lời với `boot_id` mới, mà sshd lên trước một systemd *user* service khá lâu. Trình
+   duyệt nhận `ERR_CONNECTION_REFUSED`; service phục vụ 200 bốn giây sau đó, tự nó. Báo đỏ
+   này sẽ là "trang không sống qua reboot" nói về một trang sống qua reboot.
+2. **Nó đọc version bằng một cái tên máy đích không phân giải được.**
+   `ssh host 'coscc --version'` chạy shell không-đăng-nhập, PATH là
+   `/usr/local/bin:/usr/bin:/bin:/usr/games`, còn `uv tool update-shell` sửa file rc mà
+   shell đó không bao giờ đọc. Thiệt hại không dừng ở một claim: `remote_version` trả `None`
+   nên `wait_for_a_newer_release` so `""` với version đã publish, kết luận là đã có bản mới,
+   và cho lệnh update chạy trong lúc `v0.2.1` còn đang dựng.
+
+Cả hai sửa ở PR #9. Cùng một họ với lỗi PATH của `uv` trong ghi chú thứ năm — và đó là điểm
+đáng giữ lại: **cùng một giả định sai về PATH đã cắn ba lần, ở ba file khác nhau.**
+
+Và một sự thật về chính bước 11, không ai viết ra trước đó: **mỗi lần chạy proof trọn vẹn
+tiêu một release.** Bước 5 đo "chuyển sang bản phát hành kế tiếp", mà cả lệnh cài lẫn lệnh
+update đều phân giải qua `/releases/latest/` — nên bản kế tiếp phải xuất hiện *trong lúc*
+proof đang chờ. Không phải khiếm khuyết; đó là hình dạng của điều đang được khẳng định.
 
 ## What this plan chose not to do
 
