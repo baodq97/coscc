@@ -33,6 +33,7 @@ from typing import Any
 # and `coscc/runner.py` computed the same thing separately -- one formula in two places,
 # which is how a single packaging omission arrived as two unrelated-looking symptoms.
 from coscc import harness
+from coscc.harness import child_env as _child_env
 
 # Measured 2026-09-21 on this machine: five runs over the eight units in this repository
 # took 0.05s each, node v24.20.0. Ten seconds is therefore about two hundred times the
@@ -44,20 +45,6 @@ TIMEOUT = 10.0
 
 class Unavailable(Exception):
     """The board cannot be read, carrying a reason a caller can show verbatim."""
-
-
-def _child_env() -> dict[str, str]:
-    """Built up, never filtered down — the reasoning is in `gitops.child_env`.
-
-    `cos.mjs` reads files and prints JSON. It needs no secret, so it is given none: a new
-    variable added to this process is excluded here by default rather than by memory.
-    """
-    return {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "HOME": os.environ.get("HOME", "/tmp"),
-        "LC_ALL": "C",
-        "NO_COLOR": "1",
-    }
 
 
 def _stage_rows(stages: list[dict[str, Any]], artifacts: dict[str, Any]) -> list[dict[str, Any]]:
