@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -123,3 +124,86 @@ class FailureIsReportedNotSwallowed(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheAppMayCreateABranchAndNothingElse(unittest.TestCase):
+    """`0014` R5, one test per forbidden thing.
+
+    Written as refusals rather than as an absence, because "the app cannot push" is not
+    checkable by looking at code that does not exist. What is checkable is that the one
+    entry point which touches somebody else's git takes a branch name and nothing else,
+    and refuses everything that is not one.
+
+    Real repositories, not mocks: what is under test is an agreement with `git` about what
+    `switch -c <name> main` does when the branch exists, when the trunk does not, and when
+    the name starts with a dash.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.repo = Path(self._tmp.name) / "repo"
+        self.repo.mkdir()
+        self._git("init", "-q", "-b", "main")
+        (self.repo / "README.md").write_text("x\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "first")
+
+    def _git(self, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "user.name=T",
+             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
+            capture_output=True, text=True, check=True,
+        ).stdout
+
+    def test_it_cuts_the_branch_from_the_trunk_and_switches_to_it(self):
+        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem"))
+        self.assertEqual(asyncio.run(gitops.current_branch(self.repo)), "feat/a-problem")
+        # Cut from the trunk, not from wherever the checkout happened to be standing.
+        merged = self._git("branch", "--contains", "main", "--format=%(refname:short)")
+        self.assertIn("feat/a-problem", merged)
+
+    def test_it_will_not_touch_the_trunk(self):
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(gitops.create_branch(self.repo, "main"))
+        self.assertIn("trunk", str(caught.exception))
+        self.assertEqual(asyncio.run(gitops.current_branch(self.repo)), "main")
+
+    def test_it_refuses_a_branch_that_already_exists_rather_than_joining_it(self):
+        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem"))
+        self._git("switch", "-q", "main")
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(gitops.create_branch(self.repo, "feat/a-problem"))
+        self.assertIn("already exists", str(caught.exception))
+
+    def test_a_name_that_is_not_a_branch_name_never_reaches_git(self):
+        # `--force`-shaped input is the one that matters: a leading dash turns a name into
+        # an option, and an option is not something a caller gets to choose here.
+        for bad in ("--force", "-x", "feat/../etc", "Feat/Problem", "", "x", "feat/"):
+            with self.assertRaises(GitError, msg=bad):
+                asyncio.run(gitops.create_branch(self.repo, bad))
+
+    def test_it_is_not_a_way_to_push(self):
+        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem"))
+        # No remote is configured, so a push would fail loudly. The point is that nothing
+        # tried: the branch exists only here.
+        self.assertEqual(self._git("branch", "-r", "--format=%(refname:short)").strip(), "")
+
+    def test_it_is_not_a_way_to_commit(self):
+        before = self._git("rev-parse", "HEAD").strip()
+        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem"))
+        (self.repo / "new.txt").write_text("y\n", encoding="utf-8")
+        self.assertEqual(self._git("rev-parse", "HEAD").strip(), before)
+        # And the file it did not commit is still sitting there uncommitted.
+        self.assertIn("new.txt", self._git("status", "--porcelain"))
+
+    def test_a_directory_that_is_not_a_repository_is_refused_by_name(self):
+        plain = Path(self._tmp.name) / "plain"
+        plain.mkdir()
+        for call in (
+            lambda: gitops.create_branch(plain, "feat/a-problem"),
+            lambda: gitops.current_branch(plain),
+        ):
+            with self.assertRaises(GitError) as caught:
+                asyncio.run(call())
+            self.assertIn(str(plain), str(caught.exception))
