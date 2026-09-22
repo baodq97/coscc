@@ -68,6 +68,13 @@ no commands, one turn, no budget.
   packaged tree on purpose (a wheel has no checkout to fall back to); the cost is this.
   `rm -rf coscc/_harness` after building a wheel by hand. The same is true of
   `coscc/_web/`, where it costs a stale page instead of stale rules.
+- **A database newer than the app is a 500 on every route that reads it, and `/api/health`
+  still says `ok`.** Nothing catches `data.Incompatible` — not `service.py`, not `api.py` —
+  so it leaves as `Internal Server Error` while `systemctl --user is-active` reports
+  `active`. Measured 2026-09-22 when a checkout's `npm test` upgraded `~/.cos/cos.db` to
+  schema 2 under an installed `v0.2.3`. Health checks do not see this; `curl /api/workspaces`
+  does. The way out is to match the app to the database or delete the database — a downgrade
+  does not remove it.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
 
