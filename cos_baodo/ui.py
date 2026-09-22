@@ -11,9 +11,11 @@ Three rules, each answering a requirement:
 - **R22.** The theme is declared here and nowhere else. A component that wants a colour
   asks for a *role* (`rx.color("gray", 6)`), never a hex value, so the same code is
   correct in both appearances.
-- **R23/R24.** Light and dark are the same layout, and the three widths in `BREAKPOINTS`
-  are the same layout too. Nothing is hidden at a small width that carries information —
-  it reflows or it scrolls.
+- **R23/R24.** Light and dark are the same layout, and the three widths in
+  `scripts/verify_0003.py:180` are the same layout too. Nothing is hidden at a small width
+  that carries information — it reflows or it scrolls. The widths live in the proof rather
+  than here: `screens.py` writes its responsive rules as literals, so a constant in this
+  file would be a second source that nothing reads.
 - **R25.** Body text sits on `gray 12` over `gray 1`, the two ends of the scale, which is
   the pairing the palette is built to keep legible in both appearances. The *measurement*
   is `scripts/verify_0003.py`; this file only makes it likely.
@@ -24,10 +26,6 @@ Everything here is presentation. No handler, no service call, no decision.
 from __future__ import annotations
 
 import reflex as rx
-
-# The three widths `spec.md` R24 names: phone, tablet, laptop. Chosen, not measured — they
-# exist to turn "responsive" into something a browser can fail.
-BREAKPOINTS = {"phone": "390px", "tablet": "768px", "laptop": "1280px"}
 
 THEME = rx.theme(
     # `inherit` hands the decision to the colour mode, which Reflex keeps in the browser —
