@@ -166,6 +166,91 @@ export function nextNumber(units) {
   return String(max + 1).padStart(4, '0')
 }
 
+// --- git conventions ---------------------------------------------------------
+
+// Everything from here to the command section is pure: it takes strings and returns
+// strings. Reading a file or asking git happens in the commands below, which is what lets
+// the whole grammar be tested without a repository to test it against.
+
+// The ten Conventional Commits types, reused rather than invented: the unit that added
+// this asked for the common convention, not a local one. The set is closed because an open
+// set checks nothing, and it will refuse a name somebody wants at least once.
+export const BRANCH_TYPES = ['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'perf', 'build', 'ci', 'revert']
+
+const SLUG_MAX = 60
+const TYPE_LIST = () => BRANCH_TYPES.join(', ')
+
+// `null` when the name is fine, otherwise the rule it broke. A boolean here would make
+// every rejection say the same thing, and the point of a convention is to name what is
+// wrong with the name you chose.
+export function branchProblem(name) {
+  if (!name) return 'no branch name'
+  if (name === 'main') return 'main is the trunk, not a work branch'
+  const slash = name.indexOf('/')
+  if (slash === -1) return `no type prefix: expected <type>/<slug>, type one of ${TYPE_LIST()}`
+  const type = name.slice(0, slash)
+  const slug = name.slice(slash + 1)
+  if (!BRANCH_TYPES.includes(type)) return `"${type}" is not one of ${TYPE_LIST()}`
+  if (!slug) return 'the slug is empty'
+  if (slug.includes('/')) return 'the slug carries a second slash'
+  if (slug.length > SLUG_MAX) return `the slug is ${slug.length} characters, over the ${SLUG_MAX} allowed`
+  if (!SLUG_RE.test(slug)) return 'the slug takes lowercase letters, digits and single hyphens'
+  return null
+}
+
+// `vX.Y.Z`, or `vX.Y.Z-rc.N` for a prerelease. Leading zeros are refused so that one
+// release has one spelling: `v0.01.0` and `v0.1.0` would otherwise be two tags nobody
+// could tell apart in a list.
+const TAG_RE = /^v(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/
+
+export function tagProblem(name) {
+  if (!name) return 'no tag name'
+  const m = name.match(TAG_RE)
+  if (!m) return 'expected vX.Y.Z, or vX.Y.Z-rc.N for a prerelease'
+  for (const part of [m[1], m[2], m[3]]) {
+    if (part.length > 1 && part.startsWith('0')) return `"${part}" carries a leading zero`
+  }
+  if (m[4] !== undefined && (m[4].startsWith('0') || m[4] === '0')) {
+    return 'the release candidate number starts at 1'
+  }
+  return null
+}
+
+export const isPrerelease = (name) => !tagProblem(name) && name.includes('-rc.')
+export const tagVersion = (name) => (tagProblem(name) ? null : name.slice(1).split('-')[0])
+
+// `pyproject.toml` is the source and the rest are copies. Naming a source matters more
+// than the comparison: "they disagree" is not actionable until something says which one is
+// right.
+export const VERSION_SOURCE = 'pyproject.toml'
+
+export function versionProblem(found) {
+  const source = found[VERSION_SOURCE]
+  if (!source) return `${VERSION_SOURCE} declares no version`
+  const off = Object.entries(found)
+    .filter(([place, value]) => place !== VERSION_SOURCE && value !== source)
+    .map(([place, value]) => `${place} is ${value === null || value === undefined ? 'unreadable' : value}`)
+  return off.length ? `${VERSION_SOURCE} says ${source}, but ${off.join('; ')}` : null
+}
+
+// The unit's own header, read the way `parseStatus` reads its neighbour on the same line.
+export function parseType(text) {
+  const m = text.match(/\bType:\s*([A-Za-z]+)/)
+  return m ? m[1].toLowerCase() : null
+}
+
+// A unit's branch is derived, never typed. `0009_branch-and-release-conventions` carrying
+// `Type: feat` can only be `feat/branch-and-release-conventions`, so the branch name and
+// the unit name cannot drift apart.
+export function unitBranch(unitName, intentText) {
+  const match = String(unitName ?? '').match(UNIT_RE)
+  if (!match) return { error: `"${unitName}" does not match NNNN_<slug>` }
+  const type = parseType(intentText ?? '')
+  if (!type) return { error: `${unitName}/intent.md declares no Type: — one of ${TYPE_LIST()}` }
+  if (!BRANCH_TYPES.includes(type)) return { error: `"${type}" is not one of ${TYPE_LIST()}` }
+  return { branch: `${type}/${match[2]}` }
+}
+
 // --- commands ----------------------------------------------------------------
 
 const dash = '—'

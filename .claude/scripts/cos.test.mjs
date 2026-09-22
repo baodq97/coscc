@@ -3,7 +3,11 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit, STAGE_NAMES } from './cos.mjs'
+import {
+  parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit, STAGE_NAMES,
+  BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
+  unitBranch, VERSION_SOURCE,
+} from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
 const art = (status) => ({ status, skipReason: null })
@@ -172,4 +176,123 @@ test('the five new artifacts are read, not reported as unexpected files', () => 
 
   writeFileSync(join(dir, 'notes.md'), 'x')
   assert.match(readUnit(dir, '0009_widened').problems[0], /unexpected file\(s\): notes\.md/)
+})
+
+// --- the branch grammar ------------------------------------------------------
+
+// The eight rows of `.cos/0009_branch-and-release-conventions/spec.md` R1, copied one for
+// one. Six of them are rejections, because a grammar that only ever sees valid input is a
+// function that returns true.
+const BRANCH_ROWS = [
+  ['feat/branch-conventions', null],
+  ['fix/version-drift', null],
+  ['main', /trunk/],
+  ['feature/foo', /not one of/],
+  ['feat/Foo', /lowercase/],
+  ['feat/', /empty/],
+  ['feat/a--b', /single hyphens/],
+  ['feat/foo/bar', /second slash/],
+]
+
+for (const [name, want] of BRANCH_ROWS) {
+  test(`branchProblem: ${name || '(empty)'}`, () => {
+    const got = branchProblem(name)
+    if (want === null) assert.equal(got, null, `expected ${name} to be accepted, got: ${got}`)
+    else assert.match(got ?? '', want)
+  })
+}
+
+test('the type set is the ten of Conventional Commits, and it is closed', () => {
+  assert.deepEqual(BRANCH_TYPES,
+    ['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'perf', 'build', 'ci', 'revert'])
+  for (const t of BRANCH_TYPES) assert.equal(branchProblem(`${t}/a-slug`), null)
+  assert.match(branchProblem('feature/x') ?? '', /"feature" is not one of/)
+})
+
+test('a slug over sixty characters is refused, and the message says how long it was', () => {
+  assert.equal(branchProblem(`feat/${'a'.repeat(60)}`), null)
+  assert.match(branchProblem(`feat/${'a'.repeat(61)}`) ?? '', /61 characters, over the 60/)
+})
+
+test('a name with no slash is told what shape to take', () => {
+  assert.match(branchProblem('justaname') ?? '', /expected <type>\/<slug>/)
+  assert.match(branchProblem('') ?? '', /no branch name/)
+})
+
+// --- the tag grammar ---------------------------------------------------------
+
+const TAG_ROWS = [
+  ['v0.1.0', null],
+  ['v1.20.3', null],
+  ['v0.1.0-rc.1', null],
+  ['v0.1.0-rc.12', null],
+  ['0.1.0', /expected vX\.Y\.Z/],
+  ['v0.1', /expected vX\.Y\.Z/],
+  ['v0.1.0-rc', /expected vX\.Y\.Z/],
+  ['v0.1.0-rc.0', /starts at 1/],
+]
+
+for (const [name, want] of TAG_ROWS) {
+  test(`tagProblem: ${name}`, () => {
+    const got = tagProblem(name)
+    if (want === null) assert.equal(got, null, `expected ${name} to be accepted, got: ${got}`)
+    else assert.match(got ?? '', want)
+  })
+}
+
+test('a leading zero is refused so one release has one spelling', () => {
+  assert.match(tagProblem('v0.01.0') ?? '', /leading zero/)
+  assert.match(tagProblem('v0.1.0-rc.01') ?? '', /starts at 1/)
+})
+
+test('prerelease is decided by the same grammar that validates the tag', () => {
+  assert.equal(isPrerelease('v0.1.0-rc.1'), true)
+  assert.equal(isPrerelease('v0.1.0'), false)
+  // Not a tag at all, so not a prerelease either — one implementation, one answer.
+  assert.equal(isPrerelease('release-rc.1'), false)
+})
+
+test('tagVersion strips the v and the candidate suffix, or refuses', () => {
+  assert.equal(tagVersion('v0.1.0-rc.3'), '0.1.0')
+  assert.equal(tagVersion('v1.20.3'), '1.20.3')
+  assert.equal(tagVersion('v0.1'), null)
+})
+
+// --- version drift -----------------------------------------------------------
+
+test('pyproject.toml is the source, and the message says which one is right', () => {
+  assert.equal(VERSION_SOURCE, 'pyproject.toml')
+  const same = { 'pyproject.toml': '0.1.0', 'package.json': '0.1.0' }
+  assert.equal(versionProblem(same), null)
+  const off = versionProblem({ 'pyproject.toml': '0.1.0', 'package.json': '0.0.1' })
+  assert.match(off ?? '', /pyproject\.toml says 0\.1\.0, but package\.json is 0\.0\.1/)
+})
+
+test('a place that could not be read is named, not skipped', () => {
+  assert.match(versionProblem({ 'pyproject.toml': '0.1.0', 'uv.lock': null }) ?? '', /uv\.lock is unreadable/)
+  assert.match(versionProblem({ 'pyproject.toml': null }) ?? '', /declares no version/)
+})
+
+// --- a unit knows its type ---------------------------------------------------
+
+test('parseType reads the header field beside Author and Status', () => {
+  assert.equal(parseType('Author: X. Type: feat. Status: accepted.'), 'feat')
+  assert.equal(parseType('Author: X. Type: Feat. Status: accepted.'), 'feat')
+  assert.equal(parseType('Author: X. Status: accepted.'), null)
+})
+
+test('the branch name is derived from the unit and its type', () => {
+  const header = 'Author: X. Type: feat. Status: accepted.'
+  assert.deepEqual(unitBranch('0009_branch-and-release-conventions', header),
+    { branch: 'feat/branch-and-release-conventions' })
+  assert.equal(branchProblem(unitBranch('0009_branch-and-release-conventions', header).branch), null)
+})
+
+test('a derived name that no grammar would accept cannot be produced', () => {
+  // The slug comes out of UNIT_RE, which is already lowercase-and-single-hyphens, so the
+  // only way to get an invalid branch is an invalid type — and that is refused here.
+  assert.match(unitBranch('0009_x', 'Type: feature.').error, /"feature" is not one of/)
+  assert.match(unitBranch('0009_x', 'Author: X.').error, /declares no Type:/)
+  assert.match(unitBranch('9_x', 'Type: feat.').error, /does not match NNNN_<slug>/)
+  assert.match(unitBranch(undefined, 'Type: feat.').error, /does not match NNNN_<slug>/)
 })
