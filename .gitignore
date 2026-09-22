@@ -1,5 +1,6 @@
 .web
 coscc/_web/
+coscc/_harness/
 assets/external/
 .states
 *.db

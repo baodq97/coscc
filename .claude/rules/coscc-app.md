@@ -75,6 +75,8 @@ no commands, one turn, no budget.
 | `verify_0004.py` | 4 processes at once, creates a session |
 | `verify_0005.py` | **pushes a branch and opens a PR.** Needs `COS_PROOF_REPO`; unset is exit 2 with claims 2, 3, 4, 6 skipped. Eight sessions, one with a $5 ceiling |
 | `verify_0006.py` | browser, needs `COS_PORT` free; sends one short prompt |
+| `verify_0011.py` | **needs another machine.** `COS_PROOF_TARGET`, an SSH destination it reboots twice; unset is exit 2 |
+| `verify_0012.py` | measures the **installed** copy, not this checkout. Needs `node`, a running service at `COS_URL` and one workspace; no session, no quota |
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.
 
