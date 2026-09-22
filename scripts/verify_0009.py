@@ -189,10 +189,23 @@ def claim_3() -> bool:
         if clean != 0:
             return say(False, "the version check is green on a clean copy", f"exited {clean}")
 
+        # Skew whatever the tree actually declares, not the number this unit is heading
+        # for. The first draft replaced VERSION, which was not in the files yet, so every
+        # "skewed" copy was byte-identical to the clean one and the control passed by
+        # doing nothing — a negative control that never went negative.
+        current = declared_versions()["pyproject.toml"]
+        if not current:
+            return say(False, "the version check goes red for each place on its own",
+                       "pyproject.toml declares no version to skew")
+
         for name in VERSION_FILES:
             target = sandbox / name
             good = target.read_text(encoding="utf-8")
-            target.write_text(good.replace(VERSION, "9.9.9", 1), encoding="utf-8")
+            skewed = good.replace(f'"{current}"', '"9.9.9"', 1)
+            if skewed == good:
+                missed.append(f"{name} carries no {current!r} to skew")
+                continue
+            target.write_text(skewed, encoding="utf-8")
             code = cos("check-version", root=sandbox).returncode
             target.write_text(good, encoding="utf-8")
             if code != 1:

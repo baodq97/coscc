@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import {
   parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit, STAGE_NAMES,
@@ -295,4 +297,39 @@ test('a derived name that no grammar would accept cannot be produced', () => {
   assert.match(unitBranch('0009_x', 'Author: X.').error, /declares no Type:/)
   assert.match(unitBranch('9_x', 'Type: feat.').error, /does not match NNNN_<slug>/)
   assert.match(unitBranch(undefined, 'Type: feat.').error, /does not match NNNN_<slug>/)
+})
+
+// --- the --root boundary, exercised through the CLI --------------------------
+
+// Every other test in this file imports a pure function. These four have to spawn the
+// script, because what they check is the dispatcher: `--root` is stripped from argv before
+// the command is read (see the bottom of `cos.mjs`), so "the command never touches cosDir"
+// is not the same claim as "the flag was refused". The risk register of
+// `.cos/0009_branch-and-release-conventions/plan.md` says a guard with no test is a
+// sentence in a document, and this is the guard.
+const cli = (...args) =>
+  spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args], { encoding: 'utf8' })
+
+for (const args of [['check-branch', 'feat/x'], ['check-tag', 'v0.1.0'], ['check-version']]) {
+  test(`--root is refused by ${args[0]}`, () => {
+    const out = cli('--root', tmpdir(), ...args)
+    assert.equal(out.status, 2)
+    assert.match(out.stderr, /--root does not apply/)
+    // Without the flag the same call is fine, so the refusal is about --root and not
+    // about the command being broken.
+    assert.notEqual(cli(...args).status, 2)
+  })
+}
+
+test('--root still reaches the command that reads a .cos/', () => {
+  const out = cli('--root', process.cwd(), 'unit-branch', '0009_branch-and-release-conventions')
+  assert.equal(out.status, 0)
+  assert.equal(out.stdout.trim(), 'feat/branch-and-release-conventions')
+})
+
+test('an unknown command prints both halves of the boundary', () => {
+  const out = cli('nonsense')
+  assert.equal(out.status, 2)
+  assert.match(out.stderr, /these take --root/)
+  assert.match(out.stderr, /these do not/)
 })

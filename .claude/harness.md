@@ -56,7 +56,7 @@ is a question the session is asked to ask, and each skill states that limit on i
 wrote a note before the intent.
 
 The eight rows above are a restatement of one array — `STAGES` in
-`.claude/scripts/cos.mjs:24-33`. That array is the authoritative copy: it decides the
+`.claude/scripts/cos.mjs:25-34`. That array is the authoritative copy: it decides the
 artifact names, the statuses each may carry, what the gate demands and what `status`
 proposes next. Adding a stage is editing it, and then this table.
 
@@ -84,7 +84,7 @@ artifacts.
 
 Every artifact carries `Status: draft | accepted | rejected`. Two carry one more each:
 `spec.md` may be `skipped`, and `plan.md` and `impl.md` may be `done`. The authoritative
-list is the `statuses` field on each entry of `STAGES` in `.claude/scripts/cos.mjs:24-33`;
+list is the `statuses` field on each entry of `STAGES` in `.claude/scripts/cos.mjs:25-34`;
 a status outside it is reported as a problem rather than guessed at.
 
 The agent writes the artifact, accepts it and commits it. `Status: accepted` therefore
