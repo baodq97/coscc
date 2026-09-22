@@ -29,13 +29,23 @@ does not install."
 Two things this proof insists on because `plan.md`'s risk list names the alternative as the
 way to go quietly wrong:
 
-- **Every `.gz` file is decompressed before it is searched** (`spec.md` R3, `plan.md`
-  Risk 1). `intent.md`'s own measurement is that the address lives in two files — a `.js`
-  and its `.gz` sibling — and every real browser reads the `.gz`. A scan that skips it
-  passes on exactly the broken case, which is what happened on 2026-09-21. This proof does
-  not reimplement that scan: `coscc.frontend.event_addresses` (commit 5cf4809) does the
-  decompression, and this file imports it from the checkout rather than duplicating it
-  (`scripts/verify_0003.py:29` inserts the repo root on `sys.path` the same way).
+- **The bundle is read the way a browser reads it: over HTTP, with `Accept-Encoding: gzip`
+  sent on purpose.** `spec.md` R3 and `plan.md` Risk 1 are about the same failure — the
+  address lives in two files, a `.js` and its `.gz` sibling, Reflex's
+  `frontend_compression_formats` defaults to `['gzip']`, and `PrecompressedStaticFiles`
+  serves the sidecar whenever the request carries that header, which every real browser
+  sends and a bare `httpx.get()` does not. An earlier draft of this file instead read
+  `REFLEX_WEB_WORKDIR` off `/proc/<pid>/environ` on the target and pulled the tree with
+  `tar` over SSH; that cannot work, because `coscc/run.py` sets that variable with
+  `os.environ[...] = ...` *inside* `main()`, after the process has already called
+  `execve()`, and `/proc/<pid>/environ` only ever reflects the environment at that moment —
+  measured 2026-09-22, a variable set after start never shows up there. So this proof
+  measures the bytes the server actually sends instead of guessing a layout on disk:
+  `GET /` off the target, read the env chunk's own URL out of the returned HTML (its name
+  is content-hashed, `coscc/frontend.py:58`, so it is never constructed), then `GET` that
+  URL with `Accept-Encoding: gzip` and assert the response carries `content-encoding:
+  gzip` back — the load-bearing assertion, because its absence means the plain file
+  answered and the sidecar, exactly where a stale address would survive, was never read.
 - **The check is "exactly the event socket," not "no address but ours."**
   `frontend.addresses()` returns every absolute URL authority the bundle carries — measured
   on the real bundle 2026-09-22 at 13, eleven of which belong to other people (`react.dev`,
@@ -45,10 +55,9 @@ way to go quietly wrong:
   authorities: the only socket the page opens is its own event socket, so after a correct
   rewrite that set holds exactly one entry, and this proof asserts it equals
   `{f"ws://{host}:{port}"}` — both that the destination is there and that nothing else is.
-- **The bundle-and-address check runs against files pulled off the target**, never against
-  a local build. There is no repository on the target by definition (`intent.md`'s
-  "Problem" section), so nothing here may read `.web/` or `coscc/_web/` from this checkout
-  as a stand-in.
+  This file reuses that function rather than duplicating its authority regex
+  (`scripts/verify_0003.py:29` inserts the repo root on `sys.path` the same way), by
+  writing the decompressed chunk into a temporary directory and pointing it there.
 
 `docs/install.md` is being written by a different track in parallel with this file. If it
 already exists, the install and update commands are read out of it, under `## Install` and
@@ -62,7 +71,6 @@ are being built against.
 from __future__ import annotations
 
 import os
-import posixpath
 import re
 import shlex
 import subprocess
@@ -70,6 +78,9 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urljoin
+
+import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -105,6 +116,10 @@ BOOT_TIMEOUT_S = 300  # generous: a real VM reboot, not a process restart
 PAGE_TIMEOUT_MS = 20_000
 
 _CODE_BLOCK = re.compile(r"```(?:sh|shell|bash)?\n(.*?)```", re.DOTALL)
+
+# The env chunk's own name is content-hashed (`coscc/frontend.py:58`, `_ENV_GLOB`), so it
+# changes on every build; this reads its URL out of the page rather than constructing it.
+_ENV_CHUNK_HREF = re.compile(r"[\"'](?P<path>/?assets/reflex-env-[^\"'>\s]+\.js)[\"']")
 
 
 # --------------------------------------------------------------------------
@@ -298,108 +313,80 @@ def page_renders_all_screens_and_websocket(browser, url: str) -> tuple[bool, str
 
 
 # --------------------------------------------------------------------------
-# step 3 — the served bundle's event socket, read off the target
+# step 3 — the served bundle's event socket, measured over HTTP
 # --------------------------------------------------------------------------
 
 
-def remote_bundle_dir(target: str) -> str | None:
-    """The directory Reflex mounts as static files on the target, read off the live
-    process rather than guessed.
+def find_env_chunk_url(base_url: str) -> tuple[str | None, str]:
+    """`GET /` off the target and read the env chunk's own URL out of the returned HTML.
 
-    `plan.md`'s design part 3 has `coscc/run.py` set `REFLEX_WEB_WORKDIR` before
-    importing the app; `scripts/proof_harness.py:72` reads the served tree the same way
-    this proof does, as `<that>/build/client`. Reading the variable back out of the running
-    unit's own environment is the only way to find it that does not hardcode a layout this
-    file was written before the packaging code existed to have one.
+    Its filename is content-hashed (`coscc/frontend.py:58`, `_ENV_GLOB`), so it changes on
+    every build; constructing it would silently start matching nothing the day the hash
+    changes — the same failure `coscc.frontend.NoEnvChunk` exists to stop on the write side.
     """
-    pid = run_remote(target, "systemctl --user show coscc -p MainPID --value").stdout.strip()
-    if not pid or pid == "0":
-        return None
-    environ = run_remote(target, f"tr '\\0' '\\n' < /proc/{pid}/environ 2>/dev/null")
-    if environ.returncode != 0:
-        return None
-    for line in environ.stdout.splitlines():
-        if line.startswith("REFLEX_WEB_WORKDIR="):
-            return line.split("=", 1)[1]
-    return None
-
-
-def fetch_bundle(target: str, remote_dir: str, local_dir: Path) -> tuple[bool, str]:
-    """Stream the served directory off the target with one `tar`, not `scp -r`.
-
-    `intent.md`'s own measurement is ~3.8k files under the bundle root; one stream over
-    the SSH connection this proof already opened is one round trip instead of thousands.
-    """
-    remote_parent = posixpath.dirname(remote_dir) or "."
-    remote_name = posixpath.basename(remote_dir)
     try:
-        ssh_proc = subprocess.Popen(
-            [
-                "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target,
-                f"tar -C {shlex.quote(remote_parent)} -cf - {shlex.quote(remote_name)}",
-            ],
-            stdout=subprocess.PIPE,
-        )
-        assert ssh_proc.stdout is not None
-        tar_proc = subprocess.run(
-            ["tar", "-xf", "-", "-C", str(local_dir)],
-            stdin=ssh_proc.stdout,
-            capture_output=True,
-            timeout=180,
-        )
-        ssh_proc.stdout.close()
-        ssh_proc.wait(timeout=30)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return False, f"could not stream {remote_dir} off {target}: {e}"
-    if ssh_proc.returncode != 0 or tar_proc.returncode != 0:
-        stderr = tar_proc.stderr.decode(errors="replace")[:300] if tar_proc.stderr else ""
+        resp = httpx.get(base_url, timeout=15, follow_redirects=True)
+    except httpx.HTTPError as e:
+        return None, f"GET {base_url} failed: {e}"
+    if resp.status_code != 200:
+        return None, f"GET {base_url} returned {resp.status_code}"
+    match = _ENV_CHUNK_HREF.search(resp.text)
+    if not match:
+        return None, f"no assets/reflex-env-*.js reference found in the page at {base_url}"
+    return urljoin(base_url, match.group("path")), ""
+
+
+def event_address_holds(base_url: str, expected: str) -> tuple[bool, str]:
+    """`spec.md` R3/R4, measured the way a browser measures them: over HTTP, with the
+    header that makes Reflex answer with the `.gz` sidecar rather than the plain file.
+
+    `PrecompressedStaticFiles` serves the plain chunk unless the request carries
+    `Accept-Encoding: gzip`; every real browser sends it, and `httpx.get()` does not unless
+    told to. So `content-encoding: gzip` coming back is the load-bearing assertion here —
+    its absence means this check just read the plain file, which is exactly where the
+    stale address from `plan.md` Risk 1 would still be sitting while everything looked
+    fine. Once that holds, the decompressed body is handed to
+    `coscc.frontend.event_addresses()` (commit 5cf4809) rather than matched by a second
+    regex this file would have to keep in sync with `coscc/frontend.py` by hand.
+    """
+    chunk_url, reason = find_env_chunk_url(base_url)
+    if not chunk_url:
+        return False, reason
+
+    try:
+        resp = httpx.get(chunk_url, headers={"Accept-Encoding": "gzip"}, timeout=15)
+    except httpx.HTTPError as e:
+        return False, f"GET {chunk_url} failed: {e}"
+    if resp.status_code != 200:
+        return False, f"GET {chunk_url} returned {resp.status_code}"
+
+    encoding = resp.headers.get("content-encoding", "")
+    if encoding.lower() != "gzip":
         return False, (
-            f"tar over ssh failed (ssh exit {ssh_proc.returncode}, tar exit "
-            f"{tar_proc.returncode}): {stderr}"
+            f"{chunk_url} answered with content-encoding={encoding!r}, not gzip — this "
+            "measured the plain file, not the .gz sidecar a real browser is served "
+            "(plan.md Risk 1)"
+        )
+
+    with tempfile.TemporaryDirectory(prefix="cos0011-chunk-") as tmp:
+        # httpx already decoded the body per this content-encoding, so `resp.content` here
+        # is the plain text the sidecar decompresses to. The file just needs a name that
+        # does not end in `.gz`, or `frontend.addresses()` would try to gunzip it again.
+        chunk_path = Path(tmp) / "reflex-env.js"
+        chunk_path.write_bytes(resp.content)
+        found = frontend.event_addresses(Path(tmp))
+
+    if expected not in found:
+        return False, (
+            f"the destination address {expected!r} was never found among the event "
+            f"socket authorities {sorted(found)} served from {chunk_url}"
+        )
+    if found != {expected}:
+        return False, (
+            f"event socket authorities served from {chunk_url} are {sorted(found)}, "
+            f"wanted exactly {{{expected!r}}}"
         )
     return True, ""
-
-
-def event_address_holds(target: str, expected: str) -> tuple[bool, str]:
-    """`spec.md` R3/R4, via `coscc.frontend.event_addresses` (commit 5cf4809).
-
-    `frontend.addresses()` is too blunt to assert against: it returns every absolute URL
-    authority the bundle carries, and eleven of the thirteen measured on the real bundle
-    belong to other people (`react.dev`, `github.com`, a `http://localhost:3000` left over
-    from Reflex's dev default…). `event_addresses()` narrows to `ws://`/`wss://`
-    authorities, and the only socket the page opens is its own event socket — so after a
-    correct rewrite that set holds exactly `{expected}`, no more and no fewer. Both
-    `addresses()` and `event_addresses()` decompress every `.gz` file before matching
-    (`plan.md` Risk 1); this proof does not reimplement that, it only fetches the files for
-    them to read.
-    """
-    remote_dir = remote_bundle_dir(target)
-    if not remote_dir:
-        return False, (
-            "could not read REFLEX_WEB_WORKDIR off the running coscc unit "
-            "(systemctl --user show coscc -p MainPID --value, then /proc/<pid>/environ)"
-        )
-    with tempfile.TemporaryDirectory(prefix="cos0011-bundle-") as tmp:
-        local_dir = Path(tmp)
-        bundle_dir = posixpath.join(remote_dir, "build", "client")
-        ok, reason = fetch_bundle(target, bundle_dir, local_dir)
-        if not ok:
-            return False, reason
-
-        if not any(local_dir.rglob("*")):
-            return False, f"nothing was fetched from {bundle_dir} on {target} — wrong directory?"
-
-        found = frontend.event_addresses(local_dir)
-        if expected not in found:
-            return False, (
-                f"the destination address {expected!r} was never found among the event "
-                f"socket authorities {sorted(found)} — is this the right served directory?"
-            )
-        if found != {expected}:
-            return False, (
-                f"event socket authorities are {sorted(found)}, wanted exactly {{{expected!r}}}"
-            )
-        return True, ""
 
 
 # --------------------------------------------------------------------------
@@ -538,8 +525,8 @@ def run() -> int:
         if not say(ok, "the page renders all six screens and /_event connects", reason):
             return EXIT_BROKEN
 
-        # --- step 3: the whole served bundle, .gz included, via coscc.frontend ---
-        ok, reason = event_address_holds(target, expected_event_address)
+        # --- step 3: the served bundle's event socket, over HTTP, Accept-Encoding: gzip ---
+        ok, reason = event_address_holds(url, expected_event_address)
         if not say(
             ok,
             f"the served bundle's event socket is exactly {expected_event_address!r}",
