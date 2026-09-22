@@ -39,11 +39,17 @@ là đây không phải một quy ước bị phá, mà là một khoảng trố
 `.claude/harness.md:94` ghi tình trạng hiện tại như một sự thật chứ không như một lựa chọn
 đã cân: *"The author works alone and commits to `main`."*
 
-### Version khai hai chỗ và không gì giữ chúng bằng nhau
+### Version khai bốn chỗ và không gì giữ chúng bằng nhau
 
-`pyproject.toml:3` và `package.json:3` cùng ghi `0.0.1`. Chúng bằng nhau lúc này, và không có
-lệnh, test hay check nào làm cho điều đó tiếp tục đúng. Không có tag nào, nên cũng không có
-chỗ thứ ba để đối chiếu — một bản phát hành hiện không có số hiệu nào cả.
+`pyproject.toml:3`, `package.json:3`, `uv.lock:151`, và `package-lock.json:3` cùng `:9` —
+tất cả ghi `0.0.1`. Hai chỗ sau là file sinh ra, nhưng chúng vẫn mang con số và vẫn lệch
+được. Chúng bằng nhau lúc này, và không có lệnh, test hay check nào làm cho điều đó tiếp tục
+đúng. Không có tag nào, nên cũng không có chỗ thứ năm để đối chiếu — một bản phát hành hiện
+không có số hiệu nào cả.
+
+> **Sửa cùng ngày, lúc viết `plan.md`.** Bản đầu của mục này viết "hai chỗ" và nêu hai file.
+> Đọc `uv.lock` và `package-lock.json` cho thấy bốn. Con số cũ không sai về hướng — không gì
+> giữ chúng bằng nhau — nhưng nó sai về lượng, và một check dựng theo nó sẽ bỏ sót hai nơi.
 
 ### Vì sao hai việc này là một unit
 

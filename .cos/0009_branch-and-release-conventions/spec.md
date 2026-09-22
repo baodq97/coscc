@@ -44,10 +44,16 @@ từ chối (thiếu số).
 đang checkout khi không có tham số. Exit `0` nhận, `1` từ chối kèm lý do nêu tên quy tắc bị
 phạm. Kiểm: tám dòng của bảng R1 chạy qua lệnh này và cho đúng tám kết quả đó.
 
-**R4 — `cos.mjs` khai một lệnh kiểm version đồng bộ.** So `pyproject.toml` với
-`package.json`; khi có tag `vX.Y.Z` trên HEAD thì so cả ba. Exit `0` khi khớp, `1` khi lệch
-kèm giá trị của từng bên. Kiểm: sửa một trong hai file thành số khác thì lệnh phải đỏ —
-negative control, và nó phải được chạy chứ không chỉ được mô tả.
+**R4 — `cos.mjs` khai một lệnh kiểm version đồng bộ, trên bốn chỗ.** `pyproject.toml:3`,
+`package.json:3`, `uv.lock:151` và `package-lock.json:3`+`:9` đều mang số; khi có tag
+`vX.Y.Z` trên HEAD thì so cả năm. Exit `0` khi khớp, `1` khi lệch kèm giá trị của từng bên.
+Kiểm: sửa **bất kỳ** chỗ nào trong bốn chỗ thành số khác thì lệnh phải đỏ — negative control,
+chạy thật chứ không chỉ mô tả.
+
+> **Sửa cùng ngày, lúc viết `plan.md`.** Bản đầu của R4 chỉ nêu hai file, vì `intent.md` đếm
+> hai. Đọc code lúc lập kế hoạch cho thấy bốn: hai file khai bằng tay và hai lockfile sinh
+> ra. Một check dựng theo con số cũ sẽ để hai nơi trôi tự do — đúng thứ R4 tồn tại để chặn.
+> `intent.md` đã sửa theo.
 
 **R5 — Hai lệnh mới có test trong `.claude/scripts/cos.test.mjs`.** File này hiện có **23**
 test và `npm test` chạy nó. Sau unit này số test tăng, và `npm run test:node` vẫn xanh. Đây
