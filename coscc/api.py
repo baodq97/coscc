@@ -6,7 +6,7 @@ process — but because it is also a plain ASGI app, the proof drives it in-proc
 `httpx.ASGITransport` with no compiled frontend and no Node. That is what keeps `npm test`
 free of a JavaScript toolchain (`plan.md` step 1, check d).
 
-Nothing here reads the environment — `cos_baodo.config` is the only reader — and no route
+Nothing here reads the environment — `coscc.config` is the only reader — and no route
 returns configuration or runs anything the caller names. `spec.md` C3: a long-lived
 login credential is in this process, and those two habits are what keep it there.
 
@@ -25,9 +25,9 @@ from typing import Any, AsyncIterator
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from cos_baodo.config import Config, from_env
-from cos_baodo.service import Invalid, Service
-from cos_baodo.sessions import Refused, Sessions
+from coscc.config import Config, from_env
+from coscc.service import Invalid, Service
+from coscc.sessions import Refused, Sessions
 
 
 def _bad(message: str, status: int = 400) -> JSONResponse:
@@ -56,7 +56,7 @@ def build(config: Config | None = None) -> FastAPI:
         yield
         await sessions.close_all()
 
-    api = FastAPI(title="cos-baodo", lifespan=lifespan)
+    api = FastAPI(title="coscc", lifespan=lifespan)
     api.state.config = config
     api.state.sessions = sessions
     api.state.service = service

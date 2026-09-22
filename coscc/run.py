@@ -11,11 +11,11 @@ which defaults to `127.0.0.1`. One port to check, and `ss -ltn` can check it.
 
 Build the frontend first:
 
-    uv run cos-build
+    uv run coscc-build
 
 That wrapper exists rather than `reflex export` so the build leaves a fingerprint; this
 function refuses to serve a bundle that does not match the source it claims to be built
-from. See `cos_baodo/build.py`.
+from. See `coscc/build.py`.
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ def main() -> None:
 
     import uvicorn
 
-    from cos_baodo import build
-    from cos_baodo.config import from_env
+    from coscc import build
+    from coscc.config import from_env
 
     config = from_env()
 
@@ -53,12 +53,12 @@ def main() -> None:
         print(message, file=sys.stderr)
         raise SystemExit(2)
 
-    print(f"cos-baodo on http://{config.host}:{config.port}")
+    print(f"coscc on http://{config.host}:{config.port}")
     print(f"working folder: {config.working_dir or '(unset — workspace management off)'}")
     print(f"env workspaces: {', '.join(config.workspaces) or '(none)'}")
     print(f"tools: {config.effective_tools() or 'none (chat only)'}")
     uvicorn.run(
-        "cos_baodo.cos_baodo:app",
+        "coscc.coscc:app",
         factory=True,
         host=config.host,
         port=config.port,

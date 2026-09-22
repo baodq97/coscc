@@ -44,12 +44,12 @@ import httpx
 
 import claude_agent_sdk as sdk
 
-from cos_baodo import policy
-from cos_baodo.api import build
-from cos_baodo.config import from_env
-from cos_baodo.journal import Journal
-from cos_baodo.runner import build_prompt
-from cos_baodo.sessions import _options  # the app's own construction path — see claim 5
+from coscc import policy
+from coscc.api import build
+from coscc.config import from_env
+from coscc.journal import Journal
+from coscc.runner import build_prompt
+from coscc.sessions import _options  # the app's own construction path — see claim 5
 
 REPO = Path(__file__).resolve().parent.parent
 COS_MJS = REPO / ".claude" / "scripts" / "cos.mjs"

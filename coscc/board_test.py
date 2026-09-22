@@ -13,8 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cos_baodo import board
-from cos_baodo.board import Unavailable
+from coscc import board
+from coscc.board import Unavailable
 
 REPO = Path(__file__).resolve().parent.parent
 

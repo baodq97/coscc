@@ -12,15 +12,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cos_baodo import build
-from cos_baodo.config import Config
+from coscc import build
+from coscc.config import Config
 
 
 def _fake_source_tree(root: Path, page: str = "page v1", rx: str = "cfg v1") -> None:
-    (root / "cos_baodo").mkdir(parents=True, exist_ok=True)
+    (root / "coscc").mkdir(parents=True, exist_ok=True)
     for source in build._SOURCES:
         (root / source).write_text("presentation v1")
-    (root / "cos_baodo" / "cos_baodo.py").write_text(page)
+    (root / "coscc" / "coscc.py").write_text(page)
     (root / "rxconfig.py").write_text(rx)
 
 
@@ -46,8 +46,8 @@ class WhatCountsAsCurrent(unittest.TestCase):
         _fake_source_tree(self.root, page="page v2")
         state, msg = build.check(self.config, self.built, root=self.root)
         self.assertEqual(state, build.STALE)
-        self.assertIn("cos_baodo/cos_baodo.py", msg)
-        self.assertIn("cos-build", msg)
+        self.assertIn("coscc/coscc.py", msg)
+        self.assertIn("coscc-build", msg)
 
     def test_editing_rxconfig_makes_it_stale(self):
         build.write_marker(self.built, self.config, root=self.root)
@@ -104,7 +104,7 @@ class StatesKeptApart(unittest.TestCase):
     def test_no_output_at_all_is_unbuilt(self):
         state, msg = build.check(self.config, self.built, root=self.root)
         self.assertEqual(state, build.UNBUILT)
-        self.assertIn("cos-build", msg)
+        self.assertIn("coscc-build", msg)
 
     def test_output_without_a_fingerprint_is_missing_not_unbuilt(self):
         # Someone ran `reflex export` by hand. There is a page, but nothing says what it
@@ -113,7 +113,7 @@ class StatesKeptApart(unittest.TestCase):
         (self.built / "index.html").write_text("<html></html>")
         state, msg = build.check(self.config, self.built, root=self.root)
         self.assertEqual(state, build.MISSING)
-        self.assertIn("cos-build", msg)
+        self.assertIn("coscc-build", msg)
 
     def test_a_corrupt_fingerprint_reads_as_missing_rather_than_crashing(self):
         (self.built / "index.html").write_text("<html></html>")
@@ -129,8 +129,8 @@ class WhatTheFingerprintCovers(unittest.TestCase):
         # that silently covers less than it claims is worse than none.
         self.assertEqual(
             set(build._SOURCES), {
-                "cos_baodo/cos_baodo.py", "cos_baodo/ui.py", "cos_baodo/studio.py",
-                "cos_baodo/screens.py", "cos_baodo/state.py", "rxconfig.py",
+                "coscc/coscc.py", "coscc/ui.py", "coscc/studio.py",
+                "coscc/screens.py", "coscc/state.py", "rxconfig.py",
             }
         )
 

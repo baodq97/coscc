@@ -8,7 +8,7 @@ Two settings here are not preferences, they are defects found by running the thi
 `backend_host` — Reflex 0.9.11 defaults it to `0.0.0.0`. Verified on 2026-09-21 by reading
 `Config.__dataclass_fields__["backend_host"].default`, and by `ss -ltn` showing
 `0.0.0.0:8000` before this line existed. `0001` defaulted the other way
-(`cos_baodo/config.py:66`), so adopting Reflex silently reverses that posture.
+(`coscc/config.py:66`), so adopting Reflex silently reverses that posture.
 
 `api_url` — the compiled frontend **bakes in** the address it will open its `/_event`
 WebSocket against, and Reflex defaults it to `http://localhost:8000`. Serving the app on
@@ -30,13 +30,13 @@ what this follows.
 
 import reflex as rx
 
-from cos_baodo.config import from_env
-from cos_baodo.ui import THEME
+from coscc.config import from_env
+from coscc.ui import THEME
 
 _c = from_env()
 
 config = rx.Config(
-    app_name="cos_baodo",
+    app_name="coscc",
     backend_host=_c.host,
     api_url=f"http://{_c.host}:{_c.port}",
     plugins=[rx.plugins.RadixThemesPlugin(theme=THEME)],

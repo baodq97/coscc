@@ -10,7 +10,7 @@ the page asks here first. `run.py` refuses to start on a stale build; `verify_00
 refuses to measure one.
 
 **What the fingerprint covers, and what it cannot.** The compiled bundle is decided by the
-component tree in `cos_baodo/screens.py`, its state, the shared theme and presentation
+component tree in `coscc/screens.py`, its state, the shared theme and presentation
 modules, `rxconfig.py` (which bakes in the backend address), and the Reflex version that
 compiled it. Those inputs are fingerprinted. Anything else
 that could change the output — a plugin, an environment variable read during the build —
@@ -27,18 +27,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-from cos_baodo.config import Config, from_env
+from coscc.config import Config, from_env
 
 REPO = Path(__file__).resolve().parent.parent
-MARKER = ".cos-build.json"
+MARKER = ".coscc-build.json"
 
 # Relative to the repo root. See the module docstring for the limits of this list.
 _SOURCES = (
-    "cos_baodo/cos_baodo.py",
-    "cos_baodo/ui.py",
-    "cos_baodo/studio.py",
-    "cos_baodo/screens.py",
-    "cos_baodo/state.py",
+    "coscc/coscc.py",
+    "coscc/ui.py",
+    "coscc/studio.py",
+    "coscc/screens.py",
+    "coscc/state.py",
     "rxconfig.py",
 )
 
@@ -108,13 +108,13 @@ def write_marker(built: Path, config: Config, root: Path = REPO) -> dict:
 def check(config: Config, built: Path, root: Path = REPO) -> tuple[str, str]:
     """`(state, message)`. The message is written to be shown to a person as-is."""
     if not (built / "index.html").is_file():
-        return UNBUILT, "the frontend is not built yet — run:\n    uv run cos-build"
+        return UNBUILT, "the frontend is not built yet — run:\n    uv run coscc-build"
     found = read_marker(built)
     if found is None:
         return (
             MISSING,
             "the frontend was built without a fingerprint, so it cannot be checked "
-            "against the source — rebuild with:\n    uv run cos-build",
+            "against the source — rebuild with:\n    uv run coscc-build",
         )
     want = expected(config, root)
     if found == want:
@@ -138,7 +138,7 @@ def check(config: Config, built: Path, root: Path = REPO) -> tuple[str, str]:
     if changed:
         reasons.append("changed since the build: " + ", ".join(changed))
     return STALE, "the build does not match the source — " + "; ".join(reasons) + (
-        f"\n    COS_HOST={want['host']} COS_PORT={want['port']} uv run cos-build"
+        f"\n    COS_HOST={want['host']} COS_PORT={want['port']} uv run coscc-build"
     )
 
 

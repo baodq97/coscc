@@ -40,7 +40,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
 
-from cos_baodo.data import BUSY_TIMEOUT, Busy, Data, now as _now
+from coscc.data import BUSY_TIMEOUT, Busy, Data, now as _now
 
 VERSION = 1
 

@@ -1,5 +1,5 @@
 [project]
-name = "cos-baodo"
+name = "coscc"
 version = "0.0.1"
 description = "Web app that lists, creates and resumes Claude Code sessions across projects"
 # Every measurement this repository records is taken on the interpreter in
@@ -22,7 +22,7 @@ build-backend = "uv_build"
 # only layout Reflex documents (`spec.md` R1). uv's default is `src/`, so this line is
 # what reconciles the two.
 module-root = ""
-module-name = "cos_baodo"
+module-name = "coscc"
 
 [dependency-groups]
 dev = [
@@ -33,7 +33,7 @@ dev = [
 [project.scripts]
 # `spec.md` R2. The entry point also pins how the app is served: one ASGI app on one
 # loopback port with the compiled frontend mounted, not `reflex run` -- see run.py.
-cos-baodo = "cos_baodo.run:main"
+coscc = "coscc.run:main"
 # Building through here rather than calling `reflex export` directly is what leaves the
-# fingerprint that `run.py` and `scripts/verify_0003.py` check. See cos_baodo/build.py.
-cos-build = "cos_baodo.build:main"
+# fingerprint that `run.py` and `scripts/verify_0003.py` check. See coscc/build.py.
+coscc-build = "coscc.build:main"

@@ -147,7 +147,7 @@ wheels = [
 ]
 
 [[package]]
-name = "cos-baodo"
+name = "coscc"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [

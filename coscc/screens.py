@@ -24,8 +24,8 @@ from __future__ import annotations
 import reflex as rx
 from reflex.style import set_color_mode
 
-from cos_baodo import studio as s
-from cos_baodo.state import (
+from coscc import studio as s
+from coscc.state import (
     LANE_COLOR,
     NAVIGATION,
     Cell,

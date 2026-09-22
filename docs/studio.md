@@ -5,12 +5,12 @@ the running service.
 
 It began as `fragmented-product-experience`'s prototype — the same layout, spacing and words — and `0006` replaced
 the invented data underneath it with the real thing and deleted the page that came before.
-`cos_baodo/studio.py`, the presentation primitives, did not change in that swap, which is
+`coscc/studio.py`, the presentation primitives, did not change in that swap, which is
 the clearest statement of what `fragmented-product-experience` actually settled: the look.
 
 ```sh
-uv run cos-build                                   # compile the page
-COS_WORKING_DIR=~/projects uv run cos-baodo        # then http://127.0.0.1:8790
+uv run coscc-build                                   # compile the page
+COS_WORKING_DIR=~/projects uv run coscc        # then http://127.0.0.1:8790
 ```
 
 ## Where the data is
@@ -26,7 +26,7 @@ Backing up one does **not** back up the other. The Settings screen prints both f
 reason.
 
 Neither is settable over HTTP. The only reader of the environment in the app is
-`cos_baodo/config.from_env`, and there is no setter anywhere, so a request has no path to
+`coscc/config.from_env`, and there is no setter anywhere, so a request has no path to
 either value.
 
 `cos.db` holds the workspace list, the run log, and the handful of interface preferences

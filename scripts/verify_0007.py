@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from cos_baodo.data import Data
+from coscc.data import Data
 from scripts.proof_harness import EXIT_BROKEN, EXIT_ENV, EXIT_PASS, say
 
 REPO = Path(__file__).resolve().parent.parent
@@ -57,8 +57,8 @@ TEXT_SUFFIXES = {".py", ".mjs", ".js", ".md", ".toml", ".json", ".txt", ".cfg", 
 # Each row: the file that carries the citation, the path it cites, the line it cites, and a
 # string that must be on that line for the citation to still hold up what it holds up.
 CITATIONS = (
-    ("rxconfig.py", "cos_baodo/config.py", 66, "127.0.0.1"),
-    ("cos_baodo/journal_test.py", ".cos/0004_silent-concurrent-loss/plan.md", 115, "8 trên"),
+    ("rxconfig.py", "coscc/config.py", 66, "127.0.0.1"),
+    ("coscc/journal_test.py", ".cos/0004_silent-concurrent-loss/plan.md", 115, "8 trên"),
     ("scripts/verify_0005.py", "scripts/proof_harness.py", 36, "EXIT_PASS"),
 )
 
@@ -180,8 +180,8 @@ def claim_4() -> bool:
 
 
 def claim_5() -> bool:
-    hits = [f for f in files_containing("BREAKPOINTS") if f.startswith("cos_baodo/")]
-    return say(not hits, "no unread width constant in cos_baodo/", ", ".join(hits))
+    hits = [f for f in files_containing("BREAKPOINTS") if f.startswith("coscc/")]
+    return say(not hits, "no unread width constant in coscc/", ", ".join(hits))
 
 
 # --------------------------------------------------------------------------
@@ -190,7 +190,7 @@ def claim_5() -> bool:
 
 
 def imports_of(path: Path) -> set[str]:
-    """Every `cos_baodo` submodule this file imports, in any of the three spellings."""
+    """Every `coscc` submodule this file imports, in any of the three spellings."""
     found: set[str] = set()
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -199,25 +199,25 @@ def imports_of(path: Path) -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             module = node.module or ""
-            if module in ("cos_baodo", "") and node.level <= 1:
-                # `from cos_baodo import studio` and `from . import studio` — the submodule
-                # is a name, not the module path. cos_baodo/screens.py:27 is this shape, and
+            if module in ("coscc", "") and node.level <= 1:
+                # `from coscc import studio` and `from . import studio` — the submodule
+                # is a name, not the module path. coscc/screens.py:27 is this shape, and
                 # a checker that only reads node.module calls three live modules dead.
                 found.update(a.name for a in node.names)
-            if module.startswith("cos_baodo."):
+            if module.startswith("coscc."):
                 found.add(module.split(".")[1])
             elif node.level == 1 and module:
                 found.add(module.split(".")[0])
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 parts = alias.name.split(".")
-                if parts[0] == "cos_baodo" and len(parts) > 1:
+                if parts[0] == "coscc" and len(parts) > 1:
                     found.add(parts[1])
     return found
 
 
 def claim_6() -> bool:
-    package = REPO / "cos_baodo"
+    package = REPO / "coscc"
     modules = [
         p.stem
         for p in sorted(package.glob("*.py"))
@@ -238,12 +238,12 @@ def claim_6() -> bool:
             if module in imports_of(p):
                 others.append(p)
                 continue
-            # An entry point is reached by name, not by import: `cos-baodo =
-            # "cos_baodo.run:main"` in pyproject.toml, and `"cos_baodo.cos_baodo:app"` at
-            # cos_baodo/run.py:61. A checker that only reads imports calls both dead, and
+            # An entry point is reached by name, not by import: `coscc =
+            # "coscc.run:main"` in pyproject.toml, and `"coscc.coscc:app"` at
+            # coscc/run.py:61. A checker that only reads imports calls both dead, and
             # deleting either stops the app rather than removing dead code.
             try:
-                if f"cos_baodo.{module}" in p.read_text(encoding="utf-8"):
+                if f"coscc.{module}" in p.read_text(encoding="utf-8"):
                     others.append(p)
             except (UnicodeDecodeError, OSError):
                 pass
@@ -252,7 +252,7 @@ def claim_6() -> bool:
     return say(
         not orphans,
         "no module is imported only by its own test",
-        ", ".join(f"cos_baodo/{m}.py" for m in orphans),
+        ", ".join(f"coscc/{m}.py" for m in orphans),
     )
 
 

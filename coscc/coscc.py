@@ -6,9 +6,9 @@ one: the prototype's shape, on the real service. The old page's components and s
 gone rather than kept around, because two front ends are two things to fix every time and
 only one of them ever gets fixed (`spec.md` C3 records what that costs).
 
-What is left here is registration. The page is `cos_baodo/screens.py`, its state is
-`cos_baodo/state.py`, and the business logic is where it always was, in
-`cos_baodo/service.py`.
+What is left here is registration. The page is `coscc/screens.py`, its state is
+`coscc/state.py`, and the business logic is where it always was, in
+`coscc/service.py`.
 
 The FastAPI app mounted here is the *same object* `state.py` reads its service from. Two
 instances would mean two `Sessions` registries, and knob 4 ("resume only what this app
@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import reflex as rx
 
-from cos_baodo import screens, ui
-from cos_baodo.state import API
+from coscc import screens, ui
+from coscc.state import API
 
 # The theme lives in `rxconfig.py` through `RadixThemesPlugin`, because 0.9.11 deprecates
 # `App(theme=...)` and removes it at 1.0. The global style still belongs here.

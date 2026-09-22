@@ -17,8 +17,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from cos_baodo import gitops
-from cos_baodo.gitops import GitError, check_url, child_env
+from coscc import gitops
+from coscc.gitops import GitError, check_url, child_env
 
 
 class UrlsRefusedBeforeGitExists(unittest.TestCase):
@@ -95,7 +95,7 @@ class FailureIsReportedNotSwallowed(unittest.TestCase):
             with self.assertRaises(GitError) as e:
                 asyncio.run(
                     gitops.clone(
-                        "https://cos-baodo-nonexistent.invalid/x.git", dest, timeout=30
+                        "https://coscc-nonexistent.invalid/x.git", dest, timeout=30
                     )
                 )
             self.assertTrue(str(e.exception).strip())

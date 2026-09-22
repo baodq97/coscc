@@ -19,7 +19,7 @@ under the three-stage loop still read as finished, because `plan.md: done` is te
 had already been proved.
 
 There are no hooks, no CI and no scheduled jobs. It is driven by hand **except for two
-stages**: `impl` and `pr` can be set to `autonomous` on the board in `cos_baodo/`, and then
+stages**: `impl` and `pr` can be set to `autonomous` on the board in `coscc/`, and then
 the app runs them itself with a bounded grant. Everything else is a person starting a step.
 Nothing starts the next step when one finishes — the board gives you a place to press, not
 something that presses for you.
@@ -120,7 +120,7 @@ node --test '.claude/scripts/*.test.mjs'          # the script's own tests
 ```
 
 `--root` exists for one reason and it is a boundary, not a convenience. The board in
-`cos_baodo/` reads a workspace's `.cos/` by pointing **its own** copy of this script at that
+`coscc/` reads a workspace's `.cos/` by pointing **its own** copy of this script at that
 directory. It never executes the `cos.mjs` it finds there: a workspace is a repository
 somebody cloned from a URL they typed, so the copy inside it is someone else's code, and
 running it would hand that code everything the app process has.

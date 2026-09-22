@@ -13,8 +13,8 @@ from pathlib import Path
 
 import httpx
 
-from cos_baodo.api import build
-from cos_baodo.config import Config
+from coscc.api import build
+from coscc.config import Config
 
 REPO = Path(__file__).resolve().parent.parent
 STAGES = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]

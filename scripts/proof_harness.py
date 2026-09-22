@@ -24,7 +24,7 @@ from pathlib import Path
 
 import httpx
 
-from cos_baodo import build
+from coscc import build
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -95,9 +95,9 @@ def require_browser():
 
 
 class RealApp:
-    """The app started the way a person starts it, through `cos_baodo.run`.
+    """The app started the way a person starts it, through `coscc.run`.
 
-    Going through `cos_baodo.run` means this also exercises the build guard and the
+    Going through `coscc.run` means this also exercises the build guard and the
     loopback bind, rather than reaching past them into the ASGI object.
 
     `data_dir` defaults to `working_dir` so a proof run keeps its database in the same
@@ -119,7 +119,7 @@ class RealApp:
             "COS_WORKSPACES": "",
         }
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "cos_baodo.run"],
+            [sys.executable, "-m", "coscc.run"],
             cwd=REPO, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         )
         deadline = time.monotonic() + BOOT_TIMEOUT_S

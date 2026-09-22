@@ -1,4 +1,4 @@
-# cos-baodo
+# coscc
 
 Local AI-native SDLC harness, and the template for it.
 Reference: `.claude/harness.md`. Each stage's rules live in its own skill.
@@ -8,7 +8,7 @@ Reference: `.claude/harness.md`. Each stage's rules live in its own skill.
 ```
 npm test                                          # every test, both runtimes
 uv sync                                           # Python deps, after a fresh clone
-uv run cos-build                                  # build the page; see "Build step" below
+uv run coscc-build                                  # build the page; see "Build step" below
 node .claude/scripts/cos.mjs status               # where every unit stands
 node .claude/scripts/cos.mjs gate <unit> <stage>  # exit 0 = stage may proceed
 node .claude/scripts/cos.mjs new-path <slug>      # next work unit path
@@ -18,8 +18,8 @@ Tests must be green before any task is reported complete; never skip or delete a
 one. There is no linter; do not invent a command for one.
 
 **Build step.** There is one, since `0002`. The page is Reflex, which compiles to
-JavaScript. Build with `uv run cos-build`, not `reflex export` — the wrapper records a
-fingerprint of what it built from, and both `cos-baodo` and `scripts/verify_0003.py`
+JavaScript. Build with `uv run coscc-build`, not `reflex export` — the wrapper records a
+fingerprint of what it built from, and both `coscc` and `scripts/verify_0003.py`
 **refuse to run against a bundle that does not match the source**. Without that, editing
 the page and forgetting to rebuild leaves every check passing against the previous bundle.
 Nothing runs the build automatically: `npm test` does not, because `verify_0001` and
@@ -27,24 +27,24 @@ Nothing runs the build automatically: `npm test` does not, because `verify_0001`
 deliberate, and it is what keeps the test command free of a JavaScript toolchain.
 
 `npm test` covers both runtimes: `test:node` over `.claude/scripts/`, then
-`test:python` over `cos_baodo/`. Adding a Python test file under `cos_baodo/` named
+`test:python` over `coscc/`. Adding a Python test file under `coscc/` named
 `*_test.py` is enough to be picked up. This is what keeps "tests must be green" meaning
 something now that the repository has two languages in it — verified once, on 2026-09-21,
 by making a Python test fail and watching `npm test` go red.
 
-The `cos_baodo/` web app serves **one page** at `/`: six screens — Overview, Workspaces,
+The `coscc/` web app serves **one page** at `/`: six screens — Overview, Workspaces,
 Board, Sessions, Activity & usage, Settings — built from Reflex Python components
-(`cos_baodo/screens.py`), with all of their state in `cos_baodo/state.py` and all of their
-logic behind `cos_baodo/service.py`. It lists, creates and resumes Claude Code sessions
+(`coscc/screens.py`), with all of their state in `coscc/state.py` and all of their
+logic behind `coscc/service.py`. It lists, creates and resumes Claude Code sessions
 across projects (`0001`), manages the workspaces themselves (`0002`), and shows each
 workspace's work units as a board whose steps it can run (`0005`). `0006` replaced both the
 page `0001`-`0005` built and `fragmented-product-experience`'s `/prototype` with this one; a handler that decides
 anything is a bug in `service.py`, not in the page.
 
 It binds loopback only, and its sessions are **chat only — no tools** by default;
-`cos_baodo/config.py` is the single place that reads configuration, and the defaults there
+`coscc/config.py` is the single place that reads configuration, and the defaults there
 are a safety posture rather than a suggestion. The one exception is a board step set to
-`autonomous`, which gets a named, bounded grant from `cos_baodo/policy.py` — never from the
+`autonomous`, which gets a named, bounded grant from `coscc/policy.py` — never from the
 config. Each session it creates spends account quota, so nothing that talks to it belongs
 in an unattended loop.
 
@@ -58,7 +58,7 @@ read, and after `0006` the table has no column for one — which is why a hand-e
 cannot point the app at `/etc`. Leave `COS_WORKING_DIR` unset and the app behaves exactly
 as `0001` did, except that it now has somewhere to remember things.
 
-**Storage (`0006`).** `cos_baodo/data.py` owns the data directory, the connection and the
+**Storage (`0006`).** `coscc/data.py` owns the data directory, the connection and the
 schema; it is the only module that knows where anything is. Three settings there are load
 bearing and none is a default: WAL, a 10-second `busy_timeout` **issued as the first
 statement on every connection**, and `BEGIN IMMEDIATE` around every read-modify-write.
@@ -72,8 +72,8 @@ looked for was named after the author and a filename already on disk cannot be r
 two are a pair everywhere else, so the asymmetry is deliberate rather than an oversight.
 
 ```
-uv run cos-build                                          # build the page first
-COS_WORKING_DIR=~/projects uv run cos-baodo               # then http://127.0.0.1:8790
+uv run coscc-build                                          # build the page first
+COS_WORKING_DIR=~/projects uv run coscc               # then http://127.0.0.1:8790
 uv run python scripts/verify_0001.py                      # proof for 0001; creates real sessions
 uv run python scripts/verify_0002.py                      # proof for 0002; clones, creates sessions
 uv run python scripts/verify_0003.py                      # proof for 0003; needs a browser and a free port
@@ -106,24 +106,24 @@ sends **one** short prompt and never presses the run button.
 **The board (`0005`).** Every work unit of the open workspace as eight cells, and it can
 run a step. Three modules carry it, and the split is the point:
 
-- `cos_baodo/board.py` reads a workspace's `.cos/` by running **this repository's**
+- `coscc/board.py` reads a workspace's `.cos/` by running **this repository's**
   `.claude/scripts/cos.mjs` with `--root`. It never runs the `cos.mjs` inside the
   workspace — that file belongs to a repository somebody cloned. Same reasoning applies to
-  the stage rules: `cos_baodo/runner.py` builds its prompts from **this** repository's
+  the stage rules: `coscc/runner.py` builds its prompts from **this** repository's
   `.claude/skills/`, never the workspace's.
-- `cos_baodo/policy.py` is the grant table: what a step may do, keyed by `(stage, mode)`.
+- `coscc/policy.py` is the grant table: what a step may do, keyed by `(stage, mode)`.
   It is deliberately **outside `Config`**, so the four knobs keep meaning what they meant.
   The default is the locked position: no tools, no commands, one turn, no budget. Only
   `("impl", "autonomous")` and `("pr", "autonomous")` carry anything, and `pr` carries a
   warning string that the page shows before the button is pressed, because its capability
   comes from this machine's own `gh` login and reaches every repository that login reaches.
-- `cos_baodo/journal.py` is the run log — modes, starts, finishes, denials and cost. Since
+- `coscc/journal.py` is the run log — modes, starts, finishes, denials and cost. Since
   `0006` it is rows in `cos.db` rather than a JSONL file.
 
 The board's four lanes do **not** use the harness's `blocked` flag. Measured on 2026-09-22:
 `cos.mjs` returns `blocked: true` for every unit that is not finished
 (`.claude/scripts/cos.mjs:122-135`), so mapping it onto a lane called *Needs review* puts
-every unfinished unit there and leaves the other lanes empty. `cos_baodo/state.py` reads
+every unfinished unit there and leaves the other lanes empty. `coscc/state.py` reads
 the lanes off the artifact statuses instead.
 
 The six prose stages get **no tools in either mode**. A session with no tools cannot write
@@ -141,12 +141,12 @@ and 7 still run without it. It spends real quota — eight sessions, one with a 
 **The build bakes in the port.** The compiled page hardcodes the address it opens its
 `/_event` WebSocket against, so a build made for one port serves a page that renders and
 then shows "Connection Error" with a perfectly healthy API behind it. Build and run with
-the same `COS_HOST`/`COS_PORT`; `cos-baodo` refuses to start if they disagree. This was
+the same `COS_HOST`/`COS_PORT`; `coscc` refuses to start if they disagree. This was
 found on 2026-09-21 by driving the page with a browser — no HTTP-level check could see it.
 
-**Start it with `cos-baodo`, not `reflex run`.** Reflex's dev mode serves the page from a
+**Start it with `coscc`, not `reflex run`.** Reflex's dev mode serves the page from a
 vite server that binds every interface, and 0.9.11 has no setting for its host — measured
-on 2026-09-21, `ss -ltn` showed `*:3000`. `cos-baodo` mounts the compiled frontend into the
+on 2026-09-21, `ss -ltn` showed `*:3000`. `coscc` mounts the compiled frontend into the
 same ASGI app as the API and binds one loopback port, so there is one socket to check.
 
 ## The loop

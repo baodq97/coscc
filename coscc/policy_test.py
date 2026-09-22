@@ -12,8 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cos_baodo import policy
-from cos_baodo.policy import Grant, check_command, decide, grant_for
+from coscc import policy
+from coscc.policy import Grant, check_command, decide, grant_for
 
 IMPL = grant_for("impl", "autonomous")
 

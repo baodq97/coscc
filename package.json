@@ -1,11 +1,11 @@
 {
-  "name": "cos-baodo",
+  "name": "coscc",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "npm run test:node && npm run test:python",
     "test:node": "node --test '.claude/scripts/*.test.mjs'",
-    "test:python": "uv run python -m unittest discover -s cos_baodo -p '*_test.py' -t ."
+    "test:python": "uv run python -m unittest discover -s coscc -p '*_test.py' -t ."
   }
 }

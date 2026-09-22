@@ -30,9 +30,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
-from cos_baodo.config import from_env
-from cos_baodo.service import Service
-from cos_baodo.sessions import Sessions
+from coscc.config import from_env
+from coscc.service import Service
+from coscc.sessions import Sessions
 from scripts.proof_harness import (
     EXIT_ENV,
     EXIT_PASS,

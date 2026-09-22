@@ -16,8 +16,8 @@ import unittest
 from dataclasses import dataclass, field
 from typing import Any
 
-from cos_baodo import sessions
-from cos_baodo.journal import Journal
+from coscc import sessions
+from coscc.journal import Journal
 
 
 @dataclass

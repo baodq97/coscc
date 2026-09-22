@@ -13,7 +13,7 @@ truth for anything said.
 
 **Where it lives, and why that changed.** This was once a JSON file inside the
 working folder, replaced by `rename` on every write, with a `flock` beside it. It is now
-rows in the app's own SQLite database under the data root (`cos_baodo/data.py`), because
+rows in the app's own SQLite database under the data root (`coscc/data.py`), because
 `intent.md` asked for one durable place that exists whether or not a working folder
 does. One row per `(root, name)`, so one database serves every working folder on the
 machine and a workspace still cannot be named outside its own root.
@@ -36,11 +36,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from cos_baodo.data import BUSY_TIMEOUT, Busy, Data, now
+from coscc.data import BUSY_TIMEOUT, Busy, Data, now
 
 # Kept as the name callers already pass to `transaction(timeout=...)` and patch in tests.
 # The value is the same 10 seconds the file lock waited, now enforced by SQLite's
-# `busy_timeout` (`cos_baodo/data.py`).
+# `busy_timeout` (`coscc/data.py`).
 LOCK_TIMEOUT = BUSY_TIMEOUT
 
 # One path segment. No separators, no `.`/`..`, bounded length. `spec.md` R12 lists

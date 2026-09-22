@@ -22,14 +22,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from cos_baodo import board as board_reader
-from cos_baodo import gitops
-from cos_baodo import sessions as reader
-from cos_baodo.board import Unavailable
-from cos_baodo.config import Config
-from cos_baodo.data import Data
-from cos_baodo.gitops import GitError
-from cos_baodo.journal import (
+from coscc import board as board_reader
+from coscc import gitops
+from coscc import sessions as reader
+from coscc.board import Unavailable
+from coscc.config import Config
+from coscc.data import Data
+from coscc.gitops import GitError
+from coscc.journal import (
     COST_FIELDS,
     COST_USD,
     BadRecord,
@@ -39,10 +39,10 @@ from cos_baodo.journal import (
     totals_of,
     zero_cost,
 )
-from cos_baodo.policy import GRANTS, PROSE_STAGES, grant_for
-from cos_baodo.runner import RunError, Runner, unit_dir
-from cos_baodo.sessions import Sessions
-from cos_baodo.store import BadName, Store, require_name
+from coscc.policy import GRANTS, PROSE_STAGES, grant_for
+from coscc.runner import RunError, Runner, unit_dir
+from coscc.sessions import Sessions
+from coscc.store import BadName, Store, require_name
 
 # The eight stage names, in stage order. Taken from the stage list the board reports rather
 # than written again here would be better; the board read is async and this method is not,

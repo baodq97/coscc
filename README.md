@@ -1,4 +1,4 @@
-# cos-baodo
+# coscc
 
 A local AI-native SDLC harness: a unit of work moves through eight stages — `idea.md`,
 `intent.md`, `spec.md`, `plan.md`, `impl.md`, `pr.md`, `review.md`, `ship.md` — each
@@ -33,8 +33,8 @@ screens — Overview, Workspaces, Board with a work-unit drawer, Sessions, Activ
 Settings — all reading the running service.
 
 ```sh
-uv run cos-build                                   # compile the page
-COS_WORKING_DIR=~/projects uv run cos-baodo        # then http://127.0.0.1:8790
+uv run coscc-build                                   # compile the page
+COS_WORKING_DIR=~/projects uv run coscc        # then http://127.0.0.1:8790
 ```
 
 It binds loopback only, and its chat sessions have **no tools** by default. The app keeps
@@ -47,7 +47,7 @@ Two controls spend real account quota and both say so before they are used: send
 message, and running a step of the loop. See [the page guide](docs/studio.md).
 
 Build and serve with the same `COS_HOST`/`COS_PORT` if changing the default address —
-`cos-baodo` refuses to start if the build it finds was made for a different one.
+`coscc` refuses to start if the build it finds was made for a different one.
 
 ```sh
 uv run python scripts/verify_0003.py   # the page renders, and the check can fail

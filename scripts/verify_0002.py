@@ -26,11 +26,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
-from cos_baodo.api import build
-from cos_baodo.config import from_env
-from cos_baodo.service import Invalid, Service
-from cos_baodo.sessions import Sessions
-from cos_baodo.store import Store
+from coscc.api import build
+from coscc.config import from_env
+from coscc.service import Invalid, Service
+from coscc.sessions import Sessions
+from coscc.store import Store
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -72,12 +72,12 @@ def claim_1() -> Claim:
     c = Claim(1, "no hand-written HTML or CSS serves the app page")
     found = sorted(
         str(p.relative_to(REPO))
-        for p in list(REPO.glob("cos_baodo/**/*.html")) + list(REPO.glob("cos_baodo/**/*.css"))
+        for p in list(REPO.glob("coscc/**/*.html")) + list(REPO.glob("coscc/**/*.css"))
     )
-    c.check("no markup under cos_baodo/", not found, ", ".join(found))
+    c.check("no markup under coscc/", not found, ", ".join(found))
     c.check(
         "the superseded page is gone",
-        not (REPO / "cos_baodo" / "public" / "index.html").exists(),
+        not (REPO / "coscc" / "public" / "index.html").exists(),
     )
     return c
 

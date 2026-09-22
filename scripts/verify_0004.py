@@ -28,10 +28,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from cos_baodo.config import from_env
-from cos_baodo.service import Invalid, Service
-from cos_baodo.sessions import Sessions
-from cos_baodo.store import Store
+from coscc.config import from_env
+from coscc.service import Invalid, Service
+from coscc.sessions import Sessions
+from coscc.store import Store
 
 REPO = Path(__file__).resolve().parent.parent
 

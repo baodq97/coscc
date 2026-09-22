@@ -8,7 +8,7 @@ rather than re-reading the Markdown.
 **Which copy it runs is the security decision here.** A workspace is a repository cloned
 from a URL somebody typed, so `<workspace>/.claude/scripts/cos.mjs` is a file that
 repository controls. Executing it would hand a cloned repo everything this process has,
-which is past every knob in `cos_baodo/config.py`. This module therefore runs **the copy
+which is past every knob in `coscc/config.py`. This module therefore runs **the copy
 that ships with the app**, pointed at the workspace's `.cos/` with `--root`. The cost is
 real and worth naming: a workspace that uses a different version of the harness is read
 with this app's stage list, not its own.
@@ -26,7 +26,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-# The app's own copy. `cos_baodo/` sits beside `.claude/` in the flat layout this repo uses
+# The app's own copy. `coscc/` sits beside `.claude/` in the flat layout this repo uses
 # (`pyproject.toml`, `module-root = ""`), so the repository root is one level up.
 SCRIPT = Path(__file__).resolve().parent.parent / ".claude" / "scripts" / "cos.mjs"
 

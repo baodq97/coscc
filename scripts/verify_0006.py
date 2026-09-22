@@ -34,9 +34,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from cos_baodo.config import from_env
-from cos_baodo.data import Data
-from cos_baodo.store import Store
+from coscc.config import from_env
+from coscc.data import Data
+from coscc.store import Store
 from scripts.proof_harness import (
     EXIT_BROKEN,
     EXIT_PASS,

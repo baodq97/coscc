@@ -25,9 +25,9 @@ from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
-from cos_baodo.journal import Journal
-from cos_baodo.policy import Grant, decide, grant_for, is_prose_stage
-from cos_baodo.sessions import Refused, Sessions
+from coscc.journal import Journal
+from coscc.policy import Grant, decide, grant_for, is_prose_stage
+from coscc.sessions import Refused, Sessions
 
 # Where a unit lives, and what may be a unit name. Same shape `cos.mjs` enforces; matched
 # here because this module builds a path out of it and a path built from unlaundered text
@@ -35,7 +35,7 @@ from cos_baodo.sessions import Refused, Sessions
 UNIT_RE = re.compile(r"^\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*$")
 COS_DIR = ".cos"
 
-# The app's own skills directory. `cos_baodo/` sits beside `.claude/` in the flat layout.
+# The app's own skills directory. `coscc/` sits beside `.claude/` in the flat layout.
 SKILLS = Path(__file__).resolve().parent.parent / ".claude" / "skills"
 
 # An artifact has to carry one of these on its first line, or the gate cannot read it and

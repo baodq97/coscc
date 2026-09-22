@@ -18,7 +18,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from cos_baodo.data import SCHEMA_VERSION, Busy, Data, Incompatible
+from coscc.data import SCHEMA_VERSION, Busy, Data, Incompatible
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -104,7 +104,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             child = (
                 "import sys; sys.path.insert(0, %r);"
-                "from cos_baodo.data import Data;"
+                "from coscc.data import Data;"
                 "d = Data(sys.argv[1]);"
                 "d.set_pref(sys.argv[2], 1)" % str(REPO)
             )

@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cos_baodo.journal import BadRecord, Busy, Journal
+from coscc.journal import BadRecord, Busy, Journal
 
 WRITERS = 4
 PER_WRITER = 5
@@ -167,7 +167,7 @@ class TotalsAreAddedNotStored(unittest.TestCase):
 
 WRITER = """
 import sys
-from cos_baodo.journal import Journal
+from coscc.journal import Journal
 j = Journal(sys.argv[1], sys.argv[1])
 tag = sys.argv[2]
 for i in range({per_writer}):

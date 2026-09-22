@@ -24,7 +24,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from cos_baodo.store import BadName, Busy, Store, clean_label, require_name, valid_name
+from coscc.store import BadName, Busy, Store, clean_label, require_name, valid_name
 
 
 class NamesThatMayNotBecomePaths(unittest.TestCase):
@@ -233,7 +233,7 @@ class TheTransactionIsAcrossProcesses(unittest.TestCase):
         """`spec.md` R10. The deadline turns a hang into something sayable."""
         store = Store(self.root, self.root)
         self._holder(store)
-        with mock.patch("cos_baodo.store.LOCK_TIMEOUT", 0.5):
+        with mock.patch("coscc.store.LOCK_TIMEOUT", 0.5):
             began = time.monotonic()
             with self.assertRaises(Busy) as caught:
                 store.add("second")
@@ -256,7 +256,7 @@ class TheTransactionIsAcrossProcesses(unittest.TestCase):
         child = self._holder(store)
         child.kill()
         child.wait()
-        with mock.patch("cos_baodo.store.LOCK_TIMEOUT", 5.0):
+        with mock.patch("coscc.store.LOCK_TIMEOUT", 5.0):
             store.add("after")
         self.assertEqual([e.name for e in store.entries()], ["after"])
 
@@ -276,7 +276,7 @@ class TheTransactionIsAcrossProcesses(unittest.TestCase):
         with self.assertRaises(ValueError):
             with store.transaction():
                 raise ValueError("boom")
-        with mock.patch("cos_baodo.store.LOCK_TIMEOUT", 5.0):
+        with mock.patch("coscc.store.LOCK_TIMEOUT", 5.0):
             store.add("b")  # would sit on the deadline if the transaction had leaked
         self.assertEqual({e.name for e in store.entries()}, {"a", "b"})
 

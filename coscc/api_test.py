@@ -14,8 +14,8 @@ from unittest import mock
 import claude_agent_sdk as sdk
 import httpx
 
-from cos_baodo.api import build
-from cos_baodo.config import Config
+from coscc.api import build
+from coscc.config import Config
 
 
 def _info(session_id="s1", cwd="/tmp"):
@@ -235,7 +235,7 @@ class NoHandWrittenMarkup(unittest.TestCase):
         repo = Path(__file__).resolve().parent.parent
         found = [
             p.relative_to(repo)
-            for p in list(repo.glob("cos_baodo/**/*.html")) + list(repo.glob("cos_baodo/**/*.css"))
+            for p in list(repo.glob("coscc/**/*.html")) + list(repo.glob("coscc/**/*.css"))
         ]
         self.assertEqual(found, [], f"hand-written markup is back: {found}")
 
@@ -243,7 +243,7 @@ class NoHandWrittenMarkup(unittest.TestCase):
 class Loopback(unittest.TestCase):
     def test_the_default_bind_is_loopback(self):
         # R5. Asserted here as well as in config_test because this is where it is used.
-        from cos_baodo.config import from_env
+        from coscc.config import from_env
         self.assertEqual(from_env({}).host, "127.0.0.1")
 
 

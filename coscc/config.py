@@ -2,7 +2,7 @@
 
 `spec.md` C8 argues for a central config store later and against building it now: four
 knobs do not justify a schema. What this module buys is that changing the source later is
-one edit here, not a search through the app. Nothing else in `cos_baodo/` may read the
+one edit here, not a search through the app. Nothing else in `coscc/` may read the
 environment.
 
 The defaults are the safe posture from `spec.md` C2, not suggestions. Each is off because
@@ -58,7 +58,7 @@ class Config:
     # the store is off and the app behaves as it did before there was one.
     working_dir: str | None = None
     # Where the app keeps its *own* state -- the SQLite database and the object
-    # folder. Unset means `~/.cos` (`cos_baodo/data.py`). It is a separate setting from
+    # folder. Unset means `~/.cos` (`coscc/data.py`). It is a separate setting from
     # `working_dir` on purpose: `spec.md` R4 keeps workspaces out of it, so backing one up
     # is not backing up the other, and `spec.md` C1 says that out loud because it is the
     # kind of thing that loses somebody a directory.

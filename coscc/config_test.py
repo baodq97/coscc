@@ -9,8 +9,8 @@ import dataclasses
 import unittest
 from pathlib import Path
 
-from cos_baodo.config import Config, from_env
-from cos_baodo.data import Data
+from coscc.config import Config, from_env
+from coscc.data import Data
 
 
 class DefaultsAreTheSafePosture(unittest.TestCase):
@@ -65,7 +65,7 @@ class Knob3IsReachableOnlyFromTheEnvironment(unittest.TestCase):
         only its own test kept it alive. The store now owns changing the workspace list,
         and a second way to do it would be a second thing to reason about.
         """
-        import cos_baodo.config as config
+        import coscc.config as config
 
         self.assertFalse([n for n in dir(config) if n.startswith("with_")])
 

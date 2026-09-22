@@ -1,7 +1,7 @@
 """What a step is allowed to do, keyed on the stage and the mode it runs in.
 
 This is not a fifth knob. `Config` keeps meaning one thing — the app's default, which
-`cos_baodo/config.py:44` states as *chat only, no tools at all* — and this table says what
+`coscc/config.py:44` states as *chat only, no tools at all* — and this table says what
 a **board step** may do instead. This table exists because that sentence in `config.py` was not
 true; making `Config` answer for two different things as well is how it would stop being
 true again.

@@ -22,9 +22,9 @@ import dataclasses
 
 import reflex as rx
 
-from cos_baodo.api import build
-from cos_baodo.journal import COST_USD, TOKEN_FIELDS
-from cos_baodo.service import Invalid
+from coscc.api import build
+from coscc.journal import COST_USD, TOKEN_FIELDS
+from coscc.service import Invalid
 
 API = build()
 SERVICE = API.state.service

@@ -24,8 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
-from cos_baodo.api import build
-from cos_baodo.config import Config
+from coscc.api import build
+from coscc.config import Config
 
 PROJECTS = 2  # from intent.md. Change it there, not here.
 

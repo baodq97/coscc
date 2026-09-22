@@ -15,9 +15,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from cos_baodo.config import Config
-from cos_baodo.service import Invalid, Service
-from cos_baodo.sessions import Live, Sessions
+from coscc.config import Config
+from coscc.service import Invalid, Service
+from coscc.sessions import Live, Sessions
 
 REPO = str(Path(__file__).resolve().parent.parent)
 
