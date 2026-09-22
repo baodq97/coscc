@@ -78,7 +78,7 @@ Xếp theo bán kính. Mục 1 là mục muốn không phải viết ra.
    nó phải chạy **đỏ trước** để chứng minh guard biết bắt.
 5. **Đường đọc mới đọc được từ mạng.** `spec.md` C6. Không có gì trong unit này làm hẹp lại;
    nó chỉ không được làm rộng hơn mức một route đọc lịch sử unit cần.
-6. **`npm test` chạy trên `~/.cos` thật nếu quên truyền `Data`.** `coscc/journal.py:110-111`
+6. **`npm test` chạy trên `~/.cos` thật nếu quên truyền `Data`.** `coscc/journal.py:108-109`
    ghi sẵn cảnh báo đó cho `Journal` và `Store`; bảng mới thừa hưởng nguyên rủi ro.
 
 ## Proof
