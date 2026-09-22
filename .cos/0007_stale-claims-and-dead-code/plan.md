@@ -249,7 +249,16 @@ Ghi khi chúng xảy ra, theo `write-plan` invariant 8. `impl.md` gom lại.
    dòng mà Reflex tự ghi — và bỏ `.web/` của ta. Đo bằng md5 trước và sau một lần
    `cos-build`: không đổi. Đây là loại trôi mà `intent.md` mục 13 nêu, chỉ khác là nguồn của
    nó là một công cụ chứ một người.
-5. **Citation trôi thứ tư, không sửa.** `.cos/0005_hand-driven-invisible-loop/spec.md:291`
+5. **`plan.md` giữ `accepted`, không chuyển `done`.** Dòng ở `## Order of work` nói chuyển
+   `done` sau `write-impl`. Không làm: `done` ở `plan.md` là terminal trong `cos.mjs`, nên nó
+   làm `cos-status` báo unit **finished** trong khi unit này dừng ở `impl` vì repo không có
+   remote. `write-impl` invariant 6 nói `done` chỉ đặt khi unit đã ship. Báo một unit chưa
+   ship là đã xong đúng là loại câu không đúng mà unit này đi dọn, nên `0007` để `accepted`
+   giống `0005` và `0006`.
+6. **Một phép kiểm phải đổi hình để không tự thêm noise.** Trên 3.14, event loop của
+   `IsolatedAsyncioTestCase` chạy ở debug mode và in một dòng slow-callback cho phép kiểm
+   lifespan. App được dựng ở `setUp` thay vì trong coroutine.
+7. **Citation trôi thứ tư, không sửa.** `.cos/0005_hand-driven-invisible-loop/spec.md:291`
    trỏ `cos_baodo/store.py:16-18` — cùng đích cũ như mục 4 của `intent.md`, và dòng đó giờ tả
    row SQLite. Nó là hiện thân cụ thể của "mục thứ mười bốn" mà `intent.md` OQ2 đoán trước.
    Tác giả chọn ghi lại chứ không chạm artifact accepted thứ hai.
