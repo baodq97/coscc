@@ -192,6 +192,31 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.get("/api/unit-history")
+    async def get_unit_history(request: Request) -> Any:
+        """`0013` R8. Every transition of one unit, and the projection over them.
+
+        Read-only, like every other GET here. `spec.md` C6 names what it widens: this app
+        has no authentication on any route and binds `0.0.0.0` by default, so one more
+        readable route is one more thing readable from the network. Not a new hole — the
+        same one, a little larger — and `0011` chose that posture on purpose.
+        """
+        try:
+            return service.unit_history(
+                request.query_params.get("cwd", ""),
+                request.query_params.get("unit", ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/units-with-history")
+    async def get_units_with_history(request: Request) -> Any:
+        """Every unit the log knows, including ones no longer in the working tree."""
+        try:
+            return service.units_with_history(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.get("/api/sessions")
     async def get_sessions(request: Request) -> Any:
         """R1. Sessions of one project, and only that project."""
