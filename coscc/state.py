@@ -145,6 +145,10 @@ class Run:
     tokens: str = ""
     usd: str = ""
     color: str = "gray"
+    # Why it ended this way, empty when it ended well. A run that says `failed` and nothing
+    # else sends the only person who can fix it to the database -- and for a prose stage
+    # this is where the reply it was paid for comes back (`coscc/runner.py`, `_with_reply`).
+    detail: str = ""
 
 
 @dataclasses.dataclass
@@ -679,6 +683,7 @@ class StudioState(rx.State):
                 tokens=_tokens(r.get("cost") or {})[1],
                 usd=_usd(r.get("cost") or {}),
                 color="grass" if r.get("outcome") == "done" else "amber",
+                detail=r.get("detail") or "",
             )
             for r in data["runs"]
         ]
