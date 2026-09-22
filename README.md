@@ -30,8 +30,8 @@ nothing lands in that repository's own tree.
 
 **COS Studio** is a local design preview built with actual Reflex Python components:
 
-**Current status: unverified implementation draft.** Build/test execution was blocked by
-the session's command permissions. A running preview has not yet been verified.
+**Current status: locally verified interactive prototype.** Design approval and backend
+integration are still pending; this is not a shipped product.
 
 ```sh
 uv run cos-build

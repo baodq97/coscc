@@ -57,8 +57,8 @@ def heading(title, description, *actions) -> rx.Component:
             spacing="2", min_width="0",
         ),
         rx.spacer(),
-        rx.flex(*actions, gap="2", align="center", wrap="wrap"),
-        width="100%", gap="4", align="center", wrap="wrap",
+        rx.flex(*actions, gap="8px", align="center", wrap="wrap"),
+        width="100%", gap="16px", align="center", wrap="wrap",
     )
 
 

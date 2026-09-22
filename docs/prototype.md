@@ -4,9 +4,10 @@ Open `/prototype` after `uv run cos-build` and `uv run cos-baodo`. This is a des
 prototype, not a replacement for the existing app at `/`, and not a shipped backend
 integration. The user has not yet approved the design.
 
-**Implementation status:** source and checks are drafted, but command permissions blocked
-the build and Python tests before execution. The browser proof and preview server have
-not been run. The interactions below describe the implemented design, not verified results.
+**Implementation status:** built and verified locally on 2026-09-22, including the five
+demo flows in Chromium, light/dark, responsive layout and the original application's
+browser checks. The initial execution-permission blocker was resolved when the user
+requested build and run. This does not constitute design approval or permission to ship.
 
 ## Product direction
 
@@ -64,8 +65,9 @@ uv run python scripts/verify_0009.py
 
 The browser proof starts the regular loopback app against a temporary working root, then
 checks the five agreed flows, six screens, preview states, light/dark, and document
-overflow at 390, 768 and 1440 CSS pixels. It checks that the prototype sends no business
-API requests. Use `--screenshots /absolute/output/directory` for visual evidence.
+overflow at 390, 768, 1024 and 1440 CSS pixels. It also verifies board/summary column counts
+and gutters, and checks that the prototype sends no business API requests.
+Use `--screenshots /absolute/output/directory` for visual evidence.
 
 Exit 0 means checks passed; a broken interaction fails with exit 1; missing build/browser
 or an occupied app port is exit 2. The proof never starts real AI sessions. Appearance

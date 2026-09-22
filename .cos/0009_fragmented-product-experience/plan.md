@@ -73,3 +73,17 @@ Khác với thứ tự dự kiến, code được lưu ở trạng thái chưa x
 test, browser proof, chụp ảnh hoặc mở server preview. Không đánh dấu plan done,
 không tuyên bố outcome đạt. Quan sát skill đã được ghi riêng ở unit 0010; không
 thay đổi skill/gate/runner.
+
+Người dùng sau đó yêu cầu "build và run đi", vẫn ngày 2026-09-22. Quyền chạy đã có:
+build phát hiện annotation của segmented control không khớp signature của Reflex
+đang cài; sửa handler nhận `str | list[str]`, từ chối multi-select bằng thông báo.
+Thêm test dựng component tree để bắt lỗi này mà không cần chạy build frontend.
+
+Ảnh trình duyệt cho thấy gutter không có hiệu lực và board desktop chưa thành bốn
+cột. Sửa CSS gap có đơn vị, dùng breakpoint `lg` tương ứng 1280px cho desktop, và
+đặt icon/label của bộ chuyển view trên cùng hàng. Browser proof thêm kiểm số cột,
+gutter tối thiểu 12px và bề rộng 1024px bên cạnh ba kích thước đã có.
+
+`npm test`, build, proof prototype và proof trang gốc đều đã chạy xanh. Đã chụp/xem
+ảnh và mở server preview loopback; blocker thực thi đã giải quyết. Plan vẫn accepted,
+không done: người dùng chưa duyệt thiết kế và chưa cho phép ship.

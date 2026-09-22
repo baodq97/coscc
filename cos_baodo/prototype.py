@@ -192,15 +192,15 @@ class PrototypeState(rx.State):
         self.query = value
 
     @rx.event
-    def filter_work(self, value: str):
-        if value not in ("All work", "Autonomous", "Needs review"):
+    def filter_work(self, value: str | list[str]):
+        if not isinstance(value, str) or value not in ("All work", "Autonomous", "Needs review"):
             self.notice = "Unknown work filter."
             return
         self.focus = value
 
     @rx.event
-    def set_board_view(self, value: str):
-        if value in ("Board", "List"):
+    def set_board_view(self, value: str | list[str]):
+        if isinstance(value, str) and value in ("Board", "List"):
             self.board_view = value
         else:
             self.notice = "Unknown board view."
@@ -355,8 +355,8 @@ class PrototypeState(rx.State):
             self.notice = "Unknown detail tab."
 
     @rx.event
-    def set_mode(self, value: str):
-        if value not in ("manual", "autonomous"):
+    def set_mode(self, value: str | list[str]):
+        if not isinstance(value, str) or value not in ("manual", "autonomous"):
             self.notice = "Choose manual or autonomous for this simulation."
             return
         if not self.unit_id:
@@ -567,7 +567,7 @@ def _topbar() -> rx.Component:
                   color_scheme="gray", aria_label="Search the studio",
                   display=rx.breakpoints(initial="none", md="flex")),
         s.badge("PROTOTYPE", "iris"),
-        align="center", gap="3", width="100%", min_height="68px",
+        align="center", gap="12px", width="100%", min_height="68px",
         padding=rx.breakpoints(initial="12px 18px", md="12px 32px"),
         border_bottom=f"1px solid {s.LINE}", background=s.CANVAS,
     )
@@ -593,7 +593,7 @@ def _preview_bar() -> rx.Component:
             ),
             spacing="2", align="center",
         ),
-        width="100%", align="center", wrap="wrap", gap="2",
+        width="100%", align="center", wrap="wrap", gap="8px",
         padding="12px 0 22px",
     )
 
@@ -605,7 +605,8 @@ def _metrics() -> rx.Component:
                "circle-dot", "amber"),
         s.stat("Example tokens", P.token_total, "Illustrative usage, not live billing", "sparkles", "blue"),
         s.stat("Example cost", P.cost_total, "Sum of the sample work items", "wallet", "grass"),
-        columns=rx.breakpoints(initial="2", xl="4"), gap="3", width="100%",
+        columns=rx.breakpoints(initial="2", lg="4"), gap="12px", width="100%",
+        id="workspace-metrics",
     )
 
 
@@ -638,7 +639,7 @@ def _empty() -> rx.Component:
                           on_click=P.toggle_new_work(True), disabled=P.workspace_id == ""),
                 rx.button("Manage workspaces", on_click=P.navigate("workspaces"),
                           variant="soft", color_scheme="gray"),
-                gap="3", justify="center", wrap="wrap", margin_top="12px",
+                gap="12px", justify="center", wrap="wrap", margin_top="12px",
             ),
             rx.cond(P.scenario != "populated",
                     rx.button("Back to populated preview", id="restore-preview",
@@ -694,7 +695,7 @@ def _overview() -> rx.Component:
                           on_click=P.navigate("sessions"), variant="ghost"),
                 padding=rx.breakpoints(initial="22px", md="28px"),
             ),
-            columns=rx.breakpoints(initial="1", xl="2"), gap="4", width="100%",
+            columns=rx.breakpoints(initial="1", lg="2"), gap="16px", width="100%",
         ),
         rx.grid(
             s.panel(
@@ -717,7 +718,7 @@ def _overview() -> rx.Component:
                     width="100%", height="auto", padding="13px 4px", justify_content="flex-start",
                 )),
             ),
-            columns=rx.breakpoints(initial="1", xl="2"), gap="4", width="100%",
+            columns=rx.breakpoints(initial="1", lg="2"), gap="16px", width="100%",
         ),
         spacing="5", width="100%", align="start",
     )
@@ -762,7 +763,7 @@ def _workspaces() -> rx.Component:
         rx.cond(
             P.filtered_workspaces.length() > 0,
             rx.grid(rx.foreach(P.filtered_workspaces, _workspace_card),
-                    columns=rx.breakpoints(initial="1", md="2", xl="3"), gap="4", width="100%"),
+                    columns=rx.breakpoints(initial="1", sm="2", lg="3"), gap="16px", width="100%"),
             s.panel(rx.heading("No workspaces found", size="4"),
                     s.text("Try a different search, or create your first demo workspace.", margin_top="8px")),
         ),
@@ -838,11 +839,17 @@ def _board() -> rx.Component:
             ),
             rx.spacer(),
             rx.segmented_control.root(
-                rx.segmented_control.item(rx.icon("columns-3", size=14), "Board", value="Board"),
-                rx.segmented_control.item(rx.icon("list", size=14), "List", value="List"),
+                rx.segmented_control.item(
+                    rx.hstack(rx.icon("columns-3", size=14), rx.text("Board"), spacing="2", align="center"),
+                    value="Board",
+                ),
+                rx.segmented_control.item(
+                    rx.hstack(rx.icon("list", size=14), rx.text("List"), spacing="2", align="center"),
+                    value="List",
+                ),
                 value=P.board_view, on_change=P.set_board_view, size="1",
             ),
-            width="100%", align="center", gap="3", wrap="wrap",
+            width="100%", align="center", gap="12px", wrap="wrap",
         ),
         rx.cond(
             P.workspace_work.length() == 0,
@@ -858,8 +865,8 @@ def _board() -> rx.Component:
                         _lane("In progress", P.in_progress, "iris"),
                         _lane("Needs review", P.needs_review, "amber"),
                         _lane("Complete", P.complete, "grass"),
-                        columns=rx.breakpoints(initial="1", sm="2", xl="4"),
-                        gap="3", width="100%", align_items="start",
+                        columns=rx.breakpoints(initial="1", sm="2", lg="4"),
+                        gap="12px", width="100%", align_items="start", id="board-grid",
                     ),
                     s.panel(
                         rx.foreach(P.visible_work, lambda w: rx.button(
@@ -958,7 +965,7 @@ def _sessions() -> rx.Component:
                 padding=rx.breakpoints(initial="16px", md="24px"),
             ),
             grid_template_columns=rx.breakpoints(initial="1fr", md="240px minmax(0, 1fr)"),
-            gap="4", width="100%", align_items="start",
+            gap="16px", width="100%", align_items="start",
         ),
         spacing="5", width="100%",
     )
@@ -986,7 +993,7 @@ def _activity() -> rx.Component:
                 s.text("Fixture values only. Bars share a 40,000-token scale; no usage is measured "
                        "and running a simulation adds no tokens.", size="1", margin_top="18px"),
             ),
-            columns=rx.breakpoints(initial="1", xl="2"), gap="4", width="100%", align_items="start",
+            columns=rx.breakpoints(initial="1", lg="2"), gap="16px", width="100%", align_items="start",
         ),
         spacing="5", width="100%",
     )
@@ -996,7 +1003,7 @@ def _settings_row(label: str, description: str, control: rx.Component) -> rx.Com
     return rx.flex(
         rx.vstack(rx.text(label, size="2", weight="medium"),
                   s.text(description, size="1", max_width="440px"), spacing="1"),
-        rx.spacer(), control, width="100%", gap="4", align="center", wrap="wrap",
+        rx.spacer(), control, width="100%", gap="16px", align="center", wrap="wrap",
         padding="20px 0", border_bottom=f"1px solid {s.LINE}",
     )
 
@@ -1045,7 +1052,7 @@ def _settings() -> rx.Component:
                 _settings_row("Review & ship", "Skill behavior is a separate open task. Ship is not authorized.",
                               s.badge("Not connected", "amber")),
             ),
-            columns=rx.breakpoints(initial="1", xl="2"), gap="4", width="100%",
+            columns=rx.breakpoints(initial="1", lg="2"), gap="16px", width="100%",
         ),
         s.panel(
             rx.hstack(rx.icon("flask-conical", size=19, color=rx.color("iris", 11)),
@@ -1089,7 +1096,7 @@ def _detail_dialog() -> rx.Component:
                     rx.vstack(
                         rx.flex(
                             s.badge(P.current_unit.lane, P.current_unit.color),
-                            s.badge("Example work item"), gap="2", wrap="wrap",
+                            s.badge("Example work item"), gap="8px", wrap="wrap",
                         ),
                         rx.heading("The next meaningful step", size="4", weight="medium"),
                         s.text("Explore this step in the preview. Running it simulates visible progress, "
@@ -1348,7 +1355,7 @@ def index() -> rx.Component:
                     rx.flex(
                         s.text("COS STUDIO / CONCEPT 01", size="1", letter_spacing="0.07em"),
                         rx.spacer(), s.text("Built with Python. Designed around your work.", size="1"),
-                        width="100%", gap="2", wrap="wrap", padding="36px 0 8px",
+                        width="100%", gap="8px", wrap="wrap", padding="36px 0 8px",
                     ),
                     padding=rx.breakpoints(initial="0 18px 20px", md="0 32px 24px", xl="0 40px 24px"),
                     width="100%", max_width="1660px", margin="0 auto",

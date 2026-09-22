@@ -105,15 +105,16 @@ def exercise(browser, base: str, screenshots: Path | None = None) -> None:
     page.locator("#command-query").fill("board")
     page.get_by_role("button", name="Go to Board", exact=True).click()
     expect(page.get_by_role("heading", name="Work board", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Dismiss message", exact=True).click()
 
     for mode in ("Light", "Dark"):
         page.set_viewport_size({"width": 1440, "height": 1000})
         nav("settings")
         page.get_by_role("button", name=mode, exact=True).click()
-        for width in (390, 768, 1440):
+        for width in (390, 768, 1024, 1440):
             page.set_viewport_size({"width": width, "height": 1000})
             for screen in ("overview", "workspaces", "board", "sessions", "activity", "settings"):
-                if width < 1024:
+                if width < 1280:
                     page.locator("#mobile-navigation").click()
                     page.locator(f"#mobile-nav-{screen}").click()
                 else:
@@ -122,6 +123,16 @@ def exercise(browser, base: str, screenshots: Path | None = None) -> None:
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth + 1"
                 ), f"{screen} overflows at {width}px in {mode} mode"
+                if screen in ("board", "overview"):
+                    grid = page.locator("#board-grid" if screen == "board" else "#workspace-metrics")
+                    layout = grid.evaluate(
+                        "el => { const s = getComputedStyle(el); return {"
+                        "columns: s.gridTemplateColumns.split(' ').length,"
+                        "gap: parseFloat(s.columnGap) }; }"
+                    )
+                    columns = 4 if width >= 1280 else (2 if screen == "overview" or width >= 768 else 1)
+                    assert layout["columns"] == columns, (screen, width, layout)
+                    assert layout["gap"] >= 12, (screen, width, layout)
                 if screenshots and screen in ("overview", "board") and width in (390, 1440):
                     screenshots.mkdir(parents=True, exist_ok=True)
                     page.screenshot(
@@ -131,7 +142,7 @@ def exercise(browser, base: str, screenshots: Path | None = None) -> None:
 
     assert not errors, errors
     assert not business_requests, business_requests
-    print("PASS: six screens, three widths, two appearances, preview states, no business API calls")
+    print("PASS: six screens, four widths, two appearances, grid columns/gutters, preview states, no business API calls")
     page.close()
 
 

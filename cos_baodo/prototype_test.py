@@ -4,6 +4,8 @@ import ast
 import inspect
 import unittest
 
+import reflex as rx
+
 from cos_baodo import prototype, prototype_data
 from cos_baodo.prototype import PrototypeState
 
@@ -11,6 +13,9 @@ from cos_baodo.prototype import PrototypeState
 class DemoStateTests(unittest.TestCase):
     def setUp(self):
         self.state = PrototypeState(_reflex_internal_init=True)
+
+    def test_component_tree_accepts_installed_reflex_event_signatures(self):
+        self.assertIsInstance(prototype.index(), rx.Component)
 
     def test_fixtures_are_fresh_and_references_are_valid(self):
         first = prototype_data.workspaces()
@@ -121,6 +126,21 @@ class DemoStateTests(unittest.TestCase):
             state.notice = ""
             event("not-a-choice")
             self.assertTrue(state.notice)
+
+    def test_single_choice_controls_reject_multiple_selection(self):
+        state = self.state
+        state.open_unit("COS-014")
+        for event, value in (
+            (state.filter_work, ["All work"]),
+            (state.set_board_view, ["List"]),
+            (state.set_mode, ["manual"]),
+        ):
+            state.notice = ""
+            event(value)
+            self.assertTrue(state.notice)
+        self.assertEqual(state.focus, "All work")
+        self.assertEqual(state.board_view, "Board")
+        self.assertEqual(state.current_unit.mode, "autonomous")
 
     def test_presentation_modules_do_not_import_business_backends(self):
         for module in (prototype, prototype_data):
