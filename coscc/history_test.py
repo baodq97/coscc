@@ -140,7 +140,7 @@ class FromStateComesFromTheLog(Fixture):
         self.history.record(WS, UNIT, "intent.md", "accepted")
         self.history.record(WS, UNIT, "intent.md", "accepted", source="commit:abc")
         self.history.record(WS, UNIT, "spec.md", "draft")
-        counted = settled_edits(self.rows())
+        counted = settled_edits(self.rows(), self.history.machine)
         self.assertEqual(len(counted), 1)
         self.assertEqual(counted[0]["from_state"], "accepted")
         self.assertEqual(counted[0]["to_state"], "accepted")
@@ -303,3 +303,27 @@ class WhichStateSetTheRowsWereWrittenUnder(Fixture):
         self.history.record(WS, UNIT, "intent.md", "draft")
         self.assertEqual(self.history.machines_in(WS, UNIT), ["coscc-default"])
         self.assertEqual(self.history.machines_in(WS), ["two-step", "coscc-default"])
+
+
+class SettledEditsCannotBorrowTheWrongStateSet(Fixture):
+    """The `machine` argument is required, and this is why it was made so.
+
+    It defaulted to `states.default()`. Rows written under another set would then be
+    filtered by the default set's idea of "settled", match nothing, and come back as an
+    empty list with no error raised anywhere — `spec.md` C5's failure, wearing a
+    convenience.
+    """
+
+    def test_rows_from_another_set_counted_under_that_set(self):
+        history = self.other_history()
+        history.record(WS, UNIT, "ticket.txt", "closed")
+        history.record(WS, UNIT, "ticket.txt", "closed", source="commit:zz")
+        rows = history.transitions(WS, UNIT)
+        self.assertEqual(len(settled_edits(rows, history.machine)), 1)
+        # Under the default set, `closed` means nothing at all — and that is the answer
+        # the old default would have produced silently.
+        self.assertEqual(settled_edits(rows, states.default()), [])
+
+    def test_calling_it_without_a_state_set_is_an_error_rather_than_a_guess(self):
+        with self.assertRaises(TypeError):
+            settled_edits(self.rows())

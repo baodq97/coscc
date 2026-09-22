@@ -118,7 +118,7 @@ class HistoryInGitBecomesTransitions(Fixture):
 
     def test_the_edit_after_acceptance_is_the_one_that_counts(self):
         self.run_import()
-        counted = settled_edits(self.history.transitions(WS))
+        counted = settled_edits(self.history.transitions(WS), self.history.machine)
         self.assertEqual(len(counted), 1)
         self.assertEqual(counted[0]["artifact"], "intent.md")
 

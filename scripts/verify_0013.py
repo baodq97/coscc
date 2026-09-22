@@ -86,6 +86,37 @@ def require_environment() -> None:
         raise SystemExit(EXIT_ENV)
 
 
+# What this file calls "nothing". Written here rather than read from `coscc/states.json`,
+# for the same reason `_SETTLED` is: a proof that asked the product what its words mean
+# could not catch the product being wrong about them.
+_ABSENT = "not started"
+
+
+def artifact_paths() -> list[str]:
+    """Every artifact path that has **ever** existed under a unit present at HEAD.
+
+    Not `ls-tree` alone, and the difference is a defect this file had until it was tested
+    against a case the repository does not contain. Take a unit that still exists and
+    delete one settled artifact from it: the product records that as a transition into
+    nothing and counts it, while a proof reading only HEAD never sees the path at all —
+    so the proof goes **red on a correct product**, and the way past a proof like that is
+    to edit it.
+
+    Measured on this repository 2026-09-22: this returns the same 60 paths `ls-tree` does,
+    because no live unit has lost an artifact yet. The two agreeing today is the point —
+    it means the fix costs nothing here and holds the day it stops being free.
+    """
+    present = {p.name for p in COS.iterdir() if p.is_dir()}
+    seen: set[str] = set()
+    for line in git("log", "--format=", "--name-only", "HEAD", "--", ".cos").splitlines():
+        path = line.strip()
+        parts = path.split("/")
+        if len(parts) == 3 and parts[0] == ".cos" and parts[2] in _ARTIFACTS:
+            if parts[1] in present:
+                seen.add(path)
+    return sorted(seen)
+
+
 def expected_from_git() -> tuple[Counter, dict[str, list]]:
     """Post-settlement edits, counted one file at a time, without the product's code.
 
@@ -95,19 +126,21 @@ def expected_from_git() -> tuple[Counter, dict[str, list]]:
     """
     counts: Counter = Counter()
     detail: dict[str, list] = {}
-    paths = [
-        p for p in git("ls-tree", "-r", "--name-only", "HEAD", ".cos").split()
-        if p.rsplit("/", 1)[-1] in _ARTIFACTS
-    ]
-    for path in paths:
+    for path in artifact_paths():
         previous = None
         for sha in git("log", "--reverse", "--format=%H", "HEAD", "--", path).split():
             try:
                 text = git("show", f"{sha}:{path}")
             except subprocess.CalledProcessError:
-                continue
-            found = _STATUS.search(text)
-            state = found.group(1).lower() if found else None
+                # No blob at this commit: the artifact was deleted here. Leaving nothing
+                # is a state change like any other. Skipping it was the second half of the
+                # same defect — `previous` stayed settled, so a later re-add was counted
+                # instead, and the two implementations arrived at the same total for
+                # different reasons.
+                state = _ABSENT
+            else:
+                found = _STATUS.search(text)
+                state = found.group(1).lower() if found else None
             if previous in _SETTLED:
                 key = path[len(".cos/"):]
                 counts[key] += 1

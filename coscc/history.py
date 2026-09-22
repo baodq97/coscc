@@ -424,7 +424,7 @@ class History:
 
 
 def settled_edits(
-    transitions: Iterable[dict[str, Any]], machine: Machine | None = None
+    transitions: Iterable[dict[str, Any]], machine: Machine
 ) -> list[dict[str, Any]]:
     """The transitions `0013`'s outcome counts: an artifact touched while already settled.
 
@@ -436,6 +436,11 @@ def settled_edits(
     Note what it does **not** require: that the state changed. Most of these are
     `accepted → accepted`, a settled artifact rewritten in place, which is exactly the
     event the old arrangement destroyed.
+
+    **`machine` is required, and it used to default to `states.default()`.** That default
+    was the exact failure `spec.md` C5 describes, wearing a convenience: rows written under
+    another set would be filtered by the default set's idea of "settled", match nothing,
+    and return an empty list with no error anywhere. A caller that has transitions has the
+    `History` they came from, so there is nothing to save.
     """
-    machine = machine or states.default()
     return [row for row in transitions if machine.is_settled(row["from_state"])]
