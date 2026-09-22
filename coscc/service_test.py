@@ -9,12 +9,14 @@ drift visible as a missing test rather than as a bug only one entry point has.
 from __future__ import annotations
 
 import asyncio
+import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc import harness
 from coscc.config import Config
 from coscc.service import Invalid, Service
 from coscc.sessions import Live, Sessions
@@ -253,6 +255,63 @@ class NoWebFrameworkLeaksIn(unittest.TestCase):
         source = (Path(__file__).parent / "service.py").read_text()
         for banned in ("import aiohttp", "import fastapi", "import reflex", "from fastapi", "from aiohttp", "from reflex"):
             self.assertNotIn(banned, source)
+
+
+class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
+    """The boundary `coscc/api.py:157-164` depends on, and the one review caught open.
+
+    `run_step` maps this layer's refusals with one `except RunError`. 0012 introduced a
+    second exception type on that path -- `harness.MissingRules`, raised when a stage's
+    rules cannot be found -- and for one commit it escaped: measured 2026-09-22, a
+    workspace whose harness had `cos.mjs` but no skills produced an unhandled
+    `MissingRules` where a 400 was intended, so the page would have shown a 500 for the
+    exact failure 0012 was built to report clearly.
+
+    The scenario is not hypothetical: it is a release whose copy step took `scripts/` and
+    not `skills/`, which is one of the four things `harness.wheel_complaints` exists to
+    refuse.
+    """
+
+    def test_a_stage_whose_rules_are_missing_is_invalid_not_an_escaped_exception(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            workspace = root / "work" / "proj"
+            unit = workspace / ".cos" / "0009_a-test-unit"
+            unit.mkdir(parents=True)
+            (unit / "intent.md").write_text("Status: accepted.\nI", encoding="utf-8")
+            (unit / "spec.md").write_text("Status: accepted.\nS", encoding="utf-8")
+
+            # A harness carrying cos.mjs and no skills: the Board reads, every Run refuses.
+            half = root / "half"
+            (half / "scripts").mkdir(parents=True)
+            shutil.copy(Path(REPO) / ".claude" / "scripts" / "cos.mjs", half / "scripts" / "cos.mjs")
+            (half / "skills").mkdir()
+
+            config = Config(
+                workspaces=(),
+                working_dir=str(root / "work"),
+                data_dir=str(root / "data"),
+            )
+            service = Service(config, Sessions(config))
+            asyncio.run(service.add_workspace("proj"))
+
+            originals = (harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS)
+            harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
+            harness.CHECKOUT_HARNESS = half
+            try:
+                async def go():
+                    async for _ in service.run_step(str(workspace), "0009_a-test-unit", "plan"):
+                        pass
+
+                with self.assertRaises(Invalid) as caught:
+                    asyncio.run(go())
+            finally:
+                harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS = originals
+
+            # And it still says which stage and where it looked -- `spec.md` R4.
+            message = str(caught.exception)
+            self.assertIn("plan", message)
+            self.assertIn("SKILL.md", message)
 
 
 if __name__ == "__main__":

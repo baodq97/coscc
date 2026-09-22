@@ -8,10 +8,12 @@ rather than re-reading the Markdown.
 **Which copy it runs is the security decision here.** A workspace is a repository cloned
 from a URL somebody typed, so `<workspace>/.claude/scripts/cos.mjs` is a file that
 repository controls. Executing it would hand a cloned repo everything this process has,
-which is past every knob in `coscc/config.py`. This module therefore runs **the copy
-that ships with the app**, pointed at the workspace's `.cos/` with `--root`. The cost is
-real and worth naming: a workspace that uses a different version of the harness is read
-with this app's stage list, not its own.
+which is past every knob in `coscc/config.py`. This module therefore runs **the copy that
+ships with the app**, pointed at the workspace's `.cos/` with `--root`. `coscc/harness.py`
+is what makes that sentence true, and until 0012 it was not: the wheel shipped no copy at
+all, and this module answered 400 on every read. The cost of running our own copy is real
+and worth naming: a workspace that uses a different version of the harness is read with
+this app's stage list, not its own.
 
 The board reports; it never writes. What a step costs and which session ran it belong to
 the journal, and what a stage *says* belongs to the artifact on disk. This module only
@@ -26,9 +28,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-# The app's own copy. `coscc/` sits beside `.claude/` in the flat layout this repo uses
-# (`pyproject.toml`, `module-root = ""`), so the repository root is one level up.
-SCRIPT = Path(__file__).resolve().parent.parent / ".claude" / "scripts" / "cos.mjs"
+# Which copy of the harness, and where it is, is `coscc/harness.py`'s question and is not
+# asked again here. Until 0012 this module computed `parent.parent / ".claude"` for itself
+# and `coscc/runner.py` computed the same thing separately -- one formula in two places,
+# which is how a single packaging omission arrived as two unrelated-looking symptoms.
+from coscc import harness
 
 # Measured 2026-09-21 on this machine: five runs over the eight units in this repository
 # took 0.05s each, node v24.20.0. Ten seconds is therefore about two hundred times the
@@ -84,10 +88,11 @@ async def read(workspace: str | Path, timeout: float = TIMEOUT) -> dict[str, Any
     a child that failed or hung. A workspace with no `.cos/` is a *known* answer: no units.
     """
     path = Path(workspace)
-    if not SCRIPT.exists():
-        raise Unavailable(f"the harness script is missing: {SCRIPT}")
+    script = harness.script()
+    if not script.exists():
+        raise Unavailable(f"the harness script is missing: {script}")
 
-    argv = ["node", str(SCRIPT), "--root", str(path), "status", "--json"]
+    argv = ["node", str(script), "--root", str(path), "status", "--json"]
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -97,8 +102,16 @@ async def read(workspace: str | Path, timeout: float = TIMEOUT) -> dict[str, Any
             stdin=asyncio.subprocess.DEVNULL,
         )
     except (OSError, ValueError) as e:
-        # No node on PATH is the ordinary case here, and it must name itself.
-        raise Unavailable(f"could not run node: {e}") from e
+        # No node on PATH is the ordinary case here, and it must name itself -- *with the
+        # PATH it looked on*. Measured 2026-09-22 under the systemd user service this app
+        # installs as: `node` was on the machine, at `~/.nvm/versions/node/v24.20.0/bin`,
+        # and the service's PATH was the systemd user default, which contains no nvm. The
+        # message without this suffix said only "could not run node" and sent a reader
+        # looking for a missing program that was not missing. `docs/install.md` carries the
+        # fix; this is what points at it.
+        raise Unavailable(
+            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
+        ) from e
 
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)

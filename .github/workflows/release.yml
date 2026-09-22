@@ -93,6 +93,25 @@ jobs:
           mkdir -p coscc/_web/backend
           cp -r .web/backend/. coscc/_web/backend/
 
+      # The second thing this app reads from outside `coscc/`, and the one that shipped
+      # missing three times. `.cos/0012_installed-copy-runs-no-stage/intent.md` measured
+      # v0.2.2: the Board answered 400 and every step ran with no rules in its prompt,
+      # because `coscc/board.py` and `coscc/runner.py` were reaching for a `.claude/` that
+      # only exists in a checkout.
+      #
+      # Two named directories, never `.claude/` whole: `.claude/settings.local.json` is a
+      # personal file (`.gitignore`) and a release is published. `coscc/harness.py`
+      # refuses a wheel that carries one.
+      - name: Copy the harness into the package
+        run: |
+          set -euo pipefail
+          # `rm -rf` first: a tree left over from an earlier build would be copied into
+          # the wheel alongside the new one, and the packaged copy is the one that wins.
+          rm -rf coscc/_harness
+          mkdir -p coscc/_harness
+          cp -r .claude/scripts coscc/_harness/scripts
+          cp -r .claude/skills coscc/_harness/skills
+
       - name: Build the wheel
         id: wheel
         env:
@@ -108,24 +127,19 @@ jobs:
           fi
           echo "wheel=$wheel" >> "$GITHUB_OUTPUT"
 
-      # spec.md R13, plan.md `## Risks` item 4: without the copy step above, `uv build`
-      # still succeeds and the wheel still installs — it is only missing a frontend, and
+      # spec.md R13, plan.md `## Risks` item 4: without the copy steps above, `uv build`
+      # still succeeds and the wheel still installs — it is only missing something, and
       # nothing else in this workflow would notice. This is the check that would.
-      - name: Refuse to ship a wheel with no frontend in it
+      #
+      # It was two `grep`s here until 0012, and it covered the frontend only — which is
+      # why a wheel with no harness passed it three times. The decision now lives in
+      # `coscc.harness.wheel_complaints`, where a unit test can reach it and where
+      # somebody building a wheel by hand can run the same check
+      # (`.cos/0012_installed-copy-runs-no-stage/spec.md` C1).
+      - name: Refuse to ship a wheel that would install and not work
         env:
           WHEEL: ${{ steps.wheel.outputs.wheel }}
-        run: |
-          set -euo pipefail
-          if ! unzip -l "$WHEEL" | grep -q 'coscc/_web/build/client/index\.html'; then
-            echo "::error::$WHEEL has no coscc/_web/build/client/index.html — the frontend copy step did not run, or copied nothing" >&2
-            exit 1
-          fi
-          # The second half of a runnable wheel. A wheel that passes the check above and
-          # fails this one is the exact shape that installed cleanly and never served.
-          if ! unzip -l "$WHEEL" | grep -q 'coscc/_web/backend/stateful_pages\.json'; then
-            echo "::error::$WHEEL has no coscc/_web/backend/stateful_pages.json — it would install, report active, and never serve a page" >&2
-            exit 1
-          fi
+        run: uv run python scripts/check_wheel.py "$WHEEL"
 
       # scripts/install.sh (spec.md R9, plan.md step 8) is a template carrying two
       # placeholders, read from that file on 2026-09-22: `@@COSCC_VERSION@@` and
