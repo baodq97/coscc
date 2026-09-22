@@ -114,6 +114,32 @@ Không tách được: giây phút file biến mất, `verify_0008` C10 và `ver
 **10. `write-pr`: bỏ câu nói repo có thể không có remote.** Spec R7.
 *Kiểm:* `grep -r "may not have one" .claude/` trả **rỗng**.
 
+> **Departure, 2026-09-22 — bước 9 và 10 nở ra, theo yêu cầu giữa chừng.** Người khởi
+> xướng: *"trong skills không mention bất kỳ item khác nào giúp tôi"*. Cùng hình dạng với
+> ràng buộc cũ *"skill không được depends tới bất kỳ docs nào"* (`0008` departure 11), nay
+> rộng ra mọi file. Hệ quả, ngoài hai skill plan đã liệt:
+>
+> - `write-review` bỏ hai con trỏ — tới `.claude/CLAUDE.md` và tới
+>   `.cos/0005_hand-driven-invisible-loop/spec.md` C5. Câu nói vẫn còn, con trỏ thì không.
+> - `write-impl` bỏ *"because `write-plan/SKILL.md` still names it that way"*.
+> - `write-pr` bỏ luôn `0005`–`0008` và `.cos/0005.../spec.md` C2.
+>
+> Va vào spec R4 (*"không viết lại bảy `SKILL.md` còn lại"*). R4 giữ nguyên ý định — chúng
+> không bị viết lại, chỉ bị gỡ con trỏ. **Giữ lại**: đường dẫn `cos.mjs` (mỗi skill tự chạy
+> lệnh gate đó; bỏ thì không skill nào còn nói được cách gọi gate) và mục `## Next` nêu tên
+> skill kế tiếp (đó là vòng lặp, không phải trích dẫn).
+>
+> Cùng lúc đó, thủ tục cắt branch bị **trùng** ở hai chỗ: sáu bước ở `CLAUDE.md` và sáu bước
+> tôi vừa viết ở `write-intent`. Spec R5 đòi đúng một file, và skill không còn được trỏ sang
+> file kia, nên bản ở `write-intent` bị cắt còn một câu — `unit-branch` đọc file từ đĩa nên
+> `intent.md` phải có trước. Thủ tục đầy đủ ở `CLAUDE.md`, vốn nạp sẵn mọi phiên.
+
+> **Departure, 2026-09-22 — mệnh đề 4 của `## Proof` đo nhầm máy tôi.** `grep -rliE` đi theo
+> hệ tệp nên bắt cả `.claude/settings.local.json`, một file **gitignore** chứa
+> `"Bash(git switch *)"` như một mục cấp quyền. Ba file khớp thay vì một, và hai trong số đó
+> không có trong repo. Đổi sang `git grep` — chỉ file đã theo dõi. Mệnh đề không đổi nghĩa;
+> nó thôi hỏi về máy đang chạy.
+
 **11. Chạy `## Proof`.** Toàn bộ chuỗi, một lần.
 *Kiểm:* exit **0**.
 
@@ -197,7 +223,7 @@ invariant 4.
 test "$(cat .claude/CLAUDE.md .claude/harness.md 2>/dev/null | wc -l)" -le 200 \
 && test ! -e .claude/harness.md \
 && test -z "$(grep -rl 'harness\.md' .claude/ README.md)" \
-&& test "$(grep -rliE 'git switch|gh pr create' .claude/ | wc -l)" -eq 1 \
+&& test "$(git grep -liE 'git switch|gh pr create' -- .claude/ | wc -l)" -eq 1 \
 && ! grep -rq 'may not have one' .claude/ \
 && test "$(grep -L 'Type:' .cos/*/intent.md | wc -l)" -eq 0 \
 && test -f .claude/rules/coscc-app.md \

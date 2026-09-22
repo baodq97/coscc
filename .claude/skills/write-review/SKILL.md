@@ -9,16 +9,14 @@ Read this section before anything else, because it is the reason this stage is t
 one in the loop.
 
 **There is no separation of duties here, and this file must not pretend otherwise.**
-`.claude/CLAUDE.md` states it plainly: the author works alone, commits land on `main`, and
-`accepted` is a word the agent writes about its own work. Adding a `review` stage does not
-create an approver — it creates a *place to record one*. A `review.md` marked `accepted` by
+The author works alone and `accepted` is a word the agent writes about its own work, so
+adding a `review` stage does not create an approver — it creates a *place to record one*. A `review.md` marked `accepted` by
 the same agent that wrote the code is a green cell over an empty chair, and it is **more**
 misleading than having no cell at all, because it looks like a gate.
 
-`.cos/0005_hand-driven-invisible-loop/spec.md` C5 records this as unresolved and names the
-author as the one who decides it. Until they do, the minimum this file owes a reader is to
-say **who concluded it**, in a way that distinguishes an agent's self-issued verdict from a
-person's.
+This is unresolved and the author decides it, not this file. Until they do, the minimum
+owed to a reader is to say **who concluded it**, in a way that distinguishes an agent's
+self-issued verdict from a person's.
 
 ## Before writing
 
