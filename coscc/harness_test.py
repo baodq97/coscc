@@ -30,6 +30,9 @@ RUNNABLE = (
     f"coscc/_web/{frontend.MARKER.as_posix()}",
     "coscc/_harness/scripts/cos.mjs",
     "coscc/_harness/skills/write-spec/SKILL.md",
+    # Committed rather than generated, unlike the four above, and checked anyway: an
+    # installed copy cannot tell how a missing file came to be missing (`0013` step 8).
+    "coscc/states.json",
     "coscc/__init__.py",
 )
 
@@ -122,6 +125,16 @@ class AWheelIsChecked(unittest.TestCase):
             self.assertEqual(len(complaints), 2, complaints)
             self.assertTrue(any("cos.mjs" in c for c in complaints), complaints)
             self.assertTrue(any("SKILL.md" in c for c in complaints), complaints)
+
+    def test_a_wheel_without_the_state_set_is_caught(self):
+        # `0013`: `coscc/states.py` has nothing to validate a transition against, so the
+        # log can neither be read nor written. The wheel installs and the page renders.
+        with tempfile.TemporaryDirectory() as tmp:
+            names = [n for n in RUNNABLE if not n.endswith("states.json")]
+            wheel = _wheel(Path(tmp) / "nostates.whl", names)
+            complaints = harness.wheel_complaints(wheel)
+            self.assertEqual(len(complaints), 1, complaints)
+            self.assertIn("states.json", complaints[0])
 
     def test_a_wheel_with_no_frontend_is_caught_too(self):
         with tempfile.TemporaryDirectory() as tmp:
