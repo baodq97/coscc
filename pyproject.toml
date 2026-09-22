@@ -4,8 +4,13 @@ version = "0.1.0"
 description = "Web app that lists, creates and resumes Claude Code sessions across projects"
 # Every measurement this repository records is taken on the interpreter in
 # `.python-version`, and after 0007 that is 3.14. A floor naming an older one would be the
-# same kind of untrue sentence this unit exists to remove. This is one person's local app,
-# not a library, so there is nobody downstream the floor shuts out.
+# same kind of untrue sentence this unit exists to remove. 0011 gives this app its first
+# downstream — someone running install.sh on a machine of their own — but the floor still
+# does not shut them out: install.sh installs `uv` before anything else, and `uv` provisions
+# whatever interpreter this line names, so nobody downstream needs 3.14 already on the
+# machine for this to work. Measured 2026-09-22: `uv python list --only-downloads`
+# offers cpython-3.14.7, and `uv tool install` takes `--no-python-downloads` to turn
+# that off, so it is on by default.
 requires-python = ">=3.14"
 dependencies = [
     "claude-agent-sdk>=0.2.157",
