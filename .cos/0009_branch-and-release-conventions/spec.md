@@ -86,6 +86,30 @@ trả về `[]`. Kiểm: `gh api repos/baodq97/coscc/rulesets` trả về ít nh
 `main` đòi pull request; và một lần `git push` thẳng lên `main` bị từ chối. **Đây là một cài
 đặt của repository, không phải một file** — xem C1.
 
+**R14 — và pull request đó chỉ vào được bằng squash.** `intent.md` constraint 10. Cưỡng chế ở
+**hai** chỗ, vì chúng chặn hai thứ khác nhau:
+
+| Chỗ | Chặn gì | Không chặn gì |
+|---|---|---|
+| Setting của repo: `allow_merge_commit=false`, `allow_rebase_merge=false` | bỏ hai nút khỏi giao diện và khỏi `gh pr merge` | bật lại được bằng một lần click, và không nói gì về commit đã có |
+| Ruleset: `required_linear_history` | **từ chối** một merge commit vào `main`, kể cả khi setting bị bật lại | không biết squash khác rebase |
+
+Một mình setting là một thói quen; một mình ruleset cho phép rebase merge — nó chỉ đòi lịch
+sử tuyến tính. Cả hai cùng để lại đúng một đường vào.
+
+Đo ngày 2026-09-22, trước khi sửa: cả ba `allow_merge_commit`, `allow_rebase_merge`,
+`allow_squash_merge` đều `true`, và `delete_branch_on_merge` là `false`.
+
+Kiểm: `gh api repos/baodq97/coscc` trả `allow_squash_merge: true` và hai cái kia `false`;
+ruleset mang rule `required_linear_history`. Cái giá, nói ra ở đây: tám commit của branch này
+sẽ thành **một** commit trên `main`, và lịch sử từng bước chỉ còn đọc được trong pull request
+— xem C9.
+
+> **Sửa ngày 2026-09-22, lần thứ ba, ngay trước lần merge đầu tiên.** R14 thêm theo
+> `intent.md` constraint 10. Nó đến sau khi `impl.md` và `pr.md` đã viết, nhưng trước khi có
+> merge commit nào trên `main` — và đó là lần cuối còn kịp, vì sau đó quy tắc chỉ áp được cho
+> tương lai.
+
 **R10 — Harness ghi quy ước.** `.claude/harness.md` có một mục mới nói ngữ pháp branch, ngữ
 pháp tag, bốn lệnh, và trường `Type:`. Kiểm: mục đó nêu đủ mười type của R1, cả hai dạng tag
 của R2, và một câu nói ruleset không đi theo bản copy (C1).
@@ -230,6 +254,15 @@ rào đó phải có test — một rào không có test là một câu trong fi
 không rơi vào `feat|fix|docs|refactor|test|chore|perf|build|ci|revert` sẽ không đặt được tên
 branch, và lối thoát duy nhất là sửa harness. Đó là chủ ý — một tập mở thì không kiểm được gì
 — nhưng nó sẽ gây vướng ít nhất một lần.
+
+**C9 — Squash xoá lịch sử từng bước, và đó là thứ repo này vẫn coi trọng.** R14 là lựa chọn
+của người khởi xướng và nó có giá. Tám commit của branch này — proof đỏ trước, hàm thuần, bốn
+lệnh, harness, version, workflow, `impl.md`, `pr.md` — được viết theo thứ tự đó **cố ý**, và
+`plan.md` `## Order of work` nói mỗi bước phải để lại một trạng thái kiểm được. Sau squash,
+`main` mang một commit và thứ tự ấy chỉ còn trong pull request, tức trên GitHub chứ không
+trong git. Một bản clone không có mạng đọc `git log` sẽ không thấy proof từng đỏ trước. Đánh
+đổi này **chưa từng được cân** trong repo — `0008` đã viết lại history để gỡ một tài liệu,
+nhưng chưa bao giờ bỏ bớt commit. **Người khởi xướng quyết**, và đã quyết.
 
 **C8 — R13 chết nếu `write-intent` không đòi `Type:`.** Template ở
 `.claude/skills/write-intent/SKILL.md` hiện in header là `Author: <name>. Status: accepted.`

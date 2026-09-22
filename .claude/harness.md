@@ -190,6 +190,17 @@ The slug is lowercase letters, digits and single hyphens, up to 60 characters. `
 the trunk and is not a work branch. A work branch is cut from `main`, merged through a pull
 request, and deleted.
 
+**Merged as a squash, and only as a squash.** A work branch arrives on `main` as one
+commit. Two settings hold that and they refuse different things: the repository allows only
+`allow_squash_merge`, which takes the other two buttons away, and the ruleset carries
+`required_linear_history`, which refuses a merge commit even if somebody puts the buttons
+back. Neither alone is enough — a setting is one click from being undone, and linear
+history on its own still permits a rebase merge.
+
+The cost is real and is not hidden here: the step-by-step history of a branch — proof
+written red first, then the code, then the record — survives only in the pull request,
+which lives on GitHub rather than in git. A clone with no network reads one commit.
+
 Do not compose the name. Every unit declares `Type:` on its `intent.md` header, and the
 branch follows from the unit:
 
@@ -246,6 +257,7 @@ naming somewhere else.
 | `cos.mjs`, locally | block anything — it returns an exit code and is run by choice |
 | A workflow on GitHub | block a `git push` straight to `main`; no pull request, no workflow |
 | A repository ruleset | know anything about the grammar or the version |
+| A repository setting | survive being switched back on |
 
 Copying `.claude/` brings the grammar, the four commands and their tests. It does **not**
 bring `.github/workflows/`, which sits outside `.claude/`, and it does not bring the

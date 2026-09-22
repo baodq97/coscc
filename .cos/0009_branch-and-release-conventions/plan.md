@@ -128,14 +128,20 @@ Stage `pr`. Đây là `pr.md` đầu tiên trong repo có URL thay vì một l�
 không có.
 *Kiểm:* `cos.mjs gate 0009_branch-and-release-conventions review` exit 0.
 
-**11. Merge PR, xoá branch.**
-*Kiểm:* `gh pr view --json state` trả `MERGED`; `main` chứa toàn bộ công việc; branch biến
-mất khỏi remote.
+**11. Squash-only trước, rồi merge PR, xoá branch.** *(Thứ tự là cái quan trọng — Risk 8.)*
+Đặt `allow_merge_commit=false` và `allow_rebase_merge=false` trên repo trước khi merge, để
+lần merge đầu tiên của repo **là** một squash chứ không phải một ngoại lệ được tha. Bật cả
+`delete_branch_on_merge`. Rồi `gh pr merge --squash --delete-branch`.
+*Kiểm:* `gh api repos/baodq97/coscc` trả `allow_squash_merge: true` và hai cái kia `false`;
+`gh pr view 1 --json state` trả `MERGED`; `main` nhận **một** commit chứ không tám;
+`git log --merges main` không có commit mới; branch biến mất khỏi remote.
 
 **12. Bật ruleset trên `main`.** *(Khó lùi — Risk 2.)*
-Đòi pull request. Hiện `gh api repos/baodq97/coscc/rulesets` trả `[]`.
-*Kiểm:* lệnh đó trả về một ruleset áp cho `main`; và một lần `git push` thẳng lên `main` bị
-**từ chối** — negative control, chạy thật.
+Hai rule: `pull_request`, và `required_linear_history`. Rule thứ hai là chân thứ hai của
+R14 — setting của bước 11 bỏ hai cái nút, ruleset **từ chối** một merge commit kể cả khi ai
+đó bật lại nút. Hiện `gh api repos/baodq97/coscc/rulesets` trả `[]`.
+*Kiểm:* lệnh đó trả về một ruleset `active` áp cho `main` mang cả hai rule; và một lần
+`git push` thẳng lên `main` bị **từ chối** — negative control, chạy thật.
 
 **13. Tag prerelease.**
 `git tag v0.1.0-rc.1 && git push origin v0.1.0-rc.1`.
@@ -199,6 +205,12 @@ tiện nâng gói sẽ làm các con số đó mất nền mà không báo.
 Python khác máy này. Badge xanh **không** thay `npm test` cục bộ.
 *Dấu hiệu:* không có — đó là lý do nó được viết ra đây.
 
+**8. Squash-only đặt sau lần merge đầu tiên thì lần đó thành ngoại lệ vĩnh viễn.** Quy tắc
+đến lúc PR đầu tiên đã sẵn sàng merge, nên có đúng một cửa sổ để nó mô tả được toàn bộ lịch
+sử `main` thay vì chỉ tương lai. Đóng cửa sổ đó là một merge commit nằm trên `main` mãi, và
+C10 sẽ xanh trong khi `git log --merges` kể chuyện khác.
+*Dấu hiệu:* `git log --merges main` có một commit sau ngày hôm nay.
+
 **7. Cái tôi muốn không phải viết ra.** Unit này đặt một cổng lên `main` trong một repo mà
 **bốn unit đã kẹt sau một cổng khác** — `cos.mjs:30` không cho stage `pr` một status nghĩa là
 "không áp dụng", nên `0005`–`0008` không với tới `review`. Sau bước 12, repo có **hai** chỗ
@@ -230,7 +242,7 @@ Mười ba claim:
 | C7 | Hai workflow parse được; `permissions` khai tường minh; **0** action bên thứ ba ghim theo tag. |
 | C8 | `0009/intent.md` khai `Type: feat`, lệnh của R13 in ra `feat/branch-and-release-conventions`, và một type ngoài tập mười bị từ chối. |
 | C9 | `.claude/skills/write-intent/SKILL.md` template đòi `Type:`. |
-| C10 | `gh api repos/baodq97/coscc/rulesets` trả về một ruleset áp cho `main` đòi pull request. |
+| C10 | `gh api repos/baodq97/coscc/rulesets` trả về một ruleset `active` áp cho `main`, mang cả `pull_request` lẫn `required_linear_history`; và repo cho phép **chỉ** squash. |
 | C11 | `gh release list` trả **hai dòng**; `v0.1.0-rc.1` là prerelease, `v0.1.0` không; tag `v0.1.0` nằm trên `main`. |
 | C12 | Mọi commit vào `main` **từ commit bật ruleset trở đi** đều có một pull request đã merge chứa nó. |
 | C13 | `npm test` xanh. |

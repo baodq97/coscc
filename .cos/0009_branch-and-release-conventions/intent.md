@@ -123,10 +123,22 @@ Ngày **2026-10-13 là do file này đặt**, không phải do người khởi x
    `NNNN_slug` — **0** chỗ trong repo nói một unit thuộc loại gì. Không có ràng buộc này thì
    tên branch là một lựa chọn độc lập với tên unit, và hai cái sẽ trôi khỏi nhau. Nơi khai và
    cách xử lý 8 unit đã đóng là việc của spec.
+10. **`main` chỉ nhận squash merge.** Người khởi xướng nêu: *"thêm 1 rule chỉ squash merge"*,
+   nói đúng lúc pull request đầu tiên sắp được merge bằng một merge commit. Hiện repo bật cả
+   ba cách — `allow_merge_commit`, `allow_rebase_merge`, `allow_squash_merge` đều `true`, đo
+   bằng `gh api repos/baodq97/coscc` ngày 2026-09-22 — và không cách nào bị chặn. Hệ quả cần
+   nói thẳng: một branch công việc có tám commit sẽ thành **một** commit trên `main`, nên
+   lịch sử từng bước của nó chỉ còn trong pull request. Chỗ đặt rule và cách cưỡng chế là
+   việc của spec.
 
 > **Sửa ngày 2026-09-22, lần thứ ba, trước khi viết dòng code đầu tiên.** Thêm constraint 9
 > theo lời người khởi xướng, và file này nhận `Type: feat` ngay trên header — nó là unit đầu
 > tiên khai, và là thứ tên branch của chính nó sẽ được suy ra.
+>
+> **Sửa lần thứ tư, ngay trước khi merge pull request đầu tiên.** Constraint 10. Nó đến muộn
+> hơn ba lần kia — `impl.md` và `pr.md` đã viết xong — nhưng nó đến *trước* lần merge đầu
+> tiên, và đó là lần duy nhất còn kịp: sau khi một merge commit nằm trên `main` thì quy tắc
+> chỉ còn áp cho tương lai chứ không còn mô tả được lịch sử.
 
 ## Open questions
 

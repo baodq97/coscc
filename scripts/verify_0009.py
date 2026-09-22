@@ -425,10 +425,31 @@ def ruleset_on_main() -> dict | None:
 
 
 def claim_10() -> bool:
+    problems = []
+    ruleset = ruleset_on_main()
+    if ruleset is None:
+        problems.append("no active ruleset on main carries a pull_request rule")
+    elif not any(r.get("type") == "required_linear_history" for r in ruleset.get("rules", [])):
+        problems.append("the ruleset allows a merge commit onto main")
+
+    # Two legs, and they refuse different things. The setting takes the other two buttons
+    # away; the ruleset refuses a merge commit even if somebody puts them back. Either one
+    # alone leaves a door: a setting is one click from being undone, and linear history on
+    # its own still permits a rebase merge.
+    repo = gh_json("api", f"repos/{GH_REPO}")
+    if repo is None:
+        problems.append("GitHub did not answer for the repository settings")
+    else:
+        for key, want in (("allow_squash_merge", True),
+                          ("allow_merge_commit", False),
+                          ("allow_rebase_merge", False)):
+            if repo.get(key) is not want:
+                problems.append(f"{key} is {repo.get(key)}, wanted {want}")
+
     return say(
-        ruleset_on_main() is not None,
-        "an active ruleset makes main accept commits only through a pull request",
-        "no active ruleset on main carries a pull_request rule",
+        not problems,
+        "main takes commits only through a pull request, and only as a squash",
+        "; ".join(problems),
     )
 
 

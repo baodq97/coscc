@@ -98,6 +98,14 @@ release không cần action nào.
    như lệnh, và `->` là một dấu gạch cộng một redirect. `git add -A` quét cả hai vào. Đúng
    hình dạng departure 7 của `0008`.
 
+9. **Squash-only, nêu ra lúc pull request đầu tiên sắp merge.** Người khởi xướng: *"thêm 1
+   rule chỉ squash merge"* — đúng lúc tôi gọi `gh pr merge --merge`. `intent.md` constraint
+   10, `spec.md` R14 và C9, `plan.md` bước 11–12 và Risk 8. Thời điểm là thứ đáng ghi: có
+   **đúng một** cửa sổ để quy tắc mô tả được toàn bộ lịch sử `main` thay vì chỉ tương lai, và
+   một merge commit nằm xuống là đóng nó vĩnh viễn. Cưỡng chế ở hai chỗ vì chúng chặn hai thứ
+   khác nhau — setting bỏ hai cái nút, ruleset `required_linear_history` từ chối merge commit
+   kể cả khi nút được bật lại.
+
 ## What was measured
 
 Tất cả ngày 2026-09-22, trên branch.
@@ -119,12 +127,19 @@ Tất cả ngày 2026-09-22, trên branch.
 | `.claude/scripts/cos.mjs` | 275 → **517** dòng |
 | `.claude/harness.md` | 180 → **268** dòng |
 | Action bên thứ ba ghim theo tag | **0** — ba pin, cả ba là SHA 40 hex |
+| `gh pr checks 1` | `branch-name` pass 9s, `tests` pass 25s |
+| — log của job `tests` trên runner | **55** node + **256** python, chạy thật |
+| `gh api repos/baodq97/coscc`, trước bước 11 | cả ba cách merge `true`; `delete_branch_on_merge` `false` |
 
-**Ba claim còn đỏ, và không claim nào trong đó là code.** C10 ruleset, C11 hai release, C12
-mọi commit vào `main` qua PR. Cả ba cần bước 9–14: mở PR, merge, bật ruleset, đẩy hai tag.
-Chúng đỏ **đúng** lúc này.
+**Ba claim còn đỏ, và không claim nào trong đó là code.** C10 ruleset cộng squash-only, C11
+hai release, C12 mọi commit vào `main` qua PR. Cả ba cần bước 11–14: merge, bật ruleset, đẩy
+hai tag. Chúng đỏ **đúng** lúc này.
 
-**Hai workflow chưa chạy lần nào.** C7 kiểm cấu trúc, không kiểm cú pháp. Một file YAML hỏng
+**Hai workflow đã chạy — cập nhật.** Mục này viết trước khi PR mở. `gh pr checks 1` cho cả
+hai job xanh, và log in ra 55 test node cùng 256 test python **trên runner**, nghĩa là cả hai
+file YAML parse được. Risk 1 của `plan.md` gỡ. `release.yml` thì vẫn chưa chạy lần nào.
+
+**Câu viết trước khi có bằng chứng, giữ lại để đọc được cả hai:** C7 kiểm cấu trúc, không kiểm cú pháp. Một file YAML hỏng
 lọt qua và chỉ lộ ở bước 9, nơi GitHub là trình parse và triệu chứng là `gh pr checks` rỗng.
 Không tuyên bố gì hơn thế cho tới khi PR mở ra.
 
