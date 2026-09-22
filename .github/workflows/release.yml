@@ -4,8 +4,20 @@
 # unobserved because nobody runs it locally.
 #
 # `contents: write` is the narrowest thing that can create a release, and it is the only
-# permission granted. `gh` is preinstalled on the runner, so creating the release needs no
-# third-party action at all.
+# permission granted. Building the wheel needs `uv` — the one third-party action here,
+# pinned the same way `pr.yml` pins its — but not Node: Reflex downloads its own Node/Bun to
+# export the frontend, so the runner needs no JavaScript toolchain preinstalled. `gh` is
+# preinstalled, so attaching the built assets to the release needs nothing further.
+#
+# A wheel with no `coscc/_web/` in it still builds, still installs, and just has no
+# frontend: `uv build` does not know that directory is supposed to exist, and
+# `pyproject.toml` declares no package data on purpose — `uv_build` already includes
+# everything under `coscc/`, `.gz` sidecars included, measured 2026-09-22 by building a
+# wheel with a probe file under `coscc/_web/` and finding it in `unzip -l`. So the copy step
+# below is the only thing that puts the compiled frontend where the wheel will pick it up,
+# and the guard step right after the build is the only thing that would notice if that copy
+# silently found nothing to do — see `.cos/0011_no-install-path-on-a-clean-machine/spec.md`
+# R13 and `plan.md`, `## Risks` item 4.
 name: release
 
 on:
@@ -32,17 +44,108 @@ jobs:
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
 
       # A release built from a tag that disagrees with pyproject.toml would ship a number
-      # nothing else in the repository carries.
+      # nothing else in the repository carries. This step still only asks `cos.mjs`; it adds
+      # nothing more than reading the version back out of what `cos.mjs` already printed, so
+      # later steps that need the plain X.Y.Z (to name the wheel, and to bake into
+      # install.sh) do not parse the tag or pyproject.toml a second time.
       - name: The tag agrees with the five declared versions
-        run: node .claude/scripts/cos.mjs check-version
+        id: version
+        run: |
+          set -euo pipefail
+          out=$(node .claude/scripts/cos.mjs check-version)
+          echo "$out"
+          echo "version=${out%% *}" >> "$GITHUB_OUTPUT"
 
-      - name: Create the release
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          python-version: '3.14'
+
+      - run: uv sync --frozen
+
+      # Wraps `reflex export --frontend-only --no-zip` (see coscc/build.py) and writes the
+      # bundle to .web/build/client/. Reflex fetches its own Node/Bun the first time this
+      # runs, so nothing upstream of this step needs to provision one.
+      - name: Build the compiled frontend
+        run: uv run coscc-build
+
+      # `.web/` is gitignored and never committed (see .gitignore), so this copy is the only
+      # thing that puts the bundle somewhere `uv build` will include it — `pyproject.toml`
+      # declares `module-name = "coscc"`, so only what lands under `coscc/` travels in the
+      # wheel (spec.md R1).
+      # The `build/client` segment is preserved deliberately, not out of habit.
+      # `REFLEX_WEB_WORKDIR` names a *web directory*, and Reflex's static mount appends
+      # `Dirs.STATIC` — `build/client` — to whatever it names (read from
+      # reflex/utils/exec.py:376-380, 2026-09-22). Flattening the copy here would leave
+      # `coscc/frontend.py` pointing that variable at a tree whose `build/client` does not
+      # exist, and the page would 404 while the API stayed healthy.
+      - name: Copy the compiled frontend into the package
+        run: |
+          set -euo pipefail
+          mkdir -p coscc/_web/build/client
+          cp -r .web/build/client/. coscc/_web/build/client/
+
+      - name: Build the wheel
+        id: wheel
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv build --wheel
+          wheel=$(ls dist/*.whl)
+          want="dist/coscc-${VERSION}-py3-none-any.whl"
+          if [ "$wheel" != "$want" ]; then
+            echo "::error::built $wheel, expected $want — the wheel's name is not what this workflow assumed" >&2
+            exit 1
+          fi
+          echo "wheel=$wheel" >> "$GITHUB_OUTPUT"
+
+      # spec.md R13, plan.md `## Risks` item 4: without the copy step above, `uv build`
+      # still succeeds and the wheel still installs — it is only missing a frontend, and
+      # nothing else in this workflow would notice. This is the check that would.
+      - name: Refuse to ship a wheel with no frontend in it
+        env:
+          WHEEL: ${{ steps.wheel.outputs.wheel }}
+        run: |
+          set -euo pipefail
+          if ! unzip -l "$WHEEL" | grep -q 'coscc/_web/build/client/index\.html'; then
+            echo "::error::$WHEEL has no coscc/_web/build/client/index.html — the frontend copy step did not run, or copied nothing" >&2
+            exit 1
+          fi
+
+      # scripts/install.sh (spec.md R9, plan.md step 8) is written by a parallel unit of
+      # work and did not exist in this repository when this step was written. It is a
+      # template carrying two placeholders this step substitutes: `__COSCC_VERSION__` for
+      # the plain X.Y.Z version, and `__COSCC_WHEEL_SHA256__` for the wheel's sha256. If the
+      # file lands with different placeholder names, update the two `sed` patterns below to
+      # match them — this is an assumption made ahead of that file existing, not a fact read
+      # from it.
+      - name: SHA256SUMS, and the wheel's checksum baked into install.sh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          WHEEL: ${{ steps.wheel.outputs.wheel }}
+        run: |
+          set -euo pipefail
+          wheel_name=$(basename "$WHEEL")
+          # Hashed from inside dist/ so SHA256SUMS names the wheel the way it is attached to
+          # the release — bare, not prefixed with dist/ — and `sha256sum -c` works against
+          # the three assets exactly as downloaded.
+          (cd "$(dirname "$WHEEL")" && sha256sum "$wheel_name") > SHA256SUMS
+          wheel_sha256=$(awk '{print $1}' SHA256SUMS)
+          sed \
+            -e "s/__COSCC_VERSION__/$VERSION/g" \
+            -e "s/__COSCC_WHEEL_SHA256__/$wheel_sha256/g" \
+            scripts/install.sh > install.sh
+          sha256sum install.sh >> SHA256SUMS
+
+      - name: Create the release, with the wheel, the installer and their checksums attached
         env:
           GH_TOKEN: ${{ github.token }}
           KIND: ${{ steps.kind.outputs.kind }}
+          WHEEL: ${{ steps.wheel.outputs.wheel }}
         run: |
           set -euo pipefail
           gh release create "$GITHUB_REF_NAME" \
+            "$WHEEL" install.sh SHA256SUMS \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             $([ "$KIND" = prerelease ] && echo --prerelease || echo --latest)
