@@ -26,7 +26,7 @@ Nothing runs the build automatically: `npm test` does not, because `verify_0002`
 `verify_0003` drive the ASGI app in-process and never need a compiled frontend — that is
 deliberate, and it is what keeps the test command free of a JavaScript toolchain.
 
-`npm test` covers both runtimes: `test:node` over `channel/` and `.claude/scripts/`, then
+`npm test` covers both runtimes: `test:node` over `.claude/scripts/`, then
 `test:python` over `cos_baodo/`. Adding a Python test file under `cos_baodo/` named
 `*_test.py` is enough to be picked up. This is what keeps "tests must be green" meaning
 something now that the repository has two languages in it — verified once, on 2026-09-21,
@@ -144,16 +144,6 @@ found on 2026-09-21 by driving the page with a browser — no HTTP-level check c
 vite server that binds every interface, and 0.9.11 has no setting for its host — measured
 on 2026-09-21, `ss -ltn` showed `*:3000`. `cos-baodo` mounts the compiled frontend into the
 same ASGI app as the API and binds one loopback port, so there is one socket to check.
-
-Run the web channel from an interactive session. Two `--print` runs on 2026-09-21 loaded
-the server but never registered the channel, with no log line and no error. The documented
-behaviour is that `-p` is supported, so the likely cause is the development flag's
-confirmation dialog, which cannot be drawn headlessly — unverified, and worth retesting
-before anyone builds on it:
-
-```
-claude --dangerously-load-development-channels server:webchannel   # then http://127.0.0.1:8789
-```
 
 ## The loop
 

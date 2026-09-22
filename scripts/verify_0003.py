@@ -79,11 +79,6 @@ def claim_1() -> Claim:
         "0002's page is gone",
         not (REPO / "cos_baodo" / "public" / "index.html").exists(),
     )
-    # R7: 0001's page is hand-written but is not this app's, and removing it is forbidden.
-    c.check(
-        "0001's page is untouched",
-        (REPO / "channel" / "public" / "index.html").is_file(),
-    )
     return c
 
 

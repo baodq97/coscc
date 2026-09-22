@@ -15,12 +15,10 @@ The harness is entirely inside `.claude/`:
 | `.claude/scripts/` | The mechanical checks — numbering, gates, status — and their tests. |
 
 Work units live in `.cos/NNNN_<slug>/`. `docs/` holds the playbook this is built from.
-`channel/` is the first thing the harness built: a web page on localhost that talks to a
-running Claude Code session, with `evidence/` holding the transcript it was measured by.
 
 ```
 node .claude/scripts/cos.mjs status   # where everything stands
-npm test                              # the harness scripts and the channel
+npm test                              # the harness scripts and the app
 ```
 
 Copying it into another repository means copying `.claude/`. Nothing else is needed, and

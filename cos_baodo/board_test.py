@@ -25,20 +25,25 @@ def run(coro):
     return asyncio.run(coro)
 
 
+def _by_stage(u) -> dict:
+    return {row["stage"]: row["status"] for row in u["stages"]}
+
+
 class TheRepositoryReadsAsABoard(unittest.TestCase):
     def test_every_unit_carries_all_eight_stages(self):
         data = run(board.read(REPO))
         self.assertEqual(data["stages"], STAGES)
-        self.assertGreaterEqual(data["count"], 8)
+        self.assertEqual(data["count"], len([d for d in (REPO / ".cos").iterdir() if d.is_dir()]))
         for unit in data["units"]:
             got = [row["stage"] for row in unit["stages"]]
             self.assertEqual(got, STAGES, f"{unit['name']} is missing a stage")
 
     def test_a_stage_with_no_artifact_reads_as_not_started(self):
         data = run(board.read(REPO))
-        unit = next(u for u in data["units"] if u["name"].startswith("0001_"))
-        by_stage = {row["stage"]: row["status"] for row in unit["stages"]}
-        # 0001 closed under the three-stage loop, so the four after `plan` never ran.
+        # Chosen by shape rather than by number: any unit closed under the old three-stage
+        # loop will do, and naming one pins the test to a numbering that can change.
+        unit = next(u for u in data["units"] if _by_stage(u)["plan"] == "done")
+        by_stage = _by_stage(u=unit)
         self.assertEqual(by_stage["intent"], "accepted")
         self.assertEqual(by_stage["plan"], "done")
         for stage in ("impl", "pr", "review", "ship"):
@@ -48,7 +53,7 @@ class TheRepositoryReadsAsABoard(unittest.TestCase):
         # Two answers to "what next" is exactly the drift `board.py` exists to avoid, so
         # the value must be the script's, verbatim.
         data = run(board.read(REPO))
-        unit = next(u for u in data["units"] if u["name"].startswith("0001_"))
+        unit = next(u for u in data["units"] if _by_stage(u)["plan"] == "done")
         self.assertEqual(unit["next"], "finished")
         self.assertFalse(unit["blocked"])
 

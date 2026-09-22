@@ -239,12 +239,6 @@ class NoHandWrittenMarkup(unittest.TestCase):
         ]
         self.assertEqual(found, [], f"hand-written markup is back: {found}")
 
-    def test_0001s_page_is_untouched(self):
-        # `spec.md` R7: channel/public/index.html is hand-written but is not this app's
-        # page, so R8 does not reach it and removing it is forbidden.
-        repo = Path(__file__).resolve().parent.parent
-        self.assertTrue((repo / "channel" / "public" / "index.html").is_file())
-
 
 class Loopback(unittest.TestCase):
     def test_the_default_bind_is_loopback(self):

@@ -20,6 +20,15 @@ REPO = Path(__file__).resolve().parent.parent
 STAGES = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
 
 
+def _a_unit(body: dict) -> str:
+    """Any unit name, taken from the board itself.
+
+    Naming one here pinned these tests to a numbering that renumbering breaks; what they
+    actually need is a unit that exists.
+    """
+    return body["units"][0]["name"]
+
+
 class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
     """A working folder exists, so modes can be recorded."""
 
@@ -43,7 +52,7 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_the_board_carries_every_unit_with_all_eight_stages(self):
         body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
         self.assertEqual(body["stages"], STAGES)
-        self.assertGreaterEqual(body["count"], 8)
+        self.assertEqual(body["count"], len([d for d in (REPO / ".cos").iterdir() if d.is_dir()]))
         for unit in body["units"]:
             self.assertEqual([r["stage"] for r in unit["stages"]], STAGES)
 
@@ -58,7 +67,8 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(modes, {"manual"})
 
     async def test_a_mode_set_over_http_comes_back_on_the_next_read(self):
-        payload = {"cwd": str(REPO), "unit": "0008_hand-driven-invisible-loop",
+        first = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
+        payload = {"cwd": str(REPO), "unit": _a_unit(first),
                    "stage": "impl", "mode": "autonomous"}
         r = await self.client.post("/api/board/mode", json=payload)
         self.assertEqual(r.status_code, 200, r.text)
@@ -71,10 +81,12 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_stage["spec"], "manual")
 
     async def test_a_mode_is_validated_against_the_board_not_a_second_list(self):
+        body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
+        unit = _a_unit(body)
         for bad, expected in (
             ({"unit": "9999_not-here", "stage": "impl", "mode": "manual"}, "no such work unit"),
-            ({"unit": "0008_hand-driven-invisible-loop", "stage": "deploy", "mode": "manual"}, "no such stage"),
-            ({"unit": "0008_hand-driven-invisible-loop", "stage": "impl", "mode": "turbo"}, "mode must be one of"),
+            ({"unit": unit, "stage": "deploy", "mode": "manual"}, "no such stage"),
+            ({"unit": unit, "stage": "impl", "mode": "turbo"}, "mode must be one of"),
         ):
             r = await self.client.post("/api/board/mode", json={"cwd": str(REPO), **bad})
             self.assertEqual(r.status_code, 400, r.text)
@@ -88,10 +100,11 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertIn("body must be JSON", r.json()["error"])
 
     async def test_a_unit_that_never_ran_has_an_empty_timeline_and_no_cost(self):
+        board_body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
         body = (
             await self.client.get(
                 "/api/timeline",
-                params={"cwd": str(REPO), "unit": "0008_hand-driven-invisible-loop"},
+                params={"cwd": str(REPO), "unit": _a_unit(board_body)},
             )
         ).json()
         self.assertEqual(body["runs"], [])
@@ -120,7 +133,7 @@ class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_board_still_reads(self):
         body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
-        self.assertGreaterEqual(body["count"], 8)
+        self.assertEqual(body["count"], len([d for d in (REPO / ".cos").iterdir() if d.is_dir()]))
 
     async def test_it_says_why_it_is_read_only_rather_than_looking_broken(self):
         body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
@@ -128,9 +141,10 @@ class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):
         self.assertIn("COS_WORKING_DIR", body["read_only_because"])
 
     async def test_setting_a_mode_is_refused_with_the_same_reason(self):
+        body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
         r = await self.client.post(
             "/api/board/mode",
-            json={"cwd": str(REPO), "unit": "0008_hand-driven-invisible-loop",
+            json={"cwd": str(REPO), "unit": _a_unit(body),
                   "stage": "impl", "mode": "autonomous"},
         )
         self.assertEqual(r.status_code, 400)
