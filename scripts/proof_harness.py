@@ -36,6 +36,20 @@ BOOT_TIMEOUT_S = 60.0
 EXIT_PASS, EXIT_BROKEN, EXIT_ENV = 0, 1, 2
 
 
+# Every line a proof prints, as it prints it. Python buffers stdout whenever it is not a
+# terminal, so `verify_0014.py > log` -- a run that spends up to eight sessions and can
+# take half an hour -- wrote an empty file from start to finish and emitted everything at
+# once at the end. Measured 2026-09-22, watching a run that had no way to be watched.
+#
+# Done here, once, rather than as `flush=True` on each call: the proofs print from `say`
+# and from bare `print` both, and a second mechanism is how half of them keep the old
+# behaviour. Importing this module is already what a proof does first.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except (AttributeError, ValueError, OSError):  # not a real stream; nothing to configure
+    pass
+
+
 def say(ok: bool, claim: str, detail: str = "") -> bool:
     print(f"{'PASS' if ok else 'FAIL'}  {claim}{': ' + detail if detail and not ok else ''}")
     return ok
