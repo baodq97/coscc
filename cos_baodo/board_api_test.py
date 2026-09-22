@@ -26,7 +26,11 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.app = build(
-            Config(workspaces=(str(REPO),), working_dir=self._tmp.name)
+            Config(
+                workspaces=(str(REPO),),
+                working_dir=self._tmp.name,
+                data_dir=self._tmp.name,
+            )
         )
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"

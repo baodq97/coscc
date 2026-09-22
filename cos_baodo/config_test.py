@@ -5,9 +5,12 @@ default: it has to be a deliberate edit to a test that says what it is protectin
 value that drifts because nobody was watching.
 """
 
+import dataclasses
 import unittest
+from pathlib import Path
 
 from cos_baodo.config import Config, from_env
+from cos_baodo.data import Data
 
 
 class DefaultsAreTheSafePosture(unittest.TestCase):
@@ -122,6 +125,37 @@ class TheCwdFallback(unittest.TestCase):
     def test_declared_workspaces_are_kept_alongside_a_working_folder(self):
         c = from_env({"COS_WORKING_DIR": "/tmp/ws", "COS_WORKSPACES": "/a,/b"})
         self.assertEqual(c.workspaces, ("/a", "/b"))
+
+
+class TheDataDirectory(unittest.TestCase):
+    """`0011` R1. The setting that says where the app keeps its own state."""
+
+    def test_unset_means_the_module_default_rather_than_a_path_here(self):
+        """`Config` carries `None`, and `data.Data` turns that into `~/.cos`.
+
+        Two places knowing the default would be two places to change it. This test exists
+        to keep the default out of this file.
+        """
+        self.assertIsNone(from_env({}).data_dir)
+        self.assertEqual(Data(from_env({}).data_dir).root, Path("~/.cos").expanduser().resolve())
+
+    def test_it_is_read_from_the_environment(self):
+        self.assertEqual(from_env({"COS_DATA_DIR": "/tmp/cosdata"}).data_dir, "/tmp/cosdata")
+
+    def test_blank_reads_as_unset_rather_than_as_the_current_directory(self):
+        self.assertIsNone(from_env({"COS_DATA_DIR": "   "}).data_dir)
+
+    def test_it_is_independent_of_the_working_folder(self):
+        """`spec.md` R4: the data root holds no workspace, and moving one does not move the other."""
+        c = from_env({"COS_WORKING_DIR": "/tmp/ws", "COS_DATA_DIR": "/tmp/cosdata"})
+        self.assertEqual(c.working_dir, "/tmp/ws")
+        self.assertEqual(c.data_dir, "/tmp/cosdata")
+
+    def test_config_is_frozen_so_nothing_downstream_can_move_it(self):
+        """The same mechanism as knob 3: no setter, so a request has no path to it."""
+        c = from_env({})
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            c.data_dir = "/somewhere/else"  # type: ignore[misc]
 
 
 if __name__ == "__main__":

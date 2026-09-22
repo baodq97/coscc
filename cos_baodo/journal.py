@@ -11,37 +11,44 @@ artifact's `Status:` line via `board.py`. That is what keeps the journal unable 
 about progress: it can only say who was there and what it cost.
 
 **Append-only, and that is a safety property rather than a style.** `0005` measured four
-processes losing 12 of 20 workspace entries to interleaved read-modify-write
-(`cos_baodo/store.py:16-18`). An append has no read step, so that entire class of loss is
-structurally absent here rather than defended against. The `flock` is still taken — it
-frames a record so two writers cannot interleave halves of a line, and it gives a reader a
-consistent snapshot — but it is the second line of defence, not the first.
+processes losing 12 of 20 workspace entries to interleaved read-modify-write. An append has
+no read step, so that entire class of loss is structurally absent here rather than defended
+against. The transaction is still taken — it frames a record so a reader gets a consistent
+snapshot — but it is the second line of defence, not the first.
 
 Records are stamped and never edited. A mode change is a new record; the latest one wins.
+
+**Where it lives, after `0011`.** It was a JSONL file beside the workspace store, one line
+per record, `O_APPEND` under a `flock`. It is now rows in the app's SQLite database under
+the data root. The record itself is still stored whole, as the JSON the caller composed —
+the columns beside it (`root`, `workspace`, `unit`, `stage`, `kind`) are read out of that
+JSON at insert time so a query can narrow without parsing every row. They are a second
+copy, so they are never written independently of it; the JSON is the record.
+
+A JSONL journal written before `0011` is imported once, on first use, and the file is not
+deleted. That mirrors the workspace store and is the same reasoning: an import that turns
+out wrong is recoverable only while its source still exists.
 """
 
 from __future__ import annotations
 
-import errno
-import fcntl
 import json
 import os
-import threading
-import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-VERSION = 1
-JOURNAL_FILENAME = ".cos-journal.jsonl"
-LOCK_FILENAME = ".cos-journal.lock"
+from cos_baodo.data import BUSY_TIMEOUT, Busy, Data, now as _now
 
-# Same reasoning, and the same numbers, as `store.LOCK_TIMEOUT`: the work under the lock is
-# one line of a few hundred bytes, so ten seconds is enormous. It turns an indefinite hang
-# into an error that names the folder. Chosen, not measured.
-LOCK_TIMEOUT = 10.0
-LOCK_POLL = 0.01
+VERSION = 1
+
+# The file this used to be. Named here only so `_import_legacy` can read it once
+# (`0011 spec.md` R8, extended to the journal). Nothing writes it any more.
+JOURNAL_FILENAME = ".cos-journal.jsonl"
+
+# Same reasoning, and the same number, as `store.LOCK_TIMEOUT`: ten seconds turns an
+# indefinite block into an error that names the file. Chosen, not measured.
+LOCK_TIMEOUT = BUSY_TIMEOUT
 
 MODES = ("manual", "autonomous")
 
@@ -81,68 +88,105 @@ def _zero_cost() -> dict[str, Any]:
     return out
 
 
-class Busy(RuntimeError):
-    """Another process held the journal for too long. Raised rather than waited out."""
-
-
 class BadRecord(ValueError):
     """A record this module will not store, carrying a reason a caller can show."""
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 class Journal:
     """The run log for one working folder, covering every workspace under it.
 
-    It lives beside the workspace store rather than inside any repository: a workspace is
+    It lives in the app's data root rather than inside any repository: a workspace is
     somebody's git checkout, and dropping a growing log into it would show up in their
-    `git status` forever.
+    `git status` forever. Before `0011` "not inside a repository" meant the working folder;
+    now it means `~/.cos`, which is also true when there is no working folder at all.
+
+    `data` is passed in for the same reason it is on `Store`: a test that forgets it would
+    write to the real `~/.cos`.
     """
 
-    def __init__(self, working_dir: str | os.PathLike[str]):
+    def __init__(
+        self,
+        working_dir: str | os.PathLike[str],
+        data: Data | str | os.PathLike[str] | None = None,
+    ):
         self.working_dir = Path(working_dir).expanduser().resolve()
-        self.path = self.working_dir / JOURNAL_FILENAME
-        self.lock_path = self.working_dir / LOCK_FILENAME
-        self._lock = threading.Lock()
+        self.data = data if isinstance(data, Data) else Data(data)
+        self.legacy_path = self.working_dir / JOURNAL_FILENAME
+        self._root = str(self.working_dir)
+        self._imported = False
 
     # -- locking ------------------------------------------------------------
 
     @contextmanager
     def transaction(self, timeout: float | None = None):
-        """Hold the journal exclusively. Lifted from `store.Store.transaction`.
+        """Hold the journal exclusively. Delegates to `Data.write`.
 
-        The lock lives on its own file for the same reason it does there: `flock` is
-        released by the kernel when the holder dies, so a crash cannot wedge the folder.
+        Kept as a method because `store.Store` has one and callers frame work with it the
+        same way, and because the timeout has to be a value a test can shorten.
         """
-        timeout = LOCK_TIMEOUT if timeout is None else timeout
-        self.working_dir.mkdir(parents=True, exist_ok=True)
-        with self._lock:
-            fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+        with self.data.write(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
+            self._import_legacy(conn)
+            yield conn
+
+    # -- migration ----------------------------------------------------------
+
+    def _import_legacy(self, conn) -> None:
+        """Bring a pre-`0011` JSONL log in, once, for this working folder.
+
+        The same three properties as `store.Store._import_legacy`: one `stat` in the common
+        case, the `migrations` mark written inside the caller's transaction, and the file
+        left on disk afterwards.
+
+        Lines that will not parse are skipped rather than repaired, exactly as `records`
+        used to skip them on every read.
+        """
+        if self._imported:
+            return
+        if not self.legacy_path.is_file():
+            self._imported = True
+            return
+        key = f"import-jsonl:{self._root}"
+        if self.data.has_run(key, conn):
+            self._imported = True
+            return
+
+        try:
+            raw = self.legacy_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            raw = ""
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
             try:
-                deadline = time.monotonic() + timeout
-                while True:
-                    try:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except OSError as e:
-                        if e.errno not in (errno.EACCES, errno.EAGAIN):
-                            raise
-                        if time.monotonic() >= deadline:
-                            raise Busy(
-                                f"another process is holding the journal in "
-                                f"{self.working_dir} (waited {timeout:.0f}s) — try again"
-                            ) from e
-                        time.sleep(LOCK_POLL)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-            finally:
-                os.close(fd)
+                item = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(item, dict) and item.get("kind"):
+                self._insert(conn, item)
+        Data.mark_run(conn, key)
+        self._imported = True
+
+    def _needs_import(self) -> bool:
+        return self.legacy_path.is_file() and not self._imported
 
     # -- writing ------------------------------------------------------------
+
+    def _insert(self, conn, record: dict[str, Any]) -> None:
+        """One row. The columns are read out of the record, never supplied beside it."""
+        conn.execute(
+            "INSERT INTO runs (at, root, workspace, unit, stage, kind, record) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(record.get("at") or ""),
+                self._root,
+                str(record.get("workspace") or ""),
+                str(record.get("unit") or ""),
+                str(record.get("stage") or ""),
+                str(record.get("kind") or ""),
+                json.dumps(record, ensure_ascii=False, sort_keys=False),
+            ),
+        )
 
     def append(self, record: dict[str, Any], timeout: float | None = None) -> dict[str, Any]:
         """Stamp one record and add it to the end. Never rewrites what is already there."""
@@ -154,20 +198,14 @@ class Journal:
 
         stamped = {"v": VERSION, "at": _now(), **record}
         try:
-            line = json.dumps(stamped, ensure_ascii=False, sort_keys=False)
+            # Serialised here rather than at insert time so an unstorable record is
+            # refused before anything is written, as it was when this was a text file.
+            json.dumps(stamped, ensure_ascii=False, sort_keys=False)
         except (TypeError, ValueError) as e:
             raise BadRecord(f"record is not JSON-serialisable: {e}") from e
-        if "\n" in line:
-            raise BadRecord("a record may not contain a newline")
 
-        with self.transaction(timeout):
-            # O_APPEND puts the write at the end as one operation, so the lock is framing
-            # rather than the thing that keeps two writers apart.
-            fd = os.open(self.path, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o644)
-            try:
-                os.write(fd, (line + "\n").encode("utf-8"))
-            finally:
-                os.close(fd)
+        with self.transaction(timeout) as conn:
+            self._insert(conn, stamped)
         return stamped
 
     def set_mode(self, workspace: str, unit: str, stage: str, mode: str) -> dict[str, Any]:
@@ -199,33 +237,40 @@ class Journal:
     def records(
         self, workspace: str | None = None, unit: str | None = None, timeout: float | None = None
     ) -> list[dict[str, Any]]:
-        """Every record, oldest first, optionally narrowed to one workspace or unit.
+        """Every record for this working folder, oldest first, optionally narrowed.
 
-        A line that will not parse is skipped rather than repaired. The file is plain text
-        beside a user's own folder, and rewriting it to fix someone else's edit would lose
+        A row whose JSON will not parse is skipped rather than repaired. The database is
+        editable by hand like the file before it, and rewriting somebody's edit would lose
         whatever they meant by it.
+
+        Ordered by `id`. `at` is only second-resolution, so two records written in the same
+        second would have no order at all if it were the key.
         """
-        if not self.path.exists():
-            return []
-        with self.transaction(timeout):
-            raw = self.path.read_text(encoding="utf-8", errors="replace")
+        if self._needs_import():
+            with self.transaction(timeout):
+                pass
+
+        sql = "SELECT record FROM runs WHERE root = ?"
+        args: list[Any] = [self._root]
+        if workspace is not None:
+            sql += " AND workspace = ?"
+            args.append(workspace)
+        if unit is not None:
+            sql += " AND unit = ?"
+            args.append(unit)
+        sql += " ORDER BY id"
+
+        with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
+            rows = conn.execute(sql, args).fetchall()
 
         out: list[dict[str, Any]] = []
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line:
-                continue
+        for row in rows:
             try:
-                item = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
+                item = json.loads(row["record"])
+            except (json.JSONDecodeError, ValueError, TypeError):
                 continue
-            if not isinstance(item, dict):
-                continue
-            if workspace is not None and item.get("workspace") != workspace:
-                continue
-            if unit is not None and item.get("unit") != unit:
-                continue
-            out.append(item)
+            if isinstance(item, dict):
+                out.append(item)
         return out
 
     def modes(self, workspace: str, timeout: float | None = None) -> dict[tuple[str, str], str]:

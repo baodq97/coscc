@@ -157,7 +157,7 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
-            journal = Journal(d)
+            journal = Journal(d, d)
             r = Runner(sessions=Silent(), journal=journal)
 
             async def go():
@@ -189,7 +189,7 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
-            journal = Journal(d)
+            journal = Journal(d, d)
             r = Runner(sessions=Replies(), journal=journal)
 
             async def go():
@@ -222,7 +222,7 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), intent_md="Status: accepted.\nI")
-            journal = Journal(d)
+            journal = Journal(d, d)
             r = Runner(sessions=RanOut(), journal=journal)
 
             async def go():
@@ -247,7 +247,7 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), intent_md="Status: accepted.\nI")
-            r = Runner(sessions=Normal(), journal=Journal(d))
+            r = Runner(sessions=Normal(), journal=Journal(d, d))
 
             async def go():
                 out = []

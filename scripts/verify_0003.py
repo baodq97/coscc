@@ -97,26 +97,23 @@ def claim_2() -> Claim:
     root = Path(tempfile.mkdtemp(prefix="cos0003-gate-"))
     try:
         (root / "real").mkdir()
-        config = from_env({"COS_WORKING_DIR": str(root)})
+        config = from_env({"COS_WORKING_DIR": str(root), "COS_DATA_DIR": str(root)})
         service = Service(config, Sessions(config))
 
         service.store.add("real")
         c.check("a real workspace passes the gate", _passes(service, str(root / "real")))
 
-        # Hand-edit: the file is the user's, and this is what they could type into it.
-        Store(root).path.write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "workspaces": [
-                        {"name": "real"},
-                        {"name": "/etc"},
-                        {"name": "../../etc"},
-                        {"name": "../.."},
-                    ],
-                }
-            )
-        )
+        # Hand-edit: the store is the user's, and this is what they could type into it
+        # with `sqlite3` on the command line. Since `0011` that is a table rather than a
+        # file, and the claim is unchanged: the names are rejected on read.
+        hand = Store(root, root)
+        with hand.data.write() as conn:
+            for name in ("/etc", "../../etc", "../.."):
+                conn.execute(
+                    "INSERT OR REPLACE INTO workspaces (root, name, label, added_at) "
+                    "VALUES (?, ?, '', '2026-01-01T00:00:00+00:00')",
+                    (str(hand.working_dir), name),
+                )
         fresh = Service(config, Sessions(config))
         for outside in ("/etc", str(root.parent), str(REPO)):
             c.check(
@@ -196,7 +193,7 @@ async def claim_3() -> Claim:
     root = Path(tempfile.mkdtemp(prefix="cos0003-ws-"))
     # Set once. Nothing below changes the environment again: "restart" has to mean the
     # state came off disk, not out of a fresh Config someone built by hand.
-    env = {"COS_WORKING_DIR": str(root)}
+    env = {"COS_WORKING_DIR": str(root), "COS_DATA_DIR": str(root)}
     built: list = []
 
     def start():

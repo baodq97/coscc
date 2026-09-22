@@ -114,7 +114,14 @@ def require_browser():
 
 def make_workspaces(root: Path, config) -> None:
     """Two workspaces, adopted from directories. No clone, so no network."""
-    scoped = from_env({**os.environ, "COS_WORKING_DIR": str(root), "COS_WORKSPACES": ""})
+    scoped = from_env(
+        {
+            **os.environ,
+            "COS_WORKING_DIR": str(root),
+            "COS_DATA_DIR": str(root),
+            "COS_WORKSPACES": "",
+        }
+    )
     service = Service(scoped, Sessions(scoped))
     for i in range(WORKSPACES):
         name = f"project-{i + 1}"
@@ -135,7 +142,14 @@ class RealApp:
         self.base = f"http://{config.host}:{config.port}"
 
     def __enter__(self):
-        env = {**os.environ, "COS_WORKING_DIR": str(self.working_dir), "COS_WORKSPACES": ""}
+        env = {
+            **os.environ,
+            "COS_WORKING_DIR": str(self.working_dir),
+            # The app under test keeps its database in the scratch folder too, so a
+            # proof run never touches the data root a real run would use.
+            "COS_DATA_DIR": str(self.working_dir),
+            "COS_WORKSPACES": "",
+        }
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "cos_baodo.run"],
             cwd=REPO, env=env,

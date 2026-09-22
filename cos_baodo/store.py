@@ -2,70 +2,77 @@
 
 The safety property here is a data shape, not a check. A stored entry holds a `name` —
 **one path segment** — and never an absolute path, so there is no field in which a
-hand-edited file could put `/etc`. The real path is built from the working folder on every
-read (`spec.md` R12). `is_under` stays as a second layer, but the first layer is that the
-dangerous value has nowhere to live.
+hand-edited store could put `/etc`. The real path is built from the working folder on every
+read (`0003 spec.md` R12). `is_under` stays as a second layer, but the first layer is that
+the dangerous value has nowhere to live. After `0011` that is stronger than it was: the
+table has **no column** for a path at all.
 
-This is the first state the app owns (`spec.md` C8). It holds workspaces and labels, and
-nothing else: conversation content belongs to the SDK's session store, which stays the one
-source of truth for anything said.
+This is the first state the app owns. It holds workspaces and labels, and nothing else:
+conversation content belongs to the SDK's session store, which stays the one source of
+truth for anything said.
 
-Writes go to a temp file and are renamed into place, so a crash mid-write leaves the old
-list rather than half of a new one.
+**Where it lives, and why that changed.** Until `0011` this was a JSON file inside the
+working folder, replaced by `rename` on every write, with a `flock` beside it. It is now
+rows in the app's own SQLite database under the data root (`cos_baodo/data.py`), because
+`0011 intent.md` asked for one durable place that exists whether or not a working folder
+does. One row per `(root, name)`, so one database serves every working folder on the
+machine and a workspace still cannot be named outside its own root.
 
-**Concurrency, and why the lock is where it is.** `0005` measured the old arrangement: four
-processes adding five workspaces each to one working folder left 8 of 20, with no error
-anywhere. The loss was never two writes colliding — it was two read-then-write sequences
-interleaving, each reading the old list and each writing back what it computed. So the lock
-covers the whole transaction, not the write, and it lives on a **separate file**: the store
-itself is replaced by `rename` on every write, and a lock held on it would go with it.
-
-The in-process lock is kept as well. It is right for threads here, cheap, and always taken
-in the same order as the file lock, so the two cannot deadlock against each other.
+**Concurrency, and why the transaction is where it is.** `0005` measured the old
+arrangement: four processes adding five workspaces each to one working folder left 8 of 20,
+with no error anywhere. The loss was never two writes colliding — it was two
+read-then-write sequences interleaving, each reading the old list and each writing back
+what it computed. That is why every mutation below runs inside `Data.write`, which opens
+`BEGIN IMMEDIATE`: the transaction covers the whole read-modify-write, exactly as the file
+lock did. `0011 spec.md` C2 is explicit that swapping the mechanism does not carry the
+proof across — `scripts/verify_0005.py` is what decides it, and it still measures 20.
 """
 
 from __future__ import annotations
 
-import errno
-import fcntl
 import json
 import os
 import re
-import tempfile
-import threading
-import time
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
+from cos_baodo.data import BUSY_TIMEOUT, Busy, Data, now
+
 VERSION = 1
+
+# The file this used to be. Still named here for one reason: `import_legacy` reads it once
+# so that a machine set up before `0011` keeps its workspaces (`0011 spec.md` R8). Nothing
+# writes it any more, and it is never deleted — see `import_legacy`.
 STORE_FILENAME = ".cos-baodo.json"
-LOCK_FILENAME = ".cos-baodo.lock"
 
-# How long to wait for another process to finish its transaction. Chosen, not measured
-# (`spec.md` C3): the work under the lock is reading and writing a few hundred bytes, so
-# ten seconds is already enormous. It exists to turn an indefinite hang into an error, not
-# to wait for anyone. Worth revisiting after real use rather than trusting.
-LOCK_TIMEOUT = 10.0
-LOCK_POLL = 0.01
+# Kept as the name callers already pass to `transaction(timeout=...)` and patch in tests.
+# The value is the same 10 seconds the file lock waited, now enforced by SQLite's
+# `busy_timeout` (`cos_baodo/data.py`).
+LOCK_TIMEOUT = BUSY_TIMEOUT
 
-# One path segment. No separators, no `.`/`..`, bounded length. `spec.md` R12 lists the
-# inputs this has to turn away.
+# One path segment. No separators, no `.`/`..`, bounded length. `0003 spec.md` R12 lists
+# the inputs this has to turn away.
 _NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 LABEL_MAX = 200
+
+__all__ = [
+    "BadName",
+    "Busy",
+    "Entry",
+    "LABEL_MAX",
+    "LOCK_TIMEOUT",
+    "STORE_FILENAME",
+    "Store",
+    "VERSION",
+    "clean_label",
+    "require_name",
+    "valid_name",
+]
 
 
 class BadName(ValueError):
     """A name that may not become a directory under the working folder."""
-
-
-class Busy(RuntimeError):
-    """Another process held the workspace list for too long.
-
-    Raised rather than waited out. `spec.md` C7: this reads like a broken app, so the
-    message has to say that something else is holding it — swapping a silent loss for a
-    baffling error would not be much of a trade.
-    """
 
 
 def valid_name(name: str) -> bool:
@@ -92,78 +99,127 @@ class Entry:
 
 
 class Store:
-    """The workspace list for one working folder.
+    """The workspace list for one working folder, kept in the app's own database.
 
-    Every method re-reads the file. That is deliberate: `spec.md` R21 wants membership
-    decided at read time, and a cached list is exactly the thing that made `0002`'s gate
-    safe for a reason that no longer holds.
+    Every method re-reads. That is deliberate: `0003 spec.md` R21 wants membership decided
+    at read time, and a cached list is exactly the thing that made `0002`'s gate safe for a
+    reason that no longer holds.
+
+    `data` is the app's data root. It is passed in rather than defaulted at the call sites
+    so that a test, or a proof driving four processes at a temporary root, cannot reach the
+    real `~/.cos` by forgetting an argument.
     """
 
-    def __init__(self, working_dir: str | os.PathLike[str]):
+    def __init__(
+        self,
+        working_dir: str | os.PathLike[str],
+        data: Data | str | os.PathLike[str] | None = None,
+    ):
         self.working_dir = Path(working_dir).expanduser().resolve()
-        self.path = self.working_dir / STORE_FILENAME
-        self.lock_path = self.working_dir / LOCK_FILENAME
-        self._lock = threading.Lock()
+        self.data = data if isinstance(data, Data) else Data(data)
+        # The pre-`0011` file, read once by `import_legacy` and never written.
+        self.legacy_path = self.working_dir / STORE_FILENAME
+        self._root = str(self.working_dir)
+        self._imported = False
 
     @contextmanager
     def transaction(self, timeout: float | None = None):
         """Hold the list exclusively for one read-modify-write.
 
-        The file lock is advisory and per descriptor, which is why it is taken on a file
-        that exists only to be locked. `flock` is released by the kernel when the holder
-        dies, so a crashed process cannot wedge the folder — `spec.md` R3 in the one form
-        that does not depend on anyone remembering to release it.
+        Delegates to `Data.write`, which is the only place `BEGIN IMMEDIATE` is issued.
+        Kept as a method because callers already frame multi-step work with it, and
+        because the timeout has to be one value a test can shorten — a test that had to
+        wait the real deadline would not be run.
         """
-        # Read at call time, not bound as a default, so the deadline is one value a test
-        # can shorten — a test that had to wait the real timeout would not be run.
-        timeout = LOCK_TIMEOUT if timeout is None else timeout
-        self.working_dir.mkdir(parents=True, exist_ok=True)
-        with self._lock:
-            fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-            try:
-                deadline = time.monotonic() + timeout
-                while True:
-                    try:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except OSError as e:
-                        if e.errno not in (errno.EACCES, errno.EAGAIN):
-                            raise
-                        if time.monotonic() >= deadline:
-                            raise Busy(
-                                f"another process is holding {self.working_dir} "
-                                f"(waited {timeout:.0f}s) — try again in a moment"
-                            ) from e
-                        time.sleep(LOCK_POLL)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-            finally:
-                os.close(fd)
+        with self.data.write(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
+            self._import_legacy(conn)
+            yield conn
 
-    # -- reading ------------------------------------------------------------
+    # -- migration ----------------------------------------------------------
 
-    def entries(self) -> list[Entry]:
-        """Entries from disk, with anything unusable dropped rather than repaired.
+    def _migration_key(self) -> str:
+        return f"import-json:{self._root}"
 
-        A name that does not pass `valid_name` is ignored, not corrected: the file is
-        editable by hand, and a repair would write back something the user did not ask
-        for. Dropping it keeps the invariant without touching their file.
+    def _import_legacy(self, conn) -> None:
+        """Bring a pre-`0011` JSON list in, once, for this working folder.
+
+        `0011 spec.md` R8. Three things make this safe to call on every path in:
+
+        - it returns immediately when there is no such file, which is the case on any
+          machine set up after this unit;
+        - the `migrations` row is written **in the caller's transaction**, so an import
+          that rolls back is not recorded as done;
+        - the JSON file is never deleted. An import that turns out wrong is recoverable
+          only while the thing it read from still exists.
+
+        Entries already in the database win: this adds what is missing rather than
+        restoring what somebody removed on purpose.
         """
-        raw = self._read()
-        out: list[Entry] = []
-        for item in raw.get("workspaces", []):
+        if self._imported:
+            return
+        # Cheapest possible exit for the common case: one `stat`, no query.
+        if not self.legacy_path.is_file():
+            self._imported = True
+            return
+        key = self._migration_key()
+        if self.data.has_run(key, conn):
+            self._imported = True
+            return
+
+        try:
+            raw = json.loads(self.legacy_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            raw = {}
+        items = raw.get("workspaces", []) if isinstance(raw, dict) else []
+        for item in items:
             if not isinstance(item, dict):
                 continue
             name = str(item.get("name", ""))
             if not valid_name(name):
                 continue
-            out.append(Entry(name=name, label=clean_label(item.get("label"))))
-        return out
+            conn.execute(
+                "INSERT OR IGNORE INTO workspaces (root, name, label, added_at) "
+                "VALUES (?, ?, ?, ?)",
+                (self._root, name, clean_label(item.get("label")), now()),
+            )
+        Data.mark_run(conn, key)
+        self._imported = True
+
+    def import_legacy(self) -> None:
+        """Run the one-shot import on its own. Exposed so a caller can do it deliberately."""
+        with self.transaction():
+            pass
+
+    # -- reading ------------------------------------------------------------
+
+    def entries(self) -> list[Entry]:
+        """Entries from the database, with anything unusable dropped rather than repaired.
+
+        A name that does not pass `valid_name` is ignored, not corrected: the database is
+        editable by hand like the file before it, and a repair would write back something
+        the user did not ask for. Dropping it keeps the invariant without touching their
+        data.
+
+        Order is insertion order. `add` re-inserts an existing name, so re-adding moves an
+        entry to the end — the behaviour the JSON list had.
+        """
+        needs_import = self.legacy_path.is_file() and not self._imported
+        if needs_import:
+            with self.transaction():
+                pass
+        with self.data.connect() as conn:
+            rows = conn.execute(
+                "SELECT name, label FROM workspaces WHERE root = ? ORDER BY rowid",
+                (self._root,),
+            ).fetchall()
+        return [
+            Entry(name=row["name"], label=clean_label(row["label"]))
+            for row in rows
+            if valid_name(row["name"])
+        ]
 
     def path_of(self, name: str) -> Path:
-        """The only way a stored entry becomes a path. Built, never read from the file."""
+        """The only way a stored entry becomes a path. Built, never read from the store."""
         return self.working_dir / require_name(name)
 
     def is_under(self, directory: str) -> bool:
@@ -192,55 +248,37 @@ class Store:
 
     def add(self, name: str, label: str = "") -> Entry:
         require_name(name)
-        with self.transaction():
-            items = [e for e in self.entries() if e.name != name]
-            entry = Entry(name=name, label=clean_label(label))
-            self._write(items + [entry])
-            return entry
+        with self.transaction() as conn:
+            # Delete then insert rather than upsert, so the row takes a new rowid and the
+            # entry moves to the end of the list. That is what the JSON version did, and
+            # `entries` orders by rowid.
+            conn.execute(
+                "DELETE FROM workspaces WHERE root = ? AND name = ?", (self._root, name)
+            )
+            conn.execute(
+                "INSERT INTO workspaces (root, name, label, added_at) VALUES (?, ?, ?, ?)",
+                (self._root, name, clean_label(label), now()),
+            )
+            return Entry(name=name, label=clean_label(label))
 
     def set_label(self, name: str, label: str) -> Entry:
         require_name(name)
-        with self.transaction():
-            items = self.entries()
-            if not any(e.name == name for e in items):
+        cleaned = clean_label(label)
+        with self.transaction() as conn:
+            changed = conn.execute(
+                "UPDATE workspaces SET label = ? WHERE root = ? AND name = ?",
+                (cleaned, self._root, name),
+            ).rowcount
+            if not changed:
                 raise KeyError(name)
-            updated = [
-                Entry(e.name, clean_label(label)) if e.name == name else e for e in items
-            ]
-            self._write(updated)
-            return next(e for e in updated if e.name == name)
+            return Entry(name=name, label=cleaned)
 
     def remove(self, name: str) -> None:
-        """Drops the entry. Never touches the directory — `spec.md` R18 and C6."""
+        """Drops the entry. Never touches the directory — `0003 spec.md` R18 and C6."""
         require_name(name)
-        with self.transaction():
-            items = self.entries()
-            if not any(e.name == name for e in items):
+        with self.transaction() as conn:
+            changed = conn.execute(
+                "DELETE FROM workspaces WHERE root = ? AND name = ?", (self._root, name)
+            ).rowcount
+            if not changed:
                 raise KeyError(name)
-            self._write([e for e in items if e.name != name])
-
-    # -- disk ---------------------------------------------------------------
-
-    def _read(self) -> dict:
-        # Only ever the store file. `spec.md` R4: the lock file sits beside it and is
-        # never read as a list.
-        try:
-            data = json.loads(self.path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return {"version": VERSION, "workspaces": []}
-        if not isinstance(data, dict):
-            return {"version": VERSION, "workspaces": []}
-        return data
-
-    def _write(self, entries: list[Entry]) -> None:
-        self.working_dir.mkdir(parents=True, exist_ok=True)
-        payload = {"version": VERSION, "workspaces": [asdict(e) for e in entries]}
-        fd, tmp = tempfile.mkstemp(dir=self.working_dir, prefix=".cos-baodo-", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as fh:
-                json.dump(payload, fh, indent=2)
-                fh.write("\n")
-            os.replace(tmp, self.path)
-        except BaseException:
-            Path(tmp).unlink(missing_ok=True)
-            raise

@@ -48,7 +48,11 @@ class Service:
     def __post_init__(self) -> None:
         # No working folder means no store, and the app behaves exactly as `0002` did.
         # That is what keeps `scripts/verify_0002.py` running unchanged (`spec.md` R6).
-        self.store = Store(self.config.working_dir) if self.config.working_dir else None
+        self.store = (
+            Store(self.config.working_dir, self.config.data_dir)
+            if self.config.working_dir
+            else None
+        )
         # One question, asked in two places. See `Sessions.membership`.
         self.sessions.membership = self._is_member
 
@@ -212,7 +216,11 @@ class Service:
         the board is read-only: there is nowhere to record a mode, so every step reads
         `manual` and nothing can be started. That is the safe direction to fail in.
         """
-        return Journal(self.config.working_dir) if self.config.working_dir else None
+        return (
+            Journal(self.config.working_dir, self.config.data_dir)
+            if self.config.working_dir
+            else None
+        )
 
     @staticmethod
     def _journal_key(cwd: str) -> str:

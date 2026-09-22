@@ -24,7 +24,7 @@ PER_WRITER = 5
 class ARecordSurvivesAndIsStamped(unittest.TestCase):
     def test_a_record_comes_back_with_a_version_and_a_time(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             j.append({"kind": "note", "text": "hello"})
             [got] = j.records()
             self.assertEqual(got["kind"], "note")
@@ -33,51 +33,58 @@ class ARecordSurvivesAndIsStamped(unittest.TestCase):
 
     def test_appending_leaves_earlier_records_untouched(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             for i in range(5):
                 j.append({"kind": "note", "n": i})
             self.assertEqual([r["n"] for r in j.records()], [0, 1, 2, 3, 4])
 
     def test_a_record_without_a_kind_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             with self.assertRaises(BadRecord):
                 j.append({"text": "no kind here"})
 
-    def test_a_record_that_cannot_be_serialised_is_refused_before_the_file_is_touched(self):
+    def test_a_record_that_cannot_be_serialised_is_refused_before_anything_is_stored(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             with self.assertRaises(BadRecord):
                 j.append({"kind": "note", "bad": object()})
-            self.assertFalse(j.path.exists(), "a refused record still created the file")
+            self.assertEqual(j.records(), [], "a refused record still left a row")
 
     def test_a_missing_journal_reads_as_empty_rather_than_failing(self):
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(Journal(d).records(), [])
+            self.assertEqual(Journal(d, d).records(), [])
 
-    def test_a_corrupt_line_is_skipped_not_repaired(self):
+    def test_a_corrupt_record_is_skipped_not_repaired(self):
+        """The database is hand-editable like the file was, and a repair loses intent."""
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             j.append({"kind": "note", "n": 1})
-            with open(j.path, "a", encoding="utf-8") as fh:
-                fh.write("this is not json\n")
+            with j.data.write() as conn:
+                conn.execute(
+                    "INSERT INTO runs (at, root, workspace, unit, stage, kind, record) "
+                    "VALUES ('x', ?, '', '', '', 'note', 'this is not json')",
+                    (str(j.working_dir),),
+                )
             j.append({"kind": "note", "n": 2})
             self.assertEqual([r["n"] for r in j.records()], [1, 2])
-            # and the hand-written line is still there, because nothing rewrote the file
-            self.assertIn("this is not json", j.path.read_text(encoding="utf-8"))
+            # and the hand-written row is still there, because nothing rewrote it
+            with j.data.connect() as conn:
+                stored = [row["record"] for row in conn.execute("SELECT record FROM runs")]
+            self.assertIn("this is not json", stored)
 
 
 class ModeIsTheLatestRecordForAStep(unittest.TestCase):
     def test_setting_a_mode_twice_leaves_the_second_one_in_force(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             j.set_mode("w", "0009_x", "impl", "manual")
             j.set_mode("w", "0009_x", "impl", "autonomous")
             self.assertEqual(j.modes("w"), {("0009_x", "impl"): "autonomous"})
 
     def test_modes_are_per_workspace(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             j.set_mode("a", "0009_x", "impl", "autonomous")
             j.set_mode("b", "0009_x", "impl", "manual")
             self.assertEqual(j.modes("a"), {("0009_x", "impl"): "autonomous"})
@@ -86,13 +93,13 @@ class ModeIsTheLatestRecordForAStep(unittest.TestCase):
     def test_an_invented_mode_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(BadRecord):
-                Journal(d).set_mode("w", "0009_x", "impl", "semi-automatic")
+                Journal(d, d).set_mode("w", "0009_x", "impl", "semi-automatic")
 
 
 class TheTimelineSaysWhatItKnows(unittest.TestCase):
     def test_a_finished_run_carries_its_ends_and_its_cost(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             j.started("w", "0009_x", "spec", "autonomous", session_id="s-1")
             j.finished(
                 "w", "0009_x", "spec", "done",
@@ -111,7 +118,7 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
         # The app being killed mid-step and the step still running look identical from
         # here. Leaving `ended` unset is the only honest answer.
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             j.started("w", "0009_x", "impl", "autonomous", session_id="s-2")
             [row] = j.timeline("w", "0009_x")
             self.assertIsNone(row["ended"])
@@ -120,11 +127,11 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
     def test_an_invented_outcome_is_refused(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(BadRecord):
-                Journal(d).finished("w", "0009_x", "impl", "probably fine")
+                Journal(d, d).finished("w", "0009_x", "impl", "probably fine")
 
     def test_runs_are_ordered_oldest_first(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             for stage in ("intent", "spec", "plan"):
                 j.started("w", "0009_x", stage, "manual")
                 j.finished("w", "0009_x", stage, "done")
@@ -134,7 +141,7 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
 class TotalsAreAddedNotStored(unittest.TestCase):
     def test_the_unit_total_equals_the_sum_of_its_steps(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             for stage, tokens in (("spec", 100), ("plan", 250), ("impl", 700)):
                 j.started("w", "0009_x", stage, "autonomous")
                 j.finished("w", "0009_x", stage, "done", input_tokens=tokens, output_tokens=1)
@@ -147,7 +154,7 @@ class TotalsAreAddedNotStored(unittest.TestCase):
 
     def test_two_runs_of_one_stage_add_rather_than_replace(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             for _ in range(2):
                 j.started("w", "0009_x", "impl", "autonomous")
                 j.finished("w", "0009_x", "impl", "done", input_tokens=40)
@@ -155,13 +162,13 @@ class TotalsAreAddedNotStored(unittest.TestCase):
 
     def test_a_unit_that_never_ran_totals_zero_rather_than_failing(self):
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(Journal(d).totals("w", "0009_x")["total"]["input_tokens"], 0)
+            self.assertEqual(Journal(d, d).totals("w", "0009_x")["total"]["input_tokens"], 0)
 
 
 WRITER = """
 import sys
 from cos_baodo.journal import Journal
-j = Journal(sys.argv[1])
+j = Journal(sys.argv[1], sys.argv[1])
 tag = sys.argv[2]
 for i in range({per_writer}):
     j.set_mode("w", "unit-%s-%d" % (tag, i), "impl", "autonomous")
@@ -185,22 +192,25 @@ class FourProcessesLoseNothing(unittest.TestCase):
                 _, err = p.communicate(timeout=60)
                 self.assertEqual(p.returncode, 0, err.decode(errors="replace"))
 
-            records = Journal(d).records()
+            journal = Journal(d, d)
+            records = journal.records()
             self.assertEqual(
                 len(records), WRITERS * PER_WRITER,
                 f"expected {WRITERS * PER_WRITER} records, {len(records)} survived",
             )
-            # and every line is whole — a torn write would show up as a parse failure,
-            # which `records` silently skips, so count the raw lines too.
-            raw = [l for l in Journal(d).path.read_text(encoding="utf-8").splitlines() if l.strip()]
+            # and every stored record is whole — a torn write would show up as a parse
+            # failure, which `records` silently skips, so count the raw rows too and parse
+            # each one here where a failure is loud.
+            with journal.data.connect() as conn:
+                raw = [row["record"] for row in conn.execute("SELECT record FROM runs")]
             self.assertEqual(len(raw), WRITERS * PER_WRITER)
-            for line in raw:
-                json.loads(line)
+            for stored in raw:
+                json.loads(stored)
 
-    def test_a_held_lock_becomes_an_error_that_names_the_folder(self):
+    def test_a_held_database_becomes_an_error_that_names_the_file(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
-            other = Journal(d)
+            j = Journal(d, d)
+            other = Journal(d, d)
             with j.transaction():
                 with self.assertRaises(Busy) as caught:
                     other.append({"kind": "note"}, timeout=0.05)

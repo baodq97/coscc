@@ -54,7 +54,9 @@ def say(ok: bool, claim: str, detail: str = "") -> bool:
 
 def race_child(working_dir: str, tag: str, start_at: float) -> int:
     """One writer. Waits for the shared start, then adds its share."""
-    store = Store(working_dir)
+    # The data root is the working folder here: four processes must share one
+    # database, and it must not be the real ~/.cos.
+    store = Store(working_dir, working_dir)
     while time.time() < start_at:
         time.sleep(0.001)
     for i in range(PER_WRITER):
@@ -86,7 +88,7 @@ def claim_1() -> bool:
             if err:
                 errors.append(err.decode().strip()[:200])
 
-        names = {e.name for e in Store(root).entries()}
+        names = {e.name for e in Store(root, root).entries()}
         detail = f"{len(names)} of {EXPECTED} survived"
         if errors:
             detail += f"; writers reported: {errors[0]}"
@@ -106,7 +108,14 @@ def claim_1() -> bool:
 
 async def claim_2() -> bool:
     root = Path(tempfile.mkdtemp(prefix="cos0005-pull-"))
-    config = from_env({**os.environ, "COS_WORKING_DIR": str(root), "COS_WORKSPACES": ""})
+    config = from_env(
+        {
+            **os.environ,
+            "COS_WORKING_DIR": str(root),
+            "COS_DATA_DIR": str(root),
+            "COS_WORKSPACES": "",
+        }
+    )
     sessions = Sessions(config)
     service = Service(config, sessions)
     ok = True

@@ -133,7 +133,9 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
-        self.app = build(Config(workspaces=(), working_dir=str(self.root)))
+        self.app = build(
+            Config(workspaces=(), working_dir=str(self.root), data_dir=str(self.root))
+        )
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )

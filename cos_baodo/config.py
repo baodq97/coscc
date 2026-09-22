@@ -57,6 +57,12 @@ class Config:
     # only way in is `from_env`, and a request has no path to that function. Unset means
     # the store is off and the app behaves exactly as `0002` did.
     working_dir: str | None = None
+    # `0011`. Where the app keeps its *own* state -- the SQLite database and the object
+    # folder. Unset means `~/.cos` (`cos_baodo/data.py`). It is a separate setting from
+    # `working_dir` on purpose: `spec.md` R4 keeps workspaces out of it, so backing one up
+    # is not backing up the other, and `spec.md` C1 says that out loud because it is the
+    # kind of thing that loses somebody a directory.
+    data_dir: str | None = None
     host: str = "127.0.0.1"
     port: int = 8790
     model: str | None = None
@@ -110,6 +116,9 @@ def from_env(env: dict[str, str] | None = None) -> Config:
     Knob 3 is reachable from here and from nowhere else, which is the whole mechanism
     behind "not settable over HTTP" (`spec.md` C2): a request has no path to this
     function. There is deliberately no setter.
+
+    `0011` adds `data_dir` on the same terms and for the same reason. A request that could
+    move the data directory could point the app at a database somebody else wrote.
     """
     e = dict(os.environ if env is None else env)
     working_dir = _dir(e, "WORKING_DIR")
@@ -126,6 +135,7 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         resume_foreign_sessions=_flag(e, "RESUME_FOREIGN_SESSIONS", False),
         workspaces=declared or fallback,
         working_dir=working_dir,
+        data_dir=_dir(e, "DATA_DIR"),
         host=e.get(_ENV_PREFIX + "HOST", "127.0.0.1"),
         port=int(e.get(_ENV_PREFIX + "PORT", "8790")),
         model=e.get(_ENV_PREFIX + "MODEL") or None,

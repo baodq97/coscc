@@ -114,7 +114,7 @@ class TheDeltasSumBackToTheSessionTotal(unittest.TestCase):
 class TheJournalKeepsMoneyAsMoney(unittest.TestCase):
     def test_sub_cent_costs_are_not_rounded_away(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             for _ in range(3):
                 j.started("w", "0009_x", "impl", "autonomous")
                 j.finished("w", "0009_x", "impl", "done", cost_usd=0.004, input_tokens=1)
@@ -125,7 +125,7 @@ class TheJournalKeepsMoneyAsMoney(unittest.TestCase):
 
     def test_the_unit_total_still_equals_the_sum_of_its_stages(self):
         with tempfile.TemporaryDirectory() as d:
-            j = Journal(d)
+            j = Journal(d, d)
             for stage, usd in (("spec", 0.01), ("impl", 0.25)):
                 j.started("w", "0009_x", stage, "autonomous")
                 j.finished("w", "0009_x", stage, "done", cost_usd=usd)

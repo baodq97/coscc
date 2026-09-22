@@ -76,7 +76,9 @@ class TheGateWithAStore(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def _svc(self):
-        config = Config(workspaces=(), working_dir=str(self.root))
+        config = Config(
+            workspaces=(), working_dir=str(self.root), data_dir=str(self.root)
+        )
         return Service(config, Sessions(config))
 
     def test_a_stored_workspace_passes_the_gate(self):
@@ -87,9 +89,15 @@ class TheGateWithAStore(unittest.TestCase):
 
     def test_a_hand_edited_entry_pointing_outside_closes_every_path(self):
         s = self._svc()
-        s.store.path.write_text(json.dumps({
-            "version": 1, "workspaces": [{"name": "/etc"}, {"name": "../../etc"}],
-        }))
+        # What somebody with `sqlite3` on the command line could type. The name is
+        # rejected on read, so the row exists and the workspace does not.
+        with s.store.data.write() as conn:
+            for name in ("/etc", "../../etc"):
+                conn.execute(
+                    "INSERT INTO workspaces (root, name, label, added_at) "
+                    "VALUES (?, ?, '', '2026-01-01T00:00:00+00:00')",
+                    (str(s.store.working_dir), name),
+                )
         for call in (
             lambda: s.sessions_for("/etc"),
             lambda: s.history("/etc", "abc"),
@@ -127,7 +135,9 @@ class TheGateWithAStore(unittest.TestCase):
 
     def test_the_count_is_reported_and_tracks_both_sources(self):
         (self.root / "a").mkdir()
-        config = Config(workspaces=(REPO,), working_dir=str(self.root))
+        config = Config(
+            workspaces=(REPO,), working_dir=str(self.root), data_dir=str(self.root)
+        )
         s = Service(config, Sessions(config))
         self.assertEqual(s.workspaces()["count"], 1)
         s.store.add("a")
@@ -155,14 +165,14 @@ class OneMembershipQuestion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             (root / "repo").mkdir()
-            config = Config(workspaces=(), working_dir=str(root))
+            config = Config(workspaces=(), working_dir=str(root), data_dir=str(root))
             s = Service(config, Sessions(config))
             s.store.add("repo")
             self.assertTrue(s.sessions.membership(str(root / "repo")))
 
     def test_the_session_layer_still_refuses_what_the_gate_refuses(self):
         with tempfile.TemporaryDirectory() as d:
-            config = Config(workspaces=(), working_dir=d)
+            config = Config(workspaces=(), working_dir=d, data_dir=d)
             s = Service(config, Sessions(config))
             self.assertFalse(s.sessions.membership("/etc"))
 
@@ -174,7 +184,9 @@ class PullStopsAtALiveSession(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name).resolve()
         self.addCleanup(self.tmp.cleanup)
-        config = Config(workspaces=(), working_dir=str(self.root))
+        config = Config(
+            workspaces=(), working_dir=str(self.root), data_dir=str(self.root)
+        )
         self.s = Service(config, Sessions(config))
         self.s.store.add("repo")
         self._repo(self.root / "repo")

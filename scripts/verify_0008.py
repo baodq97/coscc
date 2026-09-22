@@ -572,11 +572,11 @@ async def main() -> int:
 
     root = Path(tempfile.mkdtemp(prefix="cos0008-"))
     try:
-        env = {"COS_WORKING_DIR": str(root)}
+        env = {"COS_WORKING_DIR": str(root), "COS_DATA_DIR": str(root)}
         config = from_env(env)
         app = build(config)
         sessions = app.state.sessions
-        journal = Journal(str(root))
+        journal = Journal(str(root), str(root))
 
         async with _client(app) as http:
             if remote:
