@@ -1,4 +1,4 @@
-# COS Studio
+# CoS Studio
 
 The page this app serves. One route, `/`, six screens, and everything on them read from
 the running service.
@@ -9,8 +9,8 @@ the invented data underneath it with the real thing and deleted the page that ca
 the clearest statement of what `fragmented-product-experience` actually settled: the look.
 
 ```sh
-uv run coscc-build                                   # compile the page
-COS_WORKING_DIR=~/projects uv run coscc        # then http://127.0.0.1:8790
+uv run coscc-build                              # compile the page
+COS_WORKING_DIR=~/projects uv run coscc         # then http://127.0.0.1:8790
 ```
 
 ## Where the data is

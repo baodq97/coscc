@@ -25,4 +25,4 @@ from coscc.state import API
 # The theme lives in `rxconfig.py` through `RadixThemesPlugin`, because 0.9.11 deprecates
 # `App(theme=...)` and removes it at 1.0. The global style still belongs here.
 app = rx.App(api_transformer=API, style=ui.GLOBAL_STYLE)
-app.add_page(screens.index, title="COS Studio")
+app.add_page(screens.index, title="CoS Studio")

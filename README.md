@@ -1,5 +1,14 @@
 # coscc
 
+`coscc` is **Chief of Staff**, on **Claude Code** — `cos` + `cc`.
+
+That name says where this is going, not what it is yet. **The Chief-of-Staff function is
+not built.** What exists today is the second half of the name working on the first half's
+behalf: a local harness that runs an AI-native SDLC loop, plus a web page that drives Claude
+Code sessions across projects. `pyproject.toml` describes the thing that exists; this
+paragraph is the only place the destination is written down, and nothing in the repository
+implements it.
+
 A local AI-native SDLC harness: a unit of work moves through eight stages — `idea.md`,
 `intent.md`, `spec.md`, `plan.md`, `impl.md`, `pr.md`, `review.md`, `ship.md` — each
 artifact accepted and committed before the next begins. `idea.md` is optional and gates
@@ -28,13 +37,13 @@ nothing lands in that repository's own tree.
 
 ## The page
 
-**COS Studio** is the app's one page, at `/`, built from Reflex Python components. Six
+**CoS Studio** is the app's one page, at `/`, built from Reflex Python components. Six
 screens — Overview, Workspaces, Board with a work-unit drawer, Sessions, Activity & usage,
 Settings — all reading the running service.
 
 ```sh
-uv run coscc-build                                   # compile the page
-COS_WORKING_DIR=~/projects uv run coscc        # then http://127.0.0.1:8790
+uv run coscc-build                              # compile the page
+COS_WORKING_DIR=~/projects uv run coscc         # then http://127.0.0.1:8790
 ```
 
 It binds loopback only, and its chat sessions have **no tools** by default. The app keeps

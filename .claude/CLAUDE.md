@@ -8,7 +8,7 @@ Reference: `.claude/harness.md`. Each stage's rules live in its own skill.
 ```
 npm test                                          # every test, both runtimes
 uv sync                                           # Python deps, after a fresh clone
-uv run coscc-build                                  # build the page; see "Build step" below
+uv run coscc-build                                # build the page; see "Build step" below
 node .claude/scripts/cos.mjs status               # where every unit stands
 node .claude/scripts/cos.mjs gate <unit> <stage>  # exit 0 = stage may proceed
 node .claude/scripts/cos.mjs new-path <slug>      # next work unit path
@@ -72,8 +72,8 @@ looked for was named after the author and a filename already on disk cannot be r
 two are a pair everywhere else, so the asymmetry is deliberate rather than an oversight.
 
 ```
-uv run coscc-build                                          # build the page first
-COS_WORKING_DIR=~/projects uv run coscc               # then http://127.0.0.1:8790
+uv run coscc-build                                        # build the page first
+COS_WORKING_DIR=~/projects uv run coscc                   # then http://127.0.0.1:8790
 uv run python scripts/verify_0001.py                      # proof for 0001; creates real sessions
 uv run python scripts/verify_0002.py                      # proof for 0002; clones, creates sessions
 uv run python scripts/verify_0003.py                      # proof for 0003; needs a browser and a free port

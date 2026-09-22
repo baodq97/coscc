@@ -1111,7 +1111,7 @@ def _command_dialog() -> rx.Component:
 def _mobile_dialog() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
-            rx.hstack(rx.dialog.title("COS Studio", size="5"), rx.spacer(),
+            rx.hstack(rx.dialog.title("CoS Studio", size="5"), rx.spacer(),
                       rx.dialog.close(s.icon_button("x", "Close navigation")), width="100%"),
             rx.dialog.description("Your workspace, your next step.", size="2"),
             _workspace_select(aria_label="Mobile active workspace", width="100%",
