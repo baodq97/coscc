@@ -1,6 +1,20 @@
 # Intent: the board cannot say what happened to a unit, only where it is now
 Author: Bao Do. Type: feat. Status: accepted.
 
+> **Sửa ngày 2026-09-22, sau khi bản đầu đã accepted và commit (`d41ba8e`), trước khi viết
+> spec.** Người khởi xướng nói thêm: *"lúc mở pr chỉ cần output của write pr là được...
+> còn phần coscc này là giúp tôi hoàn thành các công việc thôi. không nên đưa vào các repos
+> nhỉ. vì repos là cả team cùng làm."*
+>
+> Bản đầu ghi rằng artifact được **xuất vào repo đích** lúc mở PR. Sai, và sai theo hướng
+> mình đề nghị chứ không phải hướng người khởi xướng muốn. Lý do bác bỏ mạnh hơn lý do
+> đề nghị: repo là của cả team, còn `.cos/` là quy trình riêng của một người; commit tám
+> file markdown vào đó là bắt những người không chọn quy trình ấy phải mang nó. Thứ reviewer
+> cần nằm ở **mô tả PR**, và `write-pr` đã sinh sẵn đúng thứ đó.
+>
+> **Không có gì của coscc đi vào cây của repo đích.** `pr.md` trở thành body của PR. Sửa
+> ở đây vì đây là chỗ cuối cùng một thay đổi còn tốn một đoạn văn thay vì một lần viết lại.
+
 ## Problem
 
 Người khởi xướng nói ngày 2026-09-22, sau khi lần đầu cài bản phát hành và dùng thử:
@@ -74,9 +88,13 @@ Outcome này sai được, và nó không cần một agent nào để đo: 39 s
   đang ở đâu" bằng cách đọc file.
 - **`coscc/journal.py`** — bảng `runs` đã tồn tại và đang trống; nó ghi *lần chạy*, không
   ghi *chuyển trạng thái*, và hai thứ đó không phải một.
-- **`.cos/` trong repo đích.** Người khởi xướng chốt 2026-09-22: DB là nguồn sự thật, và
-  artifact được **xuất** vào repo tại thời điểm mở PR, chứ không bỏ hẳn — để PR vẫn tự giải
-  thích được cho người review.
+- **`.cos/` trong repo đích — biến mất hoàn toàn.** Người khởi xướng chốt 2026-09-22: DB
+  là nguồn sự thật, và **không file nào của coscc đi vào cây của repo đích**. Thứ duy nhất
+  tới được repo là nội dung `pr.md`, dưới dạng mô tả của pull request. Lý do là repo dùng
+  chung cho cả team, còn vòng lặp này là công cụ riêng của một người.
+- **Repo này là ngoại lệ, và phải được xử lý có chủ ý.** `.cos/` ở đây có 57 artifact và
+  chính là dữ liệu mà outcome đo. Nó ở lại như **hồ sơ lịch sử đóng băng**, không phải như
+  nơi công việc mới được ghi tiếp.
 - **`0012_installed-copy-runs-no-stage`** — phần đóng gói `cos.mjs` vừa ship sẽ bị hướng này
   xoá. `.cos/0012_installed-copy-runs-no-stage/spec.md` mục `## Out of scope` đã ghi trước
   điều đó.
@@ -91,6 +109,10 @@ Outcome này sai được, và nó không cần một agent nào để đo: 39 s
 3. **`cos.mjs` chưa được xoá trong unit này.** Nó là thứ duy nhất hôm nay biết đọc `.cos/`,
    nên nó phải chạy song song làm nguồn đối chiếu cho đến khi có thứ thay được. Xoá nó là
    việc của một unit sau.
+
+   Kèm theo đó là một giới hạn phải nói ra: khi workspace không còn `.cos/`, **đối chiếu chỉ
+   còn thực hiện được trên repo này**, nơi lịch sử đã có sẵn. Với công việc mới ở một repo
+   khác, không có nguồn thứ hai nào để so.
 4. **Không agent nào trong phạm vi unit này.** Feed bình luận, người nhảy vào session,
    worktree cho mỗi ticket — cả ba đều gắn vào thứ unit này xây, và không cái nào được xây ở
    đây. Một unit cố làm cả bốn là một unit không đóng được.
@@ -99,9 +121,10 @@ Outcome này sai được, và nó không cần một agent nào để đo: 39 s
 
 ## Open questions
 
-1. **Xuất `.cos/` lúc mở PR là xuất cái gì?** Toàn bộ tám artifact như hôm nay, hay một bản
-   tóm tắt do DB sinh? Câu trả lời đổi việc PR có còn đọc được bởi người không cài coscc hay
-   không.
+1. ~~Xuất `.cos/` lúc mở PR là xuất cái gì?~~ **Đã trả lời 2026-09-22:** không xuất gì cả;
+   `pr.md` thành body của PR. Còn lại một câu con chưa quyết: nếu DB mất, thứ duy nhất còn
+   lại trong repo dùng chung là mô tả các PR trên GitHub. Có chấp nhận đó là bản sao lưu duy
+   nhất không, hay `pr.md` cũng cần được giữ ở nơi khác.
 2. **"Bao nhiêu output file được sinh ra, ở đâu"** — một task vừa sinh artifact vừa sửa code
    trong repo. Hai loại file, hai đích. Đếm chung hay tách, chưa quyết.
 3. **Trạng thái nào tồn tại?** Hôm nay là tám stage cố định với bốn `Status`. Người khởi
