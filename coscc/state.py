@@ -297,6 +297,12 @@ class StudioState(rx.State):
     board_view: str = "Board"
     density: str = "comfortable"
 
+    # -- starting a unit (`0014` R8)
+    new_slug: str = ""
+    new_brief: str = ""
+    starting: bool = False
+    branch: str = ""
+
     # -- one unit
     unit_id: str = ""
     detail_tab: str = "overview"
@@ -499,8 +505,15 @@ class StudioState(rx.State):
 
     async def _load_board(self) -> None:
         self.units, self.stages, self.board_note = [], [], ""
+        self.branch = ""
         if not self.cwd:
             return
+        try:
+            self.branch = (await SERVICE.branch_here(self.cwd))["branch"]
+        except Invalid:
+            # A workspace that is not a git checkout still has a board. Saying nothing is
+            # right here: there is no branch to show, and that is not an error to report.
+            self.branch = ""
         try:
             data = await SERVICE.board(self.cwd)
         except Invalid as e:
@@ -904,6 +917,61 @@ class StudioState(rx.State):
         self.detail_tab = value
 
     @rx.event
+    def set_new_slug(self, value: str):
+        self.new_slug = value
+
+    @rx.event
+    def set_new_brief(self, value: str):
+        self.new_brief = value
+
+    @rx.event
+    async def create_unit(self):
+        """`0014` R8. Start a work unit from the page.
+
+        The slug grammar and the number are not decided here and not decided in
+        `service.py` either — they come back from `cos.mjs`, and a bad slug arrives as its
+        refusal, word for word. A handler that decided anything would be a bug in
+        `service.py` (`.cos/0001_.../spec.md` R10).
+        """
+        slug = self.new_slug.strip()
+        if not slug:
+            self.notice = "Give the work a short name, like `board-cannot-say-what-happened`."
+            return
+        if not self.new_brief.strip():
+            # Not a validation rule of the loop — a rule of this page. The brief becomes
+            # `idea.md`, which is the only thing the intent step will have to work from,
+            # and a unit started without one wastes a paid step on an empty prompt.
+            self.notice = "Say what the problem is, in your own words. The intent step reads it."
+            return
+        self.starting = True
+        try:
+            made = SERVICE.create_unit(self.cwd, slug, self.new_brief)
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        finally:
+            self.starting = False
+        self.new_slug, self.new_brief = "", ""
+        self.notice = f"Started {made['unit']}."
+        await self._load_board()
+
+    @rx.event
+    async def start_branch(self):
+        """`0014` R8. Cut the open unit's branch in the workspace.
+
+        The one control on this page that writes to somebody else's git.
+        `coscc/gitops.py` carries the list of what that may be.
+        """
+        if not self.unit_id:
+            return
+        try:
+            cut = await SERVICE.start_branch(self.cwd, self.unit_id)
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        self.branch = cut["branch"]
+        self.notice = f"On {cut['branch']}."
+
     async def set_mode(self, value: str | list[str]):
         if not isinstance(value, str) or value not in ("manual", "autonomous"):
             self.notice = "Choose manual or autonomous."
