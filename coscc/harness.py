@@ -154,7 +154,10 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
         out.append(f"no {cos} — the Board would answer 400 on every read")
     found = sum(1 for n in names if n.startswith(skills_prefix) and n.endswith("/" + SKILL_FILE))
     if not found:
-        out.append(f"no {skills_prefix}*/{SKILL_FILE} — every step would run without its rules")
+        # Not "would run without its rules" -- that was true until 0012 and this same
+        # change is what ended it. A wheel in this shape reads the Board fine and refuses
+        # every Run, which is a different thing to go looking for.
+        out.append(f"no {skills_prefix}*/{SKILL_FILE} — every step would refuse to run")
 
     # The copy step takes two named directories, never `.claude/` whole. This is what says
     # so out loud: `.claude/settings.local.json` is a personal file (`.gitignore:19`) and a

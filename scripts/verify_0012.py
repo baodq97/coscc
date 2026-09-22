@@ -238,12 +238,16 @@ def main() -> int:
         ))
 
     # --- claim 4: rules that cannot be found stop the step ---
+    # `RunError` is what is asserted, not `MissingRules`: `coscc/service.py` maps this one
+    # exception type to a 400 and anything else reaches the route as a 500. Review caught
+    # that gap open on 2026-09-22 -- this claim was asserting the type that escaped.
     ran, out = in_installed(python, (
-        "import json;from coscc import harness;from coscc.runner import skill_for;"
+        "import json;from coscc import harness;"
+        "from coscc.runner import RunError, skill_for;"
         "harness.PACKAGE_HARNESS=harness.Path('/nonexistent/packaged');"
         "harness.CHECKOUT_HARNESS=harness.Path('/nonexistent/checkout');"
         "\ntry:\n skill_for('spec');print(json.dumps({'raised': False, 'message': ''}))"
-        "\nexcept harness.MissingRules as e:\n print(json.dumps({'raised': True, 'message': str(e)}))"
+        "\nexcept RunError as e:\n print(json.dumps({'raised': True, 'message': str(e)}))"
     ))
     if not ran:
         results.append(say(False, "rules that cannot be found stop the step", out))

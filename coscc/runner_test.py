@@ -17,7 +17,6 @@ from pathlib import Path
 
 from coscc import harness, policy
 from coscc.journal import Journal
-from coscc.harness import MissingRules
 from coscc.runner import (
     RunError,
     Runner,
@@ -293,8 +292,12 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
     """
 
     def test_a_stage_with_no_skill_raises_rather_than_dropping_the_section(self):
-        with self.assertRaises(MissingRules):
+        # `RunError`, not `MissingRules`: `coscc/service.py` maps this module's refusals
+        # with one `except RunError`, and anything else reaches the route as a 500.
+        with self.assertRaises(RunError) as caught:
             skill_for("no-such-stage")
+        self.assertIn("no-such-stage", str(caught.exception))
+        self.assertIn("SKILL.md", str(caught.exception))
 
     def test_the_prompt_always_carries_the_rules_section(self):
         with tempfile.TemporaryDirectory() as d:
@@ -330,7 +333,7 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
                     ):
                         pass
 
-                with self.assertRaises(MissingRules):
+                with self.assertRaises(RunError):
                     asyncio.run(go())
             finally:
                 harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS = originals

@@ -64,9 +64,20 @@ def skill_for(stage: str) -> str:
     `included=['intent.md']` -- the same record a step with its full rules writes. Not
     fatal is only safe when the absence is small; the measurement says it was not.
 
+    **It refuses in `RunError`, not in `MissingRules`.** `coscc/service.py` maps this
+    module's refusals with one `except RunError`, and `coscc/api.py` turns that into a 400
+    that names what went wrong. A second exception type crossing that boundary is not a
+    second kind of refusal, it is a 500: measured 2026-09-22 on a workspace whose harness
+    had `cos.mjs` but no skills -- an incomplete copy step, which is exactly the shape
+    `wheel_complaints` exists to catch -- `MissingRules` escaped `run_step` and reached the
+    route unhandled. Found by review, not by these tests.
+
     `spec.md` R4 and C2 carry the reversal and who decided it.
     """
-    return harness.read_skill(f"write-{stage}", stage)
+    try:
+        return harness.read_skill(f"write-{stage}", stage)
+    except harness.MissingRules as e:
+        raise RunError(f"no rules for the {stage} stage: {e}") from e
 
 
 def _read(path: Path) -> str:
