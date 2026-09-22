@@ -42,8 +42,19 @@ class TheCheckoutFindsItsOwnRules(unittest.TestCase):
         found = sorted(p.parent.name for p in harness.skills_dir().glob(f"*/{harness.SKILL_FILE}"))
         self.assertIn("write-spec", found)
 
-    def test_the_resolved_script_is_the_one_the_repo_commits(self):
-        self.assertEqual(harness.script(), REPO / ".claude" / "scripts" / "cos.mjs")
+    def test_with_no_packaged_tree_it_resolves_the_script_the_repo_commits(self):
+        # `PACKAGE_HARNESS` is blanked rather than trusted to be absent. This test failed
+        # the first time it ran for exactly that reason: a wheel had been built in this
+        # checkout, `coscc/_harness/` was still on disk, and the packaged copy won -- which
+        # is the documented behaviour and a hazard in its own right (see
+        # `.claude/rules/coscc-app.md`). A test that only passes on a clean tree is a test
+        # that reports the tree, not the code.
+        original = harness.PACKAGE_HARNESS
+        harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
+        try:
+            self.assertEqual(harness.script(), REPO / ".claude" / "scripts" / "cos.mjs")
+        finally:
+            harness.PACKAGE_HARNESS = original
 
 
 class RulesThatCannotBeFoundStopTheStep(unittest.TestCase):

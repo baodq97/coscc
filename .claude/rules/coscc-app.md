@@ -62,6 +62,12 @@ no commands, one turn, no budget.
   a file, so the app writes the artifact from the reply and the session returns text only.
   Settings says so on the page, because otherwise it looks like the agent wrote the file.
   `.cos/0005_hand-driven-invisible-loop/plan.md` Risk 1 records why.
+- **A `coscc/_harness/` left in a checkout shadows `.claude/`.** Both are gitignored and
+  both are built, not committed, so `git status` stays clean while the app reads the stale
+  copy — edit a skill, and the step still runs the old text. `coscc/harness.py` prefers the
+  packaged tree on purpose (a wheel has no checkout to fall back to); the cost is this.
+  `rm -rf coscc/_harness` after building a wheel by hand. The same is true of
+  `coscc/_web/`, where it costs a stale page instead of stale rules.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
 

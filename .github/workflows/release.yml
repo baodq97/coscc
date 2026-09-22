@@ -105,6 +105,9 @@ jobs:
       - name: Copy the harness into the package
         run: |
           set -euo pipefail
+          # `rm -rf` first: a tree left over from an earlier build would be copied into
+          # the wheel alongside the new one, and the packaged copy is the one that wins.
+          rm -rf coscc/_harness
           mkdir -p coscc/_harness
           cp -r .claude/scripts coscc/_harness/scripts
           cp -r .claude/skills coscc/_harness/skills
