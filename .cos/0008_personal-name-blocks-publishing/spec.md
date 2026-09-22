@@ -7,7 +7,10 @@ Intent: intent.md. Author: Bao Do. Status: accepted.
 > URL; **C5** — ghi chú tra cứu đặt một chỗ, tới được từ `.claude/harness.md`, sau một phép
 > đo mới ghi ở chính C5. Rồi việc đọc code để viết `plan.md` lộ ra một mâu thuẫn bản đầu
 > không thấy, nên R11 tách ghi chú làm bảng-tra ở `.cos/RENAMES.md` và con-trỏ ở
-> `harness.md`; lý do ở cuối C5. Bản đầu đọc được ở `5226be5`. Trước khi thêm khối này,
+> `harness.md`; lý do ở cuối C5. Cùng lúc đó, đọc `cos_baodo/store.py` bằng mắt cho
+> `plan.md` cho thấy R3 đếm sai: hai trích dẫn lệch một dòng (`:133`→`:132`, `:141`→`:140`)
+> và **một chỗ thứ mười bị bỏ sót** — khối `:185-187` trên đường đọc. R3 đã sửa. Bản đầu
+> đọc được ở `5226be5`. Trước khi thêm khối này,
 > đã kiểm: **0** chỗ trong repo trích dẫn file này kèm số dòng, nên việc đẩy số dòng xuống
 > không làm hỏng gì — đúng cái bẫy mà C5 vừa đo được ở 19 artifact khác.
 
@@ -40,11 +43,13 @@ chạy: tên thư mục, `app_name` trong `rxconfig.py`, và `module-name` trong
 `test:python` đổi `-s cos_baodo` thành `-s coscc`. Kiểm: `uv run coscc-build` phân giải
 được, `npm test` chạy được cả hai runtime.
 
-**R3 — Đường import legacy của `Store` bị xóa hẳn.** Chín định danh phải mất, đo trên
+**R3 — Đường import legacy của `Store` bị xóa hẳn.** **Mười** chỗ phải mất, đo trên
 `cos_baodo/store.py`: `STORE_FILENAME` (`:45`), mục của nó trong `__all__` (`:63`),
 `self.legacy_path` (`:118`), `self._imported` (`:120`), lời gọi `self._import_legacy(conn)`
-nằm trong `transaction()` (`:133`), `_migration_key` (`:137`), `_needs_import` (`:141`),
-`_import_legacy` (`:143`), `_load_legacy` (`:155`). Cùng với bốn chỗ trong
+trong `transaction()` (`:132`), `_migration_key` (`:137`), `_needs_import` (`:140`),
+`_import_legacy` (`:143`), `_load_legacy` (`:155`), và **khối ba dòng `:185-187`** — một
+`if self._needs_import()` nằm trên **đường đọc**, ép một transaction rỗng chạy trước khi
+đọc danh sách, vì `connect()` không ghi được còn import thì cần ghi. Cùng với bốn chỗ trong
 `cos_baodo/store_test.py` (`:188`, `:204`, `:229`, `:368`) và các test bọc chúng — một trong
 số đó là `test_bad_names_in_the_file_are_not_imported` (`:222`). Kiểm:
 `git grep -in "cos-baodo.json" -- . ':!.cos'` trả 0, và `npm test` xanh.
