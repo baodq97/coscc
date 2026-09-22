@@ -34,7 +34,10 @@ thứ người dùng sửa. Đó chính là lý do hai file phải tách nhau.
 | `pyproject.toml` | Chỉ sửa comment `:5-8` — câu "nobody downstream" hết đúng. **Không** cần khai package data: đo ngày 2026-09-22 bằng `uv build --wheel`, `uv_build` gom mọi file dưới `coscc/` kể cả `.gz` mà không cần khai gì |
 | `.gitignore` | Thêm `coscc/_web/`, để một lần build cục bộ không lọt vào commit |
 | `.github/workflows/release.yml` | Build bundle → chép vào `coscc/_web/` → `uv build` → chặn wheel rỗng → đính 3 asset |
-| `scripts/proof_harness.py` | `require_free_port` đang ghi "the bundle hardcodes that address, so this proof cannot move to a free port" — câu đó hết đúng với bundle đóng gói và phải sửa, không được để lại |
+| `scripts/proof_harness.py` | `:65` — xem ghi chú dưới bảng |
+| `.claude/rules/coscc-app.md` | `:80` — xem ghi chú dưới bảng |
+| `docs/studio.md` | `:73` — xem ghi chú dưới bảng |
+| `scripts/verify_0006.py` | `:24` — xem ghi chú dưới bảng |
 | `README.md` | Trỏ sang tài liệu cài đặt; nói rõ khối lệnh hiện có là đường dành cho checkout |
 
 **Mới**
@@ -46,6 +49,18 @@ thứ người dùng sửa. Đó chính là lý do hai file phải tách nhau.
 | `coscc/frontend_test.py` *(new)* | Test cho cả hai, gồm cả trường hợp khớp 0 file |
 | `scripts/install.sh` *(new)* | Bản mẫu; release thay số phiên bản và sha256 vào rồi đính kèm |
 | `docs/install.md` *(new)* | Tài liệu mà R14 đòi, và là nguồn các lệnh proof chép ra |
+
+**Ghi chú, thêm 2026-09-22 trong lúc implement — plan invariant 8.** Bản đầu của plan nói
+bước 10 dọn "hai câu đã hết đúng". Đếm lại bằng `git grep -n hardcode -- . ':!.cos'` thì
+câu đó nằm ở **sáu** chỗ, và quan trọng hơn: **nó không hết đúng, nó chỉ còn đúng một
+nửa.** Với một checkout, bundle vẫn nướng cứng địa chỉ và `verify_0003`/`verify_0006` vẫn
+không dời được sang port khác — R7 giữ nguyên hành vi đó có chủ ý. Với một bản đóng gói thì
+địa chỉ được ghi lại lúc khởi động và câu đó sai.
+
+Nên bước 10 không phải xoá, mà là thêm vế phân biệt vào từng chỗ. Một câu đúng-một-nửa
+không kèm vế phân biệt còn tệ hơn một câu sai, vì người đọc không có cách nào biết mình
+đang ở thế giới nào. Hai chỗ còn lại — `coscc/build.py:125` và `coscc/build_test.py:72` —
+đã nằm trong bước 4.
 
 `coscc/_web/` không có trong bảng nào: nó là sản phẩm của bước build, không phải file được
 commit.
@@ -73,8 +88,9 @@ commit.
    bộ, trên chính máy này, tới bước `systemctl --user is-active coscc` trả `active`.
 9. **`.github/workflows/release.yml`.** Kiểm: đẩy một tag prerelease `vX.Y.Z-rc.N`, rồi
    `gh release view --json assets` đếm được 3, và bước chặn wheel rỗng có chạy.
-10. **`scripts/proof_harness.py` và `README.md`** — dọn hai câu đã hết đúng. Kiểm: đọc lại,
-    và `npm test`.
+10. **Bốn chỗ mang câu "the bundle hardcodes the address", cộng `README.md`.** Thêm vế
+    phân biệt checkout/đóng gói vào từng chỗ, theo ghi chú dưới bảng file. Kiểm:
+    `git grep -n hardcode -- . ':!.cos'` và đọc từng dòng nó trả về; `npm test`.
 11. **Chạy proof thật** với `COS_PROOF_TARGET`. Đây là bước duy nhất trả lời được outcome.
 
 Bước 1 và bước 11 là cùng một file. Nó được viết trước để có thứ đỏ, và được chạy sau cùng
