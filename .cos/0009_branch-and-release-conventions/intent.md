@@ -1,6 +1,12 @@
 # Intent: Work reaches main with no convention, and nothing is ever released
 Author: Bao Do. Status: accepted.
 
+> **Sửa ngày 2026-09-22, sau khi bản đầu đã accepted và commit (`ff5634d`).** Viết `spec.md`
+> làm lộ ra rằng `## Proposed outcome` tự làm mình sai: nó lấy mốc "hôm nay" và đòi mọi commit
+> sau đó phải qua pull request, trong khi chính `intent.md`, `spec.md` và `plan.md` của unit
+> này đi thẳng vào `main` **trước khi** cái cổng ấy tồn tại. Mốc đổi sang commit bật ruleset,
+> và phần miễn trừ được nói ra thay vì để người đọc tự suy. Bản đầu đọc được ở `ff5634d`.
+
 ## Problem
 
 Người khởi xướng nói, nguyên văn:
@@ -50,15 +56,22 @@ nói được cái gì đã vào trong đó. Nên chúng dùng chung một kết
 
 Trước **2026-10-13**, `gh release list --repo baodq97/coscc` trả về **hai dòng**: một
 prerelease và một release `v0.1.0` sau nó. Tag của `v0.1.0` trỏ vào một commit trên `main`,
-và **mọi commit** mà `v0.1.0` chứa thêm so với lần đo hôm nay đều đến `main` qua một pull
-request, từ một branch có tên theo quy ước được ghi trong `.claude/`.
+và **mọi commit vào `main` kể từ lúc quy ước có hiệu lực** đều đến qua một pull request, từ
+một branch có tên theo quy ước được ghi trong `.claude/`.
+
+"Kể từ lúc có hiệu lực" nghĩa là: từ commit bật ruleset trở đi. **Artifact của chính unit
+này — `intent.md`, `spec.md`, `plan.md` — vào thẳng `main` và được miễn**, vì chúng là thứ
+tạo ra quy ước và không có quy ước nào để chúng tuân theo lúc chúng được viết. Bản đầu của
+mục này lấy mốc là "hôm nay", và như vậy nó tự làm mình sai: nó đòi những commit viết ra
+chính nó phải đi qua một cổng mà chúng vừa dựng lên. Mốc phải là cái cổng, không phải cái
+ngày.
 
 Hôm nay, 2026-09-22: **0** release, **0** tag, **0** pull request, **137** commit đều vào
 thẳng `main`.
 
 Kết quả này sai nếu: tới ngày đó chưa có `v0.1.0`, hoặc có nhưng không có prerelease trước
-nó, hoặc tag không nằm trên `main`, hoặc có ít nhất một commit trong khoảng đó vào `main` mà
-không qua pull request.
+nó, hoặc tag không nằm trên `main`, hoặc có ít nhất một commit sau mốc bật ruleset vào `main`
+mà không qua pull request.
 
 Ngày **2026-10-13 là do file này đặt**, không phải do người khởi xướng nêu. Sửa được, và sửa
 ở đây.
