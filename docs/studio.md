@@ -32,8 +32,9 @@ either value.
 `cos.db` holds the workspace list, the run log, and the handful of interface preferences
 the Settings screen remembers. A workspace row stores a **name** — one path segment — and
 the table has no column for a path, so a hand-edited database cannot point the app at
-`/etc`. A `.cos-baodo.json` or `.cos-journal.jsonl` left by a version before `0006` is
-imported once, on first use, and the file is left where it is.
+`/etc`. A `.cos-journal.jsonl` left by a version before `0006` is imported once, on first
+use, and the file is left where it is. The workspace list had an import of the same shape
+and `0008` removed it — see `.claude/CLAUDE.md`.
 
 ## The screens
 

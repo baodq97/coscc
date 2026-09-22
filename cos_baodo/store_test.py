@@ -180,73 +180,6 @@ class ListOperations(unittest.TestCase):
             self.assertEqual(len(store.entries()[0].label), 200)
 
 
-class TheOneShotImportFromJson(unittest.TestCase):
-    """`spec.md` R8. A machine set up before this unit keeps its workspaces."""
-
-    @staticmethod
-    def _legacy(root: Path, *entries: dict) -> None:
-        (root / ".cos-baodo.json").write_text(
-            json.dumps({"version": 1, "workspaces": list(entries)})
-        )
-
-    def test_entries_are_brought_in_on_first_read(self):
-        with tempfile.TemporaryDirectory() as d:
-            self._legacy(Path(d), {"name": "cos-baodo", "label": "cos-baodo"})
-            self.assertEqual(
-                [(e.name, e.label) for e in Store(d, d).entries()], [("cos-baodo", "cos-baodo")]
-            )
-
-    def test_the_json_file_is_not_deleted(self):
-        """An import that turns out wrong is recoverable only while its source exists."""
-        with tempfile.TemporaryDirectory() as d:
-            self._legacy(Path(d), {"name": "kept"})
-            Store(d, d).entries()
-            self.assertTrue((Path(d) / ".cos-baodo.json").is_file())
-
-    def test_importing_twice_does_not_duplicate(self):
-        with tempfile.TemporaryDirectory() as d:
-            self._legacy(Path(d), {"name": "once"})
-            Store(d, d).entries()
-            Store(d, d).entries()
-            Store(d, d).entries()
-            self.assertEqual([e.name for e in Store(d, d).entries()], ["once"])
-
-    def test_an_entry_removed_after_the_import_stays_removed(self):
-        """The import adds what is missing; it does not undo a deliberate removal."""
-        with tempfile.TemporaryDirectory() as d:
-            self._legacy(Path(d), {"name": "gone"})
-            Store(d, d).entries()
-            Store(d, d).remove("gone")
-            self.assertEqual([e.name for e in Store(d, d).entries()], [])
-
-    def test_bad_names_in_the_file_are_not_imported(self):
-        with tempfile.TemporaryDirectory() as d:
-            self._legacy(Path(d), {"name": "/etc"}, {"name": "../x"}, {"name": "fine"})
-            self.assertEqual([e.name for e in Store(d, d).entries()], ["fine"])
-
-    def test_a_garbage_file_reads_as_empty_rather_than_crashing(self):
-        with tempfile.TemporaryDirectory() as d:
-            (Path(d) / ".cos-baodo.json").write_text("not json at all")
-            self.assertEqual(Store(d, d).entries(), [])
-
-    def test_no_file_means_no_migration_row_at_all(self):
-        """The common case must not pay for the migration."""
-        with tempfile.TemporaryDirectory() as d:
-            store = Store(d, d)
-            store.add("fresh")
-            with store.data.connect() as conn:
-                rows = conn.execute("SELECT COUNT(*) AS n FROM migrations").fetchone()
-            self.assertEqual(rows["n"], 0)
-
-    def test_two_working_folders_import_independently(self):
-        with tempfile.TemporaryDirectory() as data_dir, \
-                tempfile.TemporaryDirectory() as one, \
-                tempfile.TemporaryDirectory() as two:
-            self._legacy(Path(one), {"name": "from-one"})
-            self._legacy(Path(two), {"name": "from-two"})
-            self.assertEqual([e.name for e in Store(one, data_dir).entries()], ["from-one"])
-            self.assertEqual([e.name for e in Store(two, data_dir).entries()], ["from-two"])
-
 
 HOLDER = """
 import sqlite3, sys, time
@@ -361,21 +294,26 @@ class TheTransactionIsAcrossProcesses(unittest.TestCase):
         self.assertEqual([e.name for e in store.entries()], ["kept"])
 
 
-class NothingWritesTheOldFile(unittest.TestCase):
-    def test_adding_a_workspace_creates_no_json_file(self):
-        with tempfile.TemporaryDirectory() as d:
-            Store(d, d).add("repo")
-            self.assertFalse((Path(d) / ".cos-baodo.json").exists())
+class NothingIsWrittenIntoTheWorkingFolder(unittest.TestCase):
+    """Three tests used to live here, one per artifact a pre-`0006` version left in the
+    working folder: a JSON list, a lock file, a temp file. Each named its file as a
+    literal, and those names carried the author's own — which is what
+    `.cos/0008_personal-name-blocks-publishing` exists to remove. Renaming the literals
+    would have been worse than deleting them: it would claim files once existed under a
+    name they never had.
 
-    def test_the_old_lock_file_is_gone_too(self):
-        with tempfile.TemporaryDirectory() as d:
-            Store(d, d).add("repo")
-            self.assertFalse((Path(d) / ".cos-baodo.lock").exists())
+    So they are replaced by the invariant they were three samples of. It is the stronger
+    claim anyway: the working folder is somebody else's git checkout, and the store writes
+    into `COS_DATA_DIR` or nowhere. The old assertions could only catch the three names
+    somebody thought to list; this catches a fourth.
+    """
 
-    def test_a_write_leaves_no_temp_file_behind(self):
-        with tempfile.TemporaryDirectory() as d:
-            Store(d, d).add("repo")
-            self.assertEqual([p.name for p in Path(d).glob(".cos-baodo-*.tmp")], [])
+    def test_a_write_leaves_the_working_folder_untouched(self):
+        with tempfile.TemporaryDirectory() as work, tempfile.TemporaryDirectory() as data:
+            store = Store(work, data)
+            store.add("repo", "a label")
+            store.remove("repo")
+            self.assertEqual(sorted(p.name for p in Path(work).iterdir()), [])
 
 
 if __name__ == "__main__":

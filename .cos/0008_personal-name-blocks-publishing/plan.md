@@ -27,6 +27,21 @@ Mười hai bước. Bước 1 dựng bằng chứng và nó phải **đỏ** tr
 - `cos_baodo/store_test.py` — bốn chỗ (`:188`, `:204`, `:229`, `:368`) và các test bọc chúng,
   trong đó có `test_bad_names_in_the_file_are_not_imported` (`:222`).
 
+> **Lệch so với dự kiến, ghi lúc làm bước 2.** "Bốn chỗ" đếm đúng số dòng chứa tên file cũ
+> nhưng sai về thứ phải bỏ. Thực tế là **hai lớp test**:
+>
+> - `TheOneShotImportFromJson` — **8 test**, toàn bộ lớp nói về đường import vừa bị xoá. Bỏ
+>   cả lớp, 67 dòng.
+> - `NothingWritesTheOldFile` — **3 test**, mỗi test đặt tên một artifact mà bản trước `0006`
+>   để lại trong working folder: `.json`, `.lock`, `.tmp`. Cả ba literal đều mang tên cũ. Đổi
+>   tên chúng sẽ là nói rằng những file đó từng tồn tại dưới một cái tên chúng chưa bao giờ
+>   có, nên cả ba được thay bằng **một** test phát biểu đúng cái bất biến mà chúng là ba mẫu:
+>   store không ghi gì vào working folder. Ba test cũ truyền `Store(d, d)` — hai root trùng
+>   nhau — nên bất biến đó không phát biểu được cho tới khi tách chúng ra.
+>
+> Cộng thêm: `import json` trong `store.py` thành import chết sau khi `_load_legacy` biến
+> mất, và bị bỏ theo. Tổng: **266 → 256 test**.
+
 ### Sửa nội dung — 28 file trong gói
 
 `api.py` (4 dòng), `api_test.py` (4), `board.py` (2), `board_api_test.py` (2),

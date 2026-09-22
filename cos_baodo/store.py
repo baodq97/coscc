@@ -30,7 +30,6 @@ proof across — `scripts/verify_0004.py` is what decides it, and it still measu
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from contextlib import contextmanager
@@ -38,11 +37,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cos_baodo.data import BUSY_TIMEOUT, Busy, Data, now
-
-# The file this used to be. Still named here for one reason: `import_legacy` reads it once
-# so that a machine set up before the database keeps its workspaces (`spec.md` R8). Nothing
-# writes it any more, and it is never deleted — see `import_legacy`.
-STORE_FILENAME = ".cos-baodo.json"
 
 # Kept as the name callers already pass to `transaction(timeout=...)` and patch in tests.
 # The value is the same 10 seconds the file lock waited, now enforced by SQLite's
@@ -60,7 +54,6 @@ __all__ = [
     "Entry",
     "LABEL_MAX",
     "LOCK_TIMEOUT",
-    "STORE_FILENAME",
     "Store",
     "clean_label",
     "require_name",
@@ -114,10 +107,7 @@ class Store:
     ):
         self.working_dir = Path(working_dir).expanduser().resolve()
         self.data = data if isinstance(data, Data) else Data(data)
-        # The pre-SQLite file, read once by `import_legacy` and never written.
-        self.legacy_path = self.working_dir / STORE_FILENAME
         self._root = str(self.working_dir)
-        self._imported = False
 
     @contextmanager
     def transaction(self, timeout: float | None = None):
@@ -129,46 +119,7 @@ class Store:
         wait the real deadline would not be run.
         """
         with self.data.write(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
-            self._import_legacy(conn)
             yield conn
-
-    # -- migration ----------------------------------------------------------
-
-    def _migration_key(self) -> str:
-        return f"import-json:{self._root}"
-
-    def _needs_import(self) -> bool:
-        return self.legacy_path.is_file() and not self._imported
-
-    def _import_legacy(self, conn) -> None:
-        """Bring a pre-SQLite JSON list in, once, for this working folder.
-
-        `Data.import_once` owns the guard, the mark and the not-deleting; this supplies
-        only what the file says. Entries already in the database win: this adds what is
-        missing rather than restoring what somebody removed on purpose.
-        """
-        if self._imported:
-            return
-        self.data.import_once(conn, self._migration_key(), self.legacy_path, self._load_legacy)
-        self._imported = True
-
-    def _load_legacy(self, conn) -> None:
-        try:
-            raw = json.loads(self.legacy_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            raw = {}
-        items = raw.get("workspaces", []) if isinstance(raw, dict) else []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name", ""))
-            if not valid_name(name):
-                continue
-            conn.execute(
-                "INSERT OR IGNORE INTO workspaces (root, name, label, added_at) "
-                "VALUES (?, ?, ?, ?)",
-                (self._root, name, clean_label(item.get("label")), now()),
-            )
 
     # -- reading ------------------------------------------------------------
 
@@ -183,9 +134,6 @@ class Store:
         Order is insertion order. `add` re-inserts an existing name, so re-adding moves an
         entry to the end — the behaviour the JSON list had.
         """
-        if self._needs_import():
-            with self.transaction():
-                pass
         with self.data.connect() as conn:
             rows = conn.execute(
                 "SELECT name, label FROM workspaces WHERE root = ? ORDER BY rowid",

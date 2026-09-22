@@ -65,8 +65,11 @@ statement on every connection**, and `BEGIN IMMEDIATE` around every read-modify-
 Getting the order wrong was measured on 2026-09-22 — `PRAGMA journal_mode=WAL` before
 `busy_timeout` failed about one run in ten with `database is locked`. The schema version
 lives in `PRAGMA user_version`, so opening an existing database is one read and no lock.
-`Store` and `Journal` kept their interfaces and changed their backing; a `.cos-baodo.json`
-or `.cos-journal.jsonl` from before `0006` is imported once and **never deleted**.
+`Store` and `Journal` kept their interfaces and changed their backing. **Only `Journal`
+still reads a legacy file**: a `.cos-journal.jsonl` from before `0006` is imported once and
+never deleted. `Store` had the same path and it was removed by `0008`, because the file it
+looked for was named after the author and a filename already on disk cannot be renamed. The
+two are a pair everywhere else, so the asymmetry is deliberate rather than an oversight.
 
 ```
 uv run cos-build                                          # build the page first
