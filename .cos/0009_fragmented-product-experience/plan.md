@@ -11,6 +11,8 @@ Intent: intent.md. Spec: spec.md. Author: GitHub Copilot. Status: accepted.
 - `cos_baodo/cos_baodo.py`: đăng ký `/prototype`, không thay route `/`.
 - `cos_baodo/build.py`, `cos_baodo/build_test.py`: fingerprint các module UI mới và
   theme `ui.py` mà trang đang dùng.
+- `reflex.lock/package.json`, `reflex.lock/bun.lock`: dependency frontend do Reflex
+  sinh khi compile component Markdown; giữ lockfile khớp bundle đã kiểm.
 - `README.md`: đường dẫn, cách chạy và giới hạn demo.
 - `docs/prototype.md` (new): bản đồ màn hình, nguyên tắc thị giác và ranh giới backend.
 - Một `idea.md` ở unit riêng do `cos.mjs new-path` cấp: ghi quan sát về ba skill,
@@ -87,3 +89,9 @@ gutter tối thiểu 12px và bề rộng 1024px bên cạnh ba kích thước �
 `npm test`, build, proof prototype và proof trang gốc đều đã chạy xanh. Đã chụp/xem
 ảnh và mở server preview loopback; blocker thực thi đã giải quyết. Plan vẫn accepted,
 không done: người dùng chưa duyệt thiết kế và chưa cho phép ship.
+
+Build còn cập nhật lockfile frontend do dùng `rx.markdown` cho artifact preview:
+`react-markdown`, syntax highlighting và các plugin remark/rehype do Reflex quản lý.
+Nhận định "không thêm dependency" trong skip assessment của spec chưa tính các gói
+JS được framework tự sinh; không có dependency Python hoặc framework mới. Giữ và
+commit lockfile sinh ra từ build đã kiểm, không viết tay phiên bản hoặc bỏ diff này.

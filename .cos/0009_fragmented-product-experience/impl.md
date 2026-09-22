@@ -31,6 +31,12 @@ Việc kiểm chứng, screenshot và mở preview đã thực hiện trong lư�
 Browser proof mở rộng thêm 1024px và kiểm số cột/gutter sau khi screenshot phát hiện
 layout chưa đúng; `plan.md` được cập nhật cùng commit sửa `e322f46`.
 
+Component `rx.markdown` khiến Reflex bổ sung các gói JS Markdown vào
+`reflex.lock/package.json` và `reflex.lock/bun.lock` trong build đã kiểm. Đó là
+dependency frontend tự sinh, không phải thư viện Python mới; nhận định không thêm
+dependency ở skip assessment ban đầu thiếu trường hợp này. Plan ghi bổ sung và
+lockfile được giữ lại để lần build sau dùng cùng bộ dependency.
+
 ## What was measured
 
 Ngày 2026-09-22, sau khi người dùng cho phép chạy:
