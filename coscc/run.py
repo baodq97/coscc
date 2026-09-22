@@ -69,10 +69,8 @@ def main() -> None:
 
     import uvicorn
 
-    print(f"coscc on http://{config.host}:{config.port}")
-    print(f"working folder: {config.working_dir or '(unset — workspace management off)'}")
-    print(f"env workspaces: {', '.join(config.workspaces) or '(none)'}")
-    print(f"tools: {config.effective_tools() or 'none (chat only)'}")
+    for line in banner(config):
+        print(line)
     uvicorn.run(
         "coscc.coscc:app",
         factory=True,
@@ -80,6 +78,38 @@ def main() -> None:
         port=config.port,
         log_level="warning",
     )
+
+
+# Addresses that reach this machine and nowhere else. `0.0.0.0` and a bare interface
+# address are both absent on purpose: binding either is what the warning below is about.
+LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def banner(config) -> list[str]:
+    """What is printed at startup, as lines, so a test can read them.
+
+    The second line is a requirement rather than a courtesy -- `0011`'s `spec.md` R5. The
+    default bind address changed to `0.0.0.0` in that unit, and this app has no
+    authentication anywhere: `coscc/api.py` states the assumption it was built under, that
+    every caller is a local process holding this machine's own credentials. Nothing
+    enforces that assumption. So when the address is not loopback, the only thing standing
+    where a login would be is this sentence, and it has to be printed every time rather
+    than documented once.
+    """
+    lines = [f"coscc on http://{config.host}:{config.port}"]
+    if config.host not in LOOPBACK:
+        lines.append(
+            "  ⚠ reachable from any machine that can route to this port, and coscc has no "
+            "login — anyone who reaches it gets every screen, including the two controls "
+            "that spend real Claude quota."
+        )
+        lines.append("  set COS_HOST=127.0.0.1 to bind this machine only.")
+    lines.append(
+        f"working folder: {config.working_dir or '(unset — workspace management off)'}"
+    )
+    lines.append(f"env workspaces: {', '.join(config.workspaces) or '(none)'}")
+    lines.append(f"tools: {config.effective_tools() or 'none (chat only)'}")
+    return lines
 
 
 def _point_the_bundle_here(static: Path, config) -> None:

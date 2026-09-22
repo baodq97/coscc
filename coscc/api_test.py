@@ -241,10 +241,26 @@ class NoHandWrittenMarkup(unittest.TestCase):
 
 
 class Loopback(unittest.TestCase):
-    def test_the_default_bind_is_loopback(self):
-        # R5. Asserted here as well as in config_test because this is where it is used.
+    """Until 2026-09-22 this asserted `127.0.0.1`, and it was right to.
+
+    `0001` R5 made the default loopback deliberately, against Reflex's own `0.0.0.0`, and
+    this test existed so the posture could not drift back by accident. `0011` changed it
+    on purpose: the app now ships to a VM that people reach from elsewhere, and the
+    originator decided that after being shown that this file's own module docstring
+    describes an app with no authentication of any kind.
+
+    So the guarantee this class protects is no longer "loopback". It is that a person is
+    *told*, every single start, and `coscc/run_test.py` is where that is checked.
+    """
+
+    def test_the_default_bind_is_every_interface_since_0011(self):
         from coscc.config import from_env
-        self.assertEqual(from_env({}).host, "127.0.0.1")
+        self.assertEqual(from_env({}).host, "0.0.0.0")
+
+    def test_loopback_is_still_one_variable_away(self):
+        # The capability `0001` built did not go away, it stopped being the default.
+        from coscc.config import from_env
+        self.assertEqual(from_env({"COS_HOST": "127.0.0.1"}).host, "127.0.0.1")
 
 
 class ShutdownClosesSessions(unittest.IsolatedAsyncioTestCase):
