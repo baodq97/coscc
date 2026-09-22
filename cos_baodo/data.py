@@ -35,6 +35,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,25 +52,32 @@ OBJECTS_DIRNAME = "objects"
 # Seconds. Matches the file-lock timeout this replaced; see the module docstring.
 BUSY_TIMEOUT = 10.0
 
+# How often `_retry` looks again. Same value the file lock polled at, for the same
+# reason: short enough not to be felt, long enough not to spin.
+RETRY_POLL = 0.01
+
 # `0o700`, from `spec.md` R2. The directory holds a record of every workspace on this
 # machine and every prompt-shaped thing the app has run, so it is not world-readable even
 # though the app is single-user.
 DIR_MODE = 0o700
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS schema_version (
-    version INTEGER NOT NULL
-);
-
--- One row per migration that has already run, so a migration cannot run twice. Keyed by
+# The schema, one statement per entry. Not a single script: `executescript` issues a COMMIT
+# before it runs, so it cannot be used inside the transaction that creates the schema — and
+# creating the schema outside a transaction is how four processes starting at once end up
+# racing each other through it.
+#
+# The version lives in SQLite's own `PRAGMA user_version` rather than in a table. Reading it
+# costs nothing and needs no lock, which is what lets every later connection skip all of
+# this with one read. A version table would be a second place to look and a write to reach.
+_SCHEMA = (
+    """-- One row per migration that has already run, so a migration cannot run twice. Keyed by
 -- a caller-chosen string rather than a number: the imports are per working folder, and
 -- there is no ordering between them.
 CREATE TABLE IF NOT EXISTS migrations (
     key TEXT PRIMARY KEY,
     at  TEXT NOT NULL
-);
-
--- `spec.md` R6. `name` is one path segment and there is deliberately **no column for a
+)""",
+    """-- `spec.md` R6. `name` is one path segment and there is deliberately **no column for a
 -- workspace path**. The path is rebuilt from `root` on every read, so a hand-edited
 -- database has nowhere to put `/etc`.
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -78,9 +86,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
     label    TEXT NOT NULL DEFAULT '',
     added_at TEXT NOT NULL,
     PRIMARY KEY (root, name)
-);
-
--- The journal. `record` holds the whole record as JSON exactly as the journal composed
+)""",
+    """-- The journal. `record` holds the whole record as JSON exactly as the journal composed
 -- it; the columns beside it exist only so a query can narrow without parsing every row.
 -- Storing the record twice would be two truths, so the columns are read *from* the JSON
 -- at insert time and never written independently.
@@ -93,21 +100,19 @@ CREATE TABLE IF NOT EXISTS runs (
     stage     TEXT NOT NULL DEFAULT '',
     kind      TEXT NOT NULL,
     record    TEXT NOT NULL
-);
-
--- Oldest-first within a scope is every read this table has, and `id` is monotonic where
+)""",
+    """-- Oldest-first within a scope is every read this table has, and `id` is monotonic where
 -- `at` is only second-resolution. The index is shaped after the query, not after a
 -- measurement -- `spec.md` open question 2 says so plainly.
-CREATE INDEX IF NOT EXISTS runs_scope ON runs (root, workspace, unit, id);
-
--- Appearance and the other things the Settings screen remembers (`spec.md` R14). Machine
+CREATE INDEX IF NOT EXISTS runs_scope ON runs (root, workspace, unit, id)""",
+    """-- Appearance and the other things the Settings screen remembers (`spec.md` R14). Machine
 -- wide rather than per browser; `spec.md` C6 records why that is right here and would be
 -- wrong with two users.
 CREATE TABLE IF NOT EXISTS prefs (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
-);
-"""
+)""",
+)
 
 
 class Incompatible(RuntimeError):
@@ -176,16 +181,20 @@ class Data:
         `isolation_level=None` turns off the driver's implicit transaction handling, which
         is the only way `write()` below can say `BEGIN IMMEDIATE` and have it mean what it
         says.
+
+        **`busy_timeout` is the first statement, and that is not a style choice.** It was
+        measured on 2026-09-22: with `PRAGMA journal_mode=WAL` issued first, the journal's
+        four-writer test failed roughly one run in ten with `database is locked` raised out
+        of the pragma itself. Changing the journal mode wants an exclusive lock, and a
+        connection that has not yet been told how long to wait does not wait at all.
         """
         self.ensure_dir()
         wait = BUSY_TIMEOUT if timeout is None else timeout
         conn = sqlite3.connect(self.db_path, timeout=wait, isolation_level=None)
         conn.row_factory = sqlite3.Row
         try:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA foreign_keys=ON")
-            conn.execute(f"PRAGMA busy_timeout={int(wait * 1000)}")
-            self._ensure_schema(conn)
+            conn.execute(f"PRAGMA busy_timeout={int(max(wait, 0.0) * 1000)}")
+            self._prepare(conn, wait)
             yield conn
         except sqlite3.OperationalError as e:
             raise self._busy(e, wait) from e
@@ -224,29 +233,84 @@ class Data:
             )
         return error
 
+    def _retry(self, work, wait: float) -> None:
+        """Run something that SQLite may answer with `SQLITE_BUSY`, until the deadline.
+
+        `busy_timeout` covers ordinary statements. It does not reliably cover changing the
+        journal mode, which is why this exists at all and why it is used in exactly two
+        places below.
+        """
+        deadline = time.monotonic() + max(wait, 0.0)
+        while True:
+            try:
+                work()
+                return
+            except sqlite3.OperationalError as e:
+                text = str(e).lower()
+                if "locked" not in text and "busy" not in text:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(RETRY_POLL)
+
     # -- schema -------------------------------------------------------------
 
-    def _ensure_schema(self, conn: sqlite3.Connection) -> None:
-        conn.executescript(_SCHEMA)
-        row = conn.execute("SELECT version FROM schema_version").fetchone()
-        if row is None:
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
-            return
-        found = int(row["version"])
+    def _prepare(self, conn: sqlite3.Connection, wait: float) -> None:
+        """Make this connection usable. Every step here is a read in the common case."""
+        # WAL is a property of the database file, not of the connection, so it is set once
+        # in the life of the database and read on every open. Reading it needs no lock;
+        # setting it does, which is why the two are not the same statement.
+        if str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+            self._retry(lambda: conn.execute("PRAGMA journal_mode=WAL"), wait)
+        conn.execute("PRAGMA foreign_keys=ON")
+
+        found = self._user_version(conn)
         if found > SCHEMA_VERSION:
             raise Incompatible(
                 f"{self.db_path} was written by a newer version of this app "
                 f"(database schema {found}, this build understands {SCHEMA_VERSION}) — "
                 "upgrade the app rather than running this one against it"
             )
-        # A lower number would be where a migration runs. There is only one version, so
-        # there is nothing to migrate yet, and writing a migration for a shape that has
-        # never shipped would be writing it against a guess.
+        if found < SCHEMA_VERSION:
+            self._retry(lambda: self._create(conn), wait)
+        # An equal number is the whole common path: one pragma read, and nothing else.
+        # A lower number is where a migration would run. There is only one version so far,
+        # and writing a migration for a shape that has never shipped would be writing it
+        # against a guess.
+
+    @staticmethod
+    def _user_version(conn: sqlite3.Connection) -> int:
+        return int(conn.execute("PRAGMA user_version").fetchone()[0])
+
+    def _create(self, conn: sqlite3.Connection) -> None:
+        """Create the schema inside one transaction, re-checking under the lock.
+
+        Four processes can reach this at the same moment on a fresh data root. The first
+        one through sets `user_version`; the rest re-read it here, inside `BEGIN
+        IMMEDIATE`, and find there is nothing left to do.
+        """
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            found = self._user_version(conn)
+            if found > SCHEMA_VERSION:
+                raise Incompatible(
+                    f"{self.db_path} was written by a newer version of this app "
+                    f"(database schema {found}, this build understands {SCHEMA_VERSION})"
+                )
+            if found < SCHEMA_VERSION:
+                for statement in _SCHEMA:
+                    conn.execute(statement)
+                # Not parameterisable; `SCHEMA_VERSION` is this module's own integer.
+                conn.execute(f"PRAGMA user_version={int(SCHEMA_VERSION)}")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
 
     def version(self) -> int:
         with self.connect() as conn:
-            row = conn.execute("SELECT version FROM schema_version").fetchone()
-            return int(row["version"]) if row else 0
+            return self._user_version(conn)
 
     # -- one-shot migrations ------------------------------------------------
 

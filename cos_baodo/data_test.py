@@ -65,21 +65,62 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             data = Data(d)
             data.version()
             with sqlite3.connect(data.db_path) as conn:
-                conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION + 5,))
+                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION + 5}")
             with self.assertRaises(Incompatible) as caught:
                 data.version()
             message = str(caught.exception)
             self.assertIn(str(SCHEMA_VERSION + 5), message)
             self.assertIn(str(SCHEMA_VERSION), message)
+            self.assertIn(str(data.db_path), message)
 
-    def test_opening_twice_does_not_duplicate_the_version_row(self):
+    def test_the_version_lives_in_the_pragma_not_in_a_table(self):
+        """One place to look, and reading it needs no lock — see `Data._prepare`."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.version()
-            data.version()
             with data.connect() as conn:
-                rows = conn.execute("SELECT COUNT(*) AS n FROM schema_version").fetchone()
-            self.assertEqual(rows["n"], 1)
+                tables = {
+                    row["name"]
+                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+            self.assertNotIn("schema_version", tables)
+            self.assertEqual({"migrations", "workspaces", "runs", "prefs"} - tables, set())
+
+    def test_opening_an_existing_database_writes_nothing(self):
+        """The common path is one pragma read. A write on every open is a lock on every open."""
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.version()
+            before = data.db_path.stat().st_mtime_ns
+            for _ in range(5):
+                data.version()
+            self.assertEqual(data.db_path.stat().st_mtime_ns, before)
+
+    def test_several_processes_creating_the_schema_at_once_all_succeed(self):
+        """The race `_create` re-checks under the lock for.
+
+        On a fresh data root every process arrives at an empty database at the same
+        moment. Measured as a real failure on 2026-09-22 before `busy_timeout` was moved
+        to the first statement.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            child = (
+                "import sys; sys.path.insert(0, %r);"
+                "from cos_baodo.data import Data;"
+                "d = Data(sys.argv[1]);"
+                "d.set_pref(sys.argv[2], 1)" % str(REPO)
+            )
+            procs = [
+                subprocess.Popen(
+                    [sys.executable, "-c", child, d, f"k{n}"],
+                    cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                )
+                for n in range(4)
+            ]
+            for proc in procs:
+                _, err = proc.communicate(timeout=60)
+                self.assertEqual(proc.returncode, 0, err.decode(errors="replace"))
+            self.assertEqual(len(Data(d).prefs()), 4)
 
 
 class WriteIsAWholeTransaction(unittest.TestCase):

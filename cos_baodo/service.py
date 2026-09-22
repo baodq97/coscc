@@ -27,9 +27,18 @@ from cos_baodo import gitops
 from cos_baodo import sessions as reader
 from cos_baodo.board import Unavailable
 from cos_baodo.config import Config
+from cos_baodo.data import Data
 from cos_baodo.gitops import GitError
-from cos_baodo.journal import BadRecord, Busy, Journal
-from cos_baodo.policy import grant_for
+from cos_baodo.journal import (
+    COST_FIELDS,
+    COST_USD,
+    BadRecord,
+    Busy,
+    Journal,
+    add_cost,
+    zero_cost,
+)
+from cos_baodo.policy import GRANTS, PROSE_STAGES, grant_for
 from cos_baodo.runner import RunError, Runner
 from cos_baodo.sessions import Sessions
 from cos_baodo.store import BadName, Store, require_name
@@ -429,3 +438,133 @@ class Service:
         self.check_send(cwd, text)
         async for item in self.sessions.stream(cwd, text, session_id):
             yield item
+
+    # -- activity, usage and settings ---------------------------------------
+    #
+    # `0011` adds three read-only methods. `0011 spec.md` said `Service` would not change,
+    # and this is the one place it does — recorded as a departure in `0011 plan.md`. The
+    # alternative was to let the new page read `Journal` and `policy` directly, and that
+    # would break the rule this module exists for (see the module docstring), which is a
+    # far worse trade than three methods that only read.
+
+    def activity(self, cwd: str, limit: int = 40) -> dict[str, Any]:
+        """What has happened across the whole workspace, newest first.
+
+        `timeline` answers the same question for one unit. This one exists because the
+        Activity screen is workspace-wide, and building it by calling `timeline` once per
+        unit would spawn one board read per unit to find out what the units are.
+        """
+        self._workspace_or_refuse(cwd)
+        journal = self._journal()
+        if journal is None:
+            return {"cwd": cwd, "events": [], "recording": False}
+        try:
+            rows = journal.records(self._journal_key(cwd))
+        except Busy as e:
+            raise Invalid(str(e)) from e
+        events = [
+            {
+                "at": r.get("at") or "",
+                "kind": r.get("kind") or "",
+                "unit": r.get("unit") or "",
+                "stage": r.get("stage") or "",
+                "mode": r.get("mode") or "",
+                "outcome": r.get("outcome") or "",
+                "session_id": r.get("session_id") or "",
+                "artifact": r.get("artifact") or "",
+                "denials": int(r.get("denials") or 0),
+                "cost": {f: r.get(f) for f in COST_FIELDS + (COST_USD,) if r.get(f)},
+            }
+            for r in rows
+        ]
+        events.reverse()
+        return {"cwd": cwd, "events": events[:limit], "recording": True}
+
+    def usage(self, cwd: str) -> dict[str, Any]:
+        """What this workspace has cost, added up from its records.
+
+        Added rather than stored, for the reason `journal.totals` gives: a stored total is
+        a second number that can disagree with the first.
+        """
+        self._workspace_or_refuse(cwd)
+        journal = self._journal()
+        if journal is None:
+            return {"cwd": cwd, "total": {}, "per_unit": {}, "recording": False}
+        try:
+            rows = journal.records(self._journal_key(cwd))
+        except Busy as e:
+            raise Invalid(str(e)) from e
+
+        per_unit: dict[str, dict[str, Any]] = {}
+        for record in rows:
+            if record.get("kind") != "end":
+                continue
+            bucket = per_unit.setdefault(str(record.get("unit") or ""), zero_cost())
+            add_cost(bucket, record)
+        total = zero_cost()
+        for bucket in per_unit.values():
+            add_cost(total, bucket)
+        return {"cwd": cwd, "total": total, "per_unit": per_unit, "recording": True}
+
+    def settings(self) -> dict[str, Any]:
+        """The safety posture, as something a screen can render. Read only.
+
+        `0011 spec.md` R18: this screen shows the four knobs and the grant table and can
+        change neither. There is no setter here for the same reason there is none in
+        `config.from_env` — a request that could turn a knob is a request that could turn
+        it on.
+        """
+        c = self.config
+        return {
+            "working_dir": c.working_dir,
+            "data_dir": str(Data(c.data_dir).root),
+            "host": c.host,
+            "port": c.port,
+            "model": c.model,
+            "knobs": [
+                {
+                    "name": "tools",
+                    "value": ", ".join(c.effective_tools()) or "none",
+                    "on": bool(c.effective_tools()),
+                    "detail": "Chat sessions are created with this tool list. Empty means "
+                              "chat only — a session with no tools cannot write a file.",
+                },
+                {
+                    "name": "allow_write_and_exec",
+                    "value": "on" if c.allow_write_and_exec else "off",
+                    "on": c.allow_write_and_exec,
+                    "detail": "While off, no write or exec tool survives into a session, "
+                              "whatever the tool list says.",
+                },
+                {
+                    "name": "bypass_permissions",
+                    "value": "on" if c.bypass_permissions else "off",
+                    "on": c.bypass_permissions,
+                    "detail": "Off, and not settable over HTTP. The only way in is the "
+                              "environment this process was started with.",
+                },
+                {
+                    "name": "resume_foreign_sessions",
+                    "value": "on" if c.resume_foreign_sessions else "off",
+                    "on": c.resume_foreign_sessions,
+                    "detail": "Off because it is untested, not because it is dangerous. "
+                              "The app resumes only what it created.",
+                },
+            ],
+            # The board's own grants, from `policy.py` rather than from the config. They
+            # are separate on purpose, and the screen has to show that they are.
+            "grants": [
+                {
+                    "stage": stage,
+                    "mode": mode,
+                    "tools": ", ".join(grant.tools) or "none",
+                    "commands": ", ".join(grant.commands) or "none",
+                    "max_turns": grant.max_turns,
+                    "max_budget_usd": grant.max_budget_usd,
+                    "app_writes_artifact": grant.app_writes_artifact,
+                    "warning": grant.warning,
+                }
+                for (stage, mode), grant in sorted(GRANTS.items())
+            ],
+            "prose_stages": list(PROSE_STAGES),
+        }

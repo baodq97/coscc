@@ -73,7 +73,7 @@ COST_USD = "cost_usd"
 USD_PLACES = 6
 
 
-def _add_cost(into: dict[str, Any], values: dict[str, Any]) -> None:
+def add_cost(into: dict[str, Any], values: dict[str, Any]) -> None:
     """Add one cost record into a running total, keeping USD a float."""
     for field_name in COST_FIELDS:
         into[field_name] = int(into.get(field_name, 0)) + int(values.get(field_name) or 0)
@@ -82,7 +82,7 @@ def _add_cost(into: dict[str, Any], values: dict[str, Any]) -> None:
     )
 
 
-def _zero_cost() -> dict[str, Any]:
+def zero_cost() -> dict[str, Any]:
     out: dict[str, Any] = {name: 0 for name in COST_FIELDS}
     out[COST_USD] = 0.0
     return out
@@ -323,8 +323,8 @@ class Journal:
                 row["denials"] = int(item.get("denials") or 0)
                 if item.get("session_id"):
                     row["session_id"] = item.get("session_id")
-                cost = _zero_cost()
-                _add_cost(cost, item)
+                cost = zero_cost()
+                add_cost(cost, item)
                 row["cost"] = cost
         return rows
 
@@ -337,17 +337,17 @@ class Journal:
         per_stage: dict[str, dict[str, Any]] = {}
         for row in self.timeline(workspace, unit, timeout=timeout):
             stage = row.get("stage") or ""
-            _add_cost(per_stage.setdefault(stage, _zero_cost()), row.get("cost") or {})
+            add_cost(per_stage.setdefault(stage, zero_cost()), row.get("cost") or {})
 
-        total = _zero_cost()
+        total = zero_cost()
         for bucket in per_stage.values():
-            _add_cost(total, bucket)
+            add_cost(total, bucket)
         return {"per_stage": per_stage, "total": total}
 
 
 def totals_of(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Add the cost of some timeline rows. Exposed so a caller can total a subset."""
-    out = _zero_cost()
+    out = zero_cost()
     for row in rows:
-        _add_cost(out, row.get("cost") or {})
+        add_cost(out, row.get("cost") or {})
     return out
