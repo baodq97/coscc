@@ -57,6 +57,15 @@ năm là mở lại một quyết định `coscc/policy.py:3-8` đã đóng.
 6. **`scripts/verify_0013.py`, chạy khi chưa backfill.** Phải **exit 1** — nó thấy 0 sự kiện
    trong khi git nói có hơn 40.
 7. **Chạy backfill, chạy lại proof.** Phải **exit 0**.
+
+   **Departure, 2026-09-22 (bước 6 và 7).** Proof ghi vào một data root **tạm**, không phải
+   `~/.cos`, và nhận cờ `--import`. Kế hoạch viết hai bước này như hai thời điểm: chạy khi
+   bộ nhập chưa có, rồi chạy lại sau khi nó chạy. Cả hai lần đó đã diễn ra đúng thứ tự
+   (exit 1 lúc 0/43, exit 0 lúc 43/43). Nhưng một proof chỉ đỏ được **một lần trong đời**
+   thì lần sau không ai kiểm lại được nó có biết đỏ hay không — đúng thứ
+   `scripts/verify_0003.py:8-14` gọi là "the check is capable of failing". Với cờ này, mỗi
+   máy chạy được cả hai chiều, mãi mãi. Giá phải trả: đỏ không còn là bằng chứng lịch sử mà
+   là một tính chất kiểm lại được; `impl.md` ghi số đo của cả hai lần chạy thật.
 8. **`states.json` vào wheel.** Thêm vào `wheel_complaints` và chạy `check_wheel.py` hai lần:
    wheel thiếu nó phải đỏ. `0012` vừa tốn một unit vì đúng lớp lỗi này; dùng lại thứ nó xây.
 9. **`impl.md`**, ghi số đo thật của bước 6, 7 và 8.
