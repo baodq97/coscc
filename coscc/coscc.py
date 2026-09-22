@@ -1,4 +1,9 @@
-"""The app: one page, one ASGI app, one loopback port.
+"""The app: one page, one ASGI app, one port.
+
+It was "one loopback port" until `0011` made `0.0.0.0` the default, which is worth knowing
+here because `coscc/api.py` states the assumption this file composes: that every caller is
+a local process holding this machine's own credentials. Nothing enforces it, and since
+`0011` nothing makes it true either.
 
 This file once held a second page — the one the earlier units built — and
 a prototype sat beside it at `/prototype`. `spec.md` R19 replaced both with

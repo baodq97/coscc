@@ -38,6 +38,9 @@ thứ người dùng sửa. Đó chính là lý do hai file phải tách nhau.
 | `.claude/rules/coscc-app.md` | `:80` — xem ghi chú dưới bảng |
 | `docs/studio.md` | `:73` — xem ghi chú dưới bảng |
 | `scripts/verify_0006.py` | `:24` — xem ghi chú dưới bảng |
+| `coscc/coscc.py` | `:1` — module tự gọi mình là "one loopback port" |
+| `rxconfig.py` | `:44` — cùng loại |
+| `pyproject.toml` | cộng thêm `:40`, cùng loại |
 | `README.md` | Trỏ sang tài liệu cài đặt; nói rõ khối lệnh hiện có là đường dành cho checkout |
 | `coscc/screens.py` | `:109-110` và `:785` — xem ghi chú thứ ba |
 | `coscc/state.py` | `:326` — cờ `loopback_only`, xem ghi chú thứ ba |
@@ -128,9 +131,12 @@ commit.
    bộ, trên chính máy này, tới bước `systemctl --user is-active coscc` trả `active`.
 9. **`.github/workflows/release.yml`.** Kiểm: đẩy một tag prerelease `vX.Y.Z-rc.N`, rồi
    `gh release view --json assets` đếm được 3, và bước chặn wheel rỗng có chạy.
-10. **Bốn chỗ mang câu "the bundle hardcodes the address", cộng `README.md`.** Thêm vế
-    phân biệt checkout/đóng gói vào từng chỗ, theo ghi chú dưới bảng file. Kiểm:
-    `git grep -n hardcode -- . ':!.cos'` và đọc từng dòng nó trả về; `npm test`.
+10. **Mọi câu đã thành sai, hai nhóm.** Nhóm một: bốn chỗ nói "the bundle hardcodes the
+    address" — thêm vế phân biệt checkout/đóng gói. Nhóm hai, phát hiện khi quét lại:
+    **năm chỗ nữa nói app bind loopback**, và sau bước 5 thì chúng sai thẳng chứ không
+    phải đúng một nửa — `README.md:50`, `.claude/rules/coscc-app.md:25`, `coscc/coscc.py:1`,
+    `pyproject.toml:40`, `rxconfig.py:44`. `README.md` cũng trỏ sang `docs/install.md`.
+    Kiểm: `git grep -in "hardcode\|loopback" -- . ':!.cos'` và đọc từng dòng; `npm test`.
 11. **Chạy proof thật** với `COS_PROOF_TARGET`. Đây là bước duy nhất trả lời được outcome.
 
 Bước 1 và bước 11 là cùng một file. Nó được viết trước để có thứ đỏ, và được chạy sau cùng

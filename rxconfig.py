@@ -41,6 +41,8 @@ config = rx.Config(
     api_url=f"http://{_c.host}:{_c.port}",
     plugins=[rx.plugins.RadixThemesPlugin(theme=THEME)],
     # The framework's badge sits fixed in the corner of every screen and overlaps content
-    # on a short viewport. This app is one person's loopback tool, not a showcase.
+    # on a short viewport. This app is a tool somebody runs for themselves, not a
+    # showcase. (It said "loopback tool" until 0011 changed the default bind address;
+    # the badge argument never depended on that part.)
     show_built_with_reflex=False,
 )

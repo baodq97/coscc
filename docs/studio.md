@@ -70,9 +70,10 @@ uv run python scripts/verify_0003.py   # the page renders, and the check can fai
 uv run python scripts/verify_0006.py   # five flows on real data, and a restart
 ```
 
-Both need a browser and a free `COS_PORT` — the compiled bundle hardcodes the address it
-opens its WebSocket against, so neither can move to a spare port. Stop the app first, and
-do not run them at the same time. `verify_0003.py` spends no quota; `verify_0006.py` sends
+Both need a browser and a free `COS_PORT` — in a checkout the compiled bundle hardcodes the
+address it opens its WebSocket against, so neither can move to a spare port. Stop the app
+first, and do not run them at the same time. (An installed wheel is the other case: it
+rewrites that address at startup. See [installing coscc](install.md).) `verify_0003.py` spends no quota; `verify_0006.py` sends
 one short prompt.
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.
