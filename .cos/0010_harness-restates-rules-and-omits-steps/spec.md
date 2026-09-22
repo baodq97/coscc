@@ -154,8 +154,19 @@ hành vi — quy ước này thuộc harness và harness đi theo bản copy —
 nói *"optimize harness.md và CLAUDE.md"* và *"nhớ dedup"*. Xoá một trong hai là phép dedup
 mạnh nhất, và lập luận cho nó là: hai tài liệu cùng mô tả một quy trình thì trùng lặp không
 phải rủi ro mà là kết quả — đã đo được 2 cặp hôm nay, và cả hai file mới chỉ sống ba tuần.
-Giá phải trả, đo được: hai proof đã đóng phải sửa đường dẫn (R12), `README.md` một dòng, và
-một cái tên mà bốn tài liệu trong `.cos/` trích dẫn sẽ chết. **Người khởi xướng quyết** —
+Giá phải trả, đo được: hai proof đã đóng phải sửa đường dẫn (R12), `README.md` hai dòng
+(`:17`, `:24`), và **16** trích dẫn kèm số dòng chết hẳn cộng **71** lần nhắc tên, trải trên
+**bốn** unit — `0005`, `0007`, `0008`, `0009` — và `.cos/RENAMES.md`.
+
+> **Sửa cùng ngày, ngay sau khi người khởi xướng chọn.** Bản đầu của đoạn này viết *"một cái
+> tên mà bốn tài liệu trong `.cos/` trích dẫn sẽ chết"*. Đếm đúng: **bốn unit**, không phải
+> bốn trích dẫn — 16 trích dẫn có số dòng và 71 lần nhắc tên. Con số cũ nhỏ hơn gần hai mươi
+> lần và nó được nêu ra **trong lúc hỏi** người khởi xướng, tức nó đã bóp méo ô chi phí của
+> chính lựa chọn họ cân. Cùng loại với 44 trích dẫn SHA chết mà `0008` đã chấp nhận và ghi
+> một lần ở `.cos/RENAMES.md`, nên hướng không đổi — nhưng lượng thì sai, và người khởi xướng
+> được nói lại con số đúng trước khi plan bắt đầu.
+
+**Người khởi xướng quyết** —
 nếu muốn giữ `harness.md`, R1 đổi thành "slim còn ≤ 80 dòng" và R2 nới lên, tổng vẫn ≤ 200.
 
 **C2 — R10 sửa artifact đã `accepted` của tám unit khác, trái `intent.md` constraint 5.**
@@ -206,7 +217,7 @@ thì mâu thuẫn là thật và constraint 4 phải nới. **Người khởi x�
 4. **`intent.md` OQ4 — đã trả lời ở R1:** xoá. Xem C1; đây là câu người khởi xướng nên đọc
    kỹ nhất trong file này.
 
-5. **Bốn tài liệu trong `.cos/` trích dẫn `harness.md` theo số dòng sẽ chết.** Cùng loại với
-   44 trích dẫn SHA chết của `0008`, đã ghi một lần ở `.cos/RENAMES.md`. Điều một câu trả lời
-   sẽ đổi: ghi thêm một dòng vào `RENAMES.md` thì có một chỗ tra; không ghi thì bốn trích dẫn
-   im lặng trỏ vào hư không.
+5. **16 trích dẫn kèm số dòng và 71 lần nhắc tên `harness.md` trong `.cos/` sẽ chết**, trải
+   trên bốn unit. Cùng loại với 44 trích dẫn SHA chết của `0008`, đã ghi một lần ở
+   `.cos/RENAMES.md`. Điều một câu trả lời sẽ đổi: ghi thêm một mục vào `RENAMES.md` thì có
+   một chỗ tra; không ghi thì 87 chỗ im lặng trỏ vào hư không.
