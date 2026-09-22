@@ -112,13 +112,13 @@ jobs:
             exit 1
           fi
 
-      # scripts/install.sh (spec.md R9, plan.md step 8) is written by a parallel unit of
-      # work and did not exist in this repository when this step was written. It is a
-      # template carrying two placeholders this step substitutes: `__COSCC_VERSION__` for
-      # the plain X.Y.Z version, and `__COSCC_WHEEL_SHA256__` for the wheel's sha256. If the
-      # file lands with different placeholder names, update the two `sed` patterns below to
-      # match them — this is an assumption made ahead of that file existing, not a fact read
-      # from it.
+      # scripts/install.sh (spec.md R9, plan.md step 8) is a template carrying two
+      # placeholders, read from that file on 2026-09-22: `@@COSCC_VERSION@@` and
+      # `@@COSCC_WHEEL_SHA256@@`. Both names must stay in step with `scripts/install.sh:36-37`.
+      # A mismatch does not fail here — `sed` substitutes nothing and exits 0 — but the
+      # script refuses to run while either placeholder is still in place, so a release built
+      # with the wrong names ships an installer that stops on its first line. That refusal is
+      # the only thing standing between a renamed placeholder and a silently broken release.
       - name: SHA256SUMS, and the wheel's checksum baked into install.sh
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -132,8 +132,8 @@ jobs:
           (cd "$(dirname "$WHEEL")" && sha256sum "$wheel_name") > SHA256SUMS
           wheel_sha256=$(awk '{print $1}' SHA256SUMS)
           sed \
-            -e "s/__COSCC_VERSION__/$VERSION/g" \
-            -e "s/__COSCC_WHEEL_SHA256__/$wheel_sha256/g" \
+            -e "s/@@COSCC_VERSION@@/$VERSION/g" \
+            -e "s/@@COSCC_WHEEL_SHA256@@/$wheel_sha256/g" \
             scripts/install.sh > install.sh
           sha256sum install.sh >> SHA256SUMS
 
