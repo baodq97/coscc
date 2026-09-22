@@ -13,7 +13,7 @@
 # base branch with a writable token while checking out the fork's code, which is how a
 # fork's pull request ends up with write access to this repository.
 #
-# This is not a gate. Nothing blocks a merge on it — see `.claude/harness.md`,
+# This is not a gate. Nothing blocks a merge on it — see `.claude/CLAUDE.md`,
 # `## What is deliberately not built`.
 name: pr
 
@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: The source branch follows the grammar in .claude/harness.md
+      - name: The source branch follows the grammar in .claude/CLAUDE.md
         # `github.head_ref` is the branch the pull request comes from. The check is the
         # same one that runs locally, from the same file, so CI and `cos.mjs` cannot
         # disagree about what a valid name is.

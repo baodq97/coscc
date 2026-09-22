@@ -1,197 +1,115 @@
 # coscc
 
-Local AI-native SDLC harness, and the template for it.
-Reference: `.claude/harness.md`. Each stage's rules live in its own skill.
+A local AI-native SDLC harness, and the template for it. Each stage's rules live in its own
+skill; `cos.mjs` decides every gate. What is written here is only what none of them enforce.
 
 ## Commands
 
 ```
-npm test                                          # every test, both runtimes
-uv sync                                           # Python deps, after a fresh clone
-uv run coscc-build                                # build the page; see "Build step" below
-node .claude/scripts/cos.mjs status               # where every unit stands
-node .claude/scripts/cos.mjs gate <unit> <stage>  # exit 0 = stage may proceed
-node .claude/scripts/cos.mjs new-path <slug>      # next work unit path
+npm test                                           # every test, both runtimes
+uv sync                                            # dependencies, after a fresh clone
+
+node .claude/scripts/cos.mjs status [--json]       # where every unit stands
+node .claude/scripts/cos.mjs gate <unit> <stage>   # 0 open · 1 blocked, with reasons · 2 misuse
+node .claude/scripts/cos.mjs new-path <slug>       # allocates the number, validates the slug
+node .claude/scripts/cos.mjs unit-branch <unit>    # the branch name this unit's Type implies
+node .claude/scripts/cos.mjs check-branch [name]   # the branch you are on, or one you are considering
+node .claude/scripts/cos.mjs check-tag <tag>       # prints: release | prerelease
+node .claude/scripts/cos.mjs check-version         # the five places a version is declared
 ```
+
+The first four take `--root <dir>` and read another repository's `.cos/`. The last three
+refuse it: given a root, they would answer about here while naming somewhere else.
 
 Tests must be green before any task is reported complete; never skip or delete a failing
 one. There is no linter; do not invent a command for one.
 
-**Build step.** There is one, since `0002`. The page is Reflex, which compiles to
-JavaScript. Build with `uv run coscc-build`, not `reflex export` — the wrapper records a
-fingerprint of what it built from, and both `coscc` and `scripts/verify_0003.py`
-**refuse to run against a bundle that does not match the source**. Without that, editing
-the page and forgetting to rebuild leaves every check passing against the previous bundle.
-Nothing runs the build automatically: `npm test` does not, because `verify_0001` and
-`verify_0002` drive the ASGI app in-process and never need a compiled frontend — that is
-deliberate, and it is what keeps the test command free of a JavaScript toolchain.
+## A unit of work
 
-`npm test` covers both runtimes: `test:node` over `.claude/scripts/`, then
-`test:python` over `coscc/`. Adding a Python test file under `coscc/` named
-`*_test.py` is enough to be picked up. This is what keeps "tests must be green" meaning
-something now that the repository has two languages in it — verified once, on 2026-09-21,
-by making a Python test fail and watching `npm test` go red.
+One directory, `.cos/NNNN_<slug>/`, holding its eight artifacts and nothing else. The slug
+names the problem rather than the solution and is fixed at creation — a slug named after a
+solution stops making sense exactly when the directory still has to be findable.
 
-The `coscc/` web app serves **one page** at `/`: six screens — Overview, Workspaces,
-Board, Sessions, Activity & usage, Settings — built from Reflex Python components
-(`coscc/screens.py`), with all of their state in `coscc/state.py` and all of their
-logic behind `coscc/service.py`. It lists, creates and resumes Claude Code sessions
-across projects (`0001`), manages the workspaces themselves (`0002`), and shows each
-workspace's work units as a board whose steps it can run (`0005`). `0006` replaced both the
-page `0001`-`0005` built and `fragmented-product-experience`'s `/prototype` with this one; a handler that decides
-anything is a bug in `service.py`, not in the page.
+Run `cos.mjs status` for the stages, their order and what each one reads.
+`.claude/scripts/cos.mjs` is the one place the loop is defined; nothing may hold a second
+copy of it.
 
-It binds loopback only, and its sessions are **chat only — no tools** by default;
-`coscc/config.py` is the single place that reads configuration, and the defaults there
-are a safety posture rather than a suggestion. The one exception is a board step set to
-`autonomous`, which gets a named, bounded grant from `coscc/policy.py` — never from the
-config. Each session it creates spends account quota, so nothing that talks to it belongs
-in an unattended loop.
+**`plan.md: done` is terminal.** `cos.mjs` reports a unit finished without reading a single
+later artifact. Set it only after the proof command has passed, and never to close a unit
+that still has stages left.
 
-**Two roots, and they are not the same thing.** `COS_DATA_DIR` (default `~/.cos`) holds the
-app's own state: `cos.db`. `COS_WORKING_DIR` holds the workspaces — somebody
-else's git checkouts. Backing up one does not back up the other, and the Settings screen
-prints both for that reason. **Neither is settable over HTTP**: `config.from_env` is the
-only reader of the environment and there is no setter, so a request has no path to either.
-A stored workspace is a *name*, never a path; the path is built from the root on every
-read, and after `0006` the table has no column for one — which is why a hand-edited store
-cannot point the app at `/etc`. Leave `COS_WORKING_DIR` unset and the app behaves exactly
-as `0001` did, except that it now has somewhere to remember things.
+**Four units are closed by a bypass.** `0005`–`0008` carry `plan.md: done` with empty `pr`,
+`review` and `ship` cells. Deliberate, 2026-09-22; each of the four `plan.md` files carries
+the reason at the top. `0009` is the first unit that ran all eight for real — compare them.
 
-**Storage (`0006`).** `coscc/data.py` owns the data directory, the connection and the
-schema; it is the only module that knows where anything is. Three settings there are load
-bearing and none is a default: WAL, a 10-second `busy_timeout` **issued as the first
-statement on every connection**, and `BEGIN IMMEDIATE` around every read-modify-write.
-Getting the order wrong was measured on 2026-09-22 — `PRAGMA journal_mode=WAL` before
-`busy_timeout` failed about one run in ten with `database is locked`. The schema version
-lives in `PRAGMA user_version`, so opening an existing database is one read and no lock.
-`Store` and `Journal` kept their interfaces and changed their backing. **Only `Journal`
-still reads a legacy file**: a `.cos-journal.jsonl` from before `0006` is imported once and
-never deleted. `Store` had the same path and it was removed by `0008`, because the file it
-looked for was named after the author and a filename already on disk cannot be renamed. The
-two are a pair everywhere else, so the asymmetry is deliberate rather than an oversight.
+**Paths in artifacts written before `0008` name the Python package as it was called then.**
+They were not rewritten. `.cos/RENAMES.md` is the lookup table and says why.
+
+## Branches, tags and releases
+
+`main` is the trunk and is not a work branch. Every change reaches it through one branch and
+one pull request, squashed to one commit, rebased onto the latest `main` first.
+
+The order per unit, and the reason it cannot be reordered:
+
+1. `cos.mjs new-path <slug>` — allocates the number.
+2. Write `intent.md` there, declaring `Type:` in its header. **Accept and commit nothing
+   yet.**
+3. `cos.mjs unit-branch <unit>` — it reads the file from step 2, so it cannot run before it.
+4. `git switch -c <that name>` — cut from `main`, before the first commit. `main` is closed;
+   a commit made on it is a commit that has to be moved.
+5. Work the stages. Each artifact is its own commit.
+6. `gh pr create`, then `gh pr merge --squash --delete-branch`.
+
+When the pull request falls behind, `gh pr update-branch --rebase`. Rebase, not a merge of
+`main` into the branch: the squash would remove the merge commit anyway, and keeping the
+two rules pointing the same way is worth more than the shortcut.
+
+Do not compose a branch name or a tag by hand. The grammars are named here and enforced by
+`unit-branch`, `check-branch` and `check-tag`; pushing a tag is what builds the release.
 
 ```
-uv run coscc-build                                        # build the page first
-COS_WORKING_DIR=~/projects uv run coscc                   # then http://127.0.0.1:8790
-uv run python scripts/verify_0001.py                      # proof for 0001; creates real sessions
-uv run python scripts/verify_0002.py                      # proof for 0002; clones, creates sessions
-uv run python scripts/verify_0003.py                      # proof for 0003; needs a browser and a free port
-uv run python scripts/verify_0004.py                      # proof for 0004; 4 processes at once, creates a session
-COS_PROOF_REPO=<url> uv run python scripts/verify_0005.py # proof for 0005; runs a whole unit, pushes, opens a PR
-uv run python scripts/verify_0006.py                      # proof for 0006; browser, free port, one short prompt
+<type>/<slug>    feat fix docs refactor test chore perf build ci revert
+vX.Y.Z           a release
+vX.Y.Z-rc.N      a prerelease, N from 1
 ```
 
-`verify_0004.py` spawns four copies of itself writing to one working folder and checks
-that all 20 entries survive, then opens a real session and checks that `pull` refuses
-while it is live. It was re-run on SQLite on 2026-09-22 and still measures 20 of 20, and
-re-run again the same day on Python 3.14.4 — the interpreter carries `sqlite3` with it, so
-a bump moves the ground under that figure. `0006 spec.md` C2 is explicit that swapping the
-mechanism does not carry the old proof across, and the same holds for swapping the
-interpreter. **The `pull` refusal covers this process only.** Two copies of the app on one
-working folder still see past each other for sessions, so `pull` can change files under
-the other's turn; that is recorded in `.cos/0004_silent-concurrent-loss/spec.md` C2 and not
-fixed. Concurrent *writes* are now SQLite's problem rather than `flock`'s.
+**What enforces this does not travel with the harness.** Copying `.claude/` brings the
+grammars, the commands and their tests. It does not bring `.github/workflows/`, which sits
+outside `.claude/`, and it cannot bring the GitHub ruleset, which is a setting rather than a
+file — and the ruleset is the only thing here that actually stops a push.
 
-`verify_0003.py` and `verify_0006.py` are the two checks that open the page in a real
-browser, and the only ones that need `COS_PORT` free — the bundle hardcodes its own
-address, so they cannot move to a spare port. Stop the app before running either, and do
-not run them at the same time. Exit codes: `0` pass, `1` the page is broken, `2` the
-environment is not ready. `verify_0003.py` holds the floor — declared theme, three widths,
-colour mode that survives a reload, AA contrast — and its negative control proves it can
-still go red; it creates no session and spends no quota. `verify_0006.py` drives the five
-flows of `0006 intent.md` on real data, restarts the app and checks all five again; it
-sends **one** short prompt and never presses the run button.
+## What is deliberately not built
 
-**The board (`0005`).** Every work unit of the open workspace as eight cells, and it can
-run a step. Three modules carry it, and the split is the point:
-
-- `coscc/board.py` reads a workspace's `.cos/` by running **this repository's**
-  `.claude/scripts/cos.mjs` with `--root`. It never runs the `cos.mjs` inside the
-  workspace — that file belongs to a repository somebody cloned. Same reasoning applies to
-  the stage rules: `coscc/runner.py` builds its prompts from **this** repository's
-  `.claude/skills/`, never the workspace's.
-- `coscc/policy.py` is the grant table: what a step may do, keyed by `(stage, mode)`.
-  It is deliberately **outside `Config`**, so the four knobs keep meaning what they meant.
-  The default is the locked position: no tools, no commands, one turn, no budget. Only
-  `("impl", "autonomous")` and `("pr", "autonomous")` carry anything, and `pr` carries a
-  warning string that the page shows before the button is pressed, because its capability
-  comes from this machine's own `gh` login and reaches every repository that login reaches.
-- `coscc/journal.py` is the run log — modes, starts, finishes, denials and cost. Since
-  `0006` it is rows in `cos.db` rather than a JSONL file.
-
-The board's four lanes do **not** use the harness's `blocked` flag. Measured on 2026-09-22:
-`cos.mjs` returns `blocked: true` for every unit that is not finished
-(`.claude/scripts/cos.mjs:123-136`), so mapping it onto a lane called *Needs review* puts
-every unfinished unit there and leaves the other lanes empty. `coscc/state.py` reads
-the lanes off the artifact statuses instead.
-
-The six prose stages get **no tools in either mode**. A session with no tools cannot write
-a file, so for those the app writes the artifact from the reply and the session only
-returns text. `.cos/0005_hand-driven-invisible-loop/plan.md` Risk 1 records that this
-contradicts one sentence of that unit's `## Design`, and why the sentence is the wrong half.
-The Settings screen says it on the page, because otherwise it looks like the agent wrote
-the file.
-
-`verify_0005.py` is the only proof that pushes anything anywhere. It needs `COS_PROOF_REPO`
-set to a repository you are willing to have it push a branch to and open a pull request on;
-there is no default, and unset means exit 2 with claims 2, 3, 4 and 6 skipped. Claims 1, 5
-and 7 still run without it. It spends real quota — eight sessions, one with a $5 ceiling.
-
-**The build bakes in the port.** The compiled page hardcodes the address it opens its
-`/_event` WebSocket against, so a build made for one port serves a page that renders and
-then shows "Connection Error" with a perfectly healthy API behind it. Build and run with
-the same `COS_HOST`/`COS_PORT`; `coscc` refuses to start if they disagree. This was
-found on 2026-09-21 by driving the page with a browser — no HTTP-level check could see it.
-
-**Start it with `coscc`, not `reflex run`.** Reflex's dev mode serves the page from a
-vite server that binds every interface, and 0.9.11 has no setting for its host — measured
-on 2026-09-21, `ss -ltn` showed `*:3000`. `coscc` mounts the compiled frontend into the
-same ASGI app as the API and binds one loopback port, so there is one socket to check.
-
-## The loop
-
-One unit of work per `.cos/NNNN_<slug>/` directory, holding its artifacts and nothing else:
-`idea.md`, `intent.md`, `spec.md`, `plan.md`, `impl.md`, `pr.md`, `review.md`, `ship.md`.
-Any other file in that directory is reported as a problem.
-
-`write-idea` → `write-intent` → `write-spec` → `write-plan` → `write-impl` → `write-pr` →
-`write-review` → `write-ship`, each gated on the one before. `idea` is optional and gates
-nothing; `plan.md: done` is terminal, which is what kept the five units closed under the
-old three-stage loop reading as finished when `0005` widened it to eight.
-
-Five units were retired on 2026-09-22 and their numbers reused, so the surviving units
-run 0001-0006 with no gaps. Anything written before that date names a retired unit by slug
-rather than by number, because the numbers now belong to different units:
-`terminal-only-access`, `sessions-invisible-across-processes`, `chat-only-sessions-have-tools`,
-`fragmented-product-experience`, `stage-records-without-actions`. `channel/`, `evidence/`
-and `scripts/verify-0001.mjs` went with the first of them; git history keeps all of it.
-
-**Four units were closed by hand and did not run the last three stages.** `0005`, `0006`,
-`0007` and `0008` carry `plan.md: done`, which `cos.mjs:123` treats as terminal, so
-`cos-status` calls them finished while their `pr`, `review` and `ship` cells stay empty.
-That is a bypass, set deliberately on 2026-09-22, and each of the four `plan.md` files
-carries the reason at the top. The short version: they were finished before the repository
-had a remote, `cos.mjs:31` gives stage `pr` no `skipped` status, and `write-pr` requires
-`draft` when no pull request exists — which never clears `gate review`. Compare their rows
-with `0009`, which ran all eight for real.
-
-`cos-status` reports where everything stands. `.claude/scripts/cos.mjs:25-34` is the one
-place the loop is defined — the table in `.claude/harness.md` restates it, nothing else may.
+- **Any approval step.** The agent proposes, accepts, implements and ships; `accepted` is a
+  word it wrote about its own work, and a pull request opened and merged by the same party
+  changes the route, not the reviewer. A green `review` cell is a chair with nobody in it.
+  Anyone copying this template should make that trade on purpose rather than inherit it.
+- **Hooks.** Every gate is advisory: nothing forces a session to run `cos.mjs`, or to stop
+  when it exits non-zero. A `PreToolUse` hook blocking `Write` while `plan.md` is `draft`
+  would be one file.
+- **Anything that starts the next stage.** An accepted artifact lights no gate. A person
+  chooses the mode and presses the button, every time.
+- **CI that decides anything.** Two workflows exist and neither is a gate; a green check
+  also measures a different interpreter than the one the proofs were measured on.
 
 ## Invariants
 
-- Set `Status: accepted` when the artifact is finished, then commit it. `accepted` records
-  that the agent judged it ready — it is not a human's approval and must not be read as one.
-- There is no review step. Commits land on `main` and `accepted` is self-issued, so the only
-  things still checking the work are `cos.mjs gate`, the tests, and the invariants in each
-  skill. Treat those as the last line, not as formalities.
-- Ask `cos.mjs gate` before a stage, and stop when it exits non-zero. Fix what it names;
-  do not reason your way past it.
-- No code while `plan.md` is `draft`. Accept the plan in its own commit first, so the
+- Set `Status: accepted` when the artifact is finished, then commit it. It records that the
+  agent judged it ready. It is not a human's approval and must not be read as one.
+- Ask `cos.mjs gate` before a stage and stop when it exits non-zero. Fix what it names; do
+  not reason your way past it.
+- No code while `plan.md` is `draft`. Accept the plan in its own commit, so the
   authorization is separable from the thing it authorizes.
-- Take work unit paths from `cos.mjs new-path`. Never guess a number.
+- Take unit paths from `cos.mjs new-path`. Never guess a number.
 - Cut a figure that has no source. Do not soften it.
 - Cite only a file committed in this repository, by path and line range.
 - Inside `.cos/`: English filenames and headings, Vietnamese prose. Everywhere else,
-  English.
+  English — those are instructions to the model, not artifacts to be reviewed.
+
+## Copying this into another repository
+
+Copy `.claude/`. That is the whole harness, and nothing lands in the host repository's own
+tree. Claude Code loads `.claude/CLAUDE.md` as project instructions, so no import, symlink
+or root file is needed. Then put that repository's real build and test commands under
+`## Commands`, and rebuild the two legs named above by hand.

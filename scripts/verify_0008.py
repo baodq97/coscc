@@ -62,6 +62,29 @@ NEW = "coscc"
 # dead; `.cos/RENAMES.md` says so once rather than each artifact saying it separately.
 BASE = "fa7d47c"
 
+# The commit this unit ended on, `0008 impl`. The three claims that ask "what did this unit
+# change" — C2 through `kept()`, C11 and C12 — read `BASE..TIP`, not `BASE..HEAD` and not the
+# working tree.
+#
+# All three were written with the moving end on 2026-09-22, when that end *was* this commit,
+# which quietly made them claims about every commit the repository would ever make
+# afterwards. Every unit since has reddened them by existing. Measured on `main` at
+# `31ea2fc`, before `0010` changed anything: C11 named ten artifacts `0009` wrote, and C12
+# named six lockfile lines `0009`'s version bump moved. `0010` then took `.claude/CLAUDE.md`
+# below the C2 threshold by moving `COS_*` into `.claude/rules/coscc-app.md`, and deleted
+# `.claude/harness.md` outright. None of the four is a rename taking something with it, and
+# none was caught until `0010` re-ran this file — `0009`'s `review.md` records that the
+# seven older proofs were never re-run after that bump.
+#
+# Pinning the upper end changes what is measured, not what is claimed: "0008 did not rewrite
+# another unit's artifact, did not drop the prefix from a file that had it, and moved nothing
+# in the lockfiles but the name". C1 is deliberately **not** pinned — the outcome of `0008`
+# is that the name stays gone, which is a claim about now.
+#
+# `0010` *did* rewrite eight signed `intent.md` headers, authorized by its own spec R10 and
+# recorded in `.cos/RENAMES.md`. This file is not the place that accounts for it.
+TIP = "08b863d"
+
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
@@ -121,7 +144,7 @@ def counts_at(rev: str | None, pattern: str) -> dict[str, int]:
 
 
 def kept(pattern: str, label: str) -> bool:
-    then, now = counts_at(BASE, pattern), counts_at(None, pattern)
+    then, now = counts_at(BASE, pattern), counts_at(TIP, pattern)
     lost = sorted(f for f in then if f not in now)
     thinned = sorted(f"{f} {then[f]}->{now[f]}" for f in then if f in now and now[f] < then[f])
     return say(
@@ -322,16 +345,16 @@ def claim_9() -> bool:
 
 def claim_10() -> bool:
     renames = read(".cos/RENAMES.md")
-    harness = read(".claude/harness.md")
+    harness = read(".claude/CLAUDE.md")
     ok = say(
         OLD_PKG in renames and f"{NEW}/" in renames,
         ".cos/RENAMES.md maps the old package onto the new one",
     )
-    ok &= say("RENAMES.md" in harness, "harness.md points at the table")
+    ok &= say("RENAMES.md" in harness, "CLAUDE.md points at the table")
     return ok & say(
         NEEDLE not in harness.lower(),
         "the pointer does not spell the old name",
-        "harness.md is outside .cos/, so writing it there would fail C1",
+        "CLAUDE.md is outside .cos/, so writing it there would fail C1",
     )
 
 
@@ -344,7 +367,7 @@ def claim_11() -> bool:
     """This claim exists for one reason, written down at `plan.md` Risk 8: the count of the
     old name inside `.cos/` only ever goes up as this unit writes its own artifacts, and the
     temptation at the end is to tidy it by editing something that was already signed."""
-    out = git("diff", "--name-only", f"{BASE}..HEAD", "--", ".cos")
+    out = git("diff", "--name-only", f"{BASE}..{TIP}", "--", ".cos")
     if out.returncode != 0:
         return say(False, "the base commit is reachable", out.stderr.strip())
     touched = [ln for ln in out.stdout.splitlines() if ln]
@@ -366,7 +389,7 @@ def claim_12() -> bool:
     """`0007` re-measured every proof on Python 3.14 and reflex 0.9.12. A dependency that
     moved during an unrelated `uv lock` would pull the ground out from under those numbers
     with nothing to announce it."""
-    out = git("diff", "-U0", f"{BASE}..HEAD", "--", "uv.lock", "package-lock.json")
+    out = git("diff", "-U0", f"{BASE}..{TIP}", "--", "uv.lock", "package-lock.json")
     if out.returncode != 0:
         return say(False, "the base commit is reachable", out.stderr.strip())
     changed = [

@@ -9,7 +9,7 @@ Read this section before anything else, because it is the reason this stage is t
 one in the loop.
 
 **There is no separation of duties here, and this file must not pretend otherwise.**
-`.claude/harness.md` states it plainly: the author works alone, commits land on `main`, and
+`.claude/CLAUDE.md` states it plainly: the author works alone, commits land on `main`, and
 `accepted` is a word the agent writes about its own work. Adding a `review` stage does not
 create an approver — it creates a *place to record one*. A `review.md` marked `accepted` by
 the same agent that wrote the code is a green cell over an empty chair, and it is **more**

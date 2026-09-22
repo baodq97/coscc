@@ -14,14 +14,15 @@ A local AI-native SDLC harness: a unit of work moves through eight stages — `i
 artifact accepted and committed before the next begins. `idea.md` is optional and gates
 nothing; the other seven are gated on the one before. The agent writes those artifacts and
 accepts its own, so `Status: accepted` records readiness rather than approval;
-`.claude/harness.md` explains what was traded away for that and what is left.
+`.claude/CLAUDE.md`, under `## What is deliberately not built`, says what was traded
+away for that and what is left.
 
 The harness is entirely inside `.claude/`:
 
 | Path | What it is |
 |---|---|
-| `.claude/CLAUDE.md` | The rules that hold in every session. Claude Code loads it automatically. |
-| `.claude/harness.md` | How the loop works and why. Read this first. |
+| `.claude/CLAUDE.md` | Every rule that holds in every session. Claude Code loads it automatically. Read this first. |
+| `.claude/rules/` | Rules that load only when a session touches the files they name. |
 | `.claude/skills/` | One skill per stage — `write-idea` through `write-ship` — plus `cos-status`. |
 | `.claude/scripts/` | The mechanical checks — numbering, gates, status — and their tests. |
 

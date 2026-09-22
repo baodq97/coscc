@@ -99,3 +99,33 @@ bao giờ đạt. `.cos/` là vùng duy nhất vừa được loại khỏi phé
 File này nằm ở tầng `.cos/`, không trong unit dir nào, nên harness bỏ qua nó:
 `.claude/scripts/cos.mjs:97-98` chỉ liệt kê thư mục, và kiểm tra file lạ ở `:83-84` chỉ chạy
 bên trong một unit dir. `.claude/harness.md` trỏ tới đây.
+
+## `.claude/harness.md`, deleted by 0010 (2026-09-22)
+
+`0010` xoá `.claude/harness.md`. Thứ nó giữ mà không ai giữ hộ chuyển sang
+`.claude/CLAUDE.md`; thứ nó giải thích về một quy tắc đã có `cos.mjs`, CI hoặc ruleset cưỡng
+chế thì không chuyển đi đâu cả. Kiến thức riêng của app `coscc` sang
+`.claude/rules/coscc-app.md`, nạp có điều kiện theo `paths:`.
+
+**Trích dẫn tới file đã chết, đo ngày xoá** bằng `grep -ro` trên `.cos/`:
+
+| Unit | Lần nhắc tên | Trong đó có số dòng |
+|---|---|---|
+| `0005_hand-driven-invisible-loop` | 19 | 6 |
+| `0007_stale-claims-and-dead-code` | 2 | 0 |
+| `0008_personal-name-blocks-publishing` | 27 | 5 |
+| `0009_branch-and-release-conventions` | 19 | 5 |
+| **Cộng, bốn unit đã ký** | **67** | **16** |
+| `0010_…` (unit xoá nó) và file này | 40 | 8 |
+
+Không cái nào được sửa, cùng lý do đã ghi ở `## Why the artifacts were not rewritten`: sửa
+là viết lại artifact đã ký, và một header chèn thêm sẽ đẩy mọi số dòng khác xuống. `0010
+intent.md` constraint 5 chốt điều đó. Đây là lần thứ hai repo trả giá này — lần đầu là 44
+trích dẫn SHA chết ở `0008`.
+
+**Tra ở đâu:** nội dung cuối cùng của file nằm ở `git show <commit trước 0010>:.claude/harness.md`.
+Số dòng trong mọi trích dẫn trên đọc theo bản 295 dòng đó, không theo bản nào khác.
+
+Hai lần nhắc `harness.md` còn lại trong chính file này (`## Why this file is here and not in
+.claude/`) **cố ý không sửa**: chúng kể lý do lịch sử của một quyết định ở `0008`, và câu đó
+đúng vào lúc nó được viết. Con trỏ tới bảng tra bây giờ ở `.claude/CLAUDE.md`.
