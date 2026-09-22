@@ -1,5 +1,5 @@
 # Plan: Bootstrap the convention on the branch that introduces it
-Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
 Mười sáu bước. Bước 1 cắt branch; bước 2 dựng bằng chứng và nó phải **đỏ**, như `0008` đã
 làm. **Mọi thứ từ bước 1 trở đi đi qua cổng mà unit này dựng lên** — kể cả `impl.md` và
@@ -167,9 +167,13 @@ dòng**; `git branch --contains v0.1.0` chứa `main`.
 *Kiểm:* exit `0`.
 
 **16. Đóng unit qua một branch thứ hai.**
-`docs/close-0009` mang `review.md` và `ship.md`, mở PR, merge. Không có lối nào khác: bước 12
-đã bật cổng, nên hai artifact cuối cũng phải đi qua nó. Đó là lần đầu quy ước tự áp lên
-chính nó mà không phải bootstrap.
+`fix/proof-0009-vacuous-claim` mang `review.md`, `ship.md`, bản vá C12, và ba đính chính
+trong artifact. Mở PR, merge. Không có lối nào khác: bước 11b đã bật cổng, nên hai artifact
+cuối cũng phải đi qua nó. Đó là lần đầu quy ước tự áp lên chính nó mà không phải bootstrap.
+
+*Tên branch đổi so với bản đầu.* Kế hoạch viết `docs/close-0009`, nhưng branch này mang một
+**bản vá thật**: `verify_0009.py` C12 từng báo xanh trên một câu hỏi chưa bao giờ được hỏi
+(`review.md` finding 1). `docs/` sẽ nói sai nội dung của nó.
 *Kiểm:* `cos.mjs status` cho `0009` đủ tám cột, và `plan.md` này đổi sang `Status: done`.
 
 ### Chọn không làm
