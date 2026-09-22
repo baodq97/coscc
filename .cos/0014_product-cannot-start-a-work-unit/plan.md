@@ -1,5 +1,5 @@
 # Plan: one function decides where a unit lives, then git, then the two routes
-Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
 ## OQ1, settled before planning
 
