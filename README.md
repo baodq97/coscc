@@ -42,12 +42,20 @@ nothing lands in that repository's own tree.
 screens — Overview, Workspaces, Board with a work-unit drawer, Sessions, Activity & usage,
 Settings — all reading the running service.
 
+To install it on a machine rather than work on it, see
+[installing coscc](docs/install.md) — one line, a systemd user service, and it comes back
+after a reboot. The two commands below are the *checkout* path, for working on the code:
+
 ```sh
 uv run coscc-build                              # compile the page
-COS_WORKING_DIR=~/projects uv run coscc         # then http://127.0.0.1:8790
+COS_WORKING_DIR=~/projects uv run coscc         # then http://0.0.0.0:8790
 ```
 
-It binds loopback only, and its chat sessions have **no tools** by default. The app keeps
+**It binds every interface by default, and this app has no authentication on any route** —
+anyone who can reach the port can use all of it, including the two controls that spend real
+quota. That was `0.0.0.0` by decision on 2026-09-22, not by accident; `COS_HOST=127.0.0.1`
+puts it back on loopback, and the startup banner says which one you are running. Its chat
+sessions have **no tools** by default. The app keeps
 its own state — the workspace list, the run log, interface preferences — in one SQLite
 database under `COS_DATA_DIR`, which defaults to `~/.cos`. Workspaces themselves stay
 under `COS_WORKING_DIR`; backing up one does not back up the other. Neither is settable

@@ -324,6 +324,11 @@ class StudioState(rx.State):
     grants: list[GrantRow] = []
     data_dir: str = ""
     host_port: str = ""
+    # Whether the bound address reaches this machine only. Since `0011` the default
+    # is `0.0.0.0`, so the page may no longer state "loopback" as a fact -- it has to
+    # read it. A page that claims a safety property it does not have is worse than a
+    # page that says nothing, and `0007` exists because of exactly that.
+    loopback_only: bool = True
     model: str = ""
 
     # -- chrome
@@ -448,6 +453,7 @@ class StudioState(rx.State):
         self.working_dir = data.get("working_dir") or ""
         self.data_dir = data.get("data_dir") or ""
         self.host_port = f"{data.get('host')}:{data.get('port')}"
+        self.loopback_only = data.get("host") in ("127.0.0.1", "localhost", "::1")
         self.model = data.get("model") or "default"
         self.knobs = [
             Knob(name=k["name"], value=k["value"], detail=k["detail"], on=bool(k["on"]))

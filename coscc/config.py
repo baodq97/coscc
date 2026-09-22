@@ -8,6 +8,16 @@ environment.
 The defaults are the safe posture from `spec.md` C2, not suggestions. Each is off because
 turning it on hands a loopback port a capability it does not need to reach the outcome in
 `intent.md`.
+
+**`host` is the one exception, and it stopped being part of that posture on 2026-09-22.**
+`0001` set it to `127.0.0.1` deliberately, against Reflex's own `0.0.0.0` default
+(`rxconfig.py` records that). `0011` changed it to `0.0.0.0` because the app now ships to
+a VM that people reach from elsewhere -- the originator decided it that day, after being
+shown what it costs. What it costs is written in `0011`'s `spec.md` C1 and is not softened
+here: this app has no authentication of any kind, so every machine that can route to this
+port can use all of it, including the two controls that spend real Claude quota. The
+startup banner in `coscc/run.py` says so out loud every time it is not loopback, which is
+the only thing standing where a login would be.
 """
 
 from __future__ import annotations
@@ -63,7 +73,8 @@ class Config:
     # is not backing up the other, and `spec.md` C1 says that out loud because it is the
     # kind of thing that loses somebody a directory.
     data_dir: str | None = None
-    host: str = "127.0.0.1"
+    # See the module docstring. `0.0.0.0` since 0011; it was `127.0.0.1` before.
+    host: str = "0.0.0.0"
     port: int = 8790
     model: str | None = None
 
@@ -137,7 +148,7 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         workspaces=declared or fallback,
         working_dir=working_dir,
         data_dir=_dir(e, "DATA_DIR"),
-        host=e.get(_ENV_PREFIX + "HOST", "127.0.0.1"),
+        host=e.get(_ENV_PREFIX + "HOST", "0.0.0.0"),
         port=int(e.get(_ENV_PREFIX + "PORT", "8790")),
         model=e.get(_ENV_PREFIX + "MODEL") or None,
     )

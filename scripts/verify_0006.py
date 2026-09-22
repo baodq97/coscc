@@ -21,8 +21,10 @@ trade for the same reason.
 carries a $5 ceiling, and a proof that runs one on every invocation is a proof nobody runs.
 Flow 3 reads an artifact and a timeline, which is what `intent.md` asks of it.
 
-It needs `COS_PORT` free, because the compiled bundle hardcodes the address it opens its
-WebSocket against. Stop the app before running this.
+It needs `COS_PORT` free, because a checkout's compiled bundle hardcodes the address it
+opens its WebSocket against. Stop the app before running this. (An installed wheel rewrites
+that address at startup instead — `coscc/frontend.py` — but this proof measures a
+checkout.)
 """
 
 from __future__ import annotations

@@ -94,9 +94,16 @@ class Parsing(unittest.TestCase):
     def test_workspaces_default_to_the_working_directory(self):
         self.assertEqual(len(from_env({}).workspaces), 1)
 
-    def test_loopback_by_default(self):
-        # R5. A non-loopback bind has to be typed out by a human, not inherited.
-        self.assertEqual(from_env({}).host, "127.0.0.1")
+    def test_every_interface_by_default_since_0011(self):
+        # `0001` R5 said the opposite and meant it: a non-loopback bind had to be typed
+        # out by a human rather than inherited. `0011` reversed it by decision, not by
+        # drift -- see the module docstring in `coscc/config.py` for who and when, and
+        # `coscc/run_test.py` for the warning that now carries the weight this default
+        # used to carry.
+        self.assertEqual(from_env({}).host, "0.0.0.0")
+
+    def test_the_old_default_is_still_reachable_by_hand(self):
+        self.assertEqual(from_env({"COS_HOST": "127.0.0.1"}).host, "127.0.0.1")
 
 
 class WorkspaceMembership(unittest.TestCase):

@@ -1,4 +1,5 @@
 .web
+coscc/_web/
 assets/external/
 .states
 *.db
@@ -18,3 +19,4 @@ __pycache__/
 .claude/settings.local.json.tmp.*
 # Source material this repository reads but does not own and must never republish.
 .raws/
+dist/

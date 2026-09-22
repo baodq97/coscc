@@ -22,7 +22,8 @@ COS_WORKING_DIR=~/projects uv run coscc     # then http://127.0.0.1:8790
 **Start it with `coscc`, not `reflex run`.** Reflex's dev mode serves the page from a vite
 server binding every interface, and 0.9.11 has no setting for its host — measured
 2026-09-21, `ss -ltn` showed `*:3000`. `coscc` mounts the compiled frontend into the API's
-own ASGI app and binds one loopback port.
+own ASGI app and binds one port. Since `0011` that port is on `0.0.0.0` by default and
+the app has no authentication — `COS_HOST=127.0.0.1` is the loopback posture `0001` built.
 
 `npm test` never builds. `verify_0001` and `verify_0002` drive the ASGI app in-process, so
 the test command needs no JavaScript toolchain — that is deliberate, and it is why editing
@@ -77,9 +78,12 @@ no commands, one turn, no budget.
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.
 
-`verify_0003` and `verify_0006` are the two that open a real browser. The bundle hardcodes
-its own address, so neither can move to a spare port: stop the app first, and never run
-them at the same time.
+`verify_0003` and `verify_0006` are the two that open a real browser. **In a checkout** the
+bundle hardcodes its own address, so neither can move to a spare port: stop the app first,
+and never run them at the same time. A wheel installed by `install.sh` behaves the other
+way — `coscc/frontend.py` rewrites the address at startup, because a packaged install has
+no Node to rebuild with. Both sentences are true; which one applies depends on which of the
+two shapes you are looking at, and `coscc/run.py` is where they part.
 
 A figure carries across a rewrite only if the mechanism did not change. `0006 spec.md` C2
 says this about swapping the store; it holds the same way for swapping the interpreter.

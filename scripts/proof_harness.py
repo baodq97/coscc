@@ -62,7 +62,9 @@ def require_free_port(config) -> None:
         return
     print(
         f"{config.host}:{config.port} is already in use — stop the running app first.\n"
-        "The bundle hardcodes that address, so this proof cannot move to a free port.",
+        "A checkout's bundle hardcodes that address, so this proof cannot move to a free\n"
+        "port. (A packaged install rewrites it at startup instead — `coscc/frontend.py` —\n"
+        "but these proofs measure a checkout.)",
         file=sys.stderr,
     )
     raise SystemExit(EXIT_ENV)

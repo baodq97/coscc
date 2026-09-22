@@ -69,9 +69,10 @@ class WhatCountsAsCurrent(unittest.TestCase):
     def test_a_different_port_is_stale_and_says_both_ports(self):
         """The 2026-09-21 failure, as a unit test.
 
-        The bundle hardcodes the backend address, so a build aimed at another port
-        renders a page that never connects. The message has to name both numbers or the
-        reader cannot tell which one to change.
+        In a checkout the bundle hardcodes the backend address and stays that way, so a
+        build aimed at another port renders a page that never connects. The message has
+        to name both numbers or the reader cannot tell which one to change. A packaged
+        install never gets here -- `coscc/frontend.py` rewrites the address instead.
         """
         build.write_marker(self.built, self.config, root=self.root)
         state, msg = build.check(

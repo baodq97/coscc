@@ -9,6 +9,15 @@ So building writes a fingerprint beside the output, and anything that serves or 
 the page asks here first. `run.py` refuses to start on a stale build; `verify_0003.py`
 refuses to measure one.
 
+**This module is about a checkout, and only a checkout.** `0011` added a second
+shape -- a wheel carrying its own bundle under `coscc/_web/` -- and nothing in that
+shape reaches this file: `coscc/run.py` branches on `frontend.is_packaged()` before
+asking anything here, so the only two callers of `check()` outside the tests
+(`coscc/run.py` and `scripts/proof_harness.py`) are both checkout paths. The
+question this module answers -- "is the bundle older than the source?" -- has no
+meaning in a wheel, where the two travel in the same file and cannot drift. That is
+why no packaged fingerprint was built; `plan.md` records the decision.
+
 **What the fingerprint covers, and what it cannot.** The compiled bundle is decided by the
 component tree in `coscc/screens.py`, its state, the shared theme and presentation
 modules, `rxconfig.py` (which bakes in the backend address), and the Reflex version that
@@ -122,7 +131,8 @@ def check(config: Config, built: Path, root: Path = REPO) -> tuple[str, str]:
 
     reasons = []
     if found.get("host") != want["host"] or found.get("port") != want["port"]:
-        # The failure of 2026-09-21: the bundle hardcodes the backend address, so a build
+        # The failure of 2026-09-21: in a checkout the bundle hardcodes the backend
+        # address and cannot be moved, so a build
         # aimed elsewhere renders a page that never connects.
         reasons.append(
             f"built for {found.get('host')}:{found.get('port')}, "
