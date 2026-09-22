@@ -318,7 +318,13 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), intent_md="Status: accepted.\nINTENT")
-            journal = Journal(Path(d) / "cos.db")
+            # Two arguments, like every other Journal in this file. With one, `data`
+            # defaults to `Data(None)` and this test writes into the real `~/.cos` --
+            # the hazard `coscc/journal.py:108-109` names, found live 2026-09-22 after
+            # `SCHEMA_VERSION` went to 2: running `npm test` upgraded the developer's own
+            # database, and the installed v0.2.3 then answered 500 on every route that
+            # reads it while `/api/health` still said ok.
+            journal = Journal(d, d)
             sessions = Counting()
             runner = Runner(sessions=sessions, journal=journal)
 
