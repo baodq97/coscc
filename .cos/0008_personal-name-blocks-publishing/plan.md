@@ -158,8 +158,22 @@ clone mới đếm đúng số commit của local.
 *Kiểm:* exit `0`.
 
 **12. Viết `impl.md`.**
-Đo lại mọi con số tại thời điểm đó — đặc biệt là số dòng `baodo` trong `.cos/`, thứ đã đi
-279 → 289 → 319 và sẽ còn tăng (`spec.md` C9).
+Đo lại mọi con số tại thời điểm đó.
+
+> **Sửa lúc làm bước 5, do người khởi xướng nêu.** Bản đầu của bước này bảo `impl.md` đo lại
+> **số dòng `baodo` trong `.cos/`**. Bỏ yêu cầu đó: `impl.md` **không ghi một tổng nào cho
+> `.cos/`**.
+>
+> Lý do là con số ấy không đo cái gì cả. Nó tự sinh ra bởi chính các artifact đang đếm nó —
+> 279 ở `9280d33`, 289 ở `fed0638`, 319 ở `5226be5`, 352 sau khi plan này được sửa — và mỗi
+> lần `impl.md` nhắc tới nó thì nó lại tăng. Nó cũng **không phải thứ outcome đo**: outcome
+> loại `.cos/` ra có chủ ý (`intent.md` `## Proposed outcome`).
+>
+> Ghi nó như một figure còn có hại: đọc thấy một số lớn ở cuối unit thì phản xạ là dọn cho
+> nhỏ, và cách duy nhất để dọn là sửa một artifact đã ký — đúng Risk 8. Nên `impl.md` ghi
+> con số outcome thực sự đo (`baodo` ngoài `.cos/`, phải bằng 0) và nói về `.cos/` đúng một
+> câu: còn một số dương, ai cần thì tự đo, không ai được trích lại. Đó cũng là điều R11 đã
+> yêu cầu; bước 12 chỉ đang thôi mâu thuẫn với nó.
 
 ### Chọn không làm
 

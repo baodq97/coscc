@@ -7,6 +7,11 @@ everything that applies to one stage lives in that stage's skill.
 Read this when setting the harness up, changing it, or copying it into another repository.
 A session in the middle of a stage does not need it.
 
+**Paths in `.cos/` artifacts written before `0008` name the Python package as it was called
+then.** They were deliberately not rewritten — `.cos/RENAMES.md` is the lookup table, and
+records why adding a note to each affected file would have broken more citations than it
+fixed.
+
 ## What this is
 
 A local implementation of the AI-native SDLC described in `ai-native-sdlc-playbook.md`,
