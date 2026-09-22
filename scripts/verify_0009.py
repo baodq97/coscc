@@ -348,11 +348,15 @@ def claim_7() -> bool:
         if not text:
             problems.append(f"{rel} is missing")
             continue
-        if not re.search(r"^permissions:", text, re.MULTILINE):
+        # Comments stripped first. A file that explains why it does not use
+        # `pull_request_target` contains the string, and the first version of this claim
+        # failed on the sentence saying the trigger was avoided.
+        body = "\n".join(l for l in text.split("\n") if not l.lstrip().startswith("#"))
+        if not re.search(r"^permissions:", body, re.MULTILINE):
             problems.append(f"{rel} declares no top-level permissions")
-        if "pull_request_target" in text:
-            problems.append(f"{rel} uses pull_request_target")
-        for ref in SHA_PIN.findall(text):
+        if re.search(r"^\s*pull_request_target:", body, re.MULTILINE):
+            problems.append(f"{rel} triggers on pull_request_target")
+        for ref in SHA_PIN.findall(body):
             if ref.startswith("./"):
                 continue
             _, _, pin = ref.partition("@")
