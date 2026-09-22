@@ -130,6 +130,48 @@ class WhichBundleIsUsed(unittest.TestCase):
             )
 
 
+class TheMarkerThatLetsAPackagedInstallStart(unittest.TestCase):
+    """The half of the packaged fix that a static-bundle check cannot see.
+
+    `is_packaged()` answers yes for a wheel carrying only `build/client`, and that wheel
+    installs, reports `active` under `Type=simple`, and serves nothing -- measured on a
+    clean Debian 13 VM, 2026-09-22. So the bundle being present is not the same question
+    as the bundle being able to start, and these are separate assertions on purpose.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_a_bundle_with_no_backend_dir_is_reported_incomplete(self):
+        packaged = self.root / "_web"
+        _bundle(packaged)
+        with mock.patch.object(frontend, "PACKAGE_WEB", packaged):
+            self.assertTrue(frontend.is_packaged())
+            absent = frontend.missing_compile_marker(self.root)
+            self.assertEqual(absent, packaged / frontend.MARKER)
+
+    def test_a_bundle_carrying_the_marker_is_accepted(self):
+        packaged = self.root / "_web"
+        _bundle(packaged)
+        marker = packaged / frontend.MARKER
+        marker.parent.mkdir(parents=True)
+        marker.write_text("[]")
+        with mock.patch.object(frontend, "PACKAGE_WEB", packaged):
+            self.assertIsNone(frontend.missing_compile_marker(self.root))
+
+    def test_the_variable_name_is_the_one_reflex_reads(self):
+        """A tripwire, not a test of our code.
+
+        `REFLEX_SKIP_COMPILE` is the attribute; `__REFLEX_SKIP_COMPILE` is the environment
+        variable, and setting the first name sets something nothing reads. Pinned here so
+        that a rename upstream shows up as a failing test rather than as a crash loop on
+        somebody else's machine.
+        """
+        self.assertEqual(frontend.SKIP_COMPILE_VAR, "__REFLEX_SKIP_COMPILE")
+
+
 class TheCheckThatVerify0011Asserts(unittest.TestCase):
     """`addresses()` is too blunt to assert against; `event_addresses()` is exact."""
 

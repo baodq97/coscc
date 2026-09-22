@@ -161,7 +161,27 @@ def banner(config) -> list[str]:
 
 
 def _point_the_bundle_here(static: Path, config) -> None:
-    """A packaged bundle is built once and served wherever it lands."""
+    """A packaged bundle is built once and served wherever it lands.
+
+    Two things have to be true before it can serve at all, and the second one is the half
+    that was missed until a clean machine found it -- see `coscc/frontend.py`.
+    """
+    # Without this, Reflex recompiles on every start and ends that compile by shelling out
+    # to Bun or npm, which a packaged install does not have. `Type=simple` makes that look
+    # like a healthy service, so nothing short of an HTTP request notices.
+    os.environ[frontend.SKIP_COMPILE_VAR] = "1"
+
+    absent = frontend.missing_compile_marker(REPO)
+    if absent is not None:
+        print(
+            f"this packaged install has no {absent.name} at {absent} — the release that "
+            "built it copied the static bundle but not the build state beside it, so "
+            "Reflex would enter its compile anyway and stop on a missing Node. The wheel "
+            "is incomplete; reinstall from a release built after 2026-09-22.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
     try:
         frontend.rewrite_address(static, config.host, config.port)
     except frontend.NoEnvChunk as missing:

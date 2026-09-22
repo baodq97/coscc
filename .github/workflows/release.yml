@@ -83,6 +83,15 @@ jobs:
           set -euo pipefail
           mkdir -p coscc/_web/build/client
           cp -r .web/build/client/. coscc/_web/build/client/
+          # `.web/backend/` is not part of the static bundle and is easy to read as build
+          # scratch. It is not. `stateful_pages.json` is the marker that lets Reflex take
+          # its short path when the compile is skipped; without it, `compile_app` falls
+          # through to a full compile and ends on `Bun or npm not found`
+          # (reflex/compiler/compiler.py:1254-1267, read 2026-09-22). Measured on a clean
+          # Debian 13 VM the same day: a wheel carrying only `build/client` installs,
+          # reports `active`, and serves nothing at all.
+          mkdir -p coscc/_web/backend
+          cp -r .web/backend/. coscc/_web/backend/
 
       - name: Build the wheel
         id: wheel
@@ -109,6 +118,12 @@ jobs:
           set -euo pipefail
           if ! unzip -l "$WHEEL" | grep -q 'coscc/_web/build/client/index\.html'; then
             echo "::error::$WHEEL has no coscc/_web/build/client/index.html — the frontend copy step did not run, or copied nothing" >&2
+            exit 1
+          fi
+          # The second half of a runnable wheel. A wheel that passes the check above and
+          # fails this one is the exact shape that installed cleanly and never served.
+          if ! unzip -l "$WHEEL" | grep -q 'coscc/_web/backend/stateful_pages\.json'; then
+            echo "::error::$WHEEL has no coscc/_web/backend/stateful_pages.json — it would install, report active, and never serve a page" >&2
             exit 1
           fi
 

@@ -61,6 +61,30 @@ _ENV_GLOB = "assets/reflex-env-*.js"
 # it before importing the app or the static mount is composed against the wrong root.
 WEB_WORKDIR_VAR = "REFLEX_WEB_WORKDIR"
 
+# Reflex re-runs its whole compile on every start unless told not to, and that compile
+# ends in `install_frontend_packages`, which requires Bun or npm. A packaged install has
+# neither. Measured 2026-09-22 on a clean Debian 13 VM: the service crash-looped on
+# `FileNotFoundError: Bun or npm not found`, while `systemctl --user is-active` still
+# answered `active` -- `Type=simple` reports a process that spawned, not one that serves.
+# Every HTTP check against it returned nothing at all, so this is a failure no amount of
+# reading the unit's state would have found.
+#
+# The variable's name is not its attribute name:
+# `reflex_base.environment.environment.REFLEX_SKIP_COMPILE.name` is `__REFLEX_SKIP_COMPILE`,
+# read 2026-09-22. Using the attribute name would set a variable nothing reads.
+SKIP_COMPILE_VAR = "__REFLEX_SKIP_COMPILE"
+
+# Skipping the compile is only half the answer, and the missing half is what made the
+# first fix look complete. `compiler.compile_app` asks `app._should_compile()` and then
+# **still falls through to the full compile** unless a marker from a previous build is
+# there to take the short path instead -- reflex/compiler/compiler.py:1254-1267, read
+# 2026-09-22. The marker and the library registry beside it are written into
+# `.web/backend/`, which is outside `build/client`, so a release that copies only the
+# static tree ships a wheel that sets the variable and crashes anyway.
+_BACKEND = Path("backend")
+MARKER = _BACKEND / "stateful_pages.json"
+BUNDLED_LIBRARIES = _BACKEND / "bundled_libraries.json"
+
 # Where the release puts the bundle inside the wheel. `pyproject.toml` ships everything
 # under `coscc/`, so this is the one place a packaged tree can live.
 PACKAGE_WEB = Path(__file__).resolve().parent / "_web"
@@ -97,6 +121,23 @@ def is_packaged() -> bool:
 def static_dir(repo: Path) -> Path:
     """The bundle root: the directory holding `index.html` and `assets/`."""
     return web_dir(repo) / _LAYOUT
+
+
+def missing_compile_marker(repo: Path) -> Path | None:
+    """The marker Reflex needs to skip its compile, if the bundle does not carry it.
+
+    Returns the path that should have existed, or `None` when it is there. A caller that
+    ignores this gets the 2026-09-22 failure back: `SKIP_COMPILE_VAR` set, the compile
+    entered anyway, and `FileNotFoundError: Bun or npm not found` on a machine that was
+    never going to have either.
+
+    Only `MARKER` is reported. `BUNDLED_LIBRARIES` is read through a `try` that swallows a
+    missing file (reflex/compiler/utils.py:286-292, read 2026-09-22), so its absence
+    degrades rather than stops -- the release still ships it, but it is not worth refusing
+    to start over.
+    """
+    marker = web_dir(repo) / MARKER
+    return None if marker.is_file() else marker
 
 
 def rewrite_address(static: Path, host: str, port: int) -> int:

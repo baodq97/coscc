@@ -121,6 +121,22 @@ fi
 # 2. uv, if it is not here already.
 # ---------------------------------------------------------------------------------------
 
+# `command -v` alone is not the same question as "is uv here". uv installs itself to
+# $HOME/.local/bin, and a non-login shell -- which is what `ssh host 'sh install.sh'` and
+# most automation give you -- does not have that on PATH: measured 2026-09-22 on Debian 13,
+# where PATH was `/usr/local/bin:/usr/bin:/bin:/usr/games` and an existing uv was invisible.
+# Looking only at PATH therefore re-downloads ~50MB of uv on every update run, and makes
+# the "if it is not already here" in docs/install.md untrue.
+if ! command -v uv >/dev/null 2>&1; then
+  for candidate in "${UV_INSTALL_DIR:-}" "${XDG_BIN_HOME:-}" "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+    if [ -n "$candidate" ] && [ -x "$candidate/uv" ]; then
+      PATH="$candidate:$PATH"
+      export PATH
+      break
+    fi
+  done
+fi
+
 if ! command -v uv >/dev/null 2>&1; then
   echo "install.sh: uv not found, installing it"
   curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -296,6 +312,21 @@ while [ "$waited" -lt 90 ]; do
     printf '\n'
     echo "install.sh: coscc $COSCC_VERSION installed and running"
     echo "install.sh: http://$probe_host:$served_port/"
+    # Almost nobody installs this on the machine they will browse from -- the supported
+    # shape is a VM reached over SSH, where the loopback address printed above is true and
+    # useless. When the bind address is every interface, name one the person can actually
+    # type, and say what that means rather than leaving it to be discovered.
+    if [ "$served_host" = "0.0.0.0" ]; then
+      lan=$(ip -4 -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+      # An `&&` list here would be the last word of a `set -e` shell on a host with no
+      # default route: the test fails, the list returns 1, and the script exits 1 having
+      # just installed successfully.
+      if [ -n "$lan" ]; then
+        echo "install.sh: http://$lan:$served_port/   (from another machine)"
+      fi
+      echo "install.sh: bound to 0.0.0.0 -- reachable on every interface of this host, and"
+      echo "install.sh: this app has no authentication. See docs/install.md before exposing it."
+    fi
     exit 0
   fi
   if [ "$(systemctl --user is-active coscc)" = "failed" ]; then

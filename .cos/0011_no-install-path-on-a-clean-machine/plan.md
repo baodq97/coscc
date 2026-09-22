@@ -107,6 +107,56 @@ nhận connection refused trên một máy hoàn toàn bình thường.
 `coscc/_web/` không có trong bảng nào: nó là sản phẩm của bước build, không phải file được
 commit.
 
+**Ghi chú thứ tư, 2026-09-22 trong lúc implement — plan invariant 8. Đây là ghi chú quan
+trọng nhất của unit này.** Bước 11 chạy lần đầu trên một VM Debian 13 thật (4 vCPU, 6 GB,
+không `node`, không `npm`, không `bun`). Bản wheel do bước 3 và bước 9 dựng ra — bản đã qua
+mọi test, qua `npm test`, qua `verify_0003`, và qua một lần cài thử trên chính máy phát
+triển — **cài xong rồi không phục vụ được một trang nào.**
+
+```
+FileNotFoundError: Bun or npm not found. You might need to rerun `reflex init` or install either.
+```
+
+Reflex chạy lại toàn bộ compile ở mỗi lần khởi động, và compile đó kết thúc bằng
+`install_frontend_packages`, thứ đòi Bun hoặc npm. Bản đóng gói không có cái nào, và theo
+thiết kế thì không cần: frontend đã biên dịch sẵn nằm trong wheel.
+
+Ba điều khiến lỗi này sống sót qua mọi phép kiểm trước đó, và cả ba đều đáng ghi:
+
+1. **`systemctl --user is-active coscc` trả lời `active`.** `Type=simple` báo một tiến
+   trình đã sinh ra, không phải một tiến trình đang phục vụ. Service crash-loop mà unit
+   state vẫn xanh. Không phép kiểm nào dựa trên trạng thái systemd phát hiện được.
+2. **Máy phát triển có sẵn Node/Bun trong cache của Reflex.** Lần cài thử trước đó xanh vì
+   môi trường, không phải vì code. Đây đúng là điều `intent.md` đặt cược: chỉ máy lạ mới
+   trả lời được câu hỏi này.
+3. **Đặt `__REFLEX_SKIP_COMPILE` không đủ, và nửa thiếu mới là chỗ khó.**
+   `compiler.compile_app` hỏi `app._should_compile()` rồi **vẫn rơi xuống compile đầy đủ**
+   trừ khi có marker từ lần build trước để đi đường tắt —
+   `reflex/compiler/compiler.py:1254-1267`, đọc 2026-09-22. Marker là
+   `.web/backend/stateful_pages.json`, nằm **ngoài** `build/client`, nên một release chỉ
+   chép cây static sẽ ship một wheel đặt biến rồi vẫn chết.
+
+Sửa ở ba nơi: `coscc/frontend.py` thêm `SKIP_COMPILE_VAR` và `missing_compile_marker()`;
+`coscc/run.py` đặt biến ở nhánh đóng gói và **từ chối khởi động với một câu tiếng người**
+nếu marker vắng, thay vì để Reflex ném traceback; `.github/workflows/release.yml` chép
+`.web/backend/` và thêm một guard thứ hai — một wheel qua được guard `index.html` mà trượt
+guard này chính là hình dạng "cài sạch, báo active, không phục vụ gì".
+
+Tên biến là `__REFLEX_SKIP_COMPILE` chứ không phải `REFLEX_SKIP_COMPILE`; cái sau là tên
+thuộc tính, đặt nó là đặt một biến không ai đọc. Có một test ghim đúng chuỗi đó.
+
+**Ghi chú thứ năm, cùng ngày.** Cũng từ máy lạ, hai lỗi nhỏ hơn trong `scripts/install.sh`:
+
+- Nó chỉ tìm `uv` bằng `command -v`. Shell không-đăng-nhập của `ssh host 'sh install.sh'`
+  có PATH là `/usr/local/bin:/usr/bin:/bin:/usr/games` — không có `$HOME/.local/bin`, đúng
+  chỗ `uv` tự cài vào. Nên mỗi lần update nó tải lại ~50 MB `uv`, và câu "installs uv if it
+  is not already here" trong `docs/install.md` không đúng. Giờ nó nhìn vào các vị trí đã
+  biết trước khi kết luận là thiếu.
+- Dòng cuối in `http://127.0.0.1:8790/` trong khi bind `0.0.0.0`. Với hình dạng được hỗ trợ
+  — một VM vào qua SSH — địa chỉ đó đúng và vô dụng. Giờ nó in thêm địa chỉ thật của máy và
+  nói thẳng rằng cổng này mở ra mọi interface và app không có xác thực. Cùng họ với lỗi
+  "trang tự nói dối" ở ghi chú thứ ba.
+
 ## Order of work
 
 1. **`scripts/verify_0011.py`** — proof trước, theo invariant 4. Nó phải chạy được ngay hôm
