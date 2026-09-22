@@ -46,7 +46,12 @@ MOUNT_FLAG = "__REFLEX_MOUNT_FRONTEND_COMPILED_APP"
 REPO = Path(__file__).resolve().parent.parent
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    args = sys.argv[1:] if argv is None else argv
+    if args:
+        _answer_and_stop(args)
+        return
+
     # Set before importing the app: Reflex reads it while composing the ASGI stack.
     os.environ.setdefault(MOUNT_FLAG, "1")
 
@@ -78,6 +83,49 @@ def main() -> None:
         port=config.port,
         log_level="warning",
     )
+
+
+def installed_version() -> str:
+    """The version of the package this process is running from.
+
+    Read from installed metadata rather than from `pyproject.toml`, because a packaged
+    install has no `pyproject.toml` to read -- and because the number that matters is the
+    one that was installed, not the one in whatever source tree happens to be nearby.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("coscc")
+    except PackageNotFoundError:  # pragma: no cover - coscc is always installed to run
+        return "unknown"
+
+
+def _answer_and_stop(args: list[str]) -> None:
+    """`--version`, and a refusal for anything else.
+
+    `--version` is answered before the frontend is resolved or the address written, so it
+    still answers when the bundle is broken. That is the point of it: `0011`'s outcome
+    step 3 is "the next release arrives in one command", and this is how a person -- or
+    `scripts/verify_0011.py` -- tells an update that happened from one that only appeared
+    to.
+
+    Refusing an unrecognised argument is a deliberate addition beyond `spec.md` R8, and
+    `plan.md` records it. Before `0011` this program took no arguments and ignored them
+    all; ignoring them became more expensive in the same unit that made `0.0.0.0` the
+    default, because a mistyped flag would now quietly start a server reachable from the
+    network instead of doing whatever was intended.
+    """
+    if args in (["--version"], ["-V"]):
+        print(f"coscc {installed_version()}")
+        return
+    print(
+        f"coscc: unrecognised argument {args[0]!r}\n"
+        "usage: coscc [--version]\n"
+        "everything else is configuration, and it is read from the environment "
+        "(COS_HOST, COS_PORT, COS_WORKING_DIR, ...) -- see docs/install.md",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 
 # Addresses that reach this machine and nowhere else. `0.0.0.0` and a bare interface

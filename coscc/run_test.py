@@ -44,5 +44,40 @@ class WhatStartupSays(unittest.TestCase):
         self.assertEqual(first, "coscc on http://0.0.0.0:9001")
 
 
+
+class TheVersionAnswer(unittest.TestCase):
+    """`spec.md` R8. The only thing that separates an update from an apparent update."""
+
+    def test_it_matches_the_version_the_repository_declares(self):
+        # `cos.mjs check-version` keeps pyproject in step with four other places, so
+        # agreeing with pyproject is agreeing with all of them.
+        import re
+        from pathlib import Path
+
+        declared = re.search(
+            r'^version = "([^"]+)"',
+            Path("pyproject.toml").read_text(),
+            re.MULTILINE,
+        ).group(1)
+        self.assertEqual(run.installed_version(), declared)
+
+    def test_it_prints_one_line_in_the_pinned_shape(self):
+        import contextlib
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run.main(["--version"])
+        printed = out.getvalue().splitlines()
+        self.assertEqual(len(printed), 1)
+        self.assertRegex(printed[0], r"^coscc \S+$")
+
+    def test_a_mistyped_flag_does_not_start_a_server(self):
+        # Since 0011 the default bind is 0.0.0.0, so "ignore the argument and carry on"
+        # would put a network-reachable server behind a typo.
+        with self.assertRaises(SystemExit) as caught:
+            run.main(["--verison"])
+        self.assertEqual(caught.exception.code, 2)
+
 if __name__ == "__main__":
     unittest.main()
