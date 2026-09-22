@@ -244,7 +244,15 @@ def _event_row(event: rx.Var[Event]) -> rx.Component:
 
 
 def _empty_board() -> rx.Component:
-    """Two reasons a board is empty, and they must not look the same (`spec.md` C5)."""
+    """Two reasons a board is empty, and they must not look the same (`spec.md` C5).
+
+    `0014` added a third, and it is the one that looks most like breakage: a workspace with
+    a `.cos/` of its own now shows **nothing**, because work units moved into the product's
+    own store. That is `0013`'s decision arriving — nothing of coscc's goes into a
+    repository a team shares — and `0014` `spec.md` C1 says it has to be said here rather
+    than left to look like a fault. `_start_unit` above is the answer to it: there is
+    nothing here yet because nothing has been started here yet.
+    """
     return s.panel(
         rx.vstack(
             rx.center(rx.icon("sprout", size=30, color=rx.color("iris", 10)),
@@ -489,9 +497,66 @@ def _lane(title: str, items, color: str) -> rx.Component:
     )
 
 
+def _start_unit() -> rx.Component:
+    """`0014` R8. The control that was missing entirely.
+
+    Until `0014` a work unit could only be made by typing `cos.mjs new-path` in a terminal
+    and creating the directory by hand, so the Board could list work but never start any —
+    every unit it had ever shown was made outside the app.
+
+    The brief is not optional here and `state.create_unit` says why: it becomes the unit's
+    `idea.md`, which is the only thing the intent step has to work from. A unit started
+    without one spends a paid step on an empty prompt.
+    """
+    return s.panel(
+        rx.vstack(
+            rx.hstack(
+                rx.icon("plus", size=16, color=rx.color("iris", 10)),
+                rx.heading("Start a work unit", size="4", weight="medium"),
+                rx.spacer(),
+                rx.cond(
+                    P.branch != "",
+                    rx.hstack(
+                        rx.icon("git-branch", size=14),
+                        s.text(P.branch, size="1"),
+                        spacing="2", align="center",
+                    ),
+                    rx.fragment(),
+                ),
+                width="100%", align="center", spacing="2",
+            ),
+            s.text(
+                "The number comes from the harness. Say the problem in your own words — "
+                "that becomes the unit's idea.md, and the intent step reads it.",
+                size="1", margin_top="2px",
+            ),
+            rx.input(
+                placeholder="short-name-for-the-problem",
+                value=P.new_slug, on_change=P.set_new_slug,
+                aria_label="Name for the work unit", id="new-unit-slug",
+                width="100%", margin_top="8px",
+            ),
+            rx.text_area(
+                placeholder="What is wrong, in your own words.",
+                value=P.new_brief, on_change=P.set_new_brief,
+                aria_label="What the problem is", id="new-unit-brief",
+                width="100%", rows="3",
+            ),
+            rx.button(
+                rx.icon("sprout", size=15), "Start it",
+                on_click=P.create_unit, loading=P.starting,
+                id="new-unit-start", size="2",
+            ),
+            width="100%", align="start", spacing="2",
+        ),
+        width="100%",
+    )
+
+
 def _board() -> rx.Component:
     return rx.vstack(
         s.heading("Work board", "From an idea to something real. One clear step at a time."),
+        rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
         rx.flex(
             rx.input(rx.input.slot(rx.icon("search", size=15)), id="work-search",
                      placeholder="Search work...", value=P.query, on_change=P.search_work,
@@ -866,7 +931,19 @@ def _run_row(run: rx.Var[Run]) -> rx.Component:
                    font_family="ui-monospace, monospace"),
             s.text(run.tokens + " tokens / " + run.usd + " / session " + run.session_id,
                    size="1"),
-            spacing="1", min_width="0",
+            rx.cond(
+                run.detail != "",
+                rx.box(
+                    s.text(run.detail, size="1", overflow_wrap="anywhere",
+                           white_space="pre-wrap",
+                           font_family="ui-monospace, monospace"),
+                    padding="8px 10px", border_radius="6px", margin_top="4px",
+                    background=rx.color("amber", 2),
+                    border=f"1px solid {rx.color('amber', 5)}",
+                    max_height="220px", overflow_y="auto", width="100%",
+                ),
+            ),
+            spacing="1", min_width="0", width="100%",
         ),
         align="start", spacing="3", padding="14px 0", width="100%",
         border_bottom=f"1px solid {s.LINE}", data_testid="run-row",
@@ -956,6 +1033,22 @@ def _detail_dialog() -> rx.Component:
                                     id="run-step", on_click=P.run_step,
                                     disabled=P.is_running | ~P.recording,
                                     loading=P.running_here, width="100%",
+                                ),
+                                # `0014` R8. The one control on this page that writes to
+                                # the repository's git. It is separate from Run and stays
+                                # separate: cutting a branch is a decision about where the
+                                # work lands, and Run is a decision to spend money.
+                                rx.button(
+                                    rx.icon("git-branch", size=15),
+                                    "Cut this unit's branch",
+                                    id="cut-branch", on_click=P.start_branch,
+                                    variant="soft", width="100%",
+                                ),
+                                s.text(
+                                    "Reads the Type: in intent.md and cuts <type>/<slug> "
+                                    "from main. The app does this and nothing else to git "
+                                    "— it never pushes, merges or commits.",
+                                    size="1",
                                 ),
                                 rx.cond(
                                     ~P.recording,

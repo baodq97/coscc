@@ -43,6 +43,14 @@ no commands, one turn, no budget.
 
 - **Sessions spend account quota.** Nothing that talks to the app belongs in an unattended
   loop.
+- **Stage `pr` merges the pull request it opened.** `.claude/skills/write-pr/SKILL.md`
+  names `gh pr merge --squash --delete-branch` as the second half of step 6, so that step
+  does not merely propose a change — it lands one. Read the next bullet for how far that
+  reaches.
+- **`/api/timeline` returns what a failed paid step replied.** Since `0014` a step whose
+  reply could not be used keeps the last 2000 characters of it (`coscc/runner.py:150`), and
+  that text reaches the board as `detail`. No route has a login and the default bind is
+  `0.0.0.0`.
 - **`("pr", "autonomous")` reaches further than this repository.** Its capability comes
   from this machine's `gh` login, so it reaches every repository that login reaches. The
   page shows a warning string before the button is pressed; do not remove it.
@@ -91,6 +99,8 @@ no commands, one turn, no budget.
 | `verify_0011.py` | **needs another machine.** `COS_PROOF_TARGET`, an SSH destination it reboots twice; unset is exit 2 |
 | `verify_0012.py` | measures the **installed** copy, not this checkout. Needs `node`, a running service at `COS_URL` and one workspace; no session, no quota |
 | `verify_0013.py` | reads git history into a **temporary** data root, never `~/.cos`. No session, no quota, no network. Run it plain and it is exit 1 by design — `--import` is what fills the log and makes it exit 0 |
+
+| `verify_0014.py` | **spends real money and merges a real pull request.** Needs `COS_PROOF_REPO`, a throwaway repo; unset is exit 2. Five sessions — measured $3.28 and 11m49s end to end, 2026-09-22. `--dry` stops before the first paid step |
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.
 

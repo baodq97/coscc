@@ -360,3 +360,102 @@ class UnitHistoryRoutes(unittest.IsolatedAsyncioTestCase):
         self.log.record(self.cwd, "0001_a-problem", "intent.md", "draft")
         got = await self.client.get("/api/units-with-history", params={"cwd": self.cwd})
         self.assertEqual(got.json()["units"], ["0001_a-problem"])
+
+
+class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0014` R1 and R4 over HTTP. The routes translate and decide nothing."""
+
+    async def asyncSetUp(self):
+        import subprocess
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.repo = root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        for args in (
+            ("init", "-q", "-b", "main"),
+            ("add", "-A"),
+        ):
+            if args[0] == "add":
+                (self.repo / "README.md").write_text("x\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(self.repo), *args], check=True,
+                           capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "user.name=T",
+             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false",
+             "commit", "-q", "-m", "first"],
+            check=True, capture_output=True,
+        )
+        self.cwd = str(self.repo)
+        self.app = build(
+            Config(
+                workspaces=(self.cwd,),
+                working_dir=str(root / "work"),
+                data_dir=str(root / "data"),
+            )
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_a_unit_is_created_and_then_visible_on_the_board(self):
+        made = await self.client.post(
+            "/api/units",
+            json={"cwd": self.cwd, "slug": "a-first-problem", "brief": "Nút Run im lặng."},
+        )
+        self.assertEqual(made.status_code, 200, made.text)
+        name = made.json()["unit"]
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        self.assertEqual([u["name"] for u in board["units"]], [name])
+
+    async def test_the_brief_is_stored_as_the_idea_the_intent_step_will_read(self):
+        made = await self.client.post(
+            "/api/units",
+            json={"cwd": self.cwd, "slug": "a-problem", "brief": "Nút Run im lặng."},
+        )
+        body = made.json()
+        self.assertTrue(body["brief"])
+        text = (Path(body["path"]) / "idea.md").read_text(encoding="utf-8")
+        self.assertIn("Nút Run im lặng.", text)
+
+    async def test_a_directory_outside_the_list_is_refused_with_400(self):
+        for call in (
+            self.client.post("/api/units", json={"cwd": "/etc", "slug": "a-problem"}),
+            self.client.post("/api/units/branch", json={"cwd": "/etc", "unit": "0001_a"}),
+            self.client.get("/api/branch", params={"cwd": "/etc"}),
+        ):
+            got = await call
+            self.assertEqual(got.status_code, 400, got.text)
+            self.assertIn("/etc", got.json()["error"])
+
+    async def test_a_bad_slug_is_400_in_the_scripts_own_words(self):
+        got = await self.client.post(
+            "/api/units", json={"cwd": self.cwd, "slug": "Bad_Slug"}
+        )
+        self.assertEqual(got.status_code, 400)
+        self.assertIn("Bad_Slug", got.json()["error"])
+
+    async def test_the_branch_route_cuts_it_and_the_read_route_sees_it(self):
+        made = (await self.client.post(
+            "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
+        )).json()
+        (Path(made["path"]) / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        )
+        cut = await self.client.post(
+            "/api/units/branch", json={"cwd": self.cwd, "unit": made["unit"]}
+        )
+        self.assertEqual(cut.status_code, 200, cut.text)
+        self.assertEqual(cut.json()["branch"], "feat/a-problem")
+        seen = (await self.client.get("/api/branch", params={"cwd": self.cwd})).json()
+        self.assertEqual(seen["branch"], "feat/a-problem")
+
+    async def test_something_that_is_not_json_is_refused_before_anything_is_made(self):
+        got = await self.client.post("/api/units", content=b"not json")
+        self.assertEqual(got.status_code, 400)
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        self.assertEqual(board["count"], 0)

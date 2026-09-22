@@ -30,6 +30,7 @@ own checkout.
 
 from __future__ import annotations
 
+import os
 import zipfile
 from pathlib import Path
 
@@ -62,6 +63,27 @@ class MissingRules(RuntimeError):
     from one that had them. `spec.md` C2 records that this reverses a decision that had
     reasons written down.
     """
+
+
+def child_env() -> dict[str, str]:
+    """The environment `cos.mjs` runs in. Built up, never filtered down — the reasoning is
+    in `gitops.child_env`.
+
+    `cos.mjs` reads files and prints JSON. It needs no secret, so it is given none: a new
+    variable added to this process is excluded here by default rather than by memory.
+
+    It lives here rather than beside one of its callers because there are now two of them:
+    `coscc/board.py` reads the loop and `coscc/units.py` extends it. Two copies of this
+    dictionary is how one of them quietly gains a variable the other does not have -- the
+    same shape of mistake `0012` paid for when two modules each computed where `.claude/`
+    was.
+    """
+    return {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": os.environ.get("HOME", "/tmp"),
+        "LC_ALL": "C",
+        "NO_COLOR": "1",
+    }
 
 
 def is_packaged() -> bool:

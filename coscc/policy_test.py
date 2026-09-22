@@ -159,3 +159,55 @@ class TheKnownLimit(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheWriteBoundaryIsTheWorkspacePlusOneDirectory(unittest.TestCase):
+    """`0014` `spec.md` C2. A security guard widened, so both sides get a test.
+
+    `0014` moved every artifact out of the workspace and into the product's store, which
+    put the file `impl` and `pr` must write outside the only place they were allowed to
+    write. The boundary now admits **one** more directory: the step's own unit.
+    """
+
+    def setUp(self):
+        self.grant = policy.grant_for("impl", "autonomous")
+        self.workspace = "/tmp/ws"
+        self.unit = "/tmp/data/units/ws-abc/.cos/0001_a-problem"
+
+    def _decide(self, path: str, unit_dir: str | None = None) -> str:
+        return policy.decide(
+            self.grant, "Write", {"file_path": path}, self.workspace, unit_dir
+        )
+
+    def test_a_step_may_write_its_own_artifact(self):
+        self.assertEqual(self._decide(f"{self.unit}/impl.md", self.unit), "")
+
+    def test_a_step_may_still_write_code_in_the_workspace(self):
+        self.assertEqual(self._decide(f"{self.workspace}/src/a.py", self.unit), "")
+
+    def test_it_is_one_directory_and_not_the_whole_store(self):
+        # The sibling unit is the case that matters: a prefix check on the store would
+        # let any step rewrite any other unit's artifacts.
+        sibling = "/tmp/data/units/ws-abc/.cos/0002_another/impl.md"
+        self.assertIn("outside the workspace", self._decide(sibling, self.unit))
+        store = "/tmp/data/units/ws-abc/.cos/anything.md"
+        self.assertIn("outside the workspace", self._decide(store, self.unit))
+
+    def test_everywhere_else_is_still_refused(self):
+        for path in ("/etc/passwd", "/tmp/data/cos.db", "/tmp/ws/../elsewhere/x.py", "~/.ssh/id"):
+            self.assertIn("outside the workspace", self._decide(path, self.unit), path)
+
+    def test_without_a_unit_directory_the_boundary_is_what_it_always_was(self):
+        # Every prose stage runs this way, and they are granted no write tools at all --
+        # so this is the shape that must not have loosened.
+        self.assertEqual(self._decide(f"{self.workspace}/src/a.py"), "")
+        self.assertIn("outside the workspace", self._decide(f"{self.unit}/impl.md"))
+
+    def test_a_shell_redirect_is_still_refused_whatever_the_boundary_is(self):
+        # The write boundary never sees a redirect; `check_command` is what stops it, and
+        # widening one must not have touched the other.
+        reason = policy.decide(
+            self.grant, "Bash", {"command": f"echo x > {self.unit}/impl.md"},
+            self.workspace, self.unit,
+        )
+        self.assertIn("redirect", reason)

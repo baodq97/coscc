@@ -31,12 +31,6 @@ from coscc.journal import Journal
 from coscc.policy import Grant, decide, grant_for, is_prose_stage
 from coscc.sessions import Refused, Sessions
 
-# Where a unit lives, and what may be a unit name. Same shape `cos.mjs` enforces; matched
-# here because this module builds a path out of it and a path built from unlaundered text
-# is how a directory traversal starts.
-UNIT_RE = re.compile(r"^\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*$")
-COS_DIR = ".cos"
-
 # An artifact has to carry one of these on its first line, or the gate cannot read it and
 # `cos.mjs` will report the unit as broken. Checked before anything is written.
 STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+)")
@@ -44,13 +38,6 @@ STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+)")
 
 class RunError(Exception):
     """A step that cannot start, or one whose reply cannot be stored."""
-
-
-def unit_dir(workspace: str | Path, unit: str) -> Path:
-    """The directory of one unit, built from the workspace rather than read from input."""
-    if not UNIT_RE.fullmatch(unit or ""):
-        raise RunError(f"not a work unit name: {unit!r}")
-    return Path(workspace).expanduser().resolve() / COS_DIR / unit
 
 
 def skill_for(stage: str) -> str:
@@ -89,6 +76,7 @@ def _read(path: Path) -> str:
 
 def build_prompt(
     workspace: str | Path,
+    directory: str | Path,
     unit: str,
     stage: str,
     stages: list[str],
@@ -99,8 +87,15 @@ def build_prompt(
 
     The list is returned rather than inferred later because R4 is checked against it: if a
     step ran without the previous stage's artifact in the prompt, the record says so.
+
+    `directory` is handed in rather than worked out here. Until `0014` this module derived
+    it from `workspace`, and so did `coscc/board.py` and `coscc/service.py` — three copies
+    of one formula, which is the shape `0012` paid a unit for. `coscc/units.py` is the one
+    place that answers it now, and the two paths are no longer the same thing: the
+    artifacts live in the product's own store while `workspace` stays the repository the
+    work is done in, which is the whole of `0014` `spec.md` R2.
     """
-    directory = unit_dir(workspace, unit)
+    directory = Path(directory)
     included: list[str] = []
     parts: list[str] = []
 
@@ -125,7 +120,7 @@ def build_prompt(
             parts.append(f"# The {earlier} it follows\n\n{text}")
             break
 
-    location = Path(COS_DIR) / unit / artifact
+    location = directory / artifact
     if writes_own:
         # A stage with tools does the work and then records it. Asking it to *reply* with
         # the file as well would mean the file and the reply could disagree.
@@ -147,6 +142,22 @@ def build_prompt(
             "rules above describe. Prose in Vietnamese; filenames and headings in English."
         )
     return "\n\n---\n\n".join(parts), included
+
+
+# How much of an unusable reply to keep beside the reason it was refused. Long enough to
+# show whether the artifact is in there behind a preamble; short enough that a journal row
+# stays a row. Chosen, not measured.
+REPLY_KEPT = 2000
+
+
+def _with_reply(reason: str, collected: str) -> str:
+    """The reason a step failed, with the reply that caused it when there is one."""
+    body = (collected or "").strip()
+    if not body:
+        return reason
+    kept = body[-REPLY_KEPT:]
+    more = "" if len(body) <= REPLY_KEPT else f" (last {REPLY_KEPT} of {len(body)} chars)"
+    return f"{reason}\n--- what the session replied{more} ---\n{kept}"
 
 
 def check_reply(text: str) -> str:
@@ -200,7 +211,7 @@ class Denials:
             self.reasons.append(f"{tool}: {reason}")
 
 
-def permission_gate(grant: Grant, workspace: str, denials: Denials):
+def permission_gate(grant: Grant, workspace: str, denials: Denials, unit_dir: str | None = None):
     """The callback the SDK asks before every tool call.
 
     This is the enforcement `spec.md` R10 asks for, and it is separate from the tool list
@@ -208,7 +219,7 @@ def permission_gate(grant: Grant, workspace: str, denials: Denials):
     """
 
     async def can_use_tool(tool: str, tool_input: dict, context: Any):
-        reason = decide(grant, tool, tool_input or {}, workspace)
+        reason = decide(grant, tool, tool_input or {}, workspace, unit_dir)
         if reason:
             denials.record(tool, reason)
             return sdk.PermissionResultDeny(message=reason)
@@ -227,6 +238,7 @@ class Runner:
     async def run(
         self,
         workspace: str,
+        directory: str | Path,
         journal_key: str,
         unit: str,
         stage: str,
@@ -240,9 +252,9 @@ class Runner:
         stream rather than two.
         """
         grant = grant_for(stage, mode)
-        directory = unit_dir(workspace, unit)
+        directory = Path(directory)
         if not directory.exists():
-            raise RunError(f"no such work unit in {workspace}: {unit}")
+            raise RunError(f"no such work unit for {workspace}: {unit}")
 
         if grant.opens_anything and is_prose_stage(stage):
             # Belt and braces against a future edit to the table: a prose stage that
@@ -250,7 +262,8 @@ class Runner:
             raise RunError(f"{stage} is a prose stage and must not carry tools")
 
         prompt, included = build_prompt(
-            workspace, unit, stage, stages, artifact, writes_own=not grant.app_writes_artifact
+            workspace, directory, unit, stage, stages, artifact,
+            writes_own=not grant.app_writes_artifact,
         )
 
         if self.journal is not None:
@@ -276,7 +289,11 @@ class Runner:
                 # Only pass a list and a gate when something was actually granted. A step
                 # with an empty grant gets exactly the session the app makes by default,
                 # which is the one the zero-tool default is about.
-                can_use_tool=permission_gate(grant, workspace, denials) if grant.opens_anything else None,
+                can_use_tool=(
+                    permission_gate(grant, workspace, denials, str(directory))
+                    if grant.opens_anything
+                    else None
+                ),
                 tools=list(grant.tools) if grant.opens_anything else None,
                 max_budget_usd=grant.max_budget_usd or None,
             ):
@@ -301,13 +318,20 @@ class Runner:
             outcome = "done"
         except (RunError, Refused) as e:
             detail = str(e)
+            # What the session said, kept. Until `0014` a prose step that produced an
+            # unusable reply threw it away: the money was spent, the artifact was not
+            # written, and the only record was the reason. A reply with no `Status:` line
+            # is often a good artifact with a preamble in front of it, and a person who
+            # can see it can decide that in a second — measured 2026-09-22, when a `spec`
+            # step failed this way inside a paid proof run and left nothing to look at.
+            detail = _with_reply(detail, collected)
             # A step stopped by its own ceiling did not fail in the ordinary sense — it was
             # bounded. `journal.OUTCOMES` keeps the two apart so a reader can tell a defect
             # from a limit working as intended (`spec.md` R11).
             if _hit_ceiling(terminal):
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal} — {detail}"
         except Exception as e:  # surfaced as data; the process keeps serving
-            detail = f"{type(e).__name__}: {e}"
+            detail = _with_reply(f"{type(e).__name__}: {e}", collected)
             if _hit_ceiling(terminal):
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         else:

@@ -24,6 +24,31 @@ a URL, and do not record a pull request that was never opened.
 Recording `draft` because no pull request exists never clears the gate after this one. So
 "stop and say so" means stop, not write `draft` and carry on.
 
+## Opening it, and merging it
+
+Two commands, in this order, and `.claude/CLAUDE.md` step 6 is where they come from:
+
+```
+git push -u origin HEAD
+gh pr create --fill-first --body-file <the pr.md you just wrote>
+gh pr merge --squash --delete-branch
+```
+
+The push is listed because `gh pr create` cannot open a pull request for a branch the
+remote has never seen, and in a non-interactive session it has no way to ask.
+
+**Merging here means the same party opened and merged it, and that is not an oversight.**
+`.claude/CLAUDE.md` under *What is deliberately not built* already says so: *"a pull request
+opened and merged by the same party changes the route, not the reviewer"*. This stage
+running both commands does not remove a gate — there has never been one — it only stops
+leaving the branch open for a reviewer who is not coming. The stage after this one still
+writes `review.md`, and `Concluded by:` is where it says that an agent concluded on its own
+work.
+
+If the merge is refused, record why in `## Where` and leave `Status: draft`. The usual
+refusal is `2 of 2 required status checks are expected`, which means a commit landed while
+the checks were green and they have to run again — wait for them, do not force it.
+
 ## Output
 
 One file, `pr.md`, in the unit's directory.

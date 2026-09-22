@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import harness
+from coscc import harness, units
 from coscc.config import Config
 from coscc.service import Invalid, Service
 from coscc.sessions import Live, Sessions
@@ -276,7 +276,10 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             workspace = root / "work" / "proj"
-            unit = workspace / ".cos" / "0009_a-test-unit"
+            workspace.mkdir(parents=True)
+            # `0014`: a unit's artifacts live in the product's store, never in the
+            # workspace tree, so the fixture has to be built where the product looks.
+            unit = units.unit_dir(workspace, "0009_a-test-unit", root / "data")
             unit.mkdir(parents=True)
             (unit / "intent.md").write_text("Status: accepted.\nI", encoding="utf-8")
             (unit / "spec.md").write_text("Status: accepted.\nS", encoding="utf-8")
@@ -417,3 +420,171 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         found = self.service.unit_history(REPO, "0001_a-problem")
         self.assertEqual(found["written_under"], ["coscc-default"])
         self.assertIsNone(found["mixed_state_sets"])
+
+
+class StartingAUnitAndItsBranch(unittest.TestCase):
+    """`0014` R1 and R4, through the one place logic lives."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self._git("init", "-q", "-b", "main")
+        (self.repo / "README.md").write_text("x\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "first")
+        self.service = Service(
+            Config(
+                workspaces=(str(self.repo),),
+                working_dir=str(self.root / "work"),
+                data_dir=str(self.root / "data"),
+            ),
+            Sessions(Config(workspaces=(str(self.repo),))),
+        )
+
+    def _git(self, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "user.name=T",
+             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
+            capture_output=True, text=True, check=True,
+        ).stdout
+
+    def test_a_new_unit_appears_on_the_board_it_was_created_for(self):
+        made = self.service.create_unit(str(self.repo), "a-first-problem", "some words")
+        board = asyncio.run(self.service.board(str(self.repo)))
+        self.assertEqual([u["name"] for u in board["units"]], [made["unit"]])
+
+    def test_nothing_of_it_lands_in_the_repository(self):
+        # `0013`'s decision, enforced. R2, and the whole reason the store exists.
+        self.service.create_unit(str(self.repo), "a-problem", "some words")
+        self.assertEqual(self._git("status", "--porcelain"), "")
+        self.assertFalse((self.repo / ".cos").exists())
+
+    def test_a_bad_slug_comes_back_as_a_refusal_not_an_exception(self):
+        with self.assertRaises(Invalid) as caught:
+            self.service.create_unit(str(self.repo), "Bad_Slug")
+        self.assertIn("Bad_Slug", str(caught.exception))
+
+    def test_the_gate_applies_to_creating_and_to_branching(self):
+        with self.assertRaises(Invalid):
+            self.service.create_unit("/etc", "a-problem")
+        with self.assertRaises(Invalid):
+            asyncio.run(self.service.start_branch("/etc", "0001_a-problem"))
+
+    def test_the_branch_is_refused_until_the_intent_says_what_type_this_is(self):
+        made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        with self.assertRaises(Invalid) as caught:
+            asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
+        self.assertIn("intent.md", str(caught.exception))
+
+    def test_the_branch_name_is_the_one_the_intents_type_implies(self):
+        made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        directory = Path(made["path"])
+        (directory / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
+        )
+        got = asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
+        self.assertEqual(got["branch"], "fix/a-problem")
+        self.assertEqual(
+            asyncio.run(self.service.branch_here(str(self.repo)))["branch"], "fix/a-problem"
+        )
+
+    def test_cutting_the_same_branch_twice_is_refused_rather_than_rejoined(self):
+        made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        (Path(made["path"]) / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
+        )
+        asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
+        self._git("switch", "-q", "main")
+        with self.assertRaises(Invalid) as caught:
+            asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
+        self.assertIn("already exists", str(caught.exception))
+
+
+class AStepRecordsTheTransitionItCaused(unittest.TestCase):
+    """`0014` R6. The first writer into `0013`'s log that is not the git import.
+
+    `.cos/0013_.../ship.md` said the loop would come back here: history imported from git
+    carries no actor and no session because git knows neither, so the provenance that unit
+    built is only true of work done after it. These rows are that work — and the check
+    that matters is that `actor` and `session` are **not** `unknown`.
+
+    Driven with a session that replies without talking to anything, because what is under
+    test is the bookkeeping around a step, not the step.
+    """
+
+    class Replies:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+            yield ("done", {"session_id": "sess-42", "cost": {"output_tokens": 3}})
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        config = Config(
+            workspaces=(str(self.repo),),
+            working_dir=str(self.root / "work"),
+            data_dir=str(self.root / "data"),
+        )
+        self.config = config
+        self.service = Service(config, self.Replies())
+        self.made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        (Path(self.made["path"]) / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        )
+
+    def _run(self, stage: str) -> None:
+        async def go():
+            async for _ in self.service.run_step(str(self.repo), self.made["unit"], stage):
+                pass
+
+        asyncio.run(go())
+
+    def test_the_row_names_the_stage_and_the_real_session(self):
+        self._run("spec")
+        found = self.service.unit_history(str(self.repo), self.made["unit"])
+        [row] = [r for r in found["transitions"] if r["artifact"] == "spec.md"]
+        self.assertEqual(row["to_state"], "accepted")
+        self.assertEqual(row["actor"], "stage:spec")
+        self.assertEqual(row["session"], "sess-42")
+        self.assertNotEqual(row["session"], "unknown")
+
+    def test_the_projection_moves_with_it(self):
+        self._run("spec")
+        found = self.service.unit_history(str(self.repo), self.made["unit"])
+        self.assertEqual(found["state"]["spec.md"], "accepted")
+
+    def test_running_the_same_stage_twice_is_two_events_not_one(self):
+        # The event `0013` exists to count: an artifact rewritten after it was settled.
+        self._run("spec")
+        self._run("spec")
+        found = self.service.unit_history(str(self.repo), self.made["unit"])
+        rows = [r for r in found["transitions"] if r["artifact"] == "spec.md"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(found["settled_edits"], 1)
+
+    def test_a_failed_step_records_nothing(self):
+        class Empty:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("done", {"session_id": "sess-0", "cost": {}})
+
+        self.service.sessions = Empty()
+
+        async def go():
+            out = []
+            async for item in self.service.run_step(str(self.repo), self.made["unit"], "spec"):
+                out.append(item)
+            return out
+
+        # A step that fails comes back as data, not as an exception: `Runner.run` catches
+        # its own RunError so the stream always ends with one `done`. The outcome in it is
+        # what says whether anything happened.
+        _, payload = asyncio.run(go())[-1]
+        self.assertNotEqual(payload["outcome"], "done")
+        found = self.service.unit_history(str(self.repo), self.made["unit"])
+        self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])

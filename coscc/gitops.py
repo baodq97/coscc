@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -138,3 +139,71 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
     if not (path / ".git").exists():
         raise GitError(f"not a git repository: {path}")
     return await _run(["git", "-C", str(path), "pull", "--ff-only"], timeout)
+
+
+# --- branches ----------------------------------------------------------------
+#
+# `0014` R5. This is the first thing in this app that **writes** to somebody else's git,
+# and it is not covered by `coscc/policy.py`: that table says what a *session* may do, and
+# these run with the app process's own authority. So the limit has to live here, and it is
+# a short list on purpose.
+#
+# The app may: create a branch, in a workspace a caller has already passed the membership
+# gate for, with a name `cos.mjs unit-branch` produced.
+#
+# The app may **not**: push, merge, commit, delete a branch, or move `main`. Those are a
+# step's business — `("pr", "autonomous")` carries `git` and `gh` and a warning that says
+# what that reaches (`coscc/policy.py:96-99`) — or nobody's.
+#
+# `plan.md` Risk 1 names the weakness honestly: this is a hand-written list, not a
+# mechanism, in the same way `policy.check_command` is. What makes it narrow is that the
+# only argument that reaches git from a request is a branch name, and that name is not the
+# caller's: it comes back from `cos.mjs`.
+
+BRANCH_TIMEOUT = 30.0
+
+# The branch a unit is cut from. Named rather than taken from the current checkout: cutting
+# from wherever somebody happened to be standing is how a unit's branch quietly contains
+# another unit's work.
+TRUNK = "main"
+
+# What a branch name may look like. `cos.mjs check-branch` owns the grammar and this is the
+# guard that stops a name reaching `git` at all — `-` or `--` at the front would be read as
+# an option, and that is the one shape that turns a name into a flag.
+_BRANCH_RE = re.compile(r"^[a-z]+/[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+async def current_branch(path: Path, timeout: float = BRANCH_TIMEOUT) -> str:
+    """The branch this checkout is on. Empty on a detached HEAD, which is not an error."""
+    if not (path / ".git").exists():
+        raise GitError(f"not a git repository: {path}")
+    return await _run(["git", "-C", str(path), "branch", "--show-current"], timeout)
+
+
+async def create_branch(path: Path, name: str, timeout: float = BRANCH_TIMEOUT) -> str:
+    """Cut `name` from `TRUNK` and switch to it. Creates nothing else and pushes nothing.
+
+    Refuses rather than reuses when the branch already exists: switching to a branch that
+    somebody else's work is already on is a different act from starting one, and the two
+    should not share a button.
+    """
+    if not (path / ".git").exists():
+        raise GitError(f"not a git repository: {path}")
+    # Before the grammar check, not after. `_BRANCH_RE` requires a `<type>/` prefix and so
+    # already excludes `main` today, which would make this line unreachable — found by
+    # writing the test for it. Ordered this way it stays alive: it keeps holding if the
+    # grammar is ever loosened, and it gives the reason rather than the shape.
+    if name == TRUNK:
+        raise GitError(f"{TRUNK} is the trunk and this app does not create or move it")
+    if not _BRANCH_RE.fullmatch(name or ""):
+        raise GitError(f"not a branch name this app will create: {name!r}")
+
+    existing = await _run(
+        ["git", "-C", str(path), "branch", "--list", "--format=%(refname:short)", name], timeout
+    )
+    if existing.strip():
+        raise GitError(f"branch already exists: {name}")
+
+    # `switch -c <name> <start>` is one command that cannot fall back to the current HEAD:
+    # given a start point it either uses it or fails.
+    return await _run(["git", "-C", str(path), "switch", "-c", name, TRUNK], timeout)

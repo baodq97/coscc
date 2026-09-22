@@ -29,7 +29,7 @@ from coscc.board import Unavailable
 from coscc.config import Config
 from coscc.data import Data
 from coscc.gitops import GitError
-from coscc.history import History, settled_edits
+from coscc.history import UNKNOWN, BadTransition, History, settled_edits
 from coscc.journal import (
     COST_FIELDS,
     COST_USD,
@@ -41,9 +41,11 @@ from coscc.journal import (
     zero_cost,
 )
 from coscc.policy import GRANTS, PROSE_STAGES, grant_for
-from coscc.runner import RunError, Runner, unit_dir
+from coscc.runner import STATUS_RE, RunError, Runner
 from coscc.sessions import Sessions
 from coscc.store import BadName, Store, require_name
+from coscc import units
+from coscc.units import BadUnit, CannotCreate
 
 # The eight stage names, in stage order. Taken from the stage list the board reports rather
 # than written again here would be better; the board read is async and this method is not,
@@ -248,6 +250,19 @@ class Service:
         """
         return str(Path(cwd).expanduser().resolve())
 
+    def _units_root(self, cwd: str) -> Path:
+        """Where this workspace's units live. One question, asked of one module.
+
+        `coscc/units.py` owns the answer; this is the only place in the service that asks.
+        """
+        return units.root(cwd, self.config.data_dir)
+
+    def _unit_dir(self, cwd: str, unit: str) -> Path:
+        try:
+            return units.unit_dir(cwd, unit, self.config.data_dir)
+        except BadUnit as e:
+            raise Invalid(str(e)) from e
+
     async def board(self, cwd: str) -> dict[str, Any]:
         """Every unit in this workspace, each with its eight stages, modes and cost.
 
@@ -257,7 +272,7 @@ class Service:
         """
         self._workspace_or_refuse(cwd)
         try:
-            data = await board_reader.read(cwd)
+            data = await board_reader.read(self._units_root(cwd))
         except Unavailable as e:
             raise Invalid(str(e)) from e
 
@@ -305,7 +320,7 @@ class Service:
             )
 
         try:
-            data = await board_reader.read(cwd)
+            data = await board_reader.read(self._units_root(cwd))
         except Unavailable as e:
             raise Invalid(str(e)) from e
 
@@ -338,7 +353,7 @@ class Service:
             )
 
         try:
-            data = await board_reader.read(cwd)
+            data = await board_reader.read(self._units_root(cwd))
         except Unavailable as e:
             raise Invalid(str(e)) from e
 
@@ -350,11 +365,13 @@ class Service:
             raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
 
         key = self._journal_key(cwd)
+        directory = self._unit_dir(cwd, unit)
         mode = journal.modes(key).get((unit, stage), "manual")
         runner = Runner(self.sessions, journal)
         try:
             async for item in runner.run(
                 workspace=cwd,
+                directory=directory,
                 journal_key=key,
                 unit=unit,
                 stage=stage,
@@ -362,8 +379,92 @@ class Service:
                 stages=list(data["stages"]),
                 mode=mode,
             ):
+                if item[0] == "done":
+                    self._record_transition(cwd, unit, row["file"], directory, item[1])
                 yield item
         except RunError as e:
+            raise Invalid(str(e)) from e
+
+    def _record_transition(
+        self, cwd: str, unit: str, artifact: str, directory: Path, done: dict[str, Any]
+    ) -> None:
+        """`0014` R6. One transition per step that finished, written as it happens.
+
+        This is the first writer into `0013`'s log that is not the git import.
+        `.cos/0013_.../ship.md` said the loop would come back here: history imported from
+        git carries no actor and no session, because git knows neither, so the provenance
+        that unit built is only ever true of work done **after** it. This is that work.
+
+        Never raises into the run. A step that did its job and then failed to be recorded
+        has still done its job, and turning a bookkeeping failure into a failed step would
+        cost real money for nothing. The failure is dropped rather than shown, and that is
+        a cost `0014` `impl.md` states rather than hides.
+        """
+        if done.get("outcome") != "done":
+            return
+        history = self._history()
+        if history is None:
+            return
+        try:
+            text = (directory / artifact).read_text(encoding="utf-8", errors="replace")
+            found = STATUS_RE.search(text)
+            if not found:
+                return
+            history.record(
+                self._journal_key(cwd),
+                unit,
+                artifact,
+                found.group(1).lower(),
+                actor=f"stage:{done.get('stage') or ''}",
+                session=str(done.get("session_id") or "") or UNKNOWN,
+                source=f"run:{done.get('stage') or ''}",
+            )
+        except (OSError, BadTransition, Busy):
+            return
+
+    def create_unit(self, cwd: str, slug: str, brief: str = "") -> dict[str, Any]:
+        """`0014` R1. Start a work unit, in the product's store rather than the repository.
+
+        The number and the slug grammar are `cos.mjs`'s, through `coscc/units.py`. Nothing
+        here is a second opinion about either — `.claude/CLAUDE.md` says that script is the
+        one place the loop is defined.
+        """
+        self._workspace_or_refuse(cwd)
+        try:
+            return {
+                "cwd": cwd,
+                **units.create(cwd, slug, brief, self.config.data_dir),
+            }
+        except (CannotCreate, BadUnit) as e:
+            raise Invalid(str(e)) from e
+
+    async def start_branch(self, cwd: str, unit: str) -> dict[str, Any]:
+        """`0014` R4. Cut this unit's branch in the workspace and switch to it.
+
+        The name is not chosen here and is not the caller's: `cos.mjs unit-branch` reads
+        the `Type:` the intent declared and prints `<type>/<slug>`. `coscc/gitops.py`
+        carries the list of what the app may do with it, which is this and nothing else.
+        """
+        self._workspace_or_refuse(cwd)
+        try:
+            name = units.branch_name(cwd, unit, self.config.data_dir)
+        except (CannotCreate, BadUnit) as e:
+            raise Invalid(str(e)) from e
+        try:
+            output = await gitops.create_branch(Path(cwd).expanduser().resolve(), name)
+        except GitError as e:
+            raise Invalid(str(e)) from e
+        return {"cwd": cwd, "unit": unit, "branch": name, "output": output}
+
+    async def branch_here(self, cwd: str) -> dict[str, Any]:
+        """Which branch the workspace is on. A read, so the page can show it."""
+        self._workspace_or_refuse(cwd)
+        try:
+            return {
+                "cwd": cwd,
+                "branch": await gitops.current_branch(Path(cwd).expanduser().resolve()),
+            }
+        except GitError as e:
             raise Invalid(str(e)) from e
 
     def timeline(self, cwd: str, unit: str) -> dict[str, Any]:
@@ -717,10 +818,7 @@ class Service:
         if stage not in STAGE_FILES:
             raise Invalid(f"no such stage: {stage}")
         filename = f"{stage}.md"
-        try:
-            path = unit_dir(cwd, unit) / filename
-        except RunError as e:
-            raise Invalid(str(e)) from e
+        path = self._unit_dir(cwd, unit) / filename
         if not path.is_file():
             return {"unit": unit, "stage": stage, "file": filename, "text": "", "exists": False}
         try:

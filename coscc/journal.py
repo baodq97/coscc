@@ -349,6 +349,7 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 "artifact": None,
                 "cost": {},
                 "denials": 0,
+                "detail": None,
             }
             rows.append(row)
             open_runs[stage] = row
@@ -357,12 +358,18 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             if row is None:
                 # An end with no start: keep it rather than drop it, so a half-written
                 # history still shows that something happened.
-                row = {"stage": stage, "mode": item.get("mode"), "started": None}
+                row = {"stage": stage, "mode": item.get("mode"), "started": None, "detail": None}
                 rows.append(row)
             row["ended"] = item.get("at")
             row["outcome"] = item.get("outcome")
             row["artifact"] = item.get("artifact")
             row["denials"] = int(item.get("denials") or 0)
+            # Why it ended this way, carried through to the row the page reads. `finished`
+            # has stored this since `0005` and `_fold` dropped it, so every failure arrived
+            # at the board as an outcome with no reason -- and `0014` found out the
+            # expensive way, when a paid `spec` step failed inside a proof run and the only
+            # account of it was the word "failed".
+            row["detail"] = item.get("detail")
             if item.get("session_id"):
                 row["session_id"] = item.get("session_id")
             cost = zero_cost()
