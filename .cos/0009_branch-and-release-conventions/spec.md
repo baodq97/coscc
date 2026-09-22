@@ -36,9 +36,15 @@ Kiểm bằng bảng, mỗi dòng là một test:
 | `feat/a--b` | **từ chối** — gạch ngang đôi |
 | `feat/foo/bar` | **từ chối** — hai dấu gạch chéo |
 
-**R2 — Ngữ pháp tag.** Release là `vX.Y.Z`. Prerelease là `vX.Y.Z-rc.N` với `N` ≥ 1. Không
-chấp nhận dạng khác. `v0.1.0` nhận; `0.1.0` từ chối (thiếu `v`); `v0.1` từ chối; `v0.1.0-rc`
-từ chối (thiếu số).
+**R2 — Ngữ pháp tag, và `cos.mjs` khai một lệnh kiểm nó.** Release là `vX.Y.Z`. Prerelease là
+`vX.Y.Z-rc.N` với `N` ≥ 1. Không chấp nhận dạng khác. `v0.1.0` nhận; `0.1.0` từ chối (thiếu
+`v`); `v0.1` từ chối; `v0.1.0-rc` từ chối (thiếu số); `v0.1.0-rc.0` từ chối (`N` phải ≥ 1).
+
+> **Sửa cùng ngày, lúc chạy proof lần đầu.** Bản đầu của R2 chỉ nêu ngữ pháp, không nêu lệnh
+> — R3 và R4 khai hai lệnh, R13 khai lệnh thứ ba, và tag không có lệnh nào. Hệ quả: workflow
+> của R8 phải tự quyết định prerelease bằng một phép so chuỗi của riêng nó, và ngữ pháp tag
+> có **hai** bản cài đặt trôi độc lập — đúng thứ R4 tồn tại để chặn, ở một chỗ khác. Vậy có
+> lệnh thứ tư, và workflow gọi nó thay vì tự đoán.
 
 **R3 — `cos.mjs` khai một lệnh kiểm tên branch.** Nhận một tên làm tham số, hoặc đọc branch
 đang checkout khi không có tham số. Exit `0` nhận, `1` từ chối kèm lý do nêu tên quy tắc bị
@@ -55,16 +61,16 @@ chạy thật chứ không chỉ mô tả.
 > ra. Một check dựng theo con số cũ sẽ để hai nơi trôi tự do — đúng thứ R4 tồn tại để chặn.
 > `intent.md` đã sửa theo.
 
-**R5 — Hai lệnh mới có test trong `.claude/scripts/cos.test.mjs`.** File này hiện có **23**
+**R5 — Bốn lệnh mới có test trong `.claude/scripts/cos.test.mjs`.** File này hiện có **23**
 test và `npm test` chạy nó. Sau unit này số test tăng, và `npm run test:node` vẫn xanh. Đây
-là điều kiện để hai lệnh đó không phải là prose: văn hoá repo ghi ở `.claude/harness.md:149-166`
+là điều kiện để bốn lệnh đó không phải là prose: văn hoá repo ghi ở `.claude/harness.md:149-166`
 là mọi invariant đều advisory trừ thứ có script kiểm.
 
-**R6 — Hai lệnh mới không nhận `--root`.** `cos.mjs` hiện nhận `--root <dir>` và
+**R6 — Ba lệnh mới không nhận `--root`.** `cos.mjs` hiện nhận `--root <dir>` và
 `coscc/board.py:90` dùng nó để trỏ script vào **`.cos/` của repo người khác**;
 `coscc/board.py:48` ghi rằng script "reads files and prints JSON. It needs no secret, so it
 is given none". Một lệnh đọc git mà tôn trọng `--root` sẽ đi đọc trạng thái git của bản
-checkout của người khác. Kiểm: gọi lệnh mới kèm `--root` bị từ chối với exit khác 0.
+checkout của người khác. Kiểm: gọi ba lệnh đó kèm `--root` bị từ chối với exit khác 0, và lệnh của R13 thì nhận.
 
 **R7 — Một workflow chạy trên pull request.** Kiểm tên branch nguồn theo R1, và chạy
 `npm test`. `permissions` khai tường minh ở mức tối thiểu; mọi action bên thứ ba ghim theo
@@ -81,7 +87,8 @@ trả về `[]`. Kiểm: `gh api repos/baodq97/coscc/rulesets` trả về ít nh
 đặt của repository, không phải một file** — xem C1.
 
 **R10 — Harness ghi quy ước.** `.claude/harness.md` có một mục mới nói ngữ pháp branch, ngữ
-pháp tag, và hai lệnh kiểm. Kiểm: mục đó nêu đủ mười type của R1 và cả hai dạng tag của R2.
+pháp tag, bốn lệnh, và trường `Type:`. Kiểm: mục đó nêu đủ mười type của R1, cả hai dạng tag
+của R2, và một câu nói ruleset không đi theo bản copy (C1).
 
 **R11 — Nguồn sự thật của version, và ba chỗ khớp nhau.** `pyproject.toml` là nguồn;
 `package.json` là bản sao; tag dựng từ nguồn. Xem C5 — người khởi xướng yêu cầu "đồng bộ" mà
@@ -142,9 +149,11 @@ không chạy file `cos.mjs` nằm trong repo mà ai đó đã clone. Hai lệnh
 phải nằm **ngoài** đường `--root` — R6. Cách chia: `--root` tiếp tục chỉ áp cho các lệnh đọc
 `.cos/`; lệnh đọc git luôn làm việc trên thư mục hiện tại.
 
-Lệnh thứ ba của R13 nằm **bên kia** ranh giới đó: nó chỉ đọc `intent.md` và tên thư mục, đúng
-loại việc `--root` sinh ra để làm, nên nó nhận `--root` như `status` và `gate`. Ba lệnh mới,
-hai bên một đường kẻ — và đường kẻ là "có chạm git hay không", không phải "mới hay cũ".
+Lệnh của R13 nằm **bên kia** ranh giới đó: nó chỉ đọc `intent.md` và tên thư mục, đúng loại
+việc `--root` sinh ra để làm, nên nó nhận `--root` như `status` và `gate`. Bốn lệnh mới, ba
+bên này một bên kia — và đường kẻ là "lệnh mô tả bản checkout này hay mô tả một `.cos/`",
+không phải "mới hay cũ". Lệnh kiểm tag không chạm git, nhưng nó trả lời về tag của repo đang
+đứng, nên nó ở cùng phía với hai lệnh kia.
 
 ### Quy ước đi theo harness, nhưng thứ cưỡng chế thì không
 

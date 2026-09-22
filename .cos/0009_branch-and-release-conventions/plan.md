@@ -31,7 +31,7 @@ quy ước. Ngoài ba file đó không còn miễn trừ nào.
 ### Sửa
 
 - `.claude/scripts/cos.mjs` (275 dòng). Ba chỗ: thêm các hàm thuần được export cạnh
-  `parseStatus` (`:50`) … `nextNumber` (`:164`); thêm hai khoá vào bảng `run` (`:265-269`);
+  `parseStatus` (`:50`) … `nextNumber` (`:164`); thêm bốn khoá vào bảng `run` (`:265-269`);
   sửa dòng usage (`:271`). Cộng phần từ chối `--root` — hiện `--root` bị tước khỏi `argv`
   trước khi đọc lệnh (`:261`), nên dispatcher phải biết nó **đã** có mặt.
 - `.claude/scripts/cos.test.mjs` (175 dòng, **23** test). Nó import hàm thuần trực tiếp từ
@@ -67,30 +67,31 @@ là một proof không hỏi gì.
 
 **3. Hàm thuần cho ngữ pháp và cho type, cùng test.**
 Export từ `cos.mjs`: một hàm nhận tên branch, một nhận tên tag, một so các chuỗi version, và
-một đọc `Type:` ra khỏi header `intent.md` rồi ghép `<type>/<slug>`. Cả bốn **không đọc file,
+một đọc `Type:` ra khỏi header `intent.md` rồi ghép `<type>/<slug>`. Ngữ pháp tag là **một**
+bản cài đặt dùng chung: workflow của bước 7 gọi lệnh chứ không tự so chuỗi. Cả bốn **không đọc file,
 không gọi git** — chúng nhận chuỗi và trả kết quả, đúng hình dạng `parseStatus` (`cos.mjs:50`)
 đang có. Test import trực tiếp; tám dòng bảng `spec.md` R1 và bốn ví dụ tag của R2 thành tám
 cộng bốn assertion, cộng các trường hợp của R13: type hợp lệ, type ngoài tập mười, không có
 `Type:`.
 *Kiểm:* `npm run test:node` xanh, số test lớn hơn 23.
 
-**4. Ba lệnh, và rào `--root` cho đúng hai trong ba.**
-Nối ba khoá vào bảng `run` (`cos.mjs:265-269`), sửa dòng usage (`:271`). Lệnh kiểm branch đọc
-branch đang checkout khi không có tham số; lệnh kiểm version đọc bốn chỗ; lệnh thứ ba nhận
-một unit và in tên branch suy ra.
+**4. Bốn lệnh, và rào `--root` cho đúng ba trong bốn.**
+Nối bốn khoá vào bảng `run` (`cos.mjs:265-269`), sửa dòng usage (`:271`). `check-branch` đọc
+branch đang checkout khi không có tham số; `check-tag` kiểm ngữ pháp tag; `check-version` đọc
+năm con số ở bốn file; `unit-branch` nhận một unit và in tên branch suy ra.
 
-Hai lệnh đầu **từ chối `--root`** với exit khác `0` — `spec.md` R6, lý do ở
+Ba lệnh đầu **từ chối `--root`** với exit khác `0` — `spec.md` R6, lý do ở
 `coscc/board.py:48,90`: script này được app trỏ vào repo của người khác và nó "needs no
-secret, so it is given none". Lệnh thứ ba **nhận** `--root`: nó chỉ đọc `.cos/`, đúng việc
-`--root` sinh ra để làm. Đường kẻ là "có chạm git hay không".
+secret, so it is given none". `unit-branch` **nhận** `--root`: nó chỉ đọc `.cos/`, đúng việc
+`--root` sinh ra để làm. Đường kẻ là "lệnh mô tả bản checkout này, hay mô tả một `.cos/`".
 
 Cộng `.claude/skills/write-intent/SKILL.md`: header của template đòi `Type:` (`spec.md` C8).
 *Kiểm:* tám dòng bảng R1 chạy qua CLI cho đúng tám kết quả; `cos.mjs --root /tmp <lệnh git>`
-exit khác 0 cho cả hai; `cos.mjs --root . <lệnh unit> 0009_branch-and-release-conventions` in
+exit khác 0 cho cả ba; `cos.mjs --root . unit-branch 0009_branch-and-release-conventions` in
 ra `feat/branch-and-release-conventions`; `npm test` xanh.
 
 **5. Mục mới trong `.claude/harness.md`.**
-Ngữ pháp branch (đủ mười type), ngữ pháp tag, ba lệnh, trường `Type:` của `intent.md` cùng
+Ngữ pháp branch (đủ mười type), ngữ pháp tag, bốn lệnh, trường `Type:` của `intent.md` cùng
 cách suy ra tên branch, và **một câu nói thẳng rằng thứ cưỡng chế mạnh nhất — ruleset — không
 đi theo bản copy** (`spec.md` C1). Không có câu đó thì người copy harness nhận một quy ước
 không ai gác.
@@ -103,11 +104,15 @@ sinh lại hai lockfile.
 version — bất kỳ dòng nào của package thứ ba xuất hiện thì hoàn tác (Risk 5).
 
 **7. Hai workflow.**
-`pr.yml`: kiểm tên branch nguồn, chạy `npm test`. `release.yml`: dựng release từ tag, đánh
-dấu prerelease khi tag có `-rc.N`. Cả hai khai `permissions` tường minh ở mức tối thiểu và
+`pr.yml`: kiểm tên branch nguồn bằng `check-branch`, chạy `npm test`. `release.yml`: gọi
+`check-tag` để quyết prerelease rồi dựng release từ tag — không tự so chuỗi, vì hai bản cài
+đặt của một ngữ pháp là thứ `spec.md` R2 vừa sửa để tránh. Cả hai khai `permissions` tường minh ở mức tối thiểu và
 ghim mọi action bên thứ ba **theo commit SHA**, không theo tag (`spec.md` C2).
-*Kiểm:* `.github/workflows/*.yml` parse được bằng một trình đọc YAML; claim tương ứng của
-proof xanh. Chúng **chưa** chạy thật cho tới bước 9.
+*Kiểm:* claim C7 của proof xanh. Nó kiểm **cấu trúc, không phải cú pháp**: `permissions:` có
+mặt, không có `pull_request_target`, mọi `uses:` ghim theo SHA 40 hex. Không có trình đọc YAML
+ở đây — `spec.md` tiêu chí 3 cấm thêm dependency và pyyaml không được cài. Một file YAML hỏng
+vì thế lọt qua C7 và chỉ lộ ở bước 9, nơi GitHub là trình parse và triệu chứng là `gh pr
+checks` rỗng. Đó là Risk 1, viết ra chứ không vá bằng một gói mới.
 
 **8. Viết `impl.md`.** Stage `impl`, trên branch. Đo lại mọi con số tại thời điểm đó.
 *Kiểm:* `cos.mjs gate 0009_branch-and-release-conventions pr` exit 0.
@@ -219,8 +224,8 @@ Mười ba claim:
 | C1 | Tám dòng bảng `spec.md` R1 chạy qua lệnh kiểm branch cho đúng tám kết quả. |
 | C2 | Bốn ví dụ tag của R2 cho đúng bốn kết quả. |
 | C3 | Lệnh kiểm version xanh trên cây hiện tại, **và đỏ** khi một trong bốn chỗ bị sửa lệch — negative control, chạy trên bản sao tạm. |
-| C4 | Hai lệnh đọc git **từ chối** `--root`; lệnh đọc `.cos/` thì nhận. |
-| C5 | Bốn chỗ khai version đều đọc `0.1.0`. |
+| C4 | Ba lệnh mô tả bản checkout này **từ chối** `--root`; `unit-branch` thì nhận. |
+| C5 | **Năm** chỗ khai version ở bốn file đều đọc `0.1.0` — `package-lock.json` mang hai. |
 | C6 | `.claude/harness.md` nêu đủ mười type, cả hai dạng tag, trường `Type:`, và câu nói ruleset không đi theo bản copy. |
 | C7 | Hai workflow parse được; `permissions` khai tường minh; **0** action bên thứ ba ghim theo tag. |
 | C8 | `0009/intent.md` khai `Type: feat`, lệnh của R13 in ra `feat/branch-and-release-conventions`, và một type ngoài tập mười bị từ chối. |
