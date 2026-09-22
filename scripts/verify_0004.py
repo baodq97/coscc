@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Proof for .cos/0004_unproven-page.
+"""Proof for .cos/0004_unproven-page, against the page `0011` replaced it with.
 
 Exits 0 only when the page is reachable **and** the check that says so can be made to
 fail. `0003` closed with three green claims sitting on top of a dead page, so measuring
@@ -230,9 +230,10 @@ def page_renders(browser, url: str) -> str:
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
         try:
-            page.get_by_role("heading", name="cos-baodo").first.wait_for(
-                timeout=PAGE_TIMEOUT_MS
-            )
+            # The shell, not a heading. `0011` replaced the page and a heading is the
+            # kind of thing a redesign moves; the shell is the thing that either mounted
+            # or did not.
+            page.wait_for_selector("#studio-shell", timeout=PAGE_TIMEOUT_MS)
         except Exception:
             body = (page.text_content("body") or "")[:200].replace("\n", " ")
             return f"the page did not render; saw: {body!r}"
@@ -248,6 +249,9 @@ def live_data_reaches_the_page(browser, url: str, working_dir: str, count: int) 
     string is Reflex's to change. These two values only appear if `on_mount` ran, and
     `on_mount` only runs if the WebSocket connected — so their presence *is* the
     connection, observed rather than inferred from a label.
+
+    `0011` moved both onto `#working-dir` and `#workspace-count`. The phrasing of the
+    count — "N workspace(s)" — is still the exact string this waits for.
     """
     page = browser.new_page()
     try:
@@ -394,7 +398,8 @@ def the_page_meets_the_craft_floor(browser, url: str) -> str:
         page.set_viewport_size({"width": WIDTHS[-1], "height": 900})
         page.wait_for_timeout(200)
 
-        # R23 — the mode changes from the page, and survives a reload.
+        # R23 — the mode changes from the page, and survives a reload. `0011` put the
+        # control in the top bar; before that it was on the Settings screen only.
         toggle = page.locator("#color-mode button").first
         if toggle.count() == 0:
             return "the page has no #color-mode control"

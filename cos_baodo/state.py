@@ -541,7 +541,7 @@ class StudioState(rx.State):
         except Invalid as e:
             self._fail(e)
             return
-        self.conversations = [
+        rows = [
             Conversation(
                 id=row["session_id"],
                 title=(row.get("summary") or row.get("session_id") or "")[:60] or "Untitled",
@@ -550,26 +550,39 @@ class StudioState(rx.State):
             )
             for row in data["sessions"]
         ]
-        if self.session_id and not any(c.id == self.session_id for c in self.conversations):
+        self.conversations = rows
+        # A session this app created but the SDK has not listed would be invisible here.
+        # Measured on 2026-09-22 against a real send: it does not happen — `sessions_for`
+        # returned the new session on the first call after the reply finished. An earlier
+        # version of this method inserted a placeholder row for that case; it was removed
+        # once the measurement showed the case does not arise, because a branch nothing
+        # reaches is a branch nobody maintains.
+        if self.session_id and not any(c.id == self.session_id for c in rows):
             self.session_id = ""
         if not self.session_id and self.conversations:
             self.session_id = self.conversations[0].id
         self._load_history()
 
     def _load_history(self) -> None:
-        self.messages = []
         if not (self.cwd and self.session_id):
+            self.messages = []
             return
         try:
             data = SERVICE.history(self.cwd, self.session_id)
         except Invalid as e:
             self._fail(e)
             return
-        self.messages = [
+        rows = [
             Message(role=m.get("role") or "assistant", text=m.get("text") or "")
             for m in data["messages"]
             if (m.get("text") or "").strip()
         ]
+        # A read that comes back empty while something is on screen is not a reason to
+        # clear the screen: the exchange the user just had would be the thing thrown away,
+        # and this app keeps no other copy of it.
+        if not rows and self.messages:
+            return
+        self.messages = rows
 
     def _load_activity(self) -> None:
         self.events = []
