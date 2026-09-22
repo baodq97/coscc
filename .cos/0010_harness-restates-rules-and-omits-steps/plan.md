@@ -1,5 +1,5 @@
 # Plan: Backfill, then enforce, then collapse three documents into two tiers
-Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
 Mười ba bước. Thứ tự bị ép bởi hai chỗ, và cả hai là lý do các bước không hoán vị được:
 

@@ -59,7 +59,9 @@ The order per unit, and the reason it cannot be reordered:
 4. `git switch -c <that name>` — cut from `main`, before the first commit. `main` is closed;
    a commit made on it is a commit that has to be moved.
 5. Work the stages. Each artifact is its own commit.
-6. `gh pr create`, then `gh pr merge --squash --delete-branch`.
+6. `gh pr create`, then `gh pr merge --squash --delete-branch`. Every push to the branch
+   resets the required checks, so a commit added while they were green means waiting for
+   them again — the merge is refused with `2 of 2 required status checks are expected`.
 
 When the pull request falls behind, `gh pr update-branch --rebase`. Rebase, not a merge of
 `main` into the branch: the squash would remove the merge commit anyway, and keeping the
