@@ -510,13 +510,32 @@ def remote_host_port(env_text: str | None) -> tuple[str, int]:
     return host, port
 
 
+# Where `uv tool install` puts the executable, in the order install.sh would find it.
+# `ssh host 'coscc --version'` runs a non-login shell, and its PATH on Debian 13 is
+# `/usr/local/bin:/usr/bin:/bin:/usr/games` -- measured 2026-09-22, when this proof read
+# `None` for the version both before and after an update and reported a false FAIL about
+# a binary that was installed and working. `uv tool update-shell` edits shell rc files,
+# which a non-login shell never reads, so the bare name cannot be relied on here.
+_REMOTE_BINDIRS = ("$HOME/.local/bin", "$XDG_BIN_HOME", "$UV_TOOL_BIN_DIR")
+
+
 def remote_version(target: str) -> str | None:
-    """The pinned contract: `coscc --version` prints exactly one line, `"coscc <ver>"`."""
-    out = run_remote(target, "coscc --version")
-    if out.returncode != 0:
-        return None
-    line = out.stdout.strip()
-    return line if re.fullmatch(r"coscc \S+", line) else None
+    """The pinned contract: `coscc --version` prints exactly one line, `"coscc <ver>"`.
+
+    Tries the bare name first, so that an install which *did* put `coscc` on PATH is
+    measured the way a person would type it, and falls back to the places the installer
+    actually writes to. Returning `None` here is indistinguishable, to the caller, from
+    "the binary is broken" -- which is why this looks harder before giving up.
+    """
+    attempts = ["coscc --version"] + [f'"{d}/coscc" --version' for d in _REMOTE_BINDIRS]
+    for attempt in attempts:
+        out = run_remote(target, attempt)
+        if out.returncode != 0:
+            continue
+        line = out.stdout.strip()
+        if re.fullmatch(r"coscc \S+", line):
+            return line
+    return None
 
 
 def latest_published_version() -> str | None:
