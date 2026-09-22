@@ -105,10 +105,22 @@ def _sidebar() -> rx.Component:
         _nav(),
         rx.spacer(),
         s.panel(
-            rx.hstack(rx.icon("shield-check", size=16, color=rx.color("grass", 11)),
-                      rx.text("Local only", size="2", weight="medium")),
-            s.text("Loopback, and chat sessions with no tools by default.",
-                   size="1", margin_top="8px"),
+            rx.hstack(
+                rx.cond(
+                    P.loopback_only,
+                    rx.icon("shield-check", size=16, color=rx.color("grass", 11)),
+                    rx.icon("shield-alert", size=16, color=rx.color("amber", 11)),
+                ),
+                rx.text(rx.cond(P.loopback_only, "Local only", "Open on the network"),
+                        size="2", weight="medium")),
+            s.text(
+                rx.cond(
+                    P.loopback_only,
+                    "Loopback, and chat sessions with no tools by default.",
+                    "Anyone who can reach this port can use this app. There is no login. "
+                    "Chat sessions still have no tools by default.",
+                ),
+                size="1", margin_top="8px"),
             rx.button("What this can do", rx.icon("arrow-up-right", size=14),
                       on_click=P.navigate("settings"), variant="ghost", size="1", margin_top="12px"),
             padding="14px", background=rx.color("grass", 2),
@@ -782,7 +794,14 @@ def _settings() -> rx.Component:
                               "up does not back up your workspaces.",
                               s.text(P.data_dir, size="1",
                                      font_family="ui-monospace, monospace")),
-                _settings_row("Address", "Loopback only.",
+                _settings_row("Address",
+                              rx.cond(
+                                  P.loopback_only,
+                                  "Loopback only.",
+                                  "Reachable from any machine that can route here, and "
+                                  "coscc has no login. Set COS_HOST=127.0.0.1 to bind "
+                                  "this machine only.",
+                              ),
                               s.text(P.host_port, size="1",
                                      font_family="ui-monospace, monospace")),
                 _settings_row("Model", "What a session is created with.",

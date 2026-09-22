@@ -39,6 +39,9 @@ thứ người dùng sửa. Đó chính là lý do hai file phải tách nhau.
 | `docs/studio.md` | `:73` — xem ghi chú dưới bảng |
 | `scripts/verify_0006.py` | `:24` — xem ghi chú dưới bảng |
 | `README.md` | Trỏ sang tài liệu cài đặt; nói rõ khối lệnh hiện có là đường dành cho checkout |
+| `coscc/screens.py` | `:109-110` và `:785` — xem ghi chú thứ ba |
+| `coscc/state.py` | `:326` — cờ `loopback_only`, xem ghi chú thứ ba |
+| `coscc/api_test.py` | Test cấm markup viết tay phải loại trừ `coscc/_web/` |
 
 **Mới**
 
@@ -49,6 +52,7 @@ thứ người dùng sửa. Đó chính là lý do hai file phải tách nhau.
 | `coscc/frontend_test.py` *(new)* | Test cho cả hai, gồm cả trường hợp khớp 0 file |
 | `scripts/install.sh` *(new)* | Bản mẫu; release thay số phiên bản và sha256 vào rồi đính kèm |
 | `docs/install.md` *(new)* | Tài liệu mà R14 đòi, và là nguồn các lệnh proof chép ra |
+| `coscc/run_test.py` *(new)* | Test cho banner và `--version`; plan bản đầu không kể nó ra |
 
 **Ghi chú, thêm 2026-09-22 trong lúc implement — plan invariant 8.** Bản đầu của plan nói
 bước 10 dọn "hai câu đã hết đúng". Đếm lại bằng `git grep -n hardcode -- . ':!.cos'` thì
@@ -73,6 +77,29 @@ trong một wheel: hai thứ đi chung một file nên không lệch nhau đư�
 Nên marker không được dựng. Lý do ghi ở đây và trong docstring của `coscc/build.py`, chứ
 không phải để người đọc sau tưởng là bỏ sót. `spec.md` `## Design` phần 2 là chỗ duy nhất
 mô tả nó, và nó sai — ghi ra chứ không sửa file đã accepted.
+
+**Ghi chú thứ ba, 2026-09-22 trong lúc implement — plan invariant 8.** Chạy thử `install.sh`
+thật rồi mở bản vừa cài bằng trình duyệt cho thấy **trang tự nói dối về chính nó**. Hai chỗ
+trong `coscc/screens.py` khẳng định loopback như một sự thật: `:109-110` in "Local only /
+Loopback, and chat sessions with no tools by default.", và `:785` in "Address — Loopback
+only." Sau bước 5 thì mặc định là `0.0.0.0`, nên cả hai câu sai, và sai theo hướng nguy
+hiểm nhất: chúng trấn an về đúng thứ vừa bị mở ra.
+
+Không plan nào cho phép việc này, và không requirement nào nêu nó — `spec.md` R5 chỉ nói tới
+banner. Nhưng ship một trang khẳng định một thuộc tính an toàn nó không có là đúng loại lỗi
+`0007` sinh ra để dọn, nên nó được sửa tại đây thay vì để lại: `coscc/state.py` thêm
+`loopback_only` đọc từ địa chỉ thật, và hai chỗ kia đọc cờ đó thay vì tự khẳng định.
+
+Kéo theo `coscc/api_test.py`: phép kiểm "không có HTML/CSS viết tay trong `coscc/`" bắt phải
+`coscc/_web/`, vốn là output compile chứ không phải markup ai gõ. Phạm vi loại trừ đúng bằng
+một thư mục, và có thêm một test ghim chính cái tên đó để không ai nới nó ra thành `coscc`.
+
+Và `scripts/install.sh` nhận thêm hai thứ không có trong plan: `COSCC_DOWNLOAD_BASE` để chạy
+thử được trước khi tồn tại release nào — nó không nới lỏng gì, sha256 vẫn so với giá trị
+nướng sẵn — và **một bước chờ cho tới khi app thật sự trả lời**. Bước chờ là hệ quả của một
+phép đo: `Type=simple` khiến systemd báo "started" ngay khi tiến trình sinh ra, còn app mất
+khoảng bốn giây mới bind. Thiếu bước chờ, người làm đúng theo tài liệu mở trình duyệt và
+nhận connection refused trên một máy hoàn toàn bình thường.
 
 `coscc/_web/` không có trong bảng nào: nó là sản phẩm của bước build, không phải file được
 commit.
