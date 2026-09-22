@@ -18,6 +18,8 @@ from cos_baodo.config import Config
 
 def _fake_source_tree(root: Path, page: str = "page v1", rx: str = "cfg v1") -> None:
     (root / "cos_baodo").mkdir(parents=True, exist_ok=True)
+    for source in build._SOURCES:
+        (root / source).write_text("presentation v1")
     (root / "cos_baodo" / "cos_baodo.py").write_text(page)
     (root / "rxconfig.py").write_text(rx)
 
@@ -53,6 +55,16 @@ class WhatCountsAsCurrent(unittest.TestCase):
         self.assertEqual(
             build.check(self.config, self.built, root=self.root)[0], build.STALE
         )
+
+    def test_editing_any_presentation_module_makes_it_stale(self):
+        for source in build._SOURCES:
+            with self.subTest(source=source):
+                build.write_marker(self.built, self.config, root=self.root)
+                path = self.root / source
+                path.write_text(path.read_text() + "\nchanged")
+                state, message = build.check(self.config, self.built, root=self.root)
+                self.assertEqual(state, build.STALE)
+                self.assertIn(source, message)
 
     def test_a_different_port_is_stale_and_says_both_ports(self):
         """The 2026-09-21 failure, as a unit test.
@@ -116,7 +128,10 @@ class WhatTheFingerprintCovers(unittest.TestCase):
         # If this list grows, the docstring in build.py has to say so — a fingerprint
         # that silently covers less than it claims is worse than none.
         self.assertEqual(
-            set(build._SOURCES), {"cos_baodo/cos_baodo.py", "rxconfig.py"}
+            set(build._SOURCES), {
+                "cos_baodo/cos_baodo.py", "cos_baodo/ui.py", "cos_baodo/studio.py",
+                "cos_baodo/prototype.py", "cos_baodo/prototype_data.py", "rxconfig.py",
+            }
         )
 
     def test_a_missing_source_file_is_recorded_not_ignored(self):

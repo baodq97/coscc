@@ -60,3 +60,16 @@ Thiếu browser/build/cổng bận phải exit 2, không lẫn với UI lỗi ex
 Không chạy proof tạo phiên AI thật hoặc push PR: chúng không kiểm phần prototype và
 có side effect ngoài phạm vi. Không viết lại giao diện chính trước khi người dùng
 duyệt. Screenshot hỗ trợ đánh giá thẩm mỹ, không thay cho quyết định của người dùng.
+
+## Execution status
+
+Ngày 2026-09-22, code và proof đã được viết nhưng bước chạy bị chặn bởi quyền thực
+thi của môi trường: `uv run cos-build` và
+`uv run python -m unittest cos_baodo.prototype_test cos_baodo.build_test` đều bị từ
+chối trước khi chạy. Đã hỏi cấp quyền cho build/test/browser/preview nhưng người dùng
+không có mặt để trả lời. Không chạy lệnh thay thế để lách giới hạn.
+
+Khác với thứ tự dự kiến, code được lưu ở trạng thái chưa xác minh; chưa chạy full
+test, browser proof, chụp ảnh hoặc mở server preview. Không đánh dấu plan done,
+không tuyên bố outcome đạt. Quan sát skill đã được ghi riêng ở unit 0010; không
+thay đổi skill/gate/runner.

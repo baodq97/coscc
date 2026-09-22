@@ -10,8 +10,9 @@ the page asks here first. `run.py` refuses to start on a stale build; `verify_00
 refuses to measure one.
 
 **What the fingerprint covers, and what it cannot.** The compiled bundle is decided by the
-component tree in `cos_baodo/cos_baodo.py`, by `rxconfig.py` (which bakes in the backend
-address), and by the Reflex version that compiled it. Those three are hashed. Anything else
+component tree in `cos_baodo/cos_baodo.py`, the shared theme and prototype presentation/data
+modules, `rxconfig.py` (which bakes in the backend address), and the Reflex version that
+compiled it. Those inputs are fingerprinted. Anything else
 that could change the output — a plugin, an environment variable read during the build —
 is **not** covered, and there is no automatic way to notice. If you change how the page is
 produced, check that it lands in `_SOURCES` or the fingerprint will say "current" about a
@@ -32,7 +33,14 @@ REPO = Path(__file__).resolve().parent.parent
 MARKER = ".cos-build.json"
 
 # Relative to the repo root. See the module docstring for the limits of this list.
-_SOURCES = ("cos_baodo/cos_baodo.py", "rxconfig.py")
+_SOURCES = (
+    "cos_baodo/cos_baodo.py",
+    "cos_baodo/ui.py",
+    "cos_baodo/studio.py",
+    "cos_baodo/prototype.py",
+    "cos_baodo/prototype_data.py",
+    "rxconfig.py",
+)
 
 # States `check` can return. `unbuilt` and `missing` are different: one means no output at
 # all, the other means output produced by something that did not leave a fingerprint.

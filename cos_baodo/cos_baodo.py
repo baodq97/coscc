@@ -19,7 +19,7 @@ import dataclasses
 
 import reflex as rx
 
-from cos_baodo import ui
+from cos_baodo import prototype, ui
 from cos_baodo.api import build
 from cos_baodo.service import Invalid
 
@@ -865,3 +865,4 @@ def index() -> rx.Component:
 # deprecates `App(theme=...)` and removes it at 1.0. The global style still belongs here.
 app = rx.App(api_transformer=_api, style=ui.GLOBAL_STYLE)
 app.add_page(index, title="cos-baodo")
+app.add_page(prototype.index, route="/prototype", title="COS Studio | Interactive prototype")
