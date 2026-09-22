@@ -33,7 +33,7 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
-from coscc import frontend
+from coscc import frontend, states
 
 _HERE = Path(__file__).resolve().parent
 
@@ -120,14 +120,21 @@ def _posix(*parts: object) -> str:
 def wheel_complaints(wheel: str | Path) -> list[str]:
     """Everything wrong with `wheel`, as sentences. Empty means it would run.
 
-    Four entries, and each one names a wheel that installs cleanly and then fails in a
+    Five entries, and each one names a wheel that installs cleanly and then fails in a
     different way:
 
     - no frontend: the page 404s while `/api/health` answers;
     - no compile marker: the service reports `active` and serves nothing at all (measured
       2026-09-22 on a clean Debian 13 VM, `coscc/frontend.py:64-70`);
     - no `cos.mjs`: the Board answers 400 (measured 2026-09-22 on `v0.2.2`);
-    - no skills: a step runs without its rules.
+    - no skills: a step runs without its rules;
+    - no `states.json`: nothing can read or write a transition, because `coscc/states.py`
+      has no state set to validate one against (`0013`).
+
+    The last one is checked even though the file is **committed** rather than generated,
+    which the other four are not. That is the point: `0012` cost a whole unit because a
+    thing the checkout had was not a thing the wheel shipped, and whether a file arrives by
+    `git` or by a copy step is not a difference the installed copy can feel.
 
     The skills check counts rather than naming nine, because nine is today's number
     (`.cos/0012_installed-copy-runs-no-stage/spec.md` C4) and a list copied by hand stops
@@ -144,6 +151,7 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     marker = _posix(_WEB, frontend.MARKER)
     cos = _posix(_HARNESS, _SCRIPTS, SCRIPT_NAME)
     skills_prefix = _posix(_HARNESS, _SKILLS) + "/"
+    state_set = _posix(states.DEFAULT_PATH.name)
 
     out = []
     if index not in names:
@@ -158,6 +166,8 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
         # change is what ended it. A wheel in this shape reads the Board fine and refuses
         # every Run, which is a different thing to go looking for.
         out.append(f"no {skills_prefix}*/{SKILL_FILE} — every step would refuse to run")
+    if state_set not in names:
+        out.append(f"no {state_set} — no transition could be read or written")
 
     # The copy step takes two named directories, never `.claude/` whole. This is what says
     # so out loud: `.claude/settings.local.json` is a personal file (`.gitignore:19`) and a

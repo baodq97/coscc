@@ -84,6 +84,39 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertNotIn("schema_version", tables)
             self.assertEqual({"migrations", "workspaces", "runs", "prefs"} - tables, set())
 
+    def test_a_database_written_before_version_2_gains_the_new_tables_and_keeps_its_rows(self):
+        """`0013` step 2: adding tables needs no bespoke migration, and must lose nothing.
+
+        Built as a real v1 database rather than by dropping tables from a v2 one — the
+        thing under test is what `_create` does when it meets a shape it did not write,
+        and a v2 database with pieces removed is not that shape.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.ensure_dir()
+            with sqlite3.connect(data.db_path) as conn:
+                conn.execute(
+                    "CREATE TABLE workspaces (root TEXT NOT NULL, name TEXT NOT NULL, "
+                    "label TEXT NOT NULL DEFAULT '', added_at TEXT NOT NULL, "
+                    "PRIMARY KEY (root, name))"
+                )
+                conn.execute("CREATE TABLE prefs (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                conn.execute("CREATE TABLE migrations (key TEXT PRIMARY KEY, at TEXT NOT NULL)")
+                conn.execute(
+                    "INSERT INTO workspaces (root, name, added_at) VALUES ('/w', 'keep-me', 'then')"
+                )
+                conn.execute("PRAGMA user_version=1")
+
+            self.assertEqual(data.version(), SCHEMA_VERSION)
+            with data.connect() as conn:
+                tables = {
+                    row["name"]
+                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+                kept = conn.execute("SELECT name FROM workspaces").fetchall()
+            self.assertEqual({"transitions", "outputs"} - tables, set())
+            self.assertEqual([row["name"] for row in kept], ["keep-me"])
+
     def test_opening_an_existing_database_writes_nothing(self):
         """The common path is one pragma read. A write on every open is a lock on every open."""
         with tempfile.TemporaryDirectory() as d:

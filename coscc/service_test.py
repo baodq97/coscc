@@ -316,3 +316,104 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheUnitHistoryReadPath(unittest.TestCase):
+    """`0013` R8. The log read through the one place logic lives.
+
+    Written against a temporary working folder and data root rather than this repository's
+    real `~/.cos` — `coscc/journal.py:108-109` names that hazard and the two new tables
+    inherit it unchanged.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.work = self.root / "work"
+        self.work.mkdir()
+        self.service = _service(working_dir=str(self.work), data_dir=str(self.root / "data"))
+
+    def _log(self):
+        from coscc.history import History
+
+        return History(self.work, self.root / "data")
+
+    def test_a_unit_with_no_history_answers_with_empty_rather_than_refusing(self):
+        found = self.service.unit_history(REPO, "0001_a-problem")
+        self.assertTrue(found["recording"])
+        self.assertEqual(found["transitions"], [])
+        self.assertEqual(found["settled_edits"], 0)
+
+    def test_the_state_it_returns_is_a_projection_of_the_rows_it_returns(self):
+        log = self._log()
+        log.record(REPO, "0001_a-problem", "intent.md", "draft")
+        log.record(REPO, "0001_a-problem", "intent.md", "accepted")
+        found = self.service.unit_history(REPO, "0001_a-problem")
+        # Not two sources: the last transition's destination *is* the state.
+        self.assertEqual(found["state"]["intent.md"], found["transitions"][-1]["to_state"])
+        self.assertEqual(found["state"]["intent.md"], "accepted")
+
+    def test_it_counts_the_edits_after_settling_that_0013_exists_to_count(self):
+        log = self._log()
+        log.record(REPO, "0001_a-problem", "intent.md", "draft")
+        log.record(REPO, "0001_a-problem", "intent.md", "accepted")
+        log.record(REPO, "0001_a-problem", "intent.md", "accepted", source="commit:abc")
+        self.assertEqual(self.service.unit_history(REPO, "0001_a-problem")["settled_edits"], 1)
+
+    def test_a_unit_retired_from_the_working_tree_still_has_a_history(self):
+        log = self._log()
+        log.record(REPO, "0099_retired", "intent.md", "accepted")
+        self.assertEqual(self.service.units_with_history(REPO)["units"], ["0099_retired"])
+
+    def test_the_gate_applies_to_both_reads(self):
+        for call in (
+            lambda: self.service.unit_history("/etc", "0001_a-problem"),
+            lambda: self.service.units_with_history("/etc"),
+        ):
+            with self.assertRaises(Invalid):
+                call()
+
+    def test_with_no_working_folder_it_says_it_is_not_recording(self):
+        service = _service()
+        found = service.unit_history(REPO, "0001_a-problem")
+        self.assertFalse(found["recording"])
+        self.assertEqual(found["transitions"], [])
+        self.assertFalse(service.units_with_history(REPO)["recording"])
+
+    def test_a_unit_holding_rows_from_two_state_sets_says_so(self):
+        """`spec.md` C5: said out loud rather than refused, because refusing a read
+        would hide the only evidence that the two sets were ever mixed."""
+        import json
+
+        from coscc import states
+        from coscc.history import History
+
+        other = self.root / "other.json"
+        other.write_text(
+            json.dumps(
+                {
+                    "name": "two-step",
+                    "absent": "nowhere",
+                    "settled": ["closed"],
+                    "stages": [
+                        {"name": "ticket", "artifact": "ticket.txt", "statuses": ["open", "closed"]}
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self._log().record(REPO, "0001_a-problem", "intent.md", "draft")
+        History(self.work, self.root / "data", machine=states.load(other)).record(
+            REPO, "0001_a-problem", "ticket.txt", "open"
+        )
+
+        found = self.service.unit_history(REPO, "0001_a-problem")
+        self.assertEqual(found["written_under"], ["coscc-default", "two-step"])
+        self.assertIn("two-step", found["mixed_state_sets"])
+
+    def test_one_state_set_reports_no_mixture(self):
+        self._log().record(REPO, "0001_a-problem", "intent.md", "draft")
+        found = self.service.unit_history(REPO, "0001_a-problem")
+        self.assertEqual(found["written_under"], ["coscc-default"])
+        self.assertIsNone(found["mixed_state_sets"])

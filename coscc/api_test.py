@@ -308,3 +308,55 @@ class ShutdownClosesSessions(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnitHistoryRoutes(unittest.IsolatedAsyncioTestCase):
+    """`0013` R8 over HTTP. The route decides nothing; it only translates."""
+
+    async def asyncSetUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        (root / "work").mkdir()
+        self.cwd = str(root / "work")
+        self.app = build(
+            Config(
+                workspaces=(self.cwd,),
+                working_dir=self.cwd,
+                data_dir=str(root / "data"),
+            )
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+        from coscc.history import History
+
+        self.log = History(self.cwd, root / "data")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_a_directory_outside_the_list_is_refused_with_400(self):
+        for path in ("/api/unit-history?cwd=/etc&unit=0001_a", "/api/units-with-history?cwd=/etc"):
+            got = await self.client.get(path)
+            self.assertEqual(got.status_code, 400, path)
+            self.assertIn("/etc", got.json()["error"])
+
+    async def test_it_returns_the_transitions_and_the_projection_over_them(self):
+        self.log.record(self.cwd, "0001_a-problem", "intent.md", "draft")
+        self.log.record(self.cwd, "0001_a-problem", "intent.md", "accepted", session="s1")
+        got = await self.client.get(
+            "/api/unit-history", params={"cwd": self.cwd, "unit": "0001_a-problem"}
+        )
+        self.assertEqual(got.status_code, 200)
+        body = got.json()
+        self.assertEqual(len(body["transitions"]), 2)
+        self.assertEqual(body["state"]["intent.md"], "accepted")
+        self.assertEqual(body["machine"], "coscc-default")
+        self.assertEqual([s["session"] for s in body["sessions"]], ["s1"])
+        self.assertEqual(body["unknown_transitions"], 1)
+
+    async def test_the_list_of_units_with_a_history_is_its_own_route(self):
+        self.log.record(self.cwd, "0001_a-problem", "intent.md", "draft")
+        got = await self.client.get("/api/units-with-history", params={"cwd": self.cwd})
+        self.assertEqual(got.json()["units"], ["0001_a-problem"])

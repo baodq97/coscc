@@ -29,6 +29,7 @@ from coscc.board import Unavailable
 from coscc.config import Config
 from coscc.data import Data
 from coscc.gitops import GitError
+from coscc.history import History, settled_edits
 from coscc.journal import (
     COST_FIELDS,
     COST_USD,
@@ -377,6 +378,109 @@ class Service:
         except Busy as e:
             raise Invalid(str(e)) from e
         return {"cwd": cwd, "unit": unit, "runs": runs, "cost": totals_of(runs)}
+
+    def _history(self) -> History | None:
+        """The transition log, or `None` when there is no working folder to keep it in.
+
+        Same shape and same reasoning as `_journal`: with nothing set, the app behaves as
+        it did before, and the safe direction to fail in is read-only.
+        """
+        return (
+            History(self.config.working_dir, self.config.data_dir)
+            if self.config.working_dir
+            else None
+        )
+
+    def unit_history(self, cwd: str, unit: str) -> dict[str, Any]:
+        """`0013` R8. Everything the log knows about one unit.
+
+        **Beside the board, not instead of it.** `board()` still asks `cos.mjs` and still
+        reads state out of the `Status:` line on disk (`intent.md` constraint 3); this
+        answers from the transition log. Two sources during a transition is deliberate and
+        has a cost, and `spec.md` C2 and C5 are where that cost is written down.
+
+        `state` here is a projection over `transitions` and is computed, never stored —
+        R1. It is returned alongside the transitions rather than instead of them precisely
+        so a caller can check one against the other.
+
+        `settled_edits` is carried because it is the unit of measure `intent.md` named:
+        the number of times an artifact was rewritten after it had been settled, which
+        was 0 before this and 43 in this repository on 2026-09-22.
+        """
+        self._workspace_or_refuse(cwd)
+        history = self._history()
+        key = self._journal_key(cwd)
+        if history is None:
+            return {
+                "cwd": cwd,
+                "unit": unit,
+                "recording": False,
+                "machine": "",
+                "written_under": [],
+                "mixed_state_sets": None,
+                "transitions": [],
+                "state": {},
+                "settled_edits": 0,
+                "sessions": [],
+                "unknown_transitions": 0,
+                "outputs": [],
+                "output_counts": {},
+            }
+        try:
+            rows = history.transitions(key, unit)
+            state = history.state(key, unit)
+            sessions = history.sessions_of(key, unit)
+            outputs = history.outputs(key, unit)
+            counts = history.output_counts(key, unit)
+            written_under = history.machines_in(key, unit)
+        except Busy as e:
+            raise Invalid(str(e)) from e
+        # `spec.md` C5. Rows written under one state set and read under another compare
+        # words that never meant the same thing, and nothing about that failure looks like
+        # a failure -- every query still returns rows. Said out loud in the payload rather
+        # than refused, because refusing a *read* would hide the only evidence there is.
+        # A caller that goes on to compare these against another source must stop here.
+        foreign = [name for name in written_under if name != history.machine.name]
+        return {
+            "cwd": cwd,
+            "unit": unit,
+            "recording": True,
+            "machine": history.machine.name,
+            "written_under": written_under,
+            "mixed_state_sets": (
+                None if not foreign
+                else f"this unit holds transitions written under {', '.join(foreign)}, "
+                     f"but is being read under {history.machine.name} — the states in "
+                     "those rows do not mean what they appear to mean here"
+            ),
+            "transitions": rows,
+            "state": state,
+            "settled_edits": len(settled_edits(rows, history.machine)),
+            "sessions": sessions["sessions"],
+            "unknown_transitions": sessions["unknown_transitions"],
+            "outputs": outputs,
+            "output_counts": counts,
+        }
+
+    def units_with_history(self, cwd: str) -> dict[str, Any]:
+        """Every unit the log has a transition for, in the order they first appear.
+
+        Not the same list as `board()`'s, and the difference is the point: a unit retired
+        from the working tree still has a history, and this is the only place it can be
+        seen. `.cos/` in this repository lost five units that way (`f506aae`).
+        """
+        self._workspace_or_refuse(cwd)
+        history = self._history()
+        if history is None:
+            return {"cwd": cwd, "recording": False, "units": []}
+        try:
+            return {
+                "cwd": cwd,
+                "recording": True,
+                "units": history.units(self._journal_key(cwd)),
+            }
+        except Busy as e:
+            raise Invalid(str(e)) from e
 
     # -- sessions -----------------------------------------------------------
 

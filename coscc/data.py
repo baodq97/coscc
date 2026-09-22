@@ -47,7 +47,13 @@ from typing import Any, Iterator
 
 # Bumped when a migration changes the shape below. `_open` refuses a database numbered
 # higher than this rather than guessing what the extra columns mean (`spec.md` R5).
-SCHEMA_VERSION = 1
+#
+# 2 added `transitions` and `outputs` for `.cos/0013_board-cannot-say-what-happened`. That
+# refusal now has a cost worth stating out loud, because it is the way back from this
+# unit: **a v0.2.3 or older build will not open a database this one has touched.** Rolling
+# the app back means rolling the database back with it, and `~/.cos/cos.db` is not
+# something a downgrade removes. `plan.md` Risk 3 records the decision.
+SCHEMA_VERSION = 2
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -115,6 +121,74 @@ CREATE TABLE IF NOT EXISTS prefs (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 )""",
+    """-- `.cos/0013_board-cannot-say-what-happened` R1: **the transition is the record, and
+-- "where is this unit now" is a query over this table.** There is deliberately no column
+-- anywhere holding a current state. A design with both would have two truths, and the one
+-- edited by hand would be the other one.
+--
+-- R3 decides the columns: a transition that cannot say who or which session must say so
+-- in a value, not by leaving a column empty. So every column is NOT NULL with no default,
+-- which pushes the decision onto the writer -- `coscc/history.py` substitutes its
+-- `UNKNOWN` and nothing here can quietly accept a blank. `intent.md` exists because
+-- "not known" already looks exactly like "did not happen"; a NULL here would be that
+-- mistake written into the schema.
+--
+-- `machine` names the state set the row was written under. Without it, a database written
+-- under one configuration and read under another compares states that never meant the
+-- same thing, and `spec.md` C5 says that failure runs rather than stops.
+CREATE TABLE IF NOT EXISTS transitions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    at         TEXT NOT NULL,
+    root       TEXT NOT NULL,
+    workspace  TEXT NOT NULL,
+    unit       TEXT NOT NULL,
+    artifact   TEXT NOT NULL,
+    stage      TEXT NOT NULL,
+    from_state TEXT NOT NULL,
+    to_state   TEXT NOT NULL,
+    actor      TEXT NOT NULL,
+    session    TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    machine    TEXT NOT NULL,
+    once_key   TEXT NOT NULL DEFAULT ''
+)""",
+    """-- Oldest-first within a unit is every read this table has; `id` is monotonic where `at`
+-- is only second-resolution, the same reasoning as `runs_scope`.
+CREATE INDEX IF NOT EXISTS transitions_scope ON transitions (root, workspace, unit, id)""",
+    """-- What makes an import re-runnable instead of doubling (`spec.md` open question 4).
+-- The key is the writer's: the git import derives one per commit and artifact, so running
+-- it twice inserts nothing the second time. It is **partial** so that live transitions,
+-- which pass no key, are never deduplicated -- two identical moves a minute apart are two
+-- events, and an append-only log that silently dropped the second would be lying by
+-- omission. Empty string rather than NULL keeps R3's "no implicit blanks" true of every
+-- column in the table.
+CREATE UNIQUE INDEX IF NOT EXISTS transitions_once
+    ON transitions (once_key) WHERE once_key <> ''""",
+    """-- R5: "how many files did this produce, and where". One table with a `kind` column
+-- rather than two tables, because every "how many in total" question would otherwise have
+-- to union them at the call site, and one of the call sites would forget.
+--
+-- `path` is recorded as given. This table never resolves a path against a repository:
+-- a deliverable and a code change live in different trees, and a column that sometimes
+-- meant one and sometimes the other would need a reader to know which before it could be
+-- read.
+CREATE TABLE IF NOT EXISTS outputs (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    at        TEXT NOT NULL,
+    root      TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    unit      TEXT NOT NULL,
+    stage     TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    path      TEXT NOT NULL,
+    actor     TEXT NOT NULL,
+    session   TEXT NOT NULL,
+    source    TEXT NOT NULL,
+    once_key  TEXT NOT NULL DEFAULT ''
+)""",
+    """CREATE INDEX IF NOT EXISTS outputs_scope ON outputs (root, workspace, unit, id)""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS outputs_once
+    ON outputs (once_key) WHERE once_key <> ''""",
 )
 
 
@@ -275,9 +349,11 @@ class Data:
         if found < SCHEMA_VERSION:
             self._retry(lambda: self._create(conn), wait)
         # An equal number is the whole common path: one pragma read, and nothing else.
-        # A lower number is where a migration would run. There is only one version so far,
-        # and writing a migration for a shape that has never shipped would be writing it
-        # against a guess.
+        # A lower number re-runs `_create`, and that is the whole migration mechanism:
+        # every statement in `_SCHEMA` is `IF NOT EXISTS`, so a v1 database meets the two
+        # tables 2 added and keeps every row it already had. This works for *adding*. A
+        # version that has to change or drop a column will need a real migration here, and
+        # will not be able to reuse this path.
 
     @staticmethod
     def _user_version(conn: sqlite3.Connection) -> int:
