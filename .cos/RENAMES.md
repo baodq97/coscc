@@ -35,8 +35,9 @@ tree, không trên history.
 Sát lúc publish, `0008` viết lại toàn bộ history để gỡ hai thứ khỏi mọi commit:
 
 - `docs/ai-native-sdlc-playbook.md` — 611 dòng văn bản của Anthropic giữ nguyên văn, không
-  ghi nguồn, hot-link bốn ảnh từ CDN của họ. Nó nằm ở **commit đầu tiên**. Đường dẫn nay là
-  một stub trỏ về bản gốc.
+  ghi nguồn, hot-link bốn ảnh từ CDN của họ. Nó nằm ở **commit đầu tiên**. **Đường dẫn đó nay
+  không tồn tại**: repo giữ một bản đọc cục bộ ở `.raws/`, và `.raws/` nằm trong
+  `.gitignore`. Bản gốc ở <https://claude.com/blog/the-ai-native-sdlc-playbook>.
 - `.claude/settings.local.json.tmp.*` — cấu hình máy lọt vào commit do `git add -A`.
 
 Cả 134 commit giữ nguyên thứ tự và thông điệp nhưng **đổi hash**. Nên **44 trích dẫn SHA**
@@ -51,6 +52,25 @@ ký là một bản ghi *sai*. Unit này chọn cái thứ nhất.
 Bản history trước khi viết lại được giữ trong một git bundle ngoài repo, trên máy tác giả. Nó
 không có ở đây và không ai ngoài đó tra được — đó là cái giá của việc gỡ nội dung của người
 khác khỏi một repo công khai.
+
+## Three citations to a path that no longer exists
+
+Ba artifact đã đóng của `0005` trích dẫn `docs/ai-native-sdlc-playbook.md`, một trong số đó
+kèm số dòng:
+
+| Chỗ trích | Trích cái gì |
+|---|---|
+| `.cos/0005_hand-driven-invisible-loop/intent.md:33` | `docs/ai-native-sdlc-playbook.md:63` |
+| `.cos/0005_hand-driven-invisible-loop/plan.md:418` | `docs/ai-native-sdlc-playbook.md:63` |
+| `.cos/0005_hand-driven-invisible-loop/spec.md:216-217` | file đó, hai lần |
+
+Đường dẫn ấy đã biến mất khỏi repo. Đoạn cả ba trỏ tới là đoạn nói về vòng lặp trong đó mỗi
+artifact được chấp nhận sẽ khởi động giai đoạn kế tiếp; nó nằm trong bản gốc, ở phần bàn về
+*the committed artifact*.
+
+Bản thân `.claude/` **không** còn trỏ ra ngoài nó nữa: `harness.md` liên kết bằng URL, và
+`write-ship` đã bỏ hẳn trích dẫn. Đó là điều kiện để copy `.claude/` sang repo khác mà không
+mang theo một đường dẫn chết — chính `.claude/harness.md:168-170` đòi như vậy.
 
 ## Why the artifacts were not rewritten
 

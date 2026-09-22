@@ -16,3 +16,5 @@ __pycache__/
 .playwright-cli/
 .claude/settings.local.json
 .claude/settings.local.json.tmp.*
+# Source material this repository reads but does not own and must never republish.
+.raws/

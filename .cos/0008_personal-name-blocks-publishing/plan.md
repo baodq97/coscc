@@ -210,8 +210,15 @@ và `.claude/settings.local.json.tmp.*`, lọt vào `fc7f968` do chính `git add
 hai bị gỡ khỏi **toàn bộ 134 commit** bằng `git filter-repo` chạy qua `uvx` (không thêm
 dependency nào vào repo). Backup là một git bundle ngoài repo, tạo trước khi chạy. Hệ quả đã
 đo và chấp nhận: **44 trích dẫn SHA** trong `.cos/` chết, `BASE` của proof đổi từ `b923bba`
-sang `fa7d47c`, và `.cos/RENAMES.md` ghi một lần cho tất cả. Đường dẫn playbook nay là một
-stub trỏ về bản gốc, nên 5 trích dẫn hiện có vẫn phân giải.
+sang `fa7d47c`, và `.cos/RENAMES.md` ghi một lần cho tất cả.
+
+Bản đầu của bước này thay playbook bằng một **stub** ở cùng đường dẫn, để 5 trích dẫn còn
+phân giải. Người khởi xướng bỏ cách đó: đường dẫn biến mất hẳn, bản đọc cục bộ chuyển sang
+`.raws/`, và `.raws/` vào `.gitignore`. Lý do đúng hơn cách của tôi — một stub vẫn là repo
+tự nhận có tài liệu đó, còn `.gitignore` nói thẳng rằng đây là nguồn đọc chứ không phải thứ
+repo sở hữu. Stub chỉ tồn tại ở đúng commit tip nên `git commit --amend` gỡ nó khỏi mọi
+commit, và `BASE` không phải đổi lần nữa. Ba trích dẫn còn lại trong `0005` nay trỏ vào hư
+không; `.cos/RENAMES.md` liệt kê cả ba.
 
 **Một skill không được phụ thuộc vào `docs/` — lỗi có sẵn, người khởi xướng chỉ ra.**
 `.claude/skills/write-ship/SKILL.md` trích dẫn `docs/ai-native-sdlc-playbook.md`, trong khi
