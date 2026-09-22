@@ -1,5 +1,32 @@
 # Plan: One data root under ~/.cos, and one page on top of it
-Intent: intent.md. Spec: spec.md. Author: Claude Opus 5. Status: accepted.
+Intent: intent.md. Spec: spec.md. Author: Claude Opus 5. Status: done.
+
+> **`done` ở đây là một bypass, đặt tay ngày 2026-09-22 theo lệnh của người khởi xướng.**
+> Ba stage `pr`, `review`, `ship` của unit này **chưa bao giờ chạy** — các ô tương ứng trong
+> `cos.mjs status` trống, và chúng trống vì đúng như vậy. Unit không đi qua chúng; nó được
+> tuyên bố đóng.
+>
+> Lối tắt là `.claude/scripts/cos.mjs:123`: `nextAction` thấy `plan.md: done` thì trả
+> `finished` ngay và không đọc ba stage sau. Đó **chính là** lối tắt mà `0005` mở rộng vòng
+> lặp từ ba lên tám stage để bịt, và `.claude/CLAUDE.md` gọi tên nó — *"`plan.md: done` is
+> terminal, which is what kept the five units closed under the old three-stage loop reading
+> as finished"*. Nó được dùng lại ở đây một cách có ý thức, không do nhầm.
+>
+> **Vì sao không đi qua vòng lặp cho đúng:** `cos.mjs:31` cho stage `pr` đúng ba status —
+> `draft`, `accepted`, `rejected` — và **không có `skipped`**, trong khi `spec` thì có. Bốn
+> unit này hoàn thành trước khi repo có remote, nên không có pull request nào để ghi, và
+> `write-pr` invariant 4 bắt ghi `draft` khi không mở được PR. `draft` thì không mở được
+> `gate review`. Không có đường ra nào khác ngoài sửa `cos.mjs`, và `0009 spec.md`
+> `## Out of scope` đã để việc đó ra ngoài phạm vi.
+>
+> **Điều này không đúng với `write-plan` invariant 9**, vốn đòi `done` chỉ được đặt sau khi
+> công việc đã ship và lệnh ở `## Proof` đã pass. Công việc **đã** ship — code của cả bốn
+> unit nằm trên `main` — nhưng `ship.md` thì không tồn tại, và proof của unit này không được
+> chạy lại vào ngày đặt `done`.
+>
+> `0009` là unit đầu tiên đi hết tám stage thật. Từ `0010` trở đi có pull request thật, nên
+> bức tường này không gặp lại.
+
 
 ## Files that change
 
