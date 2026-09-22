@@ -170,7 +170,7 @@ test('a rejection in a late stage closes the unit, same as an early one', () => 
 test('the five new artifacts are read, not reported as unexpected files', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cos-stages-'))
   for (const f of ['idea.md', 'intent.md', 'spec.md', 'plan.md', 'impl.md', 'pr.md', 'review.md', 'ship.md']) {
-    writeFileSync(join(dir, f), 'Status: accepted.\n')
+    writeFileSync(join(dir, f), f === 'intent.md' ? 'Type: feat. Status: accepted.\n' : 'Status: accepted.\n')
   }
   const u = readUnit(dir, '0009_widened')
   assert.deepEqual(u.problems, [])
@@ -178,6 +178,51 @@ test('the five new artifacts are read, not reported as unexpected files', () => 
 
   writeFileSync(join(dir, 'notes.md'), 'x')
   assert.match(readUnit(dir, '0009_widened').problems[0], /unexpected file\(s\): notes\.md/)
+})
+
+// --- the Type header ---------------------------------------------------------
+
+// `Type:` decides the branch name, so a unit that never declares one has no branch the
+// convention accepts. Before this, both shapes below read as a clean unit.
+const withIntent = (header) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cos-type-'))
+  writeFileSync(join(dir, 'intent.md'), `# Intent: x\n${header}\n`)
+  return readUnit(dir, '0011_typed')
+}
+
+test('a unit whose intent declares no Type is a problem, and the message says which', () => {
+  const u = withIntent('Author: Bao Do. Status: accepted.')
+  assert.equal(u.problems.length, 1)
+  assert.match(u.problems[0], /intent\.md declares no Type/)
+  assert.equal(u.type, undefined)
+})
+
+test('a Type outside the ten is a different problem from a missing one', () => {
+  const u = withIntent('Author: Bao Do. Type: nonsense. Status: accepted.')
+  assert.equal(u.problems.length, 1)
+  assert.match(u.problems[0], /has type "nonsense", not one of/)
+  for (const t of BRANCH_TYPES) assert.ok(u.problems[0].includes(t), `message omits ${t}`)
+})
+
+test('a Type inside the ten is recorded on the unit and reports nothing', () => {
+  for (const t of BRANCH_TYPES) {
+    const u = withIntent(`Author: Bao Do. Type: ${t}. Status: accepted.`)
+    assert.deepEqual(u.problems, [], `${t} was reported`)
+    assert.equal(u.type, t)
+  }
+})
+
+test('a missing intent.md reports that, and not a missing Type on top of it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cos-type-'))
+  const u = readUnit(dir, '0011_typed')
+  assert.deepEqual(u.problems, ['no intent.md — every unit opens with one'])
+})
+
+test('reporting a Type problem does not close any gate', () => {
+  // Deliberate, and the reason the eight older units could be backfilled at leisure rather
+  // than under a red board: `checkGate` never reads `Type:`. `.cos/0010_.../spec.md` R9.
+  const u = { ...unit({ 'intent.md': art('accepted') }), problems: ['intent.md declares no Type'] }
+  assert.deepEqual(checkGate(u, 'spec'), { ok: true, need: [] })
 })
 
 // --- the branch grammar ------------------------------------------------------
