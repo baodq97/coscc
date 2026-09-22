@@ -32,21 +32,42 @@ deliberate, and it is what keeps the test command free of a JavaScript toolchain
 something now that the repository has two languages in it — verified once, on 2026-09-21,
 by making a Python test fail and watching `npm test` go red.
 
-The `cos_baodo/` web app lists, creates and resumes Claude Code sessions across projects
-(`0002`), manages the workspaces themselves — add, label, remove, clone, pull latest
-(`0003`), and shows each workspace's work units as a board whose steps it can run
-(`0008`). It binds loopback only, and its sessions are **chat only — no tools** by default;
+The `cos_baodo/` web app serves **one page** at `/`: six screens — Overview, Workspaces,
+Board, Sessions, Activity & usage, Settings — built from Reflex Python components
+(`cos_baodo/screens.py`), with all of their state in `cos_baodo/state.py` and all of their
+logic behind `cos_baodo/service.py`. It lists, creates and resumes Claude Code sessions
+across projects (`0002`), manages the workspaces themselves (`0003`), and shows each
+workspace's work units as a board whose steps it can run (`0008`). `0011` replaced both the
+page `0002`-`0008` built and `0009`'s `/prototype` with this one; a handler that decides
+anything is a bug in `service.py`, not in the page.
+
+It binds loopback only, and its sessions are **chat only — no tools** by default;
 `cos_baodo/config.py` is the single place that reads configuration, and the defaults there
 are a safety posture rather than a suggestion. The one exception is a board step set to
 `autonomous`, which gets a named, bounded grant from `cos_baodo/policy.py` — never from the
 config. Each session it creates spends account quota, so nothing that talks to it belongs
 in an unattended loop.
 
-`COS_WORKING_DIR` is the one root under which workspaces may be created, and it is
-**deliberately not settable over HTTP** — there is no setter outside `from_env`, so a
-request has no path to it. A stored workspace is a *name*, never a path; the path is built
-from the root on every read, which is why a hand-edited store cannot point the app at
-`/etc`. Leave `COS_WORKING_DIR` unset and the app behaves exactly as `0002` did.
+**Two roots, and they are not the same thing.** `COS_DATA_DIR` (default `~/.cos`) holds the
+app's own state: `cos.db` and `objects/`. `COS_WORKING_DIR` holds the workspaces — somebody
+else's git checkouts. Backing up one does not back up the other, and the Settings screen
+prints both for that reason. **Neither is settable over HTTP**: `config.from_env` is the
+only reader of the environment and there is no setter, so a request has no path to either.
+A stored workspace is a *name*, never a path; the path is built from the root on every
+read, and after `0011` the table has no column for one — which is why a hand-edited store
+cannot point the app at `/etc`. Leave `COS_WORKING_DIR` unset and the app behaves exactly
+as `0002` did, except that it now has somewhere to remember things.
+
+**Storage (`0011`).** `cos_baodo/data.py` owns the data directory, the connection and the
+schema; it is the only module that knows where anything is. Three settings there are load
+bearing and none is a default: WAL, a 10-second `busy_timeout` **issued as the first
+statement on every connection**, and `BEGIN IMMEDIATE` around every read-modify-write.
+Getting the order wrong was measured on 2026-09-22 — `PRAGMA journal_mode=WAL` before
+`busy_timeout` failed about one run in ten with `database is locked`. The schema version
+lives in `PRAGMA user_version`, so opening an existing database is one read and no lock.
+`cos_baodo/objects.py` stores blobs under their own SHA-256, written through a `rename`.
+`Store` and `Journal` kept their interfaces and changed their backing; a `.cos-baodo.json`
+or `.cos-journal.jsonl` from before `0011` is imported once and **never deleted**.
 
 ```
 uv run cos-build                                          # build the page first
@@ -56,26 +77,30 @@ uv run python scripts/verify_0003.py                      # proof for 0003; clon
 uv run python scripts/verify_0004.py                      # proof for 0004; needs a browser and a free port
 uv run python scripts/verify_0005.py                      # proof for 0005; 4 processes at once, creates a session
 COS_PROOF_REPO=<url> uv run python scripts/verify_0008.py # proof for 0008; runs a whole unit, pushes, opens a PR
+uv run python scripts/verify_0011.py                      # proof for 0011; browser, free port, one short prompt
 ```
 
 `verify_0005.py` spawns four copies of itself writing to one working folder and checks
 that all 20 entries survive, then opens a real session and checks that `pull` refuses
-while it is live. Concurrent writes to the workspace list are locked with `flock` on a
-file beside the store, and the wait is bounded at 10 seconds — a busy folder gives an
-error naming it, never a hang. **The lock and the `pull` refusal both cover this process
-only.** Two copies of the app on one working folder still see past each other for
-sessions, so `pull` can change files under the other's turn; that is recorded in
-`.cos/0005_silent-concurrent-loss/spec.md` C2 and not fixed.
+while it is live. It was re-run on SQLite on 2026-09-22 and still measures 20 of 20 —
+`0011 spec.md` C2 is explicit that swapping the mechanism does not carry the old proof
+across. **The `pull` refusal covers this process only.** Two copies of the app on one
+working folder still see past each other for sessions, so `pull` can change files under
+the other's turn; that is recorded in `.cos/0005_silent-concurrent-loss/spec.md` C2 and not
+fixed. Concurrent *writes* are now SQLite's problem rather than `flock`'s.
 
-`verify_0004.py` is the only check that opens the page in a real browser, and the only one
-that needs `COS_PORT` free — the bundle hardcodes its own address, so this proof cannot
-move to a spare port the way the others do. Stop the app before running it, or build and
-run both at another port. Its exit codes are worth knowing: `0` pass, `1` the page is
-broken, `2` the environment is not ready (no browser, stale build, port in use). It creates
-no session, so unlike the other two it spends no quota.
+`verify_0004.py` and `verify_0011.py` are the two checks that open the page in a real
+browser, and the only ones that need `COS_PORT` free — the bundle hardcodes its own
+address, so they cannot move to a spare port. Stop the app before running either, and do
+not run them at the same time. Exit codes: `0` pass, `1` the page is broken, `2` the
+environment is not ready. `verify_0004.py` holds the floor — declared theme, three widths,
+colour mode that survives a reload, AA contrast — and its negative control proves it can
+still go red; it creates no session and spends no quota. `verify_0011.py` drives the five
+flows of `0011 intent.md` on real data, restarts the app and checks all five again; it
+sends **one** short prompt and never presses the run button.
 
-**The board (`0008`).** The page also shows every work unit of the open workspace as eight
-cells, and can run a step. Three modules carry it, and the split is the point:
+**The board (`0008`).** Every work unit of the open workspace as eight cells, and it can
+run a step. Three modules carry it, and the split is the point:
 
 - `cos_baodo/board.py` reads a workspace's `.cos/` by running **this repository's**
   `.claude/scripts/cos.mjs` with `--root`. It never runs the `cos.mjs` inside the
@@ -88,14 +113,21 @@ cells, and can run a step. Three modules carry it, and the split is the point:
   `("impl", "autonomous")` and `("pr", "autonomous")` carry anything, and `pr` carries a
   warning string that the page shows before the button is pressed, because its capability
   comes from this machine's own `gh` login and reaches every repository that login reaches.
-- `cos_baodo/journal.py` is an append-only JSONL log beside the store — modes, starts,
-  finishes, denials and cost. Appends are `flock`-ed and `O_APPEND`, so four processes
-  writing at once keep all their records.
+- `cos_baodo/journal.py` is the run log — modes, starts, finishes, denials and cost. Since
+  `0011` it is rows in `cos.db` rather than a JSONL file.
+
+The board's four lanes do **not** use the harness's `blocked` flag. Measured on 2026-09-22:
+`cos.mjs` returns `blocked: true` for every unit that is not finished
+(`.claude/scripts/cos.mjs:122-135`), so mapping it onto a lane called *Needs review* puts
+every unfinished unit there and leaves the other lanes empty. `cos_baodo/state.py` reads
+the lanes off the artifact statuses instead.
 
 The six prose stages get **no tools in either mode**. A session with no tools cannot write
 a file, so for those the app writes the artifact from the reply and the session only
 returns text. `.cos/0008_hand-driven-invisible-loop/plan.md` Risk 1 records that this
 contradicts one sentence of that unit's `## Design`, and why the sentence is the wrong half.
+The Settings screen says it on the page, because otherwise it looks like the agent wrote
+the file.
 
 `verify_0008.py` is the only proof that pushes anything anywhere. It needs `COS_PROOF_REPO`
 set to a repository you are willing to have it push a branch to and open a pull request on;
