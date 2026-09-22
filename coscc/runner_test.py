@@ -15,9 +15,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc import policy
+from coscc import harness, policy
 from coscc.journal import Journal
-from coscc.runner import RunError, Runner, build_prompt, check_reply, unit_dir
+from coscc.harness import MissingRules
+from coscc.runner import (
+    RunError,
+    Runner,
+    build_prompt,
+    check_reply,
+    skill_for,
+    unit_dir,
+)
 
 STAGES = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
 UNIT = "0009_a-test-unit"
@@ -274,6 +282,61 @@ class AFailedStepIsRecordedAsFailed(unittest.TestCase):
 
             with self.assertRaises(RunError):
                 asyncio.run(go())
+
+
+class AStepWithNoRulesDoesNotRun(unittest.TestCase):
+    """`spec.md` R4. Until 0012 every assertion in this class was false by design.
+
+    The failure it stands against is not "an error was raised" but "no error was raised":
+    a step that cannot find its rules used to run to completion, bill an account, and
+    leave a record identical to a step that had them.
+    """
+
+    def test_a_stage_with_no_skill_raises_rather_than_dropping_the_section(self):
+        with self.assertRaises(MissingRules):
+            skill_for("no-such-stage")
+
+    def test_the_prompt_always_carries_the_rules_section(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nINTENT")
+            prompt, _ = build_prompt(d, UNIT, "spec", STAGES, "spec.md")
+            self.assertIn("# The rules for this stage", prompt)
+
+    def test_it_refuses_before_the_journal_is_touched_or_a_session_is_made(self):
+        # The two things a step costs: a row saying it started, and a request that bills.
+        # Both come after `build_prompt` in `Runner.run`, and this is what holds them there.
+        class Counting:
+            def __init__(self):
+                self.streams = 0
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                self.streams += 1
+                yield ("done", {})
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nINTENT")
+            journal = Journal(Path(d) / "cos.db")
+            sessions = Counting()
+            runner = Runner(sessions=sessions, journal=journal)
+
+            originals = (harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS)
+            harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
+            harness.CHECKOUT_HARNESS = Path("/nonexistent/checkout")
+            try:
+                async def go():
+                    async for _ in runner.run(
+                        workspace=d, journal_key=d, unit=UNIT, stage="spec",
+                        artifact="spec.md", stages=STAGES, mode="manual",
+                    ):
+                        pass
+
+                with self.assertRaises(MissingRules):
+                    asyncio.run(go())
+            finally:
+                harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS = originals
+
+            self.assertEqual(sessions.streams, 0)
+            self.assertEqual(journal.timelines(d).get(UNIT, []), [])
 
 
 if __name__ == "__main__":

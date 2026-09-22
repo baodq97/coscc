@@ -12,9 +12,10 @@ The spec's design section says the agent writes it; that and R9 cannot both hold
 module implements the reading that keeps R9 and the zero-tool default: **the app
 holds the pen for `.cos/`, and the session only returns text.**
 
-The rules a stage follows come from **this app's** `.claude/skills/`, never the
-workspace's, for the same reason `board.py` runs its own `cos.mjs`: a workspace is a
-repository somebody cloned, and its files are that repository's to write.
+The rules a stage follows come from **this app's own** skills, never the workspace's, for
+the same reason `board.py` runs its own `cos.mjs`: a workspace is a repository somebody
+cloned, and its files are that repository's to write. `coscc/harness.py` is the only thing
+that answers where those skills are, and a step whose rules it cannot find does not run.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
+from coscc import harness
 from coscc.journal import Journal
 from coscc.policy import Grant, decide, grant_for, is_prose_stage
 from coscc.sessions import Refused, Sessions
@@ -35,8 +37,6 @@ from coscc.sessions import Refused, Sessions
 UNIT_RE = re.compile(r"^\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*$")
 COS_DIR = ".cos"
 
-# The app's own skills directory. `coscc/` sits beside `.claude/` in the flat layout.
-SKILLS = Path(__file__).resolve().parent.parent / ".claude" / "skills"
 
 # An artifact has to carry one of these on its first line, or the gate cannot read it and
 # `cos.mjs` will report the unit as broken. Checked before anything is written.
@@ -55,12 +55,19 @@ def unit_dir(workspace: str | Path, unit: str) -> Path:
 
 
 def skill_for(stage: str) -> str:
-    """The rules for a stage, from this app's copy. Missing is not fatal."""
-    for name in (f"write-{stage}", stage):
-        path = SKILLS / name / "SKILL.md"
-        if path.exists():
-            return path.read_text(encoding="utf-8", errors="replace")
-    return ""
+    """The rules for a stage, from this app's copy. Missing stops the step.
+
+    **This reverses a decision that had words on it.** Until 0012 the line above read
+    *"Missing is not fatal"* and this returned `""`, and `build_prompt` below simply left
+    the rules section out. `.cos/0012_installed-copy-runs-no-stage/intent.md` measured what
+    that bought: on `v0.2.2` installed from the release, every skill resolved to nothing,
+    so a step ran against a prompt 4.569 characters shorter, spent real quota, and wrote
+    `included=['intent.md']` -- the same record a step with its full rules writes. Not
+    fatal is only safe when the absence is small; the measurement says it was not.
+
+    `spec.md` R4 and C2 carry the reversal and who decided it.
+    """
+    return harness.read_skill(f"write-{stage}", stage)
 
 
 def _read(path: Path) -> str:
@@ -87,9 +94,10 @@ def build_prompt(
     included: list[str] = []
     parts: list[str] = []
 
-    rules = skill_for(stage)
-    if rules:
-        parts.append(f"# The rules for this stage\n\n{rules}")
+    # First, and outside any `try`. `Runner.run` calls this before it touches the journal
+    # and before `Sessions.stream` exists as a coroutine, so a `MissingRules` raised here
+    # is `spec.md` R4's "0 requests to the SDK" by structure rather than by promise.
+    parts.append(f"# The rules for this stage\n\n{skill_for(stage)}")
 
     intent = _read(directory / "intent.md")
     if intent:

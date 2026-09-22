@@ -9,7 +9,9 @@ rather than re-reading the Markdown.
 from a URL somebody typed, so `<workspace>/.claude/scripts/cos.mjs` is a file that
 repository controls. Executing it would hand a cloned repo everything this process has,
 which is past every knob in `coscc/config.py`. This module therefore runs **the copy
-that ships with the app**, pointed at the workspace's `.cos/` with `--root`. The cost is
+that ships with the app** -- `coscc/harness.py` is what makes that sentence true, and
+before 0012 it was not: no copy shipped -- pointed at the workspace's `.cos/` with
+`--root`. The cost is
 real and worth naming: a workspace that uses a different version of the harness is read
 with this app's stage list, not its own.
 
@@ -26,9 +28,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-# The app's own copy. `coscc/` sits beside `.claude/` in the flat layout this repo uses
-# (`pyproject.toml`, `module-root = ""`), so the repository root is one level up.
-SCRIPT = Path(__file__).resolve().parent.parent / ".claude" / "scripts" / "cos.mjs"
+from coscc import harness
+
+# Which copy, and where it is, is `coscc/harness.py`'s question -- not asked again here.
+# Until 0012 this line computed `parent.parent` for itself and `coscc/runner.py:39`
+# computed the same thing separately, which is how one packaging omission arrived as two
+# unrelated-looking symptoms.
 
 # Measured 2026-09-21 on this machine: five runs over the eight units in this repository
 # took 0.05s each, node v24.20.0. Ten seconds is therefore about two hundred times the
@@ -84,10 +89,11 @@ async def read(workspace: str | Path, timeout: float = TIMEOUT) -> dict[str, Any
     a child that failed or hung. A workspace with no `.cos/` is a *known* answer: no units.
     """
     path = Path(workspace)
-    if not SCRIPT.exists():
-        raise Unavailable(f"the harness script is missing: {SCRIPT}")
+    script = harness.script()
+    if not script.exists():
+        raise Unavailable(f"the harness script is missing: {script}")
 
-    argv = ["node", str(SCRIPT), "--root", str(path), "status", "--json"]
+    argv = ["node", str(script), "--root", str(path), "status", "--json"]
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,

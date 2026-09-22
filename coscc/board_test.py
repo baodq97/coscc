@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc import board
+from coscc import board, harness
 from coscc.board import Unavailable
 
 REPO = Path(__file__).resolve().parent.parent
@@ -119,14 +119,17 @@ class AnUnreadableBoardRaisesRatherThanReturningEmpty(unittest.TestCase):
     def test_a_missing_harness_script_is_not_reported_as_an_empty_board(self):
         # "No units" and "I could not look" are different answers, and a page that shows
         # the first when it means the second is the failure this test names.
-        original = board.SCRIPT
-        board.SCRIPT = Path("/nonexistent/cos.mjs")
+        # Both roots are moved, not just one: `harness.root()` falls back to the
+        # checkout, so blanking only the packaged side would still find a real script.
+        originals = (harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS)
+        harness.PACKAGE_HARNESS = Path("/nonexistent/packaged")
+        harness.CHECKOUT_HARNESS = Path("/nonexistent/checkout")
         try:
             with self.assertRaises(Unavailable) as caught:
                 run(board.read(REPO))
             self.assertIn("harness script is missing", str(caught.exception))
         finally:
-            board.SCRIPT = original
+            harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS = originals
 
     def test_the_child_environment_carries_no_secrets(self):
         env = board._child_env()
