@@ -1,6 +1,14 @@
 # Spec: Rename the package to coscc and publish it public
 Intent: intent.md. Author: Bao Do. Status: accepted.
 
+> **Sửa ngày 2026-09-22, sau khi bản đầu đã accepted và commit (`5226be5`).** Hai concern
+> được giao cho người khởi xướng đã có câu trả lời, và cả hai được ghi tại chỗ thay vì đẩy
+> sang `plan.md`: **C2** — dùng `github.com/baodq97/coscc`, chấp nhận handle cá nhân trong
+> URL; **C5** — ghi chú tra cứu đặt một chỗ, trong `.claude/harness.md`, sau một phép đo
+> mới ghi ở chính C5. R11 đổi theo. Bản đầu đọc được ở `5226be5`. Trước khi thêm khối này,
+> đã kiểm: **0** chỗ trong repo trích dẫn file này kèm số dòng, nên việc đẩy số dòng xuống
+> không làm hỏng gì — đúng cái bẫy mà C5 vừa đo được ở 19 artifact khác.
+
 Skip assessment, ngày 2026-09-22, cả năm tiêu chí:
 
 | # | Tiêu chí | Verdict |
@@ -84,13 +92,17 @@ artifact (C9). Đo case-sensitive; `grep -i "COS_"` khớp luôn `cos_baodo` và
 Lệch khỏi bảng này không tự động là lỗi, nhưng phải được ghi vào `impl.md` kèm lý do. Một con
 số đổi mà không ai nói tại sao là đúng thứ `0007` đi dọn.
 
-**R11 — `.cos/` không bị viết lại, và người đọc được bảo cách đọc nó.** Các artifact đã
-`accepted` giữ nguyên chữ `cos_baodo` trong thân file. Phải có một ghi chú tra cứu nói
-`cos_baodo/` nay là `coscc/`, theo đúng hình thức `.cos/0001_no-session-management/plan.md:4-21`
-đã dùng. Chỗ đặt ghi chú là một đánh đổi chưa giải — xem `## Concerns` C5. Kiểm:
+**R11 — `.cos/` không bị viết lại, và người đọc được bảo cách đọc nó ở đúng một chỗ.** Các
+artifact đã `accepted` giữ nguyên chữ `cos_baodo` trong thân file; **không file nào trong
+`.cos/` được sửa, kể cả thêm header**. Ghi chú tra cứu — nội dung theo hình thức
+`.cos/0001_no-session-management/plan.md:4-21`, nói `cos_baodo/` nay là `coscc/` — đặt trong
+`.claude/harness.md`, là nơi file đó đã tự nhận là chỗ đọc khi thiết lập hoặc thay đổi
+harness (`.claude/harness.md:7`). Lý do không theo hình thức đặt-trong-file của tiền lệ nằm ở
+C5. Kiểm: `git diff` của unit này không chạm file nào dưới `.cos/` ngoài các artifact của
+chính `0008`; `.claude/harness.md` chứa cả `cos_baodo/` lẫn `coscc/`; và
 `git grep -in baodo -- .cos` vẫn trả một số dương. **Không pin con số đó ở đây**: nó là 279 ở
-`9280d33`, 289 ở `fed0638`, và tăng nữa khi file này cùng `impl.md` được commit. `impl.md` đo
-lại tại thời điểm của nó.
+`9280d33`, 289 ở `fed0638`, 319 ở `5226be5`, và tăng nữa khi `impl.md` được commit. `impl.md`
+đo lại tại thời điểm của nó.
 
 **R12 — Bundle dựng lại và test xanh.** `uv run coscc-build` rồi `npm test`. Không có gì tự
 chạy build (`.claude/CLAUDE.md`), và `coscc` phải từ chối khởi động nếu bundle không khớp
@@ -199,8 +211,12 @@ history và chọn không (`intent.md` constraint 5). Ghi lại, không giải q
 `https://github.com/baodq97/coscc` — `baodq97` là handle cá nhân, trùng tiền tố email của cả
 121 commit. Tiêu chí người khởi xướng nêu là về **tên repo**, và theo đúng tiêu chí đó thì
 `coscc` đạt. Nhưng nếu mục đích thật là "không còn tên người trong URL công khai" thì unit
-này không đạt, và `doquocbao-nois` là tài khoản thứ hai đang đăng nhập sẵn. **Người khởi
-xướng quyết.**
+này không đạt, và `doquocbao-nois` là tài khoản thứ hai đang đăng nhập sẵn.
+
+> **Quyết ngày 2026-09-22: dùng `github.com/baodq97/coscc`.** Người khởi xướng chấp nhận
+> handle cá nhân trong URL. Concern giữ nguyên ở đây vì nó là một doubt đã được ghi, không
+> phải một lỗi đã được sửa: tên riêng vẫn có mặt trong URL công khai, chỉ là không còn trong
+> tên repo. R14 vì thế pin đúng URL đó.
 
 **C3 — Đổi một acronym không đọc được thành một acronym không đọc được.** Xem
 `## Design`. R7 là chỗ duy nhất gánh nửa thứ hai của vấn đề, và nó là một dòng prose mà không
@@ -211,11 +227,33 @@ những câu tự mô tả không còn đúng. Đặt tên theo một chức nă
 cách đó. R7 buộc hai thứ phải được nói tách nhau; nếu sau này chức năng vẫn không tới, câu ở
 README sẽ thành đúng loại câu `0007` đã đi dọn.
 
-**C5 — Ghi chú tra cứu cho `.cos/` đặt ở đâu, và không lối nào sạch.** Tiền lệ đặt nó **trong**
-file bị ảnh hưởng (`0001 plan.md:4-21`), nhưng ở đó chỉ có 1 file. Ở đây có 24. Đặt trong cả
-24 file nghĩa là sửa 24 artifact đã `accepted` — chính việc constraint 4 tồn tại để tránh. Đặt
-một chỗ trong `.claude/harness.md` là một lần sửa, nhưng người đọc `.cos/0003/spec.md` sẽ
-không thấy nó. **Người khởi xướng quyết.** Spec này không chọn thay.
+**C5 — Ghi chú tra cứu cho `.cos/` đặt ở đâu; tiền lệ không áp dụng được, và phép đo nói tại
+sao.** Đo ngày 2026-09-22: `.cos/` chứa **90 trích dẫn** dạng `cos_baodo/<file>.py:<dòng>`
+trải trên **19 file**, và cả 90 sẽ trỏ vào hư không sau R1 — ví dụ
+`.cos/0005_hand-driven-invisible-loop/intent.md:71` trỏ vào `cos_baodo/gitops.py:4`.
+
+Tiền lệ đặt ghi chú **trong** file bị ảnh hưởng (`0001 plan.md:4-21`), và lúc đó chỉ có 1
+file. Làm vậy ở đây thì hỏng, vì **5 trong 19 file đó đang bị nơi khác trích dẫn kèm số
+dòng**:
+
+```
+.cos/0002_no-workspace-management/plan.md
+.cos/0004_silent-concurrent-loss/plan.md
+.cos/0005_hand-driven-invisible-loop/pr.md
+.cos/0005_hand-driven-invisible-loop/spec.md
+.cos/0006_demo-data-and-no-durable-store/spec.md
+```
+
+Thêm một header vào chúng đẩy mọi dòng xuống và làm **19 trích dẫn đang đúng thành sai**.
+Tức là cách đó chữa 90 trích dẫn chết bằng cách tạo ra 19 trích dẫn chết kiểu khác — đúng
+nguyên văn thứ `.cos/0001_no-session-management/plan.md:6` gọi là *"một bản ghi sai theo kiểu
+khác"*. Tiền lệ từ chối viết lại thân file; nó không lường trước trường hợp chính cái header
+cũng phá được thứ khác.
+
+> **Quyết ngày 2026-09-22: một ghi chú, trong `.claude/harness.md`.** Không artifact nào bị
+> chạm, 19 trích dẫn số dòng giữ nguyên. Giá phải trả không biến mất và phải nói rõ: ai mở
+> thẳng một artifact sẽ thấy đường dẫn chết và không có gì tại chỗ chỉ họ đi đâu. Đó là chỗ
+> concern này vẫn hở, và R11 chỉ làm nó rẻ hơn chứ không đóng nó.
 
 **C6 — Bất đối xứng `Store`/`Journal` sau R3.** Xem `## Design`. Nó đúng theo phạm vi và vẫn
 là một chỗ lệch mà người đọc code sẽ phải hỏi tại sao. R6 là chỗ nó được nói ra.
@@ -249,7 +287,10 @@ README và trong sáu proof cũng đổi tên. Không phải defect, nhưng là 
    `## Out of scope`. Điều một câu trả lời sẽ đổi: R13 đang dọn một dòng workspace tên
    `cos-baodo`; nếu thư mục cũng đổi tên thì `COS_WORKING_DIR` của người khởi xướng và mọi
    session đang mở mất đường dẫn cùng lúc.
-4. **Ghi chú tra cứu của R11 đặt ở đâu?** Là C5. Không trả lời thì `plan.md` phải tự chọn, và
-   nó sẽ chọn chỗ rẻ hơn chứ không chắc là chỗ đúng hơn.
-5. **`doquocbao-nois` có vai gì về sau?** Là C2. Nếu repo sẽ chuyển sang một org thì việc tạo
-   nó dưới `baodq97` bây giờ thêm một bước chuyển sau này, và GitHub để lại redirect.
+### Đã trả lời, so với bản `5226be5`
+
+4. **Ghi chú tra cứu của R11 đặt ở đâu?** → Một chỗ, trong `.claude/harness.md`. Xem C5;
+   quyết định đến từ phép đo 5 file / 19 trích dẫn, không từ khẩu vị.
+5. **`doquocbao-nois` có vai gì về sau?** → Không vai gì trong unit này. Repo tạo dưới
+   `baodq97`. Nếu về sau chuyển sang một org thì đó là một bước riêng, và GitHub để lại
+   redirect — điều đó vẫn đúng và vẫn là một chi phí chưa ai trả.
