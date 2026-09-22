@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cos_baodo import policy, runner
+from cos_baodo import policy
 from cos_baodo.journal import Journal
 from cos_baodo.runner import RunError, Runner, build_prompt, check_reply, unit_dir
 

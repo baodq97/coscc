@@ -36,17 +36,18 @@ from cos_baodo.journal import (
     Busy,
     Journal,
     add_cost,
+    totals_of,
     zero_cost,
 )
 from cos_baodo.policy import GRANTS, PROSE_STAGES, grant_for
 from cos_baodo.runner import RunError, Runner, unit_dir
-
-# The eight artifact filenames, in stage order. Taken from the stage list the board
-# reports rather than written again here would be better; the board read is async and
-# this method is not, so the names are repeated and this comment is the warning.
-STAGE_FILES = ("idea", "intent", "spec", "plan", "impl", "pr", "review", "ship")
 from cos_baodo.sessions import Sessions
 from cos_baodo.store import BadName, Store, require_name
+
+# The eight stage names, in stage order. Taken from the stage list the board reports rather
+# than written again here would be better; the board read is async and this method is not,
+# so the names are repeated and this comment is the warning.
+STAGE_FILES = ("idea", "intent", "spec", "plan", "impl", "pr", "review", "ship")
 
 
 class Invalid(Exception):
@@ -262,9 +263,13 @@ class Service:
         journal = self._journal()
         key = self._journal_key(cwd)
         modes: dict[tuple[str, str], str] = {}
+        timelines: dict[str, list[dict[str, Any]]] = {}
         if journal is not None:
             try:
                 modes = journal.modes(key)
+                # One read for every unit's cost. Asking `totals` per unit re-scanned the
+                # working folder N times for the rows this already has.
+                timelines = journal.timelines(key)
             except Busy as e:
                 raise Invalid(str(e)) from e
 
@@ -279,7 +284,7 @@ class Service:
                 row["grants"] = list(grant.tools)
                 row["warning"] = grant.warning
             unit["cost"] = (
-                journal.totals(key, unit["name"])["total"] if journal is not None else {}
+                totals_of(timelines.get(unit["name"], [])) if journal is not None else {}
             )
 
         data["recording"] = journal is not None
@@ -368,14 +373,10 @@ class Service:
             return {"cwd": cwd, "unit": unit, "runs": [], "cost": {}}
         key = self._journal_key(cwd)
         try:
-            return {
-                "cwd": cwd,
-                "unit": unit,
-                "runs": journal.timeline(key, unit),
-                "cost": journal.totals(key, unit)["total"],
-            }
+            runs = journal.timeline(key, unit)
         except Busy as e:
             raise Invalid(str(e)) from e
+        return {"cwd": cwd, "unit": unit, "runs": runs, "cost": totals_of(runs)}
 
     # -- sessions -----------------------------------------------------------
 
@@ -452,21 +453,23 @@ class Service:
     # would break the rule this module exists for (see the module docstring), which is a
     # far worse trade than three methods that only read.
 
-    def activity(self, cwd: str, limit: int = 40) -> dict[str, Any]:
-        """What has happened across the whole workspace, newest first.
+    def _records_or_none(self, cwd: str) -> list[dict[str, Any]] | None:
+        """Every record for this workspace, or `None` when nothing is being recorded.
 
-        `timeline` answers the same question for one unit. This one exists because the
-        Activity screen is workspace-wide, and building it by calling `timeline` once per
-        unit would spawn one board read per unit to find out what the units are.
+        `activity` and `usage` both want the same rows and are always called together by
+        the Activity screen. Shared so the scan is written once — see `activity_and_usage`
+        for why it is also *read* once.
         """
         self._workspace_or_refuse(cwd)
         journal = self._journal()
         if journal is None:
-            return {"cwd": cwd, "events": [], "recording": False}
+            return None
         try:
-            rows = journal.records(self._journal_key(cwd))
+            return journal.records(self._journal_key(cwd))
         except Busy as e:
             raise Invalid(str(e)) from e
+
+    def _events_of(self, cwd: str, rows: list[dict[str, Any]], limit: int) -> dict[str, Any]:
         events = [
             {
                 "at": r.get("at") or "",
@@ -485,21 +488,7 @@ class Service:
         events.reverse()
         return {"cwd": cwd, "events": events[:limit], "recording": True}
 
-    def usage(self, cwd: str) -> dict[str, Any]:
-        """What this workspace has cost, added up from its records.
-
-        Added rather than stored, for the reason `journal.totals` gives: a stored total is
-        a second number that can disagree with the first.
-        """
-        self._workspace_or_refuse(cwd)
-        journal = self._journal()
-        if journal is None:
-            return {"cwd": cwd, "total": {}, "per_unit": {}, "recording": False}
-        try:
-            rows = journal.records(self._journal_key(cwd))
-        except Busy as e:
-            raise Invalid(str(e)) from e
-
+    def _usage_of(self, cwd: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
         per_unit: dict[str, dict[str, Any]] = {}
         for record in rows:
             if record.get("kind") != "end":
@@ -510,6 +499,43 @@ class Service:
         for bucket in per_unit.values():
             add_cost(total, bucket)
         return {"cwd": cwd, "total": total, "per_unit": per_unit, "recording": True}
+
+    def activity(self, cwd: str, limit: int = 40) -> dict[str, Any]:
+        """What has happened across the whole workspace, newest first.
+
+        `timeline` answers the same question for one unit. This one exists because the
+        Activity screen is workspace-wide, and building it by calling `timeline` once per
+        unit would spawn one board read per unit to find out what the units are.
+        """
+        rows = self._records_or_none(cwd)
+        if rows is None:
+            return {"cwd": cwd, "events": [], "recording": False}
+        return self._events_of(cwd, rows, limit)
+
+    def usage(self, cwd: str) -> dict[str, Any]:
+        """What this workspace has cost, added up from its records.
+
+        Added rather than stored, for the reason `journal.totals` gives: a stored total is
+        a second number that can disagree with the first.
+        """
+        rows = self._records_or_none(cwd)
+        if rows is None:
+            return {"cwd": cwd, "total": {}, "per_unit": {}, "recording": False}
+        return self._usage_of(cwd, rows)
+
+    def activity_and_usage(self, cwd: str, limit: int = 40) -> dict[str, Any]:
+        """Both of the above, from one read.
+
+        The Activity screen wants both at once. Calling the two public methods meant two
+        connections and two full parses of the identical rows; they stay for the JSON API,
+        and this is what the page calls.
+        """
+        rows = self._records_or_none(cwd)
+        if rows is None:
+            return {
+                "cwd": cwd, "events": [], "total": {}, "per_unit": {}, "recording": False,
+            }
+        return {**self._events_of(cwd, rows, limit), **self._usage_of(cwd, rows)}
 
     def settings(self) -> dict[str, Any]:
         """The safety posture, as something a screen can render. Read only.
@@ -584,10 +610,9 @@ class Service:
         refuses is a name no step could run against either — one rule, not two.
         """
         self._workspace_or_refuse(cwd)
-        stages = {s: f"{s}.md" for s in STAGE_FILES}
-        filename = stages.get(stage)
-        if filename is None:
+        if stage not in STAGE_FILES:
             raise Invalid(f"no such stage: {stage}")
+        filename = f"{stage}.md"
         try:
             path = unit_dir(cwd, unit) / filename
         except RunError as e:

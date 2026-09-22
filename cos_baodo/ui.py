@@ -29,9 +29,6 @@ import reflex as rx
 # exist to turn "responsive" into something a browser can fail.
 BREAKPOINTS = {"phone": "390px", "tablet": "768px", "laptop": "1280px"}
 
-# One scale, used everywhere. Reflex's spacing props take these as strings.
-SPACE = {"tight": "2", "normal": "4", "loose": "6"}
-
 THEME = rx.theme(
     # `inherit` hands the decision to the colour mode, which Reflex keeps in the browser —
     # that is what makes R23's "survives a reload" true without this file storing anything.

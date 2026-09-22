@@ -19,11 +19,11 @@ differently depending on which door you came through.
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
 
 import reflex as rx
 
 from cos_baodo.api import build
+from cos_baodo.journal import COST_USD, TOKEN_FIELDS
 from cos_baodo.service import Invalid
 
 API = build()
@@ -178,6 +178,23 @@ class GrantRow:
 # --- formatting --------------------------------------------------------------
 
 
+def _next_required(cells: list) -> "Cell | None":
+    """The first step with no artifact that something is actually waiting on.
+
+    Optional stages are stepped over. `idea` is the only one, it gates nothing, and
+    offering to run it on a unit whose card reads "Next: write-pr" would put two answers to
+    one question on the same screen — seen on 2026-09-22 in a screenshot, which is the only
+    place it was visible.
+
+    Shared by the run button and by the card's mode badge. They are the same question, and
+    when they were two scans only one of them learned about `optional`.
+    """
+    for cell in cells:
+        if not cell.started and not cell.optional:
+            return cell
+    return None
+
+
 def _tokens(cost: dict) -> tuple[int, str]:
     """Every token the turn was billed for, as one number.
 
@@ -185,15 +202,12 @@ def _tokens(cost: dict) -> tuple[int, str]:
     output would report a cache-heavy session as nearly free, which is the opposite of
     what a cost display is for.
     """
-    total = sum(
-        int(cost.get(name) or 0)
-        for name in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
-    )
+    total = sum(int(cost.get(name) or 0) for name in TOKEN_FIELDS)
     return total, (f"{total:,}" if total else "—")
 
 
 def _usd(cost: dict) -> str:
-    usd = float(cost.get("cost_usd") or 0.0)
+    usd = float(cost.get(COST_USD) or 0.0)
     if not usd:
         return "—"
     # Under a cent still has to read as a number, not as $0.00.
@@ -294,7 +308,6 @@ class StudioState(rx.State):
     # writing into one unit would race on the same files.
     running: str = ""
     run_log: str = ""
-    run_stage: str = ""
 
     # -- sessions
     conversations: list[Conversation] = []
@@ -387,18 +400,9 @@ class StudioState(rx.State):
 
     @rx.var
     def next_stage(self) -> str:
-        """The stage the run button would run: the first required one with no artifact.
-
-        Optional stages are stepped over. `idea` is the only one, it gates nothing, and
-        offering to run it on a unit whose card reads "Next: write-pr" would put two
-        answers to one question on the same screen — seen on 2026-09-22 in a screenshot,
-        which is the only place it was visible.
-        """
-        cells = self.current_unit.cells
-        for cell in cells:
-            if not cell.started and not cell.optional:
-                return cell.stage
-        return ""
+        """The stage the run button would run: the first required one with no artifact."""
+        nxt = _next_required(self.current_unit.cells)
+        return nxt.stage if nxt is not None else ""
 
     @rx.var
     def next_cell(self) -> Cell:
@@ -521,7 +525,8 @@ class StudioState(rx.State):
             lane = _lane(u)
             stage = _current_stage(u, self.stages)
             count, shown = _tokens(u.get("cost") or {})
-            mode = next((c.mode for c in cells if not c.started), "manual")
+            nxt = _next_required(cells)
+            mode = nxt.mode if nxt is not None else "manual"
             units.append(
                 Unit(
                     id=u["name"],
@@ -602,8 +607,9 @@ class StudioState(rx.State):
         if not self.cwd:
             return
         try:
-            feed = SERVICE.activity(self.cwd, limit=40)
-            usage = SERVICE.usage(self.cwd)
+            # One read for both halves of this screen; `activity` and `usage` on their own
+            # would each scan and parse the identical rows.
+            feed = SERVICE.activity_and_usage(self.cwd, limit=40)
         except Invalid as e:
             self._fail(e)
             return
@@ -629,9 +635,10 @@ class StudioState(rx.State):
                 detail += f" / wrote {row['artifact']}"
             events.append(Event(title=title, detail=detail, icon=icon, color=color, time=row["at"]))
         self.events = events
-        _, shown = _tokens(usage.get("total") or {})
+        total = feed.get("total") or {}
+        _, shown = _tokens(total)
         self.usage_total_tokens = shown
-        self.usage_total_usd = _usd(usage.get("total") or {})
+        self.usage_total_usd = _usd(total)
 
     def _load_timeline(self) -> None:
         self.runs = []
@@ -925,7 +932,6 @@ class StudioState(rx.State):
                 self.notice = "There is no next step to run."
                 return
             self.running = f"{unit}/{stage}"
-            self.run_stage = stage
             self.run_log = ""
             self.error = ""
 

@@ -27,34 +27,29 @@ WebSocket against. Stop the app before running this.
 
 from __future__ import annotations
 
-import os
 import shutil
-import socket
-import subprocess
 import sys
 import tempfile
-import time
-from contextlib import closing
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import httpx
-
-from cos_baodo import build
 from cos_baodo.config import from_env
 from cos_baodo.data import Data
 from cos_baodo.store import Store
-
-REPO = Path(__file__).resolve().parent.parent
+from scripts.proof_harness import (
+    EXIT_BROKEN,
+    EXIT_PASS,
+    RealApp,
+    require_browser,
+    require_build,
+    require_free_port,
+)
 
 FLOWS = 5  # from intent.md. Change it there, not here.
 
 PAGE_TIMEOUT_MS = 20_000
-BOOT_TIMEOUT_S = 60.0
 SETTLE_MS = 1_200
-
-EXIT_PASS, EXIT_BROKEN, EXIT_ENV = 0, 1, 2
 
 # One short prompt with a short answer, sent once.
 PROMPT = "Reply with exactly: READY"
@@ -79,42 +74,6 @@ class Flow:
         print(f"{'PASS' if self.ok else 'FAIL'}  flow {self.number}: {self.title}"
               + ("" if self.ok else f" — {self.why}"))
         return self.ok
-
-
-def _port_free(host: str, port: int) -> bool:
-    with closing(socket.socket()) as s:
-        s.settimeout(1)
-        return s.connect_ex((host, port)) != 0
-
-
-# --------------------------------------------------------------------------
-# environment
-# --------------------------------------------------------------------------
-
-
-def require_build(config) -> Path:
-    built = build.web_dir() / "build" / "client"
-    state, message = build.check(config, built)
-    if state != build.OK:
-        print(message, file=sys.stderr)
-        raise SystemExit(EXIT_ENV)
-    return built
-
-
-def require_browser():
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print("playwright is not installed — run:\n    uv sync --group dev", file=sys.stderr)
-        raise SystemExit(EXIT_ENV)
-    try:
-        p = sync_playwright().start()
-        return p, p.chromium.launch()
-    except Exception as e:
-        looked = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "~/.cache/ms-playwright")
-        print(f"no usable chromium (looked in {looked}): {type(e).__name__}\n"
-              f"    uv run playwright install chromium", file=sys.stderr)
-        raise SystemExit(EXIT_ENV)
 
 
 # --------------------------------------------------------------------------
@@ -148,58 +107,6 @@ def make_scene(root: Path, data_dir: Path) -> None:
     (ws / ".cos" / UNIT / "intent.md").write_text(INTENT, encoding="utf-8")
     (root / "second-workspace").mkdir(parents=True, exist_ok=True)
     Store(root, data_dir).add("proof-workspace", label="Written by the proof")
-
-
-class RealApp:
-    """The app started the way a person starts it, through `cos_baodo.run`."""
-
-    def __init__(self, config, working_dir: Path, data_dir: Path):
-        self.config, self.working_dir, self.data_dir = config, working_dir, data_dir
-        self.proc: subprocess.Popen | None = None
-        self.base = f"http://{config.host}:{config.port}"
-
-    def start(self) -> "RealApp":
-        env = {
-            **os.environ,
-            "COS_WORKING_DIR": str(self.working_dir),
-            "COS_DATA_DIR": str(self.data_dir),
-            "COS_WORKSPACES": "",
-        }
-        self.proc = subprocess.Popen(
-            [sys.executable, "-m", "cos_baodo.run"],
-            cwd=REPO, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-        )
-        deadline = time.monotonic() + BOOT_TIMEOUT_S
-        while time.monotonic() < deadline:
-            if self.proc.poll() is not None:
-                err = (self.proc.stderr.read() or b"").decode()[-400:]
-                print(f"the app exited before serving:\n{err}", file=sys.stderr)
-                raise SystemExit(EXIT_ENV)
-            try:
-                if httpx.get(f"{self.base}/api/health", timeout=2).status_code == 200:
-                    return self
-            except httpx.HTTPError:
-                time.sleep(0.3)
-        raise SystemExit(EXIT_ENV)
-
-    def stop(self) -> None:
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait(timeout=10)
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline and not _port_free(self.config.host, self.config.port):
-            time.sleep(0.2)
-
-    def __enter__(self):
-        return self.start()
-
-    def __exit__(self, *exc):
-        self.stop()
-        return False
 
 
 def open_page(browser, base: str):
@@ -404,11 +311,7 @@ def survives_restart(page, root: Path) -> Flow:
 def run() -> int:
     config = from_env()
     require_build(config)
-    if not _port_free(config.host, config.port):
-        print(f"{config.host}:{config.port} is already in use — stop the running app first.\n"
-              "The bundle hardcodes that address, so this proof cannot move to a free port.",
-              file=sys.stderr)
-        raise SystemExit(EXIT_ENV)
+    require_free_port(config)
 
     playwright, browser = require_browser()
     root = Path(tempfile.mkdtemp(prefix="cos0011-work-"))

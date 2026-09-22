@@ -9,7 +9,6 @@ serialise a read-modify-write rather than merely appearing to.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 import stat
 import subprocess

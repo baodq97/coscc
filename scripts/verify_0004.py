@@ -21,91 +21,35 @@ from __future__ import annotations
 
 import http.server
 import os
-import socket
-import subprocess
 import sys
 import tempfile
 import threading
-import time
-from contextlib import closing
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
-from cos_baodo import build
 from cos_baodo.config import from_env
 from cos_baodo.service import Service
 from cos_baodo.sessions import Sessions
-
-REPO = Path(__file__).resolve().parent.parent
+from scripts.proof_harness import (
+    EXIT_ENV,
+    EXIT_PASS,
+    RealApp,
+    require_browser,
+    require_build,
+    require_free_port,
+    say,
+    wait_closed,
+)
+# This proof's exit 1 means "the page is broken"; the shared module names it for what is
+# broken in general.
+from scripts.proof_harness import EXIT_BROKEN as EXIT_PAGE
 
 WORKSPACES = 2  # from intent.md. Change it there, not here.
 
 PAGE_TIMEOUT_MS = 15_000  # how long the page gets to show live data before it has failed
-BOOT_TIMEOUT_S = 60.0
-
-EXIT_PASS, EXIT_PAGE, EXIT_ENV = 0, 1, 2
-
-
-def say(ok: bool, claim: str, detail: str = "") -> bool:
-    print(f"{'PASS' if ok else 'FAIL'}  {claim}{': ' + detail if detail and not ok else ''}")
-    return ok
-
-
-def _port_free(host: str, port: int) -> bool:
-    with closing(socket.socket()) as s:
-        s.settimeout(1)
-        return s.connect_ex((host, port)) != 0
-
-
-def _wait_closed(host: str, port: int, timeout: float = 15.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if _port_free(host, port):
-            return True
-        time.sleep(0.2)
-    return False
-
-
-# --------------------------------------------------------------------------
-# environment
-# --------------------------------------------------------------------------
-
-
-def require_build(config) -> Path:
-    built = build.web_dir() / "build" / "client"
-    state, message = build.check(config, built)
-    if state != build.OK:
-        print(message, file=sys.stderr)
-        raise SystemExit(EXIT_ENV)
-    return built
-
-
-def require_browser():
-    """`spec.md` R7: never download. Say where we looked and what to run."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print(
-            "playwright is not installed — run:\n    uv sync --group dev",
-            file=sys.stderr,
-        )
-        raise SystemExit(EXIT_ENV)
-    try:
-        p = sync_playwright().start()
-        browser = p.chromium.launch()
-    except Exception as e:
-        looked = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "~/.cache/ms-playwright")
-        print(
-            f"no usable chromium (looked in {looked}): {type(e).__name__}\n"
-            f"    uv run playwright install chromium",
-            file=sys.stderr,
-        )
-        raise SystemExit(EXIT_ENV)
-    return p, browser
-
 
 # --------------------------------------------------------------------------
 # the scene
@@ -127,56 +71,6 @@ def make_workspaces(root: Path, config) -> None:
         name = f"project-{i + 1}"
         (root / name).mkdir(parents=True, exist_ok=True)
         service.store.add(name, label=f"Workspace {i + 1}")
-
-
-class RealApp:
-    """The app started the way a person starts it, not by a private path.
-
-    Going through `cos_baodo.run` means this also exercises the build guard and the
-    loopback bind, rather than reaching past them into the ASGI object.
-    """
-
-    def __init__(self, config, working_dir: Path):
-        self.config, self.working_dir = config, working_dir
-        self.proc: subprocess.Popen | None = None
-        self.base = f"http://{config.host}:{config.port}"
-
-    def __enter__(self):
-        env = {
-            **os.environ,
-            "COS_WORKING_DIR": str(self.working_dir),
-            # The app under test keeps its database in the scratch folder too, so a
-            # proof run never touches the data root a real run would use.
-            "COS_DATA_DIR": str(self.working_dir),
-            "COS_WORKSPACES": "",
-        }
-        self.proc = subprocess.Popen(
-            [sys.executable, "-m", "cos_baodo.run"],
-            cwd=REPO, env=env,
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-        )
-        deadline = time.monotonic() + BOOT_TIMEOUT_S
-        while time.monotonic() < deadline:
-            if self.proc.poll() is not None:
-                err = (self.proc.stderr.read() or b"").decode()[-400:]
-                print(f"the app exited before serving:\n{err}", file=sys.stderr)
-                raise SystemExit(EXIT_ENV)
-            try:
-                if httpx.get(f"{self.base}/api/health", timeout=2).status_code == 200:
-                    return self
-            except httpx.HTTPError:
-                time.sleep(0.3)
-        raise SystemExit(EXIT_ENV)
-
-    def __exit__(self, *exc):
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait(timeout=10)
-        return False
 
 
 class StaticOnly:
@@ -439,13 +333,7 @@ def the_page_meets_the_craft_floor(browser, url: str) -> str:
 def run() -> int:
     config = from_env()
     built = require_build(config)
-    if not _port_free(config.host, config.port):
-        print(
-            f"{config.host}:{config.port} is already in use — stop the running app first.\n"
-            "The bundle hardcodes that address, so this proof cannot move to a free port.",
-            file=sys.stderr,
-        )
-        raise SystemExit(EXIT_ENV)
+    require_free_port(config)
 
     playwright, browser = require_browser()
     root = Path(tempfile.mkdtemp(prefix="cos0004-"))
@@ -480,7 +368,7 @@ def run() -> int:
         # --- claim 2: the same measurement fails when nothing is behind the page ---
         # The app must be gone first. The bundle points at its address, so a lingering
         # server would let the "broken" page connect and quietly make this claim vacuous.
-        if not _wait_closed(config.host, config.port):
+        if not wait_closed(config.host, config.port):
             print(
                 f"{config.host}:{config.port} did not close after the app was stopped; "
                 "the broken scene would not be broken.",

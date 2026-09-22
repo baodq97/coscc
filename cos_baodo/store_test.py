@@ -16,7 +16,6 @@ would send the test at the real `~/.cos`, which is exactly the accident worth ma
 from __future__ import annotations
 
 import json
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -25,7 +24,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from cos_baodo.data import Data
 from cos_baodo.store import BadName, Busy, Store, clean_label, require_name, valid_name
 
 

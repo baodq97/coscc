@@ -58,14 +58,17 @@ OUTCOMES = ("done", "failed", "exhausted", "cancelled")
 
 # The fields a caller may report about what a turn cost. Anything else in a record is
 # carried through untouched; these are the ones `totals` knows how to add up.
-COST_FIELDS = (
+# The four a turn is billed for. Named apart from the other two because a cost display
+# sums exactly these — cache reads and writes included, or a cache-heavy session reads as
+# nearly free — and `state._tokens` should not retype them.
+TOKEN_FIELDS = (
     "input_tokens",
     "output_tokens",
     "cache_read_tokens",
     "cache_creation_tokens",
-    "turns",
-    "duration_ms",
 )
+
+COST_FIELDS = TOKEN_FIELDS + ("turns", "duration_ms")
 
 # Money is the one field that is not a whole number. A turn can cost less than a cent, so
 # truncating it to an integer would report most of them as free.
@@ -130,26 +133,22 @@ class Journal:
 
     # -- migration ----------------------------------------------------------
 
+    def _migration_key(self) -> str:
+        return f"import-jsonl:{self._root}"
+
     def _import_legacy(self, conn) -> None:
         """Bring a pre-`0011` JSONL log in, once, for this working folder.
 
-        The same three properties as `store.Store._import_legacy`: one `stat` in the common
-        case, the `migrations` mark written inside the caller's transaction, and the file
-        left on disk afterwards.
-
-        Lines that will not parse are skipped rather than repaired, exactly as `records`
-        used to skip them on every read.
+        `Data.import_once` owns the guard, the mark and the not-deleting, exactly as it
+        does for `store.Store`. This supplies only the parse: lines that will not parse are
+        skipped rather than repaired, as `records` used to skip them on every read.
         """
         if self._imported:
             return
-        if not self.legacy_path.is_file():
-            self._imported = True
-            return
-        key = f"import-jsonl:{self._root}"
-        if self.data.has_run(key, conn):
-            self._imported = True
-            return
+        self.data.import_once(conn, self._migration_key(), self.legacy_path, self._load_legacy)
+        self._imported = True
 
+    def _load_legacy(self, conn) -> None:
         try:
             raw = self.legacy_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -164,8 +163,6 @@ class Journal:
                 continue
             if isinstance(item, dict) and item.get("kind"):
                 self._insert(conn, item)
-        Data.mark_run(conn, key)
-        self._imported = True
 
     def _needs_import(self) -> bool:
         return self.legacy_path.is_file() and not self._imported
@@ -235,7 +232,11 @@ class Journal:
     # -- reading ------------------------------------------------------------
 
     def records(
-        self, workspace: str | None = None, unit: str | None = None, timeout: float | None = None
+        self,
+        workspace: str | None = None,
+        unit: str | None = None,
+        timeout: float | None = None,
+        kind: str | None = None,
     ) -> list[dict[str, Any]]:
         """Every record for this working folder, oldest first, optionally narrowed.
 
@@ -258,6 +259,9 @@ class Journal:
         if unit is not None:
             sql += " AND unit = ?"
             args.append(unit)
+        if kind is not None:
+            sql += " AND kind = ?"
+            args.append(kind)
         sql += " ORDER BY id"
 
         with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
@@ -274,11 +278,13 @@ class Journal:
         return out
 
     def modes(self, workspace: str, timeout: float | None = None) -> dict[tuple[str, str], str]:
-        """Current mode of every step that has ever had one set. Latest record wins."""
+        """Current mode of every step that has ever had one set. Latest record wins.
+
+        Narrowed in SQL: the `kind` column exists so this does not fetch and parse every
+        start, end and denial in the working folder to keep the handful that are modes.
+        """
         found: dict[tuple[str, str], str] = {}
-        for item in self.records(workspace, timeout=timeout):
-            if item.get("kind") != "mode":
-                continue
+        for item in self.records(workspace, timeout=timeout, kind="mode"):
             mode = item.get("mode")
             if mode in MODES:
                 found[(str(item.get("unit")), str(item.get("stage")))] = mode
@@ -291,43 +297,20 @@ class Journal:
         during. Both look the same from here, and the row says so by leaving `ended` unset
         rather than guessing.
         """
-        rows: list[dict[str, Any]] = []
-        open_runs: dict[str, dict[str, Any]] = {}
-        for item in self.records(workspace, unit, timeout=timeout):
-            kind = item.get("kind")
-            stage = str(item.get("stage") or "")
-            if kind == "start":
-                row = {
-                    "stage": stage,
-                    "mode": item.get("mode"),
-                    "started": item.get("at"),
-                    "ended": None,
-                    "outcome": None,
-                    "session_id": item.get("session_id"),
-                    "artifact": None,
-                    "cost": {},
-                    "denials": 0,
-                }
-                rows.append(row)
-                open_runs[stage] = row
-            elif kind == "end":
-                row = open_runs.pop(stage, None)
-                if row is None:
-                    # An end with no start: keep it rather than drop it, so a half-written
-                    # history still shows that something happened.
-                    row = {"stage": stage, "mode": item.get("mode"), "started": None}
-                    rows.append(row)
-                row["ended"] = item.get("at")
-                row["outcome"] = item.get("outcome")
-                row["artifact"] = item.get("artifact")
-                row["denials"] = int(item.get("denials") or 0)
-                if item.get("session_id"):
-                    row["session_id"] = item.get("session_id")
-                cost = zero_cost()
-                add_cost(cost, item)
-                row["cost"] = cost
-        return rows
+        return _fold(self.records(workspace, unit, timeout=timeout))
 
+    def timelines(
+        self, workspace: str, timeout: float | None = None
+    ) -> dict[str, list[dict[str, Any]]]:
+        """`timeline` for every unit at once, from a single read.
+
+        The board needs one of these per unit. Asking `timeline` for each would open a
+        connection and re-scan the working folder per unit — the same rows, N times.
+        """
+        by_unit: dict[str, list[dict[str, Any]]] = {}
+        for item in self.records(workspace, timeout=timeout):
+            by_unit.setdefault(str(item.get("unit") or ""), []).append(item)
+        return {unit: _fold(items) for unit, items in by_unit.items()}
     def totals(self, workspace: str, unit: str, timeout: float | None = None) -> dict[str, Any]:
         """What one unit has cost, added up from its steps (`spec.md` R17).
 
@@ -343,6 +326,46 @@ class Journal:
         for bucket in per_stage.values():
             add_cost(total, bucket)
         return {"per_stage": per_stage, "total": total}
+
+
+def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Records in order, folded into one row per run. Shared by `timeline`/`timelines`."""
+    rows: list[dict[str, Any]] = []
+    open_runs: dict[str, dict[str, Any]] = {}
+    for item in items:
+        kind = item.get("kind")
+        stage = str(item.get("stage") or "")
+        if kind == "start":
+            row = {
+                "stage": stage,
+                "mode": item.get("mode"),
+                "started": item.get("at"),
+                "ended": None,
+                "outcome": None,
+                "session_id": item.get("session_id"),
+                "artifact": None,
+                "cost": {},
+                "denials": 0,
+            }
+            rows.append(row)
+            open_runs[stage] = row
+        elif kind == "end":
+            row = open_runs.pop(stage, None)
+            if row is None:
+                # An end with no start: keep it rather than drop it, so a half-written
+                # history still shows that something happened.
+                row = {"stage": stage, "mode": item.get("mode"), "started": None}
+                rows.append(row)
+            row["ended"] = item.get("at")
+            row["outcome"] = item.get("outcome")
+            row["artifact"] = item.get("artifact")
+            row["denials"] = int(item.get("denials") or 0)
+            if item.get("session_id"):
+                row["session_id"] = item.get("session_id")
+            cost = zero_cost()
+            add_cost(cost, item)
+            row["cost"] = cost
+    return rows
 
 
 def totals_of(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:

@@ -39,6 +39,10 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 from typing import Any, Iterator
 
 # Bumped when a migration changes the shape below. `_open` refuses a database numbered
@@ -133,10 +137,6 @@ class Busy(RuntimeError):
 def now() -> str:
     """UTC, second resolution. Shared so every table stamps time the same way."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def default_dir() -> str:
-    return DEFAULT_DIR
 
 
 class Data:
@@ -262,6 +262,9 @@ class Data:
         # setting it does, which is why the two are not the same statement.
         if str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
             self._retry(lambda: conn.execute("PRAGMA journal_mode=WAL"), wait)
+        # Armed rather than load-bearing: `_SCHEMA` declares no foreign key today, so this
+        # enforces nothing. Kept because SQLite defaults it *off* per connection, and a
+        # table added later would otherwise get no enforcement and no warning.
         conn.execute("PRAGMA foreign_keys=ON")
 
         found = self._user_version(conn)
@@ -320,6 +323,36 @@ class Data:
             return conn.execute("SELECT 1 FROM migrations WHERE key = ?", (key,)).fetchone() is not None
         with self.connect() as c:
             return c.execute("SELECT 1 FROM migrations WHERE key = ?", (key,)).fetchone() is not None
+
+    def import_once(
+        self,
+        conn: sqlite3.Connection,
+        key: str,
+        source: Path,
+        load: "Callable[[sqlite3.Connection], None]",
+    ) -> None:
+        """Run a one-shot import of `source`, inside the caller's transaction.
+
+        `Store` and `Journal` both bring a pre-`0011` file in, and both did the same three
+        things around the part that differs. `0011 spec.md` R8 is the requirement; these
+        are the properties that make it safe to call on every path in:
+
+        - the cheapest possible exit for the common case is one `stat` and no query, which
+          is what any machine set up after this unit takes;
+        - the `migrations` row is written **in the caller's transaction**, so an import
+          that rolls back is not recorded as done;
+        - the file is never deleted. An import that turns out wrong is recoverable only
+          while the thing it read from still exists.
+
+        Only `load` differs between the two callers: what the file says, and what rows it
+        becomes.
+        """
+        if not source.is_file():
+            return
+        if self.has_run(key, conn):
+            return
+        load(conn)
+        Data.mark_run(conn, key)
 
     @staticmethod
     def mark_run(conn: sqlite3.Connection, key: str) -> None:

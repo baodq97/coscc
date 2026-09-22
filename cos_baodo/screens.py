@@ -26,9 +26,9 @@ from reflex.style import set_color_mode
 
 from cos_baodo import studio as s
 from cos_baodo.state import (
+    LANE_COLOR,
     NAVIGATION,
     Cell,
-    Conversation,
     Event,
     GrantRow,
     Knob,
@@ -516,10 +516,15 @@ def _board() -> rx.Component:
                 rx.cond(
                     P.board_view == "Board",
                     rx.grid(
-                        _lane("Planned", P.planned, "gray"),
-                        _lane("In progress", P.in_progress, "iris"),
-                        _lane("Needs review", P.needs_review, "amber"),
-                        _lane("Complete", P.complete, "grass"),
+                        *(
+                            _lane(name, units, LANE_COLOR[name])
+                            for name, units in (
+                                ("Planned", P.planned),
+                                ("In progress", P.in_progress),
+                                ("Needs review", P.needs_review),
+                                ("Complete", P.complete),
+                            )
+                        ),
                         columns=rx.breakpoints(initial="1", sm="2", lg="4"),
                         gap="12px", width="100%", align_items="start", id="board-grid",
                     ),
@@ -940,11 +945,11 @@ def _detail_dialog() -> rx.Component:
                                 ),
                                 spacing="4", width="100%", align="start",
                             ),
-                            s.text("Every stage of this unit has an artifact. There is no "
-                                   "next step to run."),
+                            s.text("Every step this unit is waiting on has an artifact. "
+                                   "There is no next step to run."),
                         ),
                         rx.cond(
-                            (P.run_log != "") & P.running_here | (P.run_log != ""),
+                            P.run_log != "",
                             s.panel(
                                 s.eyebrow("OUTPUT / LATEST RUN"),
                                 rx.text(P.run_log, size="1",
@@ -1133,7 +1138,7 @@ def _screen() -> rx.Component:
         ("sessions", _sessions()),
         ("activity", _activity()),
         ("settings", _settings()),
-        _overview(),
+        rx.fragment(),
     )
 
 

@@ -39,8 +39,6 @@ from pathlib import Path
 
 from cos_baodo.data import BUSY_TIMEOUT, Busy, Data, now
 
-VERSION = 1
-
 # The file this used to be. Still named here for one reason: `import_legacy` reads it once
 # so that a machine set up before `0011` keeps its workspaces (`0011 spec.md` R8). Nothing
 # writes it any more, and it is never deleted — see `import_legacy`.
@@ -64,7 +62,6 @@ __all__ = [
     "LOCK_TIMEOUT",
     "STORE_FILENAME",
     "Store",
-    "VERSION",
     "clean_label",
     "require_name",
     "valid_name",
@@ -140,32 +137,22 @@ class Store:
     def _migration_key(self) -> str:
         return f"import-json:{self._root}"
 
+    def _needs_import(self) -> bool:
+        return self.legacy_path.is_file() and not self._imported
+
     def _import_legacy(self, conn) -> None:
         """Bring a pre-`0011` JSON list in, once, for this working folder.
 
-        `0011 spec.md` R8. Three things make this safe to call on every path in:
-
-        - it returns immediately when there is no such file, which is the case on any
-          machine set up after this unit;
-        - the `migrations` row is written **in the caller's transaction**, so an import
-          that rolls back is not recorded as done;
-        - the JSON file is never deleted. An import that turns out wrong is recoverable
-          only while the thing it read from still exists.
-
-        Entries already in the database win: this adds what is missing rather than
-        restoring what somebody removed on purpose.
+        `Data.import_once` owns the guard, the mark and the not-deleting; this supplies
+        only what the file says. Entries already in the database win: this adds what is
+        missing rather than restoring what somebody removed on purpose.
         """
         if self._imported:
             return
-        # Cheapest possible exit for the common case: one `stat`, no query.
-        if not self.legacy_path.is_file():
-            self._imported = True
-            return
-        key = self._migration_key()
-        if self.data.has_run(key, conn):
-            self._imported = True
-            return
+        self.data.import_once(conn, self._migration_key(), self.legacy_path, self._load_legacy)
+        self._imported = True
 
+    def _load_legacy(self, conn) -> None:
         try:
             raw = json.loads(self.legacy_path.read_text())
         except (OSError, json.JSONDecodeError):
@@ -182,13 +169,6 @@ class Store:
                 "VALUES (?, ?, ?, ?)",
                 (self._root, name, clean_label(item.get("label")), now()),
             )
-        Data.mark_run(conn, key)
-        self._imported = True
-
-    def import_legacy(self) -> None:
-        """Run the one-shot import on its own. Exposed so a caller can do it deliberately."""
-        with self.transaction():
-            pass
 
     # -- reading ------------------------------------------------------------
 
@@ -203,8 +183,7 @@ class Store:
         Order is insertion order. `add` re-inserts an existing name, so re-adding moves an
         entry to the end — the behaviour the JSON list had.
         """
-        needs_import = self.legacy_path.is_file() and not self._imported
-        if needs_import:
+        if self._needs_import():
             with self.transaction():
                 pass
         with self.data.connect() as conn:

@@ -9,7 +9,6 @@ drift visible as a missing test rather than as a bug only one entry point has.
 from __future__ import annotations
 
 import asyncio
-import json
 import subprocess
 import tempfile
 import unittest

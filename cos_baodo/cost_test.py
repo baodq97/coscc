@@ -11,7 +11,6 @@ The numbers below are that measurement, replayed.
 
 from __future__ import annotations
 
-import asyncio
 import tempfile
 import unittest
 from dataclasses import dataclass, field

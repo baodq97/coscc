@@ -26,12 +26,14 @@ import os
 import tempfile
 from pathlib import Path
 
+# 0o700, with the reasoning, already belongs to the module that owns this directory.
+from cos_baodo.data import DIR_MODE
+
 # The first two hex characters become a directory. One flat directory with tens of
 # thousands of entries is slow to list on some filesystems, and this is the cheapest fix
 # that needs no index. Not measured on this machine -- taken from common practice.
 FANOUT = 2
 
-DIR_MODE = 0o700
 FILE_MODE = 0o600
 
 
