@@ -94,6 +94,29 @@ bật ruleset trở đi** đều qua pull request — không phải "từ hôm n
 khi cổng tồn tại, và được miễn. Hôm nay: **0** release, **0** tag, **0** PR, **137** commit
 đều vào thẳng `main`. Đây là outcome của `intent.md`, nguyên văn.
 
+**R13 — `intent.md` khai type, và tên branch suy ra từ unit.** `intent.md` constraint 9.
+Type khai trên dòng header, cùng chỗ `Author:` và `Status:` đang ở — **không** trong tên thư
+mục, vì `.claude/scripts/cos.mjs:12` khoá `UNIT_RE` ở `^(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)$`
+và đổi nó là đổi tên 9 thư mục đã tồn tại. Dạng: `Type: <type>.`, với `type` thuộc đúng tập
+mười của R1.
+
+Từ đó, branch của một unit là **suy ra chứ không đặt tay**: `<type>/<slug>`, trong đó `slug`
+là phần sau `NNNN_`. `0009_branch-and-release-conventions` với `Type: feat` cho
+`feat/branch-and-release-conventions`, và tên ấy thoả R1 mà không cần ai kiểm lại bằng mắt.
+
+**Tuỳ chọn cho `0001`–`0008`, bắt buộc từ `0009`.** Tám unit kia đã `accepted` và đã đóng;
+backfill chúng là sửa artifact đã ký, đúng thứ `.cos/0008_personal-name-blocks-publishing/intent.md`
+constraint 4 cấm, đổi lấy gần như không gì — chúng không có branch nào để đối chiếu. Thiếu
+`Type:` trên một unit cũ **không** là lỗi; thiếu trên một unit mới thì là.
+
+Kiểm: `cos.mjs` đọc được type, in ra tên branch suy ra cho một unit, và **từ chối** một type
+ngoài tập mười. `0009` hiện khai `Type: feat` (`intent.md:2`); tám unit còn lại khai **0** lần.
+
+> **Sửa ngày 2026-09-22, lần thứ hai, trước dòng code đầu tiên.** R13 thêm theo `intent.md`
+> constraint 9. Nó không mở rộng outcome — R12 vẫn là phép đo nghiệm thu — mà đóng một chỗ hở
+> trong R1: ngữ pháp tên branch không nói tên *nào* là đúng cho một công việc cụ thể, nên hai
+> tên đều hợp lệ mà chỉ một cái khớp unit.
+
 ## Design
 
 ### Ba nơi kiểm, và chúng không thay thế được nhau
@@ -119,6 +142,10 @@ không chạy file `cos.mjs` nằm trong repo mà ai đó đã clone. Hai lệnh
 phải nằm **ngoài** đường `--root` — R6. Cách chia: `--root` tiếp tục chỉ áp cho các lệnh đọc
 `.cos/`; lệnh đọc git luôn làm việc trên thư mục hiện tại.
 
+Lệnh thứ ba của R13 nằm **bên kia** ranh giới đó: nó chỉ đọc `intent.md` và tên thư mục, đúng
+loại việc `--root` sinh ra để làm, nên nó nhận `--root` như `status` và `gate`. Ba lệnh mới,
+hai bên một đường kẻ — và đường kẻ là "có chạm git hay không", không phải "mới hay cũ".
+
 ### Quy ước đi theo harness, nhưng thứ cưỡng chế thì không
 
 `intent.md` constraint 1 đặt quy ước vào `.claude/` để nó được copy. Copy được: ngữ pháp,
@@ -129,7 +156,8 @@ này như một chỗ hở chứ không như một chi tiết.
 
 ### Luồng của một unit sau khi có quy ước
 
-Cắt branch `<type>/<slug>` từ `main` → commit → push → mở PR → CI kiểm tên và chạy test →
+`write-intent` khai `Type:` → cắt branch `<type>/<slug>`, tên lấy từ lệnh của R13 chứ không
+gõ tay → commit → push → mở PR → CI kiểm tên và chạy test →
 merge → xoá branch. Release: chọn version, cập nhật `pyproject.toml`, đồng bộ `package.json`,
 merge qua PR, rồi đẩy tag `vX.Y.Z-rc.N` để có prerelease và `vX.Y.Z` để có release.
 
@@ -193,6 +221,13 @@ rào đó phải có test — một rào không có test là một câu trong fi
 không rơi vào `feat|fix|docs|refactor|test|chore|perf|build|ci|revert` sẽ không đặt được tên
 branch, và lối thoát duy nhất là sửa harness. Đó là chủ ý — một tập mở thì không kiểm được gì
 — nhưng nó sẽ gây vướng ít nhất một lần.
+
+**C8 — R13 chết nếu `write-intent` không đòi `Type:`.** Template ở
+`.claude/skills/write-intent/SKILL.md` hiện in header là `Author: <name>. Status: accepted.`
+và không gì khác, nên một session làm đúng skill sẽ viết ra một `intent.md` thiếu type. Một
+lệnh đọc type mà không ai viết type là một lệnh luôn trả về rỗng. Vậy R13 kéo theo một sửa
+đổi trong skill, và đó là **file thứ tư trong `.claude/` mà unit này chạm** ngoài `harness.md`,
+`cos.mjs`, `cos.test.mjs`.
 
 ## Open questions
 

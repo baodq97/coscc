@@ -1,13 +1,23 @@
 # Plan: Bootstrap the convention on the branch that introduces it
 Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
 
-Mười sáu bước. Bước 1 dựng bằng chứng và nó phải **đỏ** trước, như `0008` đã làm. Bước 2 cắt
-branch, và **mọi thứ từ đó trở đi đi qua cổng mà unit này dựng lên** — kể cả `impl.md` và
-`pr.md` của chính nó. Bước 13 bật ruleset và không dễ lùi.
+Mười sáu bước. Bước 1 cắt branch; bước 2 dựng bằng chứng và nó phải **đỏ**, như `0008` đã
+làm. **Mọi thứ từ bước 1 trở đi đi qua cổng mà unit này dựng lên** — kể cả `impl.md` và
+`pr.md` của chính nó. Bước 12 bật ruleset và không dễ lùi.
 
 Đây là lần đầu repo này làm việc trên branch. `intent.md` `## Proposed outcome` miễn trừ
 `intent.md`, `spec.md` và `plan.md` — ba file đó vào thẳng `main` vì chúng là thứ tạo ra
-quy ước. Từ `impl` trở đi không còn miễn trừ nào.
+quy ước. Ngoài ba file đó không còn miễn trừ nào.
+
+> **Sửa cùng ngày, trước dòng code đầu tiên.** Bản đầu đặt proof lên `main` rồi mới cắt
+> branch, gọi nó là "file cuối cùng được miễn trừ". Người khởi xướng hỏi *"cần checkout trước
+> nhỉ?"* và câu hỏi đúng: proof là một **bước**, không phải artifact của vòng lặp, nên không
+> có gì miễn trừ nó. Cắt branch trước thì ngoại lệ ít đi một, và PR mang trọn phần triển khai
+> thay vì thiếu đúng cái file quyết định pass/fail. Bản đầu cũng đánh số bước ruleset là 13
+> trong phần mở đầu trong khi `## Order of work` để ở 12; nay là 12 ở cả hai.
+>
+> Cùng lúc, `intent.md` constraint 9 và `spec.md` R13 thêm khái niệm **type của work unit**.
+> Việc này chạm bước 3, bước 4, một file skill, và thêm một claim vào `## Proof`.
 
 ## Files that change
 
@@ -28,46 +38,62 @@ quy ước. Từ `impl` trở đi không còn miễn trừ nào.
   `cos.mjs` (`:6`) chứ không gọi qua subprocess — hàm mới theo đúng hình dạng đó.
 - `.claude/harness.md` — một mục mới. Mục cuối hiện là `## Copying this into another
   repository` (`:167`).
+- `.claude/skills/write-intent/SKILL.md` — template header hiện là `Author: <name>. Status:
+  accepted.` và phải đòi `Type:` (`spec.md` C8). Không sửa chỗ này thì lệnh đọc type luôn trả
+  về rỗng.
 - `pyproject.toml:3`, `package.json:3` — `0.0.1` → `0.1.0`.
 - `uv.lock:151`, `package-lock.json:3` và `:9` — sinh lại theo.
 
 ### Không đổi
 
-`.cos/` — không artifact nào bị sửa (`intent.md` constraint 7). `coscc/` — unit này không
-chạm vào ứng dụng.
+`.cos/` của tám unit khác — không artifact nào bị sửa (`intent.md` constraint 7), và `Type:`
+cố ý **không** backfill cho chúng (`spec.md` R13). Artifact của chính `0009` đã sửa xong
+trước bước 1 và không đổi nữa. `coscc/` — unit này không chạm vào ứng dụng.
 
 ## Order of work
 
-**1. Dựng `scripts/verify_0009.py`, và nó phải đỏ.**
+**1. Cắt branch.**
+`git switch -c feat/branch-and-release-conventions`. Tên này suy ra từ `0009` +
+`Type: feat` (`intent.md:2`) theo `spec.md` R13, và thoả đúng ngữ pháp mà chính branch này
+sắp định nghĩa — vòng tròn là có thật và là cách duy nhất khởi động.
+*Kiểm:* `git rev-parse --abbrev-ref HEAD` trả đúng tên đó; `main` không nhận thêm commit nào
+từ đây tới bước 11.
+
+**2. Dựng `scripts/verify_0009.py`, và nó phải đỏ.**
 Khuôn theo `scripts/verify_0008.py`: claim tĩnh, exit `0`/`1`/`2`, dùng `say`, `EXIT_PASS`,
 `EXIT_BROKEN`, `EXIT_ENV` từ `scripts/proof_harness.py`. Claim liệt kê ở `## Proof`.
-*Kiểm:* chạy nó, exit `1`. Commit lên `main` — đây là file cuối cùng được miễn trừ, vì không
-có nó thì không có gì để nói bước sau đã xong.
+*Kiểm:* chạy nó, exit `1`, và số claim đỏ gần bằng tổng — một proof viết trước mà xanh ngay
+là một proof không hỏi gì.
 
-**2. Cắt branch.**
-`git switch -c feat/branch-and-release-conventions`. Tên này thoả đúng ngữ pháp mà chính
-branch này sắp định nghĩa — vòng tròn là có thật và là cách duy nhất khởi động.
-*Kiểm:* `git rev-parse --abbrev-ref HEAD` trả đúng tên đó.
-
-**3. Hàm thuần cho ba ngữ pháp, cùng test.**
-Export từ `cos.mjs`: một hàm nhận tên branch, một nhận tên tag, một so các chuỗi version. Cả
-ba **không đọc file, không gọi git** — chúng nhận chuỗi và trả kết quả, đúng hình dạng
-`parseStatus` đang có. Test import trực tiếp; tám dòng bảng của `spec.md` R1 và bốn ví dụ tag
-của R2 thành tám cộng bốn assertion.
+**3. Hàm thuần cho ngữ pháp và cho type, cùng test.**
+Export từ `cos.mjs`: một hàm nhận tên branch, một nhận tên tag, một so các chuỗi version, và
+một đọc `Type:` ra khỏi header `intent.md` rồi ghép `<type>/<slug>`. Cả bốn **không đọc file,
+không gọi git** — chúng nhận chuỗi và trả kết quả, đúng hình dạng `parseStatus` (`cos.mjs:50`)
+đang có. Test import trực tiếp; tám dòng bảng `spec.md` R1 và bốn ví dụ tag của R2 thành tám
+cộng bốn assertion, cộng các trường hợp của R13: type hợp lệ, type ngoài tập mười, không có
+`Type:`.
 *Kiểm:* `npm run test:node` xanh, số test lớn hơn 23.
 
-**4. Hai lệnh, và rào `--root`.**
-Nối hai khoá vào bảng `run`, sửa dòng usage. Lệnh kiểm branch đọc branch đang checkout khi
-không có tham số; lệnh kiểm version đọc bốn file. Cả hai **từ chối `--root`** với exit khác
-`0` — `spec.md` R6, và lý do ở `coscc/board.py:48,90`: script này được app trỏ vào repo của
-người khác, và nó "needs no secret, so it is given none".
-*Kiểm:* tám dòng bảng R1 chạy qua CLI cho đúng tám kết quả; `cos.mjs --root /tmp <lệnh mới>`
-exit khác 0; `npm test` xanh.
+**4. Ba lệnh, và rào `--root` cho đúng hai trong ba.**
+Nối ba khoá vào bảng `run` (`cos.mjs:265-269`), sửa dòng usage (`:271`). Lệnh kiểm branch đọc
+branch đang checkout khi không có tham số; lệnh kiểm version đọc bốn chỗ; lệnh thứ ba nhận
+một unit và in tên branch suy ra.
+
+Hai lệnh đầu **từ chối `--root`** với exit khác `0` — `spec.md` R6, lý do ở
+`coscc/board.py:48,90`: script này được app trỏ vào repo của người khác và nó "needs no
+secret, so it is given none". Lệnh thứ ba **nhận** `--root`: nó chỉ đọc `.cos/`, đúng việc
+`--root` sinh ra để làm. Đường kẻ là "có chạm git hay không".
+
+Cộng `.claude/skills/write-intent/SKILL.md`: header của template đòi `Type:` (`spec.md` C8).
+*Kiểm:* tám dòng bảng R1 chạy qua CLI cho đúng tám kết quả; `cos.mjs --root /tmp <lệnh git>`
+exit khác 0 cho cả hai; `cos.mjs --root . <lệnh unit> 0009_branch-and-release-conventions` in
+ra `feat/branch-and-release-conventions`; `npm test` xanh.
 
 **5. Mục mới trong `.claude/harness.md`.**
-Ngữ pháp branch (đủ mười type), ngữ pháp tag, hai lệnh, và **một câu nói thẳng rằng thứ cưỡng
-chế mạnh nhất — ruleset — không đi theo bản copy** (`spec.md` C1). Không có câu đó thì người
-copy harness nhận một quy ước không ai gác.
+Ngữ pháp branch (đủ mười type), ngữ pháp tag, ba lệnh, trường `Type:` của `intent.md` cùng
+cách suy ra tên branch, và **một câu nói thẳng rằng thứ cưỡng chế mạnh nhất — ruleset — không
+đi theo bản copy** (`spec.md` C1). Không có câu đó thì người copy harness nhận một quy ước
+không ai gác.
 *Kiểm:* claim tài liệu của proof chuyển xanh.
 
 **6. Bump version lên `0.1.0`.**
@@ -186,22 +212,27 @@ uv run python scripts/verify_0009.py
 có `gh`, `git`, `node`, hoặc không có mạng. Cách tách `1` khỏi `2` theo
 `scripts/verify_0003.py:8-14`.
 
-Mười một claim:
+Mười ba claim:
 
 | # | Claim |
 |---|---|
 | C1 | Tám dòng bảng `spec.md` R1 chạy qua lệnh kiểm branch cho đúng tám kết quả. |
 | C2 | Bốn ví dụ tag của R2 cho đúng bốn kết quả. |
 | C3 | Lệnh kiểm version xanh trên cây hiện tại, **và đỏ** khi một trong bốn chỗ bị sửa lệch — negative control, chạy trên bản sao tạm. |
-| C4 | Cả hai lệnh mới **từ chối** `--root`. |
+| C4 | Hai lệnh đọc git **từ chối** `--root`; lệnh đọc `.cos/` thì nhận. |
 | C5 | Bốn chỗ khai version đều đọc `0.1.0`. |
-| C6 | `.claude/harness.md` nêu đủ mười type, cả hai dạng tag, và câu nói ruleset không đi theo bản copy. |
+| C6 | `.claude/harness.md` nêu đủ mười type, cả hai dạng tag, trường `Type:`, và câu nói ruleset không đi theo bản copy. |
 | C7 | Hai workflow parse được; `permissions` khai tường minh; **0** action bên thứ ba ghim theo tag. |
-| C8 | `gh api repos/baodq97/coscc/rulesets` trả về một ruleset áp cho `main` đòi pull request. |
-| C9 | `gh release list` trả **hai dòng**; `v0.1.0-rc.1` là prerelease, `v0.1.0` không; tag `v0.1.0` nằm trên `main`. |
-| C10 | Mọi commit vào `main` **từ commit bật ruleset trở đi** đều có một pull request đã merge chứa nó. |
-| C11 | `npm test` xanh. |
+| C8 | `0009/intent.md` khai `Type: feat`, lệnh của R13 in ra `feat/branch-and-release-conventions`, và một type ngoài tập mười bị từ chối. |
+| C9 | `.claude/skills/write-intent/SKILL.md` template đòi `Type:`. |
+| C10 | `gh api repos/baodq97/coscc/rulesets` trả về một ruleset áp cho `main` đòi pull request. |
+| C11 | `gh release list` trả **hai dòng**; `v0.1.0-rc.1` là prerelease, `v0.1.0` không; tag `v0.1.0` nằm trên `main`. |
+| C12 | Mọi commit vào `main` **từ commit bật ruleset trở đi** đều có một pull request đã merge chứa nó. |
+| C13 | `npm test` xanh. |
 
-C9 và C10 cộng lại là outcome của `intent.md`, nguyên văn. C10 lấy mốc là commit bật ruleset
+C11 và C12 cộng lại là outcome của `intent.md`, nguyên văn. C12 lấy mốc là commit bật ruleset
 chứ không phải "hôm nay" — `intent.md` đã sửa đúng chỗ đó, vì artifact của chính unit này vào
 thẳng `main` trước khi cổng tồn tại.
+
+C8 và C9 là một cặp và phải cùng xanh: một trường không ai được dạy để viết là một trường
+không ai viết, nên C8 một mình sẽ xanh trên đúng một unit — cái unit tôi vừa sửa tay.

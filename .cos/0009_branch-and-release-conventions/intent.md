@@ -1,5 +1,5 @@
 # Intent: Work reaches main with no convention, and nothing is ever released
-Author: Bao Do. Status: accepted.
+Author: Bao Do. Type: feat. Status: accepted.
 
 > **Sửa ngày 2026-09-22, sau khi bản đầu đã accepted và commit (`ff5634d`).** Viết `spec.md`
 > làm lộ ra rằng `## Proposed outcome` tự làm mình sai: nó lấy mốc "hôm nay" và đòi mọi commit
@@ -117,6 +117,16 @@ Ngày **2026-10-13 là do file này đặt**, không phải do người khởi x
 7. **Không sửa artifact đã `accepted` trong `.cos/`.** Cùng tiền lệ đã dùng ở `0008`:
    `.cos/0002_no-workspace-management/spec.md:245-250`.
 8. **Repo đã public.** Mọi thứ unit này thêm vào — kể cả file CI — là công khai ngay khi push.
+9. **Mỗi work unit khai type của nó, và tên branch suy ra từ đó.** Người khởi xướng nêu:
+   *"các intent/ work unit cũng nên biết type nó là gì nhỉ?"* Hiện `intent.md` mang
+   `Author:` và `Status:` và không gì khác; `.claude/scripts/cos.mjs:12` khoá tên thư mục ở
+   `NNNN_slug` — **0** chỗ trong repo nói một unit thuộc loại gì. Không có ràng buộc này thì
+   tên branch là một lựa chọn độc lập với tên unit, và hai cái sẽ trôi khỏi nhau. Nơi khai và
+   cách xử lý 8 unit đã đóng là việc của spec.
+
+> **Sửa ngày 2026-09-22, lần thứ ba, trước khi viết dòng code đầu tiên.** Thêm constraint 9
+> theo lời người khởi xướng, và file này nhận `Type: feat` ngay trên header — nó là unit đầu
+> tiên khai, và là thứ tên branch của chính nó sẽ được suy ra.
 
 ## Open questions
 
