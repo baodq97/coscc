@@ -31,12 +31,6 @@ from coscc.journal import Journal
 from coscc.policy import Grant, decide, grant_for, is_prose_stage
 from coscc.sessions import Refused, Sessions
 
-# Where a unit lives, and what may be a unit name. Same shape `cos.mjs` enforces; matched
-# here because this module builds a path out of it and a path built from unlaundered text
-# is how a directory traversal starts.
-UNIT_RE = re.compile(r"^\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*$")
-COS_DIR = ".cos"
-
 # An artifact has to carry one of these on its first line, or the gate cannot read it and
 # `cos.mjs` will report the unit as broken. Checked before anything is written.
 STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+)")
@@ -44,13 +38,6 @@ STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+)")
 
 class RunError(Exception):
     """A step that cannot start, or one whose reply cannot be stored."""
-
-
-def unit_dir(workspace: str | Path, unit: str) -> Path:
-    """The directory of one unit, built from the workspace rather than read from input."""
-    if not UNIT_RE.fullmatch(unit or ""):
-        raise RunError(f"not a work unit name: {unit!r}")
-    return Path(workspace).expanduser().resolve() / COS_DIR / unit
 
 
 def skill_for(stage: str) -> str:
@@ -89,6 +76,7 @@ def _read(path: Path) -> str:
 
 def build_prompt(
     workspace: str | Path,
+    directory: str | Path,
     unit: str,
     stage: str,
     stages: list[str],
@@ -99,8 +87,15 @@ def build_prompt(
 
     The list is returned rather than inferred later because R4 is checked against it: if a
     step ran without the previous stage's artifact in the prompt, the record says so.
+
+    `directory` is handed in rather than worked out here. Until `0014` this module derived
+    it from `workspace`, and so did `coscc/board.py` and `coscc/service.py` — three copies
+    of one formula, which is the shape `0012` paid a unit for. `coscc/units.py` is the one
+    place that answers it now, and the two paths are no longer the same thing: the
+    artifacts live in the product's own store while `workspace` stays the repository the
+    work is done in, which is the whole of `0014` `spec.md` R2.
     """
-    directory = unit_dir(workspace, unit)
+    directory = Path(directory)
     included: list[str] = []
     parts: list[str] = []
 
@@ -125,7 +120,7 @@ def build_prompt(
             parts.append(f"# The {earlier} it follows\n\n{text}")
             break
 
-    location = Path(COS_DIR) / unit / artifact
+    location = directory / artifact
     if writes_own:
         # A stage with tools does the work and then records it. Asking it to *reply* with
         # the file as well would mean the file and the reply could disagree.
@@ -227,6 +222,7 @@ class Runner:
     async def run(
         self,
         workspace: str,
+        directory: str | Path,
         journal_key: str,
         unit: str,
         stage: str,
@@ -240,9 +236,9 @@ class Runner:
         stream rather than two.
         """
         grant = grant_for(stage, mode)
-        directory = unit_dir(workspace, unit)
+        directory = Path(directory)
         if not directory.exists():
-            raise RunError(f"no such work unit in {workspace}: {unit}")
+            raise RunError(f"no such work unit for {workspace}: {unit}")
 
         if grant.opens_anything and is_prose_stage(stage):
             # Belt and braces against a future edit to the table: a prose stage that
@@ -250,7 +246,8 @@ class Runner:
             raise RunError(f"{stage} is a prose stage and must not carry tools")
 
         prompt, included = build_prompt(
-            workspace, unit, stage, stages, artifact, writes_own=not grant.app_writes_artifact
+            workspace, directory, unit, stage, stages, artifact,
+            writes_own=not grant.app_writes_artifact,
         )
 
         if self.journal is not None:

@@ -41,9 +41,11 @@ from coscc.journal import (
     zero_cost,
 )
 from coscc.policy import GRANTS, PROSE_STAGES, grant_for
-from coscc.runner import RunError, Runner, unit_dir
+from coscc.runner import RunError, Runner
 from coscc.sessions import Sessions
 from coscc.store import BadName, Store, require_name
+from coscc import units
+from coscc.units import BadUnit, CannotCreate
 
 # The eight stage names, in stage order. Taken from the stage list the board reports rather
 # than written again here would be better; the board read is async and this method is not,
@@ -248,6 +250,19 @@ class Service:
         """
         return str(Path(cwd).expanduser().resolve())
 
+    def _units_root(self, cwd: str) -> Path:
+        """Where this workspace's units live. One question, asked of one module.
+
+        `coscc/units.py` owns the answer; this is the only place in the service that asks.
+        """
+        return units.root(cwd, self.config.data_dir)
+
+    def _unit_dir(self, cwd: str, unit: str) -> Path:
+        try:
+            return units.unit_dir(cwd, unit, self.config.data_dir)
+        except BadUnit as e:
+            raise Invalid(str(e)) from e
+
     async def board(self, cwd: str) -> dict[str, Any]:
         """Every unit in this workspace, each with its eight stages, modes and cost.
 
@@ -257,7 +272,7 @@ class Service:
         """
         self._workspace_or_refuse(cwd)
         try:
-            data = await board_reader.read(cwd)
+            data = await board_reader.read(self._units_root(cwd))
         except Unavailable as e:
             raise Invalid(str(e)) from e
 
@@ -305,7 +320,7 @@ class Service:
             )
 
         try:
-            data = await board_reader.read(cwd)
+            data = await board_reader.read(self._units_root(cwd))
         except Unavailable as e:
             raise Invalid(str(e)) from e
 
@@ -338,7 +353,7 @@ class Service:
             )
 
         try:
-            data = await board_reader.read(cwd)
+            data = await board_reader.read(self._units_root(cwd))
         except Unavailable as e:
             raise Invalid(str(e)) from e
 
@@ -355,6 +370,7 @@ class Service:
         try:
             async for item in runner.run(
                 workspace=cwd,
+                directory=self._unit_dir(cwd, unit),
                 journal_key=key,
                 unit=unit,
                 stage=stage,
@@ -717,10 +733,7 @@ class Service:
         if stage not in STAGE_FILES:
             raise Invalid(f"no such stage: {stage}")
         filename = f"{stage}.md"
-        try:
-            path = unit_dir(cwd, unit) / filename
-        except RunError as e:
-            raise Invalid(str(e)) from e
+        path = self._unit_dir(cwd, unit) / filename
         if not path.is_file():
             return {"unit": unit, "stage": stage, "file": filename, "text": "", "exists": False}
         try:

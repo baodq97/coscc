@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import harness
+from coscc import harness, units
 from coscc.config import Config
 from coscc.service import Invalid, Service
 from coscc.sessions import Live, Sessions
@@ -276,7 +276,10 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             workspace = root / "work" / "proj"
-            unit = workspace / ".cos" / "0009_a-test-unit"
+            workspace.mkdir(parents=True)
+            # `0014`: a unit's artifacts live in the product's store, never in the
+            # workspace tree, so the fixture has to be built where the product looks.
+            unit = units.unit_dir(workspace, "0009_a-test-unit", root / "data")
             unit.mkdir(parents=True)
             (unit / "intent.md").write_text("Status: accepted.\nI", encoding="utf-8")
             (unit / "spec.md").write_text("Status: accepted.\nS", encoding="utf-8")

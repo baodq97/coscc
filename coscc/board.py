@@ -68,13 +68,19 @@ def _stage_rows(stages: list[dict[str, Any]], artifacts: dict[str, Any]) -> list
     return rows
 
 
-async def read(workspace: str | Path, timeout: float = TIMEOUT) -> dict[str, Any]:
-    """Every unit in `workspace`, each with its eight stages.
+async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, Any]:
+    """Every unit under `units_root`, each with its eight stages.
+
+    **`units_root` is not the workspace.** Until `0014` it was, and this module worked the
+    path out for itself alongside two others doing the same (`coscc/units.py` docstring).
+    It is now the product's own store for that workspace, because `0013` settled that
+    nothing of coscc's goes into a repository a team shares — so the caller asks
+    `coscc/units.py` and hands the answer in.
 
     Raises `Unavailable` only when the answer is unknown — node missing, the script gone,
-    a child that failed or hung. A workspace with no `.cos/` is a *known* answer: no units.
+    a child that failed or hung. A root with no `.cos/` is a *known* answer: no units.
     """
-    path = Path(workspace)
+    path = Path(units_root)
     script = harness.script()
     if not script.exists():
         raise Unavailable(f"the harness script is missing: {script}")

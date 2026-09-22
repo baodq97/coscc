@@ -20,6 +20,27 @@ REPO = Path(__file__).resolve().parent.parent
 STAGES = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
 
 
+def seed_store(data_dir, workspace=REPO) -> Path:
+    """Copy this repository's real `.cos/` into the product's store for `workspace`.
+
+    `0014` moved a unit's artifacts out of the repository and under the data root, so a
+    test that wants units to look at has to put them where the product now keeps them.
+    Copied rather than pointed at, because these tests drive routes that could write.
+
+    The fixture stays this repository's own `.cos/` for the reason `coscc/board_test.py:1-7`
+    gives: what breaks here is the *agreement* with `cos.mjs`, and a hand-built fixture
+    keeps passing after the two drift apart.
+    """
+    import shutil
+
+    from coscc import units
+
+    store = units.cos_dir(workspace, data_dir)
+    store.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(Path(workspace) / ".cos", store, dirs_exist_ok=True)
+    return store
+
+
 def _a_unit(body: dict) -> str:
     """Any unit name, taken from the board itself.
 
@@ -41,6 +62,7 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
                 data_dir=self._tmp.name,
             )
         )
+        seed_store(self._tmp.name)
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
@@ -123,7 +145,12 @@ class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):
     """The board still reads, but nothing can be recorded."""
 
     async def asyncSetUp(self):
-        self.app = build(Config(workspaces=(str(REPO),)))
+        # A data root is still set: `working_dir` and `data_dir` are different knobs, and
+        # leaving this one unset would point the store at the real `~/.cos`.
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.app = build(Config(workspaces=(str(REPO),), data_dir=self._tmp.name))
+        seed_store(self._tmp.name)
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
