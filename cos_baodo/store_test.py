@@ -287,6 +287,10 @@ class TheTransactionIsAcrossProcesses(unittest.TestCase):
             stdout=subprocess.PIPE,
             text=True,
         )
+        # addCleanup runs last-registered-first, so this order kills, waits, then closes the
+        # pipe. Closing it before the child is reaped would leave the read end open in the
+        # only window that matters and hand the child an EPIPE on the way out.
+        self.addCleanup(child.stdout.close)
         self.addCleanup(child.wait)
         self.addCleanup(child.kill)
         self.assertEqual(child.stdout.readline().strip(), "held", "child never took the lock")
