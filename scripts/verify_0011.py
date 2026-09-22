@@ -124,6 +124,12 @@ SSH_TIMEOUT_S = 20
 BOOT_TIMEOUT_S = 300  # generous: a real VM reboot, not a process restart
 PAGE_TIMEOUT_MS = 20_000
 
+# How long the page may take to answer after a reboot before that counts as a failure.
+# Not a weakening of "survives a reboot with 0 commands": nobody types anything during
+# this wait, it is just the machine finishing its boot. The elapsed time is printed, so a
+# service that starts taking minutes shows up as a number rather than as a pass.
+PAGE_AFTER_REBOOT_TIMEOUT_S = 180
+
 _CODE_BLOCK = re.compile(r"```(?:sh|shell|bash)?\n(.*?)```", re.DOTALL)
 
 # The env chunk's own name is content-hashed (`coscc/frontend.py:58`, `_ENV_GLOB`), so it
@@ -399,6 +405,34 @@ def event_address_holds(base_url: str, expected: str) -> tuple[bool, str]:
 
 
 # --------------------------------------------------------------------------
+def wait_for_the_page(url: str) -> tuple[bool, str]:
+    """Let the target finish booting before asking a browser to render it.
+
+    `reboot_and_wait` returns as soon as **sshd** answers with a new boot id, and sshd is
+    up well before a systemd *user* service is. Measured 2026-09-22 on the proof's first
+    real run: ssh was back, the browser went straight to the page, and got
+    `net::ERR_CONNECTION_REFUSED` -- while the service came up seconds later and served 200
+    on its own. Reporting that as "the page does not survive a reboot" would have been a
+    false red on exactly the claim this unit exists to make.
+
+    This is the same gap `scripts/install.sh` closed with its readiness wait, for the same
+    reason, and it is bounded so that a service which never comes back still fails.
+    """
+    started = time.monotonic()
+    deadline = started + PAGE_AFTER_REBOOT_TIMEOUT_S
+    last = "no attempt completed"
+    while time.monotonic() < deadline:
+        try:
+            resp = httpx.get(url, timeout=5)
+            if resp.status_code == 200:
+                return True, f"answered after {time.monotonic() - started:.0f}s"
+            last = f"HTTP {resp.status_code}"
+        except httpx.HTTPError as e:
+            last = type(e).__name__
+        time.sleep(2)
+    return False, f"never answered within {PAGE_AFTER_REBOOT_TIMEOUT_S}s (last: {last})"
+
+
 # steps 4 and 6 — a real reboot, never `systemctl --user restart` (plan.md OQ1)
 # --------------------------------------------------------------------------
 
@@ -476,13 +510,32 @@ def remote_host_port(env_text: str | None) -> tuple[str, int]:
     return host, port
 
 
+# Where `uv tool install` puts the executable, in the order install.sh would find it.
+# `ssh host 'coscc --version'` runs a non-login shell, and its PATH on Debian 13 is
+# `/usr/local/bin:/usr/bin:/bin:/usr/games` -- measured 2026-09-22, when this proof read
+# `None` for the version both before and after an update and reported a false FAIL about
+# a binary that was installed and working. `uv tool update-shell` edits shell rc files,
+# which a non-login shell never reads, so the bare name cannot be relied on here.
+_REMOTE_BINDIRS = ("$HOME/.local/bin", "$XDG_BIN_HOME", "$UV_TOOL_BIN_DIR")
+
+
 def remote_version(target: str) -> str | None:
-    """The pinned contract: `coscc --version` prints exactly one line, `"coscc <ver>"`."""
-    out = run_remote(target, "coscc --version")
-    if out.returncode != 0:
-        return None
-    line = out.stdout.strip()
-    return line if re.fullmatch(r"coscc \S+", line) else None
+    """The pinned contract: `coscc --version` prints exactly one line, `"coscc <ver>"`.
+
+    Tries the bare name first, so that an install which *did* put `coscc` on PATH is
+    measured the way a person would type it, and falls back to the places the installer
+    actually writes to. Returning `None` here is indistinguishable, to the caller, from
+    "the binary is broken" -- which is why this looks harder before giving up.
+    """
+    attempts = ["coscc --version"] + [f'"{d}/coscc" --version' for d in _REMOTE_BINDIRS]
+    for attempt in attempts:
+        out = run_remote(target, attempt)
+        if out.returncode != 0:
+            continue
+        line = out.stdout.strip()
+        if re.fullmatch(r"coscc \S+", line):
+            return line
+    return None
 
 
 def latest_published_version() -> str | None:
@@ -591,6 +644,10 @@ def run() -> int:
         ok, reason = reboot_and_wait(target)
         if not say(ok, "the target reboots and the service comes back on its own", reason):
             return EXIT_BROKEN
+        ok, reason = wait_for_the_page(url)
+        if not say(ok, "the page is served again after the reboot, with nobody typing anything", reason):
+            return EXIT_BROKEN
+        say(True, f"the page came back on its own ({reason})")
         ok, reason = page_renders_all_screens_and_websocket(browser, url)
         if not say(ok, "the page renders again after the reboot, with nobody typing anything", reason):
             return EXIT_BROKEN
@@ -633,6 +690,10 @@ def run() -> int:
         ok, reason = reboot_and_wait(target)
         if not say(ok, "the target reboots a second time and comes back on its own", reason):
             return EXIT_BROKEN
+        ok, reason = wait_for_the_page(url)
+        if not say(ok, "the page is served again after the second reboot", reason):
+            return EXIT_BROKEN
+        say(True, f"the page came back on its own ({reason})")
         ok, reason = page_renders_all_screens_and_websocket(browser, url)
         if not say(ok, "the page still renders after the second reboot", reason):
             return EXIT_BROKEN
