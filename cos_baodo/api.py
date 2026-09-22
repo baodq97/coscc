@@ -19,6 +19,7 @@ Reflex reserves `/ping/`, `/_event` and `/_upload`. Nothing here may use them.
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request
@@ -47,7 +48,15 @@ def build(config: Config | None = None) -> FastAPI:
     sessions = Sessions(config)
     service = Service(config, sessions)
 
-    api = FastAPI(title="cos-baodo")
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # Every client is a CLI process holding a long-lived login credential
+        # (`.cos/0001_no-session-management/spec.md:121`). Shutdown is wired to the server's
+        # lifecycle rather than left to whoever remembers. Nothing to do on the way up.
+        yield
+        await sessions.close_all()
+
+    api = FastAPI(title="cos-baodo", lifespan=lifespan)
     api.state.config = config
     api.state.sessions = sessions
     api.state.service = service
@@ -248,11 +257,5 @@ def build(config: Config | None = None) -> FastAPI:
     # No route for `/` and no static mount. The page is built from Python components
     # (`spec.md` R8), and `/` has to fall through to Reflex's compiled-frontend mount —
     # a route defined here would win over it and the page would never render.
-
-    @api.on_event("shutdown")
-    async def _close() -> None:
-        # Every client is a CLI process. Shutdown is wired to the server's lifecycle
-        # rather than left to whoever remembers.
-        await sessions.close_all()
 
     return api

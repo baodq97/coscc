@@ -247,5 +247,26 @@ class Loopback(unittest.TestCase):
         self.assertEqual(from_env({}).host, "127.0.0.1")
 
 
+class ShutdownClosesSessions(unittest.IsolatedAsyncioTestCase):
+    """The one place the CLI processes are closed, and until now the one nothing checked.
+
+    `scripts/verify_0001.py:153` has to close them by hand because `httpx.ASGITransport`
+    never sends lifespan events, so every other test in this file walks past this path. The
+    lifespan context is driven directly here instead: no socket, no port, no session and no
+    quota, which is what lets the check live in `npm test` rather than in a command nobody
+    runs. What it does not prove is that uvicorn runs *this* app's lifespan in production —
+    that holds because Reflex mounts its app inside the FastAPI one (`reflex/app.py:815`,
+    measured 2026-09-22), and nothing here would notice if a later release reversed it.
+    """
+
+    async def test_leaving_the_lifespan_closes_every_session(self):
+        app = build(Config(workspaces=("/tmp",)))
+        app.state.sessions.close_all = mock.AsyncMock()
+        async with app.router.lifespan_context(app):
+            # Startup must not close anything; the app is meant to be serving here.
+            app.state.sessions.close_all.assert_not_awaited()
+        app.state.sessions.close_all.assert_awaited_once()
+
+
 if __name__ == "__main__":
     unittest.main()
