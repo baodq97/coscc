@@ -100,6 +100,15 @@ PINNED_INSTALL_COMMANDS = [
 # "update command: exactly the same line" — the pinned contract, verbatim.
 PINNED_UPDATE_COMMANDS = list(PINNED_INSTALL_COMMANDS)
 
+# Reading which release `/releases/latest/` currently resolves to. The redirect target
+# carries the tag, so this needs no API token and no JSON: GitHub answers
+# `/releases/latest` with a 302 to `/releases/tag/vX.Y.Z`.
+RELEASES_LATEST = "https://github.com/baodq97/coscc/releases/latest"
+
+# How long step 5 will wait for the operator to publish the release it is about to update
+# to. Generous: the release workflow builds a frontend from scratch.
+NEXT_RELEASE_TIMEOUT_S = 1800
+
 DEFAULT_PORT = 8790
 DEFAULT_HOST = "0.0.0.0"  # spec.md R5's new default; install.sh is required to pin it explicitly
 
@@ -476,6 +485,50 @@ def remote_version(target: str) -> str | None:
     return line if re.fullmatch(r"coscc \S+", line) else None
 
 
+def latest_published_version() -> str | None:
+    """The version `/releases/latest/download/...` would serve right now, or None."""
+    try:
+        resp = httpx.get(RELEASES_LATEST, timeout=15, follow_redirects=True)
+    except httpx.HTTPError:
+        return None
+    found = re.search(r"/releases/tag/v(\d+\.\d+\.\d+[^/\s\"']*)", str(resp.url))
+    return found.group(1) if found else None
+
+
+def wait_for_a_newer_release(installed: str | None) -> tuple[bool, str]:
+    """Step 5 measures moving to the *next* release, so a next one has to exist.
+
+    This precondition went unwritten until the proof was first run for real, 2026-09-22,
+    and it is not a detail of the harness -- it is forced by what the outcome claims.
+    `docs/install.md` gives one line for both install and update, and that line resolves
+    through `/releases/latest/`. Run with a single release published, it installs X and
+    then "updates" to X: `coscc --version` cannot change, and the step fails while
+    nothing about the update path is actually broken.
+
+    So the proof stops here and says what it is waiting for. A timeout is `EXIT_ENV`, not
+    `EXIT_BROKEN` -- "nobody published the next release" is an unready environment, the
+    same distinction the module docstring draws for a missing target.
+    """
+    current = (installed or "").removeprefix("coscc ").strip()
+    deadline = time.monotonic() + NEXT_RELEASE_TIMEOUT_S
+    told = False
+    while time.monotonic() < deadline:
+        latest = latest_published_version()
+        if latest and latest != current:
+            return True, f"{RELEASES_LATEST} now resolves to v{latest}"
+        if not told:
+            print(
+                f"\n  waiting: the target has coscc {current or '(unknown)'} installed, and "
+                f"{RELEASES_LATEST}\n  still resolves to v{latest or '(unreadable)'}. Step 5 "
+                "measures the move to the *next* release,\n  so publish it now -- push the "
+                f"next tag. Waiting up to {NEXT_RELEASE_TIMEOUT_S // 60} minutes.",
+                flush=True,
+            )
+            told = True
+        time.sleep(15)
+    return False, f"no release newer than {current!r} appeared within {NEXT_RELEASE_TIMEOUT_S}s"
+
+
 # --------------------------------------------------------------------------
 # the run
 # --------------------------------------------------------------------------
@@ -544,6 +597,11 @@ def run() -> int:
 
         # --- step 5: update, 1 command, version changes, env file untouched ---
         version_before = remote_version(target)
+        ready, why = wait_for_a_newer_release(version_before)
+        if not ready:
+            print(f"\n{why}", file=sys.stderr)
+            return EXIT_ENV
+        say(True, f"a newer release is published ({why})")
         upd_cmds = update_commands()
         if not say(
             len(upd_cmds) <= MAX_UPDATE_COMMANDS,
