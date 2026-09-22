@@ -259,9 +259,15 @@ class ShutdownClosesSessions(unittest.IsolatedAsyncioTestCase):
     measured 2026-09-22), and nothing here would notice if a later release reversed it.
     """
 
+    def setUp(self):
+        # Built outside the coroutine: IsolatedAsyncioTestCase runs the event loop in debug
+        # mode, and constructing the app inside the task took long enough to trip asyncio's
+        # slow-callback line. That is noise this unit exists to remove.
+        self.app = build(Config(workspaces=("/tmp",)))
+        self.app.state.sessions.close_all = mock.AsyncMock()
+
     async def test_leaving_the_lifespan_closes_every_session(self):
-        app = build(Config(workspaces=("/tmp",)))
-        app.state.sessions.close_all = mock.AsyncMock()
+        app = self.app
         async with app.router.lifespan_context(app):
             # Startup must not close anything; the app is meant to be serving here.
             app.state.sessions.close_all.assert_not_awaited()

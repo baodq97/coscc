@@ -2,10 +2,14 @@
 name = "cos-baodo"
 version = "0.0.1"
 description = "Web app that lists, creates and resumes Claude Code sessions across projects"
-requires-python = ">=3.11"
+# Every measurement this repository records is taken on the interpreter in
+# `.python-version`, and after 0007 that is 3.14. A floor naming an older one would be the
+# same kind of untrue sentence this unit exists to remove. This is one person's local app,
+# not a library, so there is nobody downstream the floor shuts out.
+requires-python = ">=3.14"
 dependencies = [
-    "claude-agent-sdk>=0.1.0",
-    "reflex>=0.9.11.post1",
+    "claude-agent-sdk>=0.2.157",
+    "reflex>=0.9.12",
     "fastapi>=0.141.1",
 ]
 
