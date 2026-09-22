@@ -4,8 +4,10 @@ Intent: intent.md. Author: Bao Do. Status: accepted.
 > **Sửa ngày 2026-09-22, sau khi bản đầu đã accepted và commit (`5226be5`).** Hai concern
 > được giao cho người khởi xướng đã có câu trả lời, và cả hai được ghi tại chỗ thay vì đẩy
 > sang `plan.md`: **C2** — dùng `github.com/baodq97/coscc`, chấp nhận handle cá nhân trong
-> URL; **C5** — ghi chú tra cứu đặt một chỗ, trong `.claude/harness.md`, sau một phép đo
-> mới ghi ở chính C5. R11 đổi theo. Bản đầu đọc được ở `5226be5`. Trước khi thêm khối này,
+> URL; **C5** — ghi chú tra cứu đặt một chỗ, tới được từ `.claude/harness.md`, sau một phép
+> đo mới ghi ở chính C5. Rồi việc đọc code để viết `plan.md` lộ ra một mâu thuẫn bản đầu
+> không thấy, nên R11 tách ghi chú làm bảng-tra ở `.cos/RENAMES.md` và con-trỏ ở
+> `harness.md`; lý do ở cuối C5. Bản đầu đọc được ở `5226be5`. Trước khi thêm khối này,
 > đã kiểm: **0** chỗ trong repo trích dẫn file này kèm số dòng, nên việc đẩy số dòng xuống
 > không làm hỏng gì — đúng cái bẫy mà C5 vừa đo được ở 19 artifact khác.
 
@@ -96,10 +98,26 @@ số đổi mà không ai nói tại sao là đúng thứ `0007` đi dọn.
 artifact đã `accepted` giữ nguyên chữ `cos_baodo` trong thân file; **không file nào trong
 `.cos/` được sửa, kể cả thêm header**. Ghi chú tra cứu — nội dung theo hình thức
 `.cos/0001_no-session-management/plan.md:4-21`, nói `cos_baodo/` nay là `coscc/` — đặt trong
-`.claude/harness.md`, là nơi file đó đã tự nhận là chỗ đọc khi thiết lập hoặc thay đổi
-harness (`.claude/harness.md:7`). Lý do không theo hình thức đặt-trong-file của tiền lệ nằm ở
-C5. Kiểm: `git diff` của unit này không chạm file nào dưới `.cos/` ngoài các artifact của
-chính `0008`; `.claude/harness.md` chứa cả `cos_baodo/` lẫn `coscc/`; và
+hai mảnh, và việc tách làm hai là bắt buộc chứ không phải cho gọn:
+
+- **Bảng tra** — nội dung theo hình thức `.cos/0001_no-session-management/plan.md:4-21` — đặt
+  ở **`.cos/RENAMES.md` (new)**, một file ở tầng `.cos/`, không nằm trong unit dir nào.
+- **Con trỏ** đặt trong `.claude/harness.md`, nơi file đó đã tự nhận là chỗ đọc khi thiết lập
+  hoặc thay đổi harness (`.claude/harness.md:7`). Con trỏ **không được viết ra tên cũ**; nó
+  chỉ nói rằng đường dẫn gói trong artifact viết trước `0008` được tra ở file kia.
+
+Lý do tách: bảng tra bắt buộc phải viết ra tên cũ, và `.claude/harness.md` nằm **ngoài**
+`.cos/`. Đặt bảng ở đó thì R15 và outcome của `intent.md` — `git grep -in baodo -- . ':!.cos'`
+bằng 0 — **không bao giờ đạt được**. Đây là mâu thuẫn bản `5226be5` không thấy. `.cos/` là
+vùng duy nhất vừa bị loại khỏi phép đo vừa hợp lý về ngữ nghĩa, và một file ở tầng `.cos/` là
+vô hình với harness: `.claude/scripts/cos.mjs:97-98` chỉ liệt kê thư mục, còn kiểm tra file lạ
+ở `:83-84` chỉ chạy bên trong một unit dir. Quyết định C5 — "một chỗ, tới được từ
+`harness.md`" — vẫn được giữ; chỉ chỗ đặt vật lý của bảng đổi.
+
+Kiểm: `git diff` của unit này không chạm file nào dưới `.cos/` ngoài các artifact của chính
+`0008` và `.cos/RENAMES.md`; `.cos/RENAMES.md` chứa cả tên cũ lẫn `coscc/`;
+`.claude/harness.md` trỏ tới nó và **không** chứa tên cũ; `cos.mjs status` không báo problem
+nào; và
 `git grep -in baodo -- .cos` vẫn trả một số dương. **Không pin con số đó ở đây**: nó là 279 ở
 `9280d33`, 289 ở `fed0638`, 319 ở `5226be5`, và tăng nữa khi `impl.md` được commit. `impl.md`
 đo lại tại thời điểm của nó.
@@ -250,10 +268,18 @@ nguyên văn thứ `.cos/0001_no-session-management/plan.md:6` gọi là *"một
 khác"*. Tiền lệ từ chối viết lại thân file; nó không lường trước trường hợp chính cái header
 cũng phá được thứ khác.
 
-> **Quyết ngày 2026-09-22: một ghi chú, trong `.claude/harness.md`.** Không artifact nào bị
-> chạm, 19 trích dẫn số dòng giữ nguyên. Giá phải trả không biến mất và phải nói rõ: ai mở
-> thẳng một artifact sẽ thấy đường dẫn chết và không có gì tại chỗ chỉ họ đi đâu. Đó là chỗ
-> concern này vẫn hở, và R11 chỉ làm nó rẻ hơn chứ không đóng nó.
+> **Quyết ngày 2026-09-22: một ghi chú, tới được từ `.claude/harness.md`.** Không artifact
+> nào bị chạm, 19 trích dẫn số dòng giữ nguyên. Giá phải trả không biến mất và phải nói rõ:
+> ai mở thẳng một artifact sẽ thấy đường dẫn chết và không có gì tại chỗ chỉ họ đi đâu. Đó
+> là chỗ concern này vẫn hở, và R11 chỉ làm nó rẻ hơn chứ không đóng nó.
+>
+> **Sửa sau đó, cùng ngày:** khi đọc code để viết `plan.md` mới lộ ra rằng đặt **bảng tra**
+> trong `.claude/harness.md` là bất khả — bảng phải viết ra tên cũ, `harness.md` nằm ngoài
+> `.cos/`, nên R15 và outcome của `intent.md` không bao giờ đạt. R11 vì thế tách làm hai:
+> bảng ở `.cos/RENAMES.md`, con trỏ ở `harness.md`. Quyết định "một chỗ, tới được từ
+> `harness.md`" không đổi. **Nếu người khởi xướng muốn bảng nằm thẳng trong `harness.md`,
+> thì `intent.md` phải khoét một ngoại lệ có tên cho đúng khối đó** — một dòng, và là quyết
+> định của họ, không phải của spec này.
 
 **C6 — Bất đối xứng `Store`/`Journal` sau R3.** Xem `## Design`. Nó đúng theo phạm vi và vẫn
 là một chỗ lệch mà người đọc code sẽ phải hỏi tại sao. R6 là chỗ nó được nói ra.
