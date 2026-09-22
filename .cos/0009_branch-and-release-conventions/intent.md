@@ -75,6 +75,15 @@ ngày.
 Hôm nay, 2026-09-22: **0** release, **0** tag, **0** pull request, **137** commit đều vào
 thẳng `main`.
 
+> **Sửa sau khi merge, 2026-09-22.** Phần miễn trừ ở trên **không cần dùng tới, và đoạn văn
+> mô tả sai chuyện đã xảy ra.** `intent.md`, `spec.md` và `plan.md` không vào thẳng `main`:
+> chúng được commit vào `main` **cục bộ** và `main` không bao giờ được push, nên khi
+> `feat/branch-and-release-conventions` được cắt ra và mở PR với base là `origin/main`, cả
+> ba commit ấy nằm trong pull request và đi qua cùng một cổng như mọi thứ khác. `origin/main`
+> đi từ `89e7ed1` thẳng tới commit squash `82d599d`. Kết quả tốt hơn dự định — **không gì
+> vòng qua cổng** — nhưng nó tốt hơn do một tai nạn về thứ tự push, không do thiết kế, và
+> ghi lại nguyên nhân thật đáng hơn ghi lại kết quả đẹp.
+
 Kết quả này sai nếu: tới ngày đó chưa có `v0.1.0`, hoặc có nhưng không có prerelease trước
 nó, hoặc tag không nằm trên `main`, hoặc có ít nhất một commit sau mốc bật ruleset vào `main`
 mà không qua pull request.

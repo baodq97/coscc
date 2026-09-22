@@ -286,6 +286,14 @@ trong git. Một bản clone không có mạng đọc `git log` sẽ không th�
 đổi này **chưa từng được cân** trong repo — `0008` đã viết lại history để gỡ một tài liệu,
 nhưng chưa bao giờ bỏ bớt commit. **Người khởi xướng quyết**, và đã quyết.
 
+> **Đo sau khi merge, 2026-09-22.** Chi phí nhẹ hơn đoạn trên viết, và con số nói rõ hơn
+> lời: `squash_merge_commit_message` của repo là `COMMIT_MESSAGES`, nên commit squash
+> `82d599d` mang **cả 13 thông điệp commit, 235 dòng**. Prose vẫn đọc được bằng `git log`
+> trên một bản clone không mạng. Thứ mất là các **cây trung gian**: không còn `git show` một
+> bước riêng lẻ, không còn `git bisect` giữa chúng, và không còn diff của riêng bước "proof
+> đỏ trước". Đoạn trên nói "chỉ còn trong pull request" — sai; đúng là "chỉ còn văn bản, mất
+> các trạng thái".
+
 **C8 — R13 chết nếu `write-intent` không đòi `Type:`.** Template ở
 `.claude/skills/write-intent/SKILL.md` hiện in header là `Author: <name>. Status: accepted.`
 và không gì khác, nên một session làm đúng skill sẽ viết ra một `intent.md` thiếu type. Một

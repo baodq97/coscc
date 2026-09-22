@@ -507,10 +507,20 @@ def claim_12() -> bool:
     if not since:
         return say(False, "every commit on main since the gate arrived through a PR",
                    "the ruleset carries no created_at")
-    commits = gh_json("api", f"repos/{GH_REPO}/commits?sha=main&since={since}&per_page=100")
+    # `-f` rather than an interpolated query string. The ruleset timestamp carries a
+    # `+07:00` offset, and a bare `+` in a query string decodes as a space: the first
+    # version of this passed while reporting "all 0 commits", which is the shape of a claim
+    # that holds because it was never asked.
+    commits = gh_json("api", f"repos/{GH_REPO}/commits",
+                      "-X", "GET", "-f", "sha=main", "-f", f"since={since}", "-f", "per_page=100")
     if commits is None:
         return say(False, "every commit on main since the gate arrived through a PR",
                    "GitHub did not list the commits")
+    if not commits:
+        # The gate went up before the first merge, so there is always at least one commit
+        # after it. Zero means the window is wrong, not that the repository is quiet.
+        return say(False, "every commit on main since the gate arrived through a PR",
+                   f"no commits found since {since}, and the gate predates the first merge")
     direct = []
     for c in commits:
         pulls = gh_json("api", f"repos/{GH_REPO}/commits/{c['sha']}/pulls")
