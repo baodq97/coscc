@@ -126,7 +126,7 @@ class TheGateWithAStore(unittest.TestCase):
         with self.assertRaises(Invalid):
             s.check_send(str(self.root / "repo"), "hi")
 
-    def test_no_working_folder_means_no_store_and_0002_behaviour(self):
+    def test_no_working_folder_means_no_store_and_0001_behaviour(self):
         config = Config(workspaces=(REPO,))
         s = Service(config, Sessions(config))
         self.assertIsNone(s.store)
@@ -152,7 +152,7 @@ class TheGateWithAStore(unittest.TestCase):
 
 
 class OneMembershipQuestion(unittest.TestCase):
-    """`spec.md` R10, at the place `0003` found it broken.
+    """`spec.md` R10, at the place `0002` found it broken.
 
     The session layer keeps its own guard — it is the last thing before a CLI process is
     spawned — but it must answer the same question the service gate answers. Before this,
@@ -177,7 +177,7 @@ class OneMembershipQuestion(unittest.TestCase):
 
 
 class PullStopsAtALiveSession(unittest.TestCase):
-    """`0005` R6 and R7. The refusal has to happen before `git` runs, not after."""
+    """`0004` R6 and R7. The refusal has to happen before `git` runs, not after."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

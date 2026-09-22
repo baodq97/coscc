@@ -1,12 +1,12 @@
 """Building the page, and the one place that answers "is the build current?".
 
-`0003` shipped a manual build step, and `spec.md` C3 named what that costs: edit the page,
+`0002` shipped a manual build step, and `spec.md` C3 named what that costs: edit the page,
 forget to rebuild, and every check opens the previous bundle, finds it healthy, and reports
 success. That is the same failure this unit exists to stop — green evidence about something
 that is not what is running — only harder to see.
 
 So building writes a fingerprint beside the output, and anything that serves or measures
-the page asks here first. `run.py` refuses to start on a stale build; `verify_0004.py`
+the page asks here first. `run.py` refuses to start on a stale build; `verify_0003.py`
 refuses to measure one.
 
 **What the fingerprint covers, and what it cannot.** The compiled bundle is decided by the

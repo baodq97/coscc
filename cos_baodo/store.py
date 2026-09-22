@@ -3,29 +3,29 @@
 The safety property here is a data shape, not a check. A stored entry holds a `name` —
 **one path segment** — and never an absolute path, so there is no field in which a
 hand-edited store could put `/etc`. The real path is built from the working folder on every
-read (`0003 spec.md` R12). `is_under` stays as a second layer, but the first layer is that
-the dangerous value has nowhere to live. After `0011` that is stronger than it was: the
+read (`0002 spec.md` R12). `is_under` stays as a second layer, but the first layer is that
+the dangerous value has nowhere to live. After `0006` that is stronger than it was: the
 table has **no column** for a path at all.
 
 This is the first state the app owns. It holds workspaces and labels, and nothing else:
 conversation content belongs to the SDK's session store, which stays the one source of
 truth for anything said.
 
-**Where it lives, and why that changed.** Until `0011` this was a JSON file inside the
+**Where it lives, and why that changed.** Until `0006` this was a JSON file inside the
 working folder, replaced by `rename` on every write, with a `flock` beside it. It is now
 rows in the app's own SQLite database under the data root (`cos_baodo/data.py`), because
-`0011 intent.md` asked for one durable place that exists whether or not a working folder
+`0006 intent.md` asked for one durable place that exists whether or not a working folder
 does. One row per `(root, name)`, so one database serves every working folder on the
 machine and a workspace still cannot be named outside its own root.
 
-**Concurrency, and why the transaction is where it is.** `0005` measured the old
+**Concurrency, and why the transaction is where it is.** `0004` measured the old
 arrangement: four processes adding five workspaces each to one working folder left 8 of 20,
 with no error anywhere. The loss was never two writes colliding — it was two
 read-then-write sequences interleaving, each reading the old list and each writing back
 what it computed. That is why every mutation below runs inside `Data.write`, which opens
 `BEGIN IMMEDIATE`: the transaction covers the whole read-modify-write, exactly as the file
-lock did. `0011 spec.md` C2 is explicit that swapping the mechanism does not carry the
-proof across — `scripts/verify_0005.py` is what decides it, and it still measures 20.
+lock did. `0006 spec.md` C2 is explicit that swapping the mechanism does not carry the
+proof across — `scripts/verify_0004.py` is what decides it, and it still measures 20.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from pathlib import Path
 from cos_baodo.data import BUSY_TIMEOUT, Busy, Data, now
 
 # The file this used to be. Still named here for one reason: `import_legacy` reads it once
-# so that a machine set up before `0011` keeps its workspaces (`0011 spec.md` R8). Nothing
+# so that a machine set up before `0006` keeps its workspaces (`0006 spec.md` R8). Nothing
 # writes it any more, and it is never deleted — see `import_legacy`.
 STORE_FILENAME = ".cos-baodo.json"
 
@@ -49,7 +49,7 @@ STORE_FILENAME = ".cos-baodo.json"
 # `busy_timeout` (`cos_baodo/data.py`).
 LOCK_TIMEOUT = BUSY_TIMEOUT
 
-# One path segment. No separators, no `.`/`..`, bounded length. `0003 spec.md` R12 lists
+# One path segment. No separators, no `.`/`..`, bounded length. `0002 spec.md` R12 lists
 # the inputs this has to turn away.
 _NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 LABEL_MAX = 200
@@ -98,8 +98,8 @@ class Entry:
 class Store:
     """The workspace list for one working folder, kept in the app's own database.
 
-    Every method re-reads. That is deliberate: `0003 spec.md` R21 wants membership decided
-    at read time, and a cached list is exactly the thing that made `0002`'s gate safe for a
+    Every method re-reads. That is deliberate: `0002 spec.md` R21 wants membership decided
+    at read time, and a cached list is exactly the thing that made `0001`'s gate safe for a
     reason that no longer holds.
 
     `data` is the app's data root. It is passed in rather than defaulted at the call sites
@@ -114,7 +114,7 @@ class Store:
     ):
         self.working_dir = Path(working_dir).expanduser().resolve()
         self.data = data if isinstance(data, Data) else Data(data)
-        # The pre-`0011` file, read once by `import_legacy` and never written.
+        # The pre-`0006` file, read once by `import_legacy` and never written.
         self.legacy_path = self.working_dir / STORE_FILENAME
         self._root = str(self.working_dir)
         self._imported = False
@@ -141,7 +141,7 @@ class Store:
         return self.legacy_path.is_file() and not self._imported
 
     def _import_legacy(self, conn) -> None:
-        """Bring a pre-`0011` JSON list in, once, for this working folder.
+        """Bring a pre-`0006` JSON list in, once, for this working folder.
 
         `Data.import_once` owns the guard, the mark and the not-deleting; this supplies
         only what the file says. Entries already in the database win: this adds what is
@@ -253,7 +253,7 @@ class Store:
             return Entry(name=name, label=cleaned)
 
     def remove(self, name: str) -> None:
-        """Drops the entry. Never touches the directory — `0003 spec.md` R18 and C6."""
+        """Drops the entry. Never touches the directory — `0002 spec.md` R18 and C6."""
         require_name(name)
         with self.transaction() as conn:
             changed = conn.execute(

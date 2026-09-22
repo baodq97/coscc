@@ -7,7 +7,7 @@ Two settings here are not preferences, they are defects found by running the thi
 
 `backend_host` — Reflex 0.9.11 defaults it to `0.0.0.0`. Verified on 2026-09-21 by reading
 `Config.__dataclass_fields__["backend_host"].default`, and by `ss -ltn` showing
-`0.0.0.0:8000` before this line existed. `0002` defaulted the other way
+`0.0.0.0:8000` before this line existed. `0001` defaulted the other way
 (`cos_baodo/config.py:60`), so adopting Reflex silently reverses that posture.
 
 `api_url` — the compiled frontend **bakes in** the address it will open its `/_event`
@@ -21,7 +21,7 @@ the production build with `TypeError: Invalid URL`. So the address is read from 
 config the app serves itself on, and `run.py` refuses to start if the build it finds was
 made for a different port.
 
-The theme lives here rather than on `rx.App`. `0008` R22 requires it to be declared
+The theme lives here rather than on `rx.App`. `0005` R22 requires it to be declared
 explicitly, and 0.9.11 answers `App(theme=...)` with a deprecation warning pointing at
 `RadixThemesPlugin` and saying it goes away at 1.0 — measured on 2026-09-21 by building
 with it. The published guides still show the `rx.App` form, so the installed package is

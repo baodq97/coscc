@@ -38,10 +38,10 @@ Intent: intent.md. Spec: spec.md. Author: Claude Opus 5. Status: accepted.
 
 | Path | Gì xảy ra |
 |---|---|
-| `scripts/verify_0011.py` *(new)* | Proof của R13 và R14: 5 luồng trên dữ liệu thật, restart ở giữa. |
-| `scripts/verify_0004.py` | Viết lại theo trang mới. Giữ theme, responsive, contrast, negative control. |
-| `scripts/verify_0005.py` | Giữ nguyên hai claim và số **20**. Chỉ chạy lại trên cơ chế mới. |
-| `scripts/verify_0009.py` | **Xóa.** Nó lái `/prototype`, thứ không còn tồn tại. Xem Risk 6. |
+| `scripts/verify_0006.py` *(new)* | Proof của R13 và R14: 5 luồng trên dữ liệu thật, restart ở giữa. |
+| `scripts/verify_0003.py` | Viết lại theo trang mới. Giữ theme, responsive, contrast, negative control. |
+| `scripts/verify_0004.py` | Giữ nguyên hai claim và số **20**. Chỉ chạy lại trên cơ chế mới. |
+| `scripts/verify_fragmented-product-experience.py` | **Xóa.** Nó lái `/prototype`, thứ không còn tồn tại. Xem Risk 6. |
 | `docs/prototype.md` | Viết lại thành tài liệu trang thật. |
 | `README.md` | Thư mục dữ liệu, lệnh mới, proof mới. |
 | `.claude/CLAUDE.md` | Mô tả nơi lưu dữ liệu và danh sách proof. |
@@ -59,11 +59,11 @@ Mỗi bước để lại một trạng thái kiểm được. `npm test` phải
    — *kiểm: `npm test`.*
 4. **`store.py` sang SQLite.** Interface không đổi. Thêm lần nhập một lần từ
    `<root>/.cos-baodo.json`, ghi vào bảng `migrations` để không chạy lần hai; file JSON
-   không bị xóa. — *kiểm: `npm test`, rồi `uv run python scripts/verify_0005.py` claim 1
+   không bị xóa. — *kiểm: `npm test`, rồi `uv run python scripts/verify_0004.py` claim 1
    xanh với 20/20.*
 5. **`journal.py` sang SQLite.** Interface không đổi. `records` vẫn trả oldest-first.
    — *kiểm: `npm test`.*
-6. **Cả `verify_0005.py` xanh.** Hai claim. Claim 2 tạo một phiên thật và tiêu quota.
+6. **Cả `verify_0004.py` xanh.** Hai claim. Claim 2 tạo một phiên thật và tiêu quota.
    — *kiểm: exit 0.*
 7. **`state.py`.** `StudioState`: workspaces, board, timeline, sessions, history, prefs,
    run một bước. Mọi handler gọi `Service` và chỉ dịch `Invalid` thành chữ.
@@ -74,11 +74,11 @@ Mỗi bước để lại một trạng thái kiểm được. `npm test` phải
 9. **Một trang ở `/`.** Bỏ trang cũ trong `cos_baodo.py`, đăng ký `screens.index` ở `/`,
    cập nhật `_SOURCES`. — *kiểm: `uv run cos-build` exit 0 và fingerprint phủ file mới;
    `uv run cos-baodo` khởi động và `curl` trả 200.*
-10. **`verify_0004.py` viết lại.** — *kiểm: exit 0.*
-11. **`verify_0011.py`.** Năm luồng, rồi restart tiến trình app, rồi kiểm lại.
+10. **`verify_0003.py` viết lại.** — *kiểm: exit 0.*
+11. **`verify_0006.py`.** Năm luồng, rồi restart tiến trình app, rồi kiểm lại.
     — *kiểm: exit 0.*
 12. **Tài liệu.** `README.md`, `docs/prototype.md`, `.claude/CLAUDE.md`. Xóa
-    `verify_0009.py`. — *kiểm: lệnh trong README chạy được đúng như viết.*
+    `verify_fragmented-product-experience.py`. — *kiểm: lệnh trong README chạy được đúng như viết.*
 
 Bước 1–6 là tầng dữ liệu và độc lập với trang: nếu phải dừng giữa chừng, dừng sau bước 6
 để lại một repository chạy được với trang cũ còn nguyên.
@@ -86,13 +86,13 @@ Bước 1–6 là tầng dữ liệu và độc lập với trang: nếu phải 
 ## Risks
 
 1. **SQLite mất ghi ở chỗ `flock` không mất.** Blast radius lớn nhất: đây là đúng thứ
-   `0005` đã đo thấy hỏng — **8/20** entry sống sót trước khi có khóa
-   (`.cos/0005_silent-concurrent-loss/`). `BEGIN IMMEDIATE` phải bao cả read-modify-write,
-   không phải chỉ câu `INSERT`. **Thấy được khi:** `verify_0005.py` claim 1 báo dưới 20.
+   `0004` đã đo thấy hỏng — **8/20** entry sống sót trước khi có khóa
+   (`.cos/0004_silent-concurrent-loss/`). `BEGIN IMMEDIATE` phải bao cả read-modify-write,
+   không phải chỉ câu `INSERT`. **Thấy được khi:** `verify_0004.py` claim 1 báo dưới 20.
    Không suy luận; chạy nó.
 2. **Trang mới là trang duy nhất.** Sau bước 9, sai ở đâu thì không còn mặt trước nào để
-   đối chiếu trong cùng build (spec C3). **Thấy được khi:** `verify_0004.py` hoặc
-   `verify_0011.py` đỏ — nhưng một cái sai tinh vi về bố cục thì chỉ người dùng thấy.
+   đối chiếu trong cùng build (spec C3). **Thấy được khi:** `verify_0003.py` hoặc
+   `verify_0006.py` đỏ — nhưng một cái sai tinh vi về bố cục thì chỉ người dùng thấy.
    Giảm nhẹ: bước 9 là commit riêng, revert được.
 3. **`StudioState` gánh cả sáu màn.** `prototype.py` dài 1372 dòng với state trong bộ nhớ;
    bản thật phải gọi `Service` bất đồng bộ và chịu lỗi. Reflex yêu cầu var có kiểu dựng
@@ -103,14 +103,14 @@ Bước 1–6 là tầng dữ liệu và độc lập với trang: nếu phải 
    (`cos_baodo/board.py:38`). Một workspace không có `.cos/` trả `Unavailable`.
    **Thấy được khi:** màn Board treo tới 10s, hoặc hiện lỗi thay vì trạng thái rỗng — R15
    nói nó phải là trạng thái rỗng có chữ.
-5. **Nút chạy bước tiêu quota thật** (spec C8). `verify_0011.py` **không được** bấm nó;
+5. **Nút chạy bước tiêu quota thật** (spec C8). `verify_0006.py` **không được** bấm nó;
    luồng (c) chỉ xem artifact và timeline. **Thấy được khi:** hóa đơn, tức là quá muộn —
    nên đây là ràng buộc lên proof, không phải thứ để đo sau.
-6. **Xóa `verify_0009.py` là bỏ khả năng chạy lại bằng chứng của `0009`.** Nội dung của nó
+6. **Xóa `verify_fragmented-product-experience.py` là bỏ khả năng chạy lại bằng chứng của `fragmented-product-experience`.** Nội dung của nó
    — sáu màn, light/dark, empty/loading/error, không tràn ở 390/768/1024/1440px — chuyển
-   sang `verify_0011.py` nên không mất về bản chất. Nhưng `.cos/0009_.../impl.md` trích nó,
+   sang `verify_0006.py` nên không mất về bản chất. Nhưng `.cos/fragmented-product-experience_.../impl.md` trích nó,
    và sau bước 12 câu trích đó chỉ còn đúng với commit `e5d6048`. Ghi ở đây thay vì sửa
-   artifact của `0009`.
+   artifact của `fragmented-product-experience`.
 7. **Nhập từ JSON hai lần** thành entry trùng. **Thấy được khi:** test ở bước 4 đếm entry
    sau hai lần mở store.
 8. **Thứ không muốn viết ra.** Unit này xóa mặt trước duy nhất đã được chứng minh, và viết
@@ -124,22 +124,22 @@ Bước 1–6 là tầng dữ liệu và độc lập với trang: nếu phải 
 ```
 npm test \
   && uv run cos-build \
-  && uv run python scripts/verify_0005.py \
   && uv run python scripts/verify_0004.py \
-  && uv run python scripts/verify_0011.py
+  && uv run python scripts/verify_0003.py \
+  && uv run python scripts/verify_0006.py
 ```
 
 Đạt khi cả năm lệnh exit 0, và:
 
-- `npm test` không ít test hơn lần đo ngày 2026-09-22 ở `0009` (**31** Node + **239**
+- `npm test` không ít test hơn lần đo ngày 2026-09-22 ở `fragmented-product-experience` (**31** Node + **239**
   Python), trừ phần trừ đi đúng bằng số test của `prototype_test.py` bị xóa. Con số bị trừ
   phải nêu rõ trong `impl.md`.
-- `verify_0005.py` in `20 of 20` cho claim 1.
-- `verify_0011.py` in `5/5` và báo đạt cả phần sau khi khởi động lại.
-- `verify_0004.py` exit 0, không phải 2. Exit 2 nghĩa là môi trường chưa sẵn sàng và
+- `verify_0004.py` in `20 of 20` cho claim 1.
+- `verify_0006.py` in `5/5` và báo đạt cả phần sau khi khởi động lại.
+- `verify_0003.py` exit 0, không phải 2. Exit 2 nghĩa là môi trường chưa sẵn sàng và
   **không tính là đạt**.
 
-`verify_0004.py` và `verify_0011.py` cần `COS_PORT` trống và một browser; dừng app trước
+`verify_0003.py` và `verify_0006.py` cần `COS_PORT` trống và một browser; dừng app trước
 khi chạy. Cả hai không được chạy đồng thời.
 
 ## Departures from this plan
@@ -153,7 +153,7 @@ Ghi tại thời điểm xảy ra, theo `write-plan` invariant 8.
    `set_preference` có ghi, và nó chỉ nhận các khóa trong một danh sách trắng.
 
 2. **`journal.py` cũng nhập một lần từ JSONL.** `spec.md` R8 chỉ nói tới
-   `.cos-baodo.json`. Bỏ qua nhật ký cũ sẽ mất lịch sử trên một máy đã dùng trước `0011`;
+   `.cos-baodo.json`. Bỏ qua nhật ký cũ sẽ mất lịch sử trên một máy đã dùng trước `0006`;
    cơ chế y hệt, một dòng migration key khác.
 
 3. **Lane trên board không dùng `blocked` của harness.** Đo ngày 2026-09-22 bằng

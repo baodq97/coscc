@@ -10,7 +10,7 @@ useless. So it comes here instead.
 artifact's `Status:` line via `board.py`. That is what keeps the journal unable to lie
 about progress: it can only say who was there and what it cost.
 
-**Append-only, and that is a safety property rather than a style.** `0005` measured four
+**Append-only, and that is a safety property rather than a style.** `0004` measured four
 processes losing 12 of 20 workspace entries to interleaved read-modify-write. An append has
 no read step, so that entire class of loss is structurally absent here rather than defended
 against. The transaction is still taken — it frames a record so a reader gets a consistent
@@ -18,14 +18,14 @@ snapshot — but it is the second line of defence, not the first.
 
 Records are stamped and never edited. A mode change is a new record; the latest one wins.
 
-**Where it lives, after `0011`.** It was a JSONL file beside the workspace store, one line
+**Where it lives, after `0006`.** It was a JSONL file beside the workspace store, one line
 per record, `O_APPEND` under a `flock`. It is now rows in the app's SQLite database under
 the data root. The record itself is still stored whole, as the JSON the caller composed —
 the columns beside it (`root`, `workspace`, `unit`, `stage`, `kind`) are read out of that
 JSON at insert time so a query can narrow without parsing every row. They are a second
 copy, so they are never written independently of it; the JSON is the record.
 
-A JSONL journal written before `0011` is imported once, on first use, and the file is not
+A JSONL journal written before `0006` is imported once, on first use, and the file is not
 deleted. That mirrors the workspace store and is the same reasoning: an import that turns
 out wrong is recoverable only while its source still exists.
 """
@@ -43,7 +43,7 @@ from cos_baodo.data import BUSY_TIMEOUT, Busy, Data, now as _now
 VERSION = 1
 
 # The file this used to be. Named here only so `_import_legacy` can read it once
-# (`0011 spec.md` R8, extended to the journal). Nothing writes it any more.
+# (`0006 spec.md` R8, extended to the journal). Nothing writes it any more.
 JOURNAL_FILENAME = ".cos-journal.jsonl"
 
 # Same reasoning, and the same number, as `store.LOCK_TIMEOUT`: ten seconds turns an
@@ -100,7 +100,7 @@ class Journal:
 
     It lives in the app's data root rather than inside any repository: a workspace is
     somebody's git checkout, and dropping a growing log into it would show up in their
-    `git status` forever. Before `0011` "not inside a repository" meant the working folder;
+    `git status` forever. Before `0006` "not inside a repository" meant the working folder;
     now it means `~/.cos`, which is also true when there is no working folder at all.
 
     `data` is passed in for the same reason it is on `Store`: a test that forgets it would
@@ -137,7 +137,7 @@ class Journal:
         return f"import-jsonl:{self._root}"
 
     def _import_legacy(self, conn) -> None:
-        """Bring a pre-`0011` JSONL log in, once, for this working folder.
+        """Bring a pre-`0006` JSONL log in, once, for this working folder.
 
         `Data.import_once` owns the guard, the mark and the not-deleting, exactly as it
         does for `store.Store`. This supplies only the parse: lines that will not parse are

@@ -2,7 +2,7 @@
 
 None of these create a session — the guards are exactly the paths that must refuse
 *before* anything is spawned, so testing them costs nothing (`spec.md` C4). What needs a
-real session is `scripts/verify_0002.py`, which is run on purpose.
+real session is `scripts/verify_0001.py`, which is run on purpose.
 """
 
 import json
@@ -27,7 +27,7 @@ def _info(session_id="s1", cwd="/tmp"):
 
 
 class Surface(unittest.IsolatedAsyncioTestCase):
-    """Driven over ASGI, the same way `scripts/verify_0002.py` drives it.
+    """Driven over ASGI, the same way `scripts/verify_0001.py` drives it.
 
     No socket and no lifespan: the transport speaks to the app object directly, which is
     also the object Reflex mounts. A test that needed a port would be testing something
@@ -44,7 +44,7 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
 
     async def test_workspaces_lists_what_was_configured(self):
-        # `0003` R13 widened this from a list of paths to a list of entries carrying
+        # `0002` R13 widened this from a list of paths to a list of entries carrying
         # name, label, source and missing, plus the count the app could not answer
         # before. `paths` is kept so the older shape still reads.
         body = (await self.client.get("/api/workspaces")).json()
@@ -107,7 +107,7 @@ class Surface(unittest.IsolatedAsyncioTestCase):
 
     async def test_refusing_to_resume_arrives_as_an_ndjson_error_line(self):
         # The status line is committed before streaming starts, so the caller only learns
-        # of this by reading to the end. verify_0002.py depends on that being true.
+        # of this by reading to the end. verify_0001.py depends on that being true.
         r = await self.client.post(
             "/api/send", json={"cwd": "/tmp", "text": "hi", "session_id": "not-ours"}
         )
@@ -208,7 +208,7 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
 
 
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
-    """`0002` behaviour: no store, and the write routes say why rather than crashing."""
+    """`0001` behaviour: no store, and the write routes say why rather than crashing."""
 
     async def asyncSetUp(self):
         self.app = build(Config(workspaces=("/tmp",)))

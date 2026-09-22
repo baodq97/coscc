@@ -19,7 +19,7 @@ node .claude/scripts/cos.mjs gate <NNNN_slug> pr
 Exit 0 means proceed.
 
 **This stage needs a remote, and this repository may not have one.** `git remote -v` was
-empty on 2026-09-21, which is `.cos/0008_hand-driven-invisible-loop/spec.md` C2. If there
+empty on 2026-09-21, which is `.cos/0005_hand-driven-invisible-loop/spec.md` C2. If there
 is no remote, stop and say so — do not invent a URL, and do not record a PR that was never
 opened.
 

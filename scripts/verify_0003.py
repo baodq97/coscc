@@ -1,302 +1,415 @@
 #!/usr/bin/env python3
-"""Proof for .cos/0003_no-workspace-management.
+"""Proof for .cos/0003_unproven-page, against the page `0006` replaced it with.
 
-Exits 0 only when all three claims in `intent.md` hold. Every claim prints its own
-verdict even when an earlier one has already failed — `plan.md` names that as the
-mitigation for putting three claims in one outcome: a single red link must not hide which
-parts stood up.
+Exits 0 only when the page is reachable **and** the check that says so can be made to
+fail. `0002` closed with three green claims sitting on top of a dead page, so measuring
+only the good case is the mistake this command exists to not repeat.
 
-It drives the app's own surfaces and nothing else: the filesystem for claim 1, the service
-gate for claim 2, and the HTTP routes for claim 3. There is no test-only entry point.
+Exit codes are kept apart deliberately (`spec.md` R1):
 
-Claim 3 clones from the network and creates two real sessions, which spends account quota
-(`spec.md` C10). Prompts are one word for that reason, and nothing here loops.
+    0  the page works and the check is capable of failing
+    1  the page is broken, or the check could not be made to fail
+    2  the environment is not ready — no browser, no build, stale build, port in use
+
+Collapsing 2 into 1 would report "chromium is not installed" as "the page is dead".
+
+It creates no session and sends no prompt, so it spends no account quota (`spec.md` R6),
+and it clones nothing, so it needs no network.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-import shutil
+import http.server
+import os
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
-from cos_baodo.api import build
 from cos_baodo.config import from_env
-from cos_baodo.service import Invalid, Service
+from cos_baodo.service import Service
 from cos_baodo.sessions import Sessions
-from cos_baodo.store import Store
-
-REPO = Path(__file__).resolve().parent.parent
+from scripts.proof_harness import (
+    EXIT_ENV,
+    EXIT_PASS,
+    RealApp,
+    require_browser,
+    require_build,
+    require_free_port,
+    say,
+    wait_closed,
+)
+# This proof's exit 1 means "the page is broken"; the shared module names it for what is
+# broken in general.
+from scripts.proof_harness import EXIT_BROKEN as EXIT_PAGE
 
 WORKSPACES = 2  # from intent.md. Change it there, not here.
 
-# Small, public, long-lived. https only — `spec.md` R15 puts private repos out of scope.
-REPOS = [
-    ("hello", "https://github.com/octocat/Hello-World.git"),
-    ("spoon", "https://github.com/octocat/Spoon-Knife.git"),
-]
-
-
-class Claim:
-    def __init__(self, number: int, title: str):
-        self.number, self.title = number, title
-        self.failures: list[str] = []
-
-    def check(self, what: str, ok: bool, detail: str = "") -> bool:
-        if not ok:
-            self.failures.append(f"{what}{': ' + detail if detail else ''}")
-        return ok
-
-    def report(self) -> bool:
-        if self.failures:
-            print(f"FAIL  claim {self.number}: {self.title}")
-            for line in self.failures:
-                print(f"        - {line}")
-            return False
-        print(f"PASS  claim {self.number}: {self.title}")
-        return True
-
+PAGE_TIMEOUT_MS = 15_000  # how long the page gets to show live data before it has failed
 
 # --------------------------------------------------------------------------
-# claim 1 — no hand-written markup
+# the scene
 # --------------------------------------------------------------------------
 
 
-def claim_1() -> Claim:
-    c = Claim(1, "no hand-written HTML or CSS serves the app page")
-    found = sorted(
-        str(p.relative_to(REPO))
-        for p in list(REPO.glob("cos_baodo/**/*.html")) + list(REPO.glob("cos_baodo/**/*.css"))
+def make_workspaces(root: Path, config) -> None:
+    """Two workspaces, adopted from directories. No clone, so no network."""
+    scoped = from_env(
+        {
+            **os.environ,
+            "COS_WORKING_DIR": str(root),
+            "COS_DATA_DIR": str(root),
+            "COS_WORKSPACES": "",
+        }
     )
-    c.check("no markup under cos_baodo/", not found, ", ".join(found))
-    c.check(
-        "0002's page is gone",
-        not (REPO / "cos_baodo" / "public" / "index.html").exists(),
-    )
-    return c
+    service = Service(scoped, Sessions(scoped))
+    for i in range(WORKSPACES):
+        name = f"project-{i + 1}"
+        (root / name).mkdir(parents=True, exist_ok=True)
+        service.store.add(name, label=f"Workspace {i + 1}")
+
+
+class StaticOnly:
+    """The broken scene: the real bundle, served with nothing behind it.
+
+    This is the symptom of 2026-09-21 rather than its cause (`spec.md` C2). The page
+    renders and opens its WebSocket at the address baked into the bundle, and nobody
+    answers — which is what a user saw.
+    """
+
+    def __init__(self, directory: Path):
+        self.directory = directory
+
+    def __enter__(self):
+        d = str(self.directory)
+
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, directory=d, **kw)
+
+            def log_message(self, *a):
+                pass
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.httpd.server_address[1]
+        self.base = f"http://127.0.0.1:{self.port}"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        return self
+
+    def __exit__(self, *exc):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        return False
 
 
 # --------------------------------------------------------------------------
-# claim 2 — a hand-edited store cannot widen the boundary
+# the measurement — one function, run against both scenes
 # --------------------------------------------------------------------------
 
 
-def claim_2() -> Claim:
-    c = Claim(2, "a hand-edited store cannot widen the workspace boundary")
-    root = Path(tempfile.mkdtemp(prefix="cos0003-gate-"))
+def page_renders(browser, url: str) -> str:
+    """Return "" when the page itself loaded, or a reason why it did not.
+
+    Claim 2 is only worth anything if the broken page actually rendered. Without this,
+    an empty build directory would serve a 404, live data would be absent for a reason
+    that has nothing to do with the backend, and the negative control would report
+    success while testing nothing — the proof quietly degrading into the same shape of
+    lie this unit exists to catch.
+    """
+    page = browser.new_page()
     try:
-        (root / "real").mkdir()
-        config = from_env({"COS_WORKING_DIR": str(root), "COS_DATA_DIR": str(root)})
-        service = Service(config, Sessions(config))
-
-        service.store.add("real")
-        c.check("a real workspace passes the gate", _passes(service, str(root / "real")))
-
-        # Hand-edit: the store is the user's, and this is what they could type into it
-        # with `sqlite3` on the command line. Since `0011` that is a table rather than a
-        # file, and the claim is unchanged: the names are rejected on read.
-        hand = Store(root, root)
-        with hand.data.write() as conn:
-            for name in ("/etc", "../../etc", "../.."):
-                conn.execute(
-                    "INSERT OR REPLACE INTO workspaces (root, name, label, added_at) "
-                    "VALUES (?, ?, '', '2026-01-01T00:00:00+00:00')",
-                    (str(hand.working_dir), name),
-                )
-        fresh = Service(config, Sessions(config))
-        for outside in ("/etc", str(root.parent), str(REPO)):
-            c.check(
-                f"refuses {outside}",
-                not _passes(fresh, outside),
-                "the gate accepted a directory outside the working folder",
-            )
-        c.check(
-            "a subdirectory nobody added is refused",
-            not _passes(fresh, str(root / "unlisted")),
-        )
-        c.check("the real workspace still passes", _passes(fresh, str(root / "real")))
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-    return c
-
-
-def _passes(service: Service, directory: str) -> bool:
-    """Every working path, not just one. R21 is about the gate, not about a function."""
-    for call in (
-        lambda: service.sessions_for(directory),
-        lambda: service.history(directory, "x"),
-        lambda: service.check_send(directory, "hi"),
-    ):
+        page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
         try:
-            call()
-        except Invalid:
-            return False
+            # The shell, not a heading. `0006` replaced the page and a heading is the
+            # kind of thing a redesign moves; the shell is the thing that either mounted
+            # or did not.
+            page.wait_for_selector("#studio-shell", timeout=PAGE_TIMEOUT_MS)
         except Exception:
-            # Anything else means it got past the gate and failed later, which counts as
-            # passing the gate — the thing being measured here.
-            continue
-    return True
+            body = (page.text_content("body") or "")[:200].replace("\n", " ")
+            return f"the page did not render; saw: {body!r}"
+        return ""
+    finally:
+        page.close()
 
 
-# --------------------------------------------------------------------------
-# claim 3 — the workspace chain
-# --------------------------------------------------------------------------
+def live_data_reaches_the_page(browser, url: str, working_dir: str, count: int) -> str:
+    """Return "" when the page shows live backend data, or a reason why it did not.
 
+    Deliberately not a search for Reflex's "Connection Error" text (`spec.md` R4): that
+    string is Reflex's to change. These two values only appear if `on_mount` ran, and
+    `on_mount` only runs if the WebSocket connected — so their presence *is* the
+    connection, observed rather than inferred from a label.
 
-async def _json(http, method, path, **kw):
-    r = await http.request(method, path, **kw)
+    `0006` moved both onto `#working-dir` and `#workspace-count`. The phrasing of the
+    count — "N workspace(s)" — is still the exact string this waits for.
+    """
+    page = browser.new_page()
     try:
-        return r.status_code, r.json()
-    except ValueError:
-        return r.status_code, {"error": r.text[:200]}
+        page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+        try:
+            page.get_by_text(working_dir, exact=False).first.wait_for(
+                timeout=PAGE_TIMEOUT_MS
+            )
+        except Exception:
+            return f"the working folder {working_dir} never appeared on the page"
+        try:
+            page.get_by_text(f"{count} workspace(s)", exact=False).first.wait_for(
+                timeout=PAGE_TIMEOUT_MS
+            )
+        except Exception:
+            body = (page.text_content("body") or "")[:200].replace("\n", " ")
+            return f"the count of {count} never appeared on the page; saw: {body!r}"
+        return ""
+    finally:
+        page.close()
 
 
-async def _send(http, cwd, text):
-    async with http.stream("POST", "/api/send", json={"cwd": cwd, "text": text}) as r:
-        if r.status_code != 200:
-            await r.aread()
-            return {"error": r.json().get("error", f"HTTP {r.status_code}")}
-        out = {"text": ""}
-        async for raw in r.aiter_lines():
-            line = raw.strip()
-            if not line:
-                continue
-            ev = json.loads(line)
-            if ev.get("type") == "chunk":
-                out["text"] += ev.get("text", "")
-            elif ev.get("type") == "error":
-                return {"error": ev["error"]}
-            elif ev.get("type") == "done":
-                out.update({k: v for k, v in ev.items() if k != "type"})
-        return out
+# --- the craft floor (`0005` R22-R25) ----------------------------------------
+#
+# These four are the only measurable part of "the page should be good". They are
+# necessary, not sufficient, and `0005` spec.md C7 says so in as many words: a page can
+# pass every one of them and still be unpleasant. They live here rather than in
+# `verify_0005.py` because each one needs a real browser — a layout that overflows and a
+# colour that fails contrast are both invisible to an HTTP check.
+
+# Phone, tablet, laptop. `0005` R24 fixes these three.
+WIDTHS = (390, 768, 1280)
+
+# WCAG 2.1 AA for body text. The standard is the source; the number is not ours.
+MIN_CONTRAST = 4.5
+
+# Measured on the text that is actually on the page, not on `body`. `body` carries the
+# browser's defaults here: Reflex hands `App(style=...)` to components, and the theme's
+# colours live on the `.radix-themes` node, so reading `body` measures nothing that anyone
+# sees. Found on 2026-09-21 by probing the rendered page, which reported 1.00:1.
+_CONTRAST_JS = """
+() => {
+  const px = (c) => {
+    const m = (c || '').match(/[\\d.]+/g);
+    return m ? m.slice(0, 3).map(Number) : null;
+  };
+  const transparent = (c) => !c || /rgba\\(.*,\\s*0\\s*\\)/.test(c) || c === 'transparent';
+  const lum = (rgb) => {
+    const f = rgb.map((v) => {
+      const s = v / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2];
+  };
+  // Walk up for the first background that is actually painted; `transparent` shows
+  // whatever is behind it, and comparing against that would measure nothing.
+  const bgOf = (el) => {
+    for (let n = el; n; n = n.parentElement) {
+      const c = getComputedStyle(n).backgroundColor;
+      if (!transparent(c)) return px(c) || [255, 255, 255];
+    }
+    return [255, 255, 255];
+  };
+  const ratio = (fg, bg) => {
+    const a = lum(fg), b = lum(bg);
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  };
+
+  let worst = { ratio: 99, text: '', fg: null, bg: null };
+  const nodes = document.querySelectorAll('p, h1, h2, h3, h4, h5, h6');
+  for (const el of nodes) {
+    const text = (el.textContent || '').trim();
+    if (!text) continue;
+    const box = el.getBoundingClientRect();
+    if (box.width < 1 || box.height < 1) continue;
+    const s = getComputedStyle(el);
+    if (s.visibility === 'hidden' || s.opacity === '0') continue;
+    const r = ratio(px(s.color) || [0, 0, 0], bgOf(el));
+    if (r < worst.ratio) worst = { ratio: r, text: text.slice(0, 40), fg: s.color, bg: null };
+  }
+  // No text at all is a failure, not a pass by default.
+  if (worst.text === '') return { ratio: 0, text: '(no text found on the page)' };
+  return worst;
+}
+"""
 
 
-def _client(app):
-    return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://proof", timeout=300
+def _appearance(page) -> str:
+    """Light or dark, read off the document rather than off our own state."""
+    return page.evaluate(
+        "() => document.documentElement.classList.contains('dark') ? 'dark' :"
+        " (document.querySelector('.radix-themes')?.classList.contains('dark') ? 'dark' : 'light')"
     )
 
 
-async def claim_3() -> Claim:
-    c = Claim(3, "workspaces can be cloned, labelled, used, removed — across restarts")
-    root = Path(tempfile.mkdtemp(prefix="cos0003-ws-"))
-    # Set once. Nothing below changes the environment again: "restart" has to mean the
-    # state came off disk, not out of a fresh Config someone built by hand.
-    env = {"COS_WORKING_DIR": str(root), "COS_DATA_DIR": str(root)}
-    built: list = []
-
-    def start():
-        app = build(from_env(env))
-        built.append(app)
-        return app
-
+def the_page_meets_the_craft_floor(browser, url: str) -> str:
+    """Return "" when R22-R25 all hold, or the first reason one did not."""
+    page = browser.new_page(viewport={"width": WIDTHS[-1], "height": 900})
     try:
-        app = start()
-        async with _client(app) as http:
-            for name, url in REPOS:
-                status, body = await _json(
-                    http, "POST", "/api/workspaces", json={"name": name, "repo_url": url}
+        page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+        page.wait_for_selector(".radix-themes", timeout=PAGE_TIMEOUT_MS)
+
+        # R22 — the theme is declared, not inherited from the library's defaults.
+        accent = page.get_attribute(".radix-themes", "data-accent-color")
+        radius = page.get_attribute(".radix-themes", "data-radius")
+        if accent != "iris" or radius != "large":
+            return (
+                "the theme is not the declared one: "
+                f"data-accent-color={accent!r}, data-radius={radius!r}"
+            )
+
+        # R24 — nothing pushes the document sideways at any of the three widths.
+        overflow = (
+            "() => document.documentElement.scrollWidth -"
+            " document.documentElement.clientWidth"
+        )
+        for width in WIDTHS:
+            page.set_viewport_size({"width": width, "height": 900})
+            page.wait_for_timeout(250)
+            over = page.evaluate(overflow)
+            # One pixel of slack: sub-pixel rounding is not a layout defect.
+            if over > 1:
+                return f"the page scrolls sideways at {width}px by {over}px"
+
+        # The scene above is small — two workspaces with short names — so it can sit
+        # inside 390px whether or not the layout would contain a wide thing. Measured on
+        # 2026-09-21 by deleting the table's scroll container: the check still passed. So
+        # the measurement proves it is alive before being trusted, the same way claim 2
+        # below does for the page as a whole.
+        page.set_viewport_size({"width": WIDTHS[0], "height": 900})
+        page.evaluate(
+            "() => { const d = document.createElement('div');"
+            " d.id = 'overflow-canary'; d.style.width = '3000px'; d.style.height = '1px';"
+            " document.body.appendChild(d); }"
+        )
+        page.wait_for_timeout(200)
+        caught = page.evaluate(overflow)
+        page.evaluate("() => document.getElementById('overflow-canary')?.remove()")
+        if caught <= 1:
+            return (
+                "the overflow measurement is dead: a 3000px element at "
+                f"{WIDTHS[0]}px reported {caught}px of overflow"
+            )
+        page.set_viewport_size({"width": WIDTHS[-1], "height": 900})
+        page.wait_for_timeout(200)
+
+        # R23 — the mode changes from the page, and survives a reload. `0006` put the
+        # control in the top bar; before that it was on the Settings screen only.
+        toggle = page.locator("#color-mode button").first
+        if toggle.count() == 0:
+            return "the page has no #color-mode control"
+        before = _appearance(page)
+        toggle.click()
+        page.wait_for_timeout(350)
+        after = _appearance(page)
+        if after == before:
+            return f"the colour mode control did not change anything (still {before!r})"
+
+        page.reload(wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
+        page.wait_for_selector(".radix-themes", timeout=PAGE_TIMEOUT_MS)
+        page.wait_for_timeout(400)
+        if _appearance(page) != after:
+            return (
+                f"the colour mode did not survive a reload: chose {after!r}, "
+                f"came back {_appearance(page)!r}"
+            )
+
+        # R25 — text is legible in *both* appearances, not just the one we landed in.
+        toggle = page.locator("#color-mode button").first
+        for _ in range(2):
+            measured = page.evaluate(_CONTRAST_JS)
+            if measured["ratio"] < MIN_CONTRAST:
+                return (
+                    f"worst text contrast is {measured['ratio']:.2f}:1 in "
+                    f"{_appearance(page)} mode, below {MIN_CONTRAST}:1 — "
+                    f"on {measured['text']!r} ({measured.get('fg')})"
                 )
-                c.check(f"clone {name}", status == 200, str(body.get("error", "")))
-
-            status, body = await _json(http, "GET", "/api/workspaces")
-            c.check(
-                f"count is {WORKSPACES} after cloning",
-                body.get("count") == WORKSPACES,
-                f"got {body.get('count')}",
-            )
-            c.check(
-                "no COS_WORKSPACES leaked in",
-                all(r["source"] == "store" for r in body.get("workspaces", [])),
-            )
-
-            status, _ = await _json(
-                http, "PATCH", "/api/workspaces/hello", json={"label": "Ngôi nhà"}
-            )
-            c.check("set a label", status == 200)
-
-        # --- restart, same environment ---
-        app = start()
-        async with _client(app) as http:
-            status, body = await _json(http, "GET", "/api/workspaces")
-            c.check(
-                f"count is still {WORKSPACES} after restart",
-                body.get("count") == WORKSPACES,
-                f"got {body.get('count')}",
-            )
-            labels = {r["name"]: r["label"] for r in body.get("workspaces", [])}
-            c.check(
-                "the label survived the restart",
-                labels.get("hello") == "Ngôi nhà",
-                f"got {labels.get('hello')!r}",
-            )
-
-            status, body = await _json(http, "POST", "/api/workspaces/hello/pull")
-            c.check("pull latest", status == 200, str(body.get("error", "")))
-
-            # Real sessions from here. Two of them, one word each.
-            paths = {
-                r["name"]: r["path"]
-                for r in (await _json(http, "GET", "/api/workspaces"))[1]["workspaces"]
-            }
-            for name, _ in REPOS:
-                r = await _send(http, paths[name], "Reply with exactly: READY")
-                if "error" in r:
-                    c.check(f"session in {name}", False, r["error"])
-                    continue
-                c.check(f"session in {name} returned an id", bool(r.get("session_id")))
-                c.check(f"session in {name} replied", bool(r.get("text", "").strip()))
-
-            status, body = await _json(http, "DELETE", "/api/workspaces/spoon")
-            c.check("remove one", status == 200, str(body.get("error", "")))
-
-            status, body = await _json(http, "GET", "/api/workspaces")
-            c.check("count is 1 after removal", body.get("count") == 1, f"got {body.get('count')}")
-            c.check(
-                "removal did not touch the directory",
-                (root / "spoon").is_dir(),
-                "the directory was deleted; spec.md R18 says de-list only",
-            )
-
-        # --- restart again ---
-        app = start()
-        async with _client(app) as http:
-            status, body = await _json(http, "GET", "/api/workspaces")
-            c.check(
-                "count is still 1 after the second restart",
-                body.get("count") == 1,
-                f"got {body.get('count')}",
-            )
-
-        leftovers = sorted(p.name for p in root.glob(".cos-clone-*"))
-        c.check("no clone staging directory left behind", not leftovers, ", ".join(leftovers))
+            toggle.click()
+            page.wait_for_timeout(350)
+        return ""
     finally:
-        for app in built:
-            await app.state.sessions.close_all()
+        page.close()
+
+
+def run() -> int:
+    config = from_env()
+    built = require_build(config)
+    require_free_port(config)
+
+    playwright, browser = require_browser()
+    root = Path(tempfile.mkdtemp(prefix="cos0003-"))
+    results: list[bool] = []
+    try:
+        make_workspaces(root, config)
+
+        # --- claim 1: the page shows what the backend says ---
+        with RealApp(config, root) as app:
+            api = httpx.get(f"{app.base}/api/workspaces", timeout=30).json()
+            ok = api["count"] == WORKSPACES and api["working_dir"] == str(root)
+            results.append(
+                say(ok, f"the backend reports {WORKSPACES} workspaces", str(api)[:120])
+            )
+            reason = live_data_reaches_the_page(
+                browser, app.base, api["working_dir"], api["count"]
+            )
+            results.append(
+                say(not reason, "the page shows the backend's working folder and count", reason)
+            )
+
+            reason = the_page_meets_the_craft_floor(browser, app.base)
+            results.append(
+                say(
+                    not reason,
+                    "the page holds the craft floor: declared theme, three widths, "
+                    "colour mode that persists, AA contrast",
+                    reason,
+                )
+            )
+
+        # --- claim 2: the same measurement fails when nothing is behind the page ---
+        # The app must be gone first. The bundle points at its address, so a lingering
+        # server would let the "broken" page connect and quietly make this claim vacuous.
+        if not wait_closed(config.host, config.port):
+            print(
+                f"{config.host}:{config.port} did not close after the app was stopped; "
+                "the broken scene would not be broken.",
+                file=sys.stderr,
+            )
+            raise SystemExit(EXIT_ENV)
+
+        with StaticOnly(built) as static:
+            # The page must genuinely render first, or the next claim is measuring a 404.
+            not_rendered = page_renders(browser, static.base)
+            results.append(
+                say(
+                    not not_rendered,
+                    "the broken scene still renders the real page",
+                    not_rendered,
+                )
+            )
+            reason = live_data_reaches_the_page(
+                browser, static.base, str(root), WORKSPACES
+            )
+            results.append(
+                say(
+                    bool(reason),
+                    "the same check FAILS when no backend is reachable",
+                    "it passed against a page with no backend — this proof cannot go red",
+                )
+            )
+    finally:
+        browser.close()
+        playwright.stop()
+        import shutil
+
         shutil.rmtree(root, ignore_errors=True)
-    return c
 
-
-# --------------------------------------------------------------------------
-
-
-async def run() -> int:
-    claims = [claim_1(), claim_2(), await claim_3()]
     print()
-    ok = [c.report() for c in claims]
-    print()
-    if all(ok):
-        print(f"PASS — all three claims of 0003 hold ({WORKSPACES} workspaces).")
-        return 0
-    print(f"FAIL — {ok.count(False)} of {len(ok)} claims did not hold.")
-    return 1
+    if all(results):
+        print("PASS — the page works, and the check that says so can fail.")
+        return EXIT_PASS
+    print(f"FAIL — {results.count(False)} of {len(results)} checks did not hold.")
+    return EXIT_PAGE
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(run()))
+    sys.exit(run())

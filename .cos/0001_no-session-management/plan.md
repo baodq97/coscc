@@ -1,7 +1,7 @@
 # Plan: A chat-only web app over the Agent SDK
 Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 
-> **Đọc đường dẫn trong file này theo bảng sau.** `0003` đổi tên gói `app/` thành
+> **Đọc đường dẫn trong file này theo bảng sau.** `0002` đổi tên gói `app/` thành
 > `cos_baodo/` (commit `81295b9`), nên 13 trích dẫn dưới đây trỏ vào đường dẫn không còn
 > tồn tại. Chúng **không được sửa**: file này ghi lại việc đã làm vào lúc đã làm, và viết
 > lại nó thành `cos_baodo/` sẽ thành một bản ghi sai theo kiểu khác — nói rằng các file được
@@ -14,11 +14,11 @@ Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: done.
 > | `app/config_test.py` | `cos_baodo/config_test.py` |
 > | `app/sessions.py` | `cos_baodo/sessions.py` |
 > | `app/sessions_test.py` | `cos_baodo/sessions_test.py` |
-> | `app/web.py` | `cos_baodo/api.py` (đổi framework ở `0003` bước 5) |
+> | `app/web.py` | `cos_baodo/api.py` (đổi framework ở `0002` bước 5) |
 > | `app/web_test.py` | `cos_baodo/api_test.py` |
-> | `app/public/index.html` | đã xoá ở `0003` bước 9 — trang nay là `cos_baodo/cos_baodo.py` |
+> | `app/public/index.html` | đã xoá ở `0002` bước 9 — trang nay là `cos_baodo/cos_baodo.py` |
 >
-> Đây là câu trả lời cho `spec.md` C14 của `0003`.
+> Đây là câu trả lời cho `spec.md` C14 của `0002`.
 
 Hồ sơ agent đầu tiên là **chat thuần, không tool nào** (`spec.md` C2). Kết quả trong
 `intent.md` không cần tool, nên mặc định an toàn nhất không tốn phạm vi.
@@ -35,7 +35,7 @@ Hồ sơ agent đầu tiên là **chat thuần, không tool nào** (`spec.md` C2
 | `app/sessions_test.py` | (new) |
 | `app/web.py` | (new) HTTP trên loopback, luồng phản hồi |
 | `app/public/index.html` | (new) trang chat |
-| `scripts/verify_0002.py` | (new) lệnh phán đạt/trượt, dùng ở `## Proof` |
+| `scripts/verify_0001.py` | (new) lệnh phán đạt/trượt, dùng ở `## Proof` |
 | `package.json` | có thật, 13 dòng — `test` phải chạy cả Python, `spec.md` C5 |
 | `.gitignore` | có thật, 8 dòng — thêm `.venv/`, `__pycache__/` |
 | `.claude/CLAUDE.md` | có thật — cập nhật `## Commands` |
@@ -78,10 +78,10 @@ không thêm dependency thứ hai chỉ để chạy test.
 
 6. **Trang chat.** `app/public/index.html`: chọn workspace, chọn hoặc tạo session, gõ, xem
    trả lời. Tải trang thì dựng lại lịch sử từ lớp đọc — `spec.md` open question 5 nói lần
-   này phải **cố ý** giải, vì `0001` để nó rơi.
+   này phải **cố ý** giải, vì `terminal-only-access` để nó rơi.
    Kiểm: mở trang, F5, lịch sử vẫn còn.
 
-7. **Lệnh chứng minh.** `scripts/verify_0002.py` theo `## Proof`.
+7. **Lệnh chứng minh.** `scripts/verify_0001.py` theo `## Proof`.
    Kiểm: chạy khi chưa có gì thì thoát khác 0 kèm lý do.
 
 8. **Chạy thật và đóng unit.** Chạy `## Proof` trên hai project. Cập nhật `## Commands` trong
@@ -91,7 +91,7 @@ không thêm dependency thứ hai chỉ để chạy test.
 ## Risks
 
 **Mỗi lần chạy đều tiêu hạn mức, và không gì đếm nó.** Đây là rủi ro tôi muốn không phải
-viết ra. `0001` chạy trong session sẵn có nên không tốn thêm; `0002` **tạo** session, và
+viết ra. `terminal-only-access` chạy trong session sẵn có nên không tốn thêm; `0001` **tạo** session, và
 bước 4, 7, 8 đều tạo session thật. Một vòng lặp hỏng trong `app/web.py` hoặc trong lệnh kiểm
 là một vòng lặp đốt hạn mức của tài khoản, im lặng. Dấu hiệu: cảnh báo hạn mức, hoặc phản
 hồi chậm bất thường. Giảm thiểu: lệnh kiểm gửi prompt ngắn nhất có thể và có giới hạn lượt;
@@ -101,7 +101,7 @@ không bước nào chạy trong vòng lặp không người trông.
 đề trung tâm. Dấu hiệu: hai chuỗi khác nhau. Đó là lý do bước 4 đứng trước phần HTTP và có
 lệnh dừng gắn vào.
 
-**Token đăng nhập nằm trong tiến trình đang nghe HTTP** (`spec.md` C3). Ở `0001` lộ cổng là
+**Token đăng nhập nằm trong tiến trình đang nghe HTTP** (`spec.md` C3). Ở `terminal-only-access` lộ cổng là
 lộ một ô chat; ở đây là lộ thông tin đăng nhập dài hạn. Dấu hiệu: không có dấu hiệu nào —
 đây là loại rủi ro không tự báo. Giảm thiểu: không đường nào trả về biến môi trường, không
 đường nào chạy lệnh theo chữ người dùng gửi, và chat-only nghĩa là session không có tool để
@@ -121,10 +121,10 @@ thúc.
 ## Proof
 
 ```
-npm test && uv run python scripts/verify_0002.py
+npm test && uv run python scripts/verify_0001.py
 ```
 
-`verify_0002.py` tự khởi động app trên một cổng trống, tự tắt khi xong, và thoát 0 **chỉ
+`verify_0001.py` tự khởi động app trên một cổng trống, tự tắt khi xong, và thoát 0 **chỉ
 khi** cả năm điều đúng:
 
 1. Liệt kê được session cho **2 thư mục project khác nhau**, không mục nào lẫn sang nhau.

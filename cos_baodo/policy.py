@@ -2,7 +2,7 @@
 
 This is not a fifth knob. `Config` keeps meaning one thing — the app's default, which
 `cos_baodo/config.py:44` states as *chat only, no tools at all* — and this table says what
-a **board step** may do instead. `0007` exists because that sentence in `config.py` was not
+a **board step** may do instead. `chat-only-sessions-have-tools` exists because that sentence in `config.py` was not
 true; making `Config` answer for two different things as well is how it would stop being
 true again.
 
@@ -15,7 +15,7 @@ Three properties, each deliberate:
 - **Mode matters.** `manual` never carries tools for any stage. Choosing `autonomous` is
   the act that grants them, and it is recorded in the journal when it happens.
 
-`0007`'s measurement is why `Grant.tools` is not the whole enforcement. A list handed to
+`chat-only-sessions-have-tools`'s measurement is why `Grant.tools` is not the whole enforcement. A list handed to
 the SDK covers the built-in set and nothing else — eleven MCP tools walked past `tools=[]`
 on this machine. So the grant also carries what `Runner` must refuse at the moment of use,
 and `can_use_tool` is where that happens.
@@ -41,7 +41,7 @@ class Grant:
     # Commands the step may run, matched on the first word of the command line. Empty
     # means none, which is the only safe default for a field like this.
     commands: tuple[str, ...] = ()
-    # `0008` R11. Chosen, not measured: they exist to turn a loop that will not end into a
+    # `0005` R11. Chosen, not measured: they exist to turn a loop that will not end into a
     # named failure, not to describe what a step ought to cost.
     max_turns: int = 1
     max_budget_usd: float = 0.0
@@ -85,7 +85,7 @@ PR_COMMANDS = (
 # Said on the page before the step starts. `gh` is logged in at the machine level — checked
 # on 2026-09-21, account `baodq97` in `~/.config/gh/hosts.yml` — so a step that may run it
 # can reach every repository that account can reach, not only this workspace. That is the
-# same shape of hazard `0007` is about, opened deliberately this time.
+# same shape of hazard `chat-only-sessions-have-tools` is about, opened deliberately this time.
 PR_WARNING = (
     "This step runs `git` and `gh` with the GitHub login already on this machine. "
     "That reaches every repository that account can reach, not just this workspace."
@@ -123,7 +123,7 @@ def is_prose_stage(stage: str) -> bool:
 
 # --- deciding one call -------------------------------------------------------
 #
-# `0007` measured why the list handed to the SDK is not enough on its own: eleven MCP tools
+# `chat-only-sessions-have-tools` measured why the list handed to the SDK is not enough on its own: eleven MCP tools
 # arrived at a session created with `tools=[]`, because `--tools` names the built-in set and
 # nothing else. A callback sits on the path every call takes, whatever declared it.
 

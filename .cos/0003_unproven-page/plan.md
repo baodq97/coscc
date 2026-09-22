@@ -11,14 +11,14 @@ dạng tiếp theo của lỗi unit này sinh ra để chống.
 |---|---|
 | `cos_baodo/build.py` | (new) dựng frontend và ghi dấu vân tay; nơi **duy nhất** trả lời "bản build có khớp nguồn không" |
 | `cos_baodo/build_test.py` | (new) |
-| `scripts/verify_0004.py` | (new) lệnh ở `## Proof` |
+| `scripts/verify_0003.py` | (new) lệnh ở `## Proof` |
 | `pyproject.toml` | có thật, 31 dòng — thêm `playwright` vào `[dependency-groups]`, thêm `cos-build` vào `[project.scripts]` |
 | `cos_baodo/run.py` | có thật, 91 dòng — chốt ở dòng 66-67 đang **grep chuỗi trong file JS**; đổi sang dùng `build.py` |
-| `.claude/CLAUDE.md` | có thật, 97 dòng — lệnh build đổi thành `uv run cos-build`; thêm `verify_0004.py` |
+| `.claude/CLAUDE.md` | có thật, 97 dòng — lệnh build đổi thành `uv run cos-build`; thêm `verify_0003.py` |
 
 **Không đụng tới** `cos_baodo/cos_baodo.py`, `cos_baodo/api.py`, `cos_baodo/service.py`,
-`cos_baodo/store.py`, `cos_baodo/gitops.py`, `scripts/verify_0002.py`,
-`scripts/verify_0003.py`, `channel/`, `evidence/`. Unit này thêm bằng chứng, không đổi thứ
+`cos_baodo/store.py`, `cos_baodo/gitops.py`, `scripts/verify_0001.py`,
+`scripts/verify_0002.py`, `channel/`, `evidence/`. Unit này thêm bằng chứng, không đổi thứ
 được chứng minh (`spec.md` R9).
 
 **`rxconfig.py` không đổi.** Nó đã đọc địa chỉ từ `cos_baodo/config.py` và đó vẫn đúng; dấu
@@ -37,19 +37,19 @@ vân tay chỉ cần *ghi lại* nó đã build với gì.
 
 2. **Một câu hỏi, một chỗ trả lời.** `cos_baodo/run.py` bỏ đoạn grep chuỗi `host:port` trong
    file JS (dòng 66-67 hiện tại) và hỏi `build.py`. Docstring của chính nó đã gọi cách cũ là
-   "crude"; quan trọng hơn, hai cơ chế trả lời cùng một câu là đúng thứ `0003` vừa trả giá
+   "crude"; quan trọng hơn, hai cơ chế trả lời cùng một câu là đúng thứ `0002` vừa trả giá
    để học (`cos_baodo/sessions.py`, lớp gác riêng).
    Kiểm: `uv run cos-baodo` khởi động sau một bản build khớp; sau khi sửa trang mà chưa
    build lại thì **thoát 2** và thông báo nêu đúng lệnh `uv run cos-build`.
 
 3. **Trình duyệt, và đường thoát khi không có.** Thêm `playwright` vào
-   `[dependency-groups]`. Viết phần dò trình duyệt của `scripts/verify_0004.py` trước phần
+   `[dependency-groups]`. Viết phần dò trình duyệt của `scripts/verify_0003.py` trước phần
    đo: không có trình duyệt dùng được thì **thoát 2** kèm câu lệnh cài, tuyệt đối không tự
    tải (`spec.md` R7).
    Kiểm: chạy với một biến môi trường trỏ trình duyệt vào chỗ không tồn tại → thoát 2, chữ
    trong thông báo là hướng dẫn cài, không phải "trang hỏng".
 
-4. **Dựng cảnh và đo cảnh tốt.** `scripts/verify_0004.py`: tạo working folder tạm với đúng
+4. **Dựng cảnh và đo cảnh tốt.** `scripts/verify_0003.py`: tạo working folder tạm với đúng
    **2** thư mục con, nhận cả hai làm workspace qua lớp dịch vụ (không clone, không mạng,
    không session), chạy app thật ở **đúng cổng bản build nhắm**, mở trang bằng trình duyệt,
    đọc `working_dir` và số đếm trên màn hình, so với `/api/workspaces`.
@@ -65,7 +65,7 @@ vân tay chỉ cần *ghi lại* nó đã build với gì.
    "hỏng" hoá ra vẫn tốt — negative control tự vô hiệu mà không báo gì.
 
 6. **Đóng unit.** `.claude/CLAUDE.md`: lệnh build đổi thành `uv run cos-build` và nói vì sao
-   (dấu vân tay), thêm `verify_0004.py` vào danh sách lệnh kiểm kèm ghi chú rằng nó cần một
+   (dấu vân tay), thêm `verify_0003.py` vào danh sách lệnh kiểm kèm ghi chú rằng nó cần một
    cổng thật. Chạy `## Proof`. Đặt `Status: done` chỉ sau khi nó xanh.
 
 ## What actually happened
@@ -86,7 +86,7 @@ trang, build lại, chạy: thoát **1**, và nó nói `the working folder … n
 page`. Phục hồi thì xanh lại. Đây là thứ phân biệt lệnh này với một con dấu.
 
 **`spec.md` C1 cắn ngay lần chạy đầu.** Cổng 8790 đang bị một tiến trình khác của tác giả
-giữ — `python -m app.web`, bản trước khi đổi tên ở `0003`, vẫn sống kèm hai tiến trình
+giữ — `python -m app.web`, bản trước khi đổi tên ở `0002`, vẫn sống kèm hai tiến trình
 `claude` con. Lệnh thoát **2** với đúng lý do, không phải 1. Không tắt tiến trình ấy; build
 và chạy proof ở cổng 8799 thay thế. Ma sát này là thật, và `spec.md` open question 7 vẫn
 mở.
@@ -128,10 +128,10 @@ chất của vấn đề.
 ```
 npm test \
   && node scripts/verify-0001.mjs evidence/0001_terminal-only-access/transcript.jsonl \
+  && uv run python scripts/verify_0001.py \
   && uv run python scripts/verify_0002.py \
-  && uv run python scripts/verify_0003.py \
   && uv run cos-build \
-  && uv run python scripts/verify_0004.py
+  && uv run python scripts/verify_0003.py
 ```
 
 Hai lệnh cuối cần `COS_PORT` trống. Ngày 2026-09-21 cổng mặc định đang bị chiếm, nên chúng
@@ -142,7 +142,7 @@ Bốn lệnh đầu là `spec.md` R8 và R9: thêm một bằng chứng mà khô
 `npm test` vẫn không cần trình duyệt. `uv run cos-build` đứng ngay trước lệnh cuối vì lệnh
 cuối **từ chối chạy trên bản build lệch** — đó là điểm của bước 1.
 
-`verify_0004.py` thoát **0** chỉ khi cả ba đúng, và in kết quả từng phần kể cả khi hỏng:
+`verify_0003.py` thoát **0** chỉ khi cả ba đúng, và in kết quả từng phần kể cả khi hỏng:
 
 1. **Bản build khớp nguồn.** Lệch hoặc chưa build là thoát **2**, không phải 1.
 2. **Cảnh tốt đậu.** Trang mở được, và `working_dir` cùng số đếm **2** hiện trên màn hình
@@ -161,7 +161,7 @@ Mã thoát: `0` đạt, `1` trang hỏng hoặc phép đo không gãy được, 
 - **Không tái tạo nguyên nhân gốc của lỗi 2026-09-21** — build nhắm cổng khác. `spec.md` C2
   ghi rõ phần này để lại cho chốt ở `cos_baodo/run.py`, và ghi rõ nó hổng ở đâu.
 - **Không dựng lại vòng adopt/clone/pull/remove/chat trên trình duyệt.** `intent.md` cắt;
-  `scripts/verify_0003.py` đã phủ ở tầng API.
+  `scripts/verify_0002.py` đã phủ ở tầng API.
 - **Không chụp ảnh so từng pixel**, không chạy nhiều trình duyệt.
 - **Không gỡ ma sát cổng cố định** (`spec.md` C1 và open question 7).
-- **Không giải C4, C7, OQ11 của `0003`.** Vẫn treo, vẫn là việc của tác giả.
+- **Không giải C4, C7, OQ11 của `0002`.** Vẫn treo, vẫn là việc của tác giả.

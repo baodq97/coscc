@@ -15,7 +15,7 @@ Năm tiêu chí, từng cái một:
    `python3 -c "import sqlite3"` trên máy này ngày 2026-09-22 báo SQLite 3.46.1.
 4. Không có **hành vi ngoài intent**? — **Đạt.**
 5. Không chạm **auth, PII, bề mặt an toàn**? — **Trượt.** Chạm đúng chỗ nhạy cảm nhất:
-   nơi workspace được lưu, và tính chất chống mất ghi đồng thời mà `scripts/verify_0005.py`
+   nơi workspace được lưu, và tính chất chống mất ghi đồng thời mà `scripts/verify_0004.py`
    đã chứng minh.
 
 Ba tiêu chí trượt. Spec là bắt buộc. Tiêu chí ép mạnh nhất là **số 5**.
@@ -49,7 +49,7 @@ Ba tiêu chí trượt. Spec là bắt buộc. Tiêu chí ép mạnh nhất là 
   xóa**. Lần nhập được ghi lại để không chạy lần hai. Trên máy này ngày 2026-09-22 file
   đó có **1** entry (`cos-baodo`), đọc trực tiếp từ đĩa.
 - **R9.** Bốn tiến trình ghi đồng thời **20** entry vào một database giữ đủ **20**. Đây
-  là đúng số và đúng cách đo mà `scripts/verify_0005.py` đang dùng; proof đó phải chạy
+  là đúng số và đúng cách đo mà `scripts/verify_0004.py` đang dùng; proof đó phải chạy
   lại trên cơ chế mới và xanh.
 - **R10.** Chờ database bận có **hạn**, mặc định **10 giây** — bằng `LOCK_TIMEOUT` hiện
   tại (`cos_baodo/store.py:49`, `cos_baodo/journal.py:43`). Hết hạn thì báo lỗi nêu tên
@@ -81,7 +81,7 @@ Ba tiêu chí trượt. Spec là bắt buộc. Tiêu chí ép mạnh nhất là 
 - **R19.** Chỉ còn **một** trang ở `/`. Trang cũ bị bỏ.
 - **R20.** Một proof mở trình duyệt thật kiểm đủ **5/5** luồng của R13 và kiểm R14 bằng
   cách khởi động lại tiến trình app giữa chừng. Nó tự dọn dữ liệu nó tạo ra.
-- **R21.** `scripts/verify_0004.py` được viết lại theo trang mới, giữ nguyên bốn thứ nó
+- **R21.** `scripts/verify_0003.py` được viết lại theo trang mới, giữ nguyên bốn thứ nó
   đang giữ: theme, responsive, contrast, và negative control phát hiện backend chết.
 - **R22.** `npm test` xanh. `uv run cos-build` chạy được và fingerprint phủ mọi file
   nguồn UI mới.
@@ -141,13 +141,13 @@ có thể làm trong một lần.
   của lựa chọn ở intent, không phải lỗi thiết kế — nhưng nó là thứ sẽ làm ai đó mất dữ
   liệu nếu không ai nói ra. **Người khởi xướng quyết định** có chấp nhận hay không.
 - **C2. R9 chưa được chứng minh cho tới khi proof chạy lại.** `flock` và `BEGIN IMMEDIATE`
-  là hai cơ chế khác nhau. `0005` đo được rằng cách cũ **mất 8/20 entry** trước khi có
+  là hai cơ chế khác nhau. `0004` đo được rằng cách cũ **mất 8/20 entry** trước khi có
   khóa; con số đó là lý do không được suy luận rằng SQLite đương nhiên đúng. Cho tới khi
-  `scripts/verify_0005.py` xanh trên cơ chế mới, R9 là một yêu cầu, không phải một sự thật.
+  `scripts/verify_0004.py` xanh trên cơ chế mới, R9 là một yêu cầu, không phải một sự thật.
 - **C3. Bỏ trang cũ là bỏ mặt trước duy nhất đã được chứng minh chạy với backend.** Sau
   R19, nếu trang mới sai ở chỗ nào thì trong cùng một build không còn chỗ nào để đối chiếu.
   Giảm nhẹ bằng R20 và R21, nhưng không triệt tiêu được. **Người khởi xướng đã chọn R19**
-  ngày 2026-09-22 sau khi được nêu chi phí viết lại `verify_0004.py`.
+  ngày 2026-09-22 sau khi được nêu chi phí viết lại `verify_0003.py`.
 - **C4. `~/.cos` trùng tên với `.cos/` của mỗi repository, và hai cái khác vai trò hoàn
   toàn.** Một cái là dữ liệu của app, một cái là artifact của một unit công việc. Đổi tên
   về sau tốn một lần migrate. Giữ tên là lựa chọn của người khởi xướng; ghi lại ở đây để
@@ -160,7 +160,7 @@ có thể làm trong một lần.
   trình duyệt.** Với một người dùng local-first thì đúng; nếu sau này có hai người, nó sai.
   Chấp nhận trong phạm vi người dùng mà intent đã chọn.
 - **C7. Sáu stage văn xuôi không có tool, nên app viết artifact từ nội dung reply** —
-  hành vi có sẵn từ `0008`, đã ghi ở `.cos/0008_hand-driven-invisible-loop/plan.md` Risk 1.
+  hành vi có sẵn từ `0005`, đã ghi ở `.cos/0005_hand-driven-invisible-loop/plan.md` Risk 1.
   Trang mới phải tiếp tục nói điều này ra chỗ người dùng bấm nút, chứ không được làm nó
   trông như agent tự ghi file.
 - **C8. Chạy một bước tiêu quota thật.** Prototype có nút "simulate" không tốn gì
@@ -177,5 +177,5 @@ có thể làm trong một lần.
   nào được thiết kế theo số đo, chỉ theo hình dạng truy vấn.
 - Từ intent, còn mở: người khởi xướng chưa duyệt thiết kế một cách tường minh; `~/.cos`
   có gây nhầm khi dùng thật hay không.
-- `scripts/verify_0004.py` viết lại rồi thì nó và proof mới của R20 có phần trùng nhau.
+- `scripts/verify_0003.py` viết lại rồi thì nó và proof mới của R20 có phần trùng nhau.
   Gộp hay giữ hai, plan quyết định; giữ hai thì phải nói rõ mỗi cái giữ tính chất gì.

@@ -20,9 +20,9 @@ cái vào dòng lệnh lần này. Việc dò session làm theo từng thư mụ
 chỗ làm việc" không có ai trả lời ngoài trí nhớ của tôi, và trí nhớ ấy chính là thứ phải gõ
 lại đúng vào lần khởi động sau.
 
-Hệ quả thứ hai: đem code mới về vẫn là việc của terminal. `0002` bỏ được terminal khỏi việc
+Hệ quả thứ hai: đem code mới về vẫn là việc của terminal. `0001` bỏ được terminal khỏi việc
 mở session, nhưng bước ngay trước đó — clone một repo rồi khai báo nó — thì chưa. Vòng lặp
-vẫn gãy ở cùng một chỗ, chỉ là sớm hơn một bước so với `0001`.
+vẫn gãy ở cùng một chỗ, chỉ là sớm hơn một bước so với `terminal-only-access`.
 
 Hệ quả thứ ba, và là lý do phạm vi unit này rộng hơn bản đầu: **chỗ để hiện những thứ đó
 không tồn tại.** Trang của app là 151 dòng HTML viết tay (`app/public/index.html`). Danh
@@ -30,14 +30,14 @@ sách workspace sửa được, có label, có trạng thái `missing`, có nút
 giao diện, không phải một ô chat. Viết tay từng dòng cho nó là cách chắc chắn nhất để nó
 không bao giờ được viết.
 
-Đây đúng là chỗ `0002` cố ý hoãn, chứ không phải chỗ nó bỏ sót. `spec.md:61` chốt trạng thái
+Đây đúng là chỗ `0001` cố ý hoãn, chứ không phải chỗ nó bỏ sót. `spec.md:61` chốt trạng thái
 cục bộ của app chỉ gồm danh sách thư mục và bốn knob; `app/config.py:1-11` ghi rõ lý do
 hoãn là "bốn knob chưa đủ để biện minh cho một schema". Lý do đó hết hiệu lực đúng lúc danh
 sách trở thành thứ sửa được và phải sống qua lần khởi động sau.
 
 Một dấu hiệu nhỏ của cùng chỗ trống ấy: `with_workspaces` (`app/config.py:117-119`) là
 mutator duy nhất của danh sách, docstring nói nó phục vụ lệnh kiểm chứng — nhưng lệnh đó
-dựng `Config` thẳng (`scripts/verify_0002.py:96`) và không gọi nó. Chỉ còn test của chính
+dựng `Config` thẳng (`scripts/verify_0001.py:96`) và không gọi nó. Chỉ còn test của chính
 nó gọi (`app/config_test.py:59`). Đường sửa workspace đã được dự trù và chưa từng được dùng
 thật.
 
@@ -47,7 +47,7 @@ thật.
 mệnh đề dưới đây trong **một** lần chạy, và trả về non-zero nếu bất kỳ mệnh đề nào hỏng:
 
 1. **Nền đã chuyển.** `npm test` xanh, `scripts/verify-0001.mjs` xanh, và lệnh kiểm của
-   `0002` xanh với **đúng những mệnh đề nó đang kiểm hôm nay** — chỉ thư viện client và
+   `0001` xanh với **đúng những mệnh đề nó đang kiểm hôm nay** — chỉ thư viện client và
    đường import được phép đổi.
 2. **Không còn HTML viết tay.** Repo không còn file HTML hay CSS viết tay nào phục vụ trang
    của app; `app/public/index.html` (151 dòng) đã bị xoá và không có file thay thế cùng
@@ -65,7 +65,7 @@ phản hồi, hoặc xoá rồi mà workspace vẫn còn.
 
 Số đếm nằm trong phép đo là cố ý: nó là đúng cái app hiện không trả lời được, nên nó là chỗ
 kết quả này dễ chết nhất. Và phép đo **không cần trình duyệt** vì cùng lý do đã ghi ở
-`.cos/0002_no-session-management/intent.md:33-34` — bài học rằng bằng chứng cần người ngồi
+`.cos/0001_no-session-management/intent.md:33-34` — bài học rằng bằng chứng cần người ngồi
 đó thì làm chậm mọi vòng lặp.
 
 **Ba mệnh đề là một sự kéo giãn có chủ ý của invariant 3 trong `write-intent`**, vốn đòi
@@ -78,16 +78,16 @@ ba, và không có cách nào đọc kết quả để biết phần nào đứn
 - **Người dùng:** duy nhất tác giả, một máy, loopback. Không phân phối cho ai khác.
 - **`app/` biến mất.** Gói Python chuyển sang layout phẳng của Reflex, cạnh `rxconfig.py`.
   Trên HEAD `06f2e6e`, các artifact đã commit trong `.cos/` chứa **35** trích dẫn dạng
-  `app/<file>`; **13** trong số đó nằm ở `.cos/0002_no-session-management/plan.md`, file mà
-  unit này **không** viết lại — đó mới là phần trích dẫn chết thật sự. `0001` không có cái
+  `app/<file>`; **13** trong số đó nằm ở `.cos/0001_no-session-management/plan.md`, file mà
+  unit này **không** viết lại — đó mới là phần trích dẫn chết thật sự. `terminal-only-access` không có cái
   nào. Đếm ngày 2026-09-21 bằng
   `git show HEAD:<file> | grep -o "app/[a-z_/]*\.\(py\|html\)"`.
 - **`package.json`:** `test:python` đang khoá cứng `-s app`. Phải đổi.
 - **`.claude/CLAUDE.md:17`:** ghi "There is no build step — the channel runs from source"
   và cấm bịa ra một lệnh build. Reflex biên dịch frontend, nên dòng đó thành sai và file đó
   phải sửa, không phải lách.
-- **`scripts/verify_0002.py`:** import `app.web` và dùng `aiohttp`. Nó là **bằng chứng duy
-  nhất** `0002` từng đạt, và unit này viết lại nó.
+- **`scripts/verify_0001.py`:** import `app.web` và dùng `aiohttp`. Nó là **bằng chứng duy
+  nhất** `0001` từng đạt, và unit này viết lại nó.
 - **`app/web.py`:** toàn bộ lớp HTTP đổi framework.
 - **`is_workspace` và ba chỗ gọi nó** (`app/config.py:82-94`; `app/web.py:44`, `:60`,
   `:85`): ranh giới này đang đứng được một phần nhờ danh sách bất biến trong suốt đời tiến
@@ -128,14 +128,14 @@ chúng; nó chỉ được nói chúng tốn gì.
   nối ở `spec.md:146-151` được dùng đến — nhưng chỉ cho workspace và metadata của nó.
 - **Không có kho dữ liệu thứ hai cho session.** Session store của SDK vẫn là nguồn sự thật
   (`spec.md:70`).
-- **Lệnh kiểm của `0002` giữ nguyên các mệnh đề nó kiểm.** Được đổi client và import; không
+- **Lệnh kiểm của `0001` giữ nguyên các mệnh đề nó kiểm.** Được đổi client và import; không
   được đổi, nới, hay bỏ bớt điều nó khẳng định. Nó là bằng chứng duy nhất của một unit đã
   đóng.
-- **Ràng buộc xác thực của `0002` còn nguyên**
-  (`.cos/0002_no-session-management/intent.md:48-55`).
+- **Ràng buộc xác thực của `0001` còn nguyên**
+  (`.cos/0001_no-session-management/intent.md:48-55`).
 - **Không xoá `channel/`, không xoá `evidence/0001_terminal-only-access/`.**
 - **Ghi đè một artifact đã `accepted` là ngoại lệ, không phải lối đi.** Harness không có
-  bước sửa đổi. Lần này chấp nhận được vì `0003` chưa có `plan.md` và chưa có dòng code nào;
+  bước sửa đổi. Lần này chấp nhận được vì `0002` chưa có `plan.md` và chưa có dòng code nào;
   một lần sửa sau khi đã có code thì phải là unit mới.
 - **Phạm vi:** đếm, thêm, xoá, đặt label workspace; clone; pull latest; chuyển nền; giao
   diện bằng component Python. Ngoài phạm vi: nhiều người dùng, đăng nhập, TLS, bật tool cho
@@ -150,8 +150,8 @@ chúng; nó chỉ được nói chúng tốn gì.
 4. Workspace trỏ vào thư mục đã biến mất thì app xử sao — ẩn, báo lỗi, hay tự dọn?
 5. File cấu hình ghi được nằm ở đâu, và có commit vào repo không?
 6. Docstring của `with_workspaces` (`app/config.py:117-118`) mô tả sai chỗ dùng so với
-   `scripts/verify_0002.py:96`. Sửa, hay bỏ hẳn hàm đó?
-7. **Mới:** 13 trích dẫn trong `.cos/0002_no-session-management/plan.md` sẽ chết. Để
+   `scripts/verify_0001.py:96`. Sửa, hay bỏ hẳn hàm đó?
+7. **Mới:** 13 trích dẫn trong `.cos/0001_no-session-management/plan.md` sẽ chết. Để
    nguyên và coi artifact là bản ghi lịch sử đọc qua git, hay sửa hết? Sửa thì đang
    viết lại thứ người ta đã ký.
 8. **Mới:** trang do Reflex vẽ đi qua WebSocket `/_event`, còn lệnh kiểm đi qua JSON API.

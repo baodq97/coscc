@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Proof for .cos/0011_demo-data-and-no-durable-store.
+"""Proof for .cos/0006_demo-data-and-no-durable-store.
 
 `intent.md` asks for one thing that can come back false: five interaction flows completed
 in a browser **against real data**, and all five still right after the app is stopped and
@@ -9,12 +9,12 @@ started again. This command is that sentence, executed.
     1  at least one did not
     2  the environment is not ready — no browser, no build, stale build, port in use
 
-Exit 2 is kept apart from exit 1 for the reason `0004` gives: collapsing them would report
+Exit 2 is kept apart from exit 1 for the reason `0003` gives: collapsing them would report
 "chromium is not installed" as "the page is broken".
 
 **It spends a little account quota.** Flow 4 sends one short prompt, because a chat flow
 that never talks to a model is not the flow. It is one message with a four-word answer, and
-it is the only session this creates. Compare `scripts/verify_0005.py`, which makes the same
+it is the only session this creates. Compare `scripts/verify_0004.py`, which makes the same
 trade for the same reason.
 
 **It never presses the run button.** `plan.md` Risk 5: a board step in `impl`/`autonomous`
@@ -82,7 +82,7 @@ class Flow:
 
 UNIT = "0001_a-real-unit-for-the-proof"
 INTENT = """# Intent: A real unit, written by the proof
-Author: scripts/verify_0011.py. Status: accepted.
+Author: scripts/verify_0006.py. Status: accepted.
 
 ## Problem
 
@@ -114,7 +114,7 @@ def open_page(browser, base: str):
     page.goto(base, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
     page.wait_for_selector("#studio-shell", timeout=PAGE_TIMEOUT_MS)
     # `on_mount` only runs once the WebSocket is up, so waiting for a value it fills is
-    # waiting for the connection — the same reasoning `verify_0004.py` uses.
+    # waiting for the connection — the same reasoning `verify_0003.py` uses.
     page.wait_for_function(
         "() => { const n = document.querySelector('#workspace-count');"
         " return n && !n.textContent.trim().startsWith('0'); }",
@@ -196,7 +196,7 @@ def flow_2_board(page) -> Flow:
 def flow_3_artifact_and_timeline(page) -> Flow:
     f = Flow(3, "read a unit's artifact and its timeline")
 
-    # The drawer opens on Overview, and only the open tab is in the document. `0011 spec.md`
+    # The drawer opens on Overview, and only the open tab is in the document. `0006 spec.md`
     # R17 lives here, so it is measured before anything switches away from it.
     grants = page.locator("#next-grants")
     f.check("the next step's grant is shown before the button",
@@ -314,8 +314,8 @@ def run() -> int:
     require_free_port(config)
 
     playwright, browser = require_browser()
-    root = Path(tempfile.mkdtemp(prefix="cos0011-work-"))
-    data_dir = Path(tempfile.mkdtemp(prefix="cos0011-data-"))
+    root = Path(tempfile.mkdtemp(prefix="cos0006-work-"))
+    data_dir = Path(tempfile.mkdtemp(prefix="cos0006-data-"))
     flows: list[Flow] = []
     try:
         make_scene(root, data_dir)

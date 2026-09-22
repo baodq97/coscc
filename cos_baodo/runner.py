@@ -9,7 +9,7 @@ in are recorded so a reader can check that it happened rather than take it on tr
 `spec.md` R9 and `plan.md` Risk 1: the six prose stages get no tools **in either mode**, so
 the session cannot write its own artifact — a session with no tools cannot write a file.
 The spec's design section says the agent writes it; that and R9 cannot both hold. This
-module implements the reading that keeps R9, the zero-tool default and `0007`: **the app
+module implements the reading that keeps R9, the zero-tool default and `chat-only-sessions-have-tools`: **the app
 holds the pen for `.cos/`, and the session only returns text.**
 
 The rules a stage follows come from **this app's** `.claude/skills/`, never the
@@ -186,7 +186,7 @@ def permission_gate(grant: Grant, workspace: str, denials: Denials):
     """The callback the SDK asks before every tool call.
 
     This is the enforcement `spec.md` R10 asks for, and it is separate from the tool list
-    on purpose: `0007` measured that the list does not cover every source of capability.
+    on purpose: `chat-only-sessions-have-tools` measured that the list does not cover every source of capability.
     """
 
     async def can_use_tool(tool: str, tool_input: dict, context: Any):
@@ -228,7 +228,7 @@ class Runner:
 
         if grant.opens_anything and is_prose_stage(stage):
             # Belt and braces against a future edit to the table: a prose stage that
-            # somehow acquired tools would silently stop being covered by `0007`.
+            # somehow acquired tools would silently stop being covered by `chat-only-sessions-have-tools`.
             raise RunError(f"{stage} is a prose stage and must not carry tools")
 
         prompt, included = build_prompt(
@@ -257,7 +257,7 @@ class Runner:
                 max_turns=grant.max_turns,
                 # Only pass a list and a gate when something was actually granted. A step
                 # with an empty grant gets exactly the session the app makes by default,
-                # which is the one `0007` is about.
+                # which is the one `chat-only-sessions-have-tools` is about.
                 can_use_tool=permission_gate(grant, workspace, denials) if grant.opens_anything else None,
                 tools=list(grant.tools) if grant.opens_anything else None,
                 max_budget_usd=grant.max_budget_usd or None,
@@ -285,7 +285,7 @@ class Runner:
             detail = str(e)
             # A step stopped by its own ceiling did not fail in the ordinary sense — it was
             # bounded. `journal.OUTCOMES` keeps the two apart so a reader can tell a defect
-            # from a limit working as intended (`0008` R11).
+            # from a limit working as intended (`0005` R11).
             if _hit_ceiling(terminal):
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal} — {detail}"
         except Exception as e:  # surfaced as data; the process keeps serving

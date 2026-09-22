@@ -1,6 +1,6 @@
 """Presentation primitives for the page. Python styles, no service dependencies.
 
-Written for `0009`'s prototype and kept unchanged through `0011`, which is the point:
+Written for `fragmented-product-experience`'s prototype and kept unchanged through `0006`, which is the point:
 the look the originator approved is this file, and swapping the data underneath it did
 not require touching it.
 """

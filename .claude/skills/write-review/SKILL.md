@@ -15,7 +15,7 @@ create an approver — it creates a *place to record one*. A `review.md` marked 
 the same agent that wrote the code is a green cell over an empty chair, and it is **more**
 misleading than having no cell at all, because it looks like a gate.
 
-`.cos/0008_hand-driven-invisible-loop/spec.md` C5 records this as unresolved and names the
+`.cos/0005_hand-driven-invisible-loop/spec.md` C5 records this as unresolved and names the
 author as the one who decides it. Until they do, the minimum this file owes a reader is to
 say **who concluded it**, in a way that distinguishes an agent's self-issued verdict from a
 person's.

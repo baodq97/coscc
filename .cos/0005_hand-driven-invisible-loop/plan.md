@@ -31,7 +31,7 @@ Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
 - `.claude/CLAUDE.md` — mục "The loop" và "Invariants" đang mô tả ba artifact.
 - `.claude/harness.md` — bảng loop (`:30-34`), phạm vi ba giai đoạn (`:12-13`), và câu
   "driven by hand" (`:16`).
-- `scripts/verify_0004.py` — thêm mệnh đề live/không-reload (spec R20).
+- `scripts/verify_0003.py` — thêm mệnh đề live/không-reload (spec R20).
 - `package.json` — không đổi. Ghi ra để không ai phải đoán.
 
 **Mới:**
@@ -44,7 +44,7 @@ Intent: intent.md. Spec: spec.md. Author: Bao Do. Status: accepted.
 - `cos_baodo/journal_test.py` (new)
 - `cos_baodo/runner.py` (new) — chạy một bước, phát sự kiện, trả số.
 - `cos_baodo/runner_test.py` (new)
-- `scripts/verify_0008.py` (new)
+- `scripts/verify_0005.py` (new)
 - `.claude/skills/write-idea/SKILL.md` (new)
 - `.claude/skills/write-impl/SKILL.md` (new)
 - `.claude/skills/write-pr/SKILL.md` (new)
@@ -61,12 +61,12 @@ Mỗi bước để lại repo ở trạng thái kiểm được. Không bước
 và bắt mọi bước trước phải `settled`; `nextAction` đi hết tám; bảng của `cmdStatus` không
 còn ba cột cố định. `cos.test.mjs` mở rộng cùng lúc.
 *Kiểm:* `npm test` xanh; `cos.mjs status` in đủ 8 unit và không báo `unexpected file(s)`
-cho năm tên mới; `cos.mjs gate 0008_hand-driven-invisible-loop pr` trả lời thay vì
+cho năm tên mới; `cos.mjs gate 0005_hand-driven-invisible-loop pr` trả lời thay vì
 `unknown stage`.
 
 *Đã làm, và ba chỗ đi khác plan — ghi theo invariant 8:*
 (a) **`implement` giữ làm alias của `impl`.** `.claude/skills/write-plan/SKILL.md` còn viết
-tên cũ; bỏ nó là khoá gate của `0006` và `0007`, đúng Risk 5. Một dòng bảng tra, có test.
+tên cũ; bỏ nó là khoá gate của `sessions-invisible-across-processes` và `chat-only-sessions-have-tools`, đúng Risk 5. Một dòng bảng tra, có test.
 (b) **`idea` là tuỳ chọn và không gác gì.** Bắt nó thành bắt buộc sẽ đánh dấu cả 8 unit
 trên đĩa là dang dở, vì `readUnit` xưa nay vẫn đòi mỗi unit mở bằng một intent. Nó là chỗ
 ghi một ý nghĩ có trước intent, và vắng mặt chỉ có nghĩa là không ai ghi.
@@ -85,7 +85,7 @@ mỗi unit, và khẳng định một thư mục không có harness trả rỗng
 *Đã làm, và một chỗ đi khác plan — ghi theo invariant 8:* **app không bao giờ chạy
 `cos.mjs` của workspace.** Plan viết "workspace không có `.claude/scripts/cos.mjs` thì trả
 board rỗng", tức là ngầm định workspace **có** thì chạy cái đó. Đó là lỗ hổng: workspace là
-repo `clone` từ một URL người ta gõ (`0003`), nên file ấy là code của repo đó, và chạy nó
+repo `clone` từ một URL người ta gõ (`0002`), nên file ấy là code của repo đó, và chạy nó
 trao cho một repo lạ mọi thứ tiến trình này có — vượt qua toàn bộ knob ở
 `cos_baodo/config.py`. Thay vào đó `cos.mjs` nhận cờ `--root <dir>`, và app chạy **bản của
 chính nó** trỏ vào `.cos/` của workspace. Cái giá, ghi ra: một workspace dùng phiên bản
@@ -93,16 +93,16 @@ harness khác sẽ được đọc bằng danh sách giai đoạn của app này
 trồng một `cos.mjs` độc trong workspace và khẳng định nó không hề chạy.
 
 **3. `Journal` — chỗ của thứ không phải artifact.**
-`journal.py` dùng lại nguyên cơ chế đã trả giá ở `0005`: ghi temp rồi `rename`, `flock`
+`journal.py` dùng lại nguyên cơ chế đã trả giá ở `0004`: ghi temp rồi `rename`, `flock`
 trên file riêng, chờ có trần (`cos_baodo/store.py:16-22`, `:42-49`). Ghi chế độ mỗi bước,
 mốc thời gian, session id, số token, số lần từ chối tool.
 *Kiểm:* `journal_test.py` gồm một ca nhiều tiến trình cùng ghi — cùng hình dạng phép đo của
-`scripts/verify_0005.py` nhưng ở mức unit test — và khẳng định không mất mục.
+`scripts/verify_0004.py` nhưng ở mức unit test — và khẳng định không mất mục.
 
 *Đã làm, và một chỗ đi khác plan — ghi theo invariant 8:* **không dùng temp-rename, dùng
 `O_APPEND`.** Plan viết "ghi temp rồi rename" vì đó là cách `store.py` làm. Nhưng store
 thay cả file mỗi lần ghi, còn journal chỉ nối thêm một dòng; temp-rename ở đây sẽ chép lại
-toàn bộ log mỗi sự kiện. Quan trọng hơn: cái `0005` đo được là mất mát do **đọc-rồi-ghi xen
+toàn bộ log mỗi sự kiện. Quan trọng hơn: cái `0004` đo được là mất mát do **đọc-rồi-ghi xen
 kẽ**, và một phép nối không có bước đọc, nên lớp lỗi đó vắng mặt về mặt cấu trúc chứ không
 phải bị phòng thủ. `flock` vẫn giữ — nó đóng khung một bản ghi để hai người ghi không cài
 răng lược nửa dòng, và cho người đọc một ảnh chụp nhất quán — nhưng nó là lớp thứ hai.
@@ -134,21 +134,21 @@ scale và các khối dựng chung nằm đó để bước 6 dùng lại; `cos_
 deprecation cho `App(theme=...)` và nói nó biến mất ở 1.0, chỉ sang
 `rx.plugins.RadixThemesPlugin` — đo ngày 2026-09-21 bằng chính lần build. Tài liệu trên web
 vẫn dạy lối cũ; gói đã cài là nguồn thật. `rxconfig.py` cũng chưa có trong danh sách file.
-(c) **Bốn phép kiểm R22–R25 vào `verify_0004.py` ngay bây giờ**, không đợi bước 11: chúng
+(c) **Bốn phép kiểm R22–R25 vào `verify_0003.py` ngay bây giờ**, không đợi bước 11: chúng
 là thứ chứng minh bước này, và để tới cuối thì bước này không có bằng chứng.
 (d) **Thêm một "canary" cho phép đo tràn ngang.** Đo ngày 2026-09-21: xoá hẳn khung cuộn
 của bảng mà phép kiểm vẫn xanh — cảnh test chỉ có 2 workspace tên ngắn nên không đủ rộng để
 tràn. Phép kiểm vì thế tự chèn một khối 3000px và đòi bị bắt, trước khi được tin.
 
 *Hai hồi quy phép kiểm bắt được:* trang vẽ lại làm mất dòng "N workspace(s)" mà
-`scripts/verify_0004.py:248` chờ đúng chữ; và phép đo tương phản đầu tiên đọc `body`, nơi
+`scripts/verify_0003.py:248` chờ đúng chữ; và phép đo tương phản đầu tiên đọc `body`, nơi
 Reflex không đặt màu gì — ra 1.00:1. Màu của theme nằm trên node `.radix-themes`, nên phép
 đo chuyển sang chữ thật trên trang và lấy trường hợp tệ nhất.
 
 **6. Trang: board và timeline. Đây là "state moving" nhìn thấy được.**
 Tám cột, mỗi unit một hàng, mỗi ô một trạng thái; timeline của một unit theo spec R15. Vẫn
 chưa chạy được bước nào — trang chỉ hiện và đổi chế độ.
-*Kiểm:* `uv run cos-build` rồi `uv run python scripts/verify_0004.py` xanh; mắt thấy 8 unit,
+*Kiểm:* `uv run cos-build` rồi `uv run python scripts/verify_0003.py` xanh; mắt thấy 8 unit,
 8 cột.
 
 *Đã làm.* Board vẽ 8 unit × 8 giai đoạn; bấm một unit mở panel có segmented control
@@ -169,7 +169,7 @@ mọi màn hình và đè lên nội dung ở viewport thấp.
 `done` mang input/output/cache token, USD, số lượt, thời lượng (spec R16). Journal cộng
 dồn, trang hiện tổng theo bước và theo unit.
 *Kiểm:* unit test với `ResultMessage` dựng sẵn cho phép cộng; và một session thật qua
-`verify_0008.py` cho R18 (tổng khác 0).
+`verify_0005.py` cho R18 (tổng khác 0).
 
 *Đã làm, và Risk 4 đóng bằng số đo thật.* Chạy hai lượt trên một client ngày 2026-09-21:
 
@@ -221,13 +221,13 @@ lượt, nên một bước dài sẽ khoá cả trang — đúng cái R14 cấm
 nhận `Grant()` rỗng, nên một giai đoạn nghĩ ra ngày mai là **khoá**, không phải mở.
 
 *Một điều phải nói thẳng:* grant rỗng là thứ **app** kiểm soát. Session vẫn nhận MCP tool từ
-cấu hình mức máy cho tới khi `0007` được implement — đó là toàn bộ nội dung của `0007`, và là
+cấu hình mức máy cho tới khi `chat-only-sessions-have-tools` được implement — đó là toàn bộ nội dung của `chat-only-sessions-have-tools`, và là
 lý do `spec.md` C1 khuyến nghị làm nó trước. Mệnh đề "0 tool" của bước này chỉ đạt hoàn toàn
-sau khi `0007` xong.
+sau khi `chat-only-sessions-have-tools` xong.
 
 **9. `impl` autonomous.**
 Grant khác rỗng lần đầu: tool ghi và exec, giới hạn trong thư mục workspace. Cưỡng chế ở
-`can_use_tool`, không chỉ ở danh sách truyền vào — lý do là phép đo của `0007`. Trần 50
+`can_use_tool`, không chỉ ở danh sách truyền vào — lý do là phép đo của `chat-only-sessions-have-tools`. Trần 50
 lượt và 5.00 USD (spec R11) gắn vào `StagePolicy`, **không** thay giá trị toàn cục.
 `max_turns=1` ở `sessions.py:125` chuyển thành giá trị do policy cấp, mặc định vẫn 1.
 *Kiểm:* một bước `impl` sửa được một file trong workspace nháp và ghi `impl.md`; một bước
@@ -283,13 +283,13 @@ ngoài máy và là quyết định của tác giả, không phải của bướ
   chạy `git`/`gh` bằng đăng nhập GitHub sẵn có của máy, và nó **với tới mọi repo tài khoản
   đó với tới, không riêng workspace này**. Mỗi ô có grant cũng có một biểu tượng chìa khoá
   liệt kê tool được cấp. Năng lực đến từ cấu hình mức máy phải nhìn thấy được **trong app** —
-  đó là nguyên văn bài học của `0007`.
+  đó là nguyên văn bài học của `chat-only-sessions-have-tools`.
 - Test khẳng định `manual` không mang tool lẫn cảnh báo, và `impl` không mang cảnh báo của
   `pr`.
 
 *Việc còn lại cho tác giả:* cấp một remote cho `cos-baodo`, rồi chạy bước `pr` một lần.
 
-**11. `verify_0008.py`, rồi tài liệu.**
+**11. `verify_0005.py`, rồi tài liệu.**
 Lệnh chứng minh viết sau cùng vì nó khẳng định kết quả của cả chín bước trên. Rồi sửa
 `.claude/CLAUDE.md` và `.claude/harness.md` cho khớp thực tế — tám giai đoạn, và câu
 "driven by hand" (`harness.md:16`) không còn đúng với hai bước.
@@ -300,13 +300,13 @@ chỗ nào đứng được:
 
 - **Mệnh đề 1 — đạt.** `gate` trả lời đủ tám tên, từ chối `deploy`, `rollback` và tên rỗng.
   Trước đó nó phải chứng minh mình **biết nói không**: một unit rỗng bị chặn ở `spec`. Đây
-  là bài học của `0004`, viết thành một dòng.
+  là bài học của `0003`, viết thành một dòng.
 - **Mệnh đề 7 — đạt.** Một bước `impl` với `max_turns=1` chạm trần và trả `exhausted`, kèm
   lý do, không treo. Hạ trần là **sửa số trong bảng grant**, không phải nhánh code thứ hai.
-- **Mệnh đề 5 — KHÔNG đạt, và đây là `0007`.** Session của một giai đoạn chữ, grant rỗng,
+- **Mệnh đề 5 — KHÔNG đạt, và đây là `chat-only-sessions-have-tools`.** Session của một giai đoạn chữ, grant rỗng,
   vẫn nhận `microsoft-learn` và `claude.ai Claude Docs` cùng ba tool `mcp__…`. `--tools`
-  chỉ đặt tên cho tập built-in nên không trừ được MCP. `0007` có plan accepted, chưa có
-  dòng code nào. Mệnh đề này còn đỏ tới khi `0007` xong.
+  chỉ đặt tên cho tập built-in nên không trừ được MCP. `chat-only-sessions-have-tools` có plan accepted, chưa có
+  dòng code nào. Mệnh đề này còn đỏ tới khi `chat-only-sessions-have-tools` xong.
 - **Mệnh đề 2, 3, 4, 6 — bỏ qua, vì repo không có remote.** `git remote -v` vẫn rỗng
   (Risk 2). Script đòi `COS_PROOF_REPO` trỏ tới một repo mà tác giả **đồng ý** cho nó push
   và mở PR; không có mặc định, vì với ra ngoài máy là quyết định của tác giả.
@@ -315,8 +315,8 @@ chỗ nào đứng được:
 một mình**. Hai lần chạy liên tiếp, cùng máy cùng tham số: lần đầu ba tool, lần sau **không
 tool nào**, trong khi cả hai lần đều có đúng hai MCP server gắn vào. Danh sách tool chạy đua
 với lúc server kết nối xong, nên một lần đọc sớm sẽ báo "0 tool" cho một session không hề
-rỗng — đúng kiểu xanh giả mà `0004` đã dạy. Mệnh đề 5 vì vậy hỏi **cả hai**: 0 tool **và**
-0 server. Nếu chỉ giữ vế đầu thì `0008` đã tự cấp cho mình một dấu xanh.
+rỗng — đúng kiểu xanh giả mà `0003` đã dạy. Mệnh đề 5 vì vậy hỏi **cả hai**: 0 tool **và**
+0 server. Nếu chỉ giữ vế đầu thì `0005` đã tự cấp cho mình một dấu xanh.
 
 ## Risks
 
@@ -327,7 +327,7 @@ Xếp theo bán kính, rộng nhất trước.
 ghi." Nhưng R9 của cùng file cho sáu giai đoạn chữ grant **rỗng ở cả hai chế độ** — một
 session không tool thì không ghi được file. Hai câu không cùng đúng được. Plan này chọn:
 **app cầm bút cho artifact trong `.cos/`, agent chỉ trả về văn bản**, vì nó giữ được R9,
-giữ được mặc định 0 tool, và giữ cho `0007` còn kiểm được. Câu trong `## Design` là sai và
+giữ được mặc định 0 tool, và giữ cho `chat-only-sessions-have-tools` còn kiểm được. Câu trong `## Design` là sai và
 được ghi nhận sai **ở đây**, không phải bằng cách sửa lén một artifact đã `accepted`.
 *Dấu hiệu nó vỡ:* bước `spec` chạy mà session báo khác 0 tool.
 
@@ -348,19 +348,19 @@ nhất, vì nó trông như đã đo. *Dấu hiệu:* chạy hai lượt trong m
 tổng hai lượt chứ không phải gấp đôi lượt sau. Kiểm ở bước 7, không để tới bước 11.
 
 **5. Bước 1 đổi `cos.mjs`, và `cos.mjs` là thứ gate của mọi unit khác đang đọc.** Làm hỏng
-nó là khoá cả `0006` và `0007` lại. *Dấu hiệu:* `cos.mjs status` báo problem cho một unit
+nó là khoá cả `sessions-invisible-across-processes` và `chat-only-sessions-have-tools` lại. *Dấu hiệu:* `cos.mjs status` báo problem cho một unit
 vốn sạch.
 
 **6. Board gọi Node cho mỗi lần đọc (spec C8).** App Python có phụ thuộc lúc chạy vào
 `.claude/scripts/cos.mjs`. Nếu chậm hoặc thiếu thì trang trống. *Dấu hiệu:* board rỗng trên
 một workspace có `.cos/`.
 
-**7. Bước 9 và 10 cùng mở tool trong lúc `0007` chưa implement.** `0007` có plan accepted và
-chưa có dòng code nào. `spec.md` C1 khuyến nghị làm `0007` trước; plan này không ép, nhưng
-nếu `0008` xong trước thì phép kiểm của `0007` phải chứng minh thêm rằng board không mở
+**7. Bước 9 và 10 cùng mở tool trong lúc `chat-only-sessions-have-tools` chưa implement.** `chat-only-sessions-have-tools` có plan accepted và
+chưa có dòng code nào. `spec.md` C1 khuyến nghị làm `chat-only-sessions-have-tools` trước; plan này không ép, nhưng
+nếu `0005` xong trước thì phép kiểm của `chat-only-sessions-have-tools` phải chứng minh thêm rằng board không mở
 đường vòng.
 
-**8. `0005` C2 vẫn mở, và journal làm nó rộng ra.** Hai bản app trên một working folder vẫn
+**8. `0004` C2 vẫn mở, và journal làm nó rộng ra.** Hai bản app trên một working folder vẫn
 nhìn xuyên nhau. Journal ghi thường xuyên hơn hẳn danh sách workspace.
 
 ## Proof
@@ -368,13 +368,13 @@ nhìn xuyên nhau. Journal ghi thường xuyên hơn hẳn danh sách workspace.
 Một lệnh, chạy sau bước 11:
 
 ```
-uv run cos-build && uv run python scripts/verify_0008.py
+uv run cos-build && uv run python scripts/verify_0005.py
 ```
 
-Đạt là **exit 0**. Mã thoát theo đúng quy ước `scripts/verify_0004.py:49`: `0` đạt, `1`
+Đạt là **exit 0**. Mã thoát theo đúng quy ước `scripts/verify_0003.py:49`: `0` đạt, `1`
 hỏng, `2` môi trường chưa sẵn sàng (không có remote, không có `gh`, cổng bận).
 
-`verify_0008.py` phải trả non-zero nếu bất kỳ mệnh đề nào dưới đây hỏng:
+`verify_0005.py` phải trả non-zero nếu bất kỳ mệnh đề nào dưới đây hỏng:
 
 1. `cos.mjs gate` trả lời đủ tám tên giai đoạn, và từ chối tên thứ chín.
 2. Một unit nháp đi từ `idea` tới `ship`, mọi bước chạy qua board, mọi bước có session id
@@ -389,8 +389,8 @@ Thiếu remote **không** làm cả lệnh im. Mệnh đề 1, 5 và 7 không c�
 vẫn in phán quyết; chỉ 2, 3, 4, 6 bị bỏ qua. Đó là câu trong Risk 2 — "chín phần mười vẫn
 chạy" — viết thành cơ chế thay vì để làm lời hứa.
 
-Bốn mệnh đề giao diện (R22–R25) **không** nằm trong `verify_0008.py`, vì chúng cần một
-trình duyệt thật. Chúng vào `scripts/verify_0004.py`, cùng chỗ với mệnh đề live của R20:
+Bốn mệnh đề giao diện (R22–R25) **không** nằm trong `verify_0005.py`, vì chúng cần một
+trình duyệt thật. Chúng vào `scripts/verify_0003.py`, cùng chỗ với mệnh đề live của R20:
 
 8. `rx.App` có `theme=` khai báo tường minh (đọc được từ DOM: thuộc tính của node theme).
 9. Render ở **390px**, **768px**, **1280px**: `scrollWidth` không vượt `clientWidth` của
@@ -403,13 +403,13 @@ Ngoài lệnh trên, phải cùng xanh:
 
 ```
 npm test
+uv run python scripts/verify_0001.py
 uv run python scripts/verify_0002.py
 uv run python scripts/verify_0003.py
 uv run python scripts/verify_0004.py
-uv run python scripts/verify_0005.py
 ```
 
-`verify_0004.py` là chỗ duy nhất kiểm được mệnh đề 2 của intent (live, không reload), vì nó
+`verify_0003.py` là chỗ duy nhất kiểm được mệnh đề 2 của intent (live, không reload), vì nó
 là lệnh duy nhất mở trình duyệt thật. Mệnh đề ấy **không** được tính là đạt bằng bất kỳ phép
 kiểm mức HTTP nào (spec R20).
 
@@ -424,7 +424,7 @@ kiểm mức HTTP nào (spec R20).
   app.
 - **Không thêm knob thứ năm.** Quyền nằm trong `policy.py`, tách khỏi `Config`, đúng lý do
   `spec.md ## Design` nêu: knob 1 phải tiếp tục chỉ nói về một thứ.
-- **Không sửa `0005` C2 và không đụng `0006`.** Chúng là unit khác.
+- **Không sửa `0004` C2 và không đụng `sessions-invisible-across-processes`.** Chúng là unit khác.
 - **Không hứa trang sẽ đẹp.** Bước 5 dựng *sàn* — theme, dark/light, ba bề rộng, tương
   phản AA — và bốn thứ đó kiểm được. Phần còn lại của chữ "xịn mịn" thì không: cả mười một
   bước trên xanh được với một trang vẫn rối. `spec.md` C7 ghi ai quyết phần ấy, và ghi rằng

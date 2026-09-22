@@ -7,7 +7,7 @@ process — but because it is also a plain ASGI app, the proof drives it in-proc
 free of a JavaScript toolchain (`plan.md` step 1, check d).
 
 Nothing here reads the environment — `cos_baodo.config` is the only reader — and no route
-returns configuration or runs anything the caller names. `0002` spec.md C3: a long-lived
+returns configuration or runs anything the caller names. `0001` spec.md C3: a long-lived
 login credential is in this process, and those two habits are what keep it there.
 
 Nothing here decides anything either (`spec.md` R10). Every route translates a request

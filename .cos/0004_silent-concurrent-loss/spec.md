@@ -39,17 +39,17 @@ ra.
 **R7 — Không còn session sống thì `pull` chạy bình thường.** Kiểm được: đóng session, gọi
 lại, thành công. Chặn vĩnh viễn là hỏng theo kiểu khác.
 
-**R8 — Lý do mới hiện ra như mọi lý do `pull` thất bại khác.** `0003` R20 đòi lỗi `pull`
+**R8 — Lý do mới hiện ra như mọi lý do `pull` thất bại khác.** `0002` R20 đòi lỗi `pull`
 không được nuốt; điều này không được thành ngoại lệ. Kiểm được: trang hiện nó ở đúng chỗ
 đang hiện lỗi git.
 
 ### C. Không làm đổ thứ có sẵn
 
-**R9 — Ba lệnh kiểm cũ còn xanh.** `scripts/verify_0002.py`, `scripts/verify_0003.py`,
-`scripts/verify_0004.py` chạy nguyên trạng. `verify_0003` có gọi `pull` trên một workspace
+**R9 — Ba lệnh kiểm cũ còn xanh.** `scripts/verify_0001.py`, `scripts/verify_0002.py`,
+`scripts/verify_0003.py` chạy nguyên trạng. `verify_0002` có gọi `pull` trên một workspace
 không có session, nên R6 không được chạm tới nó.
 
-**R10 — `npm test` giữ nguyên và không cần trình duyệt** (`0004` đã chốt).
+**R10 — `npm test` giữ nguyên và không cần trình duyệt** (`0003` đã chốt).
 
 **R11 — Một lệnh chứng minh, in từng mệnh đề.** Thoát 0 chỉ khi cả R5 và R6/R7 đúng; hỏng
 một mệnh đề vẫn phải in kết quả mệnh đề kia.
@@ -92,7 +92,7 @@ thì tiến trình này không thấy, và `pull` sẽ chạy. Xem C2.
 - **Khoá liên tiến trình cho *session*.** Chỉ store được khoá. Xem C2.
 - **Đổi hình dạng file store.** Trường `version` vẫn không dùng tới.
 - **Khoá trên máy không POSIX.** Xem C4.
-- **Giải mất-lượt khi mở lại session đồng thời** (`.cos/0002_no-session-management/spec.md:165-176`).
+- **Giải mất-lượt khi mở lại session đồng thời** (`.cos/0001_no-session-management/spec.md:165-176`).
   Cùng họ, khác chỗ, và vẫn bị chặn bằng knob 4 chứ không bằng khoá.
 
 ## Concerns
@@ -107,7 +107,7 @@ trong bộ nhớ, nên nó chỉ thấy session của chính app này. Hai app c
 "workspace đang bận", tức một cơ chế nữa, và `intent.md` không cho phép. **Người quyết là
 tác giả** nếu muốn đi tiếp.
 
-**C3 — Chờ 10 giây là một lựa chọn, không phải phép đo.** Khác với `0003` C3 — ở đó con số
+**C3 — Chờ 10 giây là một lựa chọn, không phải phép đo.** Khác với `0002` C3 — ở đó con số
 bịa rồi mới đo (`cos_baodo/gitops.py`). Ở đây không có gì để đo trước khi có khoá; con số
 nên được xem lại sau lần chạy thật đầu tiên chứ không phải được tin.
 
@@ -118,14 +118,14 @@ sớm hơn.
 
 **C5 — Lệnh chứng minh tiêu hạn mức, và đó là lựa chọn.** `intent.md` OQ4 hỏi: giả lập
 trạng thái session hay tạo session thật? Spec chọn **thật**, một session, một prompt ngắn.
-Giả lập sẽ kiểm một đường không ai đi, và `0004` vừa cho thấy đúng loại lỗi chỉ lộ ra khi đi
+Giả lập sẽ kiểm một đường không ai đi, và `0003` vừa cho thấy đúng loại lỗi chỉ lộ ra khi đi
 đường thật. Cái giá là mỗi lần chạy tốn một ít hạn mức.
 
-**C6 — Khoá làm hỏng một giả định của lệnh chứng minh cũ.** `scripts/verify_0003.py` gọi
-`pull`. Nếu nó chạy khi có session sống trong cùng workspace thì R6 sẽ chặn và `0003` đỏ.
+**C6 — Khoá làm hỏng một giả định của lệnh chứng minh cũ.** `scripts/verify_0002.py` gọi
+`pull`. Nếu nó chạy khi có session sống trong cùng workspace thì R6 sẽ chặn và `0002` đỏ.
 Hiện nó `pull` trước khi tạo session, nên không sao — nhưng đó là **thứ tự tình cờ**, không
-phải một ràng buộc ai viết ra. Đổi thứ tự trong file đó là làm `0003` đỏ vì một lý do chẳng
-liên quan gì tới `0003`.
+phải một ràng buộc ai viết ra. Đổi thứ tự trong file đó là làm `0002` đỏ vì một lý do chẳng
+liên quan gì tới `0002`.
 
 **C7 — Một lỗi hết hạn chờ trông giống hỏng, nhưng là hệ thống đang làm đúng.** Người dùng
 sẽ thấy "không thêm được workspace" và nghĩ app hỏng. Thông báo phải nói rằng có tiến trình

@@ -31,5 +31,5 @@ dev = [
 # loopback port with the compiled frontend mounted, not `reflex run` -- see run.py.
 cos-baodo = "cos_baodo.run:main"
 # Building through here rather than calling `reflex export` directly is what leaves the
-# fingerprint that `run.py` and `scripts/verify_0004.py` check. See cos_baodo/build.py.
+# fingerprint that `run.py` and `scripts/verify_0003.py` check. See cos_baodo/build.py.
 cos-build = "cos_baodo.build:main"

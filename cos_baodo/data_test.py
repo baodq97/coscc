@@ -1,7 +1,7 @@
 """Tests for the data root, weighted towards the two things that would fail silently.
 
-`spec.md` C2 says SQLite does not inherit the proof `0005` produced for the file lock.
-The concurrency claim itself is `scripts/verify_0005.py` — four real processes. What this
+`spec.md` C2 says SQLite does not inherit the proof `0004` produced for the file lock.
+The concurrency claim itself is `scripts/verify_0004.py` — four real processes. What this
 file covers is everything around it that a unit test can actually decide: the schema
 refusal, the directory mode, the one-shot migration mark, and that `write()` really does
 serialise a read-modify-write rather than merely appearing to.
@@ -126,7 +126,7 @@ class WriteIsAWholeTransaction(unittest.TestCase):
     def test_a_read_modify_write_under_threads_loses_nothing(self):
         """The in-process half of `spec.md` R9.
 
-        Not the proof — that is four processes in `scripts/verify_0005.py`. This catches
+        Not the proof — that is four processes in `scripts/verify_0004.py`. This catches
         the cheaper mistake: forgetting `BEGIN IMMEDIATE` and letting two upgrades race.
         """
         with tempfile.TemporaryDirectory() as d:

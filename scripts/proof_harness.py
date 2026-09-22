@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """The plumbing the browser proofs share, so a fix to it is one edit rather than two.
 
-`verify_0004.py` and `verify_0011.py` measure different claims — that is deliberate and
-recorded in `.cos/0011_demo-data-and-no-durable-store/impl.md`. What they had in common was
+`verify_0003.py` and `verify_0006.py` measure different claims — that is deliberate and
+recorded in `.cos/0006_demo-data-and-no-durable-store/impl.md`. What they had in common was
 never the claims: it was the port check, the build guard, the browser launcher and the
 app-under-test runner, which were copied verbatim from the first into the second. Two copies
-of a boot loop drift the moment one of them needs a fix, and `0004`'s already has.
+of a boot loop drift the moment one of them needs a fix, and `0003`'s already has.
 
 Nothing here decides anything about a proof. It starts an app, stops it, and refuses the
 environment early enough that "chromium is not installed" is never reported as "the page is
@@ -31,7 +31,7 @@ REPO = Path(__file__).resolve().parent.parent
 BOOT_TIMEOUT_S = 60.0
 
 # 0 the claims held, 1 they did not, 2 the environment could not answer. `EXIT_BROKEN` is
-# the same number `verify_0004.py` calls `EXIT_PAGE`; the two proofs name it for what is
+# the same number `verify_0003.py` calls `EXIT_PAGE`; the two proofs name it for what is
 # broken in each.
 EXIT_PASS, EXIT_BROKEN, EXIT_ENV = 0, 1, 2
 
@@ -78,7 +78,7 @@ def require_build(config) -> Path:
 
 
 def require_browser():
-    """`0004 spec.md` R7: never download. Say where we looked and what to run."""
+    """`0003 spec.md` R7: never download. Say where we looked and what to run."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -143,7 +143,7 @@ class RealApp:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
                 self.proc.wait(timeout=10)
-        # A restart, and `0004`'s broken scene, both need the address actually released —
+        # A restart, and `0003`'s broken scene, both need the address actually released —
         # a lingering server would let the next page connect and make the claim vacuous.
         wait_closed(self.config.host, self.config.port)
 

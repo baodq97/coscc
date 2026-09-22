@@ -17,13 +17,13 @@ node .claude/scripts/cos.mjs new-path <slug>      # next work unit path
 Tests must be green before any task is reported complete; never skip or delete a failing
 one. There is no linter; do not invent a command for one.
 
-**Build step.** There is one, since `0003`. The page is Reflex, which compiles to
+**Build step.** There is one, since `0002`. The page is Reflex, which compiles to
 JavaScript. Build with `uv run cos-build`, not `reflex export` — the wrapper records a
-fingerprint of what it built from, and both `cos-baodo` and `scripts/verify_0004.py`
+fingerprint of what it built from, and both `cos-baodo` and `scripts/verify_0003.py`
 **refuse to run against a bundle that does not match the source**. Without that, editing
 the page and forgetting to rebuild leaves every check passing against the previous bundle.
-Nothing runs the build automatically: `npm test` does not, because `verify_0002` and
-`verify_0003` drive the ASGI app in-process and never need a compiled frontend — that is
+Nothing runs the build automatically: `npm test` does not, because `verify_0001` and
+`verify_0002` drive the ASGI app in-process and never need a compiled frontend — that is
 deliberate, and it is what keeps the test command free of a JavaScript toolchain.
 
 `npm test` covers both runtimes: `test:node` over `.claude/scripts/`, then
@@ -36,9 +36,9 @@ The `cos_baodo/` web app serves **one page** at `/`: six screens — Overview, W
 Board, Sessions, Activity & usage, Settings — built from Reflex Python components
 (`cos_baodo/screens.py`), with all of their state in `cos_baodo/state.py` and all of their
 logic behind `cos_baodo/service.py`. It lists, creates and resumes Claude Code sessions
-across projects (`0002`), manages the workspaces themselves (`0003`), and shows each
-workspace's work units as a board whose steps it can run (`0008`). `0011` replaced both the
-page `0002`-`0008` built and `0009`'s `/prototype` with this one; a handler that decides
+across projects (`0001`), manages the workspaces themselves (`0002`), and shows each
+workspace's work units as a board whose steps it can run (`0005`). `0006` replaced both the
+page `0001`-`0005` built and `fragmented-product-experience`'s `/prototype` with this one; a handler that decides
 anything is a bug in `service.py`, not in the page.
 
 It binds loopback only, and its sessions are **chat only — no tools** by default;
@@ -54,11 +54,11 @@ else's git checkouts. Backing up one does not back up the other, and the Setting
 prints both for that reason. **Neither is settable over HTTP**: `config.from_env` is the
 only reader of the environment and there is no setter, so a request has no path to either.
 A stored workspace is a *name*, never a path; the path is built from the root on every
-read, and after `0011` the table has no column for one — which is why a hand-edited store
+read, and after `0006` the table has no column for one — which is why a hand-edited store
 cannot point the app at `/etc`. Leave `COS_WORKING_DIR` unset and the app behaves exactly
-as `0002` did, except that it now has somewhere to remember things.
+as `0001` did, except that it now has somewhere to remember things.
 
-**Storage (`0011`).** `cos_baodo/data.py` owns the data directory, the connection and the
+**Storage (`0006`).** `cos_baodo/data.py` owns the data directory, the connection and the
 schema; it is the only module that knows where anything is. Three settings there are load
 bearing and none is a default: WAL, a 10-second `busy_timeout` **issued as the first
 statement on every connection**, and `BEGIN IMMEDIATE` around every read-modify-write.
@@ -67,39 +67,39 @@ Getting the order wrong was measured on 2026-09-22 — `PRAGMA journal_mode=WAL`
 lives in `PRAGMA user_version`, so opening an existing database is one read and no lock.
 `cos_baodo/objects.py` stores blobs under their own SHA-256, written through a `rename`.
 `Store` and `Journal` kept their interfaces and changed their backing; a `.cos-baodo.json`
-or `.cos-journal.jsonl` from before `0011` is imported once and **never deleted**.
+or `.cos-journal.jsonl` from before `0006` is imported once and **never deleted**.
 
 ```
 uv run cos-build                                          # build the page first
 COS_WORKING_DIR=~/projects uv run cos-baodo               # then http://127.0.0.1:8790
-uv run python scripts/verify_0002.py                      # proof for 0002; creates real sessions
-uv run python scripts/verify_0003.py                      # proof for 0003; clones, creates sessions
-uv run python scripts/verify_0004.py                      # proof for 0004; needs a browser and a free port
-uv run python scripts/verify_0005.py                      # proof for 0005; 4 processes at once, creates a session
-COS_PROOF_REPO=<url> uv run python scripts/verify_0008.py # proof for 0008; runs a whole unit, pushes, opens a PR
-uv run python scripts/verify_0011.py                      # proof for 0011; browser, free port, one short prompt
+uv run python scripts/verify_0001.py                      # proof for 0001; creates real sessions
+uv run python scripts/verify_0002.py                      # proof for 0002; clones, creates sessions
+uv run python scripts/verify_0003.py                      # proof for 0003; needs a browser and a free port
+uv run python scripts/verify_0004.py                      # proof for 0004; 4 processes at once, creates a session
+COS_PROOF_REPO=<url> uv run python scripts/verify_0005.py # proof for 0005; runs a whole unit, pushes, opens a PR
+uv run python scripts/verify_0006.py                      # proof for 0006; browser, free port, one short prompt
 ```
 
-`verify_0005.py` spawns four copies of itself writing to one working folder and checks
+`verify_0004.py` spawns four copies of itself writing to one working folder and checks
 that all 20 entries survive, then opens a real session and checks that `pull` refuses
 while it is live. It was re-run on SQLite on 2026-09-22 and still measures 20 of 20 —
-`0011 spec.md` C2 is explicit that swapping the mechanism does not carry the old proof
+`0006 spec.md` C2 is explicit that swapping the mechanism does not carry the old proof
 across. **The `pull` refusal covers this process only.** Two copies of the app on one
 working folder still see past each other for sessions, so `pull` can change files under
-the other's turn; that is recorded in `.cos/0005_silent-concurrent-loss/spec.md` C2 and not
+the other's turn; that is recorded in `.cos/0004_silent-concurrent-loss/spec.md` C2 and not
 fixed. Concurrent *writes* are now SQLite's problem rather than `flock`'s.
 
-`verify_0004.py` and `verify_0011.py` are the two checks that open the page in a real
+`verify_0003.py` and `verify_0006.py` are the two checks that open the page in a real
 browser, and the only ones that need `COS_PORT` free — the bundle hardcodes its own
 address, so they cannot move to a spare port. Stop the app before running either, and do
 not run them at the same time. Exit codes: `0` pass, `1` the page is broken, `2` the
-environment is not ready. `verify_0004.py` holds the floor — declared theme, three widths,
+environment is not ready. `verify_0003.py` holds the floor — declared theme, three widths,
 colour mode that survives a reload, AA contrast — and its negative control proves it can
-still go red; it creates no session and spends no quota. `verify_0011.py` drives the five
-flows of `0011 intent.md` on real data, restarts the app and checks all five again; it
+still go red; it creates no session and spends no quota. `verify_0006.py` drives the five
+flows of `0006 intent.md` on real data, restarts the app and checks all five again; it
 sends **one** short prompt and never presses the run button.
 
-**The board (`0008`).** Every work unit of the open workspace as eight cells, and it can
+**The board (`0005`).** Every work unit of the open workspace as eight cells, and it can
 run a step. Three modules carry it, and the split is the point:
 
 - `cos_baodo/board.py` reads a workspace's `.cos/` by running **this repository's**
@@ -114,7 +114,7 @@ run a step. Three modules carry it, and the split is the point:
   warning string that the page shows before the button is pressed, because its capability
   comes from this machine's own `gh` login and reaches every repository that login reaches.
 - `cos_baodo/journal.py` is the run log — modes, starts, finishes, denials and cost. Since
-  `0011` it is rows in `cos.db` rather than a JSONL file.
+  `0006` it is rows in `cos.db` rather than a JSONL file.
 
 The board's four lanes do **not** use the harness's `blocked` flag. Measured on 2026-09-22:
 `cos.mjs` returns `blocked: true` for every unit that is not finished
@@ -124,12 +124,12 @@ the lanes off the artifact statuses instead.
 
 The six prose stages get **no tools in either mode**. A session with no tools cannot write
 a file, so for those the app writes the artifact from the reply and the session only
-returns text. `.cos/0008_hand-driven-invisible-loop/plan.md` Risk 1 records that this
+returns text. `.cos/0005_hand-driven-invisible-loop/plan.md` Risk 1 records that this
 contradicts one sentence of that unit's `## Design`, and why the sentence is the wrong half.
 The Settings screen says it on the page, because otherwise it looks like the agent wrote
 the file.
 
-`verify_0008.py` is the only proof that pushes anything anywhere. It needs `COS_PROOF_REPO`
+`verify_0005.py` is the only proof that pushes anything anywhere. It needs `COS_PROOF_REPO`
 set to a repository you are willing to have it push a branch to and open a pull request on;
 there is no default, and unset means exit 2 with claims 2, 3, 4 and 6 skipped. Claims 1, 5
 and 7 still run without it. It spends real quota — eight sessions, one with a $5 ceiling.
@@ -154,7 +154,14 @@ Any other file in that directory is reported as a problem.
 `write-idea` → `write-intent` → `write-spec` → `write-plan` → `write-impl` → `write-pr` →
 `write-review` → `write-ship`, each gated on the one before. `idea` is optional and gates
 nothing; `plan.md: done` is terminal, which is what kept the five units closed under the
-old three-stage loop reading as finished when `0008` widened it to eight.
+old three-stage loop reading as finished when `0005` widened it to eight.
+
+Five units were retired on 2026-09-22 and their numbers reused, so the surviving units
+run 0001-0006 with no gaps. Anything written before that date names a retired unit by slug
+rather than by number, because the numbers now belong to different units:
+`terminal-only-access`, `sessions-invisible-across-processes`, `chat-only-sessions-have-tools`,
+`fragmented-product-experience`, `stage-records-without-actions`. `channel/`, `evidence/`
+and `scripts/verify-0001.mjs` went with the first of them; git history keeps all of it.
 
 `cos-status` reports where everything stands. `.claude/scripts/cos.mjs:24-33` is the one
 place the loop is defined — the table in `.claude/harness.md` restates it, nothing else may.

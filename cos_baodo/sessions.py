@@ -169,10 +169,10 @@ def _options(
     silently. It is written out rather than left to the default so that deleting it is a
     visible edit.
 
-    `max_turns` is a parameter rather than the constant it was, because `0008` R11 puts the
+    `max_turns` is a parameter rather than the constant it was, because `0005` R11 puts the
     ceiling on the step: a board step that has to edit files cannot finish in one turn, and
     a chat turn must not quietly become several. The default is still 1, so every caller
-    that does not ask gets the old behaviour (`0008` plan.md C6).
+    that does not ask gets the old behaviour (`0005` plan.md C6).
     """
     options = ClaudeAgentOptions(
         cwd=cwd,
@@ -188,7 +188,7 @@ def _options(
         setting_sources=None,  # no project/user settings can widen the tool list
     )
     if can_use_tool is not None:
-        # The second layer, and the one that matters. `0007` measured eleven MCP tools
+        # The second layer, and the one that matters. `chat-only-sessions-have-tools` measured eleven MCP tools
         # reaching a session created with `tools=[]`, because `--tools` names the built-in
         # set only. This callback is on the path every call takes, whatever declared it.
         options.can_use_tool = can_use_tool
@@ -217,7 +217,7 @@ class Sessions:
         # Who counts as a workspace. Defaults to the env list, and `Service` replaces it
         # with the union of env and store (`spec.md` R21).
         #
-        # `0003` found the reason this has to be injected rather than hardcoded: this
+        # `0002` found the reason this has to be injected rather than hardcoded: this
         # layer used to ask `config.is_workspace` directly, so a store-backed workspace
         # passed the service gate and was refused here — two implementations of one
         # question, which is exactly what R10 exists to prevent. The guard stays (it is
@@ -233,12 +233,12 @@ class Sessions:
     def live_in(self, directory: str) -> list[str]:
         """Session ids with a live client in this directory, newest registration last.
 
-        `0005` R6: `pull` rewrites files under a running turn, so the service asks this
+        `0004` R6: `pull` rewrites files under a running turn, so the service asks this
         before it lets `git` near a workspace.
 
         **It sees this process only.** `_live` is a dict in memory, so a second app on the
         same working folder is invisible here and `pull` will proceed under its session.
-        That is `0005` C2, recorded and not fixed — closing it needs a mark on disk, which
+        That is `0004` C2, recorded and not fixed — closing it needs a mark on disk, which
         `intent.md` did not authorise. Do not read an empty list as "nobody is working".
 
         Compared by resolved path, not by string: the caller builds the directory from the
@@ -317,7 +317,7 @@ class Sessions:
                     resolved = message.session_id
             elif isinstance(message, sdk.ResultMessage):
                 resolved = message.session_id or resolved
-                # The one message carrying what this cost. `0002` read `session_id` off it
+                # The one message carrying what this cost. `0001` read `session_id` off it
                 # and dropped the rest, so every turn the app ran was unaccounted for.
                 total = _cumulative(message)
                 turn = {k: total[k] - live.spent.get(k, 0.0) for k in total}
@@ -325,7 +325,7 @@ class Sessions:
                 turns += int(getattr(message, "num_turns", 0) or 0)
                 duration_ms += int(getattr(message, "duration_ms", 0) or 0)
                 # Why the loop stopped. A turn that ran into its ceiling has to be
-                # distinguishable from one that finished, or `0008` R11 turns a bounded
+                # distinguishable from one that finished, or `0005` R11 turns a bounded
                 # failure back into a silent one.
                 terminal = getattr(message, "terminal_reason", None) or (
                     getattr(message, "subtype", "") or ""

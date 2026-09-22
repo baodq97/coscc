@@ -29,12 +29,12 @@ trạng `.claude/harness.md` mô tả: tác giả làm một mình và commit th
 **29 file, +4997 −174.**
 
 Mười file mới trong `cos_baodo/`: `board.py`, `journal.py`, `policy.py`, `runner.py`,
-`ui.py` và năm file test đi kèm. Một lệnh chứng minh mới, `scripts/verify_0008.py` (+634).
+`ui.py` và năm file test đi kèm. Một lệnh chứng minh mới, `scripts/verify_0005.py` (+634).
 Năm skill mới trong `.claude/skills/`. File đổi nhiều nhất là `cos_baodo/cos_baodo.py`
 (+732), tức là trang.
 
 Phần còn lại là sửa chỗ đã có: `cos.mjs` (+194) mở vòng lặp từ ba lên tám giai đoạn,
-`sessions.py` (+138) giữ lại con số của mỗi lượt và `terminal_reason`, `verify_0004.py`
+`sessions.py` (+138) giữ lại con số của mỗi lượt và `terminal_reason`, `verify_0003.py`
 (+171) thêm sàn thẩm mỹ, `service.py` (+157) và `api.py` (+77) nối board vào.
 
 ## What a reviewer should look at first
@@ -58,7 +58,7 @@ artifact từ câu trả lời. Đáng kiểm: `check_reply` có để lọt fil
 dùng bản của **repo này**, không chạy bản tìm thấy trong workspace. Nếu chỗ nào đó lỡ đảo
 lại, một repo clone về sẽ chạy được code của nó trong tiến trình app.
 
-**4. `scripts/verify_0008.py`, mệnh đề 5.** Nó hỏi **cả** 0 tool **và** 0 MCP server, vì
+**4. `scripts/verify_0005.py`, mệnh đề 5.** Nó hỏi **cả** 0 tool **và** 0 MCP server, vì
 đo riêng danh sách tool cho kết quả nhảy giữa hai lần chạy liên tiếp (`impl.md`
-`## What was measured`). Nếu ai đó bỏ vế sau cho đỡ đỏ, `0008` sẽ tự cấp cho mình một dấu
-xanh — và `0007` sẽ biến mất khỏi tầm nhìn.
+`## What was measured`). Nếu ai đó bỏ vế sau cho đỡ đỏ, `0005` sẽ tự cấp cho mình một dấu
+xanh — và `chat-only-sessions-have-tools` sẽ biến mất khỏi tầm nhìn.

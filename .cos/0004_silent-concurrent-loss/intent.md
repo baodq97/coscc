@@ -9,20 +9,20 @@ Hai chỗ trong app đang để hai bên cùng ghi một thứ, và bên thua **
 **trong tiến trình**. Hai tiến trình app cùng trỏ vào một working folder thì khoá ấy không
 thấy nhau: cả hai đọc danh sách, cả hai ghi đè, và mục của bên ghi trước biến mất. Không lỗi,
 không cảnh báo — workspace vừa thêm xong đơn giản là không còn ở đó.
-`.cos/0003_no-workspace-management/spec.md:281-283` đã ghi đây là chỗ hở, và ghi cả lý do
-đáng lo: `0002` đã **đo được** chính xác kiểu hỏng này ở tầng khác — hai tiến trình cùng mở
+`.cos/0002_no-workspace-management/spec.md:281-283` đã ghi đây là chỗ hở, và ghi cả lý do
+đáng lo: `0001` đã **đo được** chính xác kiểu hỏng này ở tầng khác — hai tiến trình cùng mở
 lại một session, cùng nhận `session_id`, không tiến trình nào nhận lỗi, và một lượt biến mất
-hoàn toàn (`.cos/0002_no-session-management/spec.md:165-176`).
+hoàn toàn (`.cos/0001_no-session-management/spec.md:165-176`).
 
 **Chỗ thứ hai — `pull` giữa lượt.** `cos_baodo/service.py:171` chạy `git pull --ff-only`
 trên một workspace bất kể workspace ấy có session đang sống hay không. App **biết** session
 nào đang sống — `cos_baodo/sessions.py:143` giữ đúng danh sách đó — nhưng không hỏi.
 Đổi file dưới chân Claude giữa một lượt thì thứ nó đọc xong không còn là thứ nó đang trả lời
-về. `.cos/0003_no-workspace-management/spec.md:210-214` ghi nhận và nói thẳng unit ấy không
+về. `.cos/0002_no-workspace-management/spec.md:210-214` ghi nhận và nói thẳng unit ấy không
 dựng khoá nào.
 
 Điểm chung, và là lý do hai việc này nằm chung một unit: **không cái nào tự báo.** Không
-ngoại lệ, không dòng log, không dấu vết. Đúng loại hỏng mà cả `0003` lẫn `0004` đã cho thấy
+ngoại lệ, không dòng log, không dấu vết. Đúng loại hỏng mà cả `0002` lẫn `0003` đã cho thấy
 là loại tốn nhất — một thứ xanh trong khi nó sai.
 
 ## Proposed outcome
@@ -49,8 +49,8 @@ minh là **liên tiến trình**, mà một tiến trình thì không chứng mi
 - **`cos_baodo/service.py`:** `pull_workspace` nhận thêm một điều kiện từ chối.
 - **`cos_baodo/sessions.py`:** đang giữ danh sách client sống; nay có người hỏi nó.
 - **Trang Reflex:** `pull` sẽ có thêm một lý do thất bại, và nó phải hiện ra như các lý do
-  khác — `0003` đã đòi lỗi `pull` không được nuốt.
-- **`scripts/verify_0003.py`:** pull trên một workspace không có session, nên không bị chặn;
+  khác — `0002` đã đòi lỗi `pull` không được nuốt.
+- **`scripts/verify_0002.py`:** pull trên một workspace không có session, nên không bị chặn;
   phải còn xanh.
 
 ## Constraints
@@ -62,11 +62,11 @@ minh là **liên tiến trình**, mà một tiến trình thì không chứng mi
   nó chặn cả những việc chẳng liên quan.
 - **`pull` từ chối, không xếp hàng.** Tác giả chọn ngày 2026-09-21: có session sống thì
   `pull` trả lỗi nói rõ lý do. Hàng đợi là cơ chế chưa ai đòi.
-- **Session vẫn chat only, không tool nào.** Bốn knob của `0002` giữ nguyên mặc định.
+- **Session vẫn chat only, không tool nào.** Bốn knob của `0001` giữ nguyên mặc định.
 - **Không đổi hình dạng file store.** Nó đã có `version`; unit này không dùng tới.
 - **Không đụng `channel/`, `evidence/0001_terminal-only-access/`, và hai lệnh kiểm của
-  `0002`, `0003`.**
-- **`npm test` giữ nguyên, không trình duyệt** — như `0004` đã chốt.
+  `0001`, `0002`.**
+- **`npm test` giữ nguyên, không trình duyệt** — như `0003` đã chốt.
 
 ## Open questions
 

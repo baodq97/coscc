@@ -120,7 +120,7 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
 
 
 class WithNoWorkingFolder(unittest.IsolatedAsyncioTestCase):
-    """`0002`'s shape: the board still reads, but nothing can be recorded."""
+    """`0001`'s shape: the board still reads, but nothing can be recorded."""
 
     async def asyncSetUp(self):
         self.app = build(Config(workspaces=(str(REPO),)))

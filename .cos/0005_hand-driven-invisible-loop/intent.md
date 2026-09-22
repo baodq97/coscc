@@ -21,7 +21,7 @@ Author: Bao Do. Status: accepted.
 > `22cf939`), và trước khi có dòng code nào.** Tác giả thêm một ràng buộc về giao diện:
 > "lưu ý làm ui/ux nữa", "tôi muốn có ux/ui đẹp xin mịn". Nó nằm ở `## Constraints`, mục
 > cuối. **Kết quả ở `## Proposed outcome` không đổi** — vẫn ba mệnh đề cũ, vẫn hạn
-> 2026-09-28. Ghi ở đây vì harness không có bước sửa đổi: `0003` đã đặt tiền lệ rằng ghi đè
+> 2026-09-28. Ghi ở đây vì harness không có bước sửa đổi: `0002` đã đặt tiền lệ rằng ghi đè
 > một artifact đã `accepted` là một lựa chọn chứ không phải quy trình, và nó chấp nhận được
 > lần này đúng vì chưa có code nào đứng trên nó.
 
@@ -62,7 +62,7 @@ sách tin nhắn, chỉ có một ô chứa lượt cuối.
 Cái đó không phải vì backend thiếu. `cos_baodo/api.py` mở **8** route, trong đó có
 `/api/sessions` (`:109`) và `/api/history` (`:120`). Grep hai chữ `sessions` và `history`
 trong `cos_baodo/cos_baodo.py` ra **0** kết quả. Liệt kê session và đọc lại lịch sử là đúng
-cái `0002` được mở ra để làm, đã làm xong ở tầng HTTP, và trang không hiện cái nào. Câu "thà
+cái `0001` được mở ra để làm, đã làm xong ở tầng HTTP, và trang không hiện cái nào. Câu "thà
 dùng terminal còn hơn" là đánh giá của tác giả, không phải số đo — không có phép đo nào về
 trang này trong repo — nhưng ba điều trên thì đo được, và chúng đủ giải thích câu ấy.
 
@@ -76,31 +76,31 @@ Số tiền đi qua đúng dòng code đó mỗi lượt và không được gi�
 
 **Và bước autonomous thì đâm vào hàng rào.** `cos_baodo/config.py:44` chốt knob 1: "Empty
 means chat only — no tools at all, not even read." Một session không tool thì không ghi được
-`spec.md`, không sửa được code, không mở được PR. `0007` đang đi làm cho câu đó thành đúng
+`spec.md`, không sửa được code, không mở được PR. `chat-only-sessions-have-tools` đang đi làm cho câu đó thành đúng
 sự thật — nó đo được session mặc định vẫn báo về **11** MCP tool
-(`.cos/0007_chat-only-sessions-have-tools/intent.md`) — và plan của `0007` đã accepted ở
+(`chat-only-sessions-have-tools/intent.md`) — và plan của `chat-only-sessions-have-tools` đã accepted ở
 commit `2d6e0dc` mà chưa có dòng code nào. Nên unit này mở đúng cánh cửa mà unit ngay trước
 nó đang đóng.
 
 ## Proposed outcome
 
-Đến hết ngày **2026-09-28**, unit công việc kế tiếp — `0009_*`, số do `cos.mjs new-path` cấp
+Đến hết ngày **2026-09-28**, unit công việc kế tiếp — `fragmented-product-experience_*`, số do `cos.mjs new-path` cấp
 — đi trọn **tám** bước idea → intent → spec → plan → impl → PR → review → ship **hoàn toàn
 trong trình duyệt ở `127.0.0.1`, không gõ một lệnh nào sau khi app đã chạy**, và cả ba mệnh
 đề dưới đây cùng đúng trong một lần chạy:
 
 1. **Tám bước, mỗi bước đọc bước trước, ít nhất hai bước tự chạy.** Board hiện đủ 8 bước của
-   `0009_*`. Mỗi bước ghi lại session id đã sinh ra nó, và mọi session id ấy đều do app tạo
+   `fragmented-product-experience_*`. Mỗi bước ghi lại session id đã sinh ra nó, và mọi session id ấy đều do app tạo
    (`Sessions.created_here`, `cos_baodo/sessions.py:160`). Mỗi bước chọn được manual hoặc
    autonomous. Ít nhất **2** bước — `impl` và `PR` — chạy autonomous thật: agent sửa file
    trong workspace và mở được một PR, không ai gõ lệnh.
 2. **Live và timeline.** Trong lúc một bước autonomous đang chạy, board hiện tiến trình của
-   nó **không cần reload trang**. Timeline của `0009_*` liệt kê đủ **8** bước theo thứ tự
+   nó **không cần reload trang**. Timeline của `fragmented-product-experience_*` liệt kê đủ **8** bước theo thứ tự
    thời gian, mỗi bước có mốc bắt đầu, mốc kết thúc và artifact nó sinh ra.
 3. **Đếm được.** Mỗi bước hiện số token của nó, lấy từ `sdk.ResultMessage` chứ không ước
-   lượng; tổng của `0009_*` bằng tổng các bước; và tổng ấy khác **0**.
+   lượng; tổng của `fragmented-product-experience_*` bằng tổng các bước; và tổng ấy khác **0**.
 
-Kết quả này **sai** nếu đến hết ngày đó: unit `0009_*` không tồn tại; hoặc artifact nào của
+Kết quả này **sai** nếu đến hết ngày đó: unit `fragmented-product-experience_*` không tồn tại; hoặc artifact nào của
 nó không có session id đứng sau trên board (nghĩa là nó được gõ ở terminal); hoặc `impl` và
 `PR` vẫn phải gõ tay; hoặc board thiếu bước nào trong 8; hoặc phải F5 mới thấy tiến trình;
 hoặc timeline thiếu mốc; hoặc bước nào không có số token; hoặc tổng lệch với các phần; hoặc
@@ -111,10 +111,10 @@ Số **8** lấy từ chính lời tác giả trích ở đầu file. Số **2**
 ngoài `.cos/`, nên chúng là chỗ hàng rào chat-only thật sự chặn. Hạn **2026-09-28** là lựa
 chọn của tác giả; nó có cơ sở trong repo chứ không phải lạc quan suông — toàn bộ **62**
 commit của repo đều mang ngày `2026-09-21` (`git log --format=%ad --date=short`), tức 7 unit
-dựng trong một ngày, và `0003` đặt hạn 2026-09-28 rồi đóng ngay hôm mở.
+dựng trong một ngày, và `0002` đặt hạn 2026-09-28 rồi đóng ngay hôm mở.
 
 **Ba mệnh đề là một lần kéo giãn có chủ ý của invariant 3**, vốn đòi đúng một kết quả. Tác
-giả được hỏi và chọn gộp. `0003` đã trả giá này một lần và ghi lại: hỏng một mắt là hỏng cả
+giả được hỏi và chọn gộp. `0002` đã trả giá này một lần và ghi lại: hỏng một mắt là hỏng cả
 ba, và không có cách nào đọc kết quả để biết phần nào đứng được. Lần này giá ấy cao hơn, vì
 mệnh đề 1 còn đòi lật một quyết định an toàn — xem `## Constraints`. Ghi ra để người đọc sau
 biết đây là lựa chọn, không phải sơ suất.
@@ -134,16 +134,16 @@ biết đây là lựa chọn, không phải sơ suất.
 - **`.cos/` trở thành thứ app ghi vào, không chỉ thứ người gõ.** Đây là lần đầu một tiến
   trình khác `git` và trình soạn thảo viết artifact. Luật ngôn ngữ của `.claude/CLAUDE.md`
   (tên file và heading tiếng Anh, prose tiếng Việt) áp cho cả artifact do board sinh ra.
-- **`0007`** — plan đã accepted (`2d6e0dc`), chưa có code. Unit này mở tool cho session; đó
-  là hướng ngược với cái `0007` vừa được cho phép làm. Hai unit gặp nhau, và thứ tự làm
+- **`chat-only-sessions-have-tools`** — plan đã accepted (`2d6e0dc`), chưa có code. Unit này mở tool cho session; đó
+  là hướng ngược với cái `chat-only-sessions-have-tools` vừa được cho phép làm. Hai unit gặp nhau, và thứ tự làm
   quyết định cái nào đúng.
-- **`0006`** — chưa có `plan.md`. Nó chặn `pull` khi có session sống, và chỉ thấy tiến trình
+- **`sessions-invisible-across-processes`** — chưa có `plan.md`. Nó chặn `pull` khi có session sống, và chỉ thấy tiến trình
   của chính nó. Một bước autonomous chạy dài làm cửa sổ ấy rộng ra.
 - **`git` và mạng, ở mức mới.** Hôm nay app chỉ `clone` và `pull` (`cos_baodo/gitops.py`).
   `PR` cần branch, commit, push và một remote. `.claude/harness.md` ghi tác giả làm một mình
   và commit thẳng `main`; bước PR không có chỗ đứng trong mô tả đó.
-- **Năm lệnh chứng minh** — `verify_0002`, `verify_0003`, `verify_0004`, `verify_0005`, và
-  lệnh của `0007` nếu nó làm xong trước. `verify_0004` còn là lệnh duy nhất mở trình duyệt
+- **Năm lệnh chứng minh** — `verify_0001`, `verify_0002`, `verify_0003`, `verify_0004`, và
+  lệnh của `chat-only-sessions-have-tools` nếu nó làm xong trước. `verify_0003` còn là lệnh duy nhất mở trình duyệt
   và là lệnh duy nhất cần `COS_PORT` trống.
 - **`uv run cos-build`** — dấu vân tay bundle. Trang đổi nhiều thì đây là bước dễ quên nhất,
   và `.claude/CLAUDE.md` đã ghi vì sao quên nó thì mọi phép kiểm xanh vô nghĩa.
@@ -166,9 +166,9 @@ Spec không được lật chúng; spec chỉ được nói chúng tốn gì.
   phản chữ thân bài đạt **4.5:1** (WCAG 2.1 AA — *nguồn ngoài repo, unverifiable ở đây*).
   **"Đẹp" thì vẫn không đo được, và ràng buộc này không giả vờ đo nó** — xem
   `## Open questions` mục 10, vẫn mở.
-- **Mở tool không được làm `0007` thành vô nghĩa.** `0007` tồn tại vì mặc định đang nói dối.
+- **Mở tool không được làm `chat-only-sessions-have-tools` thành vô nghĩa.** `chat-only-sessions-have-tools` tồn tại vì mặc định đang nói dối.
   Việc mở phải là một lựa chọn hiện ra ở từng bước, không phải một công tắc toàn cục bật sẵn,
-  và mặc định của session chat vẫn phải là không tool. Một bản sửa làm `0007` không còn kiểm
+  và mặc định của session chat vẫn phải là không tool. Một bản sửa làm `chat-only-sessions-have-tools` không còn kiểm
   được gì là hỏng theo kiểu khác.
 - **Knob 3 `bypass_permissions` không được bật để bù.** Nó là hàng rào khác, và
   `cos_baodo/config.py:49` ghi nó không đặt được qua HTTP.
@@ -188,8 +188,8 @@ Spec không được lật chúng; spec chỉ được nói chúng tốn gì.
 
 1. **PR đi đâu?** Repo commit thẳng `main` (`.claude/harness.md`), chưa có branch flow, chưa
    có remote nào trong luật. "Mở PR" cần cả ba thứ đó, và cần credential mà app loopback
-   không có đường hỏi — đúng câu hỏi `0003` mở ra cho clone repo riêng tư và chưa ai trả lời.
-2. **Làm `0008` trước hay `0007` trước?** `0007` đóng cửa, `0008` mở cửa, và cả hai đều đã
+   không có đường hỏi — đúng câu hỏi `0002` mở ra cho clone repo riêng tư và chưa ai trả lời.
+2. **Làm `0005` trước hay `chat-only-sessions-have-tools` trước?** `chat-only-sessions-have-tools` đóng cửa, `0005` mở cửa, và cả hai đều đã
    được cho phép. Làm sai thứ tự thì một trong hai unit được ghi là xong trong khi thứ nó
    khẳng định không còn đúng.
 3. **`idea`, `PR`, `review`, `ship` ghi ra artifact gì?** Bốn bước này không có file nào hôm
@@ -206,12 +206,12 @@ Spec không được lật chúng; spec chỉ được nói chúng tốn gì.
    tính ra sao, và số ấy có cộng dồn qua các lượt của cùng một session không.
    **Unverifiable:** chưa đo; `cos_baodo/sessions.py:228` mới chỉ chạm vào nó.
 7. **Live view chạy qua đường nào?** Trang do Reflex vẽ đi qua WebSocket `/_event`. Đây vẫn
-   là open question 8 của `0003`, chưa đóng: đường người dùng thật sự bấm là đường ít bằng
-   chứng nhất, và `verify_0004` mới chỉ chạm một lần bằng trình duyệt thật.
+   là open question 8 của `0002`, chưa đóng: đường người dùng thật sự bấm là đường ít bằng
+   chứng nhất, và `verify_0003` mới chỉ chạm một lần bằng trình duyệt thật.
 8. **Một bước autonomous chạy bao lâu, và bỏ dở thì sao?** Không có timeout, không có huỷ,
    không có phục hồi sau khi app tắt giữa chừng trong bất cứ chỗ nào của repo hôm nay.
-9. **Hai bản app trên cùng working folder vẫn nhìn xuyên qua nhau** — `0005` C2, và
-   `0006` chưa có plan. Board ghi vào `.cos/` làm vùng va chạm rộng hơn hẳn so với lúc chỉ có
+9. **Hai bản app trên cùng working folder vẫn nhìn xuyên qua nhau** — `0004` C2, và
+   `sessions-invisible-across-processes` chưa có plan. Board ghi vào `.cos/` làm vùng va chạm rộng hơn hẳn so với lúc chỉ có
    danh sách workspace.
 10. **"UI như SaaS" đo bằng gì?** Câu "thà dùng terminal" là đánh giá, không phải phép đo, và
     ba mệnh đề của kết quả không có mệnh đề nào bắt trang phải đẹp hay dễ dùng. Một bản đủ

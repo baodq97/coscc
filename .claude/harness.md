@@ -13,7 +13,7 @@ A local implementation of the AI-native SDLC described in `ai-native-sdlc-playbo
 covering all eight stages: idea, intent, spec, plan, impl, pr, review, ship. It is also the
 template — copy `.claude/` into another repository and the loop works there.
 
-It was three stages until `0008` (2026-09-22) widened it to eight. The five units closed
+It was three stages until `0005` (2026-09-22) widened it to eight. The five units closed
 under the three-stage loop still read as finished, because `plan.md: done` is terminal in
 `cos.mjs` and `idea` gates nothing — widening the loop was not allowed to reopen work that
 had already been proved.
@@ -153,7 +153,7 @@ are instructions to the model, not artifacts to be reviewed.
 - **A review anyone has to pass.** `write-review` exists and `review.md` gates `ship`, but
   the reviewer is the same agent that wrote the code, and `accepted` is self-issued. A green
   `review` cell is a chair with nobody in it. That is recorded in
-  `.cos/0008_hand-driven-invisible-loop/spec.md` C5 and it is the weakest joint in the loop.
+  `.cos/0005_hand-driven-invisible-loop/spec.md` C5 and it is the weakest joint in the loop.
 - **Anything that starts the next stage on its own.** An accepted artifact does not light
   the gate after it. A person chooses the mode and presses the button, every time.
 - **The eval suite, CI integration and `bands.yaml`** from the playbook.

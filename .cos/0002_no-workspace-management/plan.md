@@ -33,8 +33,8 @@ năng lực mới. Mỗi bước để repo ở trạng thái chạy được l�
 | `cos_baodo/store_test.py` | (new) |
 | `cos_baodo/gitops_test.py` | (new) |
 | `cos_baodo/api_test.py` | (new) |
-| `scripts/verify_0002.py` | có thật, 171 dòng — **chỉ** đổi client và import, `spec.md` R6 |
-| `scripts/verify_0003.py` | (new) lệnh ở `## Proof` |
+| `scripts/verify_0001.py` | có thật, 171 dòng — **chỉ** đổi client và import, `spec.md` R6 |
+| `scripts/verify_0002.py` | (new) lệnh ở `## Proof` |
 | lockfile frontend của Reflex | (new) phải commit, `spec.md` R2 |
 
 **Không đụng tới** `channel/`, `evidence/0001_terminal-only-access/`,
@@ -42,7 +42,7 @@ năng lực mới. Mỗi bước để repo ở trạng thái chạy được l�
 trang của app, nên `spec.md` R8 không áp lên nó (`spec.md` R7).
 
 **Lệnh kiểm không cần biên dịch frontend.** `cos_baodo/api.py` dựng một app FastAPI đứng
-được một mình; Reflex mount đúng app đó. Nên `verify_0002.py` và `verify_0003.py` gọi thẳng
+được một mình; Reflex mount đúng app đó. Nên `verify_0001.py` và `verify_0002.py` gọi thẳng
 app FastAPI trong tiến trình qua `httpx.ASGITransport`, không cần `.web/`, không cần Node.
 Đây là thứ giữ cho `npm test` không phải kéo theo một toolchain JavaScript — và nó chỉ đúng
 nếu bước 1 xác nhận được.
@@ -74,8 +74,8 @@ nếu bước 1 xác nhận được.
    cần toolchain JavaScript.
    **(c) Đỏ như đã viết, và đây là thứ đáng giá nhất bước này tìm ra.**
    `Config.__dataclass_fields__["backend_host"].default` là `'0.0.0.0'`; `ss -ltn` xác nhận
-   `0.0.0.0:8000` trước khi `rxconfig.py` ghim lại. `0002` mặc định ngược lại
-   (`app/config.py:55`), nên **nhận Reflex vào là tự động lật tư thế mạng của `0002`**, mà
+   `0.0.0.0:8000` trước khi `rxconfig.py` ghim lại. `0001` mặc định ngược lại
+   (`app/config.py:55`), nên **nhận Reflex vào là tự động lật tư thế mạng của `0001`**, mà
    không dòng code nào của app trông có vẻ sai.
    Ghim được backend, **không ghim được frontend**: chế độ dev chạy vite bằng `run dev` và
    chỉ truyền `PORT`, không truyền host — `ss -ltn` cho `*:3000`. Reflex 0.9.11 không có
@@ -101,19 +101,19 @@ nếu bước 1 xác nhận được.
 
 3. **Đổi tên gói, không đổi một hành vi nào.** `app/` → `cos_baodo/`, sửa mọi `from app.`,
    sửa `test:python` trong `package.json`. Vẫn là aiohttp, chưa đụng framework.
-   Kiểm: `npm test` xanh **và** `uv run python scripts/verify_0002.py` xanh. Hai lệnh này
+   Kiểm: `npm test` xanh **và** `uv run python scripts/verify_0001.py` xanh. Hai lệnh này
    xanh sau một bước chỉ đổi tên là bằng chứng bước này không mang theo gì khác.
 
 4. **Tách lớp dịch vụ.** `cos_baodo/service.py` nhận toàn bộ logic đang nằm trong route của
    `web.py`; route thành vỏ mỏng. Chưa đổi framework.
-   Kiểm: `npm test` và `verify_0002.py` vẫn xanh; đọc `web.py` không còn nhánh nghiệp vụ
+   Kiểm: `npm test` và `verify_0001.py` vẫn xanh; đọc `web.py` không còn nhánh nghiệp vụ
    nào. Bước này tồn tại vì `spec.md` R10 chỉ có nghĩa nếu lớp dịch vụ có **trước** khi có
    lối vào thứ hai.
 
 5. **Đổi HTTP sang FastAPI, giữ nguyên đường và hình dạng dữ liệu.** `cos_baodo/api.py`
-   thay `web.py`: cùng năm đường, cùng NDJSON, cùng mã lỗi. Viết lại `verify_0002.py`
+   thay `web.py`: cùng năm đường, cùng NDJSON, cùng mã lỗi. Viết lại `verify_0001.py`
    **chỉ** ở client (`aiohttp` → `httpx`) và import.
-   Kiểm: `verify_0002.py` xanh, và `git diff` của nó không chứa thay đổi nào ngoài client và
+   Kiểm: `verify_0001.py` xanh, và `git diff` của nó không chứa thay đổi nào ngoài client và
    import — `spec.md` R6 và C13. Đây là chỗ dễ nới lỏng một mệnh đề nhất, nên diff phải được
    đọc, không chỉ được chạy.
 
@@ -135,13 +135,13 @@ nếu bước 1 xác nhận được.
    đổi và `working_dir` không có thư mục thừa.
 
 9. **Trang Reflex, và xoá HTML.** `cos_baodo/cos_baodo.py`: danh sách workspace kèm label và
-   cờ `missing`, chỗ thêm/clone, xoá, pull, và khung hội thoại của `0002`. Mọi event handler
+   cờ `missing`, chỗ thêm/clone, xoá, pull, và khung hội thoại của `0001`. Mọi event handler
    gọi xuống `service.py`. Xoá `app/public/index.html`.
    Kiểm: không file `.html`/`.css` nào còn phục vụ trang app; file `.html` duy nhất còn lại
    là `channel/public/index.html` (R8). Mở trang và đi hết một vòng bằng tay — đây là phần
    **không** có lệnh nào chứng minh, và đó là `spec.md` C11.
 
-10. **Lệnh chứng minh.** `scripts/verify_0003.py` theo `## Proof`.
+10. **Lệnh chứng minh.** `scripts/verify_0002.py` theo `## Proof`.
     Kiểm: chạy khi chưa xong thì thoát khác 0 kèm mệnh đề nào hỏng.
 
 11. **Đóng unit.** Sửa `.claude/CLAUDE.md`: dòng 17 ("no build step") thành mô tả đúng, kèm
@@ -157,26 +157,26 @@ nếu bước 1 xác nhận được.
 
 Bốn thứ đáng ghi, vì không cái nào đoán được trước khi chạy.
 
-**Reflex lật tư thế mạng của `0002` mà không ai thấy.** `backend_host` mặc định
+**Reflex lật tư thế mạng của `0001` mà không ai thấy.** `backend_host` mặc định
 `'0.0.0.0'`. Ghim được backend, nhưng chế độ dev của Reflex chạy vite không nhận host, nên
 cách duy nhất giữ được `spec.md` R5 là bỏ hẳn chế độ hai cổng: mount bản build vào cùng app
 ASGI, một cổng, loopback. R5 vẫn đậu **đúng như đã viết** — tiêu chí của nó là "không cổng
 nào của app bind ra ngoài loopback", và chạy một cổng thì tiêu chí đó đúng. Chỉ phần văn
 xuôi "Reflex phục vụ hai cổng" là không còn mô tả đúng cách chạy.
 
-**Bước 4 đổi hành vi, và test của `0002` bắt được.** Gộp validation vào async generator
+**Bước 4 đổi hành vi, và test của `0001` bắt được.** Gộp validation vào async generator
 biến một `Refused` từ dòng lỗi NDJSON sau 200 thành 400 — xoá đúng cái ranh giới mà
 docstring của `post_send` viết ra. Tách thành `check_send` và `stream`.
 
 **Hai lớp cùng hỏi một câu và trả lời khác nhau.** `sessions.py:159` giữ cổng gác riêng gọi
 thẳng `config.is_workspace`, nên workspace trong store qua được cổng của service rồi bị từ
-chối ở lớp dưới. Đây đúng là thứ `spec.md` R10 sinh ra để chặn, và nó có sẵn từ `0002`.
+chối ở lớp dưới. Đây đúng là thứ `spec.md` R10 sinh ra để chặn, và nó có sẵn từ `0001`.
 Không test nào thấy; chỉ một lần clone thật rồi mở session mới lòi ra. Cổng gác giữ lại,
 nhưng câu hỏi thì dùng chung.
 
 **`from_env` lặng lẽ thêm cwd vào danh sách.** Chạy với working folder và không khai báo
 `COS_WORKSPACES` thì repo tự thành workspace, và số đếm 2 đọc ra 3. Fallback giờ chỉ áp
-dụng khi không có working folder — `0002` không đổi.
+dụng khi không có working folder — `0001` không đổi.
 
 Hai lỗi sau không unit test nào bắt được ở hình dạng cũ. Cả hai giờ có test hồi quy.
 
@@ -222,7 +222,7 @@ một intent riêng.
 
 ## C3 and C14 answered, 2026-09-21
 
-Làm như bảo trì trong phạm vi `0003`, **không mở unit mới**. Căn cứ: `spec.md` C3 đã nói
+Làm như bảo trì trong phạm vi `0002`, **không mở unit mới**. Căn cứ: `spec.md` C3 đã nói
 thẳng hai con số nên được chỉnh "sau lần chạy đầu", và C14 giao cho tác giả — tác giả đã
 quyết. Cách đọc khác là hai việc này đáng một unit riêng; tôi chọn không, và ghi lại để
 người sau cân nhắc chứ không phải đoán.
@@ -239,7 +239,7 @@ cận dưới: nó nói hai con số ấy **không quá nhỏ** cho repo thườ
 con số có nguồn mà giấu giới hạn của nguồn thì vẫn là một con số đáng ngờ.
 
 **C14 — 13 trích dẫn chết được bắc cầu, không sửa.**
-`.cos/0002_no-session-management/plan.md` nhận một bảng tra ở đầu file, ánh xạ `app/*` sang
+`.cos/0001_no-session-management/plan.md` nhận một bảng tra ở đầu file, ánh xạ `app/*` sang
 chỗ hiện tại kèm commit đổi tên (`81295b9`). Không viết lại các trích dẫn trong thân file:
 file đó ghi việc đã làm vào lúc đã làm, và đổi chúng thành `cos_baodo/` sẽ biến nó thành một
 bản ghi sai kiểu khác — nói rằng các file được tạo ở chỗ mà lúc ấy chúng không ở. Người đọc
@@ -258,18 +258,18 @@ mọi thứ và không có bước nào chạy trước nó.
 **Ba mệnh đề đi chung một kết quả.** `intent.md` đã ghi cái giá này. Hệ quả cụ thể cho plan:
 nếu bước 1 đỏ thì phần workspace — thứ chẳng liên quan gì tới Reflex — cũng trượt theo, và
 `## Proof` không nói được phần nào đứng vững. Dấu hiệu: một mệnh đề đỏ, hai mệnh đề kia
-không được báo cáo riêng. Giảm thiểu: `verify_0003.py` in kết quả **từng mệnh đề** trước khi
+không được báo cáo riêng. Giảm thiểu: `verify_0002.py` in kết quả **từng mệnh đề** trước khi
 thoát, kể cả khi thoát khác 0.
 
-**Bước 5 nới lỏng một mệnh đề của `0002` mà không ai thấy.** `verify_0002.py` là bằng chứng
-duy nhất `0002` từng đạt (`spec.md` C13). Viết lại nó là viết lại bằng chứng. Dấu hiệu: diff
+**Bước 5 nới lỏng một mệnh đề của `0001` mà không ai thấy.** `verify_0001.py` là bằng chứng
+duy nhất `0001` từng đạt (`spec.md` C13). Viết lại nó là viết lại bằng chứng. Dấu hiệu: diff
 chứa thay đổi ở phần `f.check(...)` chứ không chỉ ở client. Giảm thiểu: bước 5 đòi đọc diff
 như một điều kiện, không chỉ chạy lệnh — và không có gì tự động ép điều đó.
 
-**Mỗi lần chạy `## Proof` đều tiêu hạn mức.** `verify_0002.py` tạo session thật, và
-`verify_0003.py` tạo thêm hai. Một vòng lặp hỏng là một vòng lặp đốt hạn mức, im lặng
+**Mỗi lần chạy `## Proof` đều tiêu hạn mức.** `verify_0001.py` tạo session thật, và
+`verify_0002.py` tạo thêm hai. Một vòng lặp hỏng là một vòng lặp đốt hạn mức, im lặng
 (`spec.md` C10). Dấu hiệu: cảnh báo hạn mức, phản hồi chậm bất thường. Giảm thiểu: prompt
-ngắn nhất có thể, `max_turns=1` như `0002` đã đặt, và không bước nào chạy không người trông.
+ngắn nhất có thể, `max_turns=1` như `0001` đã đặt, và không bước nào chạy không người trông.
 
 **Clone và pull chạm mạng và chạy tiến trình ngoài** (`spec.md` C2). Dấu hiệu của hỏng an
 toàn: **không có dấu hiệu nào** — đây là loại rủi ro không tự báo. Giảm thiểu là bước 7, và
@@ -288,15 +288,15 @@ lần chạy. Bước 2 đứng trước mọi lần chạy Reflex vì lý do đ
 ```
 npm test \
   && node scripts/verify-0001.mjs evidence/0001_terminal-only-access/transcript.jsonl \
-  && uv run python scripts/verify_0002.py \
-  && uv run python scripts/verify_0003.py
+  && uv run python scripts/verify_0001.py \
+  && uv run python scripts/verify_0002.py
 ```
 
 Ba lệnh đầu là mệnh đề 1 của `intent.md` — nền đã chuyển mà không làm đổ thứ có sẵn. Lệnh
 `verify-0001.mjs` chạy không cần người: nó đọc transcript đã commit và hiện thoát 0 với
 `PASS: session e539fd53 delivered 12 turns`, kiểm ngày 2026-09-21.
 
-`verify_0003.py` thoát 0 **chỉ khi** cả ba đúng, và in kết quả từng mệnh đề kể cả khi hỏng:
+`verify_0002.py` thoát 0 **chỉ khi** cả ba đúng, và in kết quả từng mệnh đề kể cả khi hỏng:
 
 1. **Không còn HTML viết tay.** `app/public/index.html` không tồn tại, và file `.html` hay
    `.css` duy nhất còn trong repo là của `channel/`.
@@ -318,7 +318,7 @@ Con số 2 lấy từ `intent.md`. Muốn đổi thì sửa ở đó, không s�
   một đường thứ hai là một thứ nữa phải suy nghĩ. Xoá, thay bằng một test khẳng định không
   còn mutator nào. Cùng commit: `rxconfig.py` trích `app/config.py:55`, một đường dẫn không
   còn tồn tại sau bước 3 — sửa thành `cos_baodo/config.py:60`.
-- **Không sửa 13 trích dẫn chết trong `.cos/0002_no-session-management/plan.md`**
+- **Không sửa 13 trích dẫn chết trong `.cos/0001_no-session-management/plan.md`**
   (`spec.md` C14). Sửa là viết lại một artifact đã ký. Tác giả quyết; plan này không tự
   quyết hộ.
 - **Không giải `spec.md` C4** — một gốc hay nhiều gốc. Plan dựng một gốc, vì đó là thứ
@@ -330,5 +330,5 @@ Con số 2 lấy từ `intent.md`. Muốn đổi thì sửa ở đó, không s�
 - **Không dọn thư mục tạm bị bỏ quên** sau một clone hỏng (`spec.md` C5).
 - **Không chứng minh trang bằng công cụ điều khiển trình duyệt** (`spec.md` C11). `intent.md`
   đặt "không cần trình duyệt" thành một phần của kết quả, nên việc đó cần intent riêng.
-- **Không đếm hạn mức.** Vẫn như `0002`.
+- **Không đếm hạn mức.** Vẫn như `0001`.
 - **Không bật tool nào cho session.** Bốn knob giữ nguyên mặc định.

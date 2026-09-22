@@ -58,7 +58,7 @@ class Knob3IsReachableOnlyFromTheEnvironment(unittest.TestCase):
             c.bypass_permissions = True  # type: ignore[misc]
 
     def test_there_is_no_mutator_left_on_the_config(self):
-        """`0003` OQ6, answered by deleting rather than documenting.
+        """`0002` OQ6, answered by deleting rather than documenting.
 
         `with_workspaces` was the app's one config mutator. Its docstring claimed the
         proof command used it; the proof built a `Config` directly and never called it, so
@@ -111,10 +111,10 @@ class WorkspaceMembership(unittest.TestCase):
 
 
 class TheCwdFallback(unittest.TestCase):
-    """`0003` found this the hard way: the fallback made a count of 2 read as 3."""
+    """`0002` found this the hard way: the fallback made a count of 2 read as 3."""
 
     def test_no_working_folder_still_falls_back_to_cwd(self):
-        # `0002` behaviour, unchanged. verify_0002.py depends on it.
+        # `0001` behaviour, unchanged. verify_0001.py depends on it.
         self.assertEqual(len(from_env({}).workspaces), 1)
 
     def test_a_working_folder_with_nothing_declared_means_no_env_workspaces(self):
@@ -128,7 +128,7 @@ class TheCwdFallback(unittest.TestCase):
 
 
 class TheDataDirectory(unittest.TestCase):
-    """`0011` R1. The setting that says where the app keeps its own state."""
+    """`0006` R1. The setting that says where the app keeps its own state."""
 
     def test_unset_means_the_module_default_rather_than_a_path_here(self):
         """`Config` carries `None`, and `data.Data` turns that into `~/.cos`.

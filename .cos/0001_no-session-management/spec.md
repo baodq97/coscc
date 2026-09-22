@@ -75,7 +75,7 @@ knob chưa đủ để biện minh cho một schema và một dependency. Nhưng
   đã ghi đó là đánh đổi đã chấp nhận. Xem C1 — nó sẽ *có cảm giác* như lỗi.
 - **Chạy nhiều session song song trong một màn hình.** Tạo và mở lại là phạm vi; bố cục
   nhiều khung thì không.
-- **Render diff, file, output dài.** Vẫn là intent sau, như ở `0001`.
+- **Render diff, file, output dài.** Vẫn là intent sau, như ở `terminal-only-access`.
 - **Xoá, đổi tên, gắn nhãn session** — SDK có sẵn, nhưng `intent.md` không cho phép.
 - **Gỡ `channel/`.** `intent.md` cấm; `scripts/verify-0001.mjs:9` phụ thuộc vào nó.
 - **Đa người dùng, đăng nhập, TLS.** Một người, loopback.
@@ -98,8 +98,8 @@ toàn nhất ở đây không đánh đổi phạm vi lấy bất cứ thứ gì
 đây; phần còn lại giữ nguyên vì nó là lý do khiến mặc định phải là chat only, và là thứ phải
 đọc lại trước khi ai đó nới nó.
 
-**C2b — Vì sao mặc định phải chặt đến vậy.** `0001` chỉ *nói chuyện* với session
-có sẵn; `0002` **tạo** session chạy được lệnh và sửa được file. Khi Claude cần duyệt một
+**C2b — Vì sao mặc định phải chặt đến vậy.** `terminal-only-access` chỉ *nói chuyện* với session
+có sẵn; `0001` **tạo** session chạy được lệnh và sửa được file. Khi Claude cần duyệt một
 tool, ở đây không có terminal nào để hỏi. Ba lối, và không lối nào miễn phí: chặn hẳn tool
 ghi; mở sẵn một tập tool hẹp; hoặc bật chế độ bỏ qua duyệt, tức trao cho một cổng loopback
 quyền chạy lệnh không cần hỏi. **Đây là câu hỏi an toàn thật sự của unit này**, và đó là lý do
@@ -121,7 +121,7 @@ thận trọng tạm thời; bật nó lên đòi một cơ chế khoá mà unit
 **C3 — Token dài hạn nằm trong tiến trình web.** `CLAUDE_CODE_OAUTH_TOKEN` là thông tin xác
 thực sống lâu, giờ nằm trong môi trường của một tiến trình đang nghe HTTP. Bất kỳ đường nào
 trong app làm lộ biến môi trường, hoặc chạy lệnh theo chữ người dùng gửi, là làm lộ token đó.
-Cổng gác vẫn chỉ là loopback như `0001` — và ở `0001` cái bị lộ chỉ là một ô chat, còn ở đây
+Cổng gác vẫn chỉ là loopback như `terminal-only-access` — và ở `terminal-only-access` cái bị lộ chỉ là một ô chat, còn ở đây
 là một thông tin đăng nhập.
 
 **C4 — Hạn mức bị tiêu mà không ai đếm.** Session tạo từ web tiêu hạn mức tài khoản. Không có
@@ -135,7 +135,7 @@ biết "tests" chỉ cái gì.
 **C6 — Cám dỗ dựng kho dữ liệu thứ hai.** Đã kiểm: hàm đọc lịch sử của SDK trả về đủ nội dung
 để dựng lại hội thoại. Thêm một kho riêng cho message là tạo nguồn sự thật thứ hai, và khi
 hai nguồn lệch thì cái đúng là cái Claude thực sự đọc, không phải cái app lưu. Tiền lệ nằm
-ngay trong repo này: `0001` đã ghi một transcript song song với thứ Claude Code vốn đã ghi.
+ngay trong repo này: `terminal-only-access` đã ghi một transcript song song với thứ Claude Code vốn đã ghi.
 Nó không vô ích — nó ghi cái file chính thức không có — nhưng nó là thứ phải biện minh, không
 phải mặc định. **Muốn thêm kho, phải nêu được thứ session store không lưu.**
 
@@ -145,7 +145,7 @@ tắt. Bật nhầm thì mọi thứ vẫn chạy, chỉ có kết quả của u
 
 **C8 — Kho cấu hình trung tâm là hướng đã nêu, không phải phạm vi.** Tác giả muốn cấu hình
 về sau đọc từ một kho trung tâm, phục vụ nhiều hồ sơ agent. Đúng hướng khi số hồ sơ và số
-knob lớn lên; sai lúc này vì `0002` có bốn knob và một hồ sơ. Rủi ro của việc hoãn là chỗ
+knob lớn lên; sai lúc này vì `0001` có bốn knob và một hồ sơ. Rủi ro của việc hoãn là chỗ
 nối bị bỏ quên và cấu hình rải khắp code — nên nó là một yêu cầu về hình dạng, không phải
 lời hứa suông. Rủi ro của việc làm sớm là dựng schema cho thứ chưa biết hình dạng, rồi phải
 đổi schema khi hồ sơ thứ hai xuất hiện.
@@ -176,7 +176,7 @@ trong code. Loại agent thứ hai sẽ cần intent của nó.
    không phải *thỉnh thoảng hỏng*.
 4. **Còn mở** (`intent.md` OQ1): lệnh nào chạy hết mọi test sau khi có Python? Xem C5.
 5. **Còn mở** (`intent.md` OQ3): app giữ gì giữa các lần tải trang? Nếu trang lại chỉ là
-   khung nhìn thì câu hỏi "reload mất sạch" quay lại nguyên vẹn ở tầng khác — khác `0001` ở
+   khung nhìn thì câu hỏi "reload mất sạch" quay lại nguyên vẹn ở tầng khác — khác `terminal-only-access` ở
    chỗ lần này lịch sử đọc lại được từ đĩa, nên nó giải được, nhưng phải cố ý giải.
 6. **Đã trả lời** (C2): chat only, không tool nào. Mở rộng tập tool sẽ cần xem lại C2b
    trước, vì đó là chỗ ghi vì sao mặc định chặt như vậy.

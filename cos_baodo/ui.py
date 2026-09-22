@@ -16,7 +16,7 @@ Three rules, each answering a requirement:
   it reflows or it scrolls.
 - **R25.** Body text sits on `gray 12` over `gray 1`, the two ends of the scale, which is
   the pairing the palette is built to keep legible in both appearances. The *measurement*
-  is `scripts/verify_0004.py`; this file only makes it likely.
+  is `scripts/verify_0003.py`; this file only makes it likely.
 
 Everything here is presentation. No handler, no service call, no decision.
 """

@@ -30,14 +30,14 @@ giữ ba đường đó. Kiểm được: một tiến trình duy nhất phục 
 `/api/workspaces` và `/ping/` trên cùng cổng backend đều trả lời.
 
 **R5 — Cả hai cổng của Reflex chỉ loopback.** Reflex phục vụ frontend và backend trên hai
-cổng khác nhau. `0002` R5 chỉ nói về một. Cả hai phải bind `127.0.0.1`. Kiểm được: `ss -ltn`
+cổng khác nhau. `0001` R5 chỉ nói về một. Cả hai phải bind `127.0.0.1`. Kiểm được: `ss -ltn`
 không thấy `0.0.0.0` hay `::` trên cổng nào của app.
 
-**R6 — Lệnh kiểm của `0002` giữ nguyên mệnh đề.** `scripts/verify_0002.py` được đổi thư
+**R6 — Lệnh kiểm của `0001` giữ nguyên mệnh đề.** `scripts/verify_0001.py` được đổi thư
 viện client và đường import; **các mệnh đề nó khẳng định không đổi, không nới, không bớt**.
 Kiểm được: đọc diff — mọi thay đổi phải là client hoặc import; và nó xanh.
 
-**R7 — `0001` không bị đụng.** `channel/`, `evidence/0001_terminal-only-access/` và
+**R7 — `terminal-only-access` không bị đụng.** `channel/`, `evidence/0001_terminal-only-access/` và
 `scripts/verify-0001.mjs` giữ nguyên, kể cả `channel/public/index.html` — nó là HTML viết
 tay nhưng **không** phải trang của app, nên R8 không áp lên nó.
 
@@ -46,12 +46,12 @@ tay nhưng **không** phải trang của app, nên R8 không áp lên nó.
 **R8 — Không còn HTML hay CSS viết tay cho trang của app.** `app/public/index.html` (151
 dòng) bị xoá và không có file cùng loại thay thế. Kiểm được: sau unit này, không file
 `.html` hay `.css` nào trong repo phục vụ giao diện của app; file `.html` duy nhất còn lại
-là `channel/public/index.html` của `0001` (R7). Tài nguyên tĩnh dạng ảnh/font trong
+là `channel/public/index.html` của `terminal-only-access` (R7). Tài nguyên tĩnh dạng ảnh/font trong
 `assets/` không tính.
 
 **R9 — Giao diện có đủ phần để dùng.** Dựng bằng component Python: danh sách workspace kèm
 label và cờ `missing`; chỗ nhập để thêm hoặc clone; chỗ xoá; chỗ pull; và khung hội thoại
-của `0002`. Kiểm được: mỗi phần gọi xuống đúng lớp dịch vụ ở `## Design`, và không phần nào
+của `0001`. Kiểm được: mỗi phần gọi xuống đúng lớp dịch vụ ở `## Design`, và không phần nào
 gọi thẳng `git` hay đĩa.
 
 **R10 — Một lớp dịch vụ, hai lối vào.** Trang (event handler của Reflex) và JSON API
@@ -109,7 +109,7 @@ làm việc. Nó nhận một path khi và chỉ khi path đó nằm trong danh 
 sửa tay file store để trỏ ra ngoài `working_dir`, mọi đường làm việc vẫn từ chối.
 
 **R22 — Session không đổi tư thế.** Vẫn chat only, không tool nào. Không knob nào của
-`0002` bị lật. Kiểm được: `effective_tools()` rỗng trong suốt chuỗi đo.
+`0001` bị lật. Kiểm được: `effective_tools()` rỗng trong suốt chuỗi đo.
 
 **R23 — Một lệnh, ba mệnh đề, không cần trình duyệt.** Toàn bộ `intent.md:49-59` chạy trong
 một lệnh trả non-zero khi bất kỳ mệnh đề nào hỏng.
@@ -134,7 +134,7 @@ không.
 - **Lớp store.** Đọc/ghi danh sách workspace. Ghi bằng file tạm rồi `rename`, nối tiếp bằng
   một khoá trong tiến trình.
 - **Lớp git.** Gọi `git` bằng argv với môi trường dựng mới. Chỉ clone và pull.
-- **Lớp phiên.** Giữ nguyên từ `0002`: mỗi session một client SDK, vòng đời do app quyết.
+- **Lớp phiên.** Giữ nguyên từ `0001`: mỗi session một client SDK, vòng đời do app quyết.
 - **Lớp dịch vụ.** Nơi duy nhất có logic nghiệp vụ. Bốn lớp trên chỉ được gọi từ đây.
 - **Lớp trình bày.** Hai lối vào, không logic: route JSON của FastAPI mount qua
   `api_transformer`, và các event handler của Reflex vẽ trang.
@@ -154,9 +154,9 @@ không.
 **Store nằm ngoài repo, dưới chính working folder.** Trả lời `intent.md` OQ5: không commit,
 vì nó chứa những gì người dùng đã clone về máy mình. File mang một số `version`.
 
-**Hai nguồn workspace, thứ tự rõ ràng.** `COS_WORKSPACES` của `0002` không bị bỏ và không
+**Hai nguồn workspace, thứ tự rõ ràng.** `COS_WORKSPACES` của `0001` không bị bỏ và không
 được tự động chuyển vào store. Khi `COS_WORKING_DIR` không đặt, lớp store tắt hẳn và app cư
-xử đúng như `0002` — đó là cách R6 được giữ.
+xử đúng như `0001` — đó là cách R6 được giữ.
 
 **"Khởi động lại" trong lệnh kiểm** là dựng lại app từ đúng môi trường cũ. Nếu trạng thái
 sống sót qua đó thì nó đến từ đĩa, và đó là toàn bộ điều R19 cần chứng minh.
@@ -167,24 +167,24 @@ sống sót qua đó thì nó đến từ đĩa, và đó là toàn bộ điều
   vẫn đi qua `COS_WORKSPACES`. Xem C4.
 - **Clone repo riêng tư.** R15 chọn thất bại nhanh thay vì treo.
 - **`git` ngoài clone và pull.**
-- **Bật tool cho session.** Bốn knob của `0002` giữ nguyên mặc định
-  (`.cos/0002_no-session-management/spec.md:112-115`).
+- **Bật tool cho session.** Bốn knob của `0001` giữ nguyên mặc định
+  (`.cos/0001_no-session-management/spec.md:112-115`).
 - **Hiện branch, trạng thái sạch/bẩn, số commit đi sau.**
 - **Xoá thư mục khỏi đĩa.** Xem R18 và C6.
 - **Tự động dọn workspace trỏ vào thư mục đã mất.**
-- **Sửa 13 trích dẫn chết trong `.cos/0002_no-session-management/plan.md`.** Xem C14.
+- **Sửa 13 trích dẫn chết trong `.cos/0001_no-session-management/plan.md`.** Xem C14.
 - **Giao diện đẹp như một mục tiêu riêng.** Thứ đo được là R8 và R9; "đẹp" không đo được và
   không nằm trong kết quả.
 - **Nhiều người dùng, đăng nhập, TLS.**
 
 ## Concerns
 
-**C1 — `is_workspace` mất chỗ dựa cũ.** Ở `0002` nó đứng được một phần nhờ danh sách bất
+**C1 — `is_workspace` mất chỗ dựa cũ.** Ở `0001` nó đứng được một phần nhờ danh sách bất
 biến suốt đời tiến trình (`app/config.py:82-94`). Câu trả lời của thiết kế là R12 và R21.
-Chỗ này hỏng thì mọi thứ khác trong `0002` hỏng theo.
+Chỗ này hỏng thì mọi thứ khác trong `0001` hỏng theo.
 
 **C2 — App lần đầu chạy tiến trình ngoài và lần đầu chạm mạng.**
-`.cos/0002_no-session-management/spec.md:121-125` (C3) nói rõ: đường nào chạy lệnh theo chữ
+`.cos/0001_no-session-management/spec.md:121-125` (C3) nói rõ: đường nào chạy lệnh theo chữ
 người dùng gửi là đường làm lộ token. R15 là câu trả lời trực tiếp — argv chứ không shell,
 subcommand cố định, môi trường dựng mới chứ không kế thừa.
 
@@ -212,16 +212,16 @@ việc nó thất bại **im lặng**; R20 đòi lỗi ra tới người gọi. 
 pull vào workspace đang có session chạy dở sẽ đổi file dưới chân Claude giữa lượt. Không có
 khoá nào ngăn, và unit này không dựng.
 
-**C8 — Store là trạng thái đầu tiên app tự sở hữu.** `0002` cố ý không có
-(`.cos/0002_no-session-management/spec.md:61`). Một khi có file để ghi, cám dỗ ghi thêm
+**C8 — Store là trạng thái đầu tiên app tự sở hữu.** `0001` cố ý không có
+(`.cos/0001_no-session-management/spec.md:61`). Một khi có file để ghi, cám dỗ ghi thêm
 message vào đó là có thật, và
-`.cos/0002_no-session-management/spec.md:135-141` (C6) đã viết sẵn lý do không được. Store
+`.cos/0001_no-session-management/spec.md:135-141` (C6) đã viết sẵn lý do không được. Store
 này chỉ được chứa workspace và label.
 
-**C9 — Đây chưa phải kho cấu hình trung tâm ở `0002` C8.** Store lưu workspace, không lưu
+**C9 — Đây chưa phải kho cấu hình trung tâm ở `0001` C8.** Store lưu workspace, không lưu
 knob, không lưu hồ sơ agent. Bốn knob vẫn chỉ đọc từ env.
 
-**C10 — Hạn mức vẫn không được đếm.** `.cos/0002_no-session-management/spec.md:127-128`
+**C10 — Hạn mức vẫn không được đếm.** `.cos/0001_no-session-management/spec.md:127-128`
 còn nguyên hiệu lực, và unit này thêm băng thông, đĩa, và một toolchain Node.
 
 **C11 — Đường người dùng thật sự bấm vẫn là đường không ai chứng minh, chỉ là lật ngược.**
@@ -237,13 +237,13 @@ cấm bịa ra lệnh build. Reflex biên dịch frontend sang JavaScript. File 
 đúng — lách bằng cách không gọi nó là build step thì chỉ là nói dối chậm hơn.
 
 **C13 — Unit này viết lại bằng chứng duy nhất của một unit đã đóng.**
-`scripts/verify_0002.py` là thứ duy nhất chứng minh `0002` từng đạt. R6 giới hạn thay đổi ở
+`scripts/verify_0001.py` là thứ duy nhất chứng minh `0001` từng đạt. R6 giới hạn thay đổi ở
 client và import, nhưng không có gì **ép** điều đó ngoài người đọc diff. Cùng loại rủi ro mà
-`.claude/CLAUDE.md` chặn cho `0001` bằng cách cấm xoá `channel/` — chỉ là ở đây không có
+`.claude/CLAUDE.md` chặn cho `terminal-only-access` bằng cách cấm xoá `channel/` — chỉ là ở đây không có
 lệnh cấm nào tương đương.
 
 **C14 — 13 trích dẫn sẽ chết và unit này không sửa.**
-`.cos/0002_no-session-management/plan.md` trỏ vào `app/*.py` ở 13 chỗ; sau R1 chúng trỏ vào
+`.cos/0001_no-session-management/plan.md` trỏ vào `app/*.py` ở 13 chỗ; sau R1 chúng trỏ vào
 hư không. Sửa nghĩa là viết lại một artifact đã ký; không sửa nghĩa là harness có trích dẫn
 hỏng, trong khi chính nó đòi "cite only a file committed in this repository". Không lối nào
 sạch. Unit này chọn không sửa và ghi lại ở đây; **tác giả quyết** nếu muốn khác.
@@ -252,7 +252,7 @@ sạch. Unit này chọn không sửa và ghi lại ở đây; **tác giả quy�
 lockfile frontend phải commit, và lần chạy đầu cần mạng để tải. Trước unit này repo chạy
 được từ source không cần gì ngoài `uv sync` và `npm test`. Sau nó thì không.
 
-**C16 — Streaming có hai đường và chúng dễ lệch.** `0002` stream NDJSON qua `/api/send`
+**C16 — Streaming có hai đường và chúng dễ lệch.** `0001` stream NDJSON qua `/api/send`
 (`app/web.py:90-107`). Trang Reflex sẽ stream bằng state update, không bằng NDJSON. R10 đòi
 cả hai đi qua cùng lớp dịch vụ, nhưng hình dạng dữ liệu hai bên vẫn khác nhau — và chỗ lệch
 sẽ xuất hiện ở xử lý lỗi giữa chừng, đúng chỗ `app/web.py:70-74` cảnh báo rằng status đã
@@ -279,8 +279,8 @@ gửi trước khi lỗi xảy ra.
    trong tài liệu mà không ai gọi.
 10. **Còn mở, và là câu ở C4:** một gốc hay nhiều gốc?
 11. **Còn mở:** hai app cùng chạy trên một `working_dir` thì store bị hai tiến trình ghi.
-    Khoá trong tiến trình không đủ. `0002` OQ3 đã cho thấy chính xác kiểu hỏng này mất dữ
-    liệu im lặng (`.cos/0002_no-session-management/spec.md:165-176`).
+    Khoá trong tiến trình không đủ. `0001` OQ3 đã cho thấy chính xác kiểu hỏng này mất dữ
+    liệu im lặng (`.cos/0001_no-session-management/spec.md:165-176`).
 12. **Còn mở:** Reflex có chạy được với layout phẳng mà gói tên khác `app_name` không, và có
     chịu được việc `rxconfig.py` sống cạnh một repo đã có `package.json` và `channel/`
     không? Chưa kiểm. Plan phải kiểm trước khi xây gì lên trên.

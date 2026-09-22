@@ -8,7 +8,7 @@ Author: Claude Opus 5. Status: accepted.
 
 ## Problem
 
-`0009` dựng xong sáu màn COS Studio và người khởi xướng nói đã ưng ý. Nhưng thứ họ ưng
+`fragmented-product-experience` dựng xong sáu màn COS Studio và người khởi xướng nói đã ưng ý. Nhưng thứ họ ưng
 là một bản diễn: mọi con số, workspace, công việc, hội thoại và dòng hoạt động trên màn
 hình đều do `cos_baodo/prototype_data.py:1-128` bịa ra, và `PrototypeState` giữ tất cả
 trong bộ nhớ của một phiên trình duyệt (`cos_baodo/prototype.py:24-57`). Đóng tab là mất.
@@ -28,7 +28,7 @@ này có.
 ## Proposed outcome
 
 Đến hết ngày **2026-09-22**, một người chạy app trên máy này hoàn thành **5/5** luồng
-tương tác của `0009` trên **dữ liệu thật** — workspace thật dưới thư mục làm việc, board
+tương tác của `fragmented-product-experience` trên **dữ liệu thật** — workspace thật dưới thư mục làm việc, board
 đọc từ `.cos/` của workspace đó, phiên chat thật do SDK tạo — rồi tắt app, bật lại, và
 cả **5** luồng vẫn thấy đúng dữ liệu vừa tạo.
 
@@ -41,15 +41,15 @@ chọn trong trao đổi ngày 2026-09-22; không suy ra từ đo đạc nào.
 
 ## Affected users and systems
 
-- Người dùng cá nhân, local-first, chưa đăng nhập. Không đổi so với `0009`.
-- Sáu màn của `0009`: Overview, Workspaces, Board, Sessions, Activity & Usage, Settings.
-  Con số **6** lấy từ `.cos/0009_fragmented-product-experience/intent.md`.
+- Người dùng cá nhân, local-first, chưa đăng nhập. Không đổi so với `fragmented-product-experience`.
+- Sáu màn của `fragmented-product-experience`: Overview, Workspaces, Board, Sessions, Activity & Usage, Settings.
+  Con số **6** lấy từ `fragmented-product-experience/intent.md`.
 - Nơi app cất trạng thái của chính nó. Người khởi xướng chọn `/home/bd/.cos`, và chọn nó
   chứa **dữ liệu app**, không chứa bản clone của workspace.
 - `cos_baodo/store.py` và `cos_baodo/journal.py`: hai cơ chế lưu trữ hiện có, cả hai đều
-  đã được một proof chứng minh (`scripts/verify_0005.py`).
+  đã được một proof chứng minh (`scripts/verify_0004.py`).
 - Trang `/` hiện tại: người khởi xướng chọn để COS Studio thay thế nó, nên
-  `scripts/verify_0004.py` — proof duy nhất mở trình duyệt thật — sẽ không còn đúng đối
+  `scripts/verify_0003.py` — proof duy nhất mở trình duyệt thật — sẽ không còn đúng đối
   tượng nó đang kiểm.
 
 ## Constraints
@@ -59,8 +59,8 @@ chọn trong trao đổi ngày 2026-09-22; không suy ra từ đo đạc nào.
 - `/home/bd/.cos` chỉ chứa dữ liệu app. Workspace (bản clone git) vẫn nằm dưới
   `COS_WORKING_DIR`. Quy tắc "một entry lưu *tên*, không bao giờ lưu đường dẫn" và
   "`COS_WORKING_DIR` không set được qua HTTP" phải còn nguyên.
-- Chuyển `store` và `journal` sang SQLite thì phải chạy lại `scripts/verify_0005.py` với
-  4 tiến trình ghi đồng thời. Không được coi tính chất mà `0005` đã chứng minh là hiển
+- Chuyển `store` và `journal` sang SQLite thì phải chạy lại `scripts/verify_0004.py` với
+  4 tiến trình ghi đồng thời. Không được coi tính chất mà `0004` đã chứng minh là hiển
   nhiên đúng với cơ chế mới.
 - Theo best practice của Reflex, viết bằng component Python. Không HTML/CSS viết tay.
 - Giữ nguyên tư thế an toàn: chỉ bind loopback; phiên mặc định là chat, không tool; bảng
@@ -77,7 +77,7 @@ chọn trong trao đổi ngày 2026-09-22; không suy ra từ đo đạc nào.
   lần migrate.
 - Chưa có dữ liệu thật nào trong `.cos-baodo.json` hay `.cos-journal.jsonl` trên máy này
   để migrate hay không: chưa kiểm. Nếu có, phải quyết định đọc tiếp hay bỏ.
-- Người khởi xướng nói "ưng ý" sau khi xem prototype, nhưng `0009` để mở việc duyệt thẩm
+- Người khởi xướng nói "ưng ý" sau khi xem prototype, nhưng `fragmented-product-experience` để mở việc duyệt thẩm
   mỹ. Unit này không được ngầm coi "ưng ý" là đã duyệt xong thiết kế.
-- Sau khi COS Studio thay trang `/`, `scripts/verify_0004.py` kiểm cái gì: viết lại theo
+- Sau khi COS Studio thay trang `/`, `scripts/verify_0003.py` kiểm cái gì: viết lại theo
   trang mới, hay giữ nó như proof lịch sử. Spec quyết định.

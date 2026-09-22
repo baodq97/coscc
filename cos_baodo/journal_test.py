@@ -1,6 +1,6 @@
-"""Tests for the run log, including the one failure `0005` measured.
+"""Tests for the run log, including the one failure `0004` measured.
 
-The concurrency case is the reason this file is not just round-trip assertions. `0005`
+The concurrency case is the reason this file is not just round-trip assertions. `0004`
 found four processes losing 12 of 20 entries to interleaved read-modify-write, with no
 error anywhere (`cos_baodo/store.py:16-18`). The same shape is run here at unit-test size:
 real processes, one folder, count what survives.

@@ -44,11 +44,11 @@ ghi trong ngoặc. Requirement nào không truy được thì đã bị cắt.
 - **R7.** `impl` và `pr` chạy được ở chế độ `autonomous`: agent sửa file trong workspace,
   và mở được một pull request, không ai gõ lệnh trong terminal.
 
-### Tool, mở đúng chỗ (P1, và ràng buộc "không làm 0007 vô nghĩa")
+### Tool, mở đúng chỗ (P1, và ràng buộc "không làm chat-only-sessions-have-tools vô nghĩa")
 
 - **R8.** Mặc định của mọi session app tạo vẫn là **0 tool**, đúng như
   `cos_baodo/config.py:44`. Session chat (không thuộc board) không đổi hành vi. Phép kiểm
-  của `0007` phải còn xanh nguyên trạng sau unit này.
+  của `chat-only-sessions-have-tools` phải còn xanh nguyên trạng sau unit này.
 - **R9.** Quyền tool gắn vào **cặp (giai đoạn, chế độ)**, không phải vào `Config`. Sáu giai
   đoạn `idea`, `intent`, `spec`, `plan`, `review`, `ship` có grant rỗng ở **cả hai** chế độ.
   Chỉ `impl` và `pr`, và chỉ khi chế độ là `autonomous`, mang grant khác rỗng.
@@ -84,11 +84,11 @@ ghi trong ngoặc. Requirement nào không truy được thì đã bị cắt.
 
 ### Bằng chứng (cả ba mệnh đề)
 
-- **R19.** `scripts/verify_0008.py` dựng lại mệnh đề 1 và 3 **không cần trình duyệt**, và
+- **R19.** `scripts/verify_0005.py` dựng lại mệnh đề 1 và 3 **không cần trình duyệt**, và
   trả non-zero nếu bất kỳ mắt nào hỏng. Nó dùng mã thoát cùng quy ước với
-  `scripts/verify_0004.py`: `0` đạt, `1` hỏng, `2` môi trường chưa sẵn sàng.
+  `scripts/verify_0003.py`: `0` đạt, `1` hỏng, `2` môi trường chưa sẵn sàng.
 - **R20.** Mệnh đề 2 (live, không reload) chỉ chứng minh được bằng trình duyệt thật, nên nó
-  đi vào `verify_0004.py` hoặc một lệnh cùng loại. Không mệnh đề nào của P2 được tính là
+  đi vào `verify_0003.py` hoặc một lệnh cùng loại. Không mệnh đề nào của P2 được tính là
   đạt bằng một phép kiểm mức HTTP.
 - **R21.** `npm test` vẫn xanh, vẫn không cần trình duyệt, vẫn không cần toolchain
   JavaScript. Năm lệnh chứng minh cũ vẫn xanh với đúng những mệnh đề chúng đang khẳng định.
@@ -135,14 +135,14 @@ hàm, không đọc env, không sửa được qua HTTP, trả về ba thứ cho
 phép, trần lượt, trần ngân sách. Sáu giai đoạn trả về danh sách rỗng ở cả hai chế độ; chỉ
 `impl` và `pr` ở chế độ `autonomous` trả về khác rỗng.
 
-Lý do tách khỏi `Config`: `0007` tồn tại vì câu ở `cos_baodo/config.py:44` không đúng. Nếu
+Lý do tách khỏi `Config`: `chat-only-sessions-have-tools` tồn tại vì câu ở `cos_baodo/config.py:44` không đúng. Nếu
 quyền của board đi vào `Config` thì câu ấy lại phải nói về hai thứ cùng lúc và lại sẽ sai với
 một trong hai. Tách ra thì `Config` vẫn nói đúng một điều — mặc định — và `StagePolicy` nói
 điều còn lại, ở một chỗ đọc riêng.
 
 Cưỡng chế (R10) nằm ở callback `can_use_tool` của SDK, chứ không chỉ ở danh sách truyền vào
-lúc dựng options. Lý do là bài học của chính `0007`: một danh sách truyền vào có thể không
-bao phủ hết nguồn năng lực, và `0007` đo được đúng điều đó — 11 MCP tool đi vòng qua
+lúc dựng options. Lý do là bài học của chính `chat-only-sessions-have-tools`: một danh sách truyền vào có thể không
+bao phủ hết nguồn năng lực, và `chat-only-sessions-have-tools` đo được đúng điều đó — 11 MCP tool đi vòng qua
 `tools=[]`. Một callback thì đứng ở đường mọi tool phải đi qua, bất kể nó đến từ nguồn nào.
 Danh sách vẫn được truyền, làm lớp thứ nhất; callback là lớp quyết định.
 
@@ -159,7 +159,7 @@ cho artifact" của `intent.md`: nội dung artifact chỉ có một bản, trê
 Chế độ mỗi bước (R5), session id (R6), mốc thời gian (R15), số token (R17), số lần từ chối
 tool (R10): không cái nào là artifact, và không cái nào nên nằm trong file mà người đọc để
 hiểu công việc. Chúng đi vào một bản ghi **append-only** cạnh store workspace, dùng lại đúng
-cơ chế đã trả giá ở `0005`: ghi qua temp rồi `rename`, khoá `flock` trên file riêng, chờ có
+cơ chế đã trả giá ở `0004`: ghi qua temp rồi `rename`, khoá `flock` trên file riêng, chờ có
 trần (`cos_baodo/store.py:16-22`, `:42-49`).
 
 Ranh giới giữa 3 và 4 là câu trả lời cho `intent.md` open question 5: **artifact suy ra từ
@@ -218,7 +218,7 @@ một dòng `Status:` ở đầu, prose tiếng Việt, heading tiếng Anh.
   mô tả trạng thái đích là "each accepted artifact fires the next gate"; unit này dựng chỗ
   để bấm, không dựng cái bấm hộ. Người chọn chế độ và khởi động từng bước.
 - **`gitops.py` mở rộng.** Không có `branch`, `commit`, `push` ở tầng Python.
-- **Sửa `0006` hay `0005` C2.** Hai bản app trên cùng working folder vẫn nhìn xuyên qua nhau.
+- **Sửa `sessions-invisible-across-processes` hay `0004` C2.** Hai bản app trên cùng working folder vẫn nhìn xuyên qua nhau.
 - **Thẩm mỹ vượt quá sàn của R22–R25.** Sàn craft thì đo được và nằm trong phạm vi. Cái
   còn lại — bố cục có đẹp không, có "xịn mịn" không — vẫn là phán đoán, vẫn không có phép
   đo, và unit này không hứa. Xem C7.
@@ -227,12 +227,12 @@ một dòng `Status:` ở đầu, prose tiếng Việt, heading tiếng Anh.
 
 ## Concerns
 
-**C1 — `0007` và `0008` kéo ngược chiều nhau, và thứ tự là của tác giả quyết.**
-`0007` có plan accepted (`2d6e0dc`) và chưa có code; nó đi đóng đường tool. `0008` đi mở.
+**C1 — `chat-only-sessions-have-tools` và `0005` kéo ngược chiều nhau, và thứ tự là của tác giả quyết.**
+`chat-only-sessions-have-tools` có plan accepted (`2d6e0dc`) và chưa có code; nó đi đóng đường tool. `0005` đi mở.
 Thiết kế trên cố ý giữ được cả hai — mặc định vẫn 0 tool (R8), quyền nằm ngoài `Config`
-(R9) — nhưng nếu `0008` làm trước và `0007` làm sau, thì `0007` phải kiểm một mặc định giờ
+(R9) — nhưng nếu `0005` làm trước và `chat-only-sessions-have-tools` làm sau, thì `chat-only-sessions-have-tools` phải kiểm một mặc định giờ
 có `StagePolicy` đứng cạnh, và phép kiểm của nó phải chứng minh thêm rằng board không mở
-đường vòng. **Khuyến nghị: làm `0007` trước.** Quyết định là của tác giả, không phải của
+đường vòng. **Khuyến nghị: làm `chat-only-sessions-have-tools` trước.** Quyết định là của tác giả, không phải của
 spec này.
 
 **C2 — repo này không có remote, nên mệnh đề 1 hôm nay không thể đạt.**
@@ -240,7 +240,7 @@ spec này.
 và commit thẳng `main`, nên chưa từng cần remote. R7 đòi mở một pull request; không có remote
 thì không có chỗ nào để mở. Đây là **blocker cứng của hạn 2026-09-28**, không phải một chi
 tiết. Hai lối, và tác giả chọn: (a) tạo remote cho `cos-baodo`; hoặc (b) unit chứng minh
-`0009_*` nằm trong một workspace khác đã có remote — nhưng `intent.md` nói `0009_*` do
+`fragmented-product-experience_*` nằm trong một workspace khác đã có remote — nhưng `intent.md` nói `fragmented-product-experience_*` do
 `cos.mjs new-path` cấp, và script ấy neo vào repo chứa nó (`.claude/scripts/cos.mjs:9`), nên
 lối (b) đòi sửa cả cách hiểu kết quả.
 
@@ -254,7 +254,7 @@ và một luật sai ở đây là một lỗ, không phải một phiền toái
 **C4 — agent bước `pr` chạm credential `gh` của cả máy.**
 `gh` đã đăng nhập ở mức người dùng (`/home/bd/.config/gh/hosts.yml`, đo 2026-09-21). Một
 agent gọi được `gh` thì gọi được tới **mọi** repo tài khoản ấy với tới, không riêng workspace
-đang mở. Đây đúng hình dạng cái hại `0007` mô tả — năng lực đến từ cấu hình mức máy, không
+đang mở. Đây đúng hình dạng cái hại `chat-only-sessions-have-tools` mô tả — năng lực đến từ cấu hình mức máy, không
 khai trong app, không hiện trong app — chỉ lần này app mở nó có chủ ý. Nó phải hiện ra trên
 trang trước khi bước chạy, chứ không nằm trong một file thiết kế.
 
@@ -286,18 +286,18 @@ có thể **đỏ** được thì nó cần intent riêng với kết quả riê
 bản. Cái giá: app gọi Node cho mỗi lần đọc board, và `.claude/scripts/cos.mjs` thành một phụ
 thuộc lúc chạy của một app Python. Nếu một workspace không có file đó, board ở đó không chạy.
 
-**C9 — journal làm vùng va chạm của `0005` C2 rộng ra.**
-`0005` đo được bốn tiến trình ghi một working folder chỉ còn **8/20** mục khi chưa
+**C9 — journal làm vùng va chạm của `0004` C2 rộng ra.**
+`0004` đo được bốn tiến trình ghi một working folder chỉ còn **8/20** mục khi chưa
 khoá (`cos_baodo/store.py:16-18`), và khoá hiện chỉ phủ tiến trình này. Journal thêm
 một file ghi thường xuyên hơn hẳn danh sách workspace. Dùng lại `flock` của
-`store.py` là bắt buộc, không phải tuỳ chọn — nhưng nó vẫn không đóng `0005` C2.
+`store.py` là bắt buộc, không phải tuỳ chọn — nhưng nó vẫn không đóng `0004` C2.
 
 ## Open questions
 
 Mười câu của `intent.md`, trả lời hoặc nêu lại kèm thứ một câu trả lời sẽ đổi.
 
 1. **PR đi đâu** — *chưa trả lời, thành C2.* Đây là câu duy nhất chặn hạn.
-2. **`0007` trước hay `0008` trước** — *chưa trả lời, thành C1.* Spec khuyến nghị `0007`
+2. **`chat-only-sessions-have-tools` trước hay `0005` trước** — *chưa trả lời, thành C1.* Spec khuyến nghị `chat-only-sessions-have-tools`
    trước; quyết định là của tác giả.
 3. **Bốn bước mới ghi artifact gì** — **trả lời rồi**, ở `## Design`, và R2 mở
    `ARTIFACTS` từ 3 lên 8 để `cos.mjs` thôi gọi chúng là file lạ.
@@ -313,7 +313,7 @@ Mười câu của `intent.md`, trả lời hoặc nêu lại kèm thứ một c
    repo** — nguồn là gói đã cài. Còn hở: chưa đo số ấy có cộng dồn qua các lượt của cùng một
    session hay chỉ là của lượt cuối. Một câu trả lời sai ở đây làm R17 cộng sai.
 7. **Live view chạy qua đường nào** — *vẫn hở, và là lý do R20 tồn tại.* Đường
-   `/_event` vẫn là đường ít bằng chứng nhất; `verify_0004.py` chạm nó một lần bằng trình
+   `/_event` vẫn là đường ít bằng chứng nhất; `verify_0003.py` chạm nó một lần bằng trình
    duyệt thật, và mệnh đề 2 không có cách nào khác để đạt.
 8. **Bước autonomous chạy bao lâu, bỏ dở thì sao** — **trả lời một nửa.** Trần lượt và trần
    ngân sách (R11) biến vô hạn thành `exhausted`. Huỷ có đường: SDK có

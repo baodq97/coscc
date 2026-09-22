@@ -6,7 +6,7 @@ Python would drift from it silently. So this module runs that script and reads i
 rather than re-reading the Markdown.
 
 **Which copy it runs is the security decision here.** A workspace is a repository cloned
-from a URL somebody typed (`0003`), so `<workspace>/.claude/scripts/cos.mjs` is a file that
+from a URL somebody typed (`0002`), so `<workspace>/.claude/scripts/cos.mjs` is a file that
 repository controls. Executing it would hand a cloned repo everything this process has,
 which is past every knob in `cos_baodo/config.py`. This module therefore runs **the copy
 that ships with the app**, pointed at the workspace's `.cos/` with `--root`. The cost is
@@ -26,7 +26,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-# The app's own copy. `cos_baodo/` sits beside `.claude/` in the flat layout `0003` chose
+# The app's own copy. `cos_baodo/` sits beside `.claude/` in the flat layout `0002` chose
 # (`pyproject.toml`, `module-root = ""`), so the repository root is one level up.
 SCRIPT = Path(__file__).resolve().parent.parent / ".claude" / "scripts" / "cos.mjs"
 

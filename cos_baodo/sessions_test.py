@@ -166,7 +166,7 @@ class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
 
 
 class WhichWorkspacesHaveSomeoneInThem(unittest.TestCase):
-    """`0005` R6. The question `pull` has to ask before it touches a workspace."""
+    """`0004` R6. The question `pull` has to ask before it touches a workspace."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

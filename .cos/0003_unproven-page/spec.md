@@ -42,7 +42,7 @@ mã thoát và thông báo.
 **R8 — `npm test` không đổi và không có trình duyệt.** `package.json:7-9` giữ nguyên.
 Kiểm được: `npm test` vẫn xanh trên một máy không có chromium.
 
-**R9 — Không đụng `0002` và `0003`.** `scripts/verify_0002.py` và `scripts/verify_0003.py`
+**R9 — Không đụng `0001` và `0002`.** `scripts/verify_0001.py` và `scripts/verify_0002.py`
 chạy nguyên trạng và vẫn xanh.
 
 **R10 — Working folder của lệnh là tạm và tự dọn.** Hai workspace được tạo bằng cách nhận
@@ -53,7 +53,7 @@ thư mục tạm nào.
 
 **Bằng chứng ở đây là một cặp, không phải một phép kiểm.** Chạy khẳng định lên trang tốt chỉ
 nói rằng trang tốt. Chạy đúng khẳng định ấy lên trang hỏng và thấy nó **gãy** mới nói rằng
-phép kiểm còn sống. `0003` vừa cho thấy một bộ ba mệnh đề xanh nằm trên một trang chết, nên
+phép kiểm còn sống. `0002` vừa cho thấy một bộ ba mệnh đề xanh nằm trên một trang chết, nên
 unit này đo cả hai chiều trong một lần chạy. Mọi thứ khác chảy ra từ đó.
 
 **"Trang hỏng" được dựng bằng hiện tượng, không bằng nguyên nhân.** Lỗi ngày 2026-09-21 quan
@@ -85,10 +85,10 @@ thiếu của lựa chọn này.
 | Người quan sát → trang | không | `working_dir`, `count` đọc được trên màn hình |
 | Người quan sát → `/api/workspaces` | không | `working_dir`, `count` đúng của backend |
 
-**Cổng không được chọn tự do.** `0003` phát hiện bản build nhúng cứng địa chỉ backend
+**Cổng không được chọn tự do.** `0002` phát hiện bản build nhúng cứng địa chỉ backend
 (`rxconfig.py:13-21`), nên app thật **phải** chạy đúng cổng mà bản build đã nhắm — lấy từ
 `cos_baodo/config.py:61` và biến môi trường của nó. Đây là chỗ lệnh này khác hẳn
-`scripts/verify_0002.py` và `scripts/verify_0003.py`, vốn chạy app trong tiến trình qua ASGI
+`scripts/verify_0001.py` và `scripts/verify_0002.py`, vốn chạy app trong tiến trình qua ASGI
 và không cần cổng nào. Cổng bận là `2`, không phải `1`.
 
 **Python, và là dev dependency.** Cùng ngôn ngữ với hai lệnh kiểm kia. Nằm trong
@@ -100,21 +100,21 @@ kéo theo một trình duyệt. Và vì nó nằm trong `scripts/`, `package.jso
 
 - **Dựng lại toàn bộ vòng thao tác** — nhận thư mục, clone, pull, xoá, chat. `intent.md`
   cắt, vì mỗi lần chạy sẽ tốn một clone thật và một session thật cho phần
-  `scripts/verify_0003.py` đã chứng minh ở tầng API.
+  `scripts/verify_0002.py` đã chứng minh ở tầng API.
 - **Tạo session, gửi prompt.** R6.
 - **Đưa trình duyệt vào `npm test`.** R8, và `intent.md` chốt.
 - **Tự cài trình duyệt.** R7.
-- **Kiểm giao diện đẹp hay không** — bố cục, màu, khoảng cách. Không đo được, và `0003` đã
+- **Kiểm giao diện đẹp hay không** — bố cục, màu, khoảng cách. Không đo được, và `0002` đã
   cắt "đẹp" khỏi mọi kết quả.
 - **Chụp ảnh so sánh từng pixel.** Một phép kiểm đỏ mỗi lần đổi chữ là một phép kiểm sẽ bị
   tắt.
 - **Chạy trên nhiều trình duyệt.** Một là đủ cho câu hỏi đang hỏi.
-- **Đóng C4, C7, OQ11 của `0003`.** Không liên quan; vẫn treo.
+- **Đóng C4, C7, OQ11 của `0002`.** Không liên quan; vẫn treo.
 
 ## Concerns
 
 **C1 — Lệnh này phải chiếm một cổng cố định, và đó là một khác biệt thật so với hai lệnh
-kiểm kia.** `verify_0002` và `verify_0003` chạy app trong tiến trình và không đụng mạng, nên
+kiểm kia.** `verify_0001` và `verify_0002` chạy app trong tiến trình và không đụng mạng, nên
 chúng chạy được bất cứ lúc nào. Lệnh này không: nếu tác giả đang mở app để dùng, cổng bận và
 lệnh trả `2`. Có thể sống chung được, nhưng nó là ma sát mới và sẽ làm người ta ngại chạy —
 đúng loại ma sát khiến một bằng chứng không ai chạy.
@@ -139,7 +139,7 @@ Reflex, nhưng đọc `working_dir` và `count` vẫn cần biết chúng nằm 
 bố cục là lệnh đỏ mà trang không hỏng. Đổi lấy: nếu bám lỏng hơn nữa thì nó không còn phân
 biệt được trang sống với trang chết, tức mất đúng thứ cần đo.
 
-**C5 — Không gì bắt ai chạy lệnh này.** Giống hệt `verify_0002` và `verify_0003`.
+**C5 — Không gì bắt ai chạy lệnh này.** Giống hệt `verify_0001` và `verify_0002`.
 `intent.md` đã nhận cái giá này khi chọn giữ `npm test` không có trình duyệt. Nhắc lại ở đây
 vì nó là lý do một unit về bằng chứng vẫn có thể kết thúc bằng việc chẳng ai xem.
 
@@ -147,7 +147,7 @@ vì nó là lý do một unit về bằng chứng vẫn có thể kết thúc b�
 trình duyệt thật vẫn lọt. Phạm vi hẹp ở `intent.md` chấp nhận điều này.
 
 **C7 — Thêm một phụ thuộc nặng vào một repo đến giờ chỉ cần `uv sync` và `npm test`.**
-`0003` đã thêm một toolchain JavaScript; unit này thêm một trình duyệt. Mỗi cái đều có lý
+`0002` đã thêm một toolchain JavaScript; unit này thêm một trình duyệt. Mỗi cái đều có lý
 do, và cộng lại thì "clone về rồi chạy" không còn là một câu ngắn nữa.
 
 ## Open questions
@@ -160,7 +160,7 @@ do, và cộng lại thì "clone về rồi chạy" không còn là một câu n
    liệu sống có mặt trên trang (R3, R4).
 4. **Đã trả lời** (`intent.md` OQ4): chưa build là `2`, không phải `1` (R1).
 5. **Đã trả lời** (`intent.md` OQ5): headless nên không cần người ngồi, nên bài học ở
-   `.cos/0002_no-session-management/intent.md:33-34` không bị vi phạm. Nó vẫn là lệnh nặng
+   `.cos/0001_no-session-management/intent.md:33-34` không bị vi phạm. Nó vẫn là lệnh nặng
    nhất repo — xem C1 và C7.
 6. **Còn mở, và là C3:** làm gì với bản build cũ? Tác giả quyết. Đây là câu hỏi sắc nhất còn
    lại, vì trả lời sai thì unit này tạo ra đúng loại bằng chứng mà nó sinh ra để chống.
