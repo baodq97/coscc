@@ -20,8 +20,8 @@ Mười ba chỗ đã trôi. Mỗi mục dưới đây là một `path:line` ki�
 
 1. `.cos/0004_silent-concurrent-loss/plan.md:115` ghi phép đo gốc: 4 tiến trình × 5
    workspace **để lại 8 trên 20** mục, tức mất 12.
-   `.cos/0006_demo-data-and-no-durable-store/spec.md:144` đọc ngược nó thành "**mất 8/20**
-   entry". Một trong hai con số sai và cả hai đang được trích.
+   `.cos/0006_demo-data-and-no-durable-store/spec.md:144` đọc ngược nó, lấy **tám mục sống
+   sót làm tám mục bị mất**. Một trong hai con số sai và cả hai đang được trích.
 2. `cos_baodo/journal.py:14` nêu "12 of 20" mà không dẫn nguồn nào.
 
 **Citation trỏ vào dòng không còn đỡ được câu nó đỡ:**

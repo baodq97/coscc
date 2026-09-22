@@ -141,8 +141,9 @@ có thể làm trong một lần.
   của lựa chọn ở intent, không phải lỗi thiết kế — nhưng nó là thứ sẽ làm ai đó mất dữ
   liệu nếu không ai nói ra. **Người khởi xướng quyết định** có chấp nhận hay không.
 - **C2. R9 chưa được chứng minh cho tới khi proof chạy lại.** `flock` và `BEGIN IMMEDIATE`
-  là hai cơ chế khác nhau. `0004` đo được rằng cách cũ **mất 8/20 entry** trước khi có
-  khóa; con số đó là lý do không được suy luận rằng SQLite đương nhiên đúng. Cho tới khi
+  là hai cơ chế khác nhau. `0004` đo được rằng cách cũ **chỉ để lại 8 trên 20 entry** trước
+  khi có khóa (`.cos/0004_silent-concurrent-loss/plan.md:115`); con số đó là lý do không
+  được suy luận rằng SQLite đương nhiên đúng. Cho tới khi
   `scripts/verify_0004.py` xanh trên cơ chế mới, R9 là một yêu cầu, không phải một sự thật.
 - **C3. Bỏ trang cũ là bỏ mặt trước duy nhất đã được chứng minh chạy với backend.** Sau
   R19, nếu trang mới sai ở chỗ nào thì trong cùng một build không còn chỗ nào để đối chiếu.

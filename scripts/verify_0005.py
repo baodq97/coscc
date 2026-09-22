@@ -5,7 +5,7 @@ Seven propositions, listed in `plan.md ## Proof`. Four of them (8–11) are not 
 need a real browser and they live in `scripts/verify_0003.py`, beside the other claim that
 can only be seen on a rendered page.
 
-Exit codes follow `scripts/verify_0003.py:49`:
+Exit codes follow `scripts/proof_harness.py:36`:
 
     0  every proposition that could be checked held, and none were skipped
     1  a proposition is broken

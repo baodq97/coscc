@@ -261,7 +261,8 @@ time.sleep(60)
 
 
 class TheTransactionIsAcrossProcesses(unittest.TestCase):
-    """The old arrangement was measured losing 12 of 20 entries.
+    """The old arrangement was measured leaving 8 of 20 entries behind
+    (`.cos/0004_silent-concurrent-loss/plan.md:115`).
 
     These use a real child process, not a second connection in this one. The loss being
     fixed was between processes, and a same-process stand-in would pass even if the

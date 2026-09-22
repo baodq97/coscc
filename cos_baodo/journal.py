@@ -10,8 +10,10 @@ useless. So it comes here instead.
 artifact's `Status:` line via `board.py`. That is what keeps the journal unable to lie
 about progress: it can only say who was there and what it cost.
 
-**Append-only, and that is a safety property rather than a style.** Four
-processes losing 12 of 20 workspace entries to interleaved read-modify-write. An append has
+**Append-only, and that is a safety property rather than a style.** Four processes adding
+five workspace entries each to one working folder left 8 of the 20 behind, with no error
+anywhere (`.cos/0004_silent-concurrent-loss/plan.md:115`) — the loss was interleaved
+read-modify-write, not colliding writes. An append has
 no read step, so that entire class of loss is structurally absent here rather than defended
 against. The transaction is still taken — it frames a record so a reader gets a consistent
 snapshot — but it is the second line of defence, not the first.

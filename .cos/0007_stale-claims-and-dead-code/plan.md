@@ -13,7 +13,7 @@ sai chứ không phải con số cũ.
 | File | Chỗ | Việc |
 |---|---|---|
 | `cos_baodo/journal.py` | `:13-14` | "12 of 20" đang không có nguồn; dẫn về `.cos/0004_silent-concurrent-loss/plan.md:115` |
-| `cos_baodo/journal_test.py` | `:5` | citation `cos_baodo/store.py:16-18` → cùng dòng `0004` như trên |
+| `cos_baodo/journal_test.py` | `:4-5` | con số ở `:4`, citation `cos_baodo/store.py:16-18` ở `:5` → cùng dòng `0004` như trên |
 | `rxconfig.py` | `:11` | `cos_baodo/config.py:60` → `:66`, nơi `host` thật sự được mặc định |
 | `scripts/verify_0005.py` | `:8` | `scripts/verify_0003.py:49` → `scripts/proof_harness.py:36` |
 | `cos_baodo/store_test.py` | `:264` | docstring nêu "12 of 20" không nguồn; dẫn về cùng dòng `0004` |
@@ -72,7 +72,8 @@ bị chặn.
 **Sửa có điều kiện — quyết định cho `spec.md` open question 1:**
 
 - `.cos/0006_demo-data-and-no-durable-store/spec.md:144` — **sửa tại chỗ.** Con số ở đó sai
-  chiều, không phải cũ: `0004` đo được **8 trên 20 còn lại**, dòng ấy đọc thành "mất 8/20".
+  chiều, không phải cũ: `0004` đo được **8 trên 20 còn lại**, dòng ấy lấy tám mục sống sót
+  làm tám mục bị mất.
   Ba chỗ trong code đang nói chiều đúng, nên để nguyên là để một người đối chiếu bốn chỗ gặp
   một mâu thuẫn không có đường giải. Sửa gọn trong phạm vi con số cộng một citation về
   `.cos/0004_silent-concurrent-loss/plan.md:115`; không viết lại lập luận của C2, không thêm
@@ -203,7 +204,7 @@ nào cần một server. Mười một claim:
 
 | # | Claim | Đạt khi |
 |---|---|---|
-| C1 | Phép đo của `0004` chỉ có một chiều | `.cos/0004_silent-concurrent-loss/plan.md:115` chứa `8 trên`, và không file nào trong cây chứa `mất 8/20` |
+| C1 | Phép đo của `0004` chỉ có một chiều | `.cos/0004_silent-concurrent-loss/plan.md:115` chứa `8 trên`, và không file nào trong cây chứa chuỗi đọc ngược — `verify_0007.py` ghép chuỗi ấy từ `KEPT` và `TOTAL` nên chính nó cũng không chứa literal |
 | C2 | Ba citation được nêu tên trỏ đúng | với mỗi cặp (file, `path:line` nó trích), dòng được trích chứa chuỗi neo khai trong script |
 | C3 | `README.md` nêu tám stage | số stage trong `README.md` bằng số entry `stages` của `cos.mjs status --json` |
 | C4 | Không tên test nào mang số đếm unit | `.claude/scripts/cos.test.mjs` không chứa `eight units` |
@@ -213,7 +214,7 @@ nào cần một server. Mười một claim:
 | C8 | Không dependency npm mồ côi | mỗi key trong `dependencies` của `package.json` xuất hiện trong một `import`/`require` dưới `.claude/scripts/` |
 | C9 | `npm test` im | `npm test` thoát 0 và in **0** dòng chứa `Warning` |
 | C10 | `.gitignore` không trùng | sau khi bỏ dấu `/` ở cuối, không entry nào xuất hiện hai lần |
-| C11 | Version là bản mới nhất | `.python-version` là `3.14`, `uv pip list --outdated` in danh sách rỗng, và mỗi floor ở `pyproject.toml` bằng version đang cài |
+| C11 | Version là bản mới nhất | `.python-version` là `3.14`, và mỗi dòng còn lại của `uv pip list --outdated` được nêu tên trong `impl.md` kèm ràng buộc chặn nó — dạng mềm mà `spec.md` R13 cho phép, vì 13 trong 15 dòng hôm nay là transitive bị chính `reflex` ghim |
 
 Mã thoát: `0` mọi claim đạt, `1` có claim đỏ, `2` môi trường không trả lời được — thiếu `npm`
 hoặc `uv`, hoặc `cos.mjs status --json` không chạy. C9 gọi `npm test` bên trong, nên lệnh này
@@ -223,3 +224,26 @@ cần trình duyệt và không tiêu quota.
 `verify_0003.py` nằm ngoài `verify_0007.py` vì nó cần trình duyệt và một cổng trống, và
 `.claude/CLAUDE.md` giữ `npm test` không có trình duyệt là điều cố ý. Ranh giới ấy là lý do
 R15 phải được chạy bằng tay, và `spec.md` C3 ghi cái giá của nó.
+
+## Departures
+
+Ghi khi chúng xảy ra, theo `write-plan` invariant 8. `impl.md` gom lại.
+
+1. **Bốn quyết định của tác giả, 2026-09-22.** `spec.md` OQ1 → sửa `0006 spec.md:144` tại
+   chỗ. OQ4 → **chạy** `verify_0004.py` sau bước version, tốn một session. C11 → dạng mềm của
+   R13 (bảng `## Proof` đã sửa). Chuỗi đọc ngược nằm trong chính `intent.md` và `plan.md` của
+   unit này → **viết lại các câu trích bằng chữ**, nên C1 quét được cả cây mà không cần loại
+   trừ ai; `intent.md:23` và hai dòng ở đây đổi theo.
+2. **`ensure_dir` chưa bao giờ tạo `objects/`.** `cos_baodo/data.py:161-171` chỉ `mkdir`
+   `self.root`; `objects_dir` là đường dẫn tính sẵn, và `mkdir` duy nhất nằm ở
+   `cos_baodo/objects.py:74` bên trong `Objects.put` mà không ai gọi. Nửa đầu C7 vì vậy đã
+   xanh trước khi sửa — negative control thật là `not hasattr(Data(tmp), "objects_dir")`.
+   `spec.md:11-12` nói "app thôi tạo" là nói sai chiều.
+3. **C6 đếm cả entrypoint gọi bằng chuỗi.** Một phép kiểm chỉ đọc import báo
+   `cos_baodo/run.py` và `cos_baodo/cos_baodo.py` là chết, trong khi xoá cái nào cũng làm app
+   không chạy: chúng được gọi qua `cos-baodo = "cos_baodo.run:main"` ở `pyproject.toml` và
+   `"cos_baodo.cos_baodo:app"` ở `cos_baodo/run.py:61`.
+4. **Citation trôi thứ tư, không sửa.** `.cos/0005_hand-driven-invisible-loop/spec.md:291`
+   trỏ `cos_baodo/store.py:16-18` — cùng đích cũ như mục 4 của `intent.md`, và dòng đó giờ tả
+   row SQLite. Nó là hiện thân cụ thể của "mục thứ mười bốn" mà `intent.md` OQ2 đoán trước.
+   Tác giả chọn ghi lại chứ không chạm artifact accepted thứ hai.
