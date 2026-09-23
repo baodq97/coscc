@@ -595,3 +595,47 @@ class NarrationBeforeAToolCallIsNotTheArtifact(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             items, _ = self.go(d)
             self.assertEqual([k for k, _ in items if k not in ("chunk", "done")], [])
+
+
+class AnAnswerReachesTheStageThatReadsItsArtifact(unittest.TestCase):
+    """`0016` R5. An answer appended under `## Answers` is in the file, so it is in the
+    prompt of whichever stage embeds that file, and only that one (`0016` plan, Risks 4)."""
+
+    ANSWERED = (
+        "Author: t. Status: accepted.\n\n## Open questions\n\n1. Tách ra?\n\n"
+        "## Answers\n\n### Câu 1\nAnswered by: Phong. Date: 2026-09-23. Via: product.\n\n"
+        "{mark}\n"
+    )
+
+    def test_an_answer_in_intent_reaches_spec(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md=self.ANSWERED.format(mark="ANSWER-IN-INTENT-0016"))
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md")
+            self.assertIn("ANSWER-IN-INTENT-0016", prompt)
+
+    def test_an_answer_in_spec_reaches_plan(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(
+                Path(d),
+                intent_md="Status: accepted.\nINTENT",
+                spec_md=self.ANSWERED.format(mark="ANSWER-IN-SPEC-0016"),
+            )
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "plan", STAGES, "plan.md")
+            self.assertIn("ANSWER-IN-SPEC-0016", prompt)
+
+    def test_an_answer_in_spec_does_not_reach_impl_once_plan_exists(self):
+        """The limit, recorded so it is not mistaken for handled: `impl` reads `intent.md`
+        and `plan.md` only, so an answer given in `spec.md` after the plan is written
+        reaches no stage."""
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(
+                Path(d),
+                intent_md="Status: accepted.\nINTENT",
+                spec_md=self.ANSWERED.format(mark="ANSWER-TOO-LATE-0016"),
+                plan_md="Status: accepted.\nPLAN",
+            )
+            prompt, included = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md"
+            )
+            self.assertEqual(included, ["intent.md", "plan.md"])
+            self.assertNotIn("ANSWER-TOO-LATE-0016", prompt)
