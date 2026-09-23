@@ -46,6 +46,11 @@ The commit that recorded the passing round reset the required checks. Wait for t
 (`gh pr checks <number> --required --watch`), then merge. Do not force it and do not
 bypass the ruleset.
 
+**Refused because the branch is behind `main`?** Do not rebase and merge. A rebase
+rewrites the reviewed commit away and the gate will close on `the reviewed commit … is not
+on …`. Rebase, wait for green, and send it back to `write-review` for another round; a
+round that passes does not count toward `COS_REVIEW_ROUNDS`.
+
 If the merge is refused for any other reason, write `ship.md` as `draft` with the refusal
 in `## What went out`, and stop.
 

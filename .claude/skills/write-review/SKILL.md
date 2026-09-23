@@ -50,6 +50,17 @@ loop waits for someone who is not an agent. A person decides at a terminal — s
 `Status: rejected` to close the unit, or raise the limit — and nothing typed into the
 product unblocks it.
 
+Only rounds that end in `changes-requested` count toward that limit. A round that passes
+costs nothing, so reviewing again after a rebase never brings the loop closer to
+`needs a person`.
+
+**A rebase voids a pass.** The `ship` gate requires the reviewed commit to be an ancestor
+of the branch, and `gh pr update-branch --rebase` rewrites every commit on it. So bring
+the branch up to date with `main` **before** a round, not between a pass and the merge. If
+it happens anyway — `main` moved and the merge was refused as out of date — the order is:
+rebase, wait for green, append another round that reviews the new head (carrying every
+finding forward), then `ship`. The earlier pass stays in the history as it was written.
+
 ## Output
 
 One file, `review.md`, in the unit's directory. The header line is rewritten each round to

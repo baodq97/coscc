@@ -758,6 +758,35 @@ test('F2: ship reads the pull request head, not only the refs here, and pins the
   assert.match(checkGate(u, 'ship', { probe: offline }).need[0], /cannot read the head of #7: error connecting/)
 })
 
+test('F3: pass, then rebase, closes ship; another passing round opens it and costs no round', () => {
+  const REB = 'd'.repeat(40)
+  const rebased = { state: 'OPEN', headRefOid: REB }
+  const notAncestor = { code: 1, out: '', err: '' }
+  // After `gh pr update-branch --rebase` the reviewed commit is on none of the three.
+  const afterRebase = greenProbe(undefined, {
+    [`merge-base --is-ancestor ${SHA} refs/heads/feat/x`]: notAncestor,
+    [`merge-base --is-ancestor ${SHA} refs/remotes/origin/feat/x`]: notAncestor,
+    [`merge-base --is-ancestor ${SHA} ${REB}`]: notAncestor,
+  }, rebased)
+  const passed = branched({ ...CHAIN, 'review.md': reviewArt('accepted', `${round(1, 'changes-requested', ['- F1 [open] x'])}\n${round(2, 'pass', [`- F1 [fixed ${FIX}] x`])}`) })
+  const g = checkGate(passed, 'ship', { probe: afterRebase })
+  assert.equal(g.ok, false)
+  assert.match(g.need[0], /rewritten after the pass \(a rebase does this\): review its new head in another round/)
+
+  // Round 3 reviews the rebased head and passes: ship opens on that head.
+  const again = `${round(1, 'changes-requested', ['- F1 [open] x'])}\n${round(2, 'pass', [`- F1 [fixed ${FIX}] x`])}\n${round(3, 'pass', [`- F1 [fixed ${FIX}] x`]).replace(SHA, REB)}`
+  const reReviewed = branched({ ...CHAIN, 'review.md': reviewArt('accepted', again) })
+  const open = checkGate(reReviewed, 'ship', { probe: greenProbe(undefined, {}, rebased) })
+  assert.equal(open.ok, true)
+  assert.equal(open.head, REB)
+
+  // Passing rounds are not counted: cr, pass, cr is two of three used, not three.
+  const text = `${round(1, 'changes-requested', ['- F1 [open] x'])}\n${round(2, 'pass', [`- F1 [fixed ${FIX}] x`])}\n${round(3, 'changes-requested', [`- F1 [fixed ${FIX}] x`, '- F2 [open] y'])}`
+  const u = unit({ ...CHAIN, 'review.md': reviewArt('changes-requested', text) })
+  assert.match(nextAction(u).action, /2 of 3 rounds used/)
+  assert.equal(checkGate(u, 'review', { probe: greenProbe() }).ok, true)
+})
+
 test('a review.md with no rounds cannot ship', () => {
   const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', '# Review\nStatus: accepted.\n') })
   assert.match(checkGate(u, 'ship', { probe: greenProbe() }).need[0], /no ## Round/)

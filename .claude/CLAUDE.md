@@ -80,7 +80,10 @@ The order per unit, and the reason it cannot be reordered:
 
 When the pull request falls behind, `gh pr update-branch --rebase`. Rebase, not a merge of
 `main` into the branch: the squash would remove the merge commit anyway, and keeping the
-two rules pointing the same way is worth more than the shortcut.
+two rules pointing the same way is worth more than the shortcut. Do it before a review
+round, not after a pass: a rebase rewrites the reviewed commit, the `ship` gate then
+closes, and another round is needed. A round that passes does not count toward
+`COS_REVIEW_ROUNDS`, so that round costs time and nothing else.
 
 Do not compose a branch name or a tag by hand. The grammars are named here and enforced by
 `unit-branch`, `check-branch` and `check-tag`; pushing a tag is what builds the release.

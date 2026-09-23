@@ -503,7 +503,7 @@ function shipNeeds(unit, probe, said = {}) {
   for (const ref of refs) {
     const name = ref === said.head ? `the head of #${pr.number} (${ref})` : ref
     if (probe.git('merge-base', '--is-ancestor', last.reviewed, ref).code !== 0) {
-      need.push(`the reviewed commit ${last.reviewed} is not on ${name} — the branch was rewritten after the pass`)
+      need.push(`the reviewed commit ${last.reviewed} is not on ${name} — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit`)
       continue
     }
     const diff = probe.git('diff', '--name-only', `${last.reviewed}..${ref}`)
