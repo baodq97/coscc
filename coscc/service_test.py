@@ -462,6 +462,15 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self.assertEqual(self._git("status", "--porcelain"), "")
         self.assertFalse((self.repo / ".cos").exists())
 
+    def test_a_unit_takes_no_number_the_host_repository_already_used(self):
+        """`0001_product-describes-a-state-it-is-not-in` R10: `0015`, not `0001`."""
+        for i in range(1, 15):
+            (self.repo / ".cos" / f"{i:04d}_u{i}").mkdir(parents=True)
+        before = sorted(p.name for p in (self.repo / ".cos").iterdir())
+        made = self.service.create_unit(str(self.repo), "fresh", "some words")
+        self.assertEqual(made["unit"], "0015_fresh")
+        self.assertEqual(sorted(p.name for p in (self.repo / ".cos").iterdir()), before)
+
     def test_a_bad_slug_comes_back_as_a_refusal_not_an_exception(self):
         with self.assertRaises(Invalid) as caught:
             self.service.create_unit(str(self.repo), "Bad_Slug")

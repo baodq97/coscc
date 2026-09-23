@@ -94,6 +94,77 @@ class StartingAUnit(Fixture):
         self.assertEqual(other["unit"], "0001_a-problem")
 
 
+class NumbersTakenInTheHostRepositoryCount(Fixture):
+    """`0001_product-describes-a-state-it-is-not-in` R10 and R11."""
+
+    def _host(self, *names: str) -> Path:
+        host = Path(self.data) / "host"
+        for n in names:
+            (host / ".cos" / n).mkdir(parents=True)
+        return host
+
+    def test_a_host_with_fourteen_units_makes_the_next_one_fifteen(self):
+        host = self._host(*[f"{i:04d}_u{i}" for i in range(1, 15)])
+        made = units.create(host, "fresh", "", self.data, reserve_from=[host])
+        self.assertEqual(made["unit"], "0015_fresh")
+
+    def test_nothing_is_written_into_the_host(self):
+        host = self._host("0001_a", "0014_n")
+        before = sorted(p.name for p in (host / ".cos").iterdir())
+        units.create(host, "fresh", "", self.data, reserve_from=[host])
+        self.assertEqual(sorted(p.name for p in (host / ".cos").iterdir()), before)
+
+    def test_without_reserve_the_old_numbering_is_unchanged(self):
+        host = self._host("0014_n")
+        self.assertEqual(units.create(host, "fresh", "", self.data)["unit"], "0001_fresh")
+
+    def test_the_number_is_whatever_cos_mjs_prints(self):
+        """R11. If Python worked the number out itself, this would not be `0042`."""
+        from unittest import mock
+
+        fake = Path(self.data) / "fake-cos.mjs"
+        seen = Path(self.data) / "argv.json"
+        fake.write_text(
+            "import { writeFileSync } from 'node:fs'\n"
+            f"writeFileSync({str(seen)!r}, JSON.stringify(process.argv.slice(2)))\n"
+            "console.log('.cos/0042_fixed')\n",
+            encoding="utf-8",
+        )
+        host = self._host("0014_n")
+        with mock.patch("coscc.harness.script", return_value=fake):
+            made = units.create(host, "anything", "", self.data, reserve_from=[host])
+        self.assertEqual(made["unit"], "0042_fixed")
+
+        import json
+
+        argv = json.loads(seen.read_text(encoding="utf-8"))
+        at = argv.index("--reserve-from")
+        self.assertEqual(argv[at + 1], str(host.resolve()))
+        # Before the command, so an older script refuses instead of ignoring it (plan Risk 3).
+        self.assertLess(at, argv.index("new-path"))
+
+
+class TheHostUnitCount(Fixture):
+    def test_it_counts_directories_named_like_units(self):
+        host = Path(self.data) / "host"
+        for n in ("0001_a", "0002_b", "0003_Not_A_Valid_Slug"):
+            (host / ".cos" / n).mkdir(parents=True)
+        (host / ".cos" / "RENAMES.md").write_text("x", encoding="utf-8")
+        (host / ".cos" / "notes").mkdir()
+        self.assertEqual(units.host_unit_count(host), 3)
+
+    def test_no_cos_directory_is_zero(self):
+        self.assertEqual(units.host_unit_count(self.data), 0)
+        self.assertEqual(units.host_unit_count("/nonexistent-host-for-a-test"), 0)
+
+    def test_it_is_counted_again_on_every_call(self):
+        host = Path(self.data) / "host"
+        (host / ".cos" / "0001_a").mkdir(parents=True)
+        self.assertEqual(units.host_unit_count(host), 1)
+        (host / ".cos" / "0002_b").mkdir()
+        self.assertEqual(units.host_unit_count(host), 2)
+
+
 class TheBriefBecomesTheIdea(Fixture):
     """`plan.md` `## OQ1, settled before planning`."""
 

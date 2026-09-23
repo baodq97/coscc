@@ -433,7 +433,17 @@ class Service:
         try:
             return {
                 "cwd": cwd,
-                **units.create(cwd, slug, brief, self.config.data_dir),
+                # The host repository's own `.cos/` counts toward the number, so a unit
+                # started here cannot take a number already used there
+                # (`0001_product-describes-a-state-it-is-not-in` R10). Counting is
+                # `cos.mjs`'s; this only names the directory (R11).
+                **units.create(
+                    cwd,
+                    slug,
+                    brief,
+                    self.config.data_dir,
+                    reserve_from=[Path(cwd).expanduser().resolve()],
+                ),
             }
         except (CannotCreate, BadUnit) as e:
             raise Invalid(str(e)) from e

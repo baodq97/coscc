@@ -30,7 +30,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from coscc import harness
 from coscc.data import Data
@@ -180,8 +180,16 @@ def create(
     slug: str,
     brief: str = "",
     data_dir: str | os.PathLike[str] | None = None,
+    reserve_from: Sequence[str | os.PathLike[str]] = (),
 ) -> dict[str, Any]:
     """Start a work unit: allocate the number, make the directory, record the brief.
+
+    `reserve_from` names directories whose `.cos/` numbers count as taken — the host
+    repository, from `coscc/service.py`. They reach `cos.mjs` as `--reserve-from`, which
+    reads them; this module neither lists them nor compares a number. The flags go
+    **before** `new-path` on purpose: an older `cos.mjs` would read a trailing flag as
+    nothing and hand out a duplicate number silently, whereas a leading one is taken for the
+    command, refused with exit 2, and arrives on the page as `CannotCreate`.
 
     `brief` is the originator's own words and is written as `idea.md`. That is not a new
     mechanism: `idea` is the loop's optional first stage, and `coscc/runner.py:112-121`
@@ -192,7 +200,8 @@ def create(
     store = root(workspace, data_dir)
     (store / COS_DIR).mkdir(parents=True, exist_ok=True)
 
-    printed = _cos(store, "new-path", str(slug or "").strip())
+    reserve = [a for d in reserve_from for a in ("--reserve-from", str(Path(d).expanduser().resolve()))]
+    printed = _cos(store, *reserve, "new-path", str(slug or "").strip())
     relative = printed.splitlines()[-1].strip() if printed else ""
     if not relative:
         raise CannotCreate("cos.mjs new-path printed nothing")
@@ -213,6 +222,26 @@ def create(
     if text:
         (directory / "idea.md").write_text(_idea(unit, text), encoding="utf-8")
     return {"unit": unit, "path": str(directory), "brief": bool(text)}
+
+
+def host_unit_count(workspace: str | os.PathLike[str]) -> int:
+    """How many directories in the host repository's own `.cos/` are named like units.
+
+    Read-only, and names only: no file is opened, so a malformed unit over there still
+    counts. It exists so the empty board can say *why* it is empty when the repository
+    plainly is not (`0001_product-describes-a-state-it-is-not-in` R6). Counted on every
+    call and never cached — that is R8, and the cost on a large `.cos/` is unmeasured.
+    """
+    directory = Path(key(workspace)) / COS_DIR
+    try:
+        return sum(1 for e in directory.iterdir() if e.is_dir() and _HOST_UNIT_RE.match(e.name))
+    except OSError:
+        return 0
+
+
+# `^\d{4}_`, the spec's wording (R6). Looser than `UNIT_RE` on purpose: a directory whose
+# slug the grammar would refuse is still a unit that somebody made there.
+_HOST_UNIT_RE = re.compile(r"\d{4}_")
 
 
 def _idea(unit: str, brief: str) -> str:
