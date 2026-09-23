@@ -18,7 +18,7 @@ from unittest import mock
 
 from coscc import gitops, harness, units, worktrees
 from coscc.config import Config
-from coscc.service import Invalid, Service
+from coscc.service import Invalid, Service, step_cwd
 from coscc.sessions import Live, Sessions
 
 REPO = str(Path(__file__).resolve().parent.parent)
@@ -1125,3 +1125,15 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self._post(FakeGh(), 1)
         tl = self.service.timeline(str(self.repo), self.unit)
         self.assertEqual(tl.get("runs") or [], [])
+
+
+class ShipRunsOutsideTheWorktree(unittest.TestCase):
+    """`0017` review F3: inside a worktree, `gh pr merge --delete-branch` merged and then
+    exited 1 on `'main' is already used by worktree`. Only `ship`'s session moves."""
+
+    def test_ship_runs_in_the_units_directory(self):
+        self.assertEqual(step_cwd("ship", "/w/tree", Path("/store/0017_x")), "/store/0017_x")
+
+    def test_every_other_stage_keeps_the_worktree(self):
+        for stage in ("idea", "intent", "spec", "plan", "impl", "pr", "review"):
+            self.assertEqual(step_cwd(stage, "/w/tree", Path("/store/0017_x")), "/w/tree")

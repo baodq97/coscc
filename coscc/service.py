@@ -90,6 +90,28 @@ def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, 
             )
 
 
+def step_cwd(stage: str, work: str, directory: Path) -> str:
+    """Where a step's session runs. The unit's worktree, except for `ship`.
+
+    `ship` runs `gh pr merge --squash --delete-branch`, and inside a worktree that command
+    fails after it has already merged. Measured 2026-09-23 on `baodq97/coscc-proof` with gh
+    2.93.0, `main` checked out at the root and the branch in a worktree: the pull request
+    went to `MERGED`, then gh tried to switch the worktree to `main`, git answered
+    `fatal: 'main' is already used by worktree`, and gh exited 1 -- with the remote branch
+    and the local branch both left behind. A step reading that exit code reports a failed
+    merge for a pull request that merged.
+
+    The same command with the pull request's URL, run from a directory that is not a git
+    checkout, exited 0, merged, and deleted the remote branch. The unit's directory in the
+    store is such a directory -- the store has no git (`coscc/units.py`) -- and `ship` writes
+    `ship.md` there anyway. The worktree and the local branch are then removed by
+    `worktrees.remove_if_finished`, which already waits for GitHub to say `MERGED`.
+
+    The gates still read `work`: only the session moves.
+    """
+    return str(directory) if stage == "ship" else work
+
+
 @dataclass
 class Service:
     config: Config
@@ -562,7 +584,7 @@ class Service:
                 stages=list(data["stages"]),
                 mode=mode,
                 gate_said=said,
-                cwd=work,
+                cwd=step_cwd(stage, work, directory),
             ):
                 if item[0] == "done":
                     self._record_transition(cwd, unit, row["file"], directory, item[1])

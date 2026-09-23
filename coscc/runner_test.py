@@ -848,3 +848,25 @@ class AStepWorksInItsUnitsWorktree(unittest.TestCase):
             self.assertEqual((probe.cwd, probe.workspace), (wt, ws))
             self.assertEqual(probe.answers["inside"], "PermissionResultAllow")
             self.assertEqual(probe.answers["workspace"], "PermissionResultDeny")
+
+
+class ShipIsNotToldItIsInARepository(unittest.TestCase):
+    """`0017` review F3. `ship` runs in the unit's directory, which is not a checkout, so
+    its prompt must not call that directory a repository, and must send it to the URL."""
+
+    def prompt(self, d, stage, artifact):
+        make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+        directory = Path(d) / ".cos" / UNIT
+        return build_prompt(directory, directory, UNIT, stage, STAGES, artifact, writes_own=True)
+
+    def test_ship_is_sent_to_the_pull_requests_url(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = self.prompt(d, "ship", "ship.md")
+            self.assertIn("URL in `pr.md`'s `PR:` field", prompt)
+            self.assertNotIn("in the repository at", prompt)
+
+    def test_impl_still_names_its_repository(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = self.prompt(d, "impl", "impl.md")
+            self.assertIn("in the repository at", prompt)
+            self.assertNotIn("URL in `pr.md`'s `PR:` field", prompt)

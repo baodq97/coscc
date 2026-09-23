@@ -192,7 +192,22 @@ def build_prompt(
             )
 
     location = directory / artifact
-    if writes_own:
+    if writes_own and stage == "ship":
+        # `ship` runs outside every checkout (`service.step_cwd`): inside the unit's
+        # worktree, `gh pr merge --delete-branch` merges and then exits 1. Calling this
+        # directory "the repository" would send the session looking for one.
+        parts.append(
+            f"# Your task\n\n"
+            f"Merge this unit's pull request, then write `{location}` recording what went "
+            "out.\n\n"
+            "You are deliberately not inside a git checkout. Name the pull request by the "
+            "URL in `pr.md`'s `PR:` field in every `gh` command; a bare number cannot be "
+            "resolved from here.\n\n"
+            "That file must carry the `Status:` line the rules above describe. Prose in "
+            "Vietnamese; filenames and headings in English. Write it yourself with your "
+            "tools — do not paste it into your reply."
+        )
+    elif writes_own:
         # A stage with tools does the work and then records it. Asking it to *reply* with
         # the file as well would mean the file and the reply could disagree.
         parts.append(
