@@ -153,11 +153,13 @@ async def ensure(
     that opened the tree onto an existing branch (`_base_against_origin`). `switched` is
     true when the workspace was moved back to `main` to make this possible — the one thing
     here that touches the workspace's own tree, done only when that tree is clean (`0017`
-    spec, câu 2), and returned so the page can say it happened.
+    spec, câu 2) and only once the fetch this call needed has already succeeded (`0030`
+    review round 2, F5) — so a refusal that follows never has to explain a workspace that
+    already moved.
 
-    Raises `GitError` with a reason a person can act on when the workspace is dirty and
-    standing on the branch this unit needs, or when opening onto an existing branch needed
-    a fetch that failed (`_fetch_or_refuse`).
+    Raises `GitError` with a reason a person can act on when opening onto an existing
+    branch needed a fetch that failed (`_fetch_or_refuse`), or when the workspace is dirty
+    and standing on the branch this unit needs.
     """
     root = Path(units.key(workspace))
     where = path(workspace, unit, data_dir)
@@ -166,24 +168,14 @@ async def ensure(
     if found is not None and (found["branch"] or not wanted):
         return {"path": str(where), "branch": found["branch"], "created": False, "switched": False}
 
-    # The unit's branch exists and is not yet in its tree — cut at a terminal, the way
-    # `.claude/CLAUDE.md` step 4 still does it, usually in the workspace itself. Git will
-    # not check one branch out twice, so the workspace has to give it up first.
-    switched = False
-    if wanted and await gitops.current_branch(root) == branch:
-        if not await gitops.is_clean(root):
-            raise GitError(
-                f"{root} is on {branch}, this unit's branch, and has uncommitted changes, "
-                "so its worktree cannot be opened. Commit or stash them there, then "
-                f"`git switch {gitops.TRUNK}`."
-            )
-        await gitops.switch_trunk(root)
-        switched = True
-
     if found is not None:
-        # A detached tree made when the unit was created, before it had a branch.
+        # A detached tree made when the unit was created, before it had a branch. Fetch
+        # inside the tree first — it is a separate directory from the workspace, so this
+        # never touches the workspace — and only once it has either succeeded or found
+        # nothing to move does `_step_aside` touch the workspace (F5).
         tree = Path(found["path"])
         await _fetch_or_refuse(tree, branch)
+        switched = await _step_aside(root, branch)
         await gitops.switch_existing(tree, branch)
         branch_sha = await gitops.rev_parse(tree, "HEAD")
         base = await _base_against_origin(tree, branch, branch_sha)
@@ -197,8 +189,10 @@ async def ensure(
         # No tree at all yet, but the branch already exists — same situation as the block
         # above except that this unit never had a (detached) tree to fetch inside, so the
         # fetch runs in the workspace instead. `_fetch_or_refuse` is the same call either
-        # way, which is the point (F2).
+        # way, which is the point (F2); it still runs before `_step_aside` touches the
+        # workspace, for the same reason (F5).
         await _fetch_or_refuse(root, branch)
+        switched = await _step_aside(root, branch)
         await gitops.worktree_add(root, where, branch)
         branch_sha = await gitops.rev_parse(root, f"refs/heads/{branch}")
         base = await _base_against_origin(root, branch, branch_sha)
@@ -210,7 +204,30 @@ async def ensure(
     sha = await gitops.rev_parse(root, f"refs/heads/{gitops.TRUNK}")
     await gitops.worktree_add(root, where, sha)
     found = await find(workspace, unit, data_dir) or {"branch": ""}
-    return {"path": str(where), "branch": found["branch"], "created": True, "switched": switched}
+    return {"path": str(where), "branch": found["branch"], "created": True, "switched": False}
+
+
+async def _step_aside(root: Path, branch: str) -> bool:
+    """Move the workspace to `main` when it is standing on `branch`, freeing `branch` for
+    a unit's worktree. `False` when the workspace was standing on something else already.
+
+    `0030` review round 2, F5: `ensure` calls this only after the fetch it needed has
+    already succeeded. Before this fix, `switch_trunk` ran first, so a fetch that then
+    failed left the workspace on `main` anyway while `_fetch_or_refuse` still raised
+    "Nothing in the repository changed" — true of the rest of the repository, but no
+    longer of the workspace's checked-out branch. Calling this last keeps that sentence
+    true: everything that can still refuse has refused before the one mutation here runs.
+    """
+    if await gitops.current_branch(root) != branch:
+        return False
+    if not await gitops.is_clean(root):
+        raise GitError(
+            f"{root} is on {branch}, this unit's branch, and has uncommitted changes, "
+            "so its worktree cannot be opened. Commit or stash them there, then "
+            f"`git switch {gitops.TRUNK}`."
+        )
+    await gitops.switch_trunk(root)
+    return True
 
 
 async def refresh_base(

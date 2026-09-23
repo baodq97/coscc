@@ -138,6 +138,34 @@ class Ensuring(Repo):
         self.assertEqual(git(self.repo, "branch", "--show-current"), "fix/a")
         self.assertEqual((self.repo / "f.txt").read_text(), "mine\n")
 
+    def test_a_broken_origin_leaves_the_root_on_the_units_branch(self):
+        """`0030` review round 2, F5: the workspace must not move to `main` before the
+        fetch that can still refuse this call has run — this is the "no tree yet" path
+        (`ensure`'s line naming `_fetch_or_refuse(root, branch)`), where the fetch itself
+        runs in the workspace. Before the fix, `switch_trunk` ran first, so the workspace
+        ended up on `main` anyway even though `_fetch_or_refuse` then raised saying
+        "Nothing in the repository changed"."""
+        git(self.repo, "switch", "-q", "-c", "fix/a")
+        git(self.repo, "remote", "set-url", "origin", str(Path(self._tmp.name) / "gone.git"))
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
+        self.assertIn("was not opened", str(caught.exception))
+        self.assertEqual(git(self.repo, "branch", "--show-current"), "fix/a")
+
+    def test_a_broken_origin_in_the_tree_also_leaves_the_root_on_the_units_branch(self):
+        """`0030` review round 2, F5, the other of the two paths it names: a unit that
+        already has a detached tree fetches inside that tree, not the workspace, but the
+        workspace must still not have moved to `main` when that fetch fails."""
+        asyncio.run(worktrees.ensure(self.repo, "0001_a", None, self.data))
+        tree = worktrees.path(self.repo, "0001_a", self.data)
+        git(tree, "remote", "set-url", "origin", str(Path(self._tmp.name) / "gone.git"))
+        git(self.repo, "switch", "-q", "-c", "fix/a")  # `.claude/CLAUDE.md` step 4, by hand
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
+        self.assertIn("was not opened", str(caught.exception))
+        self.assertEqual(git(self.repo, "branch", "--show-current"), "fix/a")
+        self.assertEqual(git(tree, "branch", "--show-current"), "")
+
 
 class RefreshingTheBase(Repo):
     """`0030_a-unit-branch-starts-from-a-stale-main` plan step 2: `refresh_base`."""
