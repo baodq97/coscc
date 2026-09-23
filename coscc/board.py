@@ -134,6 +134,11 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             "next": (u.get("next") or {}).get("action", ""),
             "blocked": bool((u.get("next") or {}).get("blocked")),
             "problems": u.get("problems") or [],
+            # `pre-intent` or `started`, decided by `cos.mjs` `readUnit`. Copied through for
+            # the same reason as `next`: the lane reads it rather than guessing it from
+            # whether `problems` is empty. An older `cos.mjs` sends nothing, which reads as
+            # the empty string, and no lane treats that specially.
+            "phase": u.get("phase") or "",
         }
         for u in data.get("units") or []
     ]

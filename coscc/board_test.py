@@ -64,6 +64,22 @@ class TheRepositoryReadsAsABoard(unittest.TestCase):
         self.assertTrue(first["optional"])
 
 
+class ThePhaseIsCarriedFromTheScript(unittest.TestCase):
+    def test_an_idea_only_unit_arrives_as_pre_intent_with_no_problems(self):
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_fresh"
+            unit.mkdir(parents=True)
+            (unit / "idea.md").write_text("# Idea: fresh\nAuthor: x. Status: accepted.\n")
+            data = run(board.read(d))
+            [u] = data["units"]
+            self.assertEqual(u["phase"], "pre-intent")
+            self.assertEqual(u["problems"], [])
+
+    def test_every_unit_in_this_repository_has_started(self):
+        data = run(board.read(REPO))
+        self.assertEqual({u["phase"] for u in data["units"]}, {"started"})
+
+
 class AnEmptyWorkspaceIsAnAnswerNotAFailure(unittest.TestCase):
     def test_a_directory_with_no_cos_reports_why_rather_than_raising(self):
         with tempfile.TemporaryDirectory() as d:

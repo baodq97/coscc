@@ -69,6 +69,45 @@ class EveryVarAHandlerSetsIsDeclared(unittest.TestCase):
         )
 
 
+class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
+    """`0001_product-describes-a-state-it-is-not-in` R4/R5, from this store.
+
+    The dict is the shape `coscc/board.py` hands over for a unit started from the page:
+    one accepted `idea.md`, nothing else, `next` pointing at the intent.
+    """
+
+    def _fresh(self, phase: str) -> dict:
+        stages = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
+        return {
+            "name": "0015_fresh",
+            "next": "write-intent — the unit has no intent.md",
+            "blocked": True,
+            "problems": [],
+            "phase": phase,
+            "stages": [
+                {"stage": s, "status": "accepted" if s == "idea" else "not started"} for s in stages
+            ],
+        }
+
+    def test_a_pre_intent_unit_sits_in_the_first_lane(self):
+        from coscc.state import _lane
+
+        self.assertEqual(_lane(self._fresh("pre-intent")), "Planned")
+
+    def test_without_the_phase_the_same_unit_would_have_been_in_progress(self):
+        # The reason `phase` is read before every other rule: the idea is accepted, so the
+        # artifact rules alone would move a ten-second-old unit out of *Planned*.
+        from coscc.state import _lane
+
+        self.assertEqual(_lane(self._fresh("started")), "In progress")
+
+    def test_a_unit_with_problems_still_needs_review(self):
+        from coscc.state import _lane
+
+        unit = self._fresh("started") | {"problems": ["no intent.md — every unit opens with one"]}
+        self.assertEqual(_lane(unit), "Needs review")
+
+
 def _self_names(target: ast.expr) -> list[str]:
     """Every `self.X` being assigned by one target, tuple unpacking included."""
     if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):

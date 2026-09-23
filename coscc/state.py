@@ -253,6 +253,12 @@ def _lane(unit: dict) -> str:
     """
     action = str(unit.get("next") or "")
     rows = unit.get("stages") or []
+    # First, before every other rule. A unit started from this page holds only an
+    # `idea.md`, and that idea carries `Status: accepted` (`coscc/units.py` writes it so),
+    # so the *In progress* rule below would otherwise claim it the moment its `problems`
+    # went empty. `cos.mjs` decides what pre-intent means; this only places it.
+    if unit.get("phase") == "pre-intent":
+        return "Planned"
     if action == "finished" or action.startswith("closed"):
         return "Complete"
     if unit.get("problems") or any(r.get("status") == "draft" for r in rows):
