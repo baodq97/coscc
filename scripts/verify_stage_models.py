@@ -14,8 +14,14 @@ removed from the environment, a fake session layer and a fake `gh` first on `PAT
 page's own handlers are driven through Reflex's event processor, as `verify_0024.py` does,
 with no browser — so the compiled page is not exercised.
 
-With `--paid`: two real one-turn sessions through `Sessions.stream`, one per shipped model
-id. **Spends real money**; what it costs has not been measured.
+With `--paid`: one `claude -p --output-format json` call per distinct id `models.json`
+ships (currently two, one per model family), asking each for `modelUsage.contextWindow`.
+`0031_shipped-model-defaults-cap-every-stage-at-200k`: this is the outcome that intent
+defines — every stage's shipped default must report 1000000, not 200000. **Spends real
+money**; the one call measured so far — `claude-sonnet-5[1m]`, a one-word reply, run
+outside this script on 2026-09-23 — cost `total_cost_usd` 0.0108. One point is not enough
+to say what a full run of this flag costs, and review round 1 (F2) asked for the point to
+be named rather than left as "not measured".
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ from scripts.proof_harness import EXIT_BROKEN, EXIT_ENV, EXIT_PASS, say  # noqa:
 
 REPO = Path(__file__).resolve().parent.parent
 SLUG = "a-stage-the-proof-invented"
-OPUS, SONNET = "claude-opus-5-5", "claude-sonnet-5"
+OPUS, SONNET = "claude-opus-5-5[1m]", "claude-sonnet-5[1m]"
 OPUS_STAGES = ("idea", "intent", "spec", "plan", "review")
 SONNET_STAGES = ("impl", "pr", "ship")
 
@@ -208,14 +214,16 @@ async def free(root: Path, workspace: Path) -> bool:
               "a GET /api/settings/models lists the 8 stages cos.mjs names, in its order, then chat",
               f"status={first['status']}, rows={got}, script={names}")
 
-    # --- b (R2, R3) ---------------------------------------------------------------
+    # --- b (R2, R3, R4) ---------------------------------------------------------------
     rows = by_name(first)
     agents = {row["agents"] for row in first.get("rows") or []}
     want = {**{s: (OPUS, "default") for s in OPUS_STAGES},
             **{s: (SONNET, "default") for s in SONNET_STAGES}}
+    all_1m = all(rows.get(s, ("", ""))[0].endswith("[1m]") for s in names)
     ok &= say(agents == {1} and all(rows.get(s) == w for s, w in want.items())
-              and rows.get("chat", ("", ""))[1] in ("none", "COS_MODEL"),
-              "b every row has 1 agent; the shipped defaults are as answered; chat has none of its own",
+              and rows.get("chat", ("", ""))[1] in ("none", "COS_MODEL") and all_1m,
+              "b every row has 1 agent; the shipped defaults are as answered; chat has none "
+              "of its own; all 8 stages default to a [1m] id",
               f"agents={agents}, rows={rows}")
 
     # --- c (R4) -------------------------------------------------------------------
@@ -257,7 +265,7 @@ async def free(root: Path, workspace: Path) -> bool:
         drained &= await page.fire("save_model", name="impl")
         seen = await page.read()
         ok &= say(drained and seen["rows"].get("impl") == (SONNET, "override") and not seen["error"],
-                  "f Settings saved impl as claude-sonnet-5 through the page's handlers",
+                  f"f Settings saved impl as {SONNET} through the page's handlers",
                   f"rows={seen['rows']}, notice={seen['notice']!r}, error={seen['error']!r}")
         drained = await page.fire("open_unit", unit=unit)
         seen = await page.read()
@@ -269,7 +277,7 @@ async def free(root: Path, workspace: Path) -> bool:
     ok &= say(drained and offered == "impl" and session.models == [SONNET]
               and bool(start) and start[-1].get("model") == SONNET
               and start[-1].get("model_source") == "override",
-              "f the impl step pressed on the board ran on claude-sonnet-5, and its start record says so",
+              f"f the impl step pressed on the board ran on {SONNET}, and its start record says so",
               f"offered={offered!r}, asked={session.models}, start={start[-1:]}, "
               f"notice={seen['notice']!r}, error={seen['error']!r}")
     now = by_name(await table())
@@ -303,6 +311,22 @@ async def free(root: Path, workspace: Path) -> bool:
               "j each successful POST left exactly one setting record with old and new",
               f"records={records}")
 
+    # --- k (R2): an override set before the [1m] defaults shipped still wins, at its
+    # old id. This does not go through POST, so it leaves no `setting` record — j still
+    # counts 5.
+    data = Data(config.data_dir)
+    with data.write() as conn:
+        conn.execute("INSERT INTO prefs (key, value) VALUES ('model:pr', '\"claude-sonnet-5\"')")
+    old_override = await table()
+    by_k = by_name(old_override)
+    rest_unchanged = all(by_k.get(s) == rows.get(s) for s in names if s != "pr")
+    ok &= say(old_override["status"] == 200
+              and by_k.get("pr") == ("claude-sonnet-5", "override") and rest_unchanged,
+              "k an override saved before the [1m] defaults shipped still wins, at the old id",
+              f"pr={by_k.get('pr')}, rest_unchanged={rest_unchanged}, rows={by_k}")
+    with data.write() as conn:
+        conn.execute("DELETE FROM prefs WHERE key = 'model:pr'")
+
     # --- h (R11) ---------------------------------------------------------------------
     data = Data(config.data_dir)
     with data.write() as conn:
@@ -322,35 +346,100 @@ async def free(root: Path, workspace: Path) -> bool:
 
 
 async def paid() -> int:
-    """Two real sessions, one per shipped model id. The model the SDK billed is the one
-    the session reports, which is the record outcome 4 names."""
-    from coscc.config import from_env
-    from coscc.sessions import Sessions
+    """One `claude -p --output-format json` call per distinct id `coscc/models.json`
+    ships (currently two: `OPUS` and `SONNET`, both `[1m]`), reading what it reports for
+    `modelUsage[...].contextWindow` — the measurement
+    `0031_shipped-model-defaults-cap-every-stage-at-200k`'s outcome is defined by: every
+    stage's shipped default must resolve to a model reporting 1000000, not 200000.
 
-    config = from_env({**os.environ, "COS_WORKSPACES": str(REPO)})
-    sessions = Sessions(config)
+    This calls the `claude` on `PATH` directly, not through `Sessions.stream` (R5: a key
+    the SDK strips the `[1m]` suffix from would fail a `model in used` check that has
+    nothing to do with the outcome, and `Sessions.stream` never surfaces `contextWindow`
+    in the first place — `coscc/sessions.py` keeps only the keys of `model_usage`). It
+    therefore measures the CLI on `PATH`, which may not be the SDK build the app loads —
+    a deliberate trade-off (plan Risk 6)."""
+    from coscc import models
+
+    if shutil.which("claude") is None:
+        print("no claude on PATH — this proof cannot answer without it")
+        return EXIT_ENV
+
+    defaults, problems = models.load_defaults()
+    names = script_status_names()
+    if problems or set(defaults) != set(names):
+        print(f"models.json did not resolve cleanly: problems={problems}, "
+              f"defaults={sorted(defaults)}, stages={sorted(names)}")
+        return EXIT_ENV
+
+    ids = sorted(set(defaults.values()))
     ok = True
-    try:
-        for model in (SONNET, OPUS):
-            done: dict = {}
-            try:
-                async for kind, payload in sessions.stream(
-                    str(REPO), "Reply with the single word: ok", model=model
-                ):
-                    if kind == "done":
-                        done = payload
-            except Exception as e:  # a login that does not work is the environment
-                print(f"{model}: the session could not run: {type(e).__name__}: {e}")
-                return EXIT_ENV
-            used = done.get("models_used") or []
-            ok &= say(model in used and bool(done.get("session_id")),
-                      f"paid a real session asked for {model} was billed to {model}",
-                      f"models_used={used}, reply={done.get('text', '')[:80]!r}, "
-                      f"cost={done.get('cost')}")
-            print(f"      {model}: session {done.get('session_id')}, models_used={used}, "
-                  f"cost_usd={(done.get('cost') or {}).get('cost_usd')}")
-    finally:
-        await sessions.close_all()
+    passed_ids: set[str] = set()
+    for model_id in ids:
+        try:
+            result = subprocess.run(
+                ["claude", "-p", "Reply with the single word: ok", "--model", model_id,
+                 "--output-format", "json"],
+                cwd=REPO, capture_output=True, text=True, timeout=300,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:  # a login or a network that
+            # does not work is the environment, not an outcome the proof measures
+            print(f"{model_id}: claude could not be run: {type(e).__name__}: {e}")
+            return EXIT_ENV
+        # A nonzero exit is read the same way as a zero one below: the CLI reporting
+        # `is_error` in its own JSON, on either exit code, is the outcome failing
+        # (Risk 1), not the environment refusing to run. Only stdout that carries no
+        # such message — on any exit code — is read as the environment (review round 1,
+        # F1: a nonzero exit used to short-circuit to EXIT_ENV before this JSON was ever
+        # read, so an account that cannot use a `[1m]` id by exiting nonzero would have
+        # been misreported as an environment problem instead of Risk 1).
+        try:
+            payload = json.loads(result.stdout)
+        except ValueError:
+            payload = None
+        # `claude_code_version` 2.1.280 (measured 2026-09-23) wraps `--output-format json`
+        # in a JSON array of messages rather than the single result object earlier
+        # versions documented; the one carrying `modelUsage` is `type: "result"`.
+        outcome = payload
+        if isinstance(payload, list):
+            outcome = next(
+                (item for item in reversed(payload)
+                 if isinstance(item, dict) and item.get("type") == "result"), None,
+            )
+        if not isinstance(outcome, dict):
+            if result.returncode != 0:
+                print(f"{model_id}: claude exited {result.returncode}, and stdout "
+                      f"carried no result message\n"
+                      f"stderr: {result.stderr[:500]}\nstdout: {result.stdout[:500]}")
+            else:
+                print(f"{model_id}: no result message in the CLI's JSON output\n"
+                      f"stdout: {result.stdout[:500]}")
+            return EXIT_ENV
+        if outcome.get("is_error"):
+            # The CLI itself reported an error for this model id — that is the outcome
+            # failing, not the environment (Risk 1).
+            print(f"{model_id}: the CLI reported an error for this model: "
+                  f"{outcome.get('result')}")
+            return EXIT_BROKEN
+        if result.returncode != 0:
+            # Exited nonzero, parsed to a result message, but that message did not say
+            # `is_error` — an exit/JSON combination nobody has measured. Not classified
+            # as either outcome; read as the environment so it does not silently pass.
+            print(f"{model_id}: claude exited {result.returncode} but its result "
+                  f"message did not report is_error: {outcome.get('result')!r}\n"
+                  f"stderr: {result.stderr[:500]}")
+            return EXIT_ENV
+        usage = outcome.get("modelUsage") or {}
+        bare = model_id.removesuffix("[1m]")
+        windows = {key: (stats or {}).get("contextWindow") for key, stats in usage.items()}
+        matched = any(k in (model_id, bare) and w == 1000000 for k, w in windows.items())
+        ok &= say(matched, f"paid {model_id} resolves to a model reporting contextWindow 1000000")
+        print(f"      {model_id}: modelUsage keys and contextWindow: {windows}")
+        if matched:
+            passed_ids.add(model_id)
+
+    n = sum(1 for stage in names if defaults.get(stage) in passed_ids)
+    ok &= n == len(names)
+    print(f"paid {n}/{len(names)} stages resolve to a model reporting contextWindow 1000000")
     return EXIT_PASS if ok else EXIT_BROKEN
 
 

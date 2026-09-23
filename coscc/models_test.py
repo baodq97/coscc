@@ -87,13 +87,23 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
         self.assertEqual(set(defaults), set(names))
 
     def test_the_answered_split(self):
-        # `intent.md ## Answers, câu 2`.
+        # `intent.md ## Answers, câu 2` (0004), giữ nguyên qua `0031` — chỉ đổi id sang
+        # bản `[1m]` (`0031 intent.md ## Answers, câu 2`).
         defaults, _ = models.load_defaults()
         for stage in ("idea", "intent", "spec", "plan", "review"):
-            self.assertEqual(defaults[stage], "claude-opus-5-5", stage)
+            self.assertEqual(defaults[stage], "claude-opus-5-5[1m]", stage)
         for stage in ("impl", "pr", "ship"):
-            self.assertEqual(defaults[stage], "claude-sonnet-5", stage)
+            self.assertEqual(defaults[stage], "claude-sonnet-5[1m]", stage)
         self.assertNotIn("chat", defaults)
+
+    def test_every_default_is_the_1m_variant(self):
+        # `0031 intent.md`: mọi stage phải báo `contextWindow` 1000000, không riêng gì
+        # bản nào — mọi id mặc định kết thúc bằng `[1m]`.
+        defaults, problems = models.load_defaults()
+        self.assertEqual(problems, [])
+        self.assertTrue(defaults, "load_defaults() trả về rỗng")
+        for stage, model in defaults.items():
+            self.assertTrue(model.endswith("[1m]"), (stage, model))
 
 
 if __name__ == "__main__":

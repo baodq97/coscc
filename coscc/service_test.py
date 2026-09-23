@@ -1096,7 +1096,7 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
 
     def test_the_shipped_default_reaches_the_session(self):
         self._run("spec")
-        self.assertEqual(self.probe.models, ["claude-opus-5-5"])
+        self.assertEqual(self.probe.models, ["claude-opus-5-5[1m]"])
         self.assertEqual(self._start()["model_source"], "default")
 
     def test_an_override_reaches_the_session_and_the_log_then_goes_away(self):

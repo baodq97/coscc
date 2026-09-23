@@ -108,10 +108,19 @@ the only supported update path — running it again *is* the upgrade.
 
 **Upgrading past the release that adds per-stage models changes which model runs.**
 `COS_MODEL` no longer decides the model of the eight stages: each now ships with a default
-(`claude-opus-5-5` for idea, intent, spec, plan and review; `claude-sonnet-5` for impl, pr
-and ship), and Settings → *Which model runs each stage* overrides any of them without a
-restart. `COS_MODEL` answers only chat and any stage with no default. If you had set it to
-pin every stage, set those stages on that screen instead.
+(`claude-opus-5-5[1m]` for idea, intent, spec, plan and review; `claude-sonnet-5[1m]` for
+impl, pr and ship), and Settings → *Which model runs each stage* overrides any of them
+without a restart. `COS_MODEL` answers only chat and any stage with no default. If you had
+set it to pin every stage, set those stages on that screen instead.
+
+**Since `0031_shipped-model-defaults-cap-every-stage-at-200k`, every shipped default is the
+`[1m]` variant** — a 1,000,000-token context window instead of 200,000. The non-`[1m]` ids
+this section named before that unit capped every stage at 200k with nobody having decided
+that on purpose: `impl` on `claude-sonnet-5` was measured auto-compacting twice around
+167k tokens (`.cos/0031_shipped-model-defaults-cap-every-stage-at-200k/idea.md`). An
+**override already saved in Settings does not move with this default**: anyone who had
+overridden a stage to an id with no `[1m]` suffix stays at 200k for that stage until they
+change or remove that override themselves.
 
 ## Options
 
