@@ -16,12 +16,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import harness, units
+from coscc import gitops, harness, units, worktrees
 from coscc.config import Config
 from coscc.service import Invalid, Service
 from coscc.sessions import Live, Sessions
 
 REPO = str(Path(__file__).resolve().parent.parent)
+
+
+def create_sync(service: Service, *args):
+    """`create_unit` is async since `0017`; these tests are not."""
+    return asyncio.run(service.create_unit(*args))
 
 
 def _service(**kw) -> Service:
@@ -460,13 +465,13 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         ).stdout
 
     def test_a_new_unit_appears_on_the_board_it_was_created_for(self):
-        made = self.service.create_unit(str(self.repo), "a-first-problem", "some words")
+        made = create_sync(self.service,str(self.repo), "a-first-problem", "some words")
         board = asyncio.run(self.service.board(str(self.repo)))
         self.assertEqual([u["name"] for u in board["units"]], [made["unit"]])
 
     def test_nothing_of_it_lands_in_the_repository(self):
         # `0013`'s decision, enforced. R2, and the whole reason the store exists.
-        self.service.create_unit(str(self.repo), "a-problem", "some words")
+        create_sync(self.service,str(self.repo), "a-problem", "some words")
         self.assertEqual(self._git("status", "--porcelain"), "")
         self.assertFalse((self.repo / ".cos").exists())
 
@@ -475,41 +480,67 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         for i in range(1, 15):
             (self.repo / ".cos" / f"{i:04d}_u{i}").mkdir(parents=True)
         before = sorted(p.name for p in (self.repo / ".cos").iterdir())
-        made = self.service.create_unit(str(self.repo), "fresh", "some words")
+        made = create_sync(self.service,str(self.repo), "fresh", "some words")
         self.assertEqual(made["unit"], "0015_fresh")
         self.assertEqual(sorted(p.name for p in (self.repo / ".cos").iterdir()), before)
 
     def test_a_bad_slug_comes_back_as_a_refusal_not_an_exception(self):
         with self.assertRaises(Invalid) as caught:
-            self.service.create_unit(str(self.repo), "Bad_Slug")
+            create_sync(self.service,str(self.repo), "Bad_Slug")
         self.assertIn("Bad_Slug", str(caught.exception))
 
     def test_the_gate_applies_to_creating_and_to_branching(self):
         with self.assertRaises(Invalid):
-            self.service.create_unit("/etc", "a-problem")
+            create_sync(self.service,"/etc", "a-problem")
         with self.assertRaises(Invalid):
             asyncio.run(self.service.start_branch("/etc", "0001_a-problem"))
 
     def test_the_branch_is_refused_until_the_intent_says_what_type_this_is(self):
-        made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        made = create_sync(self.service,str(self.repo), "a-problem", "some words")
         with self.assertRaises(Invalid) as caught:
             asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
         self.assertIn("intent.md", str(caught.exception))
 
     def test_the_branch_name_is_the_one_the_intents_type_implies(self):
-        made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        made = create_sync(self.service,str(self.repo), "a-problem", "some words")
         directory = Path(made["path"])
         (directory / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
         got = asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
         self.assertEqual(got["branch"], "fix/a-problem")
-        self.assertEqual(
-            asyncio.run(self.service.branch_here(str(self.repo)))["branch"], "fix/a-problem"
-        )
+        # `0017`: cut in the unit's worktree; the workspace stays on `main` (R2).
+        self.assertEqual(asyncio.run(self.service.branch_here(str(self.repo)))["branch"], "main")
+        tree = Path(got["worktree"])
+        self.assertEqual(asyncio.run(gitops.current_branch(tree)), "fix/a-problem")
+        self.assertTrue(got["prepare"]["ok"])
+
+    def test_two_units_each_get_their_own_tree_and_the_workspace_never_moves(self):
+        """`0017` R1, R2."""
+        a, b = self._typed_unit("a-problem"), self._typed_unit("b-problem")
+        got_a = asyncio.run(self.service.start_branch(str(self.repo), a))
+        got_b = asyncio.run(self.service.start_branch(str(self.repo), b))
+        self.assertNotEqual(got_a["worktree"], got_b["worktree"])
+        self.assertEqual(asyncio.run(gitops.current_branch(Path(got_a["worktree"]))), "fix/a-problem")
+        self.assertEqual(asyncio.run(gitops.current_branch(Path(got_b["worktree"]))), "fix/b-problem")
+        self.assertEqual(self._git("branch", "--show-current").strip(), "main")
+        board = asyncio.run(self.service.board(str(self.repo)))
+        trees = {u["name"]: u["worktree"] for u in board["units"]}
+        self.assertEqual(trees[a]["path"], got_a["worktree"])
+        self.assertEqual(trees[b]["branch"], "fix/b-problem")
+
+    def test_units_created_together_take_different_numbers(self):
+        """`0017` R8."""
+        async def both():
+            return await asyncio.gather(
+                self.service.create_unit(str(self.repo), "one-problem", "w"),
+                self.service.create_unit(str(self.repo), "two-problem", "w"),
+            )
+        made = asyncio.run(both())
+        self.assertEqual(len({m["unit"][:4] for m in made}), 2)
 
     def test_cutting_the_same_branch_twice_is_refused_rather_than_rejoined(self):
-        made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        made = create_sync(self.service,str(self.repo), "a-problem", "some words")
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
@@ -548,14 +579,14 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self.assertEqual(board["empty"]["host_units"], 15)
 
     def test_a_board_with_units_carries_no_empty_explanation(self):
-        self.service.create_unit(str(self.repo), "a-problem", "some words")
+        create_sync(self.service,str(self.repo), "a-problem", "some words")
         board = asyncio.run(self.service.board(str(self.repo)))
         self.assertNotIn("empty", board)
 
     # --- `0001_product-describes-a-state-it-is-not-in` R1, R2, R3 ----------------
 
     def _typed_unit(self, slug: str = "a-problem") -> str:
-        made = self.service.create_unit(str(self.repo), slug, "some words")
+        made = create_sync(self.service,str(self.repo), slug, "some words")
         (Path(made["path"]) / "intent.md").write_text(
             f"# Intent: {slug}\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
@@ -627,14 +658,19 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self.assertIn("README.md", self._git("status", "--porcelain"))
 
     def test_a_dirty_tree_that_touches_a_file_the_remote_changed_cuts_nothing(self):
-        """Plan Risk 5, second half: `switch -c` refuses, and creates no branch."""
+        """Plan Risk 5, second half: `switch -c` refuses, and creates no branch.
+
+        Since `0017` the tree that matters is the unit's own worktree; the workspace's
+        dirt is no longer in the way of anything.
+        """
         self._advance_remote("README.md", "changed elsewhere\n")
-        (self.repo / "README.md").write_text("edited here\n", encoding="utf-8")
         unit = self._typed_unit()
+        tree = worktrees.path(str(self.repo), unit, str(self.root / "data"))
+        (tree / "README.md").write_text("edited here\n", encoding="utf-8")
         with self.assertRaises(Invalid):
             asyncio.run(self.service.start_branch(str(self.repo), unit))
         self.assertEqual(self._git("branch", "--list", "fix/a-problem").strip(), "")
-        self.assertEqual((self.repo / "README.md").read_text(encoding="utf-8"), "edited here\n")
+        self.assertEqual((tree / "README.md").read_text(encoding="utf-8"), "edited here\n")
 
 
 class AStepRecordsTheTransitionItCaused(unittest.TestCase):
@@ -667,7 +703,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         )
         self.config = config
         self.service = Service(config, self.Replies())
-        self.made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        self.made = create_sync(self.service,str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
         )
@@ -762,7 +798,7 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
             ),
             self.sessions,
         )
-        self.made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        self.made = create_sync(self.service,str(self.repo), "a-problem", "some words")
         (Path(self.made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
         )
@@ -934,7 +970,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
             ),
             self.Reviews(),
         )
-        self.made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        self.made = create_sync(self.service,str(self.repo), "a-problem", "some words")
         self.dir = Path(self.made["path"])
         (self.dir / "pr.md").write_text(
             f"# PR: a problem\nAuthor: t. Status: accepted.\nPR: {PR_URL}\n", encoding="utf-8"

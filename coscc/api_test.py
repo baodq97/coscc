@@ -676,8 +676,14 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cut.json()["branch"], "feat/a-problem")
         self.assertEqual(cut.json()["base"], "origin/main")
         self.assertEqual(len(cut.json()["sha"]), 7)
+        # `0017`: the workspace stays on `main`; the branch is on the unit's worktree, and
+        # the board says so.
         seen = (await self.client.get("/api/branch", params={"cwd": self.cwd})).json()
-        self.assertEqual(seen["branch"], "feat/a-problem")
+        self.assertEqual(seen["branch"], "main")
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        tree = next(u["worktree"] for u in board["units"] if u["name"] == made["unit"])
+        self.assertEqual(tree["branch"], "feat/a-problem")
+        self.assertEqual(tree["path"], cut.json()["worktree"])
 
     async def test_something_that_is_not_json_is_refused_before_anything_is_made(self):
         got = await self.client.post("/api/units", content=b"not json")

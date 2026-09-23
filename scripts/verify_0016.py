@@ -95,7 +95,7 @@ async def run(root: Path) -> bool:
 
     if not hasattr(service, "answer"):
         print("note: Service.answer does not exist in this tree")
-    made = service.create_unit(cwd, "a-question-the-proof-invented", "verify_0016 fixture")
+    made = await service.create_unit(cwd, "a-question-the-proof-invented", "verify_0016 fixture")
     unit, directory = made["unit"], Path(made["path"])
     intent = directory / "intent.md"
     # Fixture data for the proof, written before anything is measured. Not a hand edit of
@@ -138,7 +138,7 @@ async def run(root: Path) -> bool:
             got = await client.post("/api/units/answer", json=body | over)
             codes[name] = got.status_code
         # (f) needs a closed unit: a second unit, rejected, with the same questions.
-        closed = service.create_unit(cwd, "a-closed-unit-the-proof-invented", "verify_0016")
+        closed = await service.create_unit(cwd, "a-closed-unit-the-proof-invented", "verify_0016")
         closed_intent = Path(closed["path"]) / "intent.md"
         closed_intent.write_text(FIXTURE.replace("Status: accepted", "Status: rejected"), encoding="utf-8")
         closed_before = sha(closed_intent)

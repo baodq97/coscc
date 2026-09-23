@@ -254,8 +254,8 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
         return (done["pressed"] and done["drained"] and not done["running"]
                 and done["notice"].startswith(f"{stage} {outcome}"))
 
-    def make(slug: str, files: dict[str, str]) -> tuple[str, Path]:
-        made = SERVICE.create_unit(cwd, slug, "verify_0024 fixture")
+    async def make(slug: str, files: dict[str, str]) -> tuple[str, Path]:
+        made = await SERVICE.create_unit(cwd, slug, "verify_0024 fixture")
         directory = Path(made["path"])
         write_unit(directory, files)
         return made["unit"], directory
@@ -269,7 +269,7 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
     # --- the loop, on one unit -------------------------------------------------
     sha1 = git(workspace, "rev-parse", "HEAD")
     r1 = rnd(1, sha1, "changes-requested", ["- F1 [open] [high] the thing the proof invented"])
-    unit, directory = make(SLUG, {**chain, "review.md": header("changes-requested") + r1})
+    unit, directory = await make(SLUG, {**chain, "review.md": header("changes-requested") + r1})
     review = directory / "review.md"
     ci.write_text("pass")
 
@@ -391,22 +391,22 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
     ok &= await check("i", unit, "review", how="ask")
 
     # --- the other rows, each its own unit -------------------------------------
-    first, _ = make("a-fresh-one", {"intent.md": accepted("Intent", " Type: fix.")})
+    first, _ = await make("a-fresh-one", {"intent.md": accepted("Intent", " Type: fix.")})
     ok &= await check("a", first, "spec")
 
-    e_unit, _ = make("pr-open-ci-red", chain)
+    e_unit, _ = await make("pr-open-ci-red", chain)
     ci.write_text("fail")
     ok &= await check("e (red)", e_unit, "impl")
     ci.write_text("pass")
     ok &= await check("e (green)", e_unit, "review")
 
-    h_unit, _ = make("closed-long-ago", {
+    h_unit, _ = await make("closed-long-ago", {
         **chain, "plan.md": accepted("Plan").replace("accepted", "done"),
         "review.md": header("changes-requested") + r1,
     })
     ok &= await check("h", h_unit, "")
 
-    f_unit, _ = make("out-of-rounds", {**chain, "review.md": header("changes-requested") + r1})
+    f_unit, _ = await make("out-of-rounds", {**chain, "review.md": header("changes-requested") + r1})
     os.environ["COS_REVIEW_ROUNDS"] = "1"
     try:
         ok &= await check("f", f_unit, "")

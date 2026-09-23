@@ -1166,7 +1166,7 @@ class StudioState(rx.State):
             return
         self.starting = True
         try:
-            made = SERVICE.create_unit(self.cwd, slug, self.new_brief)
+            made = await SERVICE.create_unit(self.cwd, slug, self.new_brief)
         except Invalid as e:
             self.notice = str(e)
             return
