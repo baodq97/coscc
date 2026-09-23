@@ -14,6 +14,7 @@ on disk, not attaching to something still running.
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,35 @@ from typing import Any
 import claude_agent_sdk as sdk
 from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, TextBlock
 
+from coscc import frontend
 from coscc.config import Config
+
+
+# The app's own environment must not reach a session. `coscc/run.py` sets
+# `REFLEX_WEB_WORKDIR` process-wide so that Reflex composes its static mount against the
+# right root -- and a session that inherits it and runs a build compiles **into the
+# installed package**. That is how the served bundle lost its `index.html` on 2026-09-23,
+# mid-step, on the machine the step was running for: `impl` is granted `uv`, and
+# `uv run coscc-build` needs no path argument to escape a workspace. The escape was in the
+# environment it was handed.
+#
+# Filtered down rather than built up, which is the opposite of `harness.child_env` and is
+# a deliberate difference. `cos.mjs` needs four variables and they can all be named. The
+# Claude CLI finds its credentials and configuration in ways this module cannot enumerate,
+# so a built-up list would break sign-in silently, and a session that cannot sign in looks
+# exactly like a session that had nothing to say. What *can* be named is the set this app
+# puts into its own environment -- and that is exactly the set that leaks.
+LEAKED_VARS = (frontend.WEB_WORKDIR_VAR,)
+LEAKED_PREFIXES = ("COS_",)
+
+
+def child_env() -> dict[str, str]:
+    """The environment a session runs in: this process's, minus what this app put there."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key not in LEAKED_VARS and not key.startswith(LEAKED_PREFIXES)
+    }
 
 
 class Refused(Exception):
@@ -176,6 +205,8 @@ def _options(
     """
     options = ClaudeAgentOptions(
         cwd=cwd,
+        # Not this process's environment. See `child_env` above and what it cost to learn.
+        env=child_env(),
         # A board step brings its own list from `policy.Grant`; everything else gets the
         # app default, which is empty. `tools=[]` and `tools=None` mean different things to
         # the SDK, so the distinction is `is None`, not truthiness.

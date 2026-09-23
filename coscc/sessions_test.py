@@ -5,6 +5,7 @@ suite stays free to run in a loop; what needs a real session is the proof comman
 is run deliberately.
 """
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,7 @@ from unittest import mock
 
 import claude_agent_sdk as sdk
 
+from coscc import frontend, sessions
 from coscc.config import Config
 from coscc.sessions import (
     Live,
@@ -220,3 +222,28 @@ class WhichWorkspacesHaveSomeoneInThem(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
+    """`REFLEX_WEB_WORKDIR` reaching a session is what destroyed a served bundle.
+
+    Measured 2026-09-23: `coscc/run.py` sets it process-wide, an `impl` step inherited it,
+    ran a build, and Reflex compiled into the installed package instead of the workspace.
+    The page answered 404 while the API stayed healthy.
+    """
+
+    def test_the_web_workdir_does_not_reach_the_session(self):
+        with mock.patch.dict(os.environ, {frontend.WEB_WORKDIR_VAR: "/somewhere/_web"}):
+            self.assertNotIn(frontend.WEB_WORKDIR_VAR, sessions.child_env())
+
+    def test_no_setting_of_this_app_reaches_the_session(self):
+        with mock.patch.dict(os.environ, {"COS_DATA_DIR": "/d", "COS_PORT": "1"}):
+            env = sessions.child_env()
+            self.assertEqual([k for k in env if k.startswith("COS_")], [])
+
+    def test_everything_else_is_left_alone(self):
+        """Filtered down, not built up. A session that loses `HOME` cannot sign in."""
+        with mock.patch.dict(os.environ, {"HOME": "/home/someone", "PATH": "/bin"}):
+            env = sessions.child_env()
+            self.assertEqual(env["HOME"], "/home/someone")
+            self.assertEqual(env["PATH"], "/bin")
