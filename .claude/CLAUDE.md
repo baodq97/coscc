@@ -32,6 +32,10 @@ One directory, `.cos/NNNN_<slug>/`, holding its eight artifacts and nothing else
 names the problem rather than the solution and is fixed at creation — a slug named after a
 solution stops making sense exactly when the directory still has to be findable.
 
+The app writes into an artifact a stage wrote in exactly one way: it appends a
+`## Answers` section, and blocks under it, to the end of the file. Nothing above that
+section is ever rewritten.
+
 Run `cos.mjs status` for the stages, their order and what each one reads.
 `.claude/scripts/cos.mjs` is the one place the loop is defined; nothing may hold a second
 copy of it.
@@ -94,6 +98,14 @@ file — and the ruleset is the only thing here that actually stops a push.
   would be one file.
 - **Anything that starts the next stage.** An accepted artifact lights no gate. A person
   chooses the mode and presses the button, every time.
+- **A person's answer is not an approval, and it starts nothing either.** Since `0016` the
+  app has one place where a person answers an item under `## Open questions`: the
+  *Questions* tab, or `POST /api/units/answer`. It appends a block under `## Answers` and
+  a row to the run log, and that is all — no gate reads it and no stage runs because of it;
+  the next stage finds it in its prompt when somebody presses the button. `Answered by:`
+  is a name the person typed, not an identity. No route has a login and the default bind
+  is `0.0.0.0`, so anyone who can reach the port can answer under any name, and the next
+  stage will read it as a person's decision.
 - **CI that decides anything.** Two workflows exist and neither is a gate; a green check
   also measures a different interpreter than the one the proofs were measured on.
 
