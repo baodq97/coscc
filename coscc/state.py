@@ -981,7 +981,9 @@ class StudioState(rx.State):
             self.notice = str(e)
             return
         self.branch = cut["branch"]
-        self.notice = f"On {cut['branch']}."
+        # R3 of `0001_product-describes-a-state-it-is-not-in`: say where it was cut from,
+        # from the fetched ref rather than the local `main`.
+        self.notice = f"On {cut['branch']}, cut from {cut['base']} at {cut['sha']}."
 
     async def set_mode(self, value: str | list[str]):
         if not isinstance(value, str) or value not in ("manual", "autonomous"):

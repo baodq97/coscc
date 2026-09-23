@@ -429,12 +429,20 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
+        # Since `0001_product-describes-a-state-it-is-not-in` a branch is cut from what
+        # `origin` has, so the repository needs one. A bare directory: no network.
+        self.remote = self.root / "remote.git"
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True
+        )
         self.repo = self.root / "work" / "proj"
         self.repo.mkdir(parents=True)
         self._git("init", "-q", "-b", "main")
         (self.repo / "README.md").write_text("x\n", encoding="utf-8")
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "first")
+        self._git("remote", "add", "origin", str(self.remote))
+        self._git("push", "-q", "origin", "main")
         self.service = Service(
             Config(
                 workspaces=(str(self.repo),),
@@ -510,6 +518,90 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         with self.assertRaises(Invalid) as caught:
             asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
         self.assertIn("already exists", str(caught.exception))
+
+    # --- `0001_product-describes-a-state-it-is-not-in` R1, R2, R3 ----------------
+
+    def _typed_unit(self, slug: str = "a-problem") -> str:
+        made = self.service.create_unit(str(self.repo), slug, "some words")
+        (Path(made["path"]) / "intent.md").write_text(
+            f"# Intent: {slug}\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
+        )
+        return made["unit"]
+
+    def _advance_remote(self, name: str = "g.txt", text: str = "from elsewhere\n") -> str:
+        """Push one commit to `origin` from a second clone. Returns its SHA."""
+        other = self.root / "other"
+        if not other.exists():
+            subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True)
+        run = lambda *a: subprocess.run(  # noqa: E731
+            ["git", "-C", str(other), "-c", "user.name=T", "-c", "user.email=t@example.invalid",
+             "-c", "commit.gpgsign=false", *a],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        run("pull", "-q", "--ff-only")
+        (other / name).write_text(text, encoding="utf-8")
+        run("add", "-A")
+        run("commit", "-q", "-m", f"elsewhere {name}")
+        run("push", "-q", "origin", "main")
+        return run("rev-parse", "HEAD")
+
+    def test_the_branch_is_cut_from_the_remote_trunk_not_the_stale_local_one(self):
+        """R1: local `main` one commit behind; the branch lands on the remote's commit."""
+        ahead = self._advance_remote()
+        local = self._git("rev-parse", "main").strip()
+        self.assertNotEqual(local, ahead)
+        unit = self._typed_unit()
+        got = asyncio.run(self.service.start_branch(str(self.repo), unit))
+        self.assertEqual(self._git("rev-parse", got["branch"]).strip(), ahead)
+        # The local trunk was not moved to get there.
+        self.assertEqual(self._git("rev-parse", "main").strip(), local)
+
+    def test_the_result_names_the_ref_and_the_commit_it_was_cut_from(self):
+        """R3."""
+        self._advance_remote()
+        got = asyncio.run(self.service.start_branch(str(self.repo), self._typed_unit()))
+        self.assertEqual(got["base"], "origin/main")
+        self.assertEqual(got["sha"], self._git("rev-parse", "--short=7", "origin/main").strip())
+
+    def test_a_fetch_that_fails_cuts_nothing_and_says_so(self):
+        """R2. And, because there is no remote to reach, spec OQ4 too."""
+        unit = self._typed_unit()
+        self._git("remote", "set-url", "origin", str(self.root / "gone.git"))
+        before = self._git("rev-parse", "HEAD").strip()
+        with self.assertRaises(Invalid) as caught:
+            asyncio.run(self.service.start_branch(str(self.repo), unit))
+        said = str(caught.exception)
+        self.assertIn("origin", said)
+        self.assertIn("no branch was cut", said)
+        self.assertEqual(self._git("rev-parse", "HEAD").strip(), before)
+        self.assertEqual(self._git("branch", "--list", "fix/a-problem").strip(), "")
+        self.assertEqual(asyncio.run(self.service.branch_here(str(self.repo)))["branch"], "main")
+
+    def test_a_repository_with_no_origin_is_refused_the_same_way(self):
+        unit = self._typed_unit()
+        self._git("remote", "remove", "origin")
+        with self.assertRaises(Invalid) as caught:
+            asyncio.run(self.service.start_branch(str(self.repo), unit))
+        self.assertIn("no branch was cut", str(caught.exception))
+        self.assertEqual(self._git("branch", "--list", "fix/a-problem").strip(), "")
+
+    def test_a_dirty_tree_that_touches_nothing_the_remote_changed_still_cuts(self):
+        """Plan Risk 5, first half: the fetch is not stopped by a dirty tree."""
+        ahead = self._advance_remote("g.txt")
+        (self.repo / "README.md").write_text("edited here\n", encoding="utf-8")
+        got = asyncio.run(self.service.start_branch(str(self.repo), self._typed_unit()))
+        self.assertEqual(self._git("rev-parse", got["branch"]).strip(), ahead)
+        self.assertIn("README.md", self._git("status", "--porcelain"))
+
+    def test_a_dirty_tree_that_touches_a_file_the_remote_changed_cuts_nothing(self):
+        """Plan Risk 5, second half: `switch -c` refuses, and creates no branch."""
+        self._advance_remote("README.md", "changed elsewhere\n")
+        (self.repo / "README.md").write_text("edited here\n", encoding="utf-8")
+        unit = self._typed_unit()
+        with self.assertRaises(Invalid):
+            asyncio.run(self.service.start_branch(str(self.repo), unit))
+        self.assertEqual(self._git("branch", "--list", "fix/a-problem").strip(), "")
+        self.assertEqual((self.repo / "README.md").read_text(encoding="utf-8"), "edited here\n")
 
 
 class AStepRecordsTheTransitionItCaused(unittest.TestCase):
