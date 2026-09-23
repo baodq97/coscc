@@ -88,6 +88,19 @@ class Ensuring(Repo):
         self.assertEqual(git(self.repo, "branch", "--show-current"), "main")
         self.assertEqual(made["branch"], "fix/a")
 
+    def test_a_tree_made_before_the_branch_is_moved_onto_it_when_it_is_cut_at_a_terminal(self):
+        asyncio.run(worktrees.ensure(self.repo, "0001_a", None, self.data))
+        git(self.repo, "switch", "-q", "-c", "fix/a")  # `.claude/CLAUDE.md` step 4, by hand
+        made = asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
+        self.assertEqual((made["branch"], made["switched"], made["created"]), ("fix/a", True, False))
+        self.assertEqual(git(self.repo, "branch", "--show-current"), "main")
+
+    def test_creating_a_unit_never_moves_the_workspace(self):
+        git(self.repo, "switch", "-q", "-c", "fix/other")
+        made = asyncio.run(worktrees.ensure(self.repo, "0001_a", None, self.data))
+        self.assertFalse(made["switched"])
+        self.assertEqual(git(self.repo, "branch", "--show-current"), "fix/other")
+
     def test_a_dirty_root_on_the_units_branch_is_refused_and_left_alone(self):
         git(self.repo, "switch", "-q", "-c", "fix/a")
         (self.repo / "f.txt").write_text("mine\n", encoding="utf-8")

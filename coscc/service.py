@@ -508,7 +508,7 @@ class Service:
         # repository has none, and its steps run where they always did — there is no
         # branch there for another unit to take away.
         is_repo = (Path(cwd).expanduser().resolve() / ".git").exists()
-        tree = await self._worktree(cwd, unit) if is_repo else None
+        tree = await self._worktree(cwd, unit, strict=True) if is_repo else None
         if is_repo and tree is None:
             try:
                 tree = {"path": (await worktrees.ensure(cwd, unit, None, self.config.data_dir))["path"]}
@@ -745,28 +745,30 @@ class Service:
                 made["worktree"] = {"path": "", "error": str(e)}
         return made
 
-    async def _worktree(self, cwd: str, unit: str) -> dict[str, Any] | None:
+    async def _worktree(self, cwd: str, unit: str, strict: bool = False) -> dict[str, Any] | None:
         """The unit's worktree, opened on its branch if the branch exists and it is not.
 
         None when there is none and none can be opened — the workspace is dirty on the
-        unit's branch, or is not a git repository at all.
+        unit's branch, or is not a git repository at all. `strict` turns the first of those
+        into `Invalid`: a step must not run on a tree that is not on its unit's branch.
         """
         try:
             found = await worktrees.find(cwd, unit, self.config.data_dir)
-            if found is not None:
+            if found is not None and found["branch"]:
                 return {"path": found["path"], "branch": found["branch"]}
             try:
                 branch = units.branch_name(cwd, unit, self.config.data_dir)
-            except (CannotCreate, BadUnit):
-                return None
-            root = Path(cwd).expanduser().resolve()
-            try:
-                await gitops.rev_parse(root, f"refs/heads/{branch}")
-            except GitError:
-                return None
+                await gitops.rev_parse(Path(cwd).expanduser().resolve(), f"refs/heads/{branch}")
+            except (CannotCreate, BadUnit, GitError):
+                branch = None
+            if branch is None:
+                return {"path": found["path"], "branch": ""} if found else None
+            # The branch exists and the tree is not on it: open it there (`worktrees.ensure`).
             made = await worktrees.ensure(cwd, unit, branch, self.config.data_dir)
             return {"path": made["path"], "branch": made["branch"]}
-        except (GitError, BadUnit):
+        except (GitError, BadUnit) as e:
+            if strict:
+                raise Invalid(f"{unit}'s worktree could not be opened on its branch: {e}") from e
             return None
 
     async def answer(

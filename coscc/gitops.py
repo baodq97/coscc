@@ -328,6 +328,16 @@ async def switch_trunk(root: Path, timeout: float = BRANCH_TIMEOUT) -> str:
     return await _run(["git", "-C", str(root), "switch", TRUNK], timeout)
 
 
+async def switch_existing(tree: Path, name: str, timeout: float = BRANCH_TIMEOUT) -> str:
+    """Put a unit's clean worktree on its existing branch. Never `-c`, never `--force`."""
+    _require_repo(tree)
+    if name == TRUNK or not _BRANCH_RE.fullmatch(name or ""):
+        raise GitError(f"not a branch name this app will switch to: {name!r}")
+    if not await is_clean(tree, timeout):
+        raise GitError(f"{tree} has uncommitted changes, so it was left where it was")
+    return await _run(["git", "-C", str(tree), "switch", name], timeout)
+
+
 async def worktree_add(
     root: Path, path: Path, start: str, timeout: float = WORKTREE_TIMEOUT
 ) -> str:

@@ -66,6 +66,28 @@ LANE_COLOR = {
 MARK_COLORS = ("iris", "grass", "blue", "amber", "plum", "cyan")
 
 
+def tree_line(tree: dict | None) -> str:
+    """`0017` R6. A unit's worktree and its preparation, as the page says it.
+
+    A failure names the command and its exit code, never just *failed*: the person has to
+    be able to run that command themselves.
+    """
+    if not tree or not tree.get("path"):
+        return ""
+    line = f"Worktree: {tree['path']}"
+    if tree.get("branch"):
+        line += f" on {tree['branch']}"
+    prepared = tree.get("prepare")
+    if prepared is None:
+        line += " · not prepared yet"
+    elif prepared.get("ok"):
+        line += " · prepared"
+    else:
+        line += (f" · preparing failed: `{prepared.get('command')}` exited "
+                 f"{prepared.get('exit_code')}")
+    return line
+
+
 # --- the view shapes ---------------------------------------------------------
 
 
@@ -391,6 +413,12 @@ class StudioState(rx.State):
     new_brief: str = ""
     starting: bool = False
     branch: str = ""
+    # `0017`. Per unit: where its worktree is and what preparing it said, as one line.
+    trees: dict[str, str] = {}
+
+    @rx.var
+    def unit_tree(self) -> str:
+        return self.trees.get(self.unit_id, "")
 
     # -- one unit
     unit_id: str = ""
@@ -631,6 +659,9 @@ class StudioState(rx.State):
             return
 
         self.stages = list(data["stages"])
+        self.trees = {
+            u["name"]: tree_line(u.get("worktree")) for u in data.get("units") or []
+        }
         self.recording = bool(data["recording"])
         self.board_note = data.get("read_only_because") or data.get("empty_because") or ""
         empty = data.get("empty") or {}
@@ -1190,10 +1221,19 @@ class StudioState(rx.State):
         except Invalid as e:
             self.notice = str(e)
             return
-        self.branch = cut["branch"]
         # R3 of `0001_product-describes-a-state-it-is-not-in`: say where it was cut from,
-        # from the fetched ref rather than the local `main`.
-        self.notice = f"On {cut['branch']}, cut from {cut['base']} at {cut['sha']}."
+        # from the fetched ref rather than the local `main`. Since `0017` it is cut in the
+        # unit's own worktree, so the workspace's branch does not change and is not reset.
+        said = f"{cut['branch']} cut from {cut['base']} at {cut['sha']}, in {cut['worktree']}."
+        if cut.get("switched"):
+            said += " The workspace was moved back to main to open it."
+        prepared = cut.get("prepare") or {}
+        if not prepared.get("ok", True):
+            said += (f" Preparing it failed: `{prepared.get('command')}` exited "
+                     f"{prepared.get('exit_code')} — impl will not run until it succeeds.")
+        self.notice = said
+        self.trees = {**self.trees, self.unit_id: tree_line(
+            {"path": cut["worktree"], "branch": cut["branch"], "prepare": prepared})}
 
     async def set_mode(self, value: str | list[str]):
         if not isinstance(value, str) or value not in ("manual", "autonomous"):

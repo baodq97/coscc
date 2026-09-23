@@ -121,24 +121,31 @@ async def ensure(
     root = Path(units.key(workspace))
     where = path(workspace, unit, data_dir)
     found = await find(workspace, unit, data_dir)
-    if found is not None:
+    wanted = bool(branch) and await _branch_exists(root, branch)
+    if found is not None and (found["branch"] or not wanted):
         return {"path": str(where), "branch": found["branch"], "created": False, "switched": False}
 
+    # The unit's branch exists and is not yet in its tree — cut at a terminal, the way
+    # `.claude/CLAUDE.md` step 4 still does it, usually in the workspace itself. Git will
+    # not check one branch out twice, so the workspace has to give it up first.
     switched = False
-    here = await gitops.current_branch(root)
-    if here != gitops.TRUNK:
-        if await gitops.is_clean(root):
-            await gitops.switch_trunk(root)
-            switched = True
-        elif branch and here == branch:
+    if wanted and await gitops.current_branch(root) == branch:
+        if not await gitops.is_clean(root):
             raise GitError(
                 f"{root} is on {branch}, this unit's branch, and has uncommitted changes, "
                 "so its worktree cannot be opened. Commit or stash them there, then "
                 f"`git switch {gitops.TRUNK}`."
             )
+        await gitops.switch_trunk(root)
+        switched = True
+
+    if found is not None:
+        # A detached tree made when the unit was created, before it had a branch.
+        await gitops.switch_existing(Path(found["path"]), branch)
+        return {"path": str(where), "branch": branch, "created": False, "switched": switched}
 
     where.parent.mkdir(parents=True, exist_ok=True)
-    if branch and await _branch_exists(root, branch):
+    if wanted:
         await gitops.worktree_add(root, where, branch)
     else:
         sha = await gitops.rev_parse(root, f"refs/heads/{gitops.TRUNK}")
