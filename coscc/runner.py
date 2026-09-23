@@ -90,6 +90,7 @@ def build_prompt(
     writes_own: bool = False,
     gate_said: str = "",
     head: str = "",
+    base_note: str = "",
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -128,6 +129,15 @@ def build_prompt(
             "Do not ask it again and do not treat it as unasked — you may have no tools "
             "to run it with, and that is not a reason to hold back an artifact."
         )
+
+    # `0030_a-unit-branch-starts-from-a-stale-main` R1, câu 2. The app refreshes a step's
+    # detached tree from `origin/main` before running it, but a refresh can itself fail —
+    # the remote unreachable, the tree dirty, a commit on it not an ancestor of the fetched
+    # tip — and the step still runs. `service.describe_base` is the one sentence saying so;
+    # this hands it to the step rather than leaving it to guess from a `git log` it may
+    # have no tool to run.
+    if base_note:
+        parts.append(f"# The base this step runs on\n\n{base_note}")
 
     intent = _read(directory / "intent.md")
     if intent:
@@ -445,6 +455,8 @@ class Runner:
         cwd: str | None = None,
         model: str | None = None,
         model_source: str = "",
+        base: dict[str, Any] | None = None,
+        base_note: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -459,6 +471,12 @@ class Runner:
         `model` is the one `coscc/models.py` resolved for this stage, and `model_source`
         says where it came from. Both go into the `start` record, which is where a reader
         checks what a step ran on. `None` leaves the session on `COS_MODEL`.
+
+        `base` is what `coscc/worktrees.py` said about `cwd`'s freshness against
+        `origin/main` before this call was made — `service.py` reads it, this module
+        neither reads git itself nor decides what it means, only carries it into the
+        `start` record. `base_note` is `service.describe_base(base)`, already worked out,
+        so `build_prompt` does not import `service` to ask the same question twice.
         """
         grant = grant_for(stage)
         directory = Path(directory)
@@ -488,6 +506,7 @@ class Runner:
             writes_own=not grant.app_writes_artifact,
             gate_said=gate_said,
             head=head,
+            base_note=base_note,
         )
 
         if self.journal is not None:
@@ -498,6 +517,7 @@ class Runner:
                 head=head,
                 model=model, model_source=model_source,
                 agents=SESSIONS_PER_STEP,
+                base=base,
             )
 
         denials = Denials()

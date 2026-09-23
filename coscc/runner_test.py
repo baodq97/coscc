@@ -291,6 +291,69 @@ class AStepRecordsTheCommitItRanOn(unittest.TestCase):
             self.assertEqual(self._start_record(d)["head"], "")
 
 
+class ThePromptNamesTheBaseWhenItMightBeStale(unittest.TestCase):
+    """`0030_a-unit-branch-starts-from-a-stale-main` plan.md step 4.
+
+    `service.describe_base` decides the sentence; this module only places it. So the two
+    cases worth pinning here are structural — present when there is something to say,
+    absent when there is not — not the wording, which belongs to `service_test.py`.
+    """
+
+    def test_a_base_note_is_placed_in_the_prompt(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            prompt, _ = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md",
+                base_note="This step ran on origin/main at abc1234, which may be stale: reason.",
+            )
+            self.assertIn("# The base this step runs on", prompt)
+            self.assertIn("abc1234", prompt)
+
+    def test_no_base_note_leaves_the_section_out(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md")
+            self.assertNotIn("# The base this step runs on", prompt)
+
+
+class AStepRecordsTheBaseItRanOn(unittest.TestCase):
+    """`0030_a-unit-branch-starts-from-a-stale-main` plan.md step 4.
+
+    `base` is `service.py`'s to compute; this module only carries it from `Runner.run`'s
+    caller into the `start` record, the same way it already carries `head`.
+    """
+
+    class Replies:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "# Impl: x\nStatus: accepted.\n")
+            yield ("done", {"session_id": "s-impl", "cost": {}})
+
+    def _start_record(self, d: str, **run_kw) -> dict:
+        make_unit(Path(d), intent_md="Status: accepted.\nI")
+        journal = Journal(d, d)
+        r = Runner(sessions=self.Replies(), journal=journal)
+
+        async def go():
+            async for _ in r.run(
+                workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d, unit=UNIT,
+                stage="impl", artifact="impl.md", stages=STAGES, mode="manual", **run_kw,
+            ):
+                pass
+
+        asyncio.run(go())
+        [start] = journal.records(d, kind="start")
+        return start
+
+    def test_the_base_handed_in_is_the_base_recorded(self):
+        base = {"ref": "origin/main", "sha": "abc1234", "fresh": False, "reason": "R"}
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self._start_record(d, base=base)["base"], base)
+
+    def test_no_base_handed_in_records_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(self._start_record(d)["base"])
+
+
 class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
     """`0020` review round 1, F1.
 
