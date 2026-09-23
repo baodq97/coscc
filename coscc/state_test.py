@@ -108,6 +108,56 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
         self.assertEqual(_lane(unit), "Needs review")
 
 
+class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
+    """`0016` R7 and R8, on one temporary `.cos/` read the way the page reads it."""
+
+    TEXT = (
+        "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n"
+        "## Open questions\n\n1. One?\n2. Two?\n3. Three?\n\n"
+        "## Answers\n\n### Câu 1\nAnswered by: A. Date: 2026-09-23. Via: product.\n\nCó.\n"
+    )
+
+    def _both(self) -> tuple[dict, dict]:
+        """The unit as `status --json` printed it, and as `coscc/board.py` handed it on."""
+        import asyncio
+        import json
+        import subprocess
+        import tempfile
+
+        from coscc import board, harness
+
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_q"
+            unit.mkdir(parents=True)
+            (unit / "intent.md").write_text(self.TEXT, encoding="utf-8")
+            raw = subprocess.run(
+                ["node", str(harness.script()), "--root", d, "status", "--json"],
+                capture_output=True, text=True, check=True,
+            ).stdout
+            [from_script] = json.loads(raw)["units"]
+            [through_board] = asyncio.run(board.read(d))["units"]
+        return from_script, through_board
+
+    def test_the_page_count_is_the_status_json_count(self):
+        from coscc.state import _questions
+
+        from_script, through_board = self._both()
+        waiting, asked = _questions(through_board)
+        self.assertEqual(from_script["open"], 2)
+        self.assertEqual(waiting, from_script["open"])
+        self.assertEqual(
+            [(q.artifact, q.number, q.answered) for q in asked],
+            [(q["artifact"], q["n"], q["answered"]) for q in from_script["questions"]],
+        )
+
+    def test_an_open_question_alone_does_not_put_a_unit_in_needs_review(self):
+        from coscc.state import _lane
+
+        _, through_board = self._both()
+        self.assertGreater(through_board["open"], 0)
+        self.assertNotEqual(_lane(through_board), "Needs review")
+
+
 def _self_names(target: ast.expr) -> list[str]:
     """Every `self.X` being assigned by one target, tuple unpacking included."""
     if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):

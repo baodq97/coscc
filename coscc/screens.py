@@ -33,6 +33,7 @@ from coscc.state import (
     GrantRow,
     Knob,
     Message,
+    Question,
     Run,
     StudioState,
     Unit,
@@ -477,6 +478,9 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
         rx.hstack(
             s.badge(unit.stage, unit.color),
             rx.cond(unit.problems != "", s.badge("problem", "red")),
+            # `0016` R8. A number, not a lane: an open question does not stop the loop.
+            rx.cond(unit.open_questions > 0,
+                    s.badge(unit.open_questions.to_string() + " waiting on you", "amber")),
             rx.spacer(),
             rx.center(rx.text(unit.owner, size="1", weight="medium"),
                       width="27px", height="27px", border_radius="50%",
@@ -969,6 +973,52 @@ def _run_row(run: rx.Var[Run]) -> rx.Component:
     )
 
 
+def _question_row(q: rx.Var[Question]) -> rx.Component:
+    """`0016` R2. One unanswered question and the box its answer goes in."""
+    return s.panel(
+        rx.hstack(
+            s.badge(q.artifact, rx.cond(q.counted, "amber", "gray")),
+            s.text("question " + q.number.to_string(), size="1"),
+            width="100%", align="center",
+        ),
+        rx.box(rx.markdown(q.text), width="100%", margin_top="8px"),
+        rx.text_area(
+            placeholder="Your answer.",
+            value=rx.cond(P.answer_target == q.key, P.answer_text, ""),
+            on_change=lambda v: P.edit_answer(q.key, v),
+            aria_label="Answer to " + q.key, width="100%", rows="3", margin_top="8px",
+        ),
+        rx.button(
+            rx.icon("send", size=14), "Send this answer",
+            on_click=P.answer_question(q.key), loading=P.answering,
+            size="1", margin_top="8px", id="answer-" + q.key,
+        ),
+        width="100%",
+    )
+
+
+def _questions_tab() -> rx.Component:
+    """`0016` R2 and R10, said on the page: what an answer is and what it is not."""
+    return rx.vstack(
+        s.text(
+            "Answer an item under ## Open questions. The answer is appended to the end of "
+            "the artifact under ## Answers, with the name you type here; nothing above it "
+            "changes. This is not an approval and it starts no step — the next step reads "
+            "it when someone runs it. The name is not checked: this app has no login, so "
+            "anyone who reaches this port can type one.",
+            size="1", line_height="1.8",
+        ),
+        rx.input(
+            placeholder="Your name", value=P.answer_by, on_change=P.set_answer_by,
+            aria_label="Who is answering", id="answer-by", width="100%",
+        ),
+        rx.foreach(P.open_questions_here, _question_row),
+        rx.cond(P.open_questions_here.length() == 0,
+                s.text("No question in this unit is waiting for an answer.")),
+        spacing="3", padding="26px", width="100%", align="start", id="questions-body",
+    )
+
+
 def _detail_dialog() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
@@ -993,6 +1043,7 @@ def _detail_dialog() -> rx.Component:
                 rx.tabs.list(
                     rx.tabs.trigger("Overview", value="overview"),
                     rx.tabs.trigger("Artifact", value="artifacts"),
+                    rx.tabs.trigger("Questions", value="questions"),
                     rx.tabs.trigger("Timeline", value="timeline"),
                     width="100%", padding="0 24px",
                 ),
@@ -1110,6 +1161,7 @@ def _detail_dialog() -> rx.Component:
                     ),
                     value="artifacts",
                 ),
+                rx.tabs.content(_questions_tab(), value="questions"),
                 rx.tabs.content(
                     rx.vstack(
                         s.text("Every run of every step of this unit, oldest first. Read "

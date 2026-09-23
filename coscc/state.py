@@ -98,6 +98,21 @@ class Cell:
 
 
 @dataclasses.dataclass
+class Question:
+    """`0016`. One numbered item under an artifact's `## Open questions`, as `cos.mjs`
+    read it. Nothing here parses an artifact; every field is copied from `status --json`."""
+
+    # `<artifact>#<n>`: one string the page can bind a text box to.
+    key: str = ""
+    artifact: str = ""
+    number: int = 0
+    text: str = ""
+    answered: bool = False
+    # Whether this is the artifact the unit's open count is taken from.
+    counted: bool = False
+
+
+@dataclasses.dataclass
 class Unit:
     id: str = ""
     title: str = ""
@@ -116,6 +131,11 @@ class Unit:
     needs_attention: bool = False
     problems: str = ""
     cells: list[Cell] = dataclasses.field(default_factory=list)
+    # `0016` R8. How many questions in the counted artifact nobody has answered, taken
+    # from `cos.mjs` (`open`) and never recounted (R7). Shown as a badge, not a lane:
+    # an open question does not move a unit into *Needs review*.
+    open_questions: int = 0
+    questions: list[Question] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -235,6 +255,23 @@ def _initials(name: str) -> str:
     return ("".join(letters[:2]) or name[:2] or "WS").upper()
 
 
+def _questions(unit: dict) -> tuple[int, list[Question]]:
+    """`0016` R7. The open count and the questions of one board unit, copied from what
+    `cos.mjs` sent through `coscc/board.py`. Nothing is counted here: `open` is taken as
+    sent, so the page and `status --json` cannot disagree."""
+    return int(unit.get("open") or 0), [
+        Question(
+            key=f"{q['artifact']}#{q['n']}",
+            artifact=str(q["artifact"]),
+            number=int(q["n"]),
+            text=str(q.get("text") or ""),
+            answered=bool(q.get("answered")),
+            counted=bool(q.get("counted")),
+        )
+        for q in unit.get("questions") or []
+    ]
+
+
 def _lane(unit: dict) -> str:
     """Which column a unit sits in.
 
@@ -331,6 +368,15 @@ class StudioState(rx.State):
     running: str = ""
     run_log: str = ""
 
+    # -- answering a question (`0016`). One text box is live at a time: typing into a
+    # question's box makes it the target, and the box of every other question reads empty.
+    # `answer_by` stays in the page's state and is not stored as a preference, so the
+    # settings store gains no key for a name nobody verified.
+    answer_target: str = ""
+    answer_text: str = ""
+    answer_by: str = ""
+    answering: bool = False
+
     # -- sessions
     conversations: list[Conversation] = []
     session_id: str = ""
@@ -424,6 +470,12 @@ class StudioState(rx.State):
             if u.id == self.unit_id:
                 return u
         return Unit()
+
+    @rx.var
+    def open_questions_here(self) -> list[Question]:
+        """`0016`. The open unit's unanswered questions, counted artifact's first."""
+        waiting = [q for q in self.current_unit.questions if not q.answered]
+        return sorted(waiting, key=lambda q: not q.counted)
 
     @rx.var
     def next_stage(self) -> str:
@@ -572,6 +624,7 @@ class StudioState(rx.State):
             count, shown = _tokens(u.get("cost") or {})
             nxt = _next_required(cells)
             mode = nxt.mode if nxt is not None else "manual"
+            waiting, asked = _questions(u)
             units.append(
                 Unit(
                     id=u["name"],
@@ -589,6 +642,8 @@ class StudioState(rx.State):
                     needs_attention=lane == "Needs review",
                     problems="; ".join(u.get("problems") or []),
                     cells=cells,
+                    open_questions=waiting,
+                    questions=asked,
                 )
             )
         self.units = units
@@ -938,10 +993,47 @@ class StudioState(rx.State):
 
     @rx.event
     def set_detail_tab(self, value: str):
-        if value not in ("overview", "artifacts", "timeline"):
+        if value not in ("overview", "artifacts", "questions", "timeline"):
             self.notice = "That tab does not exist."
             return
         self.detail_tab = value
+
+    @rx.event
+    def edit_answer(self, key: str, value: str):
+        """Typing into one question's box makes it the one being answered."""
+        if key != self.answer_target:
+            self.answer_target = key
+        self.answer_text = value
+
+    @rx.event
+    def set_answer_by(self, value: str):
+        self.answer_by = value
+
+    @rx.event
+    async def answer_question(self, key: str):
+        """`0016` R2. Send one answer. Every rule about whether it may be written is
+        `Service.answer`'s; a refusal arrives here as its words and is shown as they are."""
+        if key != self.answer_target or not self.answer_text.strip():
+            self.notice = "Write the answer in that question's box first."
+            return
+        artifact, _, number = key.rpartition("#")
+        self.answering = True
+        try:
+            done = await SERVICE.answer(
+                self.cwd, self.unit_id, artifact, number, self.answer_text, self.answer_by
+            )
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        finally:
+            self.answering = False
+        self.answer_target, self.answer_text = "", ""
+        self.notice = (
+            f"Answered question {done['question']} of {done['artifact']} as "
+            f"{done['answered_by']}. Nothing was started; the next step reads it when it runs."
+        )
+        await self._load_board()
+        self._load_artifact()
 
     @rx.event
     def set_new_slug(self, value: str):
