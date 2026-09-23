@@ -80,6 +80,107 @@ def _read(path: Path) -> str:
         return ""
 
 
+# The Answers section of an artifact, exactly as `coscc/service.py:900` and
+# `.claude/scripts/cos.mjs:194` read it: the byte range from the start of the first line
+# that is `## Answers` -- recognised with its own trailing whitespace stripped away -- to
+# the end of the file. `None` when no such line exists.
+#
+# Bytes in, bytes out, on purpose (`0025` `spec.md` R1, `plan.md` Risk 3). `_read` above
+# decodes with `errors="replace"` and `Path.read_text` translates `\r\n` to `\n`; either
+# can move a byte, and R1 asks that none does. Only `POST /api/units/answer` ever writes
+# into this section (`.claude/CLAUDE.md`, *A unit of work*), and only by appending to it.
+def answers_section(raw: bytes) -> bytes | None:
+    idx = 0
+    while True:
+        nl = raw.find(b"\n", idx)
+        line = raw[idx: nl if nl != -1 else len(raw)]
+        if line.rstrip(b" \t\r") == b"## Answers":
+            return raw[idx:]
+        if nl == -1:
+            return None
+        idx = nl + 1
+
+
+def strip_answers(body: str) -> str:
+    """A reply, with everything from its own first `## Answers` line onward dropped.
+
+    `spec.md` R3: whatever a reply says under a heading of that name -- copied from the
+    artifact, forged, or simply a model answering its own question -- carries no
+    authority. The only section that reaches disk under `## Answers` is the one already
+    there, found by `answers_section` above; this is what keeps a reply's own attempt at
+    one from ever being mistaken for it. A reply with no such line is returned unchanged.
+    """
+    lines = body.splitlines()
+    for i, line in enumerate(lines):
+        if line.rstrip() == "## Answers":
+            return "\n".join(lines[:i]).rstrip() + "\n"
+    return body
+
+
+def with_answers(body: str, section: bytes | None) -> bytes:
+    """The bytes to write: the stage's own text, and the Answers section, unmoved.
+
+    `section` is `None` when the artifact never had one, or this is the first time it is
+    written -- and then this returns exactly the bytes written before `0025`: `body`,
+    UTF-8 encoded, nothing else. Otherwise `body` is followed by one blank line and the
+    section already on disk, byte for byte.
+    """
+    if section is None:
+        return body.encode("utf-8")
+    return body.rstrip("\n").encode("utf-8") + b"\n\n" + section
+
+
+def _open_questions(text: str) -> str:
+    """The `## Open questions` section of an artifact, verbatim: from that heading to the
+    next `## ` heading or the end of the file. Mirrors `.claude/scripts/cos.mjs`'s own
+    `section()` (`:73-79`), so a question's number here means what it means there -- the
+    numbers are what `### Câu N` in the Answers section refers back to.
+    """
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.rstrip() == "## Open questions"), None)
+    if start is None:
+        return "It carries no `## Open questions` section."
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "\n".join(lines[start:end]).rstrip()
+
+
+# `spec.md` R7's three instructions, the same words wherever the block appears so a test
+# can check for one fixed string rather than three.
+_ANSWERS_ADVICE = (
+    "This is a person's decision, already made. Cite it as `<artifact> ## Answers, câu N` "
+    "rather than reporting it back as if you had found it yourself. Do not copy this "
+    "section into your reply — the app writes it back onto the artifact after your reply, "
+    "on its own. If you still mention a question already answered here, keep its number."
+)
+
+
+def _answers_block(directory: Path, artifact: str, repeat_content: bool) -> str | None:
+    """`spec.md` R7: what a re-run is told about the answers its own artifact already
+    carries. `None` when the artifact has never been written, or was written with no
+    `## Answers` section -- a first run has nothing of a person's to protect.
+
+    `repeat_content` is false only for `intent`, whose file is already in the prompt in
+    full (`build_prompt`, *The intent this work is authorised by*, just above): repeating
+    it here would put the same text in the prompt twice for no reason.
+    """
+    try:
+        raw = (directory / artifact).read_bytes()
+    except OSError:
+        return None
+    section = answers_section(raw)
+    if section is None:
+        return None
+    if not repeat_content:
+        return f"# The answers already given to this artifact\n\n{_ANSWERS_ADVICE}"
+    text = raw.decode("utf-8", errors="replace")
+    return (
+        "# The answers already given to this artifact\n\n"
+        f"{_open_questions(text)}\n\n"
+        f"{section.decode('utf-8', errors='replace')}\n\n"
+        f"{_ANSWERS_ADVICE}"
+    )
+
+
 def build_prompt(
     workspace: str | Path,
     directory: str | Path,
@@ -155,6 +256,16 @@ def build_prompt(
             parts.append(f"# The {earlier} it follows\n\n{text}")
             break
 
+    # `spec.md` R7. A prose stage re-run against an artifact that already carries
+    # `## Answers` is one of `intent.md ## Affected users and systems`' "later stages" too:
+    # without this, it cannot see a person's decision and may ask the same question again.
+    # `review` gets the same block, but placed after *The rounds so far* below instead --
+    # `stage != "review"` here keeps it from also landing in this earlier position.
+    if is_prose_stage(stage) and not writes_own and stage != "review":
+        block = _answers_block(directory, artifact, repeat_content=stage != "intent")
+        if block:
+            parts.append(block)
+
     # A review that asked for changes sends the unit back to `impl`, and the whole point of
     # going back is the findings. Without this block the step that is meant to fix them
     # was built from `intent.md` and `plan.md` only -- it could not see a single one.
@@ -208,6 +319,15 @@ def build_prompt(
                 "your header, unchanged, and appends yours after them.\n\n"
                 + "\n".join(earlier)
             )
+
+    # `spec.md` R7, `review`'s own copy. Placed here rather than with the other stages'
+    # above so it reads after *The rounds so far*, which it is about: a person can answer
+    # under `## Answers` while a review is at `changes-requested`, and the next review
+    # must not treat that decision as an unread finding.
+    if stage == "review" and is_prose_stage(stage) and not writes_own:
+        block = _answers_block(directory, artifact, repeat_content=True)
+        if block:
+            parts.append(block)
 
     # `write-review` step 2 needs the commit it reviewed, and the `ship` gate reads that
     # line. Until `0020` the stage read it out of `.git/` itself. Since `0017` a step runs
@@ -580,10 +700,28 @@ class Runner:
                     models_used = list(payload.get("models_used") or [])
 
             if grant.app_writes_artifact:
-                body = check_reply(collected)
+                # `0025` `spec.md` R1-R6. The reply's own `## Answers`, if it has one, is
+                # never what reaches disk (R3) -- only the section already there is, and
+                # it is read as late as this module ever reads anything: right here,
+                # after every `await` in this step has already happened, not at the
+                # step's start (R6). Nothing between this read and the write below can
+                # yield, so a block a person appended while the step ran is still on
+                # disk when this runs and is carried through untouched.
+                body = strip_answers(check_reply(collected))
+                target = directory / artifact
+                try:
+                    raw = target.read_bytes()
+                except FileNotFoundError:
+                    raw = b""
+                section = answers_section(raw)
+                above = raw[: len(raw) - len(section)] if section is not None else raw
                 if artifact == "review.md":
-                    body = merge_review(_read(directory / artifact), body)
-                (directory / artifact).write_text(body, encoding="utf-8")
+                    # `merge_review` never sees the Answers section, so its own rounds
+                    # regex has nothing of that shape to (not) swallow (spec.md Design).
+                    # Its refusals are unchanged: a reply that rewrites an earlier round,
+                    # or adds none, still raises before anything below is written (R4, R5).
+                    body = merge_review(above.decode("utf-8", errors="replace"), body)
+                target.write_bytes(with_answers(body, section))
             else:
                 # The session had the tools to write it. Believing it did, rather than
                 # looking, is how a step reports success for a file that is not there.

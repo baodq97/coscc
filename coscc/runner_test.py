@@ -21,10 +21,13 @@ from coscc.policy import decide, grant_for
 from coscc.runner import (
     RunError,
     Runner,
+    answers_section,
     build_prompt,
     check_reply,
     merge_review,
     skill_for,
+    strip_answers,
+    with_answers,
 )
 
 STAGES = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
@@ -101,6 +104,59 @@ class AReplyIsCheckedBeforeItBecomesAFile(unittest.TestCase):
     def test_a_good_reply_comes_back_with_a_trailing_newline(self):
         got = check_reply("# Spec: x\nStatus: accepted.")
         self.assertTrue(got.endswith("\n"))
+
+
+class TheAnswersSectionIsFound(unittest.TestCase):
+    """`0025`: the three functions the write path is built from, tested apart from it.
+
+    Every reader of "the Answers section" -- `coscc/service.py:900`, `.claude/scripts/
+    cos.mjs:194`, and this module -- must agree on where it starts, or a section one of
+    them keeps is a section another cannot find. `spec.md` R1's definition, and `plan.md`
+    Risk 3's reason for working in bytes rather than `str`, are both here.
+    """
+
+    def test_no_heading_is_no_section(self):
+        self.assertIsNone(answers_section(b"# Spec: x\nStatus: accepted.\n\nNo Answers here.\n"))
+
+    def test_a_heading_with_trailing_space_is_still_recognised(self):
+        raw = b"# Spec: x\nStatus: accepted.\n\n## Answers  \n\n### Cau 1\nhi\n"
+        self.assertEqual(answers_section(raw), b"## Answers  \n\n### Cau 1\nhi\n")
+
+    def test_a_deeper_or_longer_heading_is_not_the_section(self):
+        for bad in (b"### Answers\n\nx\n", b"## Answers later\n\nx\n"):
+            self.assertIsNone(answers_section(bad))
+
+    def test_only_the_first_heading_starts_the_section(self):
+        raw = b"# X\n\n## Answers\n\n### Cau 1\na\n\n## Answers\n\nnot this one\n"
+        self.assertTrue(answers_section(raw).startswith(b"## Answers\n\n### Cau 1\na\n\n## Answers"))
+
+    def test_crlf_and_non_ascii_bytes_are_carried_through_unchanged(self):
+        raw = "# X\r\n\r\n## Answers\r\n\r\n### Câu 1\r\nệ — “x”\r\n".encode("utf-8")
+        got = answers_section(raw)
+        self.assertEqual(got, raw[raw.index(b"## Answers"):])
+        # Round-trips through utf-8 with not one byte moved.
+        self.assertEqual(got.decode("utf-8").encode("utf-8"), got)
+
+    def test_strip_answers_cuts_at_the_first_heading(self):
+        body = "# Spec: x\nStatus: accepted.\n\n## Requirements\n\ny\n\n## Answers\n\nFORGED\n"
+        self.assertEqual(strip_answers(body), "# Spec: x\nStatus: accepted.\n\n## Requirements\n\ny\n")
+
+    def test_strip_answers_leaves_a_reply_with_no_such_line_alone(self):
+        body = "# Spec: x\nStatus: accepted.\n\nNothing to cut here.\n"
+        self.assertEqual(strip_answers(body), body)
+
+    def test_with_answers_of_none_is_the_body_alone_encoded(self):
+        body = "# Spec: x\nStatus: accepted.\n"
+        self.assertEqual(with_answers(body, None), body.encode("utf-8"))
+
+    def test_with_answers_joins_body_and_section_with_one_blank_line(self):
+        body = "# Spec: x\nStatus: accepted.\n\n## Requirements\n\ny\n"
+        section = b"## Answers\n\n### Cau 1\nAnswered by: p. Date: 2026-09-24. Via: product.\n\nok\n"
+        got = with_answers(body, section)
+        self.assertEqual(
+            got,
+            b"# Spec: x\nStatus: accepted.\n\n## Requirements\n\ny\n\n" + section,
+        )
 
 
 class ProseStagesCarryNothingThatWrites(unittest.TestCase):
@@ -866,6 +922,112 @@ class AnAnswerReachesTheStageThatReadsItsArtifact(unittest.TestCase):
             self.assertNotIn("ANSWER-TOO-LATE-0016", prompt)
 
 
+class ARerunSeesItsOwnAnswers(unittest.TestCase):
+    """`0025` `spec.md` R7. A prose stage run again against an artifact that already
+    carries `## Answers` is one of `intent.md ## Affected users and systems`'s "later
+    stages" too -- without this it cannot see a person's decision and may ask the same
+    question a second time.
+    """
+
+    ANSWERED = (
+        "Author: t. Status: accepted.\n\n## Open questions\n\n1. Tách ra?\n\n"
+        "## Answers\n\n### Câu 1\nAnswered by: Phong. Date: 2026-09-24. Via: product.\n\n"
+        "{mark}\n"
+    )
+
+    BLOCK_HEADING = "# The answers already given to this artifact"
+    ADVICE = "Do not copy this section into your reply"
+
+    def test_spec_sees_its_own_answers_and_open_questions_on_a_rerun(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(
+                Path(d),
+                intent_md="Status: accepted.\nI",
+                spec_md=self.ANSWERED.format(mark="SPEC-RERUN-MARK-0025"),
+            )
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md")
+            self.assertIn(self.BLOCK_HEADING, prompt)
+            self.assertIn("SPEC-RERUN-MARK-0025", prompt)
+            self.assertIn("1. Tách ra?", prompt)
+            self.assertIn(self.ADVICE, prompt)
+
+    def test_plan_sees_its_own_answers_and_open_questions_on_a_rerun(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(
+                Path(d),
+                intent_md="Status: accepted.\nI",
+                spec_md="Status: accepted.\nS",
+                plan_md=self.ANSWERED.format(mark="PLAN-RERUN-MARK-0025"),
+            )
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "plan", STAGES, "plan.md")
+            self.assertIn(self.BLOCK_HEADING, prompt)
+            self.assertIn("PLAN-RERUN-MARK-0025", prompt)
+            self.assertIn("1. Tách ra?", prompt)
+            self.assertIn(self.ADVICE, prompt)
+
+    def test_review_sees_its_own_answers_placed_after_the_rounds_so_far(self):
+        """`spec.md` Design, the *Prompt* paragraph: `review`'s copy sits after *The
+        rounds so far*, not with the other four stages above it."""
+        with tempfile.TemporaryDirectory() as d:
+            round1 = (
+                "## Round 1\n\nReviewed: abc1234. Verdict: changes-requested.\n\n"
+                "### Findings\n\n- F1 [open] a.py:3 — high — F1\n"
+            )
+            review_md = (
+                "# Review: x\nPR: pr.md. Status: changes-requested.\n\n" + round1 +
+                "\n## Answers\n\n### Câu 1\nAnswered by: Phong. Date: 2026-09-24. "
+                "Via: product.\n\nREVIEW-RERUN-MARK-0025\n"
+            )
+            make_unit(Path(d), intent_md="Status: accepted.\nI", pr_md="Status: accepted.\nP",
+                      review_md=review_md)
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "review", STAGES, "review.md")
+            self.assertIn(self.BLOCK_HEADING, prompt)
+            self.assertIn("REVIEW-RERUN-MARK-0025", prompt)
+            self.assertIn(self.ADVICE, prompt)
+            self.assertLess(prompt.index("The rounds so far"), prompt.index(self.BLOCK_HEADING))
+
+    def test_intent_sees_the_advice_but_does_not_repeat_the_content(self):
+        """`intent.md` is already in the prompt whole (*The intent this work is authorised
+        by*), so the marker inside its own `## Answers` must appear exactly once."""
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md=self.ANSWERED.format(mark="INTENT-RERUN-MARK-0025"))
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "intent", STAGES, "intent.md")
+            self.assertIn(self.BLOCK_HEADING, prompt)
+            self.assertIn(self.ADVICE, prompt)
+            self.assertEqual(prompt.count("INTENT-RERUN-MARK-0025"), 1)
+
+    def test_a_first_run_has_no_such_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md")
+            self.assertNotIn(self.BLOCK_HEADING, prompt)
+
+    def test_an_artifact_with_no_answers_section_has_no_such_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(
+                Path(d),
+                intent_md="Status: accepted.\nI",
+                spec_md="Status: accepted.\n\n## Requirements\n\nnothing answered yet.\n",
+            )
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md")
+            self.assertNotIn(self.BLOCK_HEADING, prompt)
+
+    def test_impl_never_carries_this_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(
+                Path(d),
+                intent_md="Status: accepted.\nI",
+                plan_md="Status: accepted.\nP",
+                impl_md=self.ANSWERED.format(mark="IMPL-SHOULD-NOT-APPEAR-0025"),
+            )
+            prompt, included = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md"
+            )
+            self.assertNotIn(self.BLOCK_HEADING, prompt)
+            self.assertNotIn("IMPL-SHOULD-NOT-APPEAR-0025", prompt)
+            self.assertEqual(included, ["intent.md", "plan.md"])
+
+
 class AFixRoundCarriesTheFindings(unittest.TestCase):
     """The first real review round, 2026-09-23: five findings, and `impl` could see none.
 
@@ -1057,6 +1219,194 @@ class MergeReview(unittest.TestCase):
         self.assertEqual(
             body, "# Review: x\nStatus: accepted.\n\n## Round 1\n\nF1\n\n## Round 2\n\nok\n"
         )
+
+
+class RerunningKeepsTheAnswers(unittest.TestCase):
+    """`0025`. Re-running a prose stage used to overwrite its artifact whole, so a
+    `## Answers` block the answer route had appended was gone with no trace but an
+    `outputs` row (`.claude/rules/coscc-app.md`, the hazard this unit rewrites). `spec.md`
+    R1-R6: whatever a reply says, the section already on disk survives a re-run byte for
+    byte, unless there was none there to keep.
+    """
+
+    ANSWERED = (
+        "Author: t. Status: accepted.\n\n## Open questions\n\n1. Placeholder?\n\n"
+        "## Answers\n\n### Câu 1\nAnswered by: Phong. Date: 2026-09-24. Via: product.\n\n"
+        "{mark}\n"
+    )
+
+    ROUND1 = (
+        "## Round 1\n\nReviewed: abc1234. Verdict: changes-requested.\n\n"
+        "### Findings\n\n- F1 [open] a.py:3 — high — ROUND-ONE-MARKER-0025\n"
+    )
+
+    class Replies:
+        """`ReviewRoundsAccumulate.Replies`, plus `mid_write`: called after the reply has
+        been handed over and before `done` is yielded, so a test can simulate a person's
+        answer landing on disk while the step is still running (R6)."""
+
+        def __init__(self, text, mid_write=None):
+            self.text = text
+            self.mid_write = mid_write
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.prompt = text
+            yield ("chunk", self.text)
+            if self.mid_write:
+                self.mid_write()
+            yield ("done", {"session_id": "s", "cost": {}})
+
+    def unit_dir(self, d, **files):
+        return make_unit(Path(d), **files)
+
+    def run_once(self, d, stage, artifact, reply, mid_write=None):
+        directory = Path(d) / ".cos" / UNIT
+        session = self.Replies(reply, mid_write)
+
+        async def go():
+            last = None
+            async for item in Runner(session, None).run(
+                workspace=d, directory=directory, journal_key=d, unit=UNIT, stage=stage,
+                artifact=artifact, stages=STAGES, mode="manual",
+            ):
+                last = item
+            return last[1]
+
+        return asyncio.run(go())
+
+    def test_a_reply_without_answers_keeps_the_section_on_every_non_review_stage(self):
+        for stage in ("idea", "intent", "spec", "plan"):
+            with self.subTest(stage=stage):
+                with tempfile.TemporaryDirectory() as d:
+                    artifact = f"{stage}.md"
+                    existing = self.ANSWERED.format(mark=f"KEEP-{stage.upper()}-0025")
+                    self.unit_dir(d, **{artifact.replace(".", "_"): existing})
+                    path = Path(d) / ".cos" / UNIT / artifact
+                    before_section = answers_section(path.read_bytes())
+                    reply = f"# {stage.title()}: x\nStatus: accepted.\n\nno answers here.\n"
+                    done = self.run_once(d, stage, artifact, reply)
+                    after = path.read_bytes()
+                    self.assertEqual(done["outcome"], "done", done)
+                    self.assertTrue(after.endswith(before_section))
+
+    def test_b_a_reply_whose_answers_match_disk_still_yields_exactly_one_section(self):
+        with tempfile.TemporaryDirectory() as d:
+            existing = self.ANSWERED.format(mark="MATCHING-MARK-0025")
+            self.unit_dir(d, spec_md=existing)
+            reply = (
+                "# Spec: x\nStatus: accepted.\n\n## Requirements\n\nbody\n\n"
+                + existing[existing.index("## Answers"):]
+            )
+            done = self.run_once(d, "spec", "spec.md", reply)
+            after = (Path(d) / ".cos" / UNIT / "spec.md").read_text(encoding="utf-8")
+            self.assertEqual(done["outcome"], "done", done)
+            self.assertEqual(after.count("## Answers"), 1)
+
+    def test_c_a_reply_whose_answers_differ_from_disk_is_overruled_by_disk(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.unit_dir(d, spec_md=self.ANSWERED.format(mark="DISK-MARK-0025"))
+            reply = (
+                "# Spec: x\nStatus: accepted.\n\n## Requirements\n\nbody\n\n"
+                "## Answers\n\n### Câu 1\nAnswered by: a model. Date: 2099-01-01. "
+                "Via: product.\n\nREPLY-MARK-SHOULD-NOT-LAND-0025\n"
+            )
+            done = self.run_once(d, "spec", "spec.md", reply)
+            after = (Path(d) / ".cos" / UNIT / "spec.md").read_text(encoding="utf-8")
+            self.assertEqual(done["outcome"], "done", done)
+            self.assertIn("DISK-MARK-0025", after)
+            self.assertNotIn("REPLY-MARK-SHOULD-NOT-LAND-0025", after)
+
+    def test_d_a_reply_with_answers_but_none_on_disk_writes_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.unit_dir(
+                d, spec_md="Author: t. Status: accepted.\n\n## Requirements\n\n"
+                "nothing answered yet.\n",
+            )
+            reply = (
+                "# Spec: x\nStatus: accepted.\n\n## Requirements\n\nbody\n\n"
+                "## Answers\n\n### Câu 1\nAnswered by: a model. Date: 2099-01-01. "
+                "Via: product.\n\nSHOULD-NOT-LAND-0025\n"
+            )
+            done = self.run_once(d, "spec", "spec.md", reply)
+            after = (Path(d) / ".cos" / UNIT / "spec.md").read_text(encoding="utf-8")
+            self.assertEqual(done["outcome"], "done", done)
+            self.assertNotIn("## Answers", after)
+
+    def test_e_a_reply_with_no_status_line_leaves_the_file_untouched(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.unit_dir(d, spec_md=self.ANSWERED.format(mark="UNTOUCHED-MARK-0025"))
+            path = Path(d) / ".cos" / UNIT / "spec.md"
+            before = path.read_bytes()
+            done = self.run_once(d, "spec", "spec.md", "# Spec: x\n\nNo Status line at all.\n")
+            self.assertNotEqual(done["outcome"], "done")
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_f_a_block_appended_while_the_step_runs_is_still_on_disk_after(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.unit_dir(
+                d, spec_md="Author: t. Status: accepted.\n\n## Requirements\n\nnothing yet.\n",
+            )
+            path = Path(d) / ".cos" / UNIT / "spec.md"
+
+            def mid_write():
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(
+                        "\n## Answers\n\n### Câu 1\nAnswered by: Phong. "
+                        "Date: 2026-09-24. Via: product.\n\nMID-RUN-MARKER-0025\n"
+                    )
+
+            done = self.run_once(
+                d, "spec", "spec.md", "# Spec: x\nStatus: accepted.\n\nno answers here.\n",
+                mid_write=mid_write,
+            )
+            after = path.read_text(encoding="utf-8")
+            self.assertEqual(done["outcome"], "done", done)
+            self.assertIn("MID-RUN-MARKER-0025", after)
+
+    def test_g_review_with_answers_and_a_new_round_keeps_both(self):
+        with tempfile.TemporaryDirectory() as d:
+            existing = (
+                "# Review: x\nPR: pr.md. Status: changes-requested.\n\n" + self.ROUND1 +
+                "\n## Answers\n\n### Câu 1\nAnswered by: Phong. Date: 2026-09-24. "
+                "Via: product.\n\nREVIEW-ANSWER-MARK-0025\n"
+            )
+            self.unit_dir(d, review_md=existing)
+            path = Path(d) / ".cos" / UNIT / "review.md"
+            before_section = answers_section(path.read_bytes())
+            reply = (
+                "# Review: x\nStatus: accepted.\n\n## Round 2\n\n"
+                "Reviewed: def5678. Verdict: pass.\n\n### Findings\n\nnone\n"
+            )
+            done = self.run_once(d, "review", "review.md", reply)
+            after = path.read_bytes()
+            self.assertEqual(done["outcome"], "done", done)
+            self.assertTrue(after.endswith(before_section))
+            i1 = after.find(b"ROUND-ONE-MARKER-0025")
+            i2 = after.find(b"## Round 2")
+            i3 = after.find(b"## Answers")
+            self.assertNotIn(-1, (i1, i2, i3))
+            self.assertLess(i1, i2)
+            self.assertLess(i2, i3)
+            self.assertEqual(after.decode("utf-8").count("\n## Round "), 2)
+
+    def test_h_a_reply_that_rewrites_round_one_on_a_review_with_answers_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            existing = (
+                "# Review: x\nPR: pr.md. Status: changes-requested.\n\n" + self.ROUND1 +
+                "\n## Answers\n\n### Câu 1\nAnswered by: Phong. Date: 2026-09-24. "
+                "Via: product.\n\nREVIEW-ANSWER-MARK-0025\n"
+            )
+            self.unit_dir(d, review_md=existing)
+            path = Path(d) / ".cos" / UNIT / "review.md"
+            before = path.read_bytes()
+            reply = (
+                "# Review: x\nStatus: accepted.\n\n## Round 1\n\nnothing was wrong\n\n"
+                "## Round 2\n\nall fine\n"
+            )
+            done = self.run_once(d, "review", "review.md", reply)
+            self.assertNotEqual(done["outcome"], "done")
+            self.assertIn("changes an earlier review round", done["error"])
+            self.assertEqual(path.read_bytes(), before)
 
 
 class TheReviewSeesWhatWasMeasured(unittest.TestCase):
