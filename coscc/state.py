@@ -1083,8 +1083,15 @@ class StudioState(rx.State):
     @rx.event
     async def post_review_comment(self, number: int):
         """`0021` R8. Post one review round to the pull request. Whether it may, and whether
-        it is already there, is `Service.post_review_comment`'s decision."""
+        it is already there, is `Service.post_review_comment`'s decision.
+
+        The `yield` after raising `posting_round` is what sends it to the browser: without
+        it the flag is set and cleared inside one delta, and the button never locks for the
+        up to 60s `gh` may take (`0021` review, F1)."""
+        if self.posting_round != 0:
+            return
         self.posting_round = int(number)
+        yield
         try:
             done = await SERVICE.post_review_comment(self.cwd, self.unit_id, number)
         except Invalid as e:

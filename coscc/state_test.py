@@ -171,6 +171,47 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
         self.assertNotEqual(_lane(through_board), "Needs review")
 
 
+class PostingARoundLocksTheButtonWhileItRuns(unittest.TestCase):
+    """`0021` review F1. Reflex sends state to the browser only at a `yield` or at the end of
+    the handler, so a busy flag raised and cleared with no `yield` between never arrives:
+    the *Post to PR* button would not lock during the up to 60s `gh` may take."""
+
+    def test_a_yield_follows_raising_posting_round_before_the_service_is_awaited(self):
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+        state = _state_class(tree)
+        [handler] = [
+            n
+            for n in state.body
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "post_review_comment"
+        ]
+        body = handler.body
+        raised = next(
+            i
+            for i, stmt in enumerate(body)
+            if isinstance(stmt, ast.Assign)
+            and "posting_round" in [name for t in stmt.targets for name in _self_names(t)]
+        )
+        after = body[raised + 1]
+        self.assertTrue(
+            isinstance(after, ast.Expr) and isinstance(after.value, ast.Yield),
+            f"state.py:{after.lineno}: the statement after raising posting_round is not "
+            "a bare `yield`, so the browser never sees the button locked",
+        )
+
+    def test_a_second_press_while_one_is_running_does_nothing(self):
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+        state = _state_class(tree)
+        [handler] = [
+            n
+            for n in state.body
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "post_review_comment"
+        ]
+        first = next(s for s in handler.body if not isinstance(s, ast.Expr) or not isinstance(s.value, ast.Constant))
+        self.assertIsInstance(first, ast.If)
+        self.assertIn("posting_round", ast.unparse(first.test))
+        self.assertIsInstance(first.body[0], ast.Return)
+
+
 def _self_names(target: ast.expr) -> list[str]:
     """Every `self.X` being assigned by one target, tuple unpacking included."""
     if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
