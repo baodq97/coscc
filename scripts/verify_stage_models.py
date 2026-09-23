@@ -382,16 +382,17 @@ async def paid() -> int:
             # does not work is the environment, not an outcome the proof measures
             print(f"{model_id}: claude could not be run: {type(e).__name__}: {e}")
             return EXIT_ENV
-        if result.returncode != 0:
-            print(f"{model_id}: claude exited {result.returncode}\n"
-                  f"stderr: {result.stderr[:500]}\nstdout: {result.stdout[:500]}")
-            return EXIT_ENV
+        # A nonzero exit is read the same way as a zero one below: the CLI reporting
+        # `is_error` in its own JSON, on either exit code, is the outcome failing
+        # (Risk 1), not the environment refusing to run. Only stdout that carries no
+        # such message — on any exit code — is read as the environment (review round 1,
+        # F1: a nonzero exit used to short-circuit to EXIT_ENV before this JSON was ever
+        # read, so an account that cannot use a `[1m]` id by exiting nonzero would have
+        # been misreported as an environment problem instead of Risk 1).
         try:
             payload = json.loads(result.stdout)
         except ValueError:
-            print(f"{model_id}: stdout was not JSON\n"
-                  f"stderr: {result.stderr[:500]}\nstdout: {result.stdout[:500]}")
-            return EXIT_ENV
+            payload = None
         # `claude_code_version` 2.1.280 (measured 2026-09-23) wraps `--output-format json`
         # in a JSON array of messages rather than the single result object earlier
         # versions documented; the one carrying `modelUsage` is `type: "result"`.
@@ -402,8 +403,13 @@ async def paid() -> int:
                  if isinstance(item, dict) and item.get("type") == "result"), None,
             )
         if not isinstance(outcome, dict):
-            print(f"{model_id}: no result message in the CLI's JSON output\n"
-                  f"stdout: {result.stdout[:500]}")
+            if result.returncode != 0:
+                print(f"{model_id}: claude exited {result.returncode}, and stdout "
+                      f"carried no result message\n"
+                      f"stderr: {result.stderr[:500]}\nstdout: {result.stdout[:500]}")
+            else:
+                print(f"{model_id}: no result message in the CLI's JSON output\n"
+                      f"stdout: {result.stdout[:500]}")
             return EXIT_ENV
         if outcome.get("is_error"):
             # The CLI itself reported an error for this model id — that is the outcome
@@ -411,6 +417,14 @@ async def paid() -> int:
             print(f"{model_id}: the CLI reported an error for this model: "
                   f"{outcome.get('result')}")
             return EXIT_BROKEN
+        if result.returncode != 0:
+            # Exited nonzero, parsed to a result message, but that message did not say
+            # `is_error` — an exit/JSON combination nobody has measured. Not classified
+            # as either outcome; read as the environment so it does not silently pass.
+            print(f"{model_id}: claude exited {result.returncode} but its result "
+                  f"message did not report is_error: {outcome.get('result')!r}\n"
+                  f"stderr: {result.stderr[:500]}")
+            return EXIT_ENV
         usage = outcome.get("modelUsage") or {}
         bare = model_id.removesuffix("[1m]")
         windows = {key: (stats or {}).get("contextWindow") for key, stats in usage.items()}
