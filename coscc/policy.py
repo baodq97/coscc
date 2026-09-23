@@ -276,6 +276,35 @@ def is_prose_stage(stage: str) -> bool:
 # arrived at a session created with `tools=[]`, because `--tools` names the built-in set and
 # nothing else. A callback sits on the path every call takes, whatever declared it.
 
+# The prefix of every reason `check_command` and `decide` return, named once so nothing
+# else has to spell them again. `coscc/transcript.py` matches a tool result's text against
+# this tuple to tell a refusal this table made from any other error a step can hit — so a
+# reason built anywhere in this module from a string not listed here would undercount
+# `0032_impl-fills-its-context-with-whole-files-and-refusals` R3's tiêu chí 1 without
+# either side ever failing a test. Wording is unchanged from before this constant existed;
+# only the duplication is gone.
+REFUSAL_EMPTY = "an empty command"
+REFUSAL_SUBSTITUTION = "command substitution is not allowed"
+REFUSAL_REDIRECT = "redirecting into a file is not allowed"
+REFUSAL_NOT_RUNNABLE = "this step may not run"
+REFUSAL_MERGE_ENDPOINT = "this step may not call the merge endpoint"
+REFUSAL_NOT_GRANTED = "this step was not granted"
+REFUSAL_WRITE_OUTSIDE = "writing outside the workspace is not allowed"
+REFUSAL_READ_OUTSIDE = "reading outside the workspace is not allowed"
+REFUSAL_BAD_WORKSPACE = "the workspace path could not be resolved"
+
+REFUSALS = (
+    REFUSAL_EMPTY,
+    REFUSAL_SUBSTITUTION,
+    REFUSAL_REDIRECT,
+    REFUSAL_NOT_RUNNABLE,
+    REFUSAL_MERGE_ENDPOINT,
+    REFUSAL_NOT_GRANTED,
+    REFUSAL_WRITE_OUTSIDE,
+    REFUSAL_READ_OUTSIDE,
+    REFUSAL_BAD_WORKSPACE,
+)
+
 # Shell metacharacters that make the first word of a segment stop predicting what runs.
 _SUBSTITUTION = ("$(", "`", "${", "<(", ">(")
 _SEPARATORS = (";", "&&", "||", "|", "\n", "&")
@@ -312,15 +341,15 @@ def check_command(grant: Grant, command: str) -> str:
     """
     text = (command or "").strip()
     if not text:
-        return "an empty command"
+        return REFUSAL_EMPTY
     for token in _SUBSTITUTION:
         if token in text:
             # With substitution in play the first word no longer says what runs.
-            return f"command substitution is not allowed: {token}"
+            return f"{REFUSAL_SUBSTITUTION}: {token}"
     if _REDIRECT.search(text):
         # A redirect writes a file without any write tool being called, so the path check
         # in `decide` never sees it. The step has `Write` and `Edit` for making files.
-        return "redirecting into a file is not allowed — use the write tools"
+        return f"{REFUSAL_REDIRECT} — use the write tools"
     for segment in _segments(text):
         word = segment.split()[0] if segment.split() else ""
         # `VAR=x cmd` puts the assignment first; step over any of them.
@@ -329,14 +358,14 @@ def check_command(grant: Grant, command: str) -> str:
             word = segment.split()[0] if segment.split() else ""
         base = word.rsplit("/", 1)[-1]
         if base not in grant.commands:
-            return f"this step may not run {base!r}"
+            return f"{REFUSAL_NOT_RUNNABLE} {base!r}"
         words = _words(base, segment.split()[1:])
         for prefix, reason in grant.denied:
             if words[: len(prefix)] == prefix:
-                return f"this step may not run {' '.join(prefix)!r}: {reason}"
+                return f"{REFUSAL_NOT_RUNNABLE} {' '.join(prefix)!r}: {reason}"
         if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in words):
             # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
-            return "this step may not call the merge endpoint: merging is the ship stage's"
+            return f"{REFUSAL_MERGE_ENDPOINT}: merging is the ship stage's"
     return ""
 
 
@@ -408,7 +437,7 @@ def decide(
     """
     if tool not in grant.tools:
         # Covers MCP tools by construction: their names are never in a grant.
-        return f"this step was not granted {tool}"
+        return f"{REFUSAL_NOT_GRANTED} {tool}"
 
     if tool in EXEC_TOOLS:
         reason = check_command(grant, str(tool_input.get("command", "")))
@@ -424,7 +453,7 @@ def decide(
             return reason
         for raw in _paths_in(tool_input):
             if not _inside(raw, roots, None):
-                return f"writing outside the workspace is not allowed: {raw}"
+                return f"{REFUSAL_WRITE_OUTSIDE}: {raw}"
 
     if tool in READ_TOOLS:
         # `0020` `spec.md` `## Answers`, answer 2: reading is held to the same two roots as
@@ -437,12 +466,9 @@ def decide(
             return reason
         for raw in _read_paths_in(tool, tool_input):
             if raw is _TRAVERSAL:
-                return (
-                    "reading outside the workspace is not allowed: "
-                    f"{tool_input.get('pattern')}"
-                )
+                return f"{REFUSAL_READ_OUTSIDE}: {tool_input.get('pattern')}"
             if not _inside(raw, roots, roots[0]):
-                return f"reading outside the workspace is not allowed: {raw}"
+                return f"{REFUSAL_READ_OUTSIDE}: {raw}"
     return ""
 
 
@@ -457,9 +483,9 @@ def _roots(workspace: str, unit_dir: str | None) -> tuple[list, str]:
         try:
             roots.append(Path(candidate).expanduser().resolve())
         except OSError:
-            return [], "the workspace path could not be resolved"
+            return [], REFUSAL_BAD_WORKSPACE
     if not roots:
-        return [], "the workspace path could not be resolved"
+        return [], REFUSAL_BAD_WORKSPACE
     return roots, ""
 
 
