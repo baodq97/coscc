@@ -142,6 +142,19 @@ class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
             self.assertNotIn("## Round 2", u["rounds"][0]["text"])
             self.assertIn("- F1 [fixed abcdef2] the first thing", u["rounds"][1]["text"])
 
+    def test_the_script_and_the_runner_cut_rounds_at_the_same_place(self):
+        """`0021` plan, Risk 8. `coscc/runner.py` `_rounds` is an older second reading of
+        round edges; until it goes, the text posted and the text preserved must match."""
+        from coscc.runner import _rounds
+
+        text = REVIEW_TWO_ROUNDS + "\n## Answers\n\n### Câu 1\nnot a round\n"
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_q"
+            unit.mkdir(parents=True)
+            (unit / "review.md").write_text(text, encoding="utf-8")
+            [u] = run(board.read(d))["units"]
+            self.assertEqual([r["text"] for r in u["rounds"]], _rounds(text))
+
     def test_an_older_script_that_sends_neither_reads_as_none(self):
         async def fake_run(argv, timeout):
             return 0, '{"stages": [], "units": [{"name": "0001_q", "artifacts": {}}]}', ""
