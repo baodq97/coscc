@@ -131,6 +131,20 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         # knobs did not. C2b is about the app deciding, not the directory it visits.
         self.assertIsNone(_options(Config(), "/p", None).setting_sources)
 
+    def test_the_prompt_reaches_the_model_as_written(self):
+        """No `@path` expansion and no slash-command dispatch, for every session.
+
+        Measured 2026-09-23: with this off, a session holding no tools at all was sent
+        `@/tmp/canary.txt` and repeated the word inside the file. Since `0016` a prompt can
+        carry text from `POST /api/units/answer`, which anyone who reaches the port can
+        send, so this is what stands between that route and any file this user can read.
+        """
+        self.assertTrue(_options(Config(), "/p", None).verbatim_prompts)
+        # A board step's options are built by the same function; asserting it here too
+        # keeps a future special case for steps from quietly turning it back off.
+        step = _options(Config(), "/p", None, max_turns=50, tools=["Read"])
+        self.assertTrue(step.verbatim_prompts)
+
     def test_write_tools_are_stripped_on_the_way_to_the_sdk(self):
         c = Config(tools=("Read", "Bash"))
         self.assertEqual(_options(c, "/p", None).tools, ["Read"])
