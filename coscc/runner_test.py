@@ -17,6 +17,7 @@ from pathlib import Path
 
 from coscc import harness, policy
 from coscc.journal import Journal
+from coscc.policy import decide, grant_for
 from coscc.runner import (
     RunError,
     Runner,
@@ -288,6 +289,91 @@ class AStepRecordsTheCommitItRanOn(unittest.TestCase):
     def test_a_step_outside_git_records_no_commit(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self._start_record(d)["head"], "")
+
+
+class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
+    """`0020` review round 1, F1.
+
+    Every step runs in the unit's git worktree, whose `.git` is a file naming a directory
+    under the main repository's `.git/worktrees/`. Since `0020` a `Read` there is refused,
+    so `write-review` step 2 can no longer read the head itself. The app reads it and puts
+    it in the prompt instead.
+    """
+
+    def _worktree(self, d: str) -> tuple[Path, str]:
+        import subprocess
+
+        main = Path(d) / "main"
+        tree = Path(d) / "tree"
+        git = ["git", "-C", str(main), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(["git", "init", "-q", str(main)], check=True)
+        (main / "a.txt").write_text("a\n", encoding="utf-8")
+        subprocess.run(git + ["add", "a.txt"], check=True)
+        subprocess.run(git + ["commit", "-qm", "a"], check=True)
+        subprocess.run(git + ["worktree", "add", "-q", "-b", "fix/x", str(tree)], check=True)
+        head = subprocess.run(
+            ["git", "-C", str(tree), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        return tree, head
+
+    def test_the_worktree_git_directory_is_outside_what_review_may_read(self):
+        # The shape F1 named: this is why the head has to come from the app.
+        with tempfile.TemporaryDirectory() as d:
+            tree, _ = self._worktree(d)
+            self.assertTrue((tree / ".git").is_file())
+            gitdir = (tree / ".git").read_text(encoding="utf-8").split(":", 1)[1].strip()
+            unit = Path(d) / "store" / UNIT
+            reason = decide(grant_for("review"), "Read", {"file_path": gitdir + "/HEAD"},
+                            str(tree), str(unit))
+            self.assertIn("reading outside the workspace", reason)
+
+    def test_a_review_run_in_a_worktree_is_handed_its_head(self):
+        seen = {}
+
+        class Replies:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                seen["prompt"] = text
+                yield ("chunk", "# Review: x\nStatus: accepted.\n\n## Round 1\n")
+                yield ("done", {"session_id": "s-r", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as d:
+            tree, head = self._worktree(d)
+            store = Path(d) / "store"
+            make_unit(store, intent_md="Status: accepted.\nI")
+            journal = Journal(str(tree), str(tree))
+            r = Runner(sessions=Replies(), journal=journal)
+
+            async def go():
+                async for _ in r.run(
+                    workspace=str(tree), directory=store / ".cos" / UNIT,
+                    journal_key=str(tree), unit=UNIT, stage="review", artifact="review.md",
+                    stages=STAGES, mode="manual", cwd=str(tree),
+                ):
+                    pass
+
+            asyncio.run(go())
+            self.assertIn("# The commit you are reviewing", seen["prompt"])
+            self.assertIn(f"    {head}\n", seen["prompt"])
+            [start] = journal.records(str(tree), kind="start")
+            self.assertEqual(start["head"], head)
+
+    def test_no_head_is_said_rather_than_left_to_a_guess(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "review", STAGES, "review.md")
+            self.assertIn("# The commit you are reviewing", prompt)
+            self.assertIn("could not read the head", prompt)
+            self.assertIn("Do not guess one", prompt)
+
+    def test_only_review_is_handed_the_head(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            prompt, _ = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md", head="a" * 40
+            )
+            self.assertNotIn("# The commit you are reviewing", prompt)
+            self.assertNotIn("a" * 40, prompt)
 
 
 class AFailedStepIsRecordedAsFailed(unittest.TestCase):

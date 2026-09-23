@@ -83,6 +83,7 @@ def build_prompt(
     artifact: str,
     writes_own: bool = False,
     gate_said: str = "",
+    head: str = "",
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -191,6 +192,31 @@ def build_prompt(
                 "your header, unchanged, and appends yours after them.\n\n"
                 + "\n".join(earlier)
             )
+
+    # `write-review` step 2 needs the commit it reviewed, and the `ship` gate reads that
+    # line. Until `0020` the stage read it out of `.git/` itself. Since `0017` a step runs
+    # in the unit's worktree, whose `.git` is a file pointing into the main repository's
+    # `.git/worktrees/`, and since `0020` a `Read` there is refused: it lies outside both
+    # the worktree and the unit (`0020` review round 1, F1). The app has already read the
+    # head for the run log, so it hands the same value over rather than widen the boundary.
+    if stage == "review" and head:
+        parts.append(
+            "# The commit you are reviewing\n\n"
+            "The app read the head of this checkout before starting the step. Record it "
+            "on the round's `Reviewed:` line:\n\n"
+            f"    {head}\n\n"
+            "It is the same value the run log's `start` record carries. Do not read it out "
+            "of `.git/`: the checkout is a git worktree whose git directory lies outside "
+            "what this step may read."
+        )
+    elif stage == "review":
+        parts.append(
+            "# The commit you are reviewing\n\n"
+            "The app could not read the head of this checkout: it is not a git checkout, "
+            "or `git rev-parse HEAD` failed. Do not guess one. Leave the round's "
+            "`Reviewed:` line without a commit and say why under "
+            "`### What was not reviewed`; the `ship` gate will stay closed, which is right."
+        )
 
     location = directory / artifact
     if writes_own and stage == "ship":
@@ -444,10 +470,12 @@ class Runner:
                     f"{stage} is a prose stage and must not carry {', '.join(beyond)}"
                 )
 
+        head = await _head_of(cwd)
         prompt, included = build_prompt(
             cwd, directory, unit, stage, stages, artifact,
             writes_own=not grant.app_writes_artifact,
             gate_said=gate_said,
+            head=head,
         )
 
         if self.journal is not None:
@@ -455,7 +483,7 @@ class Runner:
                 journal_key, unit, stage, mode,
                 prompt_chars=len(prompt), included=included,
                 granted=list(grant.tools), max_turns=grant.max_turns,
-                head=await _head_of(cwd),
+                head=head,
             )
 
         denials = Denials()

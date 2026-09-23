@@ -101,7 +101,10 @@ no commands, one turn, no budget.
   the stages without `Bash`: `impl`, `pr` and `ship` still have `cat` and `head`, and
   `check_command` reads no paths. A `Glob` pattern is checked only up to its first
   wildcard. `ship` runs in the store's unit folder, so it can no longer `Read` the
-  worktree. `coscc/policy_test.py`, `TheReadBoundaryIsNotASandbox`, pins the gaps.
+  worktree. `coscc/policy_test.py`, `TheReadBoundaryIsNotASandbox`, pins the gaps. A
+  worktree's `.git` is a file pointing outside both roots, so no read-only stage can read
+  a commit out of `.git/`: `review` is handed the head in its prompt instead
+  (`build_prompt`, *The commit you are reviewing*; `0020` review round 1, F1).
 - **A `coscc/_harness/` left in a checkout shadows `.claude/`.** Both are gitignored and
   both are built, not committed, so `git status` stays clean while the app reads the stale
   copy — edit a skill, and the step still runs the old text. `coscc/harness.py` prefers the
