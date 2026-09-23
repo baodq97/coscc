@@ -225,25 +225,41 @@ if __name__ == "__main__":
 
 
 class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
-    """`REFLEX_WEB_WORKDIR` reaching a session is what destroyed a served bundle.
+    """`REFLEX_WEB_WORKDIR` reaching a session is what destroyed a served bundle, twice.
 
-    Measured 2026-09-23: `coscc/run.py` sets it process-wide, an `impl` step inherited it,
+    Measured 2026-09-23: `coscc/run.py` sets it process-wide, a board step inherited it,
     ran a build, and Reflex compiled into the installed package instead of the workspace.
     The page answered 404 while the API stayed healthy.
+
+    **These assertions are about the value the child would read, not about this dict.**
+    The first version of this class asserted the key was absent from `child_env` and
+    passed while the bug shipped: `claude_agent_sdk` inherits `os.environ` and lays
+    `options.env` on top, so a key left out is a key inherited. A test for a boundary has
+    to be written in the terms of the far side of it.
     """
 
-    def test_the_web_workdir_does_not_reach_the_session(self):
-        with mock.patch.dict(os.environ, {frontend.WEB_WORKDIR_VAR: "/somewhere/_web"}):
-            self.assertNotIn(frontend.WEB_WORKDIR_VAR, sessions.child_env())
+    def child(self, cwd="/w"):
+        """What the session process would actually see, composed the way the SDK does."""
+        inherited = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        inherited.update(sessions.child_env(cwd))
+        return inherited
 
-    def test_no_setting_of_this_app_reaches_the_session(self):
+    def test_the_web_workdir_the_child_reads_is_the_workspace_not_this_app(self):
+        with mock.patch.dict(os.environ, {frontend.WEB_WORKDIR_VAR: "/installed/_web"}):
+            self.assertEqual(
+                self.child("/w")[frontend.WEB_WORKDIR_VAR], str(Path("/w") / ".web")
+            )
+
+    def test_no_setting_of_this_app_reaches_the_child_with_a_value(self):
         with mock.patch.dict(os.environ, {"COS_DATA_DIR": "/d", "COS_PORT": "1"}):
-            env = sessions.child_env()
-            self.assertEqual([k for k in env if k.startswith("COS_")], [])
+            child = self.child()
+            self.assertEqual(
+                [k for k, v in child.items() if k.startswith("COS_") and v], []
+            )
 
     def test_everything_else_is_left_alone(self):
-        """Filtered down, not built up. A session that loses `HOME` cannot sign in."""
+        """Overridden, not replaced. A session that loses `HOME` cannot sign in."""
         with mock.patch.dict(os.environ, {"HOME": "/home/someone", "PATH": "/bin"}):
-            env = sessions.child_env()
-            self.assertEqual(env["HOME"], "/home/someone")
-            self.assertEqual(env["PATH"], "/bin")
+            child = self.child()
+            self.assertEqual(child["HOME"], "/home/someone")
+            self.assertEqual(child["PATH"], "/bin")
