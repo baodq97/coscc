@@ -507,3 +507,91 @@ class ThePromptSaysTheGateWasAlreadyAsked(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             prompt, _ = build_prompt(d, self.scene(d), UNIT, "ship", STAGES, "ship.md")
             self.assertNotIn("The gate, already asked", prompt)
+
+
+class NarrationBeforeAToolCallIsNotTheArtifact(unittest.TestCase):
+    """Measured on `0016_no-human-in-the-loop`, 2026-09-23.
+
+    Its `plan.md` opened with *"Tôi đang đọc code để viết plan — xong `cos.mjs`..."* run
+    into the title with no newline between them. The file no longer began with `# Plan:`
+    and `Status:` was no longer its second line. `cos.mjs` read it anyway — it looks for
+    `Status:` anywhere in the file — so this corrupted every plan the board produced
+    without ever failing a gate.
+
+    It began the hour `plan` was given `Read`, `Glob` and `Grep` (#22). Before that no
+    prose stage had tools, so no prose stage ever spoke twice, and concatenating every
+    chunk was indistinguishable from taking the reply.
+    """
+
+    class Narrates:
+        """A session that thinks out loud, reads two files, then answers."""
+
+        def __init__(self, journal=None):
+            self.journal = journal
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "Reading the board reader and the page handlers.")
+            yield ("tool", "Read")
+            yield ("chunk", "Now checking the route the proof will use.")
+            yield ("tool", "Grep")
+            yield ("chunk", "# Plan: a problem\nIntent: intent.md. Status: accepted.\n\n## Body\n")
+            yield ("done", {"session_id": "s-1", "cost": {"output_tokens": 9}})
+
+    def go(self, d):
+        make_unit(
+            Path(d),
+            intent_md="Status: accepted.\nTHE-INTENT",
+            spec_md="Status: accepted.\nTHE-SPEC",
+        )
+        runner = Runner(self.Narrates(), None)
+
+        async def run():
+            out = []
+            async for item in runner.run(
+                workspace=d,
+                directory=Path(d) / ".cos" / UNIT,
+                journal_key=d,
+                unit=UNIT,
+                stage="plan",
+                artifact="plan.md",
+                stages=STAGES,
+                mode="autonomous",
+            ):
+                out.append(item)
+            return out
+
+        return asyncio.run(run()), Path(d) / ".cos" / UNIT / "plan.md"
+
+    def test_the_artifact_starts_at_its_own_heading(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, written = self.go(d)
+            self.assertTrue(
+                written.read_text(encoding="utf-8").startswith("# Plan:"),
+                written.read_text(encoding="utf-8")[:120],
+            )
+
+    def test_no_narration_survives_into_the_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, written = self.go(d)
+            body = written.read_text(encoding="utf-8")
+            self.assertNotIn("Reading the board reader", body)
+            self.assertNotIn("Now checking the route", body)
+
+    def test_the_status_line_is_the_second_line_again(self):
+        """What `write-plan`'s template asks for, and what a reader looks at first."""
+        with tempfile.TemporaryDirectory() as d:
+            _, written = self.go(d)
+            self.assertIn("Status: accepted", written.read_text(encoding="utf-8").splitlines()[1])
+
+    def test_the_narration_still_reaches_the_page_while_it_happens(self):
+        """Dropping it from the file must not drop it from the stream a person watches."""
+        with tempfile.TemporaryDirectory() as d:
+            items, _ = self.go(d)
+            chunks = [p for k, p in items if k == "chunk"]
+            self.assertIn("Reading the board reader and the page handlers.", chunks)
+
+    def test_the_tool_signal_is_not_forwarded_as_a_row_of_its_own(self):
+        """`coscc/api.py` reads every kind that is not `chunk` as the terminal `done`."""
+        with tempfile.TemporaryDirectory() as d:
+            items, _ = self.go(d)
+            self.assertEqual([k for k, _ in items if k not in ("chunk", "done")], [])

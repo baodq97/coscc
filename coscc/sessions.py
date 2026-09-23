@@ -20,7 +20,14 @@ from pathlib import Path
 from typing import Any
 
 import claude_agent_sdk as sdk
-from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, TextBlock
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    ServerToolUseBlock,
+    TextBlock,
+    ToolUseBlock,
+)
 
 from coscc import frontend
 from coscc.config import Config
@@ -350,6 +357,12 @@ class Sessions:
                     if isinstance(block, TextBlock):
                         collected.append(block.text)
                         yield ("chunk", block.text)
+                    elif isinstance(block, (ToolUseBlock, ServerToolUseBlock)):
+                        # Said out loud so a caller assembling an artifact from the reply
+                        # can tell narration from the artifact. Text that arrives before a
+                        # tool call is a step thinking out loud on its way somewhere; it is
+                        # never the file. See `coscc/runner.py` for what is done with it.
+                        yield ("tool", getattr(block, "name", "") or "tool")
                 if message.session_id:
                     resolved = message.session_id
             elif isinstance(message, sdk.ResultMessage):

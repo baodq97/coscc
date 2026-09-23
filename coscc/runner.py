@@ -331,6 +331,24 @@ class Runner:
                 if kind == "chunk":
                     collected += payload
                     yield ("chunk", payload)
+                elif kind == "tool":
+                    # Everything said before a tool call was said on the way to using it.
+                    # For a stage whose artifact the app writes, that text is narration and
+                    # the artifact is what comes after the last one.
+                    #
+                    # This cost nothing while no prose stage had tools. `plan` got `Read`,
+                    # `Glob` and `Grep` on 2026-09-23 to fix a different defect, and from
+                    # that hour every `plan.md` the board produced began with the step
+                    # thinking out loud -- glued to the heading, so the file no longer
+                    # opened with `# Plan:` and the `Status:` line was no longer the second.
+                    # Measured on `0016_no-human-in-the-loop`: two sentences ahead of the
+                    # title. `cos.mjs` still parsed it, because it looks for `Status:`
+                    # anywhere, which is why this corrupted quietly instead of failing.
+                    #
+                    # Not forwarded. `coscc/api.py:227-231` treats every kind that is not
+                    # `chunk` as the terminal `done` row, so a third kind reaching it would
+                    # arrive at the client as a malformed `done`.
+                    collected = ""
                 else:
                     session_id = payload.get("session_id", "")
                     cost = payload.get("cost", {}) or {}
