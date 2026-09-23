@@ -317,6 +317,62 @@ REFUSALS = (
     REFUSAL_ANSI_QUOTE,
 )
 
+# R4/R7: what to do instead, said once and appended to the refusal it belongs to *and* to
+# `command_rules` below, so the prompt and the refusal a step meets can never disagree.
+SUBSTITUTION_ALTERNATIVE = (
+    "pipe a commit message in instead of substituting it: `git commit -F - <<'EOF'`, "
+    "ending the heredoc on its own line; read any other value with a separate command "
+    "first, then use what it printed"
+)
+REDIRECT_ALTERNATIVE = (
+    "pipe long output through `tail -n N` or `head -n N` instead of redirecting it, and "
+    "create a file with the Write tool rather than a shell redirect"
+)
+NO_TEMP_FILE_ALTERNATIVE = (
+    "there is nothing to delete a temporary file for, because nothing here should be "
+    "creating one — see the two alternatives above"
+)
+
+# R9: the size a `Read` with no `limit` is capped to when the file runs past it. Chosen —
+# the same figure `permission_gate` below enforces — not measured; 20000 leaves headroom
+# under the 25000-character ceiling `intent.md`'s tiêu chí 2 sets, for the `+8` per line
+# `read_limit` already charges.
+READ_CEILING = 20000
+
+
+def command_rules(grant: Grant) -> str:
+    """A plain restatement of what `check_command` and `decide` enforce for `grant`, meant
+    to sit in a step's own prompt (R4) so a step sees the rule before it meets the refusal
+    that would otherwise be its first word of it.
+
+    Pure: built only from `grant` and this module's own constants — the same ones
+    `check_command` builds its refusals from — so the prompt and a refusal a step actually
+    meets can never disagree (R7).
+    """
+    commands = ", ".join(f"`{c}`" for c in sorted(grant.commands))
+    lines = [
+        f"You may run these, matched on the first word of each command: {commands}. "
+        f"Anything else is refused: `{REFUSAL_NOT_RUNNABLE} '<word>'`.",
+        f"Command substitution ({', '.join(_SUBSTITUTION)}) is refused: "
+        f"{SUBSTITUTION_ALTERNATIVE}.",
+        f"A shell redirect (`>`, `>>`) is refused: {REDIRECT_ALTERNATIVE}.",
+    ]
+    if "rm" not in grant.commands:
+        lines.append(f"There is no `rm` here: {NO_TEMP_FILE_ALTERNATIVE}.")
+    for prefix, reason in grant.denied:
+        lines.append(
+            f"`{' '.join(prefix)}` is refused even though its first word is allowed: "
+            f"{reason}."
+        )
+    lines.append(
+        f"A `Read` with no `limit` given, on a file that would otherwise run past "
+        f"{READ_CEILING} characters, is given one automatically so it stops under that "
+        "ceiling instead — ask for your own `limit` or `offset` if you want a different "
+        "window. A `Grep` with no `head_limit` given is capped to 200 matching lines the "
+        "same way."
+    )
+    return "\n".join(lines)
+
 # Shell metacharacters that make the first word of a segment stop predicting what runs.
 _SUBSTITUTION = ("$(", "`", "${", "<(", ">(")
 _SEPARATORS = (";", "&&", "||", "|", "\n", "&")
@@ -574,11 +630,11 @@ def check_command(grant: Grant, command: str) -> str:
             # the body of a heredoc whose delimiter was quoted, which bash does not expand
             # either (R6). Substitution inside a plain `'...'` is still refused here on
             # purpose — spec.md `## Design` says so; nothing asked for that to widen.
-            return f"{REFUSAL_SUBSTITUTION}: {token}"
+            return f"{REFUSAL_SUBSTITUTION}: {token} — {SUBSTITUTION_ALTERNATIVE}"
     if _REDIRECT.search(checked_text):
         # A redirect writes a file without any write tool being called, so the path check
         # in `decide` never sees it. The step has `Write` and `Edit` for making files.
-        return f"{REFUSAL_REDIRECT} — use the write tools"
+        return f"{REFUSAL_REDIRECT} — {REDIRECT_ALTERNATIVE}"
     for segment in segments:
         # `shlex.split`, not `str.split()`: a segment `_scan` cut is quote-balanced by
         # construction (a split only ever happens while outside every quote), so this
@@ -594,7 +650,11 @@ def check_command(grant: Grant, command: str) -> str:
             word = words[0]
         base = word.rsplit("/", 1)[-1]
         if base not in grant.commands:
-            return f"{REFUSAL_NOT_RUNNABLE} {base!r}"
+            allowed = ", ".join(sorted(grant.commands))
+            extra = f" — allowed: {allowed}" if allowed else ""
+            if base == "rm":
+                extra += f"; {NO_TEMP_FILE_ALTERNATIVE}"
+            return f"{REFUSAL_NOT_RUNNABLE} {base!r}{extra}"
         checked_words = _words(base, words[1:])
         for prefix, reason in grant.denied:
             if checked_words[: len(prefix)] == prefix:
@@ -603,6 +663,30 @@ def check_command(grant: Grant, command: str) -> str:
             # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
             return f"{REFUSAL_MERGE_ENDPOINT}: merging is the ship stage's"
     return ""
+
+
+def read_limit(line_lengths: list[int], offset: int = 0, ceiling: int = READ_CEILING) -> int | None:
+    """R9: the largest `limit` (a count of lines) a `Read` starting at `offset` may be given
+    without its output running past `ceiling` characters — or `None` when it would not run
+    past it at all, meaning no cap is needed.
+
+    Pure — `permission_gate` in `coscc/runner.py` is the only caller, and it does the file
+    reading; this only counts. Each line costs `len(line) + 8`: 8 is chosen, not measured,
+    to cover the line-number column `Read` prints ahead of every line, so the count stays
+    an upper bound rather than an exact one.
+
+    Never returns less than 1 even when the single next line alone would run past
+    `ceiling` — a step must see *something* of a large file, not a refusal in its place
+    (`plan.md ## What was chosen not to be done`: "Không từ chối `Read` lớn").
+    """
+    total = 0
+    count = 0
+    for length in line_lengths[offset:]:
+        total += length + 8
+        if total > ceiling:
+            return max(count, 1)
+        count += 1
+    return None
 
 
 # Flags `gh` reads a value after, anywhere on the line. Their values are dropped with them,

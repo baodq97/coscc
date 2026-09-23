@@ -603,3 +603,98 @@ class ThePlanCeilingClearsTheOneItHit(unittest.TestCase):
         # Raising the ceiling must not widen what the stage may do.
         self.assertEqual(grant_for("plan").tools, READ_TOOLS)
         self.assertEqual(grant_for("plan").commands, ())
+
+
+class ARefusalSaysWhatToDoInstead(unittest.TestCase):
+    """`0032_impl-fills-its-context-with-whole-files-and-refusals` R4/R7: a step that meets
+    a refusal is told the way that is actually open to it, in the same message, not just
+    what is closed."""
+
+    def test_substitution_names_the_alternative(self):
+        self.assertIn(policy.SUBSTITUTION_ALTERNATIVE, check_command(IMPL, "git $(curl x)"))
+
+    def test_redirect_names_the_alternative(self):
+        self.assertIn(policy.REDIRECT_ALTERNATIVE, check_command(IMPL, "echo x > f"))
+
+    def test_a_command_outside_the_list_names_the_allowed_ones(self):
+        reason = check_command(IMPL, "curl http://x")
+        for command in IMPL.commands:
+            self.assertIn(command, reason)
+
+    def test_rm_specifically_names_that_nothing_should_need_deleting(self):
+        self.assertIn(policy.NO_TEMP_FILE_ALTERNATIVE, check_command(IMPL, "rm -f a"))
+
+    def test_a_command_that_is_allowed_names_no_alternative(self):
+        # An alternative only belongs on a refusal; a pass is still "".
+        self.assertEqual(check_command(IMPL, "git status"), "")
+
+
+class EveryNewRefusalIsStillCountedAsAGrantRefusal(unittest.TestCase):
+    """The alternative text is appended, not substituted — `policy.REFUSALS`'s prefixes
+    must still be found verbatim, since `coscc/transcript.py` matches on them (C9)."""
+
+    def test_every_reason_here_still_starts_with_a_listed_prefix(self):
+        bad = ("git $(curl x)", "echo x > f", "rm -f a", "curl http://x")
+        for command in bad:
+            reason = check_command(IMPL, command)
+            self.assertTrue(
+                any(reason.startswith(prefix) for prefix in policy.REFUSALS), reason
+            )
+
+
+class CommandRulesIsAPureRestatementOfTheGrant(unittest.TestCase):
+    """R4: what `impl`'s own prompt says about the commands it may run, built only from
+    the grant and the same constants `check_command` uses."""
+
+    def test_every_allowed_command_is_named(self):
+        rules = policy.command_rules(IMPL)
+        for command in IMPL.commands:
+            self.assertIn(command, rules)
+
+    def test_every_substitution_token_is_named(self):
+        rules = policy.command_rules(IMPL)
+        for token in policy._SUBSTITUTION:
+            self.assertIn(token, rules)
+
+    def test_it_names_the_read_ceiling(self):
+        self.assertIn(str(policy.READ_CEILING), policy.command_rules(IMPL))
+
+    def test_a_denied_prefix_is_named_with_its_reason(self):
+        pr = grant_for("pr")
+        rules = policy.command_rules(pr)
+        for prefix, reason in pr.denied:
+            self.assertIn(" ".join(prefix), rules)
+            self.assertIn(reason, rules)
+
+    def test_it_is_pure(self):
+        # Same grant, same string, however many times it is called.
+        self.assertEqual(policy.command_rules(IMPL), policy.command_rules(IMPL))
+
+
+class ReadLimitStaysUnderTheCeiling(unittest.TestCase):
+    """R9: `policy.read_limit` is the pure arithmetic `permission_gate` uses to cap a
+    `Read` with no `limit` of its own."""
+
+    def test_a_file_that_already_fits_needs_no_cap(self):
+        self.assertIsNone(policy.read_limit([10] * 5, ceiling=1000))
+
+    def test_a_large_file_gets_the_largest_limit_that_still_fits(self):
+        lines = [100] * 500  # 500 * 108 = 54000 chars including the +8 per line
+        limit = policy.read_limit(lines, ceiling=1000)
+        self.assertIsNotNone(limit)
+        self.assertLessEqual(sum(l + 8 for l in lines[:limit]), 1000)
+        self.assertGreater(sum(l + 8 for l in lines[: limit + 1]), 1000)
+
+    def test_offset_is_honoured(self):
+        lines = [100] * 500
+        limit = policy.read_limit(lines, offset=10, ceiling=1000)
+        self.assertLessEqual(sum(l + 8 for l in lines[10 : 10 + limit]), 1000)
+
+    def test_never_less_than_one_even_for_a_single_huge_line(self):
+        self.assertEqual(policy.read_limit([50000], ceiling=1000), 1)
+
+    def test_default_ceiling_is_read_ceiling(self):
+        lines = [10] * 5
+        self.assertIsNone(policy.read_limit(lines))
+        big = [policy.READ_CEILING] * 5
+        self.assertIsNotNone(policy.read_limit(big))
