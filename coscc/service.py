@@ -395,7 +395,11 @@ class Service:
         # Asked here rather than in `Runner` because a refusal must arrive before any
         # money is spent, and `run_step` is the last place that is still true.
         try:
-            allowed, said = await board_reader.gate(self._units_root(cwd), unit, stage)
+            # `cwd` is the workspace: the checkout the `review` and `ship` gates read git
+            # and the pull request from (`0015`). The store has no git to read.
+            allowed, said = await board_reader.gate(
+                self._units_root(cwd), unit, stage, repo=cwd
+            )
         except Unavailable as e:
             raise Invalid(str(e)) from e
         if not allowed:

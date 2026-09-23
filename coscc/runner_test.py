@@ -122,11 +122,14 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                     f"{stage}/{mode} carries more than reading",
                 )
 
-    def test_plan_is_the_only_prose_stage_that_reads_and_only_when_autonomous(self):
-        self.assertEqual(policy.grant_for("plan", "autonomous").tools, policy.READ_TOOLS)
-        self.assertEqual(policy.grant_for("plan", "manual").tools, ())
+    def test_plan_and_review_are_the_only_prose_stages_that_read_and_only_when_autonomous(self):
+        # `review` joined `plan` in `0015`: the separate session that sits before the merge
+        # has to open the files it judges. It still only reads.
+        for reader in ("plan", "review"):
+            self.assertEqual(policy.grant_for(reader, "autonomous").tools, policy.READ_TOOLS)
+            self.assertEqual(policy.grant_for(reader, "manual").tools, ())
         for stage in policy.PROSE_STAGES:
-            if stage == "plan":
+            if stage in ("plan", "review"):
                 continue
             for mode in ("manual", "autonomous"):
                 self.assertEqual(
@@ -639,3 +642,160 @@ class AnAnswerReachesTheStageThatReadsItsArtifact(unittest.TestCase):
             )
             self.assertEqual(included, ["intent.md", "plan.md"])
             self.assertNotIn("ANSWER-TOO-LATE-0016", prompt)
+
+
+class AFixRoundCarriesTheFindings(unittest.TestCase):
+    """The first real review round, 2026-09-23: five findings, and `impl` could see none.
+
+    `0015` made `review.md: changes-requested` send a unit back to `impl`. The prompt for
+    that step was still built from `intent.md` and the stage before it, `plan.md` -- so
+    the step meant to fix the findings was given nothing that named them.
+    """
+
+    REVIEW = (
+        "# Review: x\nPR: pr.md. Concluded by: agent. Status: {status}.\n\n"
+        "## Findings\n\n- F1 [open] a.py:3 — high — FINDING-ONE-MARKER\n"
+    )
+
+    def prompt(self, d, status):
+        make_unit(
+            Path(d),
+            intent_md="Status: accepted.\nI",
+            plan_md="Status: accepted.\nP",
+            review_md=self.REVIEW.format(status=status),
+        )
+        return build_prompt(
+            d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", writes_own=True
+        )
+
+    def test_impl_sees_the_findings_when_changes_were_requested(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, included = self.prompt(d, "changes-requested")
+            self.assertIn("FINDING-ONE-MARKER", prompt)
+            self.assertIn("review.md", included)
+
+    def test_a_review_that_passed_is_not_sent_back(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, included = self.prompt(d, "accepted")
+            self.assertNotIn("FINDING-ONE-MARKER", prompt)
+            self.assertNotIn("review.md", included)
+
+    def test_a_passed_review_quoting_the_status_further_down_is_not_sent_back(self):
+        # Round 2 of 0015's review, F6: the old pattern matched `Status: changes-requested`
+        # on any line, so a review whose header is `accepted` but whose body quotes that
+        # string sent a passed unit back to `impl`. Only the first `Status:` counts.
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(
+                Path(d),
+                intent_md="Status: accepted.\nI",
+                plan_md="Status: accepted.\nP",
+                review_md=(
+                    "# Review: x\nPR: pr.md. Concluded by: agent. Status: accepted.\n\n"
+                    "## Round 1\n\nThe header read\nStatus: changes-requested.\n\n"
+                    "- F1 [fixed abc1234] a.py:3 — high — FINDING-ONE-MARKER\n"
+                ),
+            )
+            prompt, included = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", writes_own=True
+            )
+            self.assertNotIn("FINDING-ONE-MARKER", prompt)
+            self.assertNotIn("review.md", included)
+
+    def test_no_other_stage_is_handed_the_findings(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.prompt(d, "changes-requested")
+            prompt, _ = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md"
+            )
+            self.assertNotIn("FINDING-ONE-MARKER", prompt)
+
+
+class ReviewRoundsAccumulate(unittest.TestCase):
+    """`0015`'s second review erased its first, 2026-09-23.
+
+    The app writes `review.md` from the reply, and the reply carried only what that run
+    had to say. Round 1 and its five findings were gone, and so was the count `cos.mjs`
+    reads to stop after N rounds and ask for a person -- a limit that resets every run is
+    one that never arrives.
+    """
+
+    ROUND1 = (
+        "## Round 1\n\nReviewed: abc1234. Verdict: changes-requested.\n\n"
+        "### Findings\n\n- F1 [open] a.py:3 — high — ROUND-ONE-MARKER\n"
+    )
+
+    class Replies:
+        def __init__(self, text):
+            self.text = text
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.prompt = text
+            yield ("chunk", self.text)
+            yield ("done", {"session_id": "s", "cost": {}})
+
+    def run_review(self, d, reply):
+        unit = make_unit(
+            Path(d),
+            intent_md="Status: accepted.\nI",
+            pr_md="Status: accepted.\nP",
+            review_md="# Review: x\nPR: pr.md. Status: changes-requested.\n\n" + self.ROUND1,
+        )
+        session = self.Replies(reply)
+
+        async def go():
+            last = None
+            async for item in Runner(session, None).run(
+                workspace=d, directory=unit, journal_key=d, unit=UNIT, stage="review",
+                artifact="review.md", stages=STAGES, mode="manual",
+            ):
+                last = item
+            return last[1]
+
+        return session, unit / "review.md", go
+
+    def test_the_prompt_carries_the_earlier_rounds(self):
+        with tempfile.TemporaryDirectory() as d:
+            session, _, go = self.run_review(
+                d, "# Review: x\nStatus: accepted.\n\n" + self.ROUND1 + "\n## Round 2\n\nok\n"
+            )
+            asyncio.run(go())
+            self.assertIn("ROUND-ONE-MARKER", session.prompt)
+
+    def test_a_reply_that_keeps_round_one_is_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, written, go = self.run_review(
+                d, "# Review: x\nStatus: accepted.\n\n" + self.ROUND1 + "\n## Round 2\n\nok\n"
+            )
+            asyncio.run(go())
+            body = written.read_text(encoding="utf-8")
+            self.assertIn("ROUND-ONE-MARKER", body)
+            self.assertIn("## Round 2", body)
+
+    def test_a_reply_that_drops_round_one_leaves_the_file_as_it_was(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, written, go = self.run_review(
+                d, "# Review: x\nStatus: accepted.\n\n## Round 2\n\nall fine\n"
+            )
+            # The runner reports a refusal as the step's outcome rather than raising.
+            done = asyncio.run(go())
+            self.assertNotEqual(done["outcome"], "done")
+            self.assertIn("earlier review round", done["error"])
+            self.assertIn("ROUND-ONE-MARKER", written.read_text(encoding="utf-8"))
+
+
+class TheReviewSeesWhatWasMeasured(unittest.TestCase):
+    """`0015` round 2: a finding stayed open because `impl.md` never reached the review."""
+
+    def test_impl_md_is_in_the_review_prompt(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(
+                Path(d),
+                intent_md="Status: accepted.\nI",
+                impl_md="Status: accepted.\nMEASURED-MARKER",
+                pr_md="Status: accepted.\nP",
+            )
+            prompt, included = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "review", STAGES, "review.md"
+            )
+            self.assertIn("MEASURED-MARKER", prompt)
+            self.assertIn("impl.md", included)

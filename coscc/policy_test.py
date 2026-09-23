@@ -158,6 +158,65 @@ class ThePrStepSaysWhatItWillReach(unittest.TestCase):
         self.assertLess(self.PR.max_budget_usd, IMPL.max_budget_usd)
 
 
+class MergingIsShipsNotPrs(unittest.TestCase):
+    """`0015`: `pr` stops at an open pull request; `ship` merges after a review passed."""
+
+    PR = grant_for("pr", "autonomous")
+    SHIP = grant_for("ship", "autonomous")
+
+    def test_pr_is_refused_the_merge_and_told_whose_it_is(self):
+        for line in (
+            "gh pr merge --squash --delete-branch",
+            "gh pr merge 7",
+            "git push -u origin HEAD && gh pr merge --squash",
+            "/usr/bin/gh pr merge",
+        ):
+            reason = check_command(self.PR, line)
+            self.assertIn("merging is the ship stage's", reason, line)
+
+    def test_pr_may_still_open_and_watch_the_pull_request(self):
+        for line in ("gh pr create --fill", "gh pr checks 7 --watch", "gh pr view 7"):
+            self.assertEqual(check_command(self.PR, line), "", line)
+
+    def test_ship_may_merge(self):
+        self.assertEqual(check_command(self.SHIP, "gh pr merge --squash --delete-branch"), "")
+        self.assertFalse(self.SHIP.app_writes_artifact)
+        self.assertIn("gh pr merge", self.SHIP.warning)
+
+    def test_ship_is_no_longer_a_prose_stage_and_manual_ship_carries_nothing(self):
+        self.assertNotIn("ship", policy.PROSE_STAGES)
+        self.assertFalse(grant_for("ship", "manual").opens_anything)
+
+    def test_review_reads_and_only_reads(self):
+        review = grant_for("review", "autonomous")
+        self.assertEqual(review.tools, policy.READ_TOOLS)
+        self.assertEqual(policy.beyond_reading(review), ())
+        self.assertIn("review", policy.PROSE_STAGES)
+
+    def test_a_flag_in_front_does_not_walk_past_the_deny_list(self):
+        """`0015` review round 1, F1: flags are removed before the prefix is compared."""
+        for line in (
+            "gh -R o/r pr merge 7",
+            "gh --repo o/r pr merge 7",
+            "gh --repo=o/r pr merge 7",
+            "gh pr -R o/r merge 7",
+            "gh --hostname github.com pr merge 7",
+            "gh api -X PUT repos/o/r/pulls/7/merge",
+            "gh alias set m 'pr merge'",
+        ):
+            self.assertIn("merging is the ship stage's", check_command(self.PR, line), line)
+        # A value flag's value is not read as a word, but a real word after it still is.
+        self.assertEqual(check_command(self.PR, "gh -R o/r pr view 7"), "")
+        self.assertEqual(check_command(self.PR, "gh api repos/o/r/pulls/7"), "")
+
+    def test_the_known_limit_of_the_deny_list(self):
+        """`0015` plan, Risk 5: the list still reads tokens, not what runs. `node -e` may
+        spawn `gh`, and an alias defined before the step runs under its own name. Pinned so
+        that nobody reads this grant as a guarantee; `.claude/CLAUDE.md` says the same."""
+        self.assertEqual(check_command(self.PR, "node -e 'require(\"child_process\")'"), "")
+        self.assertEqual(check_command(self.PR, "gh m 7"), "")
+
+
 class TheKnownLimit(unittest.TestCase):
     def test_an_allowed_binary_can_still_be_told_to_do_a_lot(self):
         """`plan.md` Risk 3, written down as a passing test rather than left implied.

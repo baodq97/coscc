@@ -43,17 +43,29 @@ no commands, one turn, no budget.
 
 - **Sessions spend account quota.** Nothing that talks to the app belongs in an unattended
   loop.
-- **Stage `pr` merges the pull request it opened.** `.claude/skills/write-pr/SKILL.md`
-  names `gh pr merge --squash --delete-branch` as the second half of step 6, so that step
-  does not merely propose a change — it lands one. Read the next bullet for how far that
+- **Stage `ship` merges; `pr` no longer does.** Since `0015` `pr` stops at an open pull
+  request and its grant refuses the merge by the command's words with flags removed —
+  `gh -R o/r pr merge`, the merge endpoint through `gh api` and `gh alias set` included.
+  An alias defined before the step, or `node -e` spawning `gh`, still walks past
+  (`coscc/policy_test.py`, `test_the_known_limit_of_the_deny_list`).
+  `("ship", "autonomous")` holds `git` and `gh` with this machine's login and lands the
+  change on `main` after the `ship` gate opens. Read the next bullet for how far that
   reaches.
 - **`/api/timeline` returns what a failed paid step replied.** Since `0014` a step whose
   reply could not be used keeps the last 2000 characters of it (`coscc/runner.py:150`), and
   that text reaches the board as `detail`. No route has a login and the default bind is
   `0.0.0.0`.
-- **`("pr", "autonomous")` reaches further than this repository.** Its capability comes
-  from this machine's `gh` login, so it reaches every repository that login reaches. The
-  page shows a warning string before the button is pressed; do not remove it.
+- **`("pr", "autonomous")` and `("ship", "autonomous")` reach further than this
+  repository.** Their capability comes from this machine's `gh` login, so they reach every
+  repository that login reaches. The page shows a warning string before the button is
+  pressed; do not remove either.
+- **The `review` and `ship` gates call `gh` and `git` in the workspace.** `board.gate`
+  passes `--repo` and waits 30s (chosen). `child_env` carries `PATH`, `HOME` and
+  `COS_REVIEW_ROUNDS` only, so a machine logged in through `GH_TOKEN` alone sees the
+  `review` gate closed with gh's own error. Offline, `review` cannot start.
+- **A review that asked for changes cannot be re-run from the board.** The run button only
+  offers a stage with no artifact, and re-running a prose stage overwrites its file. The
+  fix → review-again loop runs at a terminal (`0015` plan, Risk 1).
 - **Two roots, and backing up one does not back up the other.** `COS_DATA_DIR` (default
   `~/.cos`) holds `cos.db`; `COS_WORKING_DIR` holds somebody else's git checkouts. A stored
   workspace is a *name*, never a path — the path is rebuilt from the root on every read,
@@ -66,8 +78,9 @@ no commands, one turn, no budget.
 - **The board's lanes must not use the harness's `blocked` flag.** `cos.mjs` returns
   `blocked: true` for every unfinished unit, so that mapping puts all of them in *Needs
   review* and empties the other three. `state.py` reads lanes off artifact statuses.
-- **The six prose stages get no tools in either mode.** A session with no tools cannot write
-  a file, so the app writes the artifact from the reply and the session returns text only.
+- **The five prose stages get no write tools and no commands in either mode.** `plan` and,
+  since `0015`, `review` may read in `autonomous`; `ship` is no longer prose. A session
+  that cannot write a file needs the app to write its artifact from the reply.
   Settings says so on the page, because otherwise it looks like the agent wrote the file.
   `.cos/0005_hand-driven-invisible-loop/plan.md` Risk 1 records why.
 - **A `coscc/_harness/` left in a checkout shadows `.claude/`.** Both are gitignored and

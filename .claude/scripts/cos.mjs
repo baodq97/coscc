@@ -3,7 +3,7 @@
 // disk: which artifacts exist, what status each carries, which gate that clears. Judgement
 // — whether a spec should be skipped, whether a plan is good — stays with the skills.
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -29,7 +29,11 @@ const STAGES = [
   { name: 'plan', file: 'plan.md', hint: 'write-plan', statuses: ['draft', 'accepted', 'rejected', 'done'] },
   { name: 'impl', file: 'impl.md', hint: 'write-impl — implementation starts', statuses: ['draft', 'accepted', 'rejected', 'done'] },
   { name: 'pr', file: 'pr.md', hint: 'write-pr', statuses: ['draft', 'accepted', 'rejected'] },
-  { name: 'review', file: 'review.md', hint: 'write-review', statuses: ['draft', 'accepted', 'rejected'] },
+  // `changes-requested` is the one status that sends work back rather than forward or
+  // out: the reviewer looked, found something, and the unit goes on. `rejected` still
+  // closes the unit, as it does on every other artifact. `settled` below does not include
+  // it, so the `ship` gate is closed by it without a line of its own.
+  { name: 'review', file: 'review.md', hint: 'write-review', statuses: ['draft', 'changes-requested', 'accepted', 'rejected'] },
   { name: 'ship', file: 'ship.md', hint: 'write-ship', statuses: ['draft', 'accepted', 'rejected'] },
 ]
 
@@ -48,8 +52,9 @@ const VALID = Object.fromEntries(STAGES.map((s) => [s.file, s.statuses]))
 
 // The status line is prose: "Intent: intent.md. Author: X. Status: draft." Take the first
 // `Status:` in the file and nothing else, so a later mention in the body cannot shadow it.
+// Hyphenated words are one status (`changes-requested`); a trailing hyphen is not part of it.
 export function parseStatus(text) {
-  const m = text.match(/\bStatus:\s*([A-Za-z]+)/)
+  const m = text.match(/\bStatus:\s*([A-Za-z]+(?:-[A-Za-z]+)*)/)
   return m ? m[1].toLowerCase() : null
 }
 
@@ -163,6 +168,90 @@ export function unitQuestions(unit) {
   return { questions, open, counted }
 }
 
+// --- the pull request and the review rounds -----------------------------------
+
+// `pr.md` names the pull request it opened in its header: `PR: <url>`. Without it the
+// `review` gate has nothing to review and no checks to read.
+export function parsePr(text) {
+  const m = text.match(/\bPR:\s*(\S+?\/pull\/(\d+))/)
+  return m ? { url: m[1], number: Number(m[2]) } : null
+}
+
+const ROUND_HEAD = /^## Round (\d+)\s*$/
+const ROUND_META = /^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*(pass|changes-requested)\.?\s*$/i
+const FINDING = /^- (F\d+)\s+\[([^\]]*)\]\s*(.*)$/
+
+// `review.md` is a list of rounds, each `## Round N`, never rewritten once written: a
+// re-review appends a round. Each round opens with `Reviewed: <sha>. Verdict: pass|
+// changes-requested.` and lists its findings under `### Findings`, one per line, each
+// labelled `[open]` or `[fixed <sha>]`. A label that is neither is `unreadable`, which the
+// `ship` gate treats as not fixed. Reading stops at `## Answers`, the app's section.
+export function parseReview(text) {
+  const lines = text.split(/\r?\n/)
+  const stop = lines.findIndex((l) => l.trimEnd() === '## Answers')
+  const rounds = []
+  let inFindings = false
+  for (const line of stop === -1 ? lines : lines.slice(0, stop)) {
+    const head = line.match(ROUND_HEAD)
+    if (head) {
+      rounds.push({ n: Number(head[1]), reviewed: null, verdict: null, findings: [], seenText: false, closed: false })
+      inFindings = false
+      continue
+    }
+    if (line.startsWith('## ')) {
+      // A section that is not a round ends the one above it.
+      if (rounds.length) rounds[rounds.length - 1].closed = true
+      inFindings = false
+      continue
+    }
+    const r = rounds[rounds.length - 1]
+    if (!r || r.closed) continue
+    if (!r.seenText && line.trim() !== '') {
+      r.seenText = true
+      const meta = line.trim().match(ROUND_META)
+      if (meta) {
+        r.reviewed = meta[1].toLowerCase()
+        r.verdict = meta[2].toLowerCase()
+        continue
+      }
+    }
+    if (line.startsWith('### ')) {
+      inFindings = line.trimEnd() === '### Findings'
+      continue
+    }
+    if (!inFindings) continue
+    const f = line.match(FINDING)
+    if (!f) continue
+    const label = f[2].trim()
+    const fixed = label.match(/^fixed\s+([0-9a-f]{7,40})$/i)
+    r.findings.push({
+      id: f[1],
+      label: label.toLowerCase() === 'open' ? 'open' : fixed ? 'fixed' : 'unreadable',
+      fixedBy: fixed ? fixed[1].toLowerCase() : null,
+      text: f[3].trim(),
+    })
+  }
+  return { rounds: rounds.map(({ n, reviewed, verdict, findings }) => ({ n, reviewed, verdict, findings })) }
+}
+
+// How many review rounds may end in `changes-requested` before the loop stops and needs a
+// person. The originator chose 3 (`0015` intent, Answers, Câu 3); it is a choice, not a
+// measurement. `COS_REVIEW_ROUNDS` overrides it, in the same `COS_*` family as the model
+// setting, so that when `0004` makes settings live this number moves with the model rather
+// than becoming a second place to look.
+export const REVIEW_ROUNDS = 3
+
+// The limit in force, or a thrown `RangeError` naming the variable. A bad value is a
+// configuration mistake, not a fact about a unit, so the command exits 2 on it.
+export function reviewRounds(env = process.env) {
+  const raw = env.COS_REVIEW_ROUNDS
+  if (raw === undefined || raw === '') return REVIEW_ROUNDS
+  if (!/^\d+$/.test(raw.trim()) || Number(raw) < 1) {
+    throw new RangeError(`COS_REVIEW_ROUNDS must be a positive integer, got "${raw}"`)
+  }
+  return Number(raw)
+}
+
 export function readUnit(dir, name) {
   const unit = { name, artifacts: {}, problems: [] }
   let intentText = null
@@ -186,6 +275,10 @@ export function readUnit(dir, name) {
       unit.problems.push(`${file} has status "${status}", not one of ${VALID[file].join(', ')}`)
     }
     unit.artifacts[file] = { status, skipReason: file === 'plan.md' ? parseSkipReason(text) : null }
+    // Attached, never reported as a problem: `review.md` files written before rounds
+    // existed have none, and the closed units' output must not change (`0015` spec, R7).
+    if (file === 'pr.md') unit.artifacts[file].pr = parsePr(text)
+    if (file === 'review.md') unit.artifacts[file].review = parseReview(text)
     const questions = answeredQuestions(text)
     if (questions !== null) unit.artifacts[file].questions = questions
   }
@@ -216,6 +309,8 @@ export function readUnit(dir, name) {
     if (type === null) unit.problems.push(`intent.md declares no Type — add "Type: <${BRANCH_TYPES[0]}|…>" to its header`)
     else if (!BRANCH_TYPES.includes(type)) unit.problems.push(`intent.md has type "${type}", not one of ${BRANCH_TYPES.join(', ')}`)
     else unit.type = type
+    // Derived, never typed — the `ship` gate reads the branch the review was of.
+    unit.branch = unitBranch(name, intentText).branch ?? null
   }
 
   return unit
@@ -249,7 +344,7 @@ const settled = (s) => s === 'accepted' || s === 'skipped' || s === 'done'
 const missing = (u, f) => (present(u, f) ? `${f} exists but carries no Status line` : `${f} does not exist`)
 
 // One action per unit: a named skill, or the one edit that unblocks the file.
-export function nextAction(unit) {
+export function nextAction(unit, limit = REVIEW_ROUNDS) {
   // `plan.md: done` closed five units under the three-stage loop, and it stays terminal.
   // Widening the loop must not reopen work that was finished and proved under the old
   // rules — `write-plan` only allows `done` once the proof command has passed.
@@ -265,12 +360,171 @@ export function nextAction(unit) {
     }
     if (status === 'rejected') return { blocked: false, action: `closed — ${s.name} rejected` }
     if (status === 'draft') return { blocked: true, action: `finish and accept ${s.file}` }
+    // Not closed and not done: the work goes back to the branch, then to another round.
+    if (status === 'changes-requested') {
+      const used = roundsUsed(unit)
+      if (used >= limit) return { blocked: true, action: needsAPerson(used, limit) }
+      return {
+        blocked: true,
+        action: `fix the open findings of review round ${lastRound(unit)?.n ?? used} on the branch, then write-review again (${used} of ${limit} rounds used)`,
+      }
+    }
   }
   return { blocked: false, action: 'finished' }
 }
 
+const reviewOf = (unit) => unit.artifacts['review.md']?.review?.rounds ?? []
+const lastRound = (unit) => reviewOf(unit).at(-1) ?? null
+
+// Rounds that ended asking for changes. A `changes-requested` header whose rounds carry no
+// readable verdict still counts as one, so a malformed round cannot buy another.
+function roundsUsed(unit) {
+  const asked = reviewOf(unit).filter((r) => r.verdict === 'changes-requested').length
+  return Math.max(asked, statusOf(unit, 'review.md') === 'changes-requested' ? 1 : 0)
+}
+
+// The first place the loop stops and waits for someone who is not an agent. A person
+// unblocks it at a terminal: `review.md: rejected`, or a larger `COS_REVIEW_ROUNDS`.
+// Nothing written through the product does — see `0015` plan, Risk 2, for why.
+const needsAPerson = (used, limit) =>
+  `needs a person — review used ${used} of ${limit} rounds and findings are still open`
+
+// --- what the gate asks git and gh -------------------------------------------
+
+// The two questions `review` and `ship` ask outside `.cos/`. Every other gate reads files
+// only. Injected so the rules can be tested without a repository or a network; the default
+// runs the real commands in the repository the unit's code lives in, which is **not** the
+// store `--root` points at when the app asks (`0014` moved units out of the repository).
+export function makeProbe(repoDir) {
+  const run = (cmd, args) => {
+    const r = spawnSync(cmd, args, { cwd: repoDir, encoding: 'utf8' })
+    if (r.error) return { code: -1, out: '', err: String(r.error.message ?? r.error) }
+    return { code: r.status, out: r.stdout ?? '', err: r.stderr ?? '' }
+  }
+  return { git: (...args) => run('git', args), gh: (...args) => run('gh', args) }
+}
+
+// `review` may begin only on an open pull request whose required checks are green
+// (`0015` spec, Answers, Câu 2). Nothing green to read is not read as green.
+function reviewNeeds(unit, probe, limit) {
+  const need = []
+  const pr = unit.artifacts['pr.md']?.pr ?? null
+  if (!pr) need.push('pr.md names no pull request — the pr stage opens one and writes PR: <url>')
+  if (statusOf(unit, 'review.md') === 'changes-requested' && roundsUsed(unit) >= limit) {
+    need.push(needsAPerson(roundsUsed(unit), limit))
+  }
+  if (need.length || !pr) return need
+  if (!probe) return ['no repository given — pass --repo <dir>']
+
+  const r = probe.gh('pr', 'checks', String(pr.number), '--required', '--json', 'name,bucket')
+  // `gh pr checks` exits non-zero when a check failed or is pending, and still prints the
+  // JSON. So the output is read first and the exit code only when there is none.
+  let checks = null
+  try {
+    checks = JSON.parse(r.out)
+  } catch {
+    checks = null
+  }
+  if (!Array.isArray(checks)) {
+    const said = (r.err || r.out).trim() || `gh exited ${r.code} and said nothing`
+    return [`cannot read the required checks of #${pr.number}: ${said}`]
+  }
+  if (!checks.length) return [`#${pr.number} reports no required checks — nothing green to read is not green`]
+  const red = checks.filter((c) => c.bucket === 'fail' || c.bucket === 'cancel').map((c) => c.name)
+  if (red.length) return [`CI is red on #${pr.number}: ${red.join(', ')} — back to impl: fix on the branch and push`]
+  const waiting = checks.filter((c) => c.bucket !== 'pass' && c.bucket !== 'skipping').map((c) => c.name)
+  if (waiting.length) return [`CI has not finished on #${pr.number}: ${waiting.join(', ')} — wait, then ask again`]
+  return []
+}
+
+// `ship` merges. It may do so only after a pass that left nothing open, whose history is
+// intact, and after which no code reached the branch (`0015` spec, R3–R5).
+//
+// `said.head` is set to the pull request head the gate checked, so the merge can be pinned
+// to it.
+function shipNeeds(unit, probe, said = {}) {
+  const rounds = reviewOf(unit)
+  if (!rounds.length) return ['review.md has no ## Round — nothing says what was reviewed or found']
+  const last = rounds.at(-1)
+  const need = []
+  if (last.verdict !== 'pass') {
+    need.push(`review round ${last.n} has verdict "${last.verdict ?? 'unreadable'}", not pass — its first line is Reviewed: <sha>. Verdict: pass.`)
+  }
+  const open = last.findings.filter((f) => f.label !== 'fixed')
+  if (open.length) {
+    need.push(`review round ${last.n} still has findings not fixed: ${open.map((f) => `${f.id} [${f.label}]`).join(', ')}`)
+  }
+  const inLast = new Set(last.findings.map((f) => f.id))
+  const dropped = [...new Set(rounds.slice(0, -1).flatMap((r) => r.findings.map((f) => f.id)))].filter((id) => !inLast.has(id))
+  if (dropped.length) {
+    need.push(`review round ${last.n} drops findings an earlier round raised: ${dropped.join(', ')} — carry each one forward, fixed or open`)
+  }
+  const numbers = rounds.map((r) => r.n)
+  if (numbers.some((n, i) => n !== i + 1)) {
+    need.push(`review rounds are numbered ${numbers.join(', ')}, not 1 to ${rounds.length} — a round was removed or renumbered`)
+  }
+  if (!last.reviewed) need.push(`review round ${last.n} names no reviewed commit — Reviewed: <sha>`)
+  if (need.length) return need
+
+  if (!probe) return ['no repository given — pass --repo <dir>']
+  if (!unit.branch) return ['the unit has no branch — intent.md must declare a Type']
+  const pr = unit.artifacts['pr.md']?.pr ?? null
+  if (!pr) return ['pr.md names no pull request — nothing says what ship would merge']
+  const refs = [`refs/heads/${unit.branch}`, `refs/remotes/origin/${unit.branch}`].filter(
+    (ref) => probe.git('rev-parse', '--verify', '--quiet', ref).code === 0,
+  )
+  if (!refs.length) return [`no branch ${unit.branch} here, local or origin — the gate does not fetch`]
+  if (probe.git('cat-file', '-e', `${last.reviewed}^{commit}`).code !== 0) {
+    return [`the reviewed commit ${last.reviewed} is not in this repository`]
+  }
+
+  // What the merge lands is the pull request's head on GitHub, not a ref here: a push
+  // from another checkout moves it and leaves `origin/<branch>` stale, since the gate does
+  // not fetch (`0015` review round 1, F2). So the head is asked for and checked like a ref,
+  // and `ship` merges with `--match-head-commit` set to exactly this commit.
+  const view = probe.gh('pr', 'view', String(pr.number), '--json', 'state,headRefOid')
+  let info = null
+  try {
+    info = JSON.parse(view.out)
+  } catch {
+    info = null
+  }
+  if (!info || typeof info.headRefOid !== 'string') {
+    const said = (view.err || view.out).trim() || `gh exited ${view.code} and said nothing`
+    return [`cannot read the head of #${pr.number}: ${said}`]
+  }
+  if (info.state !== 'OPEN') return [`#${pr.number} is ${info.state}, not open — there is nothing to merge`]
+  if (probe.git('cat-file', '-e', `${info.headRefOid}^{commit}`).code !== 0) {
+    return [`the head of #${pr.number}, ${info.headRefOid}, is not in this repository — someone pushed from elsewhere: fetch, then ask again`]
+  }
+  refs.push(info.headRefOid)
+  said.head = info.headRefOid
+  const own = `.cos/${unit.name}/`
+  for (const ref of refs) {
+    const name = ref === said.head ? `the head of #${pr.number} (${ref})` : ref
+    if (probe.git('merge-base', '--is-ancestor', last.reviewed, ref).code !== 0) {
+      need.push(`the reviewed commit ${last.reviewed} is not on ${name} — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit`)
+      continue
+    }
+    const diff = probe.git('diff', '--name-only', `${last.reviewed}..${ref}`)
+    if (diff.code !== 0) {
+      need.push(`git could not diff ${last.reviewed}..${ref}: ${diff.err.trim()}`)
+      continue
+    }
+    const after = diff.out.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith(own))
+    if (after.length) {
+      need.push(`${name} changed after the reviewed commit ${last.reviewed}: ${after.join(', ')} — review again`)
+    }
+  }
+  return need
+}
+
 // Does `stage` have everything it needs? Returns the reasons it does not.
-export function checkGate(unit, stage) {
+//
+// `probe` is how `review` and `ship` reach git and gh; `null` means no repository was
+// given, and those two gates stay closed rather than guess. `limit` is the review round
+// limit in force. Every other stage reads files only and ignores both.
+export function checkGate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   const target = stageOf(stage)
   if (!target) {
     return { ok: false, need: [`unknown stage "${stage}" — use one of ${STAGE_NAMES.join(', ')}`] }
@@ -292,7 +546,14 @@ export function checkGate(unit, stage) {
     }
   }
 
-  return { ok: need.length === 0, need }
+  // Asked only once the earlier stages are behind us: a gate closed for a missing plan has
+  // no business spending a network call on CI.
+  if (!need.length && target.name === 'review') need.push(...reviewNeeds(unit, probe, limit))
+  const said = {}
+  if (!need.length && target.name === 'ship') need.push(...shipNeeds(unit, probe, said))
+
+  const ok = need.length === 0
+  return ok && said.head ? { ok, need, head: said.head } : { ok, need }
 }
 
 export function nextNumber(units) {
@@ -391,16 +652,16 @@ const dash = '—'
 // Eight stages will not fit across a terminal spelled out, so the table carries one letter
 // each and prints the key underneath. The full words stay in `status --json`, which is what
 // anything other than a human reads.
-const CODE = { draft: 'd', accepted: 'A', rejected: 'x', skipped: 's', done: 'D' }
+const CODE = { draft: 'd', accepted: 'A', rejected: 'x', skipped: 's', done: 'D', 'changes-requested': 'c' }
 const cell = (u, f) => {
   const status = u.artifacts[f]?.status
   if (status === undefined) return dash
   return CODE[status] ?? '?'
 }
 
-function cmdStatus(json, cosDir) {
+function cmdStatus(json, cosDir, limit) {
   const units = readAll(cosDir)
-  const rows = units.map((u) => ({ ...u, next: nextAction(u) }))
+  const rows = units.map((u) => ({ ...u, next: nextAction(u, limit) }))
 
   if (json) {
     // The stage list ships with the data so a reader never has to keep its own copy of it.
@@ -419,7 +680,7 @@ function cmdStatus(json, cosDir) {
     const cells = STAGES.map((s) => cell(u, s.file)).join(' | ')
     console.log(`| ${u.name} | ${cells} | ${u.next.action} |`)
   }
-  console.log(`\nA accepted · d draft · s skipped · D done · x rejected · ${dash} not started`)
+  console.log(`\nA accepted · d draft · c changes-requested · s skipped · D done · x rejected · ${dash} not started`)
 
   const problems = rows.flatMap((u) => u.problems.map((p) => `${u.name}: ${p}`))
   if (problems.length) {
@@ -429,9 +690,12 @@ function cmdStatus(json, cosDir) {
   return 0
 }
 
-function cmdGate(unitName, stage, cosDir) {
+// `repoDir` is where the unit's code lives, which `review` and `ship` ask git and gh about.
+// `null` when `--root` was given without `--repo`: the store `--root` names has no git, and
+// answering from this checkout instead would name one place and read another.
+function cmdGate(unitName, stage, cosDir, repoDir, limit) {
   if (!unitName || !stage) {
-    console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}>`)
+    console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}> [--repo <dir>]`)
     return 2
   }
   const dir = join(cosDir, unitName)
@@ -439,9 +703,12 @@ function cmdGate(unitName, stage, cosDir) {
     console.error(`No such work unit: ${unitName}`)
     return 2
   }
-  const { ok, need } = checkGate(readUnit(dir, unitName), stage)
+  const probe = repoDir ? makeProbe(repoDir) : null
+  const { ok, need, head } = checkGate(readUnit(dir, unitName), stage, { probe, limit })
   if (ok) {
-    console.log(`open: ${stage} may proceed for ${unitName}`)
+    // `ship` is told the one commit it may merge; any other head is one nobody reviewed.
+    const pin = head ? ` — merge with --match-head-commit ${head}` : ''
+    console.log(`open: ${stage} may proceed for ${unitName}${pin}`)
     return 0
   }
   console.error(`blocked: ${stage} cannot proceed for ${unitName}`)
@@ -622,24 +889,41 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const afterRoot = rootAt === -1 ? argv : argv.filter((_, i) => i !== rootAt && i !== rootAt + 1)
 
   // `--reserve-from <dir>`, repeatable, stripped the same way and from any position.
+  // `--repo <dir>`, once, the same way: the repository whose git and pull request the
+  // `review` and `ship` gates read.
   const reserveFrom = []
+  let repoArg = null
   const words = []
   for (let i = 0; i < afterRoot.length; i++) {
-    if (afterRoot[i] !== '--reserve-from') {
-      words.push(afterRoot[i])
+    const flag = afterRoot[i]
+    if (flag !== '--reserve-from' && flag !== '--repo') {
+      words.push(flag)
       continue
     }
     if (!afterRoot[i + 1]) {
-      console.error('--reserve-from needs a directory')
+      console.error(`${flag} needs a directory`)
       process.exit(2)
     }
-    reserveFrom.push(afterRoot[++i])
+    if (flag === '--repo') repoArg = afterRoot[++i]
+    else reserveFrom.push(afterRoot[++i])
   }
   const [cmd, ...rest] = words
 
+  // Without `--root` the units are this checkout's, so this checkout is their repository.
+  // With `--root` and no `--repo` there is none, and the two gates that need one say so.
+  const repoDir = repoArg !== null ? resolve(repoArg) : rootAt === -1 ? ROOT : null
+
+  let limit = REVIEW_ROUNDS
+  try {
+    limit = reviewRounds()
+  } catch (e) {
+    console.error(e.message)
+    process.exit(2)
+  }
+
   const run = {
-    status: () => cmdStatus(rest.includes('--json'), cosDir),
-    gate: () => cmdGate(rest[0], rest[1], cosDir),
+    status: () => cmdStatus(rest.includes('--json'), cosDir, limit),
+    gate: () => cmdGate(rest[0], rest[1], cosDir, repoDir, limit),
     'new-path': () => cmdNewPath(rest[0], cosDir, reserveFrom),
     'unit-branch': () => cmdUnitBranch(rest[0], cosDir),
     'check-branch': () => cmdCheckBranch(rest[0]),
@@ -650,7 +934,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!run) {
     console.error('usage: cos.mjs [--root <dir>] <command>')
     console.error('  reading a .cos/ (these take --root):')
-    console.error('    status [--json] | gate <unit> <stage> | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit>')
+    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit>')
     console.error('  describing this checkout (these do not):')
     console.error('    check-branch [name] | check-tag <tag> | check-version')
     process.exit(2)
@@ -673,6 +957,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // accepted and ignored reads as a flag that worked.
   if (reserveFrom.length && cmd !== 'new-path') {
     console.error(`--reserve-from applies only to \`new-path\`, not to \`${cmd}\`.`)
+    process.exit(2)
+  }
+
+  // `--repo` names where the `review` and `ship` gates ask git and gh. Nothing else asks.
+  if (repoArg !== null && cmd !== 'gate') {
+    console.error(`--repo applies only to \`gate\`, not to \`${cmd}\`.`)
     process.exit(2)
   }
 

@@ -48,6 +48,9 @@ STATUS_COLOR = {
     "draft": "amber",
     "skipped": "gray",
     "rejected": "red",
+    # A reviewer looked and asked for changes: waiting on someone, like a draft, but not
+    # the same colour, because it is not unfinished writing — it is a verdict.
+    "changes-requested": "orange",
     "not started": "gray",
 }
 
@@ -298,7 +301,11 @@ def _lane(unit: dict) -> str:
         return "Planned"
     if action == "finished" or action.startswith("closed"):
         return "Complete"
-    if unit.get("problems") or any(r.get("status") == "draft" for r in rows):
+    # `changes-requested` sits with `draft`: the review found something and the unit waits
+    # on a fix, which is the kind of thing this lane exists to surface (`0015`).
+    if unit.get("problems") or any(
+        r.get("status") in ("draft", "changes-requested") for r in rows
+    ):
         return "Needs review"
     if any(r.get("status") != "not started" for r in rows):
         return "In progress"

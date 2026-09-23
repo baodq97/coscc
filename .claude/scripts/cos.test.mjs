@@ -8,11 +8,25 @@ import { join } from 'node:path'
 import {
   parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit, STAGE_NAMES,
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
-  unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers,
+  unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
+  reviewRounds,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
 const art = (status) => ({ status, skipReason: null })
+
+// A probe that answers the way git and gh would, without either. `checks` is what
+// `gh pr checks --json name,bucket` prints; `git` maps an argument string to an answer.
+const ok = (out = '') => ({ code: 0, out, err: '' })
+// `view` is what `gh pr view --json state,headRefOid` prints; `null` means the head is the
+// reviewed commit (`SHA`, declared further down), so the diff to it is empty.
+const greenProbe = (checks = [{ name: 'tests', bucket: 'pass' }], git = {}, view = null) => ({
+  gh: (...args) =>
+    args[1] === 'view'
+      ? ok(JSON.stringify(view ?? { state: 'OPEN', headRefOid: SHA }))
+      : { code: 0, out: JSON.stringify(checks), err: '' },
+  git: (...args) => git[args.join(' ')] ?? ok(),
+})
 
 test('parseStatus takes the first Status line, whatever prose surrounds it', () => {
   assert.equal(parseStatus('Author: X. Status: draft.'), 'draft')
@@ -140,7 +154,11 @@ test('a later stage needs the earlier ones behind it', () => {
 
   const withImpl = { ...upToPlan, 'impl.md': art('accepted') }
   assert.equal(checkGate(unit(withImpl), 'pr').ok, true)
-  assert.equal(checkGate(unit({ ...withImpl, 'pr.md': art('accepted') }), 'review').ok, true)
+  // Since `0015` the review gate also needs an open pull request with green checks, so
+  // the chain alone is no longer enough; the chain is still necessary.
+  const pr = { ...art('accepted'), pr: { url: 'https://github.com/o/r/pull/7', number: 7 } }
+  assert.equal(checkGate(unit({ ...withImpl, 'pr.md': pr }), 'review', { probe: greenProbe() }).ok, true)
+  assert.equal(checkGate(unit({ ...upToPlan, 'pr.md': pr }), 'review', { probe: greenProbe() }).ok, false)
 })
 
 test('a done artifact is behind us, not in the way', () => {
@@ -599,4 +617,224 @@ test('status --json carries questions and open for each unit', () => {
   const got = JSON.parse(out.stdout).units[0]
   assert.equal(got.open, 2)
   assert.equal(got.questions.length, 3)
+})
+
+// --- review before merge (0015) -----------------------------------------------
+
+const SHA = 'a'.repeat(40)
+const FIX = 'b'.repeat(40)
+const PR = { ...art('accepted'), pr: { url: 'https://github.com/o/r/pull/7', number: 7 } }
+const CHAIN = {
+  'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('accepted'),
+  'impl.md': art('accepted'), 'pr.md': PR,
+}
+const reviewArt = (status, text) => ({ ...art(status), review: parseReview(text) })
+const round = (n, verdict, findings = []) =>
+  `## Round ${n}\n\nReviewed: ${SHA}. Verdict: ${verdict}.\n\n### Findings\n\n${findings.join('\n')}\n\n### What was not reviewed\n\nnothing\n`
+const branched = (artifacts) => ({ ...unit(artifacts), name: '0001_x', branch: 'feat/x' })
+
+test('parseStatus reads a hyphenated status whole', () => {
+  assert.equal(parseStatus('Author: X. Status: changes-requested.'), 'changes-requested')
+  assert.equal(parseStatus('Status: accepted-.'), 'accepted')
+})
+
+test('parsePr reads the pull request from the header, or returns null', () => {
+  assert.deepEqual(parsePr('# PR\nPR: https://github.com/o/r/pull/42. Status: accepted.'), {
+    url: 'https://github.com/o/r/pull/42', number: 42,
+  })
+  assert.equal(parsePr('# PR\nStatus: accepted.'), null)
+})
+
+test('parseReview reads rounds, verdicts and labelled findings, and stops at Answers', () => {
+  const text = `# Review\nStatus: accepted.\n\n${round(1, 'changes-requested', ['- F1 [open] a', '- F2 [open] b'])}\n${round(2, 'pass', [`- F1 [fixed ${FIX}] a`, '- F2 [maybe] b'])}\n## Answers\n\n## Round 3\n`
+  const { rounds } = parseReview(text)
+  assert.deepEqual(rounds.map((r) => [r.n, r.verdict, r.reviewed]), [[1, 'changes-requested', SHA], [2, 'pass', SHA]])
+  assert.deepEqual(rounds[1].findings.map((f) => [f.id, f.label, f.fixedBy]), [['F1', 'fixed', FIX], ['F2', 'unreadable', null]])
+  assert.deepEqual(parseReview('# Review written before rounds\nStatus: accepted.\n').rounds, [])
+})
+
+test('R1: the review gate is closed while pr.md names no pull request', () => {
+  const g = checkGate(unit({ ...CHAIN, 'pr.md': art('accepted') }), 'review', { probe: greenProbe() })
+  assert.equal(g.ok, false)
+  assert.match(g.need[0], /pr\.md names no pull request/)
+})
+
+test('R2: changes-requested and rejected lead to different places', () => {
+  const asked = nextAction(unit({ ...CHAIN, 'review.md': reviewArt('changes-requested', round(1, 'changes-requested', ['- F1 [open] x'])) }))
+  assert.equal(asked.blocked, true)
+  assert.match(asked.action, /fix the open findings of review round 1 .* \(1 of 3 rounds used\)/)
+  const rejected = nextAction(unit({ ...CHAIN, 'review.md': art('rejected') }))
+  assert.equal(rejected.blocked, false)
+  assert.match(rejected.action, /closed — review rejected/)
+})
+
+test('changes-requested closes the ship gate but leaves the review gate open', () => {
+  const u = unit({ ...CHAIN, 'review.md': reviewArt('changes-requested', round(1, 'changes-requested', ['- F1 [open] x'])) })
+  assert.equal(checkGate(u, 'review', { probe: greenProbe() }).ok, true)
+  assert.match(checkGate(u, 'ship', { probe: greenProbe() }).need[0], /review\.md is "changes-requested"/)
+})
+
+test('CI decides whether review may begin', () => {
+  const u = unit(CHAIN)
+  const red = checkGate(u, 'review', { probe: greenProbe([{ name: 'tests', bucket: 'fail' }, { name: 'branch-name', bucket: 'pass' }]) })
+  assert.equal(red.ok, false)
+  assert.match(red.need[0], /CI is red on #7: tests — back to impl/)
+  assert.match(checkGate(u, 'review', { probe: greenProbe([{ name: 'tests', bucket: 'pending' }]) }).need[0], /has not finished/)
+  assert.match(checkGate(u, 'review', { probe: greenProbe([]) }).need[0], /no required checks/)
+  const broken = { gh: () => ({ code: 1, out: '', err: 'HTTP 401' }), git: () => ok() }
+  assert.match(checkGate(u, 'review', { probe: broken }).need[0], /HTTP 401/)
+  assert.match(checkGate(u, 'review').need[0], /no repository given/)
+  assert.equal(checkGate(u, 'review', { probe: greenProbe([{ name: 'a', bucket: 'pass' }, { name: 'b', bucket: 'skipping' }]) }).ok, true)
+})
+
+test('F4: the three closed cases, in the shapes gh pr checks --required --json name,bucket gives them', () => {
+  // `gh` prints the JSON array on stdout whatever it exits with; red is exit 1 and running is
+  // exit 8 on the plain output, and the gate must not depend on which. With nothing
+  // required it prints no JSON at all, only an error on stderr, exit 1.
+  const u = unit(CHAIN)
+  const gh = (code, out, err = '') => ({ gh: () => ({ code, out, err }), git: () => ok() })
+  const red = '[{"bucket":"fail","name":"tests"},{"bucket":"pass","name":"branch-name"}]\n'
+  const running = '[{"bucket":"pending","name":"tests"},{"bucket":"pass","name":"branch-name"}]\n'
+  for (const code of [0, 1]) {
+    const g = checkGate(u, 'review', { probe: gh(code, red) })
+    assert.deepEqual([g.ok, g.need], [false, ['CI is red on #7: tests — back to impl: fix on the branch and push']])
+  }
+  for (const code of [0, 8]) {
+    const g = checkGate(u, 'review', { probe: gh(code, running) })
+    assert.deepEqual([g.ok, g.need], [false, ['CI has not finished on #7: tests — wait, then ask again']])
+  }
+  const none = checkGate(u, 'review', { probe: gh(1, '', "no required checks reported on the 'feat/x' branch\n") })
+  assert.deepEqual([none.ok, none.need], [false, ["cannot read the required checks of #7: no required checks reported on the 'feat/x' branch"]])
+  // An empty array is the same answer by another road.
+  assert.match(checkGate(u, 'review', { probe: gh(0, '[]\n') }).need[0], /reports no required checks/)
+})
+
+test('the round limit stops the loop and says it needs a person', () => {
+  const text = [1, 2, 3].map((n) => round(n, 'changes-requested', ['- F1 [open] x'])).join('\n')
+  const u = unit({ ...CHAIN, 'review.md': reviewArt('changes-requested', text) })
+  assert.equal(REVIEW_ROUNDS, 3)
+  assert.match(checkGate(u, 'review', { probe: greenProbe() }).need[0], /needs a person — review used 3 of 3 rounds/)
+  assert.match(nextAction(u).action, /needs a person/)
+  assert.equal(checkGate(u, 'review', { probe: greenProbe(), limit: 4 }).ok, true)
+  assert.match(nextAction(u, 4).action, /3 of 4 rounds used/)
+})
+
+test('reviewRounds reads COS_REVIEW_ROUNDS and refuses what is not a positive integer', () => {
+  assert.equal(reviewRounds({}), 3)
+  assert.equal(reviewRounds({ COS_REVIEW_ROUNDS: '5' }), 5)
+  for (const bad of ['0', '-1', 'two', '1.5']) {
+    assert.throws(() => reviewRounds({ COS_REVIEW_ROUNDS: bad }), /COS_REVIEW_ROUNDS/)
+  }
+})
+
+test('R3: an accepted review with a finding still open cannot ship, and names it', () => {
+  const text = round(1, 'pass', ['- F1 [open] the thing'])
+  const g = checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', text) }), 'ship', { probe: greenProbe() })
+  assert.equal(g.ok, false)
+  assert.match(g.need.join('\n'), /F1 \[open\]/)
+})
+
+test('R4: an earlier round survives, a dropped finding or a renumbered round is caught', () => {
+  const good = `${round(1, 'changes-requested', ['- F1 [open] x'])}\n${round(2, 'pass', [`- F1 [fixed ${FIX}] x`])}`
+  assert.equal(checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', good) }), 'ship', { probe: greenProbe() }).ok, true)
+
+  const dropped = `${round(1, 'changes-requested', ['- F1 [open] x'])}\n${round(2, 'pass')}`
+  assert.match(checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', dropped) }), 'ship', { probe: greenProbe() }).need.join('\n'), /drops findings .*F1/)
+
+  const gap = `${round(1, 'changes-requested', ['- F1 [open] x'])}\n${round(3, 'pass', [`- F1 [fixed ${FIX}] x`])}`
+  assert.match(checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', gap) }), 'ship', { probe: greenProbe() }).need.join('\n'), /numbered 1, 3/)
+})
+
+test('R5: code after the reviewed commit closes the ship gate; the unit\'s own files do not', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })
+  const diff = (files) => greenProbe(undefined, { [`diff --name-only ${SHA}..refs/heads/feat/x`]: ok(files.join('\n')), [`diff --name-only ${SHA}..refs/remotes/origin/feat/x`]: ok(files.join('\n')) })
+  assert.equal(checkGate(u, 'ship', { probe: diff(['.cos/0001_x/review.md']) }).ok, true)
+  const g = checkGate(u, 'ship', { probe: diff(['.cos/0001_x/review.md', 'src/a.py']) })
+  assert.equal(g.ok, false)
+  assert.match(g.need[0], /changed after the reviewed commit .*src\/a\.py/)
+  // A branch rewritten so the reviewed commit is gone from it.
+  const rewritten = greenProbe(undefined, { [`merge-base --is-ancestor ${SHA} refs/heads/feat/x`]: { code: 1, out: '', err: '' } })
+  assert.match(checkGate(u, 'ship', { probe: rewritten }).need[0], /not on refs\/heads\/feat\/x/)
+  assert.match(checkGate(u, 'ship').need[0], /no repository given/)
+})
+
+test('F2: ship reads the pull request head, not only the refs here, and pins the merge to it', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })
+  const HEAD = 'c'.repeat(40)
+  const open = { state: 'OPEN', headRefOid: HEAD }
+  // Local and origin refs still say the reviewed commit; GitHub's head moved past it.
+  const pushedElsewhere = greenProbe(undefined, { [`diff --name-only ${SHA}..${HEAD}`]: ok('src/a.py') }, open)
+  const g = checkGate(u, 'ship', { probe: pushedElsewhere })
+  assert.equal(g.ok, false)
+  assert.match(g.need[0], new RegExp(`the head of #7 \\(${HEAD}\\) changed after the reviewed commit .*src/a\\.py`))
+
+  // The head moved only by the unit's own files: open, and the gate names the head to merge.
+  const good = checkGate(u, 'ship', { probe: greenProbe(undefined, { [`diff --name-only ${SHA}..${HEAD}`]: ok('.cos/0001_x/review.md') }, open) })
+  assert.equal(good.ok, true)
+  assert.equal(good.head, HEAD)
+
+  const missing = greenProbe(undefined, { [`cat-file -e ${HEAD}^{commit}`]: { code: 1, out: '', err: '' } }, open)
+  assert.match(checkGate(u, 'ship', { probe: missing }).need[0], /not in this repository — someone pushed from elsewhere: fetch/)
+  assert.match(checkGate(u, 'ship', { probe: greenProbe(undefined, {}, { state: 'MERGED', headRefOid: SHA }) }).need[0], /#7 is MERGED, not open/)
+  const offline = { gh: () => ({ code: 1, out: '', err: 'error connecting to api.github.com' }), git: () => ok() }
+  assert.match(checkGate(u, 'ship', { probe: offline }).need[0], /cannot read the head of #7: error connecting/)
+})
+
+test('F3: pass, then rebase, closes ship; another passing round opens it and costs no round', () => {
+  const REB = 'd'.repeat(40)
+  const rebased = { state: 'OPEN', headRefOid: REB }
+  const notAncestor = { code: 1, out: '', err: '' }
+  // After `gh pr update-branch --rebase` the reviewed commit is on none of the three.
+  const afterRebase = greenProbe(undefined, {
+    [`merge-base --is-ancestor ${SHA} refs/heads/feat/x`]: notAncestor,
+    [`merge-base --is-ancestor ${SHA} refs/remotes/origin/feat/x`]: notAncestor,
+    [`merge-base --is-ancestor ${SHA} ${REB}`]: notAncestor,
+  }, rebased)
+  const passed = branched({ ...CHAIN, 'review.md': reviewArt('accepted', `${round(1, 'changes-requested', ['- F1 [open] x'])}\n${round(2, 'pass', [`- F1 [fixed ${FIX}] x`])}`) })
+  const g = checkGate(passed, 'ship', { probe: afterRebase })
+  assert.equal(g.ok, false)
+  assert.match(g.need[0], /rewritten after the pass \(a rebase does this\): review its new head in another round/)
+
+  // Round 3 reviews the rebased head and passes: ship opens on that head.
+  const again = `${round(1, 'changes-requested', ['- F1 [open] x'])}\n${round(2, 'pass', [`- F1 [fixed ${FIX}] x`])}\n${round(3, 'pass', [`- F1 [fixed ${FIX}] x`]).replace(SHA, REB)}`
+  const reReviewed = branched({ ...CHAIN, 'review.md': reviewArt('accepted', again) })
+  const open = checkGate(reReviewed, 'ship', { probe: greenProbe(undefined, {}, rebased) })
+  assert.equal(open.ok, true)
+  assert.equal(open.head, REB)
+
+  // Passing rounds are not counted: cr, pass, cr is two of three used, not three.
+  const text = `${round(1, 'changes-requested', ['- F1 [open] x'])}\n${round(2, 'pass', [`- F1 [fixed ${FIX}] x`])}\n${round(3, 'changes-requested', [`- F1 [fixed ${FIX}] x`, '- F2 [open] y'])}`
+  const u = unit({ ...CHAIN, 'review.md': reviewArt('changes-requested', text) })
+  assert.match(nextAction(u).action, /2 of 3 rounds used/)
+  assert.equal(checkGate(u, 'review', { probe: greenProbe() }).ok, true)
+})
+
+test('a review.md with no rounds cannot ship', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', '# Review\nStatus: accepted.\n') })
+  assert.match(checkGate(u, 'ship', { probe: greenProbe() }).need[0], /no ## Round/)
+})
+
+test('--repo belongs to gate and nothing else', () => {
+  const out = cli('--repo', tmpdir(), 'status')
+  assert.equal(out.status, 2)
+  assert.match(out.stderr, /--repo applies only to `gate`/)
+})
+
+test('a bad COS_REVIEW_ROUNDS is misuse, and names the variable', () => {
+  const out = spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), 'status'], {
+    encoding: 'utf8', env: { ...process.env, COS_REVIEW_ROUNDS: 'three' },
+  })
+  assert.equal(out.status, 2)
+  assert.match(out.stderr, /COS_REVIEW_ROUNDS/)
+})
+
+test('with --root and no --repo, review says there is no repository instead of reading this one', () => {
+  const { root } = questionTree({
+    'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n',
+    'spec.md': 'Status: accepted.\n', 'plan.md': 'Status: accepted.\n', 'impl.md': 'Status: accepted.\n',
+    'pr.md': 'PR: https://github.com/o/r/pull/1. Status: accepted.\n',
+  })
+  const out = cli('--root', root, 'gate', '0001_q', 'review')
+  assert.equal(out.status, 1)
+  assert.match(out.stderr, /no repository given — pass --repo/)
 })

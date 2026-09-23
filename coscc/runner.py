@@ -138,6 +138,57 @@ def build_prompt(
             parts.append(f"# The {earlier} it follows\n\n{text}")
             break
 
+    # A review that asked for changes sends the unit back to `impl`, and the whole point of
+    # going back is the findings. Without this block the step that is meant to fix them
+    # was built from `intent.md` and `plan.md` only -- it could not see a single one.
+    #
+    # Found 2026-09-23 on the first real round: `0015`'s review came back
+    # `changes-requested` with five findings, the gate reopened `impl`, and nothing in the
+    # prompt the app would have built mentioned any of them. `0015` promised the loop
+    # "fix, then review again" and had built only the second half.
+    #
+    # Only while the review is `changes-requested`. A review that passed has nothing for
+    # `impl` to act on, and one that rejected closed the unit.
+    if stage in ("impl", "implement"):
+        review = _read(directory / "review.md")
+        if review and _header_status(review) == "changes-requested" and "review.md" not in included:
+            included.append("review.md")
+            parts.append(
+                "# The review that sent this back\n\n"
+                "The last review asked for changes. Fix every finding marked `[open]` below "
+                "on the branch, one commit per finding where that is possible, then record "
+                "in impl.md which commit fixed which finding.\n\n"
+                f"{review}"
+            )
+
+    # `review.md` accumulates rounds, and the app writes it from the reply -- so the reply
+    # has to carry every earlier round, or writing it erases them. Found 2026-09-23 on
+    # `0015`'s second review: round 1 and its five findings vanished from the file, and
+    # with them the count `cos.mjs` reads to stop at N rounds and ask for a person. A loop
+    # whose counter resets every run never reaches its limit.
+    # A review is asked to check what was measured, and `impl.md` is where that is written.
+    # The stage before `review` is `pr`, so without this `impl.md` never reached it -- and
+    # since `0014` the unit lives outside the repository, so it could not be found by
+    # looking either. Round 2 of `0015`'s review, 2026-09-23, left a finding open for
+    # exactly that reason while the evidence it asked for sat in `impl.md`.
+    if stage == "review":
+        measured = _read(directory / "impl.md")
+        if measured and "impl.md" not in included:
+            included.append("impl.md")
+            parts.append(f"# What was built and measured\n\n{measured}")
+
+    if stage == "review":
+        earlier = _rounds(_read(directory / "review.md"))
+        if earlier:
+            included.append("review.md")
+            parts.append(
+                "# The rounds so far\n\n"
+                "Copy every `## Round N` section below into your reply exactly as it is, "
+                "byte for byte, then add the next round after the last one. The app refuses "
+                "to write a review.md that drops or changes an earlier round.\n\n"
+                + "\n".join(earlier)
+            )
+
     location = directory / artifact
     if writes_own:
         # A stage with tools does the work and then records it. Asking it to *reply* with
@@ -160,6 +211,27 @@ def build_prompt(
             "rules above describe. Prose in Vietnamese; filenames and headings in English."
         )
     return "\n\n---\n\n".join(parts), included
+
+
+# One `## Round N` section of review.md: from its heading to the next `## ` heading.
+_ROUND_RE = re.compile(r"^## Round \d+\b.*?(?=^## |\Z)", re.MULTILINE | re.DOTALL)
+
+
+def _rounds(text: str) -> list[str]:
+    """Every round already recorded, each exactly as it stands in the file."""
+    return [m.group(0).rstrip() for m in _ROUND_RE.finditer(text or "")]
+
+
+# A status as `cos.mjs` `parseStatus` reads it: the first `Status:` in the file, hyphenated
+# words as one. Only the first -- a round or a finding quoting "Status: changes-requested"
+# further down must not send a review that passed back to `impl`.
+HEADER_STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+(?:-[A-Za-z]+)*)")
+
+
+def _header_status(text: str) -> str | None:
+    """The artifact's own status, read the way `cos.mjs` reads it."""
+    m = HEADER_STATUS_RE.search(text or "")
+    return m.group(1).lower() if m else None
 
 
 # How much of an unusable reply to keep beside the reason it was refused. Long enough to
@@ -355,7 +427,19 @@ class Runner:
                     terminal = str(payload.get("terminal_reason") or "")
 
             if grant.app_writes_artifact:
-                (directory / artifact).write_text(check_reply(collected), encoding="utf-8")
+                body = check_reply(collected)
+                if artifact == "review.md":
+                    lost = [
+                        r.splitlines()[0]
+                        for r in _rounds(_read(directory / artifact))
+                        if r not in body
+                    ]
+                    if lost:
+                        raise RunError(
+                            "the reply drops or changes an earlier review round, so "
+                            f"review.md was left as it was: {', '.join(lost)}"
+                        )
+                (directory / artifact).write_text(body, encoding="utf-8")
             else:
                 # The session had the tools to write it. Believing it did, rather than
                 # looking, is how a step reports success for a file that is not there.
