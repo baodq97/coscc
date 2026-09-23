@@ -15,15 +15,25 @@ whatever account is logged in.
 `--strict-mcp` locks the MCP configuration on top of `_options`, the way `coscc/
 sessions.py` `_options` itself will once R11 lands — used only to measure `main` *before*
 that change (plan.md step 2). `--baseline N` turns the run into a pass/fail check: exit 1
-unless the token total is at most `0.7 * N` and no MCP server or `mcp__*` tool reached the
-session at all (R11, R12).
+unless the aggregated token total is at most `0.7 * N` and no MCP server or `mcp__*` tool
+reached any sampled session at all (R11, R12).
+
+**Review round 1, F3.** A single session's token total is not stable: five identical runs
+on the same commit, same flags, same prompt (`impl.md ## What was measured`, R12) came back
+9150 three times and 10322 twice — a fixed ~1172-token gap whose source is `chưa biết`, not
+noise that averages away with more samples of the *same* run. One sample is therefore not
+enough to make `--baseline` mean anything; it happened to land on either side of the 30%
+ceiling depending on which of the two values it drew. `--repeat N` (default 1, so a plain
+run still costs one session) runs the session `N` times and combines the token totals with
+`--agg` (`median`, the default, or `max`) before comparing to `--baseline`. Every sample is
+still printed, so no individual run's number is lost to the aggregate.
 
 Exit codes:
 
-    0  the session ran, reported exactly one turn and no tool call, and --baseline (if
-       given) was met
-    1  the session ran but was not a clean first call (num_turns != 1, or it used a tool),
-       or --baseline was given and was not met
+    0  every sampled session ran, reported exactly one turn and no tool call, and
+       --baseline (if given) was met by the aggregate
+    1  a session was not a clean first call (num_turns != 1, or it used a tool), or
+       --baseline was given and was not met
     2  no `claude` on PATH, or the CLI reports it is not logged in
 """
 
@@ -33,6 +43,7 @@ import argparse
 import asyncio
 import json
 import shutil
+import statistics
 import sys
 from pathlib import Path
 
@@ -130,57 +141,91 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--baseline", type=float, default=None, metavar="N",
-        help="exit 1 unless tokens <= 0.7*N and no MCP server or mcp__* tool arrived",
+        help="exit 1 unless the aggregate tokens <= 0.7*N and no MCP server or mcp__* tool "
+        "arrived in any sample",
+    )
+    parser.add_argument(
+        "--repeat", type=int, default=1, metavar="N",
+        help="run the session N times (default 1) and combine the token totals with --agg "
+        "before checking --baseline — F3: one sample is not stable enough to trust alone",
+    )
+    parser.add_argument(
+        "--agg", choices=("median", "max"), default="median",
+        help="how --repeat samples are combined before checking --baseline (default: median)",
     )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.repeat < 1:
+        print("--repeat must be at least 1", file=sys.stderr)
+        return EXIT_ENV
 
     if shutil.which("claude") is None:
         print("no claude on PATH — this measurement cannot run without it", file=sys.stderr)
         return EXIT_ENV
 
-    try:
-        data = asyncio.run(_run(args.strict_mcp))
-    except sdk.CLIConnectionError as e:
-        print(f"claude could not be reached: {type(e).__name__}: {e}", file=sys.stderr)
-        return EXIT_ENV
-    except sdk.ProcessError as e:
-        text = str(e).lower()
-        if "login" in text or "auth" in text:
-            print(f"claude is not logged in: {e}", file=sys.stderr)
+    samples = []
+    for _ in range(args.repeat):
+        try:
+            data = asyncio.run(_run(args.strict_mcp))
+        except sdk.CLIConnectionError as e:
+            print(f"claude could not be reached: {type(e).__name__}: {e}", file=sys.stderr)
             return EXIT_ENV
-        raise
+        except sdk.ProcessError as e:
+            text = str(e).lower()
+            if "login" in text or "auth" in text:
+                print(f"claude is not logged in: {e}", file=sys.stderr)
+                return EXIT_ENV
+            raise
+        samples.append(data)
 
+    if not args.json:
+        for i, data in enumerate(samples, 1):
+            prefix = f"sample {i}/{len(samples)}: " if len(samples) > 1 else ""
+            for key in ("session_id", "model", "models_used", "num_turns", "tool_calls", "tokens"):
+                print(f"{prefix}{key}: {data[key]}")
+            print(f"{prefix}tools ({len(data['tools'])}): {', '.join(data['tools'])}")
+            print(f"{prefix}mcp tools ({len(data['mcp_tools'])}): {', '.join(data['mcp_tools'])}")
+            print(f"{prefix}mcp servers ({len(data['mcp_servers'])}): {', '.join(data['mcp_servers'])}")
+
+    for i, data in enumerate(samples, 1):
+        if data["num_turns"] != 1 or data["tool_calls"]:
+            print(
+                f"sample {i}/{len(samples)} was not a clean first call — num_turns="
+                f"{data['num_turns']} tool_calls={data['tool_calls']}; the token total is "
+                "not the first call's alone, so nothing is aggregated from it",
+                file=sys.stderr,
+            )
+            return EXIT_BROKEN
+
+    tokens_list = [d["tokens"] for d in samples]
+    agg_tokens = statistics.median(tokens_list) if args.agg == "median" else max(tokens_list)
+    mcp_servers = sorted({s for d in samples for s in d["mcp_servers"]})
+    mcp_tools = sorted({t for d in samples for t in d["mcp_tools"]})
+
+    result = {
+        "samples": samples,
+        "agg": args.agg,
+        "tokens": tokens_list,
+        "agg_tokens": agg_tokens,
+        "mcp_servers": mcp_servers,
+        "mcp_tools": mcp_tools,
+    }
     if args.json:
-        print(json.dumps(data))
+        print(json.dumps(result))
     else:
-        for key in ("session_id", "model", "models_used", "num_turns", "tool_calls", "tokens"):
-            print(f"{key}: {data[key]}")
-        print(f"tools ({len(data['tools'])}): {', '.join(data['tools'])}")
-        print(f"mcp tools ({len(data['mcp_tools'])}): {', '.join(data['mcp_tools'])}")
-        print(f"mcp servers ({len(data['mcp_servers'])}): {', '.join(data['mcp_servers'])}")
-
-    if data["num_turns"] != 1 or data["tool_calls"]:
-        print(
-            "not a clean first call — num_turns="
-            f"{data['num_turns']} tool_calls={data['tool_calls']}; the token total is not "
-            "the first call's alone, so it is not reported as one",
-            file=sys.stderr,
-        )
-        return EXIT_BROKEN
+        print(f"tokens, all samples: {tokens_list}")
+        print(f"{args.agg} tokens: {agg_tokens}")
+        print(f"mcp servers, union of all samples ({len(mcp_servers)}): {', '.join(mcp_servers)}")
+        print(f"mcp tools, union of all samples ({len(mcp_tools)}): {', '.join(mcp_tools)}")
 
     if args.baseline is not None:
         ceiling = 0.7 * args.baseline
-        ok = (
-            data["tokens"] <= ceiling
-            and not data["mcp_servers"]
-            and not data["mcp_tools"]
-        )
+        ok = agg_tokens <= ceiling and not mcp_servers and not mcp_tools
         if not ok:
             print(
-                f"--baseline {args.baseline}: tokens={data['tokens']} (ceiling "
-                f"{ceiling:.0f}), mcp_servers={data['mcp_servers']}, "
-                f"mcp_tools={data['mcp_tools']}",
+                f"--baseline {args.baseline}: {args.agg} tokens={agg_tokens} (ceiling "
+                f"{ceiling:.0f}), mcp_servers={mcp_servers}, mcp_tools={mcp_tools}",
                 file=sys.stderr,
             )
             return EXIT_BROKEN
