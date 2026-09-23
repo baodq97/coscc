@@ -101,14 +101,81 @@ class AReplyIsCheckedBeforeItBecomesAFile(unittest.TestCase):
         self.assertTrue(got.endswith("\n"))
 
 
-class ProseStagesCarryNothing(unittest.TestCase):
-    def test_every_prose_stage_is_empty_in_both_modes(self):
+class ProseStagesCarryNothingThatWrites(unittest.TestCase):
+    """The rule narrowed on 2026-09-23 and this class records both halves.
+
+    It used to read: a prose stage carries nothing at all. `plan` broke that, on purpose
+    -- `write-plan/SKILL.md` requires it to open every file it names, and an empty grant
+    made that impossible, so every plan the board produced named paths it had never seen.
+
+    What has not moved: the app writes a prose stage's artifact from the reply, so no
+    prose stage may write or run anything, in any mode.
+    """
+
+    def test_no_prose_stage_can_write_or_run_in_either_mode(self):
         for stage in policy.PROSE_STAGES:
             for mode in ("manual", "autonomous"):
                 grant = policy.grant_for(stage, mode)
-                self.assertEqual(grant.tools, (), f"{stage}/{mode} carries tools")
                 self.assertEqual(grant.commands, (), f"{stage}/{mode} carries commands")
-                self.assertFalse(grant.opens_anything, f"{stage}/{mode} opens something")
+                self.assertEqual(
+                    policy.beyond_reading(grant), (),
+                    f"{stage}/{mode} carries more than reading",
+                )
+
+    def test_plan_is_the_only_prose_stage_that_reads_and_only_when_autonomous(self):
+        self.assertEqual(policy.grant_for("plan", "autonomous").tools, policy.READ_TOOLS)
+        self.assertEqual(policy.grant_for("plan", "manual").tools, ())
+        for stage in policy.PROSE_STAGES:
+            if stage == "plan":
+                continue
+            for mode in ("manual", "autonomous"):
+                self.assertEqual(
+                    policy.grant_for(stage, mode).tools, (),
+                    f"{stage}/{mode} carries tools",
+                )
+
+    def test_the_guard_lets_the_plan_stage_through_with_its_read_tools(self):
+        """The half a grant-table test cannot cover.
+
+        `plan` holding `Read` is only useful if the runner's own guard agrees, and that
+        guard is the reason it could not hold anything for so long. This drives a real
+        run and asserts it reaches the session rather than being refused on the way.
+        """
+        class Replies:
+            def __init__(self):
+                self.granted = None
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1,
+                             tools=None, **kw):
+                self.granted = tuple(tools or ())
+                yield ("chunk", "# Plan: x\nStatus: accepted.\n")
+                yield ("done", {"session_id": "s-plan", "cost": {}})
+
+        sessions = Replies()
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI",
+                      spec_md="Status: accepted.\nS")
+            r = Runner(sessions=sessions, journal=None)
+
+            async def go():
+                out = []
+                async for ev in r.run(
+                    workspace=d, directory=Path(d) / '.cos' / UNIT, journal_key=d,
+                    unit=UNIT, stage="plan", artifact="plan.md", stages=STAGES,
+                    mode="autonomous",
+                ):
+                    out.append(ev)
+                return out
+
+            _, final = asyncio.run(go())[-1]
+
+        self.assertEqual(final["outcome"], "done", final)
+        self.assertEqual(sessions.granted, policy.READ_TOOLS)
+
+    def test_the_app_still_writes_the_plan_artifact(self):
+        """The reason `plan` gets no write tools. If the session wrote `plan.md` itself,
+        an unaccepted plan could author the thing that authorizes it."""
+        self.assertTrue(policy.grant_for("plan", "autonomous").app_writes_artifact)
 
     def test_an_unknown_pair_is_locked_rather_than_open(self):
         grant = policy.grant_for("a-stage-invented-tomorrow", "autonomous")
@@ -138,7 +205,10 @@ class ProseStagesCarryNothing(unittest.TestCase):
 
                 with self.assertRaises(RunError) as caught:
                     asyncio.run(go())
-                self.assertIn("must not carry tools", str(caught.exception))
+                # The refusal names what it refused, which the older message did not:
+                # "must not carry tools" said a prose stage may hold none, and since
+                # 2026-09-23 `plan` holds three.
+                self.assertIn("must not carry Write", str(caught.exception))
         finally:
             policy.GRANTS.clear()
             policy.GRANTS.update(original)

@@ -28,7 +28,7 @@ import claude_agent_sdk as sdk
 
 from coscc import harness
 from coscc.journal import Journal
-from coscc.policy import Grant, decide, grant_for, is_prose_stage
+from coscc.policy import Grant, beyond_reading, decide, grant_for, is_prose_stage
 from coscc.sessions import Refused, Sessions
 
 # An artifact has to carry one of these on its first line, or the gate cannot read it and
@@ -256,10 +256,21 @@ class Runner:
         if not directory.exists():
             raise RunError(f"no such work unit for {workspace}: {unit}")
 
-        if grant.opens_anything and is_prose_stage(stage):
+        if is_prose_stage(stage):
             # Belt and braces against a future edit to the table: a prose stage that
-            # somehow acquired tools would silently stop being covered.
-            raise RunError(f"{stage} is a prose stage and must not carry tools")
+            # somehow acquired the ability to write, or to run a command, would silently
+            # stop being covered.
+            #
+            # It asks `beyond_reading` rather than `opens_anything` since 2026-09-23.
+            # `plan` now holds `Read`, `Glob` and `Grep`, because its own skill has always
+            # required it to open the files it names and this guard was half of why it
+            # never could. What the guard is actually for is unchanged: the app writes a
+            # prose stage's artifact, so the stage must not be able to write it instead.
+            beyond = beyond_reading(grant)
+            if beyond:
+                raise RunError(
+                    f"{stage} is a prose stage and must not carry {', '.join(beyond)}"
+                )
 
         prompt, included = build_prompt(
             workspace, directory, unit, stage, stages, artifact,

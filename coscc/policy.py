@@ -101,6 +101,26 @@ GRANTS: dict[tuple[str, str], Grant] = {
         max_budget_usd=5.0,
         app_writes_artifact=False,
     ),
+    # `plan` reads, and only reads. `.claude/skills/write-plan/SKILL.md` has told this
+    # stage to open the files it is about to name since it was written -- *"Read the files
+    # the plan will touch before naming them"*, and invariant 1 requires every path under
+    # `## Files that change` to be verified before it is written down. This table gave it
+    # nothing, so a plan produced by the board named paths it had never seen.
+    #
+    # It went unnoticed until 2026-09-23 because until then every plan in this repository
+    # had been typed by hand, by a session that did have tools. The first plan actually run
+    # through the product is what found it.
+    #
+    # No write tools and no commands: the app still writes `plan.md` from the reply, which
+    # is what stops a plan from authoring itself, and `beyond_reading` below is what keeps
+    # that true if this entry is ever widened.
+    ("plan", "autonomous"): Grant(
+        tools=READ_TOOLS,
+        # Chosen, not measured. Five files named in a spec is the case in front of me;
+        # twenty turns leaves room to follow a reference and still ends a loop that will not.
+        max_turns=20,
+        max_budget_usd=2.0,
+    ),
     ("pr", "autonomous"): Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=PR_COMMANDS,
@@ -110,6 +130,22 @@ GRANTS: dict[tuple[str, str], Grant] = {
         warning=PR_WARNING,
     ),
 }
+
+
+def beyond_reading(grant: Grant) -> tuple[str, ...]:
+    """What a grant carries that a prose stage may not — which is anything beyond reading.
+
+    A prose stage is one whose artifact **the app** writes from the reply. That is the
+    property worth defending: a step holding write tools could write its own artifact
+    behind the app's back, and a step holding commands is not a prose stage at all.
+    Reading is neither of those, and `plan` was required to read long before it was
+    allowed to.
+
+    So the guard in `coscc/runner.py` asks this rather than asking whether the grant is
+    empty. The old question — empty or not — read as *no tools* and meant *no capability*;
+    the two stopped being the same thing on 2026-09-23.
+    """
+    return tuple(t for t in grant.tools if t not in READ_TOOLS) + tuple(grant.commands)
 
 
 def grant_for(stage: str, mode: str) -> Grant:
