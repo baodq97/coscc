@@ -146,7 +146,7 @@ async def run(root: Path, fakebin: Path) -> bool:
     cwd = str(workspace)
     app = build(Config(workspaces=(cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")))
     service = app.state.service
-    made = service.create_unit(cwd, SLUG, "verify_0021 fixture")
+    made = await service.create_unit(cwd, SLUG, "verify_0021 fixture")
     unit, directory = made["unit"], Path(made["path"])
     units_root = service._units_root(cwd)
     # Fixture data, written before anything is measured, in a unit that lives in a

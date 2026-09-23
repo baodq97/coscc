@@ -271,9 +271,43 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
                 [k for k, v in child.items() if k.startswith("COS_") and v], []
             )
 
+    def test_the_settings_the_child_reads_still_load(self):
+        """`0017` review F1: the child reads `COS_PORT=""`, and `config.from_env` must
+        take that as unset. A worktree's own `npm test` loads the config, and `int("")`
+        errored seven of its tests whenever the app had been given a port."""
+        from coscc import config
+        with mock.patch.dict(os.environ, {"COS_HOST": "127.0.0.1", "COS_PORT": "9999"}):
+            c = config.from_env(self.child())
+            self.assertEqual((c.host, c.port), ("0.0.0.0", 8790))
+
     def test_everything_else_is_left_alone(self):
         """Overridden, not replaced. A session that loses `HOME` cannot sign in."""
         with mock.patch.dict(os.environ, {"HOME": "/home/someone", "PATH": "/bin"}):
             child = self.child()
             self.assertEqual(child["HOME"], "/home/someone")
             self.assertEqual(child["PATH"], "/bin")
+
+    # -- `0017` R7: a unit's session reads its own tree, not the workspace's --------
+
+    def unit_child(self, cwd, workspace):
+        inherited = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        inherited.update(sessions.child_env(cwd, workspace))
+        return inherited
+
+    def test_the_virtualenv_the_child_reads_is_the_worktrees(self):
+        with mock.patch.dict(os.environ, {"VIRTUAL_ENV": "/ws/.venv"}):
+            self.assertEqual(self.unit_child("/wt", "/ws")["VIRTUAL_ENV"], str(Path("/wt") / ".venv"))
+
+    def test_no_path_entry_under_the_workspace_or_the_package_reaches_the_child(self):
+        import coscc
+        pkg = str(Path(coscc.__file__).resolve().parent / "bin")
+        with mock.patch.dict(os.environ, {"PATH": os.pathsep.join(["/ws/.venv/bin", pkg, "/usr/bin"])}):
+            self.assertEqual(self.unit_child("/wt", "/ws")["PATH"], "/usr/bin")
+
+    def test_no_reflex_flag_of_this_process_reaches_the_child_with_a_value(self):
+        with mock.patch.dict(os.environ, {
+            "__REFLEX_SKIP_COMPILE": "1", "__REFLEX_MOUNT_FRONTEND_COMPILED_APP": "1",
+        }):
+            child = self.unit_child("/wt", "/ws")
+            self.assertEqual([k for k, v in child.items() if k.startswith("__REFLEX_") and v], [])
+            self.assertEqual(child[frontend.WEB_WORKDIR_VAR], str(Path("/wt") / ".web"))

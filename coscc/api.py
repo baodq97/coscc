@@ -130,7 +130,7 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("send a JSON object")
         try:
-            return service.create_unit(
+            return await service.create_unit(
                 str(body.get("cwd") or ""),
                 str(body.get("slug") or ""),
                 str(body.get("brief") or ""),

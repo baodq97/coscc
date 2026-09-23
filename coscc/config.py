@@ -37,7 +37,7 @@ _ENV_PREFIX = "COS_"
 
 def _flag(env: dict[str, str], name: str, default: bool) -> bool:
     raw = env.get(_ENV_PREFIX + name)
-    if raw is None:
+    if raw is None or not raw.strip():
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
@@ -148,7 +148,11 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         workspaces=declared or fallback,
         working_dir=working_dir,
         data_dir=_dir(e, "DATA_DIR"),
-        host=e.get(_ENV_PREFIX + "HOST", "0.0.0.0"),
-        port=int(e.get(_ENV_PREFIX + "PORT", "8790")),
+        # Empty is unset, for every setting. `coscc/sessions.py` `child_env` cannot remove
+        # a `COS_*` name from a session, only override it with "", so a session started
+        # from an app launched with `COS_PORT` set reads `COS_PORT=""` -- and `int("")`
+        # errored seven tests in a unit's worktree (`0017` review, F1).
+        host=(e.get(_ENV_PREFIX + "HOST") or "").strip() or "0.0.0.0",
+        port=int((e.get(_ENV_PREFIX + "PORT") or "").strip() or "8790"),
         model=e.get(_ENV_PREFIX + "MODEL") or None,
     )

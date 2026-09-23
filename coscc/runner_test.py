@@ -806,3 +806,67 @@ class TheReviewSeesWhatWasMeasured(unittest.TestCase):
             )
             self.assertIn("MEASURED-MARKER", prompt)
             self.assertIn("impl.md", included)
+
+
+class AStepWorksInItsUnitsWorktree(unittest.TestCase):
+    """`0017` plan step 5. `cwd` is the session's directory and the write boundary."""
+
+    def test_writing_outside_the_worktree_is_refused_and_inside_is_allowed(self):
+        class Probe:
+            def __init__(self):
+                self.cwd = None
+                self.workspace = None
+                self.answers = {}
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1,
+                             can_use_tool=None, workspace=None, **kw):
+                self.cwd, self.workspace = cwd, workspace
+                for name, target in (
+                    ("inside", f"{cwd}/x.txt"),
+                    ("workspace", f"{workspace}/x.txt"),
+                ):
+                    got = await can_use_tool("Write", {"file_path": target, "content": "x"}, None)
+                    self.answers[name] = type(got).__name__
+                yield ("done", {"session_id": "s-impl", "cost": {}})
+
+        probe = Probe()
+        with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as wt:
+            directory = make_unit(Path(ws), intent_md="Status: accepted.\nI",
+                                  plan_md="Status: accepted.\nP")
+            (directory / "impl.md").write_text("# Impl\nStatus: accepted.\n", encoding="utf-8")
+            r = Runner(sessions=probe, journal=None)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=ws, directory=directory, journal_key=ws, unit=UNIT,
+                    stage="impl", artifact="impl.md", stages=STAGES, mode="autonomous",
+                    cwd=wt,
+                )]
+
+            _, final = asyncio.run(go())[-1]
+            self.assertEqual(final["outcome"], "done", final)
+            self.assertEqual((probe.cwd, probe.workspace), (wt, ws))
+            self.assertEqual(probe.answers["inside"], "PermissionResultAllow")
+            self.assertEqual(probe.answers["workspace"], "PermissionResultDeny")
+
+
+class ShipIsNotToldItIsInARepository(unittest.TestCase):
+    """`0017` review F3. `ship` runs in the unit's directory, which is not a checkout, so
+    its prompt must not call that directory a repository, and must send it to the URL."""
+
+    def prompt(self, d, stage, artifact):
+        make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+        directory = Path(d) / ".cos" / UNIT
+        return build_prompt(directory, directory, UNIT, stage, STAGES, artifact, writes_own=True)
+
+    def test_ship_is_sent_to_the_pull_requests_url(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = self.prompt(d, "ship", "ship.md")
+            self.assertIn("URL in `pr.md`'s `PR:` field", prompt)
+            self.assertNotIn("in the repository at", prompt)
+
+    def test_impl_still_names_its_repository(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = self.prompt(d, "impl", "impl.md")
+            self.assertIn("in the repository at", prompt)
+            self.assertNotIn("URL in `pr.md`'s `PR:` field", prompt)

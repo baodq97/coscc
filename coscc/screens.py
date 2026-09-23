@@ -1185,11 +1185,15 @@ def _detail_dialog() -> rx.Component:
                                 ),
                                 s.text(
                                     "Fetches main from origin, then cuts <type>/<slug> "
-                                    "from it, named by the Type: in intent.md. If that "
-                                    "fetch fails, nothing is cut. The app does this and "
-                                    "nothing else to git — it never pushes, merges or "
-                                    "commits.",
+                                    "from it, named by the Type: in intent.md, in this "
+                                    "unit's own worktree — the workspace stays on main. "
+                                    "If that fetch fails, nothing is cut. The app never "
+                                    "pushes, merges or commits.",
                                     size="1",
+                                ),
+                                rx.cond(
+                                    P.unit_tree != "",
+                                    s.text(P.unit_tree, id="unit-tree", size="1"),
                                 ),
                                 rx.cond(
                                     ~P.recording,

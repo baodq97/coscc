@@ -205,10 +205,17 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
     ok = True
     ci = fakebin / "CI"
 
+    def tree_of(unit: str) -> Path:
+        """Since `0017` a unit's branch and commits live in its own worktree."""
+        from coscc import worktrees
+        return worktrees.path(cwd, unit, SERVICE.config.data_dir)
+
     def script_says(unit: str) -> dict:
+        # The checkout the app reads for this unit: its worktree (`0017`).
+        repo = tree_of(unit) if tree_of(unit).exists() else Path(cwd)
         done = subprocess.run(
             ["node", str(harness.script()), "--root", str(units_root), "next", unit,
-             "--repo", cwd],
+             "--repo", str(repo)],
             capture_output=True, text=True, timeout=60, env=harness.child_env(),
         )
         return json.loads(done.stdout) if done.returncode == 0 else {"stage": f"exit {done.returncode}"}
@@ -254,8 +261,8 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
         return (done["pressed"] and done["drained"] and not done["running"]
                 and done["notice"].startswith(f"{stage} {outcome}"))
 
-    def make(slug: str, files: dict[str, str]) -> tuple[str, Path]:
-        made = SERVICE.create_unit(cwd, slug, "verify_0024 fixture")
+    async def make(slug: str, files: dict[str, str]) -> tuple[str, Path]:
+        made = await SERVICE.create_unit(cwd, slug, "verify_0024 fixture")
         directory = Path(made["path"])
         write_unit(directory, files)
         return made["unit"], directory
@@ -269,7 +276,7 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
     # --- the loop, on one unit -------------------------------------------------
     sha1 = git(workspace, "rev-parse", "HEAD")
     r1 = rnd(1, sha1, "changes-requested", ["- F1 [open] [high] the thing the proof invented"])
-    unit, directory = make(SLUG, {**chain, "review.md": header("changes-requested") + r1})
+    unit, directory = await make(SLUG, {**chain, "review.md": header("changes-requested") + r1})
     review = directory / "review.md"
     ci.write_text("pass")
 
@@ -306,11 +313,12 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
     def impl_reply() -> str:
         nonlocal fixes
         fixes += 1
-        (workspace / f"fix{fixes}.txt").write_text(f"fix {fixes}\n", encoding="utf-8")
-        git(workspace, "add", "-A")
-        git(workspace, "commit", "-q", "-m", f"fix {fixes}")
+        wt = tree_of(unit)
+        (wt / f"fix{fixes}.txt").write_text(f"fix {fixes}\n", encoding="utf-8")
+        git(wt, "add", "-A")
+        git(wt, "commit", "-q", "-m", f"fix {fixes}")
         (directory / "impl.md").write_text(
-            accepted("Impl") + f"\nfix {fixes}: {git(workspace, 'rev-parse', 'HEAD')}\n",
+            accepted("Impl") + f"\nfix {fixes}: {git(wt, 'rev-parse', 'HEAD')}\n",
             encoding="utf-8",
         )
         return "impl recorded"
@@ -355,7 +363,7 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
     ok &= await check("c", unit, "review", how="ask")
 
     # R3, the refusal: a reply that drops round 1 is not written.
-    sha2 = git(workspace, "rev-parse", "HEAD")
+    sha2 = git(tree_of(unit), "rev-parse", "HEAD")
     r2 = rnd(2, sha2, "pass", [f"- F1 [fixed {sha2}] [high] the thing the proof invented"])
     old = review.read_bytes()
     session.reply = lambda: header("accepted") + r2
@@ -385,28 +393,28 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
     ok &= await check("g", unit, "ship")
 
     # i: code lands after the pass.
-    (workspace / "late.txt").write_text("after the pass\n", encoding="utf-8")
-    git(workspace, "add", "-A")
-    git(workspace, "commit", "-q", "-m", "after the pass")
+    (tree_of(unit) / "late.txt").write_text("after the pass\n", encoding="utf-8")
+    git(tree_of(unit), "add", "-A")
+    git(tree_of(unit), "commit", "-q", "-m", "after the pass")
     ok &= await check("i", unit, "review", how="ask")
 
     # --- the other rows, each its own unit -------------------------------------
-    first, _ = make("a-fresh-one", {"intent.md": accepted("Intent", " Type: fix.")})
+    first, _ = await make("a-fresh-one", {"intent.md": accepted("Intent", " Type: fix.")})
     ok &= await check("a", first, "spec")
 
-    e_unit, _ = make("pr-open-ci-red", chain)
+    e_unit, _ = await make("pr-open-ci-red", chain)
     ci.write_text("fail")
     ok &= await check("e (red)", e_unit, "impl")
     ci.write_text("pass")
     ok &= await check("e (green)", e_unit, "review")
 
-    h_unit, _ = make("closed-long-ago", {
+    h_unit, _ = await make("closed-long-ago", {
         **chain, "plan.md": accepted("Plan").replace("accepted", "done"),
         "review.md": header("changes-requested") + r1,
     })
     ok &= await check("h", h_unit, "")
 
-    f_unit, _ = make("out-of-rounds", {**chain, "review.md": header("changes-requested") + r1})
+    f_unit, _ = await make("out-of-rounds", {**chain, "review.md": header("changes-requested") + r1})
     os.environ["COS_REVIEW_ROUNDS"] = "1"
     try:
         ok &= await check("f", f_unit, "")

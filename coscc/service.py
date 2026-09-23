@@ -47,7 +47,7 @@ from coscc.policy import GRANTS, PROSE_STAGES, grant_for
 from coscc.runner import STATUS_RE, RunError, Runner
 from coscc.sessions import Sessions
 from coscc.store import BadName, Store, require_name
-from coscc import units
+from coscc import units, worktrees
 from coscc.units import BadUnit, CannotCreate
 
 # The eight stage names, in stage order. Taken from the stage list the board reports rather
@@ -90,6 +90,28 @@ def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, 
             )
 
 
+def step_cwd(stage: str, work: str, directory: Path) -> str:
+    """Where a step's session runs. The unit's worktree, except for `ship`.
+
+    `ship` runs `gh pr merge --squash --delete-branch`, and inside a worktree that command
+    fails after it has already merged. Measured 2026-09-23 on `baodq97/coscc-proof` with gh
+    2.93.0, `main` checked out at the root and the branch in a worktree: the pull request
+    went to `MERGED`, then gh tried to switch the worktree to `main`, git answered
+    `fatal: 'main' is already used by worktree`, and gh exited 1 -- with the remote branch
+    and the local branch both left behind. A step reading that exit code reports a failed
+    merge for a pull request that merged.
+
+    The same command with the pull request's URL, run from a directory that is not a git
+    checkout, exited 0, merged, and deleted the remote branch. The unit's directory in the
+    store is such a directory -- the store has no git (`coscc/units.py`) -- and `ship` writes
+    `ship.md` there anyway. The worktree and the local branch are then removed by
+    `worktrees.remove_if_finished`, which already waits for GitHub to say `MERGED`.
+
+    The gates still read `work`: only the session moves.
+    """
+    return str(directory) if stage == "ship" else work
+
+
 @dataclass
 class Service:
     config: Config
@@ -103,6 +125,8 @@ class Service:
     # round run one after the other and the second finds the first's marker. One process
     # only, like `pull` (`.claude/rules/coscc-app.md`).
     _comment_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    # `0017` R8. Per workspace, created on first use.
+    _create_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # No working folder means no store, and the app behaves as it did before one existed.
@@ -348,6 +372,8 @@ class Service:
                 totals_of(timelines.get(unit["name"], [])) if journal is not None else {}
             )
 
+        await self._attach_worktrees(cwd, data["units"])
+
         data["recording"] = journal is not None
         data["read_only_because"] = (
             None if journal is not None
@@ -365,6 +391,56 @@ class Service:
             }
         return data
 
+    async def _attach_worktrees(self, cwd: str, units_: list[dict[str, Any]]) -> None:
+        """`0017`. Give every unit `worktree: {path, branch, prepare}`, or `None`.
+
+        One `git worktree list` for the whole board. A `finished` unit that still has a tree
+        is cleaned up here (R10), so a unit shipped at a terminal is cleaned up too — at the
+        cost of a `gh pr view` (up to 30s) on **every** board read for as long as the tree
+        stays: once, when the removal succeeds; on each read after, when it does not
+        (`gh` failing, the pull request not merged, the local branch off the merged head).
+        Nothing remembers a refusal, so a transient `gh` error is retried rather than
+        believed. A dirty tree is refused before `gh` is asked. (Plan Risk 7; `0017`
+        review F4 — this docstring said "the first time" until then.)
+        """
+        root = Path(cwd).expanduser().resolve()
+        try:
+            listed = {
+                str(Path(t["path"]).resolve()): t
+                for t in await gitops.worktree_list(root)
+            } if (root / ".git").exists() else {}
+        except GitError:
+            listed = {}
+        for u in units_:
+            u["worktree"] = None
+            try:
+                where = worktrees.path(cwd, u["name"], self.config.data_dir)
+            except BadUnit:
+                continue
+            found = listed.get(str(where))
+            if found is None:
+                continue
+            if u.get("next") == "finished":
+                done = await worktrees.remove_if_finished(cwd, u["name"], u, self.config.data_dir)
+                if done.get("removed"):
+                    continue
+            u["worktree"] = {
+                "path": str(where),
+                "branch": found.get("branch") or "",
+                "prepare": worktrees.read_prepare(where),
+            }
+
+    async def _cleanup(self, cwd: str, unit: str) -> dict[str, Any]:
+        """R10 after a `ship` step. Never raises; says what it did or why not."""
+        try:
+            data = await board_reader.read(self._units_root(cwd))
+        except Unavailable as e:
+            return {"removed": False, "reason": str(e)}
+        found = next((u for u in data["units"] if u["name"] == unit), None)
+        if found is None:
+            return {"removed": False, "reason": "unit not on the board"}
+        return await worktrees.remove_if_finished(cwd, unit, found, self.config.data_dir)
+
     async def next_step(self, cwd: str, unit: str) -> dict[str, Any]:
         """`0024`. The one stage the run button may offer, and why -- `cos.mjs next`'s answer.
 
@@ -376,8 +452,18 @@ class Service:
         if not unit:
             raise Invalid("name a work unit")
         self._unit_dir(cwd, unit)
+        # `0017`. The unit's worktree is the checkout its branch and pull request are read
+        # from. None when there is none to open, and `cos.mjs` then keeps `review` and
+        # `ship` closed rather than read the workspace's branch, which is not this unit's.
+        # A workspace that is not a git repository has no worktrees, and is read as it
+        # always was — the same fallback `run_step` takes, so the two read one checkout.
+        if (Path(cwd).expanduser().resolve() / ".git").exists():
+            tree = await self._worktree(cwd, unit)
+            repo = tree["path"] if tree else None
+        else:
+            repo = cwd
         try:
-            found = await board_reader.next_step(self._units_root(cwd), unit, repo=cwd)
+            found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo)
         except Unavailable as e:
             raise Invalid(str(e)) from e
         return {"cwd": cwd, "unit": unit, **{k: found[k] for k in ("stage", "action", "blocked")}}
@@ -445,16 +531,37 @@ class Service:
         #
         # Asked here rather than in `Runner` because a refusal must arrive before any
         # money is spent, and `run_step` is the last place that is still true.
+        # `0017`. Every step runs in the unit's own worktree. A workspace that is not a git
+        # repository has none, and its steps run where they always did — there is no
+        # branch there for another unit to take away.
+        is_repo = (Path(cwd).expanduser().resolve() / ".git").exists()
+        tree = await self._worktree(cwd, unit, strict=True) if is_repo else None
+        if is_repo and tree is None:
+            try:
+                tree = {"path": (await worktrees.ensure(cwd, unit, None, self.config.data_dir))["path"]}
+            except (GitError, BadUnit) as e:
+                raise Invalid(f"{unit} has no worktree and one could not be opened: {e}") from e
+        work = tree["path"] if tree else cwd
         try:
-            # `cwd` is the workspace: the checkout the `review` and `ship` gates read git
-            # and the pull request from (`0015`). The store has no git to read.
+            # `work` is the checkout the `review` and `ship` gates read git and the pull
+            # request from (`0015`). The store has no git to read.
             allowed, said = await board_reader.gate(
-                self._units_root(cwd), unit, stage, repo=cwd
+                self._units_root(cwd), unit, stage, repo=work
             )
         except Unavailable as e:
             raise Invalid(str(e)) from e
         if not allowed:
             raise Invalid(said)
+
+        if stage == "impl" and tree is not None:
+            # R6. A tree that cannot run its tests turns every `impl` red from the start, so
+            # the step is not started on one. Tried once more first: a network blip is the
+            # ordinary reason, and the page has nothing better to offer than *try again*.
+            prepared = worktrees.read_prepare(Path(work))
+            if not (prepared or {}).get("ok"):
+                prepared = await worktrees.prepare(Path(work), cwd)
+            if not prepared.get("ok"):
+                raise Invalid(worktrees.describe_failure(prepared))
 
         key = self._journal_key(cwd)
         directory = self._unit_dir(cwd, unit)
@@ -477,9 +584,14 @@ class Service:
                 stages=list(data["stages"]),
                 mode=mode,
                 gate_said=said,
+                cwd=step_cwd(stage, work, directory),
             ):
                 if item[0] == "done":
                     self._record_transition(cwd, unit, row["file"], directory, item[1])
+                    if stage == "ship" and tree is not None and item[1].get("outcome") == "done":
+                        # R10. Only if `cos.mjs` now says `finished` and GitHub says merged;
+                        # otherwise nothing is touched and the board tries again later.
+                        item = ("done", {**item[1], "cleanup": await self._cleanup(cwd, unit)})
                     if rounds_before is not None and item[1].get("outcome") == "done":
                         # After `Runner` has written `review.md` (`runner.py:442`), never
                         # before: the artifact does not wait on GitHub (`0021` R6).
@@ -615,31 +727,76 @@ class Service:
         except (OSError, BadTransition, Busy):
             return
 
-    def create_unit(self, cwd: str, slug: str, brief: str = "") -> dict[str, Any]:
+    def _create_lock(self, cwd: str) -> asyncio.Lock:
+        """`0017` R8. One lock per workspace, held across numbering and making the tree."""
+        return self._create_locks.setdefault(units.key(cwd), asyncio.Lock())
+
+    async def create_unit(self, cwd: str, slug: str, brief: str = "") -> dict[str, Any]:
         """`0014` R1. Start a work unit, in the product's store rather than the repository.
 
         The number and the slug grammar are `cos.mjs`'s, through `coscc/units.py`. Nothing
         here is a second opinion about either — `.claude/CLAUDE.md` says that script is the
         one place the loop is defined.
+
+        Since `0017` it also opens the unit's own worktree, detached at the workspace's
+        `main`. A worktree that cannot be opened does not undo the unit: the result says
+        why under `worktree.error`, and the next step that needs the tree tries again.
         """
         self._workspace_or_refuse(cwd)
+        root = Path(cwd).expanduser().resolve()
+        async with self._create_lock(cwd):
+            reserve = [root]
+            try:
+                reserve += [
+                    Path(t["path"]) for t in (await gitops.worktree_list(root))[1:]
+                    if (Path(t["path"]) / units.COS_DIR).is_dir()
+                ]
+            except GitError:
+                pass
+            try:
+                made = {
+                    "cwd": cwd,
+                    # The host repository's own `.cos/` counts toward the number, so a unit
+                    # started here cannot take a number already used there
+                    # (`0001_product-describes-a-state-it-is-not-in` R10), and since `0017`
+                    # so does every worktree's. Counting is `cos.mjs`'s.
+                    **units.create(cwd, slug, brief, self.config.data_dir, reserve_from=reserve),
+                }
+            except (CannotCreate, BadUnit) as e:
+                raise Invalid(str(e)) from e
+            try:
+                made["worktree"] = await worktrees.ensure(
+                    cwd, made["unit"], None, self.config.data_dir
+                )
+            except (GitError, BadUnit) as e:
+                made["worktree"] = {"path": "", "error": str(e)}
+        return made
+
+    async def _worktree(self, cwd: str, unit: str, strict: bool = False) -> dict[str, Any] | None:
+        """The unit's worktree, opened on its branch if the branch exists and it is not.
+
+        None when there is none and none can be opened — the workspace is dirty on the
+        unit's branch, or is not a git repository at all. `strict` turns the first of those
+        into `Invalid`: a step must not run on a tree that is not on its unit's branch.
+        """
         try:
-            return {
-                "cwd": cwd,
-                # The host repository's own `.cos/` counts toward the number, so a unit
-                # started here cannot take a number already used there
-                # (`0001_product-describes-a-state-it-is-not-in` R10). Counting is
-                # `cos.mjs`'s; this only names the directory (R11).
-                **units.create(
-                    cwd,
-                    slug,
-                    brief,
-                    self.config.data_dir,
-                    reserve_from=[Path(cwd).expanduser().resolve()],
-                ),
-            }
-        except (CannotCreate, BadUnit) as e:
-            raise Invalid(str(e)) from e
+            found = await worktrees.find(cwd, unit, self.config.data_dir)
+            if found is not None and found["branch"]:
+                return {"path": found["path"], "branch": found["branch"]}
+            try:
+                branch = units.branch_name(cwd, unit, self.config.data_dir)
+                await gitops.rev_parse(Path(cwd).expanduser().resolve(), f"refs/heads/{branch}")
+            except (CannotCreate, BadUnit, GitError):
+                branch = None
+            if branch is None:
+                return {"path": found["path"], "branch": ""} if found else None
+            # The branch exists and the tree is not on it: open it there (`worktrees.ensure`).
+            made = await worktrees.ensure(cwd, unit, branch, self.config.data_dir)
+            return {"path": made["path"], "branch": made["branch"]}
+        except (GitError, BadUnit) as e:
+            if strict:
+                raise Invalid(f"{unit}'s worktree could not be opened on its branch: {e}") from e
+            return None
 
     async def answer(
         self,
@@ -774,7 +931,13 @@ class Service:
             name = units.branch_name(cwd, unit, self.config.data_dir)
         except (CannotCreate, BadUnit) as e:
             raise Invalid(str(e)) from e
-        repo = Path(cwd).expanduser().resolve()
+        # `0017`. Cut in the unit's own worktree, never in the workspace: cutting there is
+        # what took one unit's branch away from another. The workspace stays on `main`.
+        try:
+            tree = await worktrees.ensure(cwd, unit, None, self.config.data_dir)
+        except (GitError, BadUnit) as e:
+            raise Invalid(f"Could not open {unit}'s worktree, so no branch was cut. {e}") from e
+        repo = Path(tree["path"])
         try:
             await gitops.fetch(repo, BRANCH_REMOTE, BRANCH_TRUNK)
         except GitError as e:
@@ -787,6 +950,11 @@ class Service:
             output = await gitops.create_branch(repo, name, sha)
         except GitError as e:
             raise Invalid(str(e)) from e
+        # Prepared here rather than when the tree was made (`0017` plan): the lockfiles an
+        # `impl` works with are the ones at the commit just cut from, not the local `main`.
+        # A failure is returned, not raised — the branch is cut either way — and `run_step`
+        # refuses `impl` until preparing succeeds (R6).
+        prepared = await worktrees.prepare(repo, cwd)
         return {
             "cwd": cwd,
             "unit": unit,
@@ -794,6 +962,9 @@ class Service:
             "base": f"{BRANCH_REMOTE}/{BRANCH_TRUNK}",
             "sha": sha[:7],
             "output": output,
+            "worktree": str(repo),
+            "switched": bool(tree.get("switched")),
+            "prepare": prepared,
         }
 
     async def branch_here(self, cwd: str) -> dict[str, Any]:

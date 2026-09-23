@@ -33,17 +33,21 @@ checked. Copy it; do not read the head again yourself.
 ## Merging
 
 ```
-gh pr merge <number> --squash --delete-branch --match-head-commit <sha the gate named>
+gh pr merge <url> --squash --delete-branch --match-head-commit <sha the gate named>
 ```
 
-The number is the one in `pr.md`'s `PR:` field. `--match-head-commit` is what makes the
+The URL is `pr.md`'s `PR:` field. Name the pull request by URL, not by number, and do not
+run this from inside the unit's worktree: there `--delete-branch` merges, then fails to
+switch the worktree to a `main` another worktree holds, and exits 1 with the branches left
+behind — a merge that reads as a failure. The app runs this step in the unit's own
+directory, which is not a checkout, for that reason. `--match-head-commit` is what makes the
 gate's answer hold at the moment of the merge: if anything was pushed between the gate and
 this command, GitHub refuses the merge instead of landing a head nobody checked. Then ask
 the gate again.
 
 **`2 of 2 required status checks are expected` after a pass is a wait, not a failure.**
 The commit that recorded the passing round reset the required checks. Wait for them
-(`gh pr checks <number> --required --watch`), then merge. Do not force it and do not
+(`gh pr checks <url> --required --watch`), then merge. Do not force it and do not
 bypass the ruleset.
 
 **Refused because the branch is behind `main`?** Do not rebase and merge. A rebase
@@ -75,7 +79,7 @@ Review: review.md. Author: <name>. Status: accepted.
 
 ## Invariants
 
-1. **`## What went out` names the merge commit on `main`** as `gh pr view <number> --json
+1. **`## What went out` names the merge commit on `main`** as `gh pr view <url> --json
    mergeCommit,mergedAt` reported it.
 2. **`## Did the outcome hold` answers `intent.md`'s outcome directly**, in its own terms,
    with the number it named. This is the only place the unit is judged against what it

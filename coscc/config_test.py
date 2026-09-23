@@ -105,6 +105,12 @@ class Parsing(unittest.TestCase):
     def test_the_old_default_is_still_reachable_by_hand(self):
         self.assertEqual(from_env({"COS_HOST": "127.0.0.1"}).host, "127.0.0.1")
 
+    def test_an_empty_setting_reads_as_unset(self):
+        # `0017` review F1: `child_env` overrides every `COS_*` with "", so this is what
+        # a session started by an app launched with `COS_HOST`/`COS_PORT` set reads.
+        c = from_env({"COS_HOST": "", "COS_PORT": "", "COS_BYPASS_PERMISSIONS": ""})
+        self.assertEqual((c.host, c.port, c.bypass_permissions), ("0.0.0.0", 8790, False))
+
 
 class WorkspaceMembership(unittest.TestCase):
     def test_a_path_outside_the_list_is_not_a_workspace(self):
