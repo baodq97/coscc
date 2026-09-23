@@ -154,3 +154,56 @@ class AnUnreadableBoardRaisesRatherThanReturningEmpty(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheGateIsAskedByTheApp(unittest.TestCase):
+    """`.claude/CLAUDE.md` invariant 2, which this app walked past until 2026-09-23.
+
+    The fixture is this repository's own `.cos/`, for the reason in the module docstring:
+    what breaks here is agreement with `.claude/scripts/cos.mjs`, and a hand-built unit
+    would keep passing after the two drift apart.
+    """
+
+    def test_an_open_gate_comes_back_open_and_says_so(self):
+        # A unit closed under the old loop: every stage behind it is settled, so any
+        # stage's gate is open. Chosen by shape, not by number.
+        data = run(board.read(REPO))
+        unit = next(u for u in data["units"] if _by_stage(u)["plan"] == "done")
+        allowed, said = run(board.gate(REPO, unit["name"], "impl"))
+        self.assertTrue(allowed, said)
+        self.assertIn("open", said.lower())
+
+    def test_a_blocked_gate_comes_back_blocked_and_carries_the_reasons(self):
+        # A unit that does not exist cannot have an accepted intent, so every stage after
+        # the first is blocked -- and the reasons are what a caller has to be able to show.
+        allowed, said = run(board.gate(REPO, "9999_no-such-unit-here", "ship"))
+        self.assertFalse(allowed)
+        self.assertTrue(said.strip(), "a blocked gate that says nothing explains nothing")
+
+    def test_a_non_zero_exit_is_an_answer_here_and_a_failure_in_read(self):
+        """The one difference between the two callers of `_run`, pinned.
+
+        `read` raises when the script exits non-zero: it asked and got no answer. `gate`
+        returns: exit 1 *is* the answer. Extracting `_run` is only safe while this holds.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            # A root with no `.cos/` reads fine -- it is a known answer, no units.
+            self.assertEqual(run(board.read(tmp))["count"], 0)
+            allowed, said = run(board.gate(tmp, "0001_nothing-here", "spec"))
+            self.assertFalse(allowed)
+            self.assertTrue(said.strip())
+
+    def test_a_missing_script_is_unavailable_not_a_closed_gate(self):
+        """A gate that cannot be asked must not read as a gate that said no.
+
+        The two are opposite instructions to a caller: one is "fix the install", the other
+        is "finish the earlier stage".
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            original = harness.script
+            harness.script = lambda: Path(tmp) / "not-here.mjs"
+            try:
+                with self.assertRaises(Unavailable):
+                    run(board.gate(REPO, "0001_no-session-management", "spec"))
+            finally:
+                harness.script = original

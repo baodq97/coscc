@@ -102,7 +102,10 @@ file — and the ruleset is the only thing here that actually stops a push.
 - Set `Status: accepted` when the artifact is finished, then commit it. It records that the
   agent judged it ready. It is not a human's approval and must not be read as one.
 - Ask `cos.mjs gate` before a stage and stop when it exits non-zero. Fix what it names; do
-  not reason your way past it.
+  not reason your way past it. A stage started from the coscc board has had this asked for
+  it already — the app refuses to start a step the gate closes, and puts the gate's answer
+  in the prompt. That is for the four prose stages that run with no tools and could never
+  obey this line themselves; at a terminal it still means you.
 - No code while `plan.md` is `draft`. Accept the plan in its own commit, so the
   authorization is separable from the thing it authorizes.
 - Take unit paths from `cos.mjs new-path`. Never guess a number.

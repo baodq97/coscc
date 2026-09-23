@@ -379,6 +379,22 @@ class Service:
         if row is None:
             raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
 
+        # `.claude/CLAUDE.md` invariant 2: *"Ask `cos.mjs gate` before a stage and stop
+        # when it exits non-zero."* Until 2026-09-23 this app did neither. It read the
+        # board, found the row, and started the session -- so the board would run `ship`
+        # on a unit whose `intent.md` was still a draft, and the only thing standing
+        # between it and that was a sentence in a skill file addressed to a session that
+        # often has no way to run a command.
+        #
+        # Asked here rather than in `Runner` because a refusal must arrive before any
+        # money is spent, and `run_step` is the last place that is still true.
+        try:
+            allowed, said = await board_reader.gate(self._units_root(cwd), unit, stage)
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        if not allowed:
+            raise Invalid(said)
+
         key = self._journal_key(cwd)
         directory = self._unit_dir(cwd, unit)
         mode = journal.modes(key).get((unit, stage), "manual")
@@ -393,6 +409,7 @@ class Service:
                 artifact=row["file"],
                 stages=list(data["stages"]),
                 mode=mode,
+                gate_said=said,
             ):
                 if item[0] == "done":
                     self._record_transition(cwd, unit, row["file"], directory, item[1])

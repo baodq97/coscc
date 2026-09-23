@@ -68,6 +68,36 @@ def _stage_rows(stages: list[dict[str, Any]], artifacts: dict[str, Any]) -> list
     return rows
 
 
+async def _run(argv: list[str], timeout: float) -> tuple[int, str, str]:
+    """One `cos.mjs` invocation: its exit code and both streams, decoded.
+
+    Extracted when `gate` arrived, because the two callers want opposite things from a
+    non-zero exit. `read` treats it as a failure -- it asked a question and got no answer.
+    `gate` treats it as *the answer*: exit 1 is "blocked, and here are the reasons", which
+    is the whole point of asking. Leaving the returncode to the caller is what lets both
+    be true without a second copy of this boilerplate.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "node",
+        *argv,
+        env=_child_env(),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        stdin=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise
+    return (
+        proc.returncode or 0,
+        out.decode(errors="replace"),
+        err.decode(errors="replace"),
+    )
+
+
 async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, Any]:
     """Every unit under `units_root`, each with its eight stages.
 
@@ -85,14 +115,9 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
     if not script.exists():
         raise Unavailable(f"the harness script is missing: {script}")
 
-    argv = ["node", str(script), "--root", str(path), "status", "--json"]
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            env=_child_env(),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            stdin=asyncio.subprocess.DEVNULL,
+        code, out_text, err_text = await _run(
+            [str(script), "--root", str(path), "status", "--json"], timeout
         )
     except (OSError, ValueError) as e:
         # No node on PATH is the ordinary case here, and it must name itself -- *with the
@@ -106,19 +131,14 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"
         ) from e
 
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise Unavailable(f"reading the board timed out after {timeout:.0f}s")
+        raise Unavailable(f"reading the board timed out after {timeout:.0f}s") from None
 
-    if proc.returncode != 0:
-        detail = (err or out or b"").decode(errors="replace").strip()
-        raise Unavailable(detail or f"the harness script exited {proc.returncode}")
+    if code != 0:
+        raise Unavailable((err_text or out_text).strip() or f"the harness script exited {code}")
 
     try:
-        data = json.loads(out.decode(errors="replace"))
+        data = json.loads(out_text)
     except (json.JSONDecodeError, ValueError) as e:
         raise Unavailable(f"the harness script did not return JSON: {e}") from e
 
@@ -153,6 +173,48 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
         "empty_because": None if units else _why_empty(path),
     }
 
+
+
+async def gate(
+    units_root: str | Path, unit: str, stage: str, timeout: float = TIMEOUT
+) -> tuple[bool, str]:
+    """Ask `cos.mjs gate` whether one stage of one unit may proceed.
+
+    Returns `(open, what it said)`. Exit 0 is open; exit 1 is blocked and carries the
+    reasons; exit 2 is misuse, which is this app's bug and not the unit's, so it is
+    reported with what the script printed rather than translated.
+
+    **Nothing in this app asked this question until now.** `.claude/CLAUDE.md` invariant 2
+    -- *"Ask `cos.mjs gate` before a stage and stop when it exits non-zero"* -- was written
+    for a person at a terminal, and every stage's skill repeats it. But the six prose
+    stages run with no tools at all, so four of them could never obey it, and
+    `coscc/service.py` `run_step` went straight from reading the board to starting the
+    session. The rule existed, the script that decides it existed, and the product walked
+    past both.
+
+    Measured 2026-09-23: the `ship` step of `0001_product-describes-a-state-it-is-not-in`
+    wrote `Status: draft` and gave "the gate for this stage has not been asked" as a
+    reason. Its gate was open. It had no way to find that out, so it assumed the worst
+    about a question the app was already in a position to answer for it.
+    """
+    path = Path(units_root)
+    script = harness.script()
+    if not script.exists():
+        raise Unavailable(f"the harness script is missing: {script}")
+
+    try:
+        code, out_text, err_text = await _run(
+            [str(script), "--root", str(path), "gate", unit, stage], timeout
+        )
+    except (OSError, ValueError) as e:
+        raise Unavailable(
+            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
+        ) from e
+    except asyncio.TimeoutError:
+        raise Unavailable(f"asking the gate timed out after {timeout:.0f}s") from None
+
+    said = (out_text + err_text).strip()
+    return code == 0, said or f"the gate exited {code} and said nothing"
 
 def _why_empty(path: Path) -> str:
     if not path.exists():

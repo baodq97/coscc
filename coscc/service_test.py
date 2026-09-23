@@ -722,3 +722,81 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.assertNotEqual(payload["outcome"], "done")
         found = self.service.unit_history(str(self.repo), self.made["unit"])
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
+
+
+class AStepTheGateClosesNeverStarts(unittest.TestCase):
+    """`.claude/CLAUDE.md` invariant 2, enforced by the app for the first time.
+
+    Until 2026-09-23 `run_step` went from reading the board straight to starting a
+    session. The gate existed, `cos.mjs` decided it, every skill opened by telling the
+    stage to ask it — and the product asked nobody. The board would run `ship` on a unit
+    whose `spec.md` had never been written.
+
+    What these tests actually pin is the *ordering*: the refusal has to land before the
+    session is created, because after that the money is already gone.
+    """
+
+    class NeverCalled:
+        """A session layer that fails the test if a refused step reaches it."""
+
+        def __init__(self):
+            self.calls = 0
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.calls += 1
+            yield ("chunk", "# Ship: no\nAuthor: t. Status: accepted.\n\n## Body\n")
+            yield ("done", {"session_id": "s", "cost": {}})
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.sessions = self.NeverCalled()
+        self.service = Service(
+            Config(
+                workspaces=(str(self.repo),),
+                working_dir=str(self.root / "work"),
+                data_dir=str(self.root / "data"),
+            ),
+            self.sessions,
+        )
+        self.made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        (Path(self.made["path"]) / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        )
+
+    def _run(self, stage: str):
+        async def go():
+            out = []
+            async for item in self.service.run_step(str(self.repo), self.made["unit"], stage):
+                out.append(item)
+            return out
+
+        return asyncio.run(go())
+
+    def test_a_stage_whose_earlier_artifacts_are_missing_is_refused(self):
+        # `spec.md`, `plan.md`, `impl.md`, `pr.md` and `review.md` do not exist, so `ship`
+        # has nothing behind it. The intent alone does not open the last gate.
+        with self.assertRaises(Invalid) as caught:
+            self._run("ship")
+        self.assertTrue(str(caught.exception).strip())
+
+    def test_the_refusal_names_what_is_missing_rather_than_only_saying_no(self):
+        with self.assertRaises(Invalid) as caught:
+            self._run("ship")
+        # The gate's own words. A refusal a person cannot act on is a refusal that sends
+        # them to read the source.
+        self.assertIn("spec.md", str(caught.exception))
+
+    def test_no_session_is_created_for_a_step_the_gate_refused(self):
+        """The whole point of asking in `run_step` and not inside `Runner`."""
+        with self.assertRaises(Invalid):
+            self._run("ship")
+        self.assertEqual(self.sessions.calls, 0)
+
+    def test_a_stage_the_gate_opens_still_runs(self):
+        # The guard must not close the ordinary path. `spec` follows an accepted intent.
+        self._run("spec")
+        self.assertEqual(self.sessions.calls, 1)
