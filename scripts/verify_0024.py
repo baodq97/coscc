@@ -10,12 +10,19 @@ checks, at every step, that the stage the page offers is the stage `cos.mjs next
     1  at least one did not
     2  the environment could not answer: no `node`, `uv` or `git`
 
-**At the level of the page's state, not a browser** (`0024` spec, Answers, Câu 3: no new
-dependency). The stage the page offers is `_run_target(await SERVICE.next_step(...))[0]`,
-which is exactly what `StudioState.load_next` assigns to `run_stage`, and `next_stage`
-hands back. A step is started with `SERVICE.run_step(cwd, unit, stage)`, which is exactly
-what the `run_step` handler calls with `self.next_stage`. `SERVICE` is the one
-`coscc/state.py` builds at import, from the environment set below.
+**The page's own state, driven through Reflex's own event processor, not a browser**
+(`0024` spec, Answers, Câu 3: no new dependency; intent, Answers, Câu 4: the proof must
+drive the page). Every step is an event the page would send -- `load`, `choose_workspace`,
+`open_unit`, `load_next` (*Ask again*), `set_mode`, `run_step` -- handed to a
+`BaseStateEventProcessor` over an in-memory state manager, which is the code path the
+running app takes: foreground handlers under the state lock, background ones through a
+`StateProxy`, and an event a handler returns (`open_unit` and `run_step` both return
+`StudioState.load_next`) chained through the processor's queue rather than called here.
+"The stage the page offers" is `StudioState.next_stage` read back from that state after
+the queue drains -- nothing in this file computes it. What is not exercised is the
+compiled JavaScript and the socket between it and this state; the browser proofs
+(`verify_0003.py`) drive those for the page, not for this button. `SERVICE` is the one `coscc/state.py` builds at import, from the
+environment set below.
 
 **No session, no quota, no network.** `gh` is a fake first on `PATH`: it reads CI's verdict
 from a file beside it (`child_env` passes no other variable through), answers the pull
@@ -128,10 +135,68 @@ def accepted(title: str, extra: str = "") -> str:
     return f"# {title}: a loop the proof invented\nAuthor: verify_0024.{extra} Status: accepted.\n"
 
 
+class Page:
+    """One browser tab's `StudioState`, driven the way the running app drives it.
+
+    `fire` hands an event to Reflex's `BaseStateEventProcessor` and waits until its queue
+    and every task it started -- chained and background ones included -- are done.
+    `read` takes the state lock and reads the page's vars back. Nothing here assigns a
+    var or calls a handler's body directly.
+    """
+
+    TOKEN = "verify-0024-tab"
+    DRAIN = 120.0  # seconds; a press waits on the fake session and on two fake `gh` calls
+
+    def __init__(self, processor, manager, studio, root_cls) -> None:
+        self.processor, self.manager = processor, manager
+        self.studio, self.root_cls = studio, root_cls
+
+    async def fire(self, handler: str, **payload) -> bool:
+        from reflex.event import Event
+        from reflex_base.utils.format import format_event_handler
+
+        name = format_event_handler(self.studio.event_handlers[handler])
+        await self.processor.enqueue(self.TOKEN, Event(name=name, payload=payload))
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.DRAIN
+        while loop.time() < deadline:
+            await asyncio.sleep(0.02)
+            if not self.processor._tasks and self.processor._queue.empty():
+                return True
+        return False
+
+    async def read(self) -> dict:
+        from reflex.istate.manager.token import BaseStateToken
+
+        async with self.manager.modify_state(
+            BaseStateToken(ident=self.TOKEN, cls=self.root_cls)
+        ) as root:
+            s = await root.get_state(self.studio)
+            return {
+                "cwd": s.cwd, "unit": s.unit_id, "next_stage": s.next_stage,
+                "run_said": s.run_said, "notice": s.notice, "error": s.error,
+                "running": s.running,
+            }
+
+
 async def run(root: Path, fakebin: Path, workspace: Path) -> bool:
+    from reflex.istate.manager.memory import StateManagerMemory
+    from reflex.state import State
+    from reflex_base.event.processor import BaseStateEventProcessor
+
+    from coscc.state import StudioState
+
+    manager = StateManagerMemory()
+    processor = BaseStateEventProcessor().configure(state_manager=manager)
+    async with processor:
+        return await loop_through(Page(processor, manager, StudioState, State),
+                                  root, fakebin, workspace)
+
+
+async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -> bool:
     from coscc import harness
     from coscc.service import Invalid
-    from coscc.state import SERVICE, _run_target
+    from coscc.state import SERVICE
 
     cwd = str(workspace)
     session = FakeSession()
@@ -148,29 +213,46 @@ async def run(root: Path, fakebin: Path, workspace: Path) -> bool:
         )
         return json.loads(done.stdout) if done.returncode == 0 else {"stage": f"exit {done.returncode}"}
 
-    async def page_offers(unit: str) -> tuple[str, str]:
-        return _run_target(await SERVICE.next_step(cwd, unit))
+    async def check(label: str, unit: str, want: str, how: str = "open") -> bool:
+        """R1: the stage the page offers is what the script prints, and here that is `want`.
 
-    async def check(label: str, unit: str, want: str) -> bool:
-        """R1: the page offers what the script prints, and here that is `want`."""
-        stage, said = await page_offers(unit)
+        `how` is what a person did to make the page ask: `open` the unit's card, press
+        *Ask again* (`ask`), or nothing -- `after` reads what the last press left, which is
+        the `load_next` that `run_step` chains when it ends.
+        """
+        drained = True
+        if how == "open":
+            drained = await page.fire("open_unit", unit=unit)
+        elif how == "ask":
+            drained = await page.fire("load_next")
+        got = await page.read()
         script = script_says(unit)
         return say(
-            stage == script.get("stage") == want,
-            f"{label}: the page offers {want or 'nothing'!r}, as cos.mjs next does",
-            f"page={stage!r}, script={script.get('stage')!r}, said={said!r}",
+            drained and got["unit"] == unit
+            and got["next_stage"] == script.get("stage") == want,
+            f"{label} ({how}): the page offers {want or 'nothing'!r}, as cos.mjs next does",
+            f"page={got['next_stage']!r}, script={script.get('stage')!r}, "
+            f"said={got['run_said']!r}, unit={got['unit']!r}, drained={drained}",
         )
 
-    async def press(unit: str, stage: str) -> dict:
-        """What the run button does with `next_stage`: one `run_step`, and R5 around it."""
+    async def press(stage: str) -> dict:
+        """The run button: one `run_step` event on the page, which runs `next_stage`.
+
+        Refuses to press when the page does not offer `stage` -- the button runs whatever
+        the page offers, so pressing it then would prove something else.
+        """
+        got = await page.read()
+        if got["next_stage"] != stage:
+            return {**got, "pressed": False, "_sessions": 0, "drained": True}
         before = session.calls
-        last: dict = {}
-        async for kind, payload in SERVICE.run_step(cwd, unit, stage):
-            if kind == "done":
-                last = payload
-        await asyncio.sleep(0)
-        last["_sessions"] = session.calls - before
-        return last
+        drained = await page.fire("run_step")
+        after = await page.read()
+        return {**after, "pressed": True, "_sessions": session.calls - before,
+                "drained": drained}
+
+    def ran(done: dict, stage: str, outcome: str) -> bool:
+        return (done["pressed"] and done["drained"] and not done["running"]
+                and done["notice"].startswith(f"{stage} {outcome}"))
 
     def make(slug: str, files: dict[str, str]) -> tuple[str, Path]:
         made = SERVICE.create_unit(cwd, slug, "verify_0024 fixture")
@@ -191,13 +273,27 @@ async def run(root: Path, fakebin: Path, workspace: Path) -> bool:
     review = directory / "review.md"
     ci.write_text("pass")
 
-    # b: changes asked, nothing on the branch yet.
+    # The page loads and a person picks the workspace, as on the Workspaces screen.
+    drained = await page.fire("load") and await page.fire("choose_workspace", path=cwd)
+    got = await page.read()
+    ok &= say(drained and got["cwd"] == cwd,
+              "the page loaded and chose the temporary workspace through its own handlers",
+              f"cwd={got['cwd']!r}, error={got['error']!r}, drained={drained}")
+
+    # b: changes asked, nothing on the branch yet. Opening the card is what asks.
     ok &= await check("b", unit, "impl")
 
-    # R4: a stage the gate closes is refused before any session starts.
+    # R4, on the page: `ship` is not what it offers, so the button cannot run it.
+    got = await page.read()
+    ok &= say(got["next_stage"] != "ship",
+              "R4 the page does not offer ship while cos.mjs asks for a fix",
+              f"next_stage={got['next_stage']!r}")
+    # R4, under the page: a client that asks for ship anyway is refused by the gate
+    # before a session starts. No page control sends this; it is the route's guard.
     before = session.calls
     try:
-        await press(unit, "ship")
+        async for _ in SERVICE.run_step(cwd, unit, "ship"):
+            pass
         refused = False
     except Invalid:
         refused = True
@@ -221,60 +317,78 @@ async def run(root: Path, fakebin: Path, workspace: Path) -> bool:
 
     # A fix is code, and `impl` holds tools only in `autonomous` -- in `manual` the app
     # writes `impl.md` from the reply and the session can commit nothing. Set the way the
-    # page's mode control sets it (`StudioState.set_mode` -> `SERVICE.set_mode`).
-    await SERVICE.set_mode(cwd, unit, "impl", "autonomous")
+    # page's mode control sets it: `StudioState.set_mode`, on the stage the page offers.
+    ok &= say(await page.fire("set_mode", value="autonomous")
+              and not (await page.read())["error"],
+              "the page's mode control set impl to autonomous",
+              f"{await page.read()}")
     session.reply = impl_reply
-    done = await press(unit, "impl")
-    ok &= say(done.get("outcome") == "done" and done["_sessions"] == 1,
+    done = await press("impl")
+    ok &= say(ran(done, "impl", "done") and done["_sessions"] == 1,
               "R5 the impl press ran exactly one session and started nothing after it",
-              f"{done.get('outcome')}, {done.get('error')}, sessions={done['_sessions']}")
+              f"notice={done['notice']!r}, error={done['error']!r}, "
+              f"sessions={done['_sessions']}, offered={done['next_stage']!r}")
 
-    # d: the fix is on the head; CI runs, then fails.
+    # d: the fix is on the head; CI runs. What `run_step` chained on its way out already
+    # asked: the page is showing that answer now, with nobody pressing anything.
     ci.write_text("pending")
-    ok &= await check("d-pending", unit, "")
+    ok &= await check("d-pending", unit, "", how="ask")
+    # R4/R5, on the page: the button with nothing offered starts nothing.
+    before = session.calls
+    drained = await page.fire("run_step")
+    got = await page.read()
+    ok &= say(drained and session.calls == before
+              and got["notice"] == "There is no next step to run.",
+              "R4 pressing run while the page offers nothing starts no session",
+              f"notice={got['notice']!r}, sessions={session.calls - before}")
     ci.write_text("fail")
-    ok &= await check("d-red", unit, "impl")
-    done = await press(unit, "impl")
-    ok &= say(done.get("outcome") == "done" and done["_sessions"] == 1,
-              "R5 the second impl press ran exactly one session", f"{done}")
+    ok &= await check("d-red", unit, "impl", how="ask")
+    done = await press("impl")
+    ok &= say(ran(done, "impl", "done") and done["_sessions"] == 1,
+              "R5 the second impl press ran exactly one session",
+              f"notice={done['notice']!r}, error={done['error']!r}, "
+              f"sessions={done['_sessions']}")
 
-    # c: CI green on the fix.
+    # c: CI green on the fix. The press's own re-ask ran while CI was still red.
+    ok &= await check("d-red, after the press", unit, "impl", how="after")
     ci.write_text("pass")
-    ok &= await check("c", unit, "review")
+    ok &= await check("c", unit, "review", how="ask")
 
     # R3, the refusal: a reply that drops round 1 is not written.
     sha2 = git(workspace, "rev-parse", "HEAD")
     r2 = rnd(2, sha2, "pass", [f"- F1 [fixed {sha2}] [high] the thing the proof invented"])
     old = review.read_bytes()
     session.reply = lambda: header("accepted") + r2
-    done = await press(unit, "review")
-    ok &= say(done.get("outcome") == "failed" and review.read_bytes() == old
+    done = await press("review")
+    ok &= say(ran(done, "review", "failed") and review.read_bytes() == old
               and done["_sessions"] == 1,
               "R3 a review reply that drops round 1 is refused and review.md is untouched",
-              f"{done.get('outcome')}, same={review.read_bytes() == old}")
-    ok &= await check("c, after the refusal", unit, "review")
+              f"notice={done['notice']!r}, same={review.read_bytes() == old}")
+    ok &= await check("c, after the refusal", unit, "review", how="after")
 
     # The review round the button runs: round 1 verbatim, round 2 after it.
     session.reply = lambda: header("accepted") + r1 + "\n" + r2
-    done = await press(unit, "review")
+    done = await press("review")
     new = review.read_text(encoding="utf-8")
     old_rounds = rounds_part(old.decode("utf-8")).rstrip()
     ok &= say(
-        done.get("outcome") == "done" and done["_sessions"] == 1
+        ran(done, "review", "done") and done["_sessions"] == 1
         and new.count("\n## Round ") == old.decode("utf-8").count("\n## Round ") + 1
         and rounds_part(new).encode("utf-8").startswith(old_rounds.encode("utf-8")),
         "R3 the review press adds exactly one round and keeps round 1 byte for byte",
-        f"{done.get('outcome')}, {done.get('error')}",
+        f"notice={done['notice']!r}, error={done['error']!r}",
     )
 
-    # g: the pass, and nothing moved since.
+    # g: the pass, and nothing moved since -- read off what the review press re-asked,
+    # then again by opening the card.
+    ok &= await check("g", unit, "ship", how="after")
     ok &= await check("g", unit, "ship")
 
     # i: code lands after the pass.
     (workspace / "late.txt").write_text("after the pass\n", encoding="utf-8")
     git(workspace, "add", "-A")
     git(workspace, "commit", "-q", "-m", "after the pass")
-    ok &= await check("i", unit, "review")
+    ok &= await check("i", unit, "review", how="ask")
 
     # --- the other rows, each its own unit -------------------------------------
     first, _ = make("a-fresh-one", {"intent.md": accepted("Intent", " Type: fix.")})
@@ -295,8 +409,8 @@ async def run(root: Path, fakebin: Path, workspace: Path) -> bool:
     f_unit, _ = make("out-of-rounds", {**chain, "review.md": header("changes-requested") + r1})
     os.environ["COS_REVIEW_ROUNDS"] = "1"
     try:
-        stage, said = await page_offers(f_unit)
         ok &= await check("f", f_unit, "")
+        said = (await page.read())["run_said"]
         ok &= say("needs a person" in said, "f the page shows cos.mjs's needs-a-person line",
                   said)
     finally:

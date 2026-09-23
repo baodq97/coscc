@@ -139,7 +139,7 @@ no commands, one turn, no budget.
 | `verify_0014.py` | **spends real money and merges a real pull request.** Needs `COS_PROOF_REPO`, a throwaway repo; unset is exit 2. Five sessions — measured $3.28 and 11m49s end to end, 2026-09-22. `--dry` stops before the first paid step |
 | `verify_0016.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
 | `verify_0021.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2 |
-| `verify_0024.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. The page's state, not a browser |
+| `verify_0024.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s own handlers through Reflex's event processor, in-process; no browser, so the compiled page is not exercised |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.
