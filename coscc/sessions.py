@@ -230,6 +230,17 @@ def _options(
         model=config.model,
         max_turns=max(1, int(max_turns)),
         setting_sources=None,  # no project/user settings can widen the tool list
+        # Without this the CLI rewrites the prompt before the model sees it: an `@path`
+        # anywhere in it is replaced by that file's contents, and a leading `/word` is
+        # dispatched as a slash command. Neither is anything this app ever means to do.
+        #
+        # Measured 2026-09-23 on claude-agent-sdk 0.2.158: a session with `tools=[]` --
+        # no way to read a file -- was sent `@/tmp/canary.txt` and repeated the word
+        # inside it. With this set it saw only the path. That mattered from `0016` on,
+        # because `POST /api/units/answer` takes free text from anyone who can reach the
+        # port, no login, bound to `0.0.0.0`, and puts it verbatim into the next stage's
+        # prompt. An answer reading `@~/.ssh/id_rsa` would have put the key there.
+        verbatim_prompts=True,
     )
     if can_use_tool is not None:
         # The second layer, and the one that matters. Eleven MCP tools were measured

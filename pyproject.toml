@@ -1,6 +1,6 @@
 [project]
 name = "coscc"
-version = "0.5.0"
+version = "0.5.1"
 description = "Web app that lists, creates and resumes Claude Code sessions across projects"
 # Every measurement this repository records is taken on the interpreter in
 # `.python-version`, and after 0007 that is 3.14. A floor naming an older one would be the
@@ -13,7 +13,7 @@ description = "Web app that lists, creates and resumes Claude Code sessions acro
 # that off, so it is on by default.
 requires-python = ">=3.14"
 dependencies = [
-    "claude-agent-sdk>=0.2.157",
+    "claude-agent-sdk>=0.2.158",
     "reflex>=0.9.12",
     "fastapi>=0.141.1",
 ]
