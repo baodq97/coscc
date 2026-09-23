@@ -687,6 +687,28 @@ test('CI decides whether review may begin', () => {
   assert.equal(checkGate(u, 'review', { probe: greenProbe([{ name: 'a', bucket: 'pass' }, { name: 'b', bucket: 'skipping' }]) }).ok, true)
 })
 
+test('F4: the three closed cases, in the shapes gh pr checks --required --json name,bucket gives them', () => {
+  // `gh` prints the JSON array on stdout whatever it exits with; red is exit 1 and running is
+  // exit 8 on the plain output, and the gate must not depend on which. With nothing
+  // required it prints no JSON at all, only an error on stderr, exit 1.
+  const u = unit(CHAIN)
+  const gh = (code, out, err = '') => ({ gh: () => ({ code, out, err }), git: () => ok() })
+  const red = '[{"bucket":"fail","name":"tests"},{"bucket":"pass","name":"branch-name"}]\n'
+  const running = '[{"bucket":"pending","name":"tests"},{"bucket":"pass","name":"branch-name"}]\n'
+  for (const code of [0, 1]) {
+    const g = checkGate(u, 'review', { probe: gh(code, red) })
+    assert.deepEqual([g.ok, g.need], [false, ['CI is red on #7: tests — back to impl: fix on the branch and push']])
+  }
+  for (const code of [0, 8]) {
+    const g = checkGate(u, 'review', { probe: gh(code, running) })
+    assert.deepEqual([g.ok, g.need], [false, ['CI has not finished on #7: tests — wait, then ask again']])
+  }
+  const none = checkGate(u, 'review', { probe: gh(1, '', "no required checks reported on the 'feat/x' branch\n") })
+  assert.deepEqual([none.ok, none.need], [false, ["cannot read the required checks of #7: no required checks reported on the 'feat/x' branch"]])
+  // An empty array is the same answer by another road.
+  assert.match(checkGate(u, 'review', { probe: gh(0, '[]\n') }).need[0], /reports no required checks/)
+})
+
 test('the round limit stops the loop and says it needs a person', () => {
   const text = [1, 2, 3].map((n) => round(n, 'changes-requested', ['- F1 [open] x'])).join('\n')
   const u = unit({ ...CHAIN, 'review.md': reviewArt('changes-requested', text) })
