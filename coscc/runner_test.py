@@ -113,30 +113,25 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
     prose stage may write or run anything, in any mode.
     """
 
-    def test_no_prose_stage_can_write_or_run_in_either_mode(self):
+    def test_no_prose_stage_can_write_or_run(self):
+        """Was `..._in_either_mode`. `0020` `spec.md` `## Answers`, answer 1: the grant no
+        longer depends on the mode, so there is one grant per stage to check."""
         for stage in policy.PROSE_STAGES:
-            for mode in ("manual", "autonomous"):
-                grant = policy.grant_for(stage, mode)
-                self.assertEqual(grant.commands, (), f"{stage}/{mode} carries commands")
-                self.assertEqual(
-                    policy.beyond_reading(grant), (),
-                    f"{stage}/{mode} carries more than reading",
-                )
+            grant = policy.grant_for(stage)
+            self.assertEqual(grant.commands, (), f"{stage} carries commands")
+            self.assertEqual(
+                policy.beyond_reading(grant), (), f"{stage} carries more than reading"
+            )
 
-    def test_plan_and_review_are_the_only_prose_stages_that_read_and_only_when_autonomous(self):
+    def test_plan_and_review_are_the_only_prose_stages_that_read(self):
         # `review` joined `plan` in `0015`: the separate session that sits before the merge
-        # has to open the files it judges. It still only reads.
-        for reader in ("plan", "review"):
-            self.assertEqual(policy.grant_for(reader, "autonomous").tools, policy.READ_TOOLS)
-            self.assertEqual(policy.grant_for(reader, "manual").tools, ())
+        # has to open the files it judges. It still only reads. Since `0020` in any mode.
+        readers = ("plan", "review")
+        for reader in readers:
+            self.assertEqual(policy.grant_for(reader).tools, policy.READ_TOOLS)
         for stage in policy.PROSE_STAGES:
-            if stage in ("plan", "review"):
-                continue
-            for mode in ("manual", "autonomous"):
-                self.assertEqual(
-                    policy.grant_for(stage, mode).tools, (),
-                    f"{stage}/{mode} carries tools",
-                )
+            if stage not in readers:
+                self.assertEqual(policy.grant_for(stage).tools, (), f"{stage} carries tools")
 
     def test_the_guard_lets_the_plan_stage_through_with_its_read_tools(self):
         """The half a grant-table test cannot cover.
@@ -179,10 +174,10 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
     def test_the_app_still_writes_the_plan_artifact(self):
         """The reason `plan` gets no write tools. If the session wrote `plan.md` itself,
         an unaccepted plan could author the thing that authorizes it."""
-        self.assertTrue(policy.grant_for("plan", "autonomous").app_writes_artifact)
+        self.assertTrue(policy.grant_for("plan").app_writes_artifact)
 
-    def test_an_unknown_pair_is_locked_rather_than_open(self):
-        grant = policy.grant_for("a-stage-invented-tomorrow", "autonomous")
+    def test_an_unknown_stage_is_locked_rather_than_open(self):
+        grant = policy.grant_for("a-stage-invented-tomorrow")
         self.assertFalse(grant.opens_anything)
         self.assertEqual(grant.max_turns, 1)
         self.assertEqual(grant.max_budget_usd, 0.0)
@@ -194,7 +189,7 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
         failing, so the runner checks rather than trusting the table it just read.
         """
         original = dict(policy.GRANTS)
-        policy.GRANTS[("spec", "autonomous")] = policy.Grant(tools=("Write",))
+        policy.GRANTS["spec"] = policy.Grant(tools=("Write",))
         try:
             with tempfile.TemporaryDirectory() as d:
                 make_unit(Path(d), intent_md="Status: accepted.\nI")

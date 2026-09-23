@@ -1,4 +1,4 @@
-"""What a step is allowed to do, keyed on the stage and the mode it runs in.
+"""What a step is allowed to do, keyed on the stage it runs.
 
 This is not a fifth knob. `Config` keeps meaning one thing — the app's default, which
 `coscc/config.py:44` states as *chat only, no tools at all* — and this table says what
@@ -8,12 +8,14 @@ true again.
 
 Three properties, each deliberate:
 
-- **Deny by default.** A pair this table does not name gets `Grant()`, which is no tools,
+- **Deny by default.** A stage this table does not name gets `Grant()`, which is no tools,
   one turn and no budget. A stage invented tomorrow is therefore locked, not open.
 - **Pure.** Nothing here reads the environment, the store, or a request. There is no path
   from HTTP to these values, the same way there is none to `COS_WORKING_DIR`.
-- **Mode matters.** `manual` never carries tools for any stage. Choosing `autonomous` is
-  the act that grants them, and it is recorded in the journal when it happens.
+- **The tools go with the stage, not the mode.** Until `0020` `manual` carried nothing and
+  `autonomous` carried the grant. `0020` `spec.md` `## Answers`, answer 1, ended that: a
+  stage's tools follow from its task, in every mode. The mode is still recorded in the
+  journal; it decides nothing here.
 
 That measurement is why `Grant.tools` is not the whole enforcement. A list handed to
 the SDK covers the built-in set and nothing else — eleven MCP tools walked past `tools=[]`
@@ -133,9 +135,10 @@ SHIP_WARNING = (
     "landed after it; nobody but an agent has read the change."
 )
 
-# Only pairs that appear here get anything. Everything else — every prose stage, every
-# stage in `manual`, and anything invented later — falls through to `Grant()`.
-GRANTS: dict[tuple[str, str], Grant] = {
+# Only stages that appear here get anything. Everything else — `idea`, `intent`, and any
+# stage invented later — falls through to `Grant()`. Keyed by stage alone since `0020`:
+# the mode a step is started in is recorded, and grants nothing.
+GRANTS: dict[str, Grant] = {
     # The one entry whose ceilings are measured rather than chosen. Four `impl` steps ran
     # through the board on 2026-09-23 and three of them died at the turn ceiling:
     #
@@ -157,7 +160,7 @@ GRANTS: dict[tuple[str, str], Grant] = {
     # This raises the ceiling. It does not fix what happens at it: a step that hits one
     # still spends the money and leaves no record of what it did.
     # `0019_a-failed-step-destroys-the-work-that-succeeded` is that, and it is the real fix.
-    ("impl", "autonomous"): Grant(
+    "impl": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=IMPL_COMMANDS,
         max_turns=120,
@@ -177,7 +180,7 @@ GRANTS: dict[tuple[str, str], Grant] = {
     # No write tools and no commands: the app still writes `plan.md` from the reply, which
     # is what stops a plan from authoring itself, and `beyond_reading` below is what keeps
     # that true if this entry is ever widened.
-    ("plan", "autonomous"): Grant(
+    "plan": Grant(
         tools=READ_TOOLS,
         # Twenty was chosen, not measured, and on 2026-09-23 it cut a plan mid-read:
         # `0021_review-findings-never-reach-the-pull-request` stopped at the ceiling after
@@ -192,7 +195,7 @@ GRANTS: dict[tuple[str, str], Grant] = {
         max_turns=40,
         max_budget_usd=4.0,
     ),
-    ("pr", "autonomous"): Grant(
+    "pr": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=PR_COMMANDS,
         max_turns=30,
@@ -205,7 +208,7 @@ GRANTS: dict[tuple[str, str], Grant] = {
     # reads and only reads, like `plan`: the app still writes `review.md` from the reply.
     # It cannot run `git diff`, so it sees the working tree and `impl.md`, not the diff —
     # `0015` plan, Risk 3, and a later unit.
-    ("review", "autonomous"): Grant(
+    "review": Grant(
         tools=READ_TOOLS,
         # Chosen, not measured; the same ceilings as `plan`.
         max_turns=20,
@@ -213,7 +216,7 @@ GRANTS: dict[tuple[str, str], Grant] = {
     ),
     # `0015`: `ship` merges, so it needs what `pr` has. Its ceilings are copied from `pr`,
     # chosen rather than measured.
-    ("ship", "autonomous"): Grant(
+    "ship": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=PR_COMMANDS,
         max_turns=30,
@@ -240,9 +243,12 @@ def beyond_reading(grant: Grant) -> tuple[str, ...]:
     return tuple(t for t in grant.tools if t not in READ_TOOLS) + tuple(grant.commands)
 
 
-def grant_for(stage: str, mode: str) -> Grant:
-    """The grant for one step. Unknown pairs are locked, not open."""
-    return GRANTS.get((stage, mode), Grant())
+def grant_for(stage: str) -> Grant:
+    """The grant for one step. A stage the table does not name is locked, not open.
+
+    No mode: `0020` `spec.md` `## Answers`, answer 1 — the tools go with the stage's task.
+    """
+    return GRANTS.get(stage, Grant())
 
 
 def is_prose_stage(stage: str) -> bool:

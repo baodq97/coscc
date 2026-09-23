@@ -821,7 +821,7 @@ def _knob_row(knob: rx.Var[Knob]) -> rx.Component:
 def _grant_row(grant: rx.Var[GrantRow]) -> rx.Component:
     return rx.box(
         rx.hstack(
-            s.badge(grant.stage + " / " + grant.mode, "iris"),
+            s.badge(grant.stage, "iris"),
             rx.spacer(),
             s.text(grant.turns + " turns", size="1"),
             s.text("max " + grant.budget, size="1"),

@@ -8,6 +8,7 @@ tool nobody granted is refused whatever declared it — which is the shape that 
 
 from __future__ import annotations
 
+import inspect
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,7 +16,7 @@ from pathlib import Path
 from coscc import policy
 from coscc.policy import READ_TOOLS, Grant, check_command, decide, grant_for
 
-IMPL = grant_for("impl", "autonomous")
+IMPL = grant_for("impl")
 
 
 class OnlyImplAndOnlyAutonomous(unittest.TestCase):
@@ -26,12 +27,30 @@ class OnlyImplAndOnlyAutonomous(unittest.TestCase):
         self.assertGreater(IMPL.max_turns, 1)
         self.assertGreater(IMPL.max_budget_usd, 0)
 
-    def test_the_same_stage_in_manual_carries_nothing(self):
-        self.assertFalse(grant_for("impl", "manual").opens_anything)
+    def test_a_stage_the_table_does_not_name_carries_nothing(self):
+        """Was `test_the_same_stage_in_manual_carries_nothing`.
+
+        `0020` `spec.md` `## Answers`, answer 1: grants follow the stage, not the mode, so
+        there is no `manual` left to carry nothing. What stays locked is a stage the table
+        does not name.
+        """
+        self.assertEqual(grant_for("idea"), Grant())
+        self.assertEqual(grant_for("intent"), Grant())
 
     def test_impl_writes_its_own_artifact_and_prose_stages_do_not(self):
         self.assertFalse(IMPL.app_writes_artifact)
-        self.assertTrue(grant_for("spec", "autonomous").app_writes_artifact)
+        self.assertTrue(grant_for("spec").app_writes_artifact)
+
+
+class OneGrantPerStage(unittest.TestCase):
+    """`0020` `spec.md` `## Answers`, answer 1: tools follow the stage, in every mode."""
+
+    def test_grants_are_keyed_by_stage_alone(self):
+        for key in policy.GRANTS:
+            self.assertIsInstance(key, str, key)
+
+    def test_grant_for_takes_no_mode(self):
+        self.assertEqual(list(inspect.signature(grant_for).parameters), ["stage"])
 
 
 class AToolNobodyGrantedIsRefused(unittest.TestCase):
@@ -119,7 +138,7 @@ class CommandsAreCheckedSegmentBySegment(unittest.TestCase):
 
 
 class ThePrStepSaysWhatItWillReach(unittest.TestCase):
-    PR = grant_for("pr", "autonomous")
+    PR = grant_for("pr")
 
     def test_it_may_run_git_and_gh_and_not_a_package_manager(self):
         self.assertEqual(check_command(self.PR, "git push -u origin HEAD"), "")
@@ -148,10 +167,14 @@ class ThePrStepSaysWhatItWillReach(unittest.TestCase):
         self.assertIn("every repository", self.PR.warning)
         self.assertEqual(IMPL.warning, "")
 
-    def test_manual_carries_neither_tools_nor_warning(self):
-        manual = grant_for("pr", "manual")
-        self.assertFalse(manual.opens_anything)
-        self.assertEqual(manual.warning, "")
+    def test_the_warning_is_on_the_only_grant_pr_has(self):
+        """Was `test_manual_carries_neither_tools_nor_warning`.
+
+        `0020` `spec.md` `## Answers`, answer 1: there is one grant per stage now, so no
+        mode exists in which `pr` runs without its warning shown before the button.
+        """
+        self.assertTrue(grant_for("pr").opens_anything)
+        self.assertEqual(grant_for("pr").warning, policy.PR_WARNING)
 
     def test_its_ceilings_are_lower_than_impls(self):
         self.assertLess(self.PR.max_turns, IMPL.max_turns)
@@ -161,8 +184,8 @@ class ThePrStepSaysWhatItWillReach(unittest.TestCase):
 class MergingIsShipsNotPrs(unittest.TestCase):
     """`0015`: `pr` stops at an open pull request; `ship` merges after a review passed."""
 
-    PR = grant_for("pr", "autonomous")
-    SHIP = grant_for("ship", "autonomous")
+    PR = grant_for("pr")
+    SHIP = grant_for("ship")
 
     def test_pr_is_refused_the_merge_and_told_whose_it_is(self):
         for line in (
@@ -183,12 +206,15 @@ class MergingIsShipsNotPrs(unittest.TestCase):
         self.assertFalse(self.SHIP.app_writes_artifact)
         self.assertIn("gh pr merge", self.SHIP.warning)
 
-    def test_ship_is_no_longer_a_prose_stage_and_manual_ship_carries_nothing(self):
+    def test_ship_is_no_longer_a_prose_stage(self):
+        """Was `..._and_manual_ship_carries_nothing`. `0020` `spec.md` `## Answers`,
+        answer 1, removed the mode from the grant, so the second half now says what `ship`
+        does carry rather than what `manual` did not."""
         self.assertNotIn("ship", policy.PROSE_STAGES)
-        self.assertFalse(grant_for("ship", "manual").opens_anything)
+        self.assertNotEqual(grant_for("ship").commands, ())
 
     def test_review_reads_and_only_reads(self):
-        review = grant_for("review", "autonomous")
+        review = grant_for("review")
         self.assertEqual(review.tools, policy.READ_TOOLS)
         self.assertEqual(policy.beyond_reading(review), ())
         self.assertIn("review", policy.PROSE_STAGES)
@@ -242,7 +268,7 @@ class TheWriteBoundaryIsTheWorkspacePlusOneDirectory(unittest.TestCase):
     """
 
     def setUp(self):
-        self.grant = policy.grant_for("impl", "autonomous")
+        self.grant = policy.grant_for("impl")
         self.workspace = "/tmp/ws"
         self.unit = "/tmp/data/units/ws-abc/.cos/0001_a-problem"
 
@@ -424,9 +450,9 @@ class ThePlanCeilingClearsTheOneItHit(unittest.TestCase):
     """`0021`'s plan stopped at 20 turns on 2026-09-23 and returned nothing."""
 
     def test_the_plan_ceiling_is_above_the_one_that_was_hit(self):
-        self.assertGreater(grant_for("plan", "autonomous").max_turns, 20)
+        self.assertGreater(grant_for("plan").max_turns, 20)
 
     def test_plan_still_only_reads(self):
         # Raising the ceiling must not widen what the stage may do.
-        self.assertEqual(grant_for("plan", "autonomous").tools, READ_TOOLS)
-        self.assertEqual(grant_for("plan", "autonomous").commands, ())
+        self.assertEqual(grant_for("plan").tools, READ_TOOLS)
+        self.assertEqual(grant_for("plan").commands, ())

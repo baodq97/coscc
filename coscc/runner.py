@@ -406,7 +406,7 @@ class Runner:
         `workspace` stays the membership question and the journal's subject. Unset, the
         two are the same directory, as they were before.
         """
-        grant = grant_for(stage, mode)
+        grant = grant_for(stage)
         directory = Path(directory)
         cwd = cwd or workspace
         if not directory.exists():

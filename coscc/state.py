@@ -233,7 +233,6 @@ class Knob:
 @dataclasses.dataclass
 class GrantRow:
     stage: str = ""
-    mode: str = ""
     tools: str = ""
     commands: str = ""
     turns: str = ""
@@ -605,7 +604,6 @@ class StudioState(rx.State):
         self.grants = [
             GrantRow(
                 stage=g["stage"],
-                mode=g["mode"],
                 tools=g["tools"],
                 commands=g["commands"],
                 turns=str(g["max_turns"]),

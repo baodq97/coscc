@@ -363,7 +363,8 @@ class Service:
                 # `manual` is the default because starting work is a decision someone has
                 # to make, not one an unset value should make for them.
                 row["mode"] = modes.get((unit["name"], row["stage"]), "manual")
-                grant = grant_for(row["stage"], row["mode"])
+                # The mode is a label since `0020`; the grant follows the stage alone.
+                grant = grant_for(row["stage"])
                 # Carried to the page so `spec.md` C4 can be met where the button is: what
                 # a step will be allowed to do has to be readable before it is started.
                 row["grants"] = list(grant.tools)
@@ -1303,7 +1304,6 @@ class Service:
             "grants": [
                 {
                     "stage": stage,
-                    "mode": mode,
                     "tools": ", ".join(grant.tools) or "none",
                     "commands": ", ".join(grant.commands) or "none",
                     "max_turns": grant.max_turns,
@@ -1311,7 +1311,7 @@ class Service:
                     "app_writes_artifact": grant.app_writes_artifact,
                     "warning": grant.warning,
                 }
-                for (stage, mode), grant in sorted(GRANTS.items())
+                for stage, grant in sorted(GRANTS.items())
             ],
             "prose_stages": list(PROSE_STAGES),
         }
