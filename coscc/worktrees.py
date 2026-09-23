@@ -48,10 +48,6 @@ PREPARE_TIMEOUT = 600.0
 # How much of a failed command's output is kept for the page. Chosen, not measured.
 TAIL_CHARS = 2000
 
-# Prefixes that never reach a preparing command. Built up, not filtered down — this list
-# is the assertion that catches a mistake, the same belt and braces as `gitops.child_env`.
-SCRUB_PREFIXES = ("CLAUDE", "ANTHROPIC", "COS_", "__REFLEX_")
-
 
 class Unprepared(Exception):
     """A worktree whose preparation failed. Carries the command and its exit code."""
@@ -205,18 +201,20 @@ def prepare_env(tree: Path, workspace: str | os.PathLike[str] | None) -> dict[st
 
     `VIRTUAL_ENV` and `REFLEX_WEB_WORKDIR` point into the tree: `0014`'s lesson is that a
     build reading this process's `REFLEX_WEB_WORKDIR` compiles into the installed package.
+
+    No `CLAUDE*`, `ANTHROPIC*`, `COS_*` or `__REFLEX_*` name reaches the command because
+    none of the five names below is one — not because anything filters. A sixth name added
+    here is the only way one could; `worktrees_test.py` asserts on the result with those
+    names set in this process. (Until the `0017` review, F5, a filter loop ran over these
+    five and could never remove anything.)
     """
-    env = {
+    return {
         "PATH": clean_path(workspace),
         "HOME": os.environ.get("HOME", "/tmp"),
         "LC_ALL": "C.UTF-8",
         "VIRTUAL_ENV": str(tree / ".venv"),
         WEB_WORKDIR_VAR: str(tree / ".web"),
     }
-    for name in list(env):
-        if name.startswith(SCRUB_PREFIXES):
-            del env[name]
-    return env
 
 
 Run = Callable[[list[str], Path, dict[str, str]], Awaitable[tuple[int, str]]]
