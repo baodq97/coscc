@@ -174,6 +174,17 @@ no commands, one turn, no budget.
   `COS_HOST=127.0.0.1` is the mitigation that exists.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
+- **Since `0032_impl-fills-its-context-with-whole-files-and-refusals`, `check_command`'s
+  scanner skips a heredoc body whose delimiter is quoted, and does not split a separator
+  character that sits inside a quote.** This applies to every grant that shares
+  `check_command` — `pr` and `ship`, not only `impl` — because there is one scanner, not
+  one per stage. The known shapes it must still refuse are pinned in
+  `coscc/policy_test.py`'s `TheScannerReadsQuotesAndHeredocs` (an unbalanced quote, `$'…'`
+  and `$"…"`, `<<<`, a heredoc delimiter that matches more loosely than bash would, more
+  than one heredoc on a line, and a heredoc nested inside `$(...)`), but a shape nobody
+  wrote a test for is not caught by anything — the only way to see it is a real command
+  in a real session's transcript, which is not committed. Read a change to `_scan` as a
+  security change, the same way `0015`'s deny list was.
 
 ## The proofs, and what each one costs
 
@@ -196,6 +207,9 @@ no commands, one turn, no budget.
 | `verify_0024.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s own handlers through Reflex's event processor, in-process; no browser, so the compiled page is not exercised |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
+| `scripts/count_session.py` | no session, no quota, no network — reads a transcript already on disk under `~/.claude/projects/` |
+| `scripts/measure_context.py` | **spends real quota.** One real `impl`-grant session on `claude-sonnet-5[1m]`, a one-line prompt; roughly 9–14k tokens billed per run, measured `0032_impl-fills-its-context-with-whole-files-and-refusals`, 2026-09-23 |
+| `scripts/probe_tool_limits.py` | **spends real quota.** One real `impl`-grant session that reads a ~100000-character file, runs `seq 1 40000` and greps a wide file — larger than a plain prompt, measured `0032_impl-fills-its-context-with-whole-files-and-refusals`, 2026-09-23 |
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.
 
