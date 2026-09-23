@@ -11,6 +11,7 @@ uv sync                                            # dependencies, after a fresh
 
 node .claude/scripts/cos.mjs status [--json]       # where every unit stands
 node .claude/scripts/cos.mjs gate <unit> <stage> [--repo <dir>]   # 0 open · 1 blocked, with reasons · 2 misuse
+node .claude/scripts/cos.mjs next <unit> [--repo <dir>]           # JSON: the one stage to run now, or "" and why
 node .claude/scripts/cos.mjs new-path <slug>       # allocates the number, validates the slug
 node .claude/scripts/cos.mjs unit-branch <unit>    # the branch name this unit's Type implies
 node .claude/scripts/cos.mjs check-branch [name]   # the branch you are on, or one you are considering
@@ -18,13 +19,15 @@ node .claude/scripts/cos.mjs check-tag <tag>       # prints: release | prereleas
 node .claude/scripts/cos.mjs check-version         # the five places a version is declared
 ```
 
-The first four take `--root <dir>` and read another repository's `.cos/`. The last three
+The first five take `--root <dir>` and read another repository's `.cos/`. The last three
 refuse it: given a root, they would answer about here while naming somewhere else.
 `new-path` alone also takes `--reserve-from <dir>`, repeatable: numbers already used in
-that directory's `.cos/` count as taken, though nothing is written there. `gate` alone
-takes `--repo <dir>`: the git checkout whose branch and pull request the `review` and
+that directory's `.cos/` count as taken, though nothing is written there. `gate` and `next`
+take `--repo <dir>`: the git checkout whose branch and pull request the `review` and
 `ship` gates read. Without `--root` it is this checkout; with `--root` and no `--repo`,
-those two gates stay closed rather than read the wrong one. `COS_REVIEW_ROUNDS` (default
+those two gates stay closed rather than read the wrong one, and `next` offers nothing
+where it would need them. `next` names a stage; it opens nothing — ask `gate` before
+running it. `COS_REVIEW_ROUNDS` (default
 3) is how many review rounds may ask for changes before the loop needs a person.
 
 Tests must be green before any task is reported complete; never skip or delete a failing
