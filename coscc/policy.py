@@ -26,6 +26,7 @@ and `can_use_tool` is where that happens.
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass, field
 
 # Stages whose artifact is prose. The app writes these from the text the session returns,
@@ -292,6 +293,13 @@ REFUSAL_NOT_GRANTED = "this step was not granted"
 REFUSAL_WRITE_OUTSIDE = "writing outside the workspace is not allowed"
 REFUSAL_READ_OUTSIDE = "reading outside the workspace is not allowed"
 REFUSAL_BAD_WORKSPACE = "the workspace path could not be resolved"
+# `0032_impl-fills-its-context-with-whole-files-and-refusals` R5/R6/R8: the scanner reads
+# quotes and heredocs now, and these are the shapes it refuses outright because a simple
+# two-state reading of them cannot promise it agrees with bash — spec.md `## Design`.
+REFUSAL_UNBALANCED_QUOTE = "an unbalanced quote is not allowed"
+REFUSAL_HEREDOC_UNCLOSED = "a heredoc that never closes is not allowed"
+REFUSAL_HEREDOC_MULTIPLE = "more than one heredoc on the same line is not allowed"
+REFUSAL_ANSI_QUOTE = "an ANSI-C or a locale-quoted string is not allowed"
 
 REFUSALS = (
     REFUSAL_EMPTY,
@@ -303,11 +311,17 @@ REFUSALS = (
     REFUSAL_WRITE_OUTSIDE,
     REFUSAL_READ_OUTSIDE,
     REFUSAL_BAD_WORKSPACE,
+    REFUSAL_UNBALANCED_QUOTE,
+    REFUSAL_HEREDOC_UNCLOSED,
+    REFUSAL_HEREDOC_MULTIPLE,
+    REFUSAL_ANSI_QUOTE,
 )
 
 # Shell metacharacters that make the first word of a segment stop predicting what runs.
 _SUBSTITUTION = ("$(", "`", "${", "<(", ">(")
 _SEPARATORS = (";", "&&", "||", "|", "\n", "&")
+_MULTI_SEPARATORS = tuple(s for s in _SEPARATORS if len(s) > 1)  # ("&&", "||")
+_SINGLE_SEPARATORS = tuple(s for s in _SEPARATORS if len(s) == 1 and s != "\n")  # (";", "|", "&")
 
 # Redirection into a file, which is a write that no write-tool check would ever see.
 # Measured on 2026-09-22: a real `impl` step was refused four times, and one of those was
@@ -316,18 +330,226 @@ _SEPARATORS = (";", "&&", "||", "|", "\n", "&")
 # target is another descriptor, not a path.
 _REDIRECT = re.compile(r">>?\s*(?![&\s])")
 
-# `2>&1` and friends: a redirect between descriptors, touching no file. Removed before the
-# line is split, because the `&` in it would otherwise be read as a separator and the `1`
-# as a command — which is exactly what `npm test 2>&1` did on 2026-09-22.
+# `2>&1` and friends: a redirect between descriptors, touching no file. Skipped whole while
+# scanning, because the `&` in it would otherwise be read as a separator and the `1` as a
+# command — which is exactly what `npm test 2>&1` did on 2026-09-22.
 _FD_REDIRECT = re.compile(r"\d?>&\d?")
 
+# Metacharacters that stop a heredoc's delimiter word, the same way whitespace does.
+_DELIM_STOP = ";|&()<>"
 
-def _segments(command: str) -> list[str]:
-    """Split a command line into the pieces that each start a process."""
-    parts = [_FD_REDIRECT.sub(" ", command)]
-    for sep in _SEPARATORS:
-        parts = [piece for part in parts for piece in part.split(sep)]
-    return [p.strip() for p in parts if p.strip()]
+
+def _scan(text: str) -> tuple[list[str], str, str]:
+    """Split a command line into segments, reading quotes and heredocs the way bash does
+    enough to tell a real command apart from text inside them — R5, R6.
+
+    Returns ``(segments, checked_text, error)``. When ``error`` is not `""`, `segments` and
+    `checked_text` are both empty: nothing downstream should trust a line that did not scan
+    cleanly, and `check_command` returns `error` before it looks at either.
+
+    Three states carry the read: outside any quote, inside `'...'`, inside `"..."`.
+    **Outside a quote, a backslash keeps the character after it literal** — the same
+    reading bash gives it — so it can never itself open a quote. Without this,
+    `echo \\"; rm x; echo \\"` would look like one long quoted argument to a scanner that
+    read the first `\\"` as opening a real double quote, and `rm` would never become its
+    own segment even though bash never opens one either. Inside `'...'` a backslash is
+    nothing special; inside `"..."` it keeps the next character literal, same as outside.
+
+    `$'` and `$"` are refused on sight, whatever state they are found in outside a single
+    quote. ANSI-C quoting lets `\\'` sit inside `$'...'` without closing it — `$'\\''`
+    closes after three characters, not two — and a plain two-state reading of `'...'` gets
+    that wrong in the dangerous direction: it would swallow a real separator that follows
+    into what it mistakes for an open quote, hiding a command bash does run. Refusing the
+    whole line is cheap next to reading ANSI-C escapes correctly.
+
+    A heredoc (`<<WORD` or `<<-WORD`, never `<<<`) is only recognised outside a quote. Its
+    delimiter word is read under the same quote rules; any quote in it marks the body
+    quoted, and the quotes are dropped from the word each following line is compared
+    against. `<<-` also drops a leading tab from each line before comparing, same as bash.
+
+    The newline that follows the operator always ends the segment being built, exactly
+    like any other newline — a heredoc does not keep the rest of the physical line part of
+    the same segment, so a command placed right after a heredoc's closing line is still its
+    own segment and is still checked. The body, and its closing delimiter line, are then
+    skipped whole before the next segment starts: they are never split into command
+    segments, quoted or not. Only when the delimiter itself was quoted is the body also
+    dropped from `checked_text` — substitution and redirect are still checked inside an
+    **unquoted** heredoc's body, because bash still expands it.
+
+    A second `<<`/`<<-` before the first is resolved, an unterminated quote, an
+    unterminated heredoc delimiter, and a heredoc whose closing line never comes are each
+    refused rather than guessed at.
+    """
+    n = len(text)
+    i = 0
+    state = "N"  # "N" outside quotes, "S" single-quoted, "D" double-quoted
+    heredoc_pending: tuple[bool, str, bool] | None = None  # (quoted, delimiter, dash)
+    segments: list[str] = []
+    checked_parts: list[str] = []
+    seg_last = 0
+    chk_last = 0
+
+    def flush_segment(end: int) -> None:
+        nonlocal seg_last
+        piece = text[seg_last:end].strip()
+        if piece:
+            segments.append(piece)
+        seg_last = end
+
+    def exclude_from_checked(a: int, b: int) -> None:
+        nonlocal chk_last
+        checked_parts.append(text[chk_last:a])
+        chk_last = b
+
+    while i < n:
+        ch = text[i]
+        if state == "S":
+            if ch == "'":
+                state = "N"
+            i += 1
+            continue
+        if state == "D":
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                state = "N"
+            i += 1
+            continue
+        # state == "N"
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            state = "S"
+            i += 1
+            continue
+        if ch == '"':
+            state = "D"
+            i += 1
+            continue
+        if text[i : i + 2] in ("$'", '$"'):
+            return [], "", f"{REFUSAL_ANSI_QUOTE}: {text[i:i+2]}"
+        if text[i : i + 3] == "<<<":
+            i += 3
+            continue
+        if text[i : i + 2] == "<<":
+            if heredoc_pending is not None:
+                return [], "", REFUSAL_HEREDOC_MULTIPLE
+            j = i + 2
+            dash = j < n and text[j] == "-"
+            if dash:
+                j += 1
+            while j < n and text[j] in " \t":
+                j += 1
+            delim_chars: list[str] = []
+            quoted = False
+            dstate = "N"
+            while j < n:
+                c = text[j]
+                if dstate == "N":
+                    if c in " \t\n" or c in _DELIM_STOP:
+                        break
+                    if c == "\\":
+                        if j + 1 < n:
+                            delim_chars.append(text[j + 1])
+                            j += 2
+                        else:
+                            j += 1
+                        continue
+                    if c == "'":
+                        quoted, dstate = True, "S"
+                        j += 1
+                        continue
+                    if c == '"':
+                        quoted, dstate = True, "D"
+                        j += 1
+                        continue
+                    delim_chars.append(c)
+                    j += 1
+                    continue
+                if dstate == "S":
+                    if c == "'":
+                        dstate = "N"
+                    else:
+                        delim_chars.append(c)
+                    j += 1
+                    continue
+                # dstate == "D"
+                if c == "\\" and j + 1 < n:
+                    delim_chars.append(text[j + 1])
+                    j += 2
+                    continue
+                if c == '"':
+                    dstate = "N"
+                else:
+                    delim_chars.append(c)
+                j += 1
+            if dstate != "N":
+                return [], "", f"{REFUSAL_UNBALANCED_QUOTE}: an unterminated heredoc delimiter"
+            delim = "".join(delim_chars)
+            if not delim:
+                return [], "", f"{REFUSAL_HEREDOC_UNCLOSED}: no delimiter word after '<<'"
+            heredoc_pending = (quoted, delim, dash)
+            i = j
+            continue
+        if ch == ">":
+            m = _FD_REDIRECT.match(text, i)
+            if m:
+                i = m.end()
+                continue
+            i += 1
+            continue
+        if ch == "\n":
+            if heredoc_pending is not None:
+                quoted, delim, dash = heredoc_pending
+                heredoc_pending = None
+                body_start = i + 1
+                pos = body_start
+                body_end = None
+                while pos <= n:
+                    nl = text.find("\n", pos)
+                    line_end = nl if nl != -1 else n
+                    line = text[pos:line_end]
+                    compare = line.lstrip("\t") if dash else line
+                    if compare == delim:
+                        body_end = line_end + 1 if nl != -1 else n
+                        break
+                    if nl == -1:
+                        break
+                    pos = nl + 1
+                if body_end is None:
+                    return [], "", f"{REFUSAL_HEREDOC_UNCLOSED}: no line matches {delim!r}"
+                flush_segment(i)
+                if quoted:
+                    exclude_from_checked(body_start, body_end)
+                seg_last = body_end
+                i = body_end
+                continue
+            flush_segment(i)
+            seg_last = i + 1
+            i += 1
+            continue
+        if text[i : i + 2] in _MULTI_SEPARATORS:
+            flush_segment(i)
+            seg_last = i + 2
+            i += 2
+            continue
+        if ch in _SINGLE_SEPARATORS:
+            flush_segment(i)
+            seg_last = i + 1
+            i += 1
+            continue
+        i += 1
+
+    if state != "N":
+        return [], "", REFUSAL_UNBALANCED_QUOTE
+    if heredoc_pending is not None:
+        return [], "", f"{REFUSAL_HEREDOC_UNCLOSED}: '<<' with no line left to close it"
+
+    flush_segment(n)
+    checked_parts.append(text[chk_last:n])
+    return segments, "".join(checked_parts), ""
 
 
 def check_command(grant: Grant, command: str) -> str:
@@ -342,28 +564,42 @@ def check_command(grant: Grant, command: str) -> str:
     text = (command or "").strip()
     if not text:
         return REFUSAL_EMPTY
+    segments, checked_text, error = _scan(text)
+    if error:
+        return error
     for token in _SUBSTITUTION:
-        if token in text:
-            # With substitution in play the first word no longer says what runs.
+        if token in checked_text:
+            # With substitution in play the first word no longer says what runs. Checked
+            # against `checked_text`, not the raw line: the only text this ever excludes is
+            # the body of a heredoc whose delimiter was quoted, which bash does not expand
+            # either (R6). Substitution inside a plain `'...'` is still refused here on
+            # purpose — spec.md `## Design` says so; nothing asked for that to widen.
             return f"{REFUSAL_SUBSTITUTION}: {token}"
-    if _REDIRECT.search(text):
+    if _REDIRECT.search(checked_text):
         # A redirect writes a file without any write tool being called, so the path check
         # in `decide` never sees it. The step has `Write` and `Edit` for making files.
         return f"{REFUSAL_REDIRECT} — use the write tools"
-    for segment in _segments(text):
-        word = segment.split()[0] if segment.split() else ""
+    for segment in segments:
+        # `shlex.split`, not `str.split()`: a segment `_scan` cut is quote-balanced by
+        # construction (a split only ever happens while outside every quote), so this
+        # cannot raise for text that reached here, and it is what lets `"rm"`, `'gh' pr
+        # merge` and `gh "pr" merge` all compare equal to their bare spelling (R8).
+        words = shlex.split(segment, posix=True)
+        if not words:
+            continue
+        word = words[0]
         # `VAR=x cmd` puts the assignment first; step over any of them.
-        while "=" in word and not word.startswith("-") and len(segment.split()) > 1:
-            segment = segment.split(maxsplit=1)[1]
-            word = segment.split()[0] if segment.split() else ""
+        while "=" in word and not word.startswith("-") and len(words) > 1:
+            words = words[1:]
+            word = words[0]
         base = word.rsplit("/", 1)[-1]
         if base not in grant.commands:
             return f"{REFUSAL_NOT_RUNNABLE} {base!r}"
-        words = _words(base, segment.split()[1:])
+        checked_words = _words(base, words[1:])
         for prefix, reason in grant.denied:
-            if words[: len(prefix)] == prefix:
+            if checked_words[: len(prefix)] == prefix:
                 return f"{REFUSAL_NOT_RUNNABLE} {' '.join(prefix)!r}: {reason}"
-        if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in words):
+        if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in checked_words):
             # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
             return f"{REFUSAL_MERGE_ENDPOINT}: merging is the ship stage's"
     return ""

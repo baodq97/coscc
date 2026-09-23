@@ -181,6 +181,109 @@ class CommandsAreCheckedSegmentBySegment(unittest.TestCase):
         self.assertEqual(decide(IMPL, "Bash", {"command": "npm test"}, "/tmp"), "")
 
 
+class TheScannerReadsQuotesAndHeredocs(unittest.TestCase):
+    """`0032_impl-fills-its-context-with-whole-files-and-refusals` R5, R6, R8.
+
+    `spec.md ## Design`'s table names six shapes `check_command` used to read wrong; the
+    first two (`${PIPESTATUS[0]}`, `> /tmp/x.log`) were already correct refusals and stay
+    exactly that (R8). The other four are what this class pins.
+    """
+
+    # -- R5: a separator inside a quote is not a separator ------------------------------
+
+    def test_a_pipe_inside_a_double_quoted_pattern_does_not_split(self):
+        # Measured 2026-09-23: refused with "may not run '^OK'" before this fix.
+        self.assertEqual(check_command(IMPL, 'grep -E "^ℹ|^OK" f'), "")
+
+    def test_a_semicolon_inside_a_single_quote_does_not_split(self):
+        self.assertEqual(check_command(IMPL, "echo 'a; b'"), "")
+
+    def test_a_pipe_outside_any_quote_still_splits(self):
+        self.assertIn("may not run", check_command(IMPL, "git log | rm x"))
+
+    def test_an_unbalanced_double_quote_is_refused(self):
+        self.assertIn("unbalanced", check_command(IMPL, 'echo "a'))
+
+    # -- R6: a heredoc body is never split into command segments -------------------------
+
+    def test_a_python_heredoc_with_a_quoted_delimiter_runs(self):
+        self.assertEqual(check_command(IMPL, "python3 - <<'EOF'\nimport os\nEOF"), "")
+
+    def test_a_commit_message_heredoc_with_backtick_and_redirect_chars_runs(self):
+        # The exact shape write-impl's own guidance recommends for a commit message.
+        cmd = "git commit -F - <<'EOF'\nfix `x` > y\nEOF"
+        self.assertEqual(check_command(IMPL, cmd), "")
+
+    def test_an_unquoted_heredoc_body_is_still_checked_for_substitution(self):
+        # bash still expands an unquoted heredoc's body, so this must stay refused.
+        self.assertIn(
+            "substitution", check_command(IMPL, "cat <<EOF\n$(rm x)\nEOF")
+        )
+
+    def test_a_quoted_heredoc_body_containing_substitution_text_runs(self):
+        # C3's positive case: the same text, but the delimiter is quoted, so bash would
+        # never expand it either.
+        self.assertEqual(check_command(IMPL, "cat <<'EOF'\n$(rm x)\nEOF"), "")
+
+    def test_substitution_nested_in_a_heredoc_is_still_refused(self):
+        # C3's other case: `$(` opens *outside* the heredoc body, so it is never excluded
+        # from checked_text no matter how the heredoc inside it is quoted.
+        self.assertIn(
+            "substitution", check_command(IMPL, "$(cat <<'EOF'\nx\nEOF\n)")
+        )
+
+    def test_a_command_after_a_closed_heredoc_is_its_own_segment(self):
+        self.assertIn("may not run 'rm'", check_command(IMPL, "cat <<'EOF'\nx\nEOF\nrm y"))
+
+    def test_a_delimiter_line_with_a_leading_space_does_not_close_the_heredoc(self):
+        # bash closes a heredoc only at a line matching the delimiter exactly.
+        cmd = "cat <<'EOF'\nx\n EOF\nrm y"
+        self.assertIn("heredoc", check_command(IMPL, cmd))
+
+    def test_a_bare_here_string_does_not_expose_what_it_quotes(self):
+        self.assertEqual(check_command(IMPL, "cat <<<'x; rm y'"), "")
+
+    def test_more_than_one_heredoc_on_one_line_is_refused(self):
+        self.assertIn(
+            "one heredoc", check_command(IMPL, "cat <<A <<B\nx\nA\ny\nB")
+        )
+
+    # -- R5/R6: what a naive two-state reading would get wrong ---------------------------
+
+    def test_a_backslash_escaped_quote_outside_any_quote_does_not_open_one(self):
+        # If `\"` opened a real quote here, `; rm x` would be hidden inside it — but bash
+        # never opens one either, so `rm` must still be its own, refused, segment.
+        self.assertIn('may not run', check_command(IMPL, 'echo \\"; rm x; echo \\"'))
+
+    def test_ansi_c_quoting_is_refused_outright(self):
+        # `$'\''` closes after three characters in bash, not at the first `'` a plain
+        # single-quote reading would stop at — which would hide the `; rm x` that follows
+        # inside what looks like an open quote. Refusing the line is the safe reading.
+        self.assertIn("ANSI-C", check_command(IMPL, "echo $'\\''; rm x #'"))
+
+    def test_locale_quoting_is_refused_outright(self):
+        self.assertIn("ANSI-C", check_command(IMPL, 'echo $"hi"'))
+
+    def test_a_properly_closed_quote_still_lets_the_next_command_split(self):
+        self.assertIn("may not run", check_command(IMPL, 'echo "a" ; rm x'))
+
+    # -- R8: nothing that was correctly refused before is allowed now --------------------
+
+    def test_every_previously_refused_shape_is_still_refused(self):
+        for bad in (
+            "echo ${PIPESTATUS[0]}",
+            "git commit -m \"$(cat <<EOF\nx\nEOF\n)\"",
+            "npm test > /tmp/x.log",
+            "rm -f a",
+        ):
+            self.assertNotEqual(check_command(IMPL, bad), "", bad)
+
+    def test_the_merge_endpoint_and_alias_are_still_refused_with_quotes(self):
+        pr = grant_for("pr")
+        for bad in ("gh 'pr' merge", 'gh "pr" merge'):
+            self.assertIn("merging is the ship stage's", check_command(pr, bad), bad)
+
+
 class ThePrStepSaysWhatItWillReach(unittest.TestCase):
     PR = grant_for("pr")
 
