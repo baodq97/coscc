@@ -28,7 +28,16 @@ import claude_agent_sdk as sdk
 
 from coscc import gitops, harness
 from coscc.journal import Journal
-from coscc.policy import Grant, beyond_reading, decide, grant_for, is_prose_stage
+from coscc.policy import (
+    EXEC_TOOLS,
+    Grant,
+    beyond_reading,
+    command_rules,
+    decide,
+    grant_for,
+    is_prose_stage,
+    read_limit,
+)
 from coscc.sessions import Refused, Sessions
 
 # An artifact has to carry one of these on its first line, or the gate cannot read it and
@@ -91,6 +100,7 @@ def build_prompt(
     gate_said: str = "",
     head: str = "",
     base_note: str = "",
+    grant: Grant | None = None,
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -233,6 +243,18 @@ def build_prompt(
             "`Reviewed:` line without a commit and say why under "
             "`### What was not reviewed`; the `ship` gate will stay closed, which is right."
         )
+
+    # `0032_impl-fills-its-context-with-whole-files-and-refusals` R4: `impl` is the one
+    # stage measured meeting a refusal it had no way to predict — `intent.md ## Answers`
+    # câu 1, nine of them on one real run, all from this same grant. Saying the rule ahead
+    # of time is cheaper than a step discovering it by being refused: a refusal costs a
+    # round trip and leaves its own text in the transcript, and `command_rules` is built
+    # from exactly the constants `check_command` refuses with, so the two can never say
+    # different things (R7). Only `impl` gets this section — `pr` and `ship` share the
+    # same command check but are out of this unit's scope (`plan.md ## What was chosen
+    # not to be done`), and every stage without `Bash` has no commands to name.
+    if stage in ("impl", "implement") and grant is not None and EXEC_TOOLS[0] in grant.tools:
+        parts.append(f"# Commands this step may run\n\n{command_rules(grant)}")
 
     location = directory / artifact
     if writes_own and stage == "ship":
@@ -507,6 +529,7 @@ class Runner:
             gate_said=gate_said,
             head=head,
             base_note=base_note,
+            grant=grant,
         )
 
         if self.journal is not None:

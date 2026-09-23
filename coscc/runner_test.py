@@ -83,6 +83,56 @@ class ThePromptCarriesTheStageBefore(unittest.TestCase):
             self.assertIn("Write a spec", prompt)
 
 
+class TheImplPromptCarriesItsOwnCommandRules(unittest.TestCase):
+    """`0032_impl-fills-its-context-with-whole-files-and-refusals` R4: an `impl` step is
+    told the commands it may run before it can meet a refusal for one it may not."""
+
+    def test_impl_carries_every_command_before_your_task(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nINTENT")
+            grant = grant_for("impl")
+            prompt, _ = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md",
+                writes_own=True, grant=grant,
+            )
+            self.assertIn("# Commands this step may run", prompt)
+            for command in grant.commands:
+                self.assertIn(command, prompt)
+            self.assertLess(
+                prompt.index("# Commands this step may run"), prompt.index("# Your task")
+            )
+
+    def test_plan_and_spec_carry_no_such_section(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nINTENT")
+            for stage in ("plan", "spec"):
+                prompt, _ = build_prompt(
+                    d, Path(d) / ".cos" / UNIT, UNIT, stage, STAGES, f"{stage}.md",
+                    grant=grant_for(stage),
+                )
+                self.assertNotIn("# Commands this step may run", prompt)
+
+    def test_pr_and_ship_carry_no_such_section_either(self):
+        # Out of this unit's scope even though both hold Bash — `plan.md ## What was
+        # chosen not to be done`.
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nINTENT")
+            for stage in ("pr", "ship"):
+                prompt, _ = build_prompt(
+                    d, Path(d) / ".cos" / UNIT, UNIT, stage, STAGES, f"{stage}.md",
+                    writes_own=True, grant=grant_for(stage),
+                )
+                self.assertNotIn("# Commands this step may run", prompt)
+
+    def test_no_grant_given_carries_no_such_section(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nINTENT")
+            prompt, _ = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", writes_own=True,
+            )
+            self.assertNotIn("# Commands this step may run", prompt)
+
+
 class AReplyIsCheckedBeforeItBecomesAFile(unittest.TestCase):
     def test_a_reply_with_no_status_line_is_refused(self):
         with self.assertRaises(RunError):
