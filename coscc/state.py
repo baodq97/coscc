@@ -24,7 +24,7 @@ import reflex as rx
 
 from coscc.api import build
 from coscc.journal import COST_USD, TOKEN_FIELDS
-from coscc.service import Invalid
+from coscc.service import Invalid, describe_base
 
 API = build()
 SERVICE = API.state.service
@@ -1356,6 +1356,13 @@ class StudioState(rx.State):
                         self.notice = (
                             f"{stage} {outcome}" + (f" — wrote {written}" if written else "")
                         )
+                        # `0030_a-unit-branch-starts-from-a-stale-main`. `describe_base`
+                        # is the one sentence saying a step's base may be stale; this page
+                        # only appends the string the service already worked out, never
+                        # its own reading of `payload["base"]`.
+                        stale = describe_base(payload.get("base"))
+                        if stale:
+                            self.notice += " " + stale
         except Invalid as e:
             async with self:
                 self._fail(e)

@@ -113,6 +113,22 @@ def step_cwd(stage: str, work: str, directory: Path) -> str:
     return str(directory) if stage == "ship" else work
 
 
+def describe_base(base: dict[str, Any] | None) -> str:
+    """The one sentence saying a step's base may be stale, or `""` when it is fresh.
+
+    `0030_a-unit-branch-starts-from-a-stale-main`. `state.py` and this module's own prompt
+    (`runner.build_prompt`, *The base this step runs on*) both call this rather than each
+    writing the sentence its own way — the same reason `.claude/CLAUDE.md` gives for
+    `cos.mjs` being the one place the loop is defined, at a much smaller scale.
+    """
+    if not base or base.get("fresh", True):
+        return ""
+    sha = base.get("sha") or "?"
+    ref = base.get("ref") or f"{BRANCH_REMOTE}/{BRANCH_TRUNK}"
+    reason = base.get("reason") or ""
+    return f"This step ran on {ref} at {sha}, which may be stale: {reason}"
+
+
 @dataclass
 class Service:
     config: Config
@@ -544,6 +560,16 @@ class Service:
             except (GitError, BadUnit) as e:
                 raise Invalid(f"{unit} has no worktree and one could not be opened: {e}") from e
         work = tree["path"] if tree else cwd
+        # `0030_a-unit-branch-starts-from-a-stale-main` R1/R4/R5. A tree already on its
+        # branch carries whatever `_worktree` read when it was opened onto it (or nothing,
+        # when it was already there before this call); a tree still detached is refreshed
+        # now, on the spot, because a session about to run on it is about to read it.
+        base: dict[str, Any] | None = None
+        if tree is not None:
+            if tree.get("branch"):
+                base = tree.get("base")
+            else:
+                base = await worktrees.refresh_base(cwd, unit, self.config.data_dir)
         try:
             # `work` is the checkout the `review` and `ship` gates read git and the pull
             # request from (`0015`). The store has no git to read.
@@ -592,8 +618,11 @@ class Service:
                 cwd=step_cwd(stage, work, directory),
                 model=model,
                 model_source=model_source,
+                base=base,
+                base_note=describe_base(base),
             ):
                 if item[0] == "done":
+                    item = ("done", {**item[1], "base": base})
                     self._record_transition(cwd, unit, row["file"], directory, item[1])
                     if stage == "ship" and tree is not None and item[1].get("outcome") == "done":
                         # R10. Only if `cos.mjs` now says `finished` and GitHub says merged;
@@ -799,7 +828,7 @@ class Service:
                 return {"path": found["path"], "branch": ""} if found else None
             # The branch exists and the tree is not on it: open it there (`worktrees.ensure`).
             made = await worktrees.ensure(cwd, unit, branch, self.config.data_dir)
-            return {"path": made["path"], "branch": made["branch"]}
+            return {"path": made["path"], "branch": made["branch"], "base": made.get("base")}
         except (GitError, BadUnit) as e:
             if strict:
                 raise Invalid(f"{unit}'s worktree could not be opened on its branch: {e}") from e

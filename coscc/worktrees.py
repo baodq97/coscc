@@ -98,6 +98,49 @@ async def _branch_exists(root: Path, name: str) -> bool:
         return False
 
 
+async def _fetch_or_refuse(where_repo: Path, branch: str) -> None:
+    """Fetch `origin/main` in `where_repo`, refusing to go on when that fails.
+
+    `0030` review round 1, F2. Neither of `ensure`'s two "open onto an existing branch"
+    paths cuts `branch` — it was already cut at a terminal, the way `.claude/CLAUDE.md`
+    step 4 still does it — so the reason to refuse here is not that a stale `main` would
+    name the wrong pull request base (only `start_branch`, which does cut a branch, has
+    that reason). It is narrower: `câu 1` asks every path that opens a tree onto an
+    existing branch to agree on when doing so is safe, and a fetch that failed is the one
+    thing both paths can check for without guessing. So both call this, and neither
+    proceeds past it — whether or not the unit already had a (still detached) tree is not
+    a reason for the two to disagree.
+    """
+    try:
+        await gitops.fetch(where_repo)
+    except GitError as e:
+        raise GitError(
+            f"Could not update {gitops.TRUNK} from origin, so {branch} was not opened "
+            f"in this unit's worktree. Nothing in the repository changed. git said: {e}"
+        ) from e
+
+
+async def _base_against_origin(where_repo: Path, branch: str, branch_sha: str) -> dict[str, Any]:
+    """`{ref, sha, fresh, behind, reason}` for `branch_sha` against `origin/main`.
+
+    Never refuses and never rebases (`intent.md ## Answers, câu 3`): a branch behind is
+    reported, not fixed — `gh pr update-branch --rebase` is what the `reason` points to.
+    """
+    origin_ref = f"origin/{gitops.TRUNK}"
+    origin_sha = await gitops.rev_parse(where_repo, f"refs/remotes/{origin_ref}")
+    behind = await gitops.count_missing(where_repo, branch_sha, origin_sha)
+    return {
+        "ref": origin_ref,
+        "sha": origin_sha[:7],
+        "fresh": behind == 0,
+        "behind": behind,
+        "reason": "" if behind == 0 else (
+            f"{branch} is missing {behind} commit(s) from {origin_ref}; "
+            "see `gh pr update-branch --rebase`."
+        ),
+    }
+
+
 async def ensure(
     workspace: str | os.PathLike[str],
     unit: str,
@@ -106,13 +149,17 @@ async def ensure(
 ) -> dict[str, Any]:
     """The unit's worktree, made if it is not there yet.
 
-    Returns `{path, branch, created, switched}`. `switched` is true when the workspace
-    was moved back to `main` to make this possible — the one thing here that touches the
-    workspace's own tree, done only when that tree is clean (`0017` spec, câu 2), and
-    returned so the page can say it happened.
+    Returns `{path, branch, created, switched}`, and also `base` when this call is the one
+    that opened the tree onto an existing branch (`_base_against_origin`). `switched` is
+    true when the workspace was moved back to `main` to make this possible — the one thing
+    here that touches the workspace's own tree, done only when that tree is clean (`0017`
+    spec, câu 2) and only once the fetch this call needed has already succeeded (`0030`
+    review round 2, F5) — so a refusal that follows never has to explain a workspace that
+    already moved.
 
-    Raises `GitError` with a reason a person can act on when the workspace is dirty and
-    standing on the branch this unit needs.
+    Raises `GitError` with a reason a person can act on when opening onto an existing
+    branch needed a fetch that failed (`_fetch_or_refuse`), or when the workspace is dirty
+    and standing on the branch this unit needs.
     """
     root = Path(units.key(workspace))
     where = path(workspace, unit, data_dir)
@@ -121,33 +168,112 @@ async def ensure(
     if found is not None and (found["branch"] or not wanted):
         return {"path": str(where), "branch": found["branch"], "created": False, "switched": False}
 
-    # The unit's branch exists and is not yet in its tree — cut at a terminal, the way
-    # `.claude/CLAUDE.md` step 4 still does it, usually in the workspace itself. Git will
-    # not check one branch out twice, so the workspace has to give it up first.
-    switched = False
-    if wanted and await gitops.current_branch(root) == branch:
-        if not await gitops.is_clean(root):
-            raise GitError(
-                f"{root} is on {branch}, this unit's branch, and has uncommitted changes, "
-                "so its worktree cannot be opened. Commit or stash them there, then "
-                f"`git switch {gitops.TRUNK}`."
-            )
-        await gitops.switch_trunk(root)
-        switched = True
-
     if found is not None:
-        # A detached tree made when the unit was created, before it had a branch.
-        await gitops.switch_existing(Path(found["path"]), branch)
-        return {"path": str(where), "branch": branch, "created": False, "switched": switched}
+        # A detached tree made when the unit was created, before it had a branch. Fetch
+        # inside the tree first — it is a separate directory from the workspace, so this
+        # never touches the workspace — and only once it has either succeeded or found
+        # nothing to move does `_step_aside` touch the workspace (F5).
+        tree = Path(found["path"])
+        await _fetch_or_refuse(tree, branch)
+        switched = await _step_aside(root, branch)
+        await gitops.switch_existing(tree, branch)
+        branch_sha = await gitops.rev_parse(tree, "HEAD")
+        base = await _base_against_origin(tree, branch, branch_sha)
+        return {
+            "path": str(where), "branch": branch, "created": False, "switched": switched,
+            "base": base,
+        }
 
     where.parent.mkdir(parents=True, exist_ok=True)
     if wanted:
+        # No tree at all yet, but the branch already exists — same situation as the block
+        # above except that this unit never had a (detached) tree to fetch inside, so the
+        # fetch runs in the workspace instead. `_fetch_or_refuse` is the same call either
+        # way, which is the point (F2); it still runs before `_step_aside` touches the
+        # workspace, for the same reason (F5).
+        await _fetch_or_refuse(root, branch)
+        switched = await _step_aside(root, branch)
         await gitops.worktree_add(root, where, branch)
-    else:
-        sha = await gitops.rev_parse(root, f"refs/heads/{gitops.TRUNK}")
-        await gitops.worktree_add(root, where, sha)
+        branch_sha = await gitops.rev_parse(root, f"refs/heads/{branch}")
+        base = await _base_against_origin(root, branch, branch_sha)
+        found = await find(workspace, unit, data_dir) or {"branch": ""}
+        return {
+            "path": str(where), "branch": found["branch"], "created": True, "switched": switched,
+            "base": base,
+        }
+    sha = await gitops.rev_parse(root, f"refs/heads/{gitops.TRUNK}")
+    await gitops.worktree_add(root, where, sha)
     found = await find(workspace, unit, data_dir) or {"branch": ""}
-    return {"path": str(where), "branch": found["branch"], "created": True, "switched": switched}
+    return {"path": str(where), "branch": found["branch"], "created": True, "switched": False}
+
+
+async def _step_aside(root: Path, branch: str) -> bool:
+    """Move the workspace to `main` when it is standing on `branch`, freeing `branch` for
+    a unit's worktree. `False` when the workspace was standing on something else already.
+
+    `0030` review round 2, F5: `ensure` calls this only after the fetch it needed has
+    already succeeded. Before this fix, `switch_trunk` ran first, so a fetch that then
+    failed left the workspace on `main` anyway while `_fetch_or_refuse` still raised
+    "Nothing in the repository changed" — true of the rest of the repository, but no
+    longer of the workspace's checked-out branch. Calling this last keeps that sentence
+    true: everything that can still refuse has refused before the one mutation here runs.
+    """
+    if await gitops.current_branch(root) != branch:
+        return False
+    if not await gitops.is_clean(root):
+        raise GitError(
+            f"{root} is on {branch}, this unit's branch, and has uncommitted changes, "
+            "so its worktree cannot be opened. Commit or stash them there, then "
+            f"`git switch {gitops.TRUNK}`."
+        )
+    await gitops.switch_trunk(root)
+    return True
+
+
+async def refresh_base(
+    workspace: str | os.PathLike[str],
+    unit: str,
+    data_dir: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
+    """Bring a unit's still-detached tree to the fetched tip of `origin/main`, and say so.
+
+    `0030` R1, R5, R6. Unlike `ensure`, this never raises: a step on a detached tree runs
+    whether or not the fetch succeeds, and this is the one place that decides what to say
+    about it (`intent.md ## Answers, câu 2`). Returns `{ref, sha, fresh, reason}` — `sha`
+    is the short remote tip once known, `fresh` is whether the tree ended up there, and
+    `reason` is empty exactly when `fresh` is true.
+
+    When the tree is actually moved, the record `prepare()` left is deleted: it describes
+    a tree at the commit it was prepared at, and that commit just changed (R6).
+    """
+    ref = f"origin/{gitops.TRUNK}"
+    found = await find(workspace, unit, data_dir)
+    if found is None:
+        return {"ref": ref, "sha": "", "fresh": False, "reason": "no worktree to refresh"}
+    tree = Path(found["path"])
+    try:
+        await gitops.fetch(tree)
+    except GitError as e:
+        return {"ref": ref, "sha": "", "fresh": False, "reason": str(e)}
+    try:
+        sha = await gitops.rev_parse(tree, f"refs/remotes/{ref}")
+    except GitError as e:
+        return {"ref": ref, "sha": "", "fresh": False, "reason": str(e)}
+    try:
+        before = await gitops.rev_parse(tree, "HEAD")
+    except GitError as e:
+        return {"ref": ref, "sha": sha[:7], "fresh": False, "reason": str(e)}
+    if before == sha:
+        return {"ref": ref, "sha": sha[:7], "fresh": True, "reason": ""}
+    try:
+        await gitops.advance_detached(tree, sha)
+    except GitError as e:
+        return {"ref": ref, "sha": sha[:7], "fresh": False, "reason": str(e)}
+    try:
+        prepare_record(tree).unlink()
+    except OSError:
+        pass
+    return {"ref": ref, "sha": sha[:7], "fresh": True, "reason": ""}
 
 
 # --- preparing ---------------------------------------------------------------

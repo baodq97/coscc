@@ -18,7 +18,7 @@ from unittest import mock
 
 from coscc import gitops, harness, units, worktrees
 from coscc.config import Config
-from coscc.service import Invalid, Service, step_cwd
+from coscc.service import Invalid, Service, describe_base, step_cwd
 from coscc.sessions import Live, Sessions
 
 REPO = str(Path(__file__).resolve().parent.parent)
@@ -671,6 +671,203 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
             asyncio.run(self.service.start_branch(str(self.repo), unit))
         self.assertEqual(self._git("branch", "--list", "fix/a-problem").strip(), "")
         self.assertEqual((tree / "README.md").read_text(encoding="utf-8"), "edited here\n")
+
+
+class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
+    """`0030_a-unit-branch-starts-from-a-stale-main` plan step 5.
+
+    `run_step` refreshes a still-detached tree from `origin/main` before the step runs, and
+    carries what it found into the `done` record — the reading `describe_base` turns into
+    one sentence for the board and the prompt. Same fixture as `StartingAUnitAndItsBranch`
+    (a bare remote on disk, no network), driven with a session that replies without talking
+    to anything, the way `AStepRecordsTheTransitionItCaused` does below.
+
+    R7 is `intent.md ## Proposed outcome`'s own measurement: `git merge-base --is-ancestor`
+    and `git rev-list --count`, run by subprocess against the branch the app or a session
+    cut, never against anything this test computed itself.
+    """
+
+    class Replies:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+            yield ("done", {"session_id": "sess-30", "cost": {"output_tokens": 3}})
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.remote = self.root / "remote.git"
+        subprocess.run(
+            ["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True
+        )
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self._git("init", "-q", "-b", "main")
+        (self.repo / "README.md").write_text("x\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "first")
+        self._git("remote", "add", "origin", str(self.remote))
+        self._git("push", "-q", "origin", "main")
+        self.config = Config(
+            workspaces=(str(self.repo),),
+            working_dir=str(self.root / "work"),
+            data_dir=str(self.root / "data"),
+        )
+        self.service = Service(self.config, self.Replies())
+
+    def _git(self, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "user.name=T",
+             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
+            capture_output=True, text=True, check=True,
+        ).stdout
+
+    def _advance_remote(self, name: str = "g.txt", text: str = "from elsewhere\n") -> str:
+        """Push one commit to `origin` from a second clone. Returns its SHA."""
+        other = self.root / "other"
+        if not other.exists():
+            subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True)
+        run = lambda *a: subprocess.run(  # noqa: E731
+            ["git", "-C", str(other), "-c", "user.name=T", "-c", "user.email=t@example.invalid",
+             "-c", "commit.gpgsign=false", *a],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        run("pull", "-q", "--ff-only")
+        (other / name).write_text(text, encoding="utf-8")
+        run("add", "-A")
+        run("commit", "-q", "-m", f"elsewhere {name}")
+        run("push", "-q", "origin", "main")
+        return run("rev-parse", "HEAD")
+
+    def _typed_unit(self, slug: str = "a-problem") -> str:
+        made = create_sync(self.service, str(self.repo), slug, "some words")
+        (Path(made["path"]) / "intent.md").write_text(
+            f"# Intent: {slug}\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
+        )
+        return made["unit"]
+
+    def _tree(self, unit: str) -> Path:
+        return worktrees.path(str(self.repo), unit, str(self.root / "data"))
+
+    def _tree_head(self, tree: Path) -> str:
+        return subprocess.run(
+            ["git", "-C", str(tree), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    def _run_step(self, unit: str, stage: str = "spec") -> dict:
+        async def go():
+            last = None
+            async for item in self.service.run_step(str(self.repo), unit, stage):
+                last = item
+            return last
+
+        kind, payload = asyncio.run(go())
+        self.assertEqual(kind, "done")
+        return payload
+
+    def test_r1_the_tree_is_moved_to_the_fetched_tip_and_local_main_stays(self):
+        unit = self._typed_unit()
+        local_before = self._git("rev-parse", "main").strip()
+        ahead = self._advance_remote()
+        done = self._run_step(unit)
+        self.assertEqual(done["outcome"], "done")
+        self.assertEqual(
+            done["base"], {"ref": "origin/main", "sha": ahead[:7], "fresh": True, "reason": ""}
+        )
+        self.assertEqual(self._git("rev-parse", "main").strip(), local_before)
+        self.assertEqual(self._tree_head(self._tree(unit)), ahead)
+
+    def test_r2_a_broken_origin_does_not_stop_the_step(self):
+        unit = self._typed_unit()
+        tree = self._tree(unit)
+        before = self._tree_head(tree)
+        self._git("remote", "set-url", "origin", str(self.root / "gone.git"))
+        done = self._run_step(unit)
+        self.assertEqual(done["outcome"], "done")
+        self.assertFalse(done["base"]["fresh"])
+        self.assertTrue(done["base"]["reason"])
+        self.assertEqual(self._tree_head(tree), before)
+
+    def test_r5_a_commit_made_directly_on_the_tree_is_never_left_behind(self):
+        unit = self._typed_unit()
+        tree = self._tree(unit)
+        (tree / "local.txt").write_text("mine\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(tree), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(tree), "-c", "user.name=T", "-c", "user.email=t@example.invalid",
+             "-c", "commit.gpgsign=false", "commit", "-q", "-m", "local"], check=True,
+        )
+        local_head = self._tree_head(tree)
+        done = self._run_step(unit)
+        self.assertFalse(done["base"]["fresh"])
+        self.assertIn("ancestor", done["base"]["reason"])
+        self.assertEqual(self._tree_head(tree), local_head)
+
+    def test_r7_the_branch_start_branch_cuts_carries_the_remote_tip(self):
+        """`intent.md ## Proposed outcome`, measured through `start_branch`.
+
+        `0030` review round 1, F1: `tip` is the SHA `_advance_remote()` itself pushed and
+        returned, never a ref read back from the workspace — `origin/main` there is the very
+        ref `start_branch` updates when it fetches, so comparing against it would still pass
+        with the fetch removed, which is exactly what this test exists to catch.
+        """
+        tip = self._advance_remote()
+        unit = self._typed_unit()
+        got = asyncio.run(self.service.start_branch(str(self.repo), unit))
+        tree = got["worktree"]
+        branch = got["branch"]
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", tree, "merge-base", "--is-ancestor", tip, branch]
+            ).returncode,
+            0,
+        )
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", tree, "rev-list", "--count", f"{branch}..{tip}"],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip(),
+            "0",
+        )
+
+    def test_r7_a_branch_a_session_cuts_itself_also_carries_the_remote_tip(self):
+        """Plan Risk 2's gap, closed at the one place a step runs: `run_step` refreshes the
+        still-detached tree, and a session's own `git switch -c` right after starts from
+        that refreshed HEAD — the same command a person runs at a terminal
+        (`.claude/CLAUDE.md` step 4), not a wrapper this test invented.
+        """
+        unit = self._typed_unit()
+        ahead = self._advance_remote()
+        self._run_step(unit)
+        tree = self._tree(unit)
+        branch = units.branch_name(str(self.repo), unit, str(self.root / "data"))
+        subprocess.run(
+            ["git", "-C", str(tree), "switch", "--no-track", "-c", branch],
+            check=True, capture_output=True,
+        )
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(tree), "merge-base", "--is-ancestor", ahead, branch]
+            ).returncode,
+            0,
+        )
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", str(tree), "rev-list", "--count", f"{branch}..{ahead}"],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip(),
+            "0",
+        )
+
+    def test_describe_base_is_empty_when_fresh_and_names_the_sha_when_not(self):
+        self.assertEqual(describe_base(None), "")
+        self.assertEqual(describe_base({"fresh": True}), "")
+        said = describe_base(
+            {"fresh": False, "ref": "origin/main", "sha": "abc1234", "reason": "boom"}
+        )
+        self.assertIn("abc1234", said)
+        self.assertIn("boom", said)
 
 
 class AStepRecordsTheTransitionItCaused(unittest.TestCase):

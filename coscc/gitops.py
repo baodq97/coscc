@@ -121,6 +121,32 @@ async def _run(argv: list[str], timeout: float, cwd: str | None = None) -> str:
     return text
 
 
+async def _run_code(argv: list[str], timeout: float, cwd: str | None = None) -> tuple[int, str]:
+    """Like `_run`, but hands the exit code back instead of raising on a non-zero one.
+
+    `0030`. `merge-base --is-ancestor` uses exit 1 to mean "no" rather than "failed", and
+    `_run` cannot tell that apart from a real error — it turns every non-zero code into a
+    `GitError`. This is the same subprocess, the same `child_env()`, the same deadline;
+    only what happens with the exit code differs, which is why `_run` itself is unchanged.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        cwd=cwd,
+        env=child_env(),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        stdin=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise GitError(f"git timed out after {timeout:.0f}s: {' '.join(argv[:2])}")
+    text = (out or b"").decode(errors="replace").strip()
+    return proc.returncode, text
+
+
 async def clone(repo_url: str, dest: Path, timeout: float = CLONE_TIMEOUT) -> str:
     """Clone into a directory that must not already exist."""
     url = check_url(repo_url)
@@ -165,6 +191,12 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
 # - `branch -D` a unit's branch after its pull request merged, and only when the local
 #   branch still points at the head GitHub merged. `-d` always refuses after a squash, so
 #   the head comparison is the only thing standing between this and a lost commit.
+# - Since `0030`, `switch --detach` a unit's own worktree to the commit a fetch just
+#   brought, and only when the tree carries no branch of its own, is clean, and its
+#   current HEAD is an ancestor of that commit — so a commit nobody pushed is never left
+#   behind (`0030_a-unit-branch-starts-from-a-stale-main` plan R1/R5). `merge-base
+#   --is-ancestor` and `rev-list --count` are the two reads that decide that and measure
+#   how far a branch is behind, neither writing anything.
 #
 # The app may **not**: push, merge, commit, move `main` to another commit, or delete any
 # branch but that one. Those are a step's business — the `pr` grant carries `git`
@@ -247,6 +279,53 @@ async def rev_parse(path: Path, ref: str, timeout: float = BRANCH_TIMEOUT) -> st
     except GitError as e:
         # `--quiet` makes git say nothing, so the reason has to be ours.
         raise GitError(f"{ref} does not name a commit in {path} ({e})") from e
+
+
+async def is_ancestor(
+    path: Path, ancestor: str, descendant: str, timeout: float = BRANCH_TIMEOUT
+) -> bool:
+    """Whether `ancestor` is reachable from `descendant` — `merge-base --is-ancestor`.
+
+    `0030` R1/R5. Exit 0 is yes, exit 1 is no, and git turns anything else — an unknown
+    commit, most likely — into a third answer that is neither. `_run` cannot tell exit 1
+    apart from a real failure, which is why this calls `_run_code` instead of `_run`.
+
+    Both arguments are full SHAs and nothing else, the same restriction `create_branch`
+    puts on `base`: a ref name would let the answer drift between the moment this checks
+    and the moment a caller acts on it.
+    """
+    if not (path / ".git").exists():
+        raise GitError(f"not a git repository: {path}")
+    for sha in (ancestor, descendant):
+        if not _SHA_RE.fullmatch(sha or ""):
+            raise GitError(f"a full commit SHA is required, not {sha!r}")
+    code, text = await _run_code(
+        ["git", "-C", str(path), "merge-base", "--is-ancestor", ancestor, descendant], timeout
+    )
+    if code == 0:
+        return True
+    if code == 1:
+        return False
+    raise GitError(text or f"git exited {code}")
+
+
+async def count_missing(path: Path, have: str, want: str, timeout: float = BRANCH_TIMEOUT) -> int:
+    """How many commits `want` carries that `have` does not — `rev-list --count have..want`.
+
+    `0030` `plan.md` R7's own measurement, and also the `behind` a caller reports: zero
+    means `have` already carries everything `want` does. Both arguments are full SHAs, for
+    the same reason `is_ancestor` requires them.
+    """
+    if not (path / ".git").exists():
+        raise GitError(f"not a git repository: {path}")
+    for sha in (have, want):
+        if not _SHA_RE.fullmatch(sha or ""):
+            raise GitError(f"a full commit SHA is required, not {sha!r}")
+    out = await _run(["git", "-C", str(path), "rev-list", "--count", f"{have}..{want}"], timeout)
+    try:
+        return int(out.strip())
+    except ValueError:
+        raise GitError(f"rev-list did not print a count: {out!r}") from None
 
 
 async def create_branch(
@@ -336,6 +415,39 @@ async def switch_existing(tree: Path, name: str, timeout: float = BRANCH_TIMEOUT
     if not await is_clean(tree, timeout):
         raise GitError(f"{tree} has uncommitted changes, so it was left where it was")
     return await _run(["git", "-C", str(tree), "switch", name], timeout)
+
+
+async def advance_detached(tree: Path, sha: str, timeout: float = BRANCH_TIMEOUT) -> str:
+    """Move a unit's detached worktree to `sha`, and refuse rather than guess when it is not safe.
+
+    `0030` `plan.md` R1/R5. `git switch --detach <sha>`, never `--force`. The three
+    conditions below are checked here, together, rather than left to git or split across a
+    caller, because a caller that skipped one would have no way to know it did:
+
+    - the tree carries no branch of its own (`current_branch` is empty) — a branch is
+      somebody's own work, and this function does not touch one;
+    - the tree is clean — nothing of a person's is discarded;
+    - the tree's current HEAD is an ancestor of `sha` — so a commit made on the detached
+      tree is never silently left behind, and moving forward never means moving away from
+      something nobody pushed.
+
+    Any one missing raises `GitError` naming which; the tree is left exactly where it was.
+    """
+    _require_repo(tree)
+    if not _SHA_RE.fullmatch(sha or ""):
+        raise GitError(f"a worktree is advanced to a full commit SHA, not {sha!r}")
+    branch = await current_branch(tree, timeout)
+    if branch:
+        raise GitError(f"{tree} is on {branch}, not detached, so it was not moved")
+    if not await is_clean(tree, timeout):
+        raise GitError(f"{tree} has uncommitted changes, so it was not moved")
+    head = await _run(["git", "-C", str(tree), "rev-parse", "HEAD"], timeout)
+    if not await is_ancestor(tree, head, sha, timeout):
+        raise GitError(
+            f"{tree}'s HEAD ({head[:7]}) is not an ancestor of {sha[:7]}, so it was not "
+            "moved — it may carry a commit not on the remote trunk"
+        )
+    return await _run(["git", "-C", str(tree), "switch", "--detach", sha], timeout)
 
 
 async def worktree_add(
