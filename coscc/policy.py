@@ -30,7 +30,11 @@ from dataclasses import dataclass, field
 # so the session itself needs no ability to write at all — see `plan.md` Risk 1 for why the
 # spec's design section is wrong about this, and why it is recorded there rather than
 # quietly fixed here.
-PROSE_STAGES = ("idea", "intent", "spec", "plan", "review", "ship")
+#
+# `ship` left this list in `0015`. It merges now — `pr` stops at an open pull request and
+# the merge waits for a review that passed — and a stage that runs `gh pr merge` is not
+# one whose artifact the app can write from a reply.
+PROSE_STAGES = ("idea", "intent", "spec", "plan", "review")
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,10 @@ class Grant:
     # and this unit opens one on purpose — so it has to be said out loud where the button
     # is, not only in a design document.
     warning: str = ""
+    # Command prefixes refused even though their first word is allowed, each with the
+    # reason given. Matched on the leading tokens of a segment, so it catches the plain
+    # spelling and nothing cleverer — see `plan.md` Risk 5 of `0015`.
+    denied: tuple[tuple[tuple[str, ...], str], ...] = ()
 
     @property
     def opens_anything(self) -> bool:
@@ -105,6 +113,17 @@ PR_COMMANDS = (
 PR_WARNING = (
     "This step runs `git` and `gh` with the GitHub login already on this machine. "
     "That reaches every repository that account can reach, not just this workspace."
+)
+
+# `0015`: the pull request `pr` opens is merged by `ship`, after a review that passed, and
+# never by the stage that opened it.
+MERGE_IS_SHIPS = ((("gh", "pr", "merge"), "merging is the ship stage's"),)
+
+SHIP_WARNING = (
+    "This step merges the pull request into main with `gh pr merge`, using the GitHub "
+    "login already on this machine. That login reaches every repository its account can "
+    "reach. The gate has checked that the review passed with nothing open and that no code "
+    "landed after it; nobody but an agent has read the change."
 )
 
 # Only pairs that appear here get anything. Everything else — every prose stage, every
@@ -165,6 +184,27 @@ GRANTS: dict[tuple[str, str], Grant] = {
         max_budget_usd=3.0,
         app_writes_artifact=False,
         warning=PR_WARNING,
+        denied=MERGE_IS_SHIPS,
+    ),
+    # `0015`: a separate agent session reviews the open pull request, before the merge. It
+    # reads and only reads, like `plan`: the app still writes `review.md` from the reply.
+    # It cannot run `git diff`, so it sees the working tree and `impl.md`, not the diff —
+    # `0015` plan, Risk 3, and a later unit.
+    ("review", "autonomous"): Grant(
+        tools=READ_TOOLS,
+        # Chosen, not measured; the same ceilings as `plan`.
+        max_turns=20,
+        max_budget_usd=2.0,
+    ),
+    # `0015`: `ship` merges, so it needs what `pr` has. Its ceilings are copied from `pr`,
+    # chosen rather than measured.
+    ("ship", "autonomous"): Grant(
+        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
+        commands=PR_COMMANDS,
+        max_turns=30,
+        max_budget_usd=3.0,
+        app_writes_artifact=False,
+        warning=SHIP_WARNING,
     ),
 }
 
@@ -254,6 +294,10 @@ def check_command(grant: Grant, command: str) -> str:
         base = word.rsplit("/", 1)[-1]
         if base not in grant.commands:
             return f"this step may not run {base!r}"
+        tokens = (base, *segment.split()[1:])
+        for prefix, reason in grant.denied:
+            if tokens[: len(prefix)] == prefix:
+                return f"this step may not run {' '.join(prefix)!r}: {reason}"
     return ""
 
 

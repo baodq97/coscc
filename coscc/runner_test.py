@@ -122,11 +122,14 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                     f"{stage}/{mode} carries more than reading",
                 )
 
-    def test_plan_is_the_only_prose_stage_that_reads_and_only_when_autonomous(self):
-        self.assertEqual(policy.grant_for("plan", "autonomous").tools, policy.READ_TOOLS)
-        self.assertEqual(policy.grant_for("plan", "manual").tools, ())
+    def test_plan_and_review_are_the_only_prose_stages_that_read_and_only_when_autonomous(self):
+        # `review` joined `plan` in `0015`: the separate session that sits before the merge
+        # has to open the files it judges. It still only reads.
+        for reader in ("plan", "review"):
+            self.assertEqual(policy.grant_for(reader, "autonomous").tools, policy.READ_TOOLS)
+            self.assertEqual(policy.grant_for(reader, "manual").tools, ())
         for stage in policy.PROSE_STAGES:
-            if stage == "plan":
+            if stage in ("plan", "review"):
                 continue
             for mode in ("manual", "autonomous"):
                 self.assertEqual(
