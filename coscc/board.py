@@ -159,6 +159,13 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             # whether `problems` is empty. An older `cos.mjs` sends nothing, which reads as
             # the empty string, and no lane treats that specially.
             "phase": u.get("phase") or "",
+            # `0016`. Which items under `## Open questions` a person has answered, and how
+            # many are still open in the counted artifact. Both decided by `cos.mjs` and
+            # copied, never recounted here (`0016` spec R7). An older `cos.mjs` sends
+            # neither, which reads as no questions, the same way `phase` degrades.
+            "questions": list(u.get("questions") or []),
+            "open": int(u.get("open") or 0),
+            "counted": u.get("counted") or "",
         }
         for u in data.get("units") or []
     ]
