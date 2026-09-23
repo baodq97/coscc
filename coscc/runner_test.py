@@ -687,3 +687,76 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
                 d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md"
             )
             self.assertNotIn("FINDING-ONE-MARKER", prompt)
+
+
+class ReviewRoundsAccumulate(unittest.TestCase):
+    """`0015`'s second review erased its first, 2026-09-23.
+
+    The app writes `review.md` from the reply, and the reply carried only what that run
+    had to say. Round 1 and its five findings were gone, and so was the count `cos.mjs`
+    reads to stop after N rounds and ask for a person -- a limit that resets every run is
+    one that never arrives.
+    """
+
+    ROUND1 = (
+        "## Round 1\n\nReviewed: abc1234. Verdict: changes-requested.\n\n"
+        "### Findings\n\n- F1 [open] a.py:3 — high — ROUND-ONE-MARKER\n"
+    )
+
+    class Replies:
+        def __init__(self, text):
+            self.text = text
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.prompt = text
+            yield ("chunk", self.text)
+            yield ("done", {"session_id": "s", "cost": {}})
+
+    def run_review(self, d, reply):
+        unit = make_unit(
+            Path(d),
+            intent_md="Status: accepted.\nI",
+            pr_md="Status: accepted.\nP",
+            review_md="# Review: x\nPR: pr.md. Status: changes-requested.\n\n" + self.ROUND1,
+        )
+        session = self.Replies(reply)
+
+        async def go():
+            last = None
+            async for item in Runner(session, None).run(
+                workspace=d, directory=unit, journal_key=d, unit=UNIT, stage="review",
+                artifact="review.md", stages=STAGES, mode="manual",
+            ):
+                last = item
+            return last[1]
+
+        return session, unit / "review.md", go
+
+    def test_the_prompt_carries_the_earlier_rounds(self):
+        with tempfile.TemporaryDirectory() as d:
+            session, _, go = self.run_review(
+                d, "# Review: x\nStatus: accepted.\n\n" + self.ROUND1 + "\n## Round 2\n\nok\n"
+            )
+            asyncio.run(go())
+            self.assertIn("ROUND-ONE-MARKER", session.prompt)
+
+    def test_a_reply_that_keeps_round_one_is_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, written, go = self.run_review(
+                d, "# Review: x\nStatus: accepted.\n\n" + self.ROUND1 + "\n## Round 2\n\nok\n"
+            )
+            asyncio.run(go())
+            body = written.read_text(encoding="utf-8")
+            self.assertIn("ROUND-ONE-MARKER", body)
+            self.assertIn("## Round 2", body)
+
+    def test_a_reply_that_drops_round_one_leaves_the_file_as_it_was(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, written, go = self.run_review(
+                d, "# Review: x\nStatus: accepted.\n\n## Round 2\n\nall fine\n"
+            )
+            # The runner reports a refusal as the step's outcome rather than raising.
+            done = asyncio.run(go())
+            self.assertNotEqual(done["outcome"], "done")
+            self.assertIn("earlier review round", done["error"])
+            self.assertIn("ROUND-ONE-MARKER", written.read_text(encoding="utf-8"))

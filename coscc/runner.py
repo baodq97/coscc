@@ -161,6 +161,23 @@ def build_prompt(
                 f"{review}"
             )
 
+    # `review.md` accumulates rounds, and the app writes it from the reply -- so the reply
+    # has to carry every earlier round, or writing it erases them. Found 2026-09-23 on
+    # `0015`'s second review: round 1 and its five findings vanished from the file, and
+    # with them the count `cos.mjs` reads to stop at N rounds and ask for a person. A loop
+    # whose counter resets every run never reaches its limit.
+    if stage == "review":
+        earlier = _rounds(_read(directory / "review.md"))
+        if earlier:
+            included.append("review.md")
+            parts.append(
+                "# The rounds so far\n\n"
+                "Copy every `## Round N` section below into your reply exactly as it is, "
+                "byte for byte, then add the next round after the last one. The app refuses "
+                "to write a review.md that drops or changes an earlier round.\n\n"
+                + "\n".join(earlier)
+            )
+
     location = directory / artifact
     if writes_own:
         # A stage with tools does the work and then records it. Asking it to *reply* with
@@ -183,6 +200,15 @@ def build_prompt(
             "rules above describe. Prose in Vietnamese; filenames and headings in English."
         )
     return "\n\n---\n\n".join(parts), included
+
+
+# One `## Round N` section of review.md: from its heading to the next `## ` heading.
+_ROUND_RE = re.compile(r"^## Round \d+\b.*?(?=^## |\Z)", re.MULTILINE | re.DOTALL)
+
+
+def _rounds(text: str) -> list[str]:
+    """Every round already recorded, each exactly as it stands in the file."""
+    return [m.group(0).rstrip() for m in _ROUND_RE.finditer(text or "")]
 
 
 # The one status that sends a unit back to `impl`. Read from the header line, the same
@@ -383,7 +409,19 @@ class Runner:
                     terminal = str(payload.get("terminal_reason") or "")
 
             if grant.app_writes_artifact:
-                (directory / artifact).write_text(check_reply(collected), encoding="utf-8")
+                body = check_reply(collected)
+                if artifact == "review.md":
+                    lost = [
+                        r.splitlines()[0]
+                        for r in _rounds(_read(directory / artifact))
+                        if r not in body
+                    ]
+                    if lost:
+                        raise RunError(
+                            "the reply drops or changes an earlier review round, so "
+                            f"review.md was left as it was: {', '.join(lost)}"
+                        )
+                (directory / artifact).write_text(body, encoding="utf-8")
             else:
                 # The session had the tools to write it. Believing it did, rather than
                 # looking, is how a step reports success for a file that is not there.
