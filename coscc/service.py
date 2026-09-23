@@ -26,6 +26,7 @@ from typing import Any, AsyncIterator
 
 from coscc import board as board_reader
 from coscc import gitops
+from coscc import prcomment
 from coscc import sessions as reader
 from coscc.board import Unavailable
 from coscc.config import Config
@@ -64,6 +65,31 @@ class Invalid(Exception):
     """A request this layer refuses, carrying a reason a caller can show verbatim."""
 
 
+def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, Any]]) -> None:
+    """`0021` D4. Give every review round a `comment`: on the pull request, or not and why.
+
+    Read off the run log, never stored beside the round: a `posted` or `already` row for
+    the round means it is there. Anything else -- including a round written at a terminal,
+    which has no row at all -- is *not on the PR*, with the latest failure's reason if any.
+    """
+    posted: dict[tuple[str, Any], str] = {}
+    failed: dict[tuple[str, Any], str] = {}
+    for r in records:
+        k = (str(r.get("unit") or ""), r.get("round"))
+        if r.get("outcome") in ("posted", "already"):
+            posted[k] = str(r.get("comment_url") or "")
+        elif r.get("outcome") == "failed":
+            failed[k] = str(r.get("detail") or "")
+    for u in units_:
+        for rnd in u.get("rounds") or []:
+            k = (u["name"], rnd.get("n"))
+            rnd["comment"] = (
+                {"posted": True, "url": posted[k], "reason": None}
+                if k in posted
+                else {"posted": False, "url": "", "reason": failed.get(k)}
+            )
+
+
 @dataclass
 class Service:
     config: Config
@@ -73,6 +99,10 @@ class Service:
     # interleave their blocks. The page and the API share this instance (`state.py`
     # takes `API.state.service`), so one lock covers both.
     _answer_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    # `0021`. Held across read-comments-then-post, so two presses of *Post to PR* for one
+    # round run one after the other and the second finds the first's marker. One process
+    # only, like `pull` (`.claude/rules/coscc-app.md`).
+    _comment_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # No working folder means no store, and the app behaves as it did before one existed.
@@ -291,14 +321,18 @@ class Service:
         key = self._journal_key(cwd)
         modes: dict[tuple[str, str], str] = {}
         timelines: dict[str, list[dict[str, Any]]] = {}
+        comments: list[dict[str, Any]] = []
         if journal is not None:
             try:
                 modes = journal.modes(key)
                 # One read for every unit's cost. Asking `totals` per unit re-scanned the
                 # working folder N times for the rows this already has.
                 timelines = journal.timelines(key)
+                # `0021` D4. One read for every unit's comment attempts, too.
+                comments = journal.records(key, kind="pr-comment")
             except Busy as e:
                 raise Invalid(str(e)) from e
+        _attach_comment_state(data["units"], comments)
 
         for unit in data["units"]:
             for row in unit["stages"]:
@@ -408,6 +442,12 @@ class Service:
         key = self._journal_key(cwd)
         directory = self._unit_dir(cwd, unit)
         mode = journal.modes(key).get((unit, stage), "manual")
+        # `0021` D3. The rounds `review.md` held before this step, so that the ones it adds
+        # can be told apart afterwards. Taken from the board already read above.
+        rounds_before = (
+            {r.get("n") for r in found.get("rounds") or []}
+            if row["file"] == "review.md" else None
+        )
         runner = Runner(self.sessions, journal)
         try:
             async for item in runner.run(
@@ -423,9 +463,103 @@ class Service:
             ):
                 if item[0] == "done":
                     self._record_transition(cwd, unit, row["file"], directory, item[1])
+                    if rounds_before is not None and item[1].get("outcome") == "done":
+                        # After `Runner` has written `review.md` (`runner.py:442`), never
+                        # before: the artifact does not wait on GitHub (`0021` R6).
+                        item = (
+                            "done",
+                            {**item[1], "comments": await self._post_new_rounds(cwd, unit, rounds_before)},
+                        )
                 yield item
         except RunError as e:
             raise Invalid(str(e)) from e
+
+    async def _post_new_rounds(
+        self, cwd: str, unit: str, before: set[Any]
+    ) -> list[dict[str, Any]]:
+        """`0021` R2. Post every round the step just added. Never raises.
+
+        What happened to each is in the run log whatever it was, and the board shows a
+        round that did not make it as *not on the PR* with the reason.
+        """
+        try:
+            data = await board_reader.read(self._units_root(cwd))
+        except Unavailable as e:
+            return [{"round": None, "state": "failed", "url": "", "reason": str(e)}]
+        found = next((u for u in data["units"] if u["name"] == unit), None)
+        if found is None:
+            return []
+        out = []
+        for rnd in found.get("rounds") or []:
+            if rnd.get("n") in before:
+                continue
+            async with self._comment_lock:
+                out.append(await self._post_round(cwd, found, rnd))
+        return out
+
+    async def post_review_comment(self, cwd: str, unit: str, round_n: Any) -> dict[str, Any]:
+        """`0021` R8, R9. Post one review round to the unit's pull request, or say it is there.
+
+        The body is built from the round as `cos.mjs` read it out of `review.md`; nothing a
+        caller sends reaches GitHub but the unit's name and the round's number. Not an
+        approval, and it opens no gate: neither gate reads comments (R10).
+        """
+        self._workspace_or_refuse(cwd)
+        try:
+            n = int(round_n)
+        except (TypeError, ValueError):
+            raise Invalid(f"a round is named by its number, got {round_n!r}") from None
+        async with self._comment_lock:
+            try:
+                data = await board_reader.read(self._units_root(cwd))
+            except Unavailable as e:
+                raise Invalid(str(e)) from e
+            found = next((u for u in data["units"] if u["name"] == unit), None)
+            if found is None:
+                raise Invalid(f"no such work unit in this workspace: {unit}")
+            rnd = next((r for r in found.get("rounds") or [] if r.get("n") == n), None)
+            if rnd is None:
+                have = ", ".join(str(r.get("n")) for r in found.get("rounds") or []) or "none"
+                raise Invalid(f"review.md of {unit} has no round {n} (it has {have})")
+            return await self._post_round(cwd, found, rnd)
+
+    async def _post_round(
+        self, cwd: str, found: dict[str, Any], rnd: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Post one round and write one `pr-comment` row saying how it went (R13).
+
+        The caller holds `_comment_lock`. A row that cannot be written is dropped rather
+        than turned into a failure: the comment is on GitHub or it is not, and that is what
+        the person asked about. The next board read then shows the round as not posted, and
+        a second press finds the marker and says `already`.
+        """
+        unit = found["name"]
+        n = rnd.get("n")
+        pr_url = (found.get("pr") or {}).get("url") or ""
+        result = await prcomment.post(
+            unit, n, rnd.get("verdict"), rnd.get("text") or "", pr_url,
+            str(Path(cwd).expanduser().resolve()),
+        )
+        record: dict[str, Any] = {
+            "kind": "pr-comment",
+            "workspace": self._journal_key(cwd),
+            "unit": unit,
+            "stage": "review",
+            "round": n,
+            "pr": pr_url,
+            "outcome": result.state,
+        }
+        if result.state == "failed":
+            record["detail"] = result.reason
+        else:
+            record["comment_url"] = result.url
+        journal = self._journal()
+        if journal is not None:
+            try:
+                journal.append(record)
+            except (Busy, BadRecord, OSError):
+                pass
+        return {"unit": unit, "round": n, "pr": pr_url, **result.as_dict()}
 
     def _record_transition(
         self, cwd: str, unit: str, artifact: str, directory: Path, done: dict[str, Any]

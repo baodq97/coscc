@@ -130,9 +130,13 @@ async def post(
     text: str,
     pr_url: str | None,
     cwd: str,
-    run: Run = _gh,
+    run: Run | None = None,
 ) -> Result:
-    """Post one round unless it is already there. Never raises."""
+    """Post one round unless it is already there. Never raises.
+
+    `run` defaults to `_gh`, looked up at call time so a test can replace the module's.
+    """
+    run = run or _gh
     if not pr_url:
         return Result("failed", reason="pr.md names no pull request")
     if not PR_URL_RE.match(pr_url):
