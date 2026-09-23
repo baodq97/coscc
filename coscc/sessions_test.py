@@ -149,6 +149,16 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         c = Config(tools=("Read", "Bash"))
         self.assertEqual(_options(c, "/p", None).tools, ["Read"])
 
+    def test_a_resolved_model_wins_over_cos_model(self):
+        # `0004_no-setting-says-which-model-runs-a-stage`: the stage's model is passed in.
+        c = Config(model="from-env")
+        self.assertEqual(_options(c, "/p", None, model="x").model, "x")
+
+    def test_no_resolved_model_falls_back_to_cos_model(self):
+        c = Config(model="from-env")
+        self.assertEqual(_options(c, "/p", None).model, "from-env")
+        self.assertIsNone(_options(Config(), "/p", None).model)
+
 
 class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
     async def test_a_directory_outside_the_workspaces_is_refused(self):

@@ -35,6 +35,12 @@ from coscc.sessions import Refused, Sessions
 # `cos.mjs` will report the unit as broken. Checked before anything is written.
 STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+)")
 
+# How many agent sessions one step starts. `Runner.run` makes exactly one `stream` call,
+# so this is a description of the code below, not a setting: Settings shows it per stage
+# (`0004_no-setting-says-which-model-runs-a-stage` `intent.md ## Answers, câu 1`). A stage
+# that ran several agents would be a different design, and this number would change with it.
+SESSIONS_PER_STEP = 1
+
 
 class RunError(Exception):
     """A step that cannot start, or one whose reply cannot be stored."""
@@ -437,6 +443,8 @@ class Runner:
         mode: str,
         gate_said: str = "",
         cwd: str | None = None,
+        model: str | None = None,
+        model_source: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -447,6 +455,10 @@ class Runner:
         session's directory, the write boundary and the repository the prompt names.
         `workspace` stays the membership question and the journal's subject. Unset, the
         two are the same directory, as they were before.
+
+        `model` is the one `coscc/models.py` resolved for this stage, and `model_source`
+        says where it came from. Both go into the `start` record, which is where a reader
+        checks what a step ran on. `None` leaves the session on `COS_MODEL`.
         """
         grant = grant_for(stage)
         directory = Path(directory)
@@ -484,6 +496,8 @@ class Runner:
                 prompt_chars=len(prompt), included=included,
                 granted=list(grant.tools), max_turns=grant.max_turns,
                 head=head,
+                model=model, model_source=model_source,
+                agents=SESSIONS_PER_STEP,
             )
 
         denials = Denials()
@@ -491,6 +505,8 @@ class Runner:
         terminal = ""
         session_id = ""
         cost: dict[str, Any] = {}
+        # What the session says it was billed to. The `start` record says what was asked for.
+        models_used: list[str] = []
         outcome = "failed"
         detail = ""
         try:
@@ -512,6 +528,9 @@ class Runner:
                 # Only named when it differs, so a stand-in `stream` written before `0017`
                 # without a `workspace` parameter keeps working for a plain step.
                 **({"workspace": workspace} if cwd != workspace else {}),
+                # The same reasoning: a stand-in with no `model` parameter keeps working
+                # for a step nobody resolved a model for.
+                **({"model": model} if model is not None else {}),
             ):
                 if kind == "chunk":
                     collected += payload
@@ -538,6 +557,7 @@ class Runner:
                     session_id = payload.get("session_id", "")
                     cost = payload.get("cost", {}) or {}
                     terminal = str(payload.get("terminal_reason") or "")
+                    models_used = list(payload.get("models_used") or [])
 
             if grant.app_writes_artifact:
                 body = check_reply(collected)
@@ -585,6 +605,7 @@ class Runner:
                     detail=detail or None,
                     denials=denials.count,
                     denied=denials.reasons or None,
+                    models_used=models_used or None,
                     **cost,
                 )
 
@@ -599,5 +620,7 @@ class Runner:
                 "included": included,
                 "error": detail,
                 "cost": cost,
+                "model": model,
+                "model_source": model_source,
             },
         )

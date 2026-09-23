@@ -218,6 +218,7 @@ def _options(
     tools: list[str] | None = None,
     max_budget_usd: float | None = None,
     workspace: str | None = None,
+    model: str | None = None,
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
@@ -230,6 +231,9 @@ def _options(
     ceiling on the step: a board step that has to edit files cannot finish in one turn, and
     a chat turn must not quietly become several. The default is still 1, so every caller
     that does not ask gets the old behaviour (`plan.md` C6).
+
+    `model` is what `coscc/models.py` resolved for this stage or for chat. `None` means
+    nobody resolved one, and `COS_MODEL` applies as it always did.
     """
     options = ClaudeAgentOptions(
         cwd=cwd,
@@ -242,7 +246,7 @@ def _options(
         permission_mode=config.permission_mode(),
         resume=resume,
         fork_session=False,  # spec.md C7 — R3 needs the same id back, not a branch
-        model=config.model,
+        model=model if model is not None else config.model,
         max_turns=max(1, int(max_turns)),
         setting_sources=None,  # no project/user settings can widen the tool list
         # Without this the CLI rewrites the prompt before the model sees it: an `@path`
@@ -337,6 +341,7 @@ class Sessions:
         tools: list[str] | None = None,
         max_budget_usd: float | None = None,
         workspace: str | None = None,
+        model: str | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -372,6 +377,7 @@ class Sessions:
                         tools=tools,
                         max_budget_usd=max_budget_usd,
                         workspace=workspace,
+                        model=model,
                     )
                 )
                 await client.connect()
@@ -383,6 +389,10 @@ class Sessions:
         turns = 0
         duration_ms = 0
         terminal = ""
+        # Which model ids the SDK billed this session to: the keys of `model_usage`. This
+        # is the session's own record of the model it ran on, as opposed to the model the
+        # app asked for (`0004_no-setting-says-which-model-runs-a-stage`, outcome 4).
+        used: list[str] = []
         await live.client.query(text)
         async for message in live.client.receive_response():
             if isinstance(message, AssistantMessage):
@@ -403,6 +413,7 @@ class Sessions:
                 # The one message carrying what this cost. An earlier version read `session_id` off it
                 # and dropped the rest, so every turn the app ran was unaccounted for.
                 total = _cumulative(message)
+                used = sorted(str(k) for k in (getattr(message, "model_usage", None) or {}))
                 turn = {k: total[k] - live.spent.get(k, 0.0) for k in total}
                 live.spent = total
                 turns += int(getattr(message, "num_turns", 0) or 0)
@@ -441,6 +452,7 @@ class Sessions:
                 "cwd": cwd,
                 "cost": cost,
                 "terminal_reason": terminal,
+                "models_used": used,
             },
         )
 
