@@ -674,6 +674,13 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
             self.assertIn("FINDING-ONE-MARKER", prompt)
             self.assertIn("review.md", included)
 
+    def test_impl_is_told_to_push_the_fix(self):
+        """`0024`. `cos.mjs next` offers `review` only once a fix reaches the pull request,
+        so a fix committed and never pushed keeps the button on `impl` (plan, Risk 2)."""
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = self.prompt(d, "changes-requested")
+            self.assertIn("then push the branch", prompt)
+
     def test_a_review_that_passed_is_not_sent_back(self):
         with tempfile.TemporaryDirectory() as d:
             prompt, included = self.prompt(d, "accepted")

@@ -156,8 +156,10 @@ def build_prompt(
             parts.append(
                 "# The review that sent this back\n\n"
                 "The last review asked for changes. Fix every finding marked `[open]` below "
-                "on the branch, one commit per finding where that is possible, then record "
-                "in impl.md which commit fixed which finding.\n\n"
+                "on the branch, one commit per finding where that is possible, then push "
+                "the branch, then record in impl.md which commit fixed which finding. The "
+                "next review is offered only once a fix is on the pull request, so a fix "
+                "left unpushed keeps this unit on impl.\n\n"
                 f"{review}"
             )
 
