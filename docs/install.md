@@ -106,6 +106,13 @@ nothing alarming, and simply leaves the old version in place
 (`.cos/0011_no-install-path-on-a-clean-machine/spec.md:189-192`). The install line above is
 the only supported update path — running it again *is* the upgrade.
 
+**Upgrading past the release that adds per-stage models changes which model runs.**
+`COS_MODEL` no longer decides the model of the eight stages: each now ships with a default
+(`claude-opus-5-5` for idea, intent, spec, plan and review; `claude-sonnet-5` for impl, pr
+and ship), and Settings → *Which model runs each stage* overrides any of them without a
+restart. `COS_MODEL` answers only chat and any stage with no default. If you had set it to
+pin every stage, set those stages on that screen instead.
+
 ## Options
 
 `scripts/install.sh` reads flags, not environment variables, and only on first install (an
