@@ -244,15 +244,27 @@ def _event_row(event: rx.Var[Event]) -> rx.Component:
 
 
 def _empty_board() -> rx.Component:
-    """Two reasons a board is empty, and they must not look the same (`spec.md` C5).
+    """Why the board is empty, said about the directory that is actually empty.
 
-    `0014` added a third, and it is the one that looks most like breakage: a workspace with
-    a `.cos/` of its own now shows **nothing**, because work units moved into the product's
-    own store. That is `0013`'s decision arriving — nothing of coscc's goes into a
-    repository a team shares — and `0014` `spec.md` C1 says it has to be said here rather
-    than left to look like a fault. `_start_unit` above is the answer to it: there is
-    nothing here yet because nothing has been started here yet.
+    Two branches (`0001_product-describes-a-state-it-is-not-in` R6, R7):
+
+    - The host repository's own `.cos/` holds units (`P.empty_host_units > 0`). The board
+      reads only the product's store, so it names both directories and the count, and
+      says the board does not list those units. The read-only reason, if any, follows.
+    - Otherwise the sentence from before this unit: `board_note`, or the default. There is
+      nothing in the host to explain, and the old words are true there.
+
+    Until that unit this docstring claimed `0014` `spec.md` C1 was met here. It was not:
+    no sentence on the page said so, and the one that did speak named the store's `.cos/`
+    while the reader was looking at the repository's.
     """
+    host_note = rx.text(
+        P.empty_host, "/.cos/ holds ", P.empty_host_units,
+        " work units, and this board does not list them. Units started in this app live "
+        "in its own store, ", P.empty_store, ", and the board reads only that.",
+        rx.cond(P.board_note != "", rx.fragment(" ", P.board_note), rx.fragment()),
+        size="2", color=s.MUTED, text_align="center", max_width="420px", id="board-note",
+    )
     return s.panel(
         rx.vstack(
             rx.center(rx.icon("sprout", size=30, color=rx.color("iris", 10)),
@@ -260,17 +272,21 @@ def _empty_board() -> rx.Component:
                       background=rx.color("iris", 3), margin_bottom="6px"),
             rx.heading(rx.cond(P.has_workspace, "Nothing here yet.", "No workspace chosen."),
                        size="6", weight="medium"),
-            s.text(
-                rx.cond(
-                    P.board_note != "",
-                    P.board_note,
+            rx.cond(
+                P.empty_host_units > 0,
+                host_note,
+                s.text(
                     rx.cond(
-                        P.has_workspace,
-                        "This workspace has no work units.",
-                        "Add a workspace, or set COS_WORKING_DIR and restart.",
+                        P.board_note != "",
+                        P.board_note,
+                        rx.cond(
+                            P.has_workspace,
+                            "This workspace has no work units.",
+                            "Add a workspace, or set COS_WORKING_DIR and restart.",
+                        ),
                     ),
+                    text_align="center", max_width="420px", id="board-note",
                 ),
-                text_align="center", max_width="420px", id="board-note",
             ),
             rx.button("Manage workspaces", on_click=P.navigate("workspaces"),
                       variant="soft", color_scheme="gray", margin_top="12px"),
@@ -494,6 +510,9 @@ def _lane(title: str, items, color: str) -> rx.Component:
                           border_radius="10px", width="100%")),
         spacing="3", align="stretch", width="100%", min_width="0",
         padding="12px", border_radius="13px", background=s.SURFACE,
+        # So a proof can ask which lane a card is in (`0001_product-describes-a-state-it-
+        # is-not-in` R4). `title` is a Python string here, one of `LANE_COLOR`'s keys.
+        data_testid=f"lane-{title}",
     )
 
 

@@ -301,6 +301,12 @@ class StudioState(rx.State):
     stages: list[str] = []
     units: list[Unit] = []
     board_note: str = ""
+    # Set only when the board is empty (`0001_product-describes-a-state-it-is-not-in` R6):
+    # the store the board read, the host repository, and how many units the host's own
+    # `.cos/` holds that the board does not list.
+    empty_store: str = ""
+    empty_host: str = ""
+    empty_host_units: int = 0
     recording: bool = False
     query: str = ""
     focus: str = "All work"
@@ -515,6 +521,7 @@ class StudioState(rx.State):
 
     async def _load_board(self) -> None:
         self.units, self.stages, self.board_note = [], [], ""
+        self.empty_store, self.empty_host, self.empty_host_units = "", "", 0
         self.branch = ""
         if not self.cwd:
             return
@@ -533,6 +540,15 @@ class StudioState(rx.State):
         self.stages = list(data["stages"])
         self.recording = bool(data["recording"])
         self.board_note = data.get("read_only_because") or data.get("empty_because") or ""
+        empty = data.get("empty") or {}
+        self.empty_store = str(empty.get("store") or "")
+        self.empty_host = str(empty.get("host") or "")
+        self.empty_host_units = int(empty.get("host_units") or 0)
+        if self.empty_host_units > 0:
+            # `empty_because` speaks of the store's `.cos/`, and next to a host `.cos/`
+            # that is full it reads as a claim about the wrong directory — the fault this
+            # unit exists for. Only the read-only reason survives, appended by the page.
+            self.board_note = data.get("read_only_because") or ""
 
         units: list[Unit] = []
         for u in data["units"]:

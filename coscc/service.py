@@ -313,6 +313,16 @@ class Service:
             None if journal is not None
             else "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR"
         )
+        if not data["units"]:
+            # `0001_product-describes-a-state-it-is-not-in` R6, R7, R8. The board reads the
+            # store, and a host repository can have a `.cos/` full of units the store never
+            # heard of. The page has to be able to say which directory it read and how many
+            # units sit in the one it did not. Counted on every call: R8 forbids a cache.
+            data["empty"] = {
+                "store": str(self._units_root(cwd)),
+                "host": units.key(cwd),
+                "host_units": units.host_unit_count(cwd),
+            }
         return data
 
     async def set_mode(self, cwd: str, unit: str, stage: str, mode: str) -> dict[str, Any]:
