@@ -818,6 +818,60 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
         self.assertEqual(self.sessions.calls, 0)
 
 
+class TheNextStageComesFromTheScript(unittest.TestCase):
+    """`0024`. `Service.next_step` asks `cos.mjs next` and chooses nothing itself."""
+
+    # The fixture of the class above, borrowed rather than inherited so its tests run once.
+    NeverCalled = AStepTheGateClosesNeverStarts.NeverCalled
+    setUp = AStepTheGateClosesNeverStarts.setUp
+    _run = AStepTheGateClosesNeverStarts._run
+
+    def _next(self, unit: str | None = None, cwd: str | None = None):
+        return asyncio.run(
+            self.service.next_step(
+                str(self.repo) if cwd is None else cwd,
+                self.made["unit"] if unit is None else unit,
+            )
+        )
+
+    def test_the_stage_is_the_scripts(self):
+        got = self._next()
+        self.assertEqual(got["stage"], "spec")
+        self.assertIn("write-spec", got["action"])
+        self.assertEqual(self.sessions.calls, 0)
+
+    def test_a_missing_workspace_or_unit_is_refused(self):
+        for cwd, unit in (("", None), (None, ""), ("/etc", None)):
+            with self.subTest(cwd=cwd, unit=unit), self.assertRaises(Invalid):
+                self._next(unit=unit, cwd=cwd)
+
+    def test_a_unit_that_is_not_there_or_not_a_name_is_invalid(self):
+        for unit in ("0099_not-here", "../escape"):
+            with self.subTest(unit=unit), self.assertRaises(Invalid):
+                self._next(unit=unit)
+
+    def test_next_reads_the_same_checkout_the_gate_reads(self):
+        from coscc import board as board_reader
+
+        seen = {}
+
+        async def fake_next(units_root, unit, repo=None, **kw):
+            seen["next"] = (str(units_root), repo)
+            return {"unit": unit, "stage": "review", "action": "a", "blocked": True}
+
+        async def fake_gate(units_root, unit, stage, repo=None, **kw):
+            seen["gate"] = (str(units_root), repo)
+            return False, "blocked: stop here"
+
+        with mock.patch.object(board_reader, "next_step", fake_next), \
+                mock.patch.object(board_reader, "gate", fake_gate):
+            stage = self._next()["stage"]
+            with self.assertRaises(Invalid):
+                self._run(stage)
+        self.assertEqual(seen["next"], seen["gate"])
+        self.assertEqual(seen["next"][1], str(self.repo))
+
+
 REVIEW_ONE = (
     "# Review: a problem\nAuthor: t. Status: changes-requested.\n\n"
     "## Round 1\n\nReviewed: abcdef1. Verdict: changes-requested.\n\n"

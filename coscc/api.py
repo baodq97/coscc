@@ -228,6 +228,17 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.get("/api/units/next")
+    async def get_next(request: Request) -> Any:
+        """`0024`. The one stage the run button may offer for a unit, as `cos.mjs next`
+        answered it: `{stage, action, blocked}`. Asks `gh` in the workspace, so it can wait
+        up to 60s. It names a stage and starts nothing; `/api/board/run` still asks the gate."""
+        q = request.query_params
+        try:
+            return await service.next_step(q.get("cwd", ""), q.get("unit", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.post("/api/board/mode")
     async def set_board_mode(request: Request) -> Any:
         """R5. The only thing the board writes, and it writes it to the journal."""
