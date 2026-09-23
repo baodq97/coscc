@@ -1,0 +1,13 @@
+{
+  "name": "coscc-default",
+  "models": {
+    "idea": "claude-opus-5-5",
+    "intent": "claude-opus-5-5",
+    "spec": "claude-opus-5-5",
+    "plan": "claude-opus-5-5",
+    "impl": "claude-sonnet-5",
+    "pr": "claude-sonnet-5",
+    "review": "claude-opus-5-5",
+    "ship": "claude-sonnet-5"
+  }
+}

@@ -275,6 +275,31 @@ class Preferences(unittest.TestCase):
             self.assertIs(data.pref("shown"), True)
             self.assertEqual(data.pref("count"), 3)
 
+    def test_a_preference_can_be_removed(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.set_pref("model:impl", "x")
+            self.assertTrue(data.delete_pref("model:impl"))
+            self.assertFalse(data.delete_pref("model:impl"))
+            self.assertIsNone(data.pref("model:impl"))
+
+    def test_pref_rows_keeps_a_broken_value_so_it_can_be_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.set_pref("model:impl", "x")
+            data.set_pref("model:plan", "y")
+            data.set_pref("density", "compact")
+            with data.write() as conn:
+                conn.execute("UPDATE prefs SET value = '{' WHERE key = 'model:plan'")
+            self.assertEqual(data.pref_rows("model:"), {"model:impl": '"x"', "model:plan": "{"})
+
+    def test_pref_rows_prefix_is_literal(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.set_pref("model_x", "a")
+            data.set_pref("model:x", "b")
+            self.assertEqual(list(data.pref_rows("model:")), ["model:x"])
+
 
 class NothingReachesTheRealHomeDirectory(unittest.TestCase):
     def test_constructing_a_default_data_root_touches_no_disk(self):

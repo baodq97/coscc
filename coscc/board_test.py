@@ -66,6 +66,20 @@ class TheRepositoryReadsAsABoard(unittest.TestCase):
         self.assertTrue(first["optional"])
 
 
+class TheStageListNeedsNoWorkspace(unittest.TestCase):
+    """`0004_no-setting-says-which-model-runs-a-stage`: Settings asks for the stages with
+    no workspace, and gets the script's list, in the script's order."""
+
+    def test_stages_is_the_script_status_list(self):
+        self.assertEqual(run(board.stages()), run(board.read(REPO))["stages"])
+        self.assertEqual(run(board.stages()), STAGES)
+
+    def test_no_node_is_unavailable_not_a_crash(self):
+        with mock.patch.object(board, "_run", side_effect=OSError("no node")):
+            with self.assertRaises(Unavailable):
+                run(board.stages())
+
+
 class ThePhaseIsCarriedFromTheScript(unittest.TestCase):
     def test_an_idea_only_unit_arrives_as_pre_intent_with_no_problems(self):
         with tempfile.TemporaryDirectory() as d:

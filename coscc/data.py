@@ -473,3 +473,28 @@ class Data:
             except (TypeError, ValueError):
                 continue
         return out
+
+    def delete_pref(self, key: str) -> bool:
+        """Remove one preference. True when there was one to remove."""
+        with self.write() as conn:
+            cur = conn.execute("DELETE FROM prefs WHERE key = ?", (key,))
+            return cur.rowcount > 0
+
+    def pref_rows(self, prefix: str) -> dict[str, str]:
+        """Every preference whose key starts with `prefix`, **unparsed**.
+
+        `prefs()` drops a row whose JSON will not parse, silently. That is fine for a
+        screen density, and wrong for the model a stage runs on: a hand-edited
+        `model:plan` that does not parse would make `plan` fall back with nobody told why
+        (`0004_no-setting-says-which-model-runs-a-stage` spec R11). The caller parses, and
+        reports what it could not.
+
+        Matched in Python, not with `LIKE`, so a `_` or `%` in the prefix means itself.
+        """
+        with self.connect() as conn:
+            rows = conn.execute("SELECT key, value FROM prefs").fetchall()
+        return {
+            str(row["key"]): row["value"]
+            for row in rows
+            if str(row["key"]).startswith(prefix)
+        }

@@ -191,6 +191,21 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
     }
 
 
+async def stages(timeout: float = TIMEOUT) -> list[str]:
+    """The stage names `cos.mjs` defines, in its order, with no workspace needed.
+
+    `0004_no-setting-says-which-model-runs-a-stage`: Settings lists a model per stage
+    before anybody has added a workspace, and it must not keep a stage list of its own
+    (`.claude/CLAUDE.md`: nothing may hold a second copy of the loop). So it asks the same
+    script the board asks, pointed at an empty temporary root — `status --json` sends the
+    stage list whether or not any unit exists. Raises `Unavailable` exactly as `read` does.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="coscc-stages-") as empty:
+        data = await read(empty, timeout)
+    return list(data["stages"])
+
 
 # Chosen, not measured. Since `0015` the `review` gate asks GitHub for the pull request's
 # checks, so this one call now waits on a network the board's own read never touches.
