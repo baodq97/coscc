@@ -26,31 +26,37 @@ from coscc import frontend
 from coscc.config import Config
 
 
-# The app's own environment must not reach a session. `coscc/run.py` sets
-# `REFLEX_WEB_WORKDIR` process-wide so that Reflex composes its static mount against the
-# right root -- and a session that inherits it and runs a build compiles **into the
-# installed package**. That is how the served bundle lost its `index.html` on 2026-09-23,
-# mid-step, on the machine the step was running for: `impl` is granted `uv`, and
-# `uv run coscc-build` needs no path argument to escape a workspace. The escape was in the
-# environment it was handed.
+# The app's own environment must not reach a session, and it cannot be removed -- only
+# overridden. `claude_agent_sdk` builds the child environment as
+# `{k: v for k, v in os.environ.items() if k != "CLAUDECODE"}` and then lays `options.env`
+# on top, so a key left out of `options.env` is a key the child *inherits*. Absence is not
+# deletion here.
 #
-# Filtered down rather than built up, which is the opposite of `harness.child_env` and is
-# a deliberate difference. `cos.mjs` needs four variables and they can all be named. The
-# Claude CLI finds its credentials and configuration in ways this module cannot enumerate,
-# so a built-up list would break sign-in silently, and a session that cannot sign in looks
-# exactly like a session that had nothing to say. What *can* be named is the set this app
-# puts into its own environment -- and that is exactly the set that leaks.
-LEAKED_VARS = (frontend.WEB_WORKDIR_VAR,)
-LEAKED_PREFIXES = ("COS_",)
+# `coscc/run.py` sets `REFLEX_WEB_WORKDIR` process-wide, pointing at the bundle this app
+# serves -- `coscc/_web` inside the installed package. A step that runs a build reads it
+# and compiles **into the installed package**: `index.html` is replaced by a fresh
+# scaffold and the page answers 404 while `/api/health` stays 200. Measured twice on
+# 2026-09-23, on the machine the step was running for, to the copy running the step.
+#
+# The first attempt at this fix left the key out of `options.env` and asserted it was
+# absent *from the dictionary*. That test passed and the bundle was destroyed again an
+# hour later, because the assertion was about this process and the damage was in the
+# child. It is overridden now, and the test asks what value the child would read.
+#
+# `<cwd>/.web` is where a checkout's build belongs: `coscc/frontend.py` `web_dir` returns
+# exactly that for anything not packaged, and a session's `cwd` is the workspace.
+def child_env(cwd: str) -> dict[str, str]:
+    """What to lay over the environment a session would otherwise inherit whole.
 
-
-def child_env() -> dict[str, str]:
-    """The environment a session runs in: this process's, minus what this app put there."""
-    return {
-        key: value
-        for key, value in os.environ.items()
-        if key not in LEAKED_VARS and not key.startswith(LEAKED_PREFIXES)
-    }
+    Every name this app puts into its own environment appears here with a value that is
+    safe for somebody else's repository, because leaving one out hands the child this
+    app's own.
+    """
+    env = {frontend.WEB_WORKDIR_VAR: str(Path(cwd) / ".web")}
+    # This app's settings describe this app, not the workspace. Empty reads as unset to
+    # `coscc/config.py`, which takes `or None` on every one of them.
+    env.update({name: "" for name in os.environ if name.startswith("COS_")})
+    return env
 
 
 class Refused(Exception):
@@ -205,8 +211,8 @@ def _options(
     """
     options = ClaudeAgentOptions(
         cwd=cwd,
-        # Not this process's environment. See `child_env` above and what it cost to learn.
-        env=child_env(),
+        # Laid over what the child would inherit. See `child_env` and what it cost twice.
+        env=child_env(cwd),
         # A board step brings its own list from `policy.Grant`; everything else gets the
         # app default, which is empty. `tools=[]` and `tools=None` mean different things to
         # the SDK, so the distinction is `is None`, not truthiness.
