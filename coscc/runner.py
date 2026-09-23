@@ -82,6 +82,7 @@ def build_prompt(
     stages: list[str],
     artifact: str,
     writes_own: bool = False,
+    gate_said: str = "",
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -103,6 +104,23 @@ def build_prompt(
     # and before `Sessions.stream` exists as a coroutine, so a `MissingRules` raised here
     # is `spec.md` R4's "0 requests to the SDK" by structure rather than by promise.
     parts.append(f"# The rules for this stage\n\n{skill_for(stage)}")
+
+    # The rules above open by telling this stage to run `cos.mjs gate` and stop if it
+    # exits non-zero. Four of the six prose stages have no tools and never could, and on
+    # 2026-09-23 the `ship` step of `0001` wrote `Status: draft` naming the unasked gate
+    # as a reason -- while its gate was open. So the app asks, refuses to start the step
+    # at all when the answer is no, and says so here. A step that is running has an open
+    # gate by construction; this tells it that, so it stops treating "I could not check"
+    # as "I must not proceed".
+    if gate_said:
+        parts.append(
+            "# The gate, already asked\n\n"
+            "The app ran `cos.mjs gate` for this stage before starting this step, and it "
+            "is open. It would not have started otherwise. This is what the gate said:\n\n"
+            f"    {gate_said}\n\n"
+            "Do not ask it again and do not treat it as unasked — you may have no tools "
+            "to run it with, and that is not a reason to hold back an artifact."
+        )
 
     intent = _read(directory / "intent.md")
     if intent:
@@ -245,6 +263,7 @@ class Runner:
         artifact: str,
         stages: list[str],
         mode: str,
+        gate_said: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -275,6 +294,7 @@ class Runner:
         prompt, included = build_prompt(
             workspace, directory, unit, stage, stages, artifact,
             writes_own=not grant.app_writes_artifact,
+            gate_said=gate_said,
         )
 
         if self.journal is not None:

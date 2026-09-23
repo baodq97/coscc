@@ -469,3 +469,41 @@ class AnUnusableReplyIsKeptBesideTheReason(unittest.TestCase):
             _, payload = asyncio.run(go())[-1]
             self.assertIn("returned nothing", payload["error"])
             self.assertNotIn("what the session replied", payload["error"])
+
+
+class ThePromptSaysTheGateWasAlreadyAsked(unittest.TestCase):
+    """What `0001`'s `ship` step needed and did not have, 2026-09-23.
+
+    Every stage's skill opens by telling it to run `cos.mjs gate` and stop on non-zero.
+    The four toolless prose stages can never run it, and `ship` responded the only honest
+    way left to it: it wrote `Status: draft` and gave the unasked gate as a reason. Its
+    gate was open. The app knew, and never said.
+    """
+
+    def scene(self, d):
+        make_unit(Path(d), intent_md="Status: accepted.\nTHE-INTENT-BODY")
+        return Path(d) / ".cos" / UNIT
+
+    def test_the_gates_own_words_reach_the_stage(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = build_prompt(
+                d, self.scene(d), UNIT, "ship", STAGES, "ship.md",
+                gate_said="open: ship may proceed for " + UNIT,
+            )
+            self.assertIn("open: ship may proceed", prompt)
+
+    def test_it_tells_the_stage_not_to_hold_back_over_a_gate_it_cannot_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = build_prompt(
+                d, self.scene(d), UNIT, "ship", STAGES, "ship.md",
+                gate_said="open: ship may proceed",
+            )
+            # The instruction, not the transcript. Without it the stage reads "ask the
+            # gate" in its own rules and has no way to know the question is already behind it.
+            self.assertIn("Do not ask it again", prompt)
+
+    def test_a_prompt_built_without_a_gate_answer_says_nothing_about_one(self):
+        """Callers that do not ask must not imply an answer they never got."""
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _ = build_prompt(d, self.scene(d), UNIT, "ship", STAGES, "ship.md")
+            self.assertNotIn("The gate, already asked", prompt)
