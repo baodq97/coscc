@@ -271,6 +271,15 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
                 [k for k, v in child.items() if k.startswith("COS_") and v], []
             )
 
+    def test_the_settings_the_child_reads_still_load(self):
+        """`0017` review F1: the child reads `COS_PORT=""`, and `config.from_env` must
+        take that as unset. A worktree's own `npm test` loads the config, and `int("")`
+        errored seven of its tests whenever the app had been given a port."""
+        from coscc import config
+        with mock.patch.dict(os.environ, {"COS_HOST": "127.0.0.1", "COS_PORT": "9999"}):
+            c = config.from_env(self.child())
+            self.assertEqual((c.host, c.port), ("0.0.0.0", 8790))
+
     def test_everything_else_is_left_alone(self):
         """Overridden, not replaced. A session that loses `HOME` cannot sign in."""
         with mock.patch.dict(os.environ, {"HOME": "/home/someone", "PATH": "/bin"}):

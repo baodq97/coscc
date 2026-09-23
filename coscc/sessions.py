@@ -73,7 +73,9 @@ def child_env(cwd: str, workspace: str | None = None) -> dict[str, str]:
         "PATH": worktrees.clean_path(workspace),
     }
     # This app's settings describe this app, not the workspace. Empty reads as unset to
-    # `coscc/config.py`, which takes `or None` on every one of them.
+    # `coscc/config.py` `from_env` for every one of them (host and port only since the
+    # `0017` review, F1), and to `cos.mjs` for `COS_REVIEW_ROUNDS`. `sessions_test.py`
+    # loads the config from what the child reads.
     env.update({name: "" for name in os.environ if name.startswith(("COS_", "__REFLEX_"))})
     return env
 

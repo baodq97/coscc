@@ -261,12 +261,19 @@ def this_repo_mode(base: Path) -> bool:
               f"in {time.monotonic() - started:.0f}s")
         if not prepared["ok"]:
             return say(False, "R5 preparing the worktree", worktrees.describe_failure(prepared))
-        env = worktrees.prepare_env(tree, str(REPO))
-        env.update({k: v for k, v in os.environ.items() if k.startswith("COS_")})
-        env.setdefault("COS_PORT", "8790")
+        # The worktree runs under what a session would read: this process's environment
+        # with an app's `COS_HOST`/`COS_PORT` in it, `child_env` laid on top the way
+        # `claude_agent_sdk` does. Nothing is patched back in -- review F1 was a proof that
+        # repaired `COS_PORT` for itself and so could not see the product break on it.
+        from unittest import mock
+        from coscc import sessions
+        parent = {**os.environ, "COS_HOST": "127.0.0.1", "COS_PORT": "8790"}
+        with mock.patch.dict(os.environ, parent, clear=True):
+            env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+            env.update(sessions.child_env(str(tree), str(REPO)))
         codes = {}
         for label, where in (("worktree", tree), ("checkout", REPO)):
-            e = dict(env) if label == "worktree" else {**os.environ, "COS_PORT": env["COS_PORT"]}
+            e = env if label == "worktree" else {**os.environ, "COS_PORT": "8790"}
             if label == "checkout":
                 e.pop("VIRTUAL_ENV", None)
             codes[label] = subprocess.run(["npm", "test"], cwd=str(where), env=e,
@@ -333,9 +340,6 @@ def main() -> int:
         base = Path(d)
         # Before `coscc` builds anything from the environment.
         os.environ["COS_DATA_DIR"] = str(base / "data")
-        os.environ.setdefault("COS_PORT", "8790")
-        if not os.environ["COS_PORT"].strip():
-            os.environ["COS_PORT"] = "8790"
         if "--paid" in args:
             proof = os.environ.get("COS_PROOF_REPO", "").strip()
             if not proof:
