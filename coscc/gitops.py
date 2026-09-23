@@ -8,9 +8,9 @@ Four rules, each answering `spec.md` R15:
 
 1. **argv, never a shell.** No string is ever interpreted; `repo_url` is one element of a
    list, so quoting, `;`, `$(...)` and friends have no meaning.
-2. **Fixed subcommands.** `clone` and `pull --ff-only`. No flag reaches `git` from a
-   caller, and a URL that begins with `-` is refused before `git` is invoked so it cannot
-   be read as one.
+2. **Fixed subcommands.** `clone`, `pull --ff-only`, and for branches `fetch` of the
+   trunk, `rev-parse` and `switch -c`. No flag reaches `git` from a caller, and a URL that
+   begins with `-` is refused before `git` is invoked so it cannot be read as one.
 3. **A constructed environment.** The child gets `PATH`, `HOME`, and the two variables that
    make it non-interactive. It does **not** inherit ours, so `CLAUDE_CODE_OAUTH_TOKEN`
    cannot reach a process that talks to the network.
@@ -148,8 +148,10 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
 # these run with the app process's own authority. So the limit has to live here, and it is
 # a short list on purpose.
 #
-# The app may: create a branch, in a workspace a caller has already passed the membership
-# gate for, with a name `cos.mjs unit-branch` produced.
+# The app may: fetch the trunk from `origin` into `refs/remotes/origin/main`, and create a
+# branch from the commit that fetch brought, in a workspace a caller has already passed the
+# membership gate for, with a name `cos.mjs unit-branch` produced. The fetch writes one
+# remote-tracking ref and moves nothing a person works on.
 #
 # The app may **not**: push, merge, commit, delete a branch, or move `main`. Those are a
 # step's business — `("pr", "autonomous")` carries `git` and `gh` and a warning that says
@@ -172,6 +174,20 @@ TRUNK = "main"
 # an option, and that is the one shape that turns a name into a flag.
 _BRANCH_RE = re.compile(r"^[a-z]+/[a-z0-9]+(?:-[a-z0-9]+)*$")
 
+# A remote name or a trunk name handed to `fetch`. No leading `-`, no `/`, no `:` — so
+# neither can become an option or reshape the refspec it is spliced into.
+_REF_PART_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+# The only start point `create_branch` takes.
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+# Seconds. **Not measured**: the figure is `0001_product-describes-a-state-it-is-not-in`
+# `spec.md` R2's, chosen there and marked unverifiable. The nearest measurement with a
+# source is a `pull` with nothing to fetch, 0.83-0.92s on this machine (the table at the
+# top of this file). So it bounds the ordinary case and says nothing about a slow link —
+# and while it runs, the page's request waits (`spec.md` C7).
+FETCH_TIMEOUT = 20.0
+
 
 async def current_branch(path: Path, timeout: float = BRANCH_TIMEOUT) -> str:
     """The branch this checkout is on. Empty on a detached HEAD, which is not an error."""
@@ -180,8 +196,57 @@ async def current_branch(path: Path, timeout: float = BRANCH_TIMEOUT) -> str:
     return await _run(["git", "-C", str(path), "branch", "--show-current"], timeout)
 
 
-async def create_branch(path: Path, name: str, timeout: float = BRANCH_TIMEOUT) -> str:
-    """Cut `name` from `TRUNK` and switch to it. Creates nothing else and pushes nothing.
+async def fetch(
+    path: Path, remote: str = "origin", branch: str = TRUNK, timeout: float = FETCH_TIMEOUT
+) -> str:
+    """Bring `refs/remotes/<remote>/<branch>` up to date, and touch nothing else.
+
+    `0001_product-describes-a-state-it-is-not-in` R1. The refspec is spelled out so that
+    ref is updated even when the remote's config carries no default refspec, and no tags
+    come along with it. A fetch moves no local branch and does not look at the working
+    tree, which is why a dirty checkout does not stop it.
+
+    Raises `GitError` on failure or on the deadline, like everything else here: `_run`
+    already carries git's own words back, so a second return shape would say less.
+    """
+    if not (path / ".git").exists():
+        raise GitError(f"not a git repository: {path}")
+    for part in (remote, branch):
+        if not _REF_PART_RE.fullmatch(part or ""):
+            raise GitError(f"not a remote or branch name this app will fetch: {part!r}")
+    refspec = f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}"
+    return await _run(
+        ["git", "-C", str(path), "fetch", "--no-tags", "--", remote, refspec], timeout
+    )
+
+
+async def rev_parse(path: Path, ref: str, timeout: float = BRANCH_TIMEOUT) -> str:
+    """The full SHA a ref names. `--verify` so an unknown ref fails instead of echoing."""
+    if not (path / ".git").exists():
+        raise GitError(f"not a git repository: {path}")
+    if not ref or ref.startswith("-"):
+        raise GitError(f"refusing a ref that could be read as a flag: {ref!r}")
+    try:
+        return await _run(
+            ["git", "-C", str(path), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+            timeout,
+        )
+    except GitError as e:
+        # `--quiet` makes git say nothing, so the reason has to be ours.
+        raise GitError(f"{ref} does not name a commit in {path} ({e})") from e
+
+
+async def create_branch(
+    path: Path, name: str, base: str, timeout: float = BRANCH_TIMEOUT
+) -> str:
+    """Cut `name` from the commit `base` and switch to it. Creates nothing else, pushes nothing.
+
+    `base` is a full SHA and nothing else. Since `0001_product-describes-a-state-it-is-not-in`
+    the caller decides the start point — fetch, then read the SHA — so what this reports as
+    cut is exactly what was cut, even if another fetch lands in between. A SHA also carries
+    no upstream, and `--no-track` says so explicitly: cut from `origin/main` by name, git
+    would set the new branch to track `main`, and a later `git pull` on it would pull the
+    trunk in without anybody asking.
 
     Refuses rather than reuses when the branch already exists: switching to a branch that
     somebody else's work is already on is a different act from starting one, and the two
@@ -197,6 +262,8 @@ async def create_branch(path: Path, name: str, timeout: float = BRANCH_TIMEOUT) 
         raise GitError(f"{TRUNK} is the trunk and this app does not create or move it")
     if not _BRANCH_RE.fullmatch(name or ""):
         raise GitError(f"not a branch name this app will create: {name!r}")
+    if not _SHA_RE.fullmatch(base or ""):
+        raise GitError(f"a branch is cut from a full commit SHA, not from {base!r}")
 
     existing = await _run(
         ["git", "-C", str(path), "branch", "--list", "--format=%(refname:short)", name], timeout
@@ -205,5 +272,9 @@ async def create_branch(path: Path, name: str, timeout: float = BRANCH_TIMEOUT) 
         raise GitError(f"branch already exists: {name}")
 
     # `switch -c <name> <start>` is one command that cannot fall back to the current HEAD:
-    # given a start point it either uses it or fails.
-    return await _run(["git", "-C", str(path), "switch", "-c", name, TRUNK], timeout)
+    # given a start point it either uses it or fails. It does fail when a file modified in
+    # the working tree also differs between HEAD and `base` — git refuses rather than
+    # overwrite, and creates no branch; that output reaches the page as it is.
+    return await _run(
+        ["git", "-C", str(path), "switch", "--no-track", "-c", name, base], timeout
+    )

@@ -253,6 +253,12 @@ def _lane(unit: dict) -> str:
     """
     action = str(unit.get("next") or "")
     rows = unit.get("stages") or []
+    # First, before every other rule. A unit started from this page holds only an
+    # `idea.md`, and that idea carries `Status: accepted` (`coscc/units.py` writes it so),
+    # so the *In progress* rule below would otherwise claim it the moment its `problems`
+    # went empty. `cos.mjs` decides what pre-intent means; this only places it.
+    if unit.get("phase") == "pre-intent":
+        return "Planned"
     if action == "finished" or action.startswith("closed"):
         return "Complete"
     if unit.get("problems") or any(r.get("status") == "draft" for r in rows):
@@ -295,6 +301,12 @@ class StudioState(rx.State):
     stages: list[str] = []
     units: list[Unit] = []
     board_note: str = ""
+    # Set only when the board is empty (`0001_product-describes-a-state-it-is-not-in` R6):
+    # the store the board read, the host repository, and how many units the host's own
+    # `.cos/` holds that the board does not list.
+    empty_store: str = ""
+    empty_host: str = ""
+    empty_host_units: int = 0
     recording: bool = False
     query: str = ""
     focus: str = "All work"
@@ -509,6 +521,7 @@ class StudioState(rx.State):
 
     async def _load_board(self) -> None:
         self.units, self.stages, self.board_note = [], [], ""
+        self.empty_store, self.empty_host, self.empty_host_units = "", "", 0
         self.branch = ""
         if not self.cwd:
             return
@@ -527,6 +540,15 @@ class StudioState(rx.State):
         self.stages = list(data["stages"])
         self.recording = bool(data["recording"])
         self.board_note = data.get("read_only_because") or data.get("empty_because") or ""
+        empty = data.get("empty") or {}
+        self.empty_store = str(empty.get("store") or "")
+        self.empty_host = str(empty.get("host") or "")
+        self.empty_host_units = int(empty.get("host_units") or 0)
+        if self.empty_host_units > 0:
+            # `empty_because` speaks of the store's `.cos/`, and next to a host `.cos/`
+            # that is full it reads as a claim about the wrong directory — the fault this
+            # unit exists for. Only the read-only reason survives, appended by the page.
+            self.board_note = data.get("read_only_because") or ""
 
         units: list[Unit] = []
         for u in data["units"]:
@@ -975,7 +997,9 @@ class StudioState(rx.State):
             self.notice = str(e)
             return
         self.branch = cut["branch"]
-        self.notice = f"On {cut['branch']}."
+        # R3 of `0001_product-describes-a-state-it-is-not-in`: say where it was cut from,
+        # from the fetched ref rather than the local `main`.
+        self.notice = f"On {cut['branch']}, cut from {cut['base']} at {cut['sha']}."
 
     async def set_mode(self, value: str | list[str]):
         if not isinstance(value, str) or value not in ("manual", "autonomous"):

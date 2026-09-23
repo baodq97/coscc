@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -218,6 +218,40 @@ test('a missing intent.md reports that, and not a missing Type on top of it', ()
   assert.deepEqual(u.problems, ['no intent.md — every unit opens with one'])
 })
 
+// --- pre-intent: not started is not the same as broken -----------------------
+
+const unitDir = (files) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cos-phase-'))
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text)
+  return dir
+}
+
+test('a unit holding only a valid idea is pre-intent and reports nothing', () => {
+  const u = readUnit(unitDir({ 'idea.md': '# Idea: x\nStatus: accepted.\n' }), '0015_fresh')
+  assert.equal(u.phase, 'pre-intent')
+  assert.deepEqual(u.problems, [])
+  // Still blocked on its intent, because it is: the phase changes the lane, not the gate.
+  assert.deepEqual(nextAction(u), { blocked: true, action: 'write-intent — the unit has no intent.md' })
+  assert.equal(checkGate(u, 'spec').ok, false)
+})
+
+test('an idea with a later artifact and no intent is still a problem', () => {
+  const u = readUnit(unitDir({ 'idea.md': 'Status: accepted.\n', 'spec.md': 'Status: draft.\n' }), '0015_x')
+  assert.equal(u.phase, 'started')
+  assert.ok(u.problems.includes('no intent.md — every unit opens with one'))
+})
+
+test('an idea with no Status line is not pre-intent', () => {
+  const u = readUnit(unitDir({ 'idea.md': '# Idea: x\n' }), '0015_x')
+  assert.equal(u.phase, 'started')
+  assert.ok(u.problems.includes('no intent.md — every unit opens with one'))
+  assert.ok(u.problems.includes('idea.md carries no Status line'))
+})
+
+test('a unit with an intent is started', () => {
+  assert.equal(readUnit(unitDir({ 'intent.md': 'Type: fix. Status: draft.\n' }), '0015_x').phase, 'started')
+})
+
 test('reporting a Type problem does not close any gate', () => {
   // Deliberate, and the reason the eight older units could be backfilled at leisure rather
   // than under a red board: `checkGate` never reads `Type:`. `.cos/0010_.../spec.md` R9.
@@ -377,4 +411,56 @@ test('an unknown command prints both halves of the boundary', () => {
   assert.equal(out.status, 2)
   assert.match(out.stderr, /these take --root/)
   assert.match(out.stderr, /these do not/)
+})
+
+// --- new-path --reserve-from --------------------------------------------------
+
+// A directory with a `.cos/` holding the named units.
+const cosTree = (...names) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cos-reserve-'))
+  mkdirSync(join(dir, '.cos'))
+  for (const n of names) mkdirSync(join(dir, '.cos', n))
+  return dir
+}
+
+test('new-path counts the numbers taken in a reserved directory', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cos-root-'))
+  const host = cosTree('0001_a', '0014_n')
+  const out = cli('--root', root, '--reserve-from', host, 'new-path', 'x')
+  assert.equal(out.status, 0, out.stderr)
+  assert.equal(out.stdout.trim(), '.cos/0015_x')
+})
+
+test('new-path takes the highest of root and reserve, and still writes nothing', () => {
+  const root = cosTree('0003_c')
+  const host = cosTree('0014_n')
+  const out = cli('--root', root, 'new-path', 'x', '--reserve-from', host)
+  assert.equal(out.stdout.trim(), '.cos/0015_x')
+  assert.deepEqual(readdirSync(join(root, '.cos')), ['0003_c'])
+  assert.deepEqual(readdirSync(join(host, '.cos')), ['0014_n'])
+})
+
+test('a reserved directory with no .cos/ contributes nothing', () => {
+  const root = cosTree('0003_c')
+  const out = cli('--root', root, '--reserve-from', mkdtempSync(join(tmpdir(), 'cos-bare-')), 'new-path', 'x')
+  assert.equal(out.stdout.trim(), '.cos/0004_x')
+})
+
+test('--reserve-from is repeatable', () => {
+  const out = cli('--root', cosTree(), '--reserve-from', cosTree('0002_b'), '--reserve-from', cosTree('0009_i'), 'new-path', 'x')
+  assert.equal(out.stdout.trim(), '.cos/0010_x')
+})
+
+for (const args of [['status'], ['gate', '0001_a', 'spec'], ['unit-branch', '0001_a']]) {
+  test(`--reserve-from is refused by ${args[0]}`, () => {
+    const out = cli('--root', cosTree(), '--reserve-from', cosTree('0001_a'), ...args)
+    assert.equal(out.status, 2)
+    assert.match(out.stderr, /--reserve-from applies only to/)
+  })
+}
+
+test('--reserve-from with no directory is misuse', () => {
+  const out = cli('new-path', 'x', '--reserve-from')
+  assert.equal(out.status, 2)
+  assert.match(out.stderr, /needs a directory/)
 })

@@ -20,6 +20,8 @@ node .claude/scripts/cos.mjs check-version         # the five places a version i
 
 The first four take `--root <dir>` and read another repository's `.cos/`. The last three
 refuse it: given a root, they would answer about here while naming somewhere else.
+`new-path` alone also takes `--reserve-from <dir>`, repeatable: numbers already used in
+that directory's `.cos/` count as taken, though nothing is written there.
 
 Tests must be green before any task is reported complete; never skip or delete a failing
 one. There is no linter; do not invent a command for one.

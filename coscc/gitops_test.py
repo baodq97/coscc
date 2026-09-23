@@ -156,24 +156,27 @@ class TheAppMayCreateABranchAndNothingElse(unittest.TestCase):
             capture_output=True, text=True, check=True,
         ).stdout
 
-    def test_it_cuts_the_branch_from_the_trunk_and_switches_to_it(self):
-        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem"))
+    @property
+    def head(self) -> str:
+        return self._git("rev-parse", "HEAD").strip()
+
+    def test_it_cuts_the_branch_from_the_commit_it_is_given_and_switches_to_it(self):
+        base = self.head
+        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem", base))
         self.assertEqual(asyncio.run(gitops.current_branch(self.repo)), "feat/a-problem")
-        # Cut from the trunk, not from wherever the checkout happened to be standing.
-        merged = self._git("branch", "--contains", "main", "--format=%(refname:short)")
-        self.assertIn("feat/a-problem", merged)
+        self.assertEqual(self._git("rev-parse", "feat/a-problem").strip(), base)
 
     def test_it_will_not_touch_the_trunk(self):
         with self.assertRaises(GitError) as caught:
-            asyncio.run(gitops.create_branch(self.repo, "main"))
+            asyncio.run(gitops.create_branch(self.repo, "main", self.head))
         self.assertIn("trunk", str(caught.exception))
         self.assertEqual(asyncio.run(gitops.current_branch(self.repo)), "main")
 
     def test_it_refuses_a_branch_that_already_exists_rather_than_joining_it(self):
-        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem"))
+        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem", self.head))
         self._git("switch", "-q", "main")
         with self.assertRaises(GitError) as caught:
-            asyncio.run(gitops.create_branch(self.repo, "feat/a-problem"))
+            asyncio.run(gitops.create_branch(self.repo, "feat/a-problem", self.head))
         self.assertIn("already exists", str(caught.exception))
 
     def test_a_name_that_is_not_a_branch_name_never_reaches_git(self):
@@ -181,17 +184,23 @@ class TheAppMayCreateABranchAndNothingElse(unittest.TestCase):
         # an option, and an option is not something a caller gets to choose here.
         for bad in ("--force", "-x", "feat/../etc", "Feat/Problem", "", "x", "feat/"):
             with self.assertRaises(GitError, msg=bad):
-                asyncio.run(gitops.create_branch(self.repo, bad))
+                asyncio.run(gitops.create_branch(self.repo, bad, self.head))
+
+    def test_a_base_that_is_not_a_full_sha_never_reaches_git(self):
+        for bad in ("main", "origin/main", "--orphan", self.head[:7], "", "HEAD"):
+            with self.assertRaises(GitError, msg=bad):
+                asyncio.run(gitops.create_branch(self.repo, "feat/a-problem", bad))
+        self.assertEqual(self._git("branch", "--list", "feat/a-problem").strip(), "")
 
     def test_it_is_not_a_way_to_push(self):
-        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem"))
+        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem", self.head))
         # No remote is configured, so a push would fail loudly. The point is that nothing
         # tried: the branch exists only here.
         self.assertEqual(self._git("branch", "-r", "--format=%(refname:short)").strip(), "")
 
     def test_it_is_not_a_way_to_commit(self):
         before = self._git("rev-parse", "HEAD").strip()
-        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem"))
+        asyncio.run(gitops.create_branch(self.repo, "feat/a-problem", before))
         (self.repo / "new.txt").write_text("y\n", encoding="utf-8")
         self.assertEqual(self._git("rev-parse", "HEAD").strip(), before)
         # And the file it did not commit is still sitting there uncommitted.
@@ -201,9 +210,81 @@ class TheAppMayCreateABranchAndNothingElse(unittest.TestCase):
         plain = Path(self._tmp.name) / "plain"
         plain.mkdir()
         for call in (
-            lambda: gitops.create_branch(plain, "feat/a-problem"),
+            lambda: gitops.create_branch(plain, "feat/a-problem", "0" * 40),
             lambda: gitops.current_branch(plain),
+            lambda: gitops.fetch(plain),
+            lambda: gitops.rev_parse(plain, "HEAD"),
         ):
             with self.assertRaises(GitError) as caught:
                 asyncio.run(call())
             self.assertIn(str(plain), str(caught.exception))
+
+
+class FetchingTheTrunkFromARemote(unittest.TestCase):
+    """`0001_product-describes-a-state-it-is-not-in` R1 and R2, against a local bare remote.
+
+    No network: the remote is a directory. What is under test is which ref moves, which
+    does not, and that a failure carries git's own words.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.remote = root / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
+        seed = root / "seed"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True)
+        self.seed = seed
+        self._commit(seed, "one")
+        self.repo = root / "repo"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.repo)], check=True)
+
+    def _git(self, where: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(where), "-c", "user.name=T",
+             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    def _commit(self, where: Path, text: str) -> str:
+        (where / "f.txt").write_text(text + "\n", encoding="utf-8")
+        self._git(where, "add", "-A")
+        self._git(where, "commit", "-q", "-m", text)
+        self._git(where, "push", "-q", "origin", "main")
+        return self._git(where, "rev-parse", "HEAD")
+
+    def test_fetch_brings_the_new_commit_and_moves_no_local_branch(self):
+        local = self._git(self.repo, "rev-parse", "main")
+        new = self._commit(self.seed, "two")
+        asyncio.run(gitops.fetch(self.repo, "origin", "main"))
+        self.assertEqual(asyncio.run(gitops.rev_parse(self.repo, "refs/remotes/origin/main")), new)
+        self.assertEqual(self._git(self.repo, "rev-parse", "main"), local)
+
+    def test_a_missing_remote_is_a_git_error_carrying_what_git_said(self):
+        self._git(self.repo, "remote", "set-url", "origin", str(Path(self._tmp.name) / "gone.git"))
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(gitops.fetch(self.repo, "origin", "main"))
+        self.assertIn("gone.git", str(caught.exception))
+
+    def test_a_remote_or_branch_shaped_like_a_flag_never_reaches_git(self):
+        for remote, branch in (("--upload-pack=x", "main"), ("origin", "-x"), ("origin", "a:b"), ("", "main")):
+            with self.assertRaises(GitError, msg=(remote, branch)):
+                asyncio.run(gitops.fetch(self.repo, remote, branch))
+
+    def test_rev_parse_of_an_unknown_ref_names_it(self):
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(gitops.rev_parse(self.repo, "refs/remotes/nowhere/main"))
+        self.assertIn("refs/remotes/nowhere/main", str(caught.exception))
+
+    def test_a_branch_cut_from_the_fetched_sha_tracks_nothing(self):
+        # Plan Risk 2: with a ref name as start point git would set an upstream of `main`.
+        new = self._commit(self.seed, "two")
+        asyncio.run(gitops.fetch(self.repo))
+        asyncio.run(gitops.create_branch(self.repo, "fix/a-problem", new))
+        self.assertEqual(self._git(self.repo, "rev-parse", "fix/a-problem"), new)
+        got = subprocess.run(
+            ["git", "-C", str(self.repo), "config", "branch.fix/a-problem.merge"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(got.stdout.strip(), "")

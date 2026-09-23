@@ -85,8 +85,21 @@ export function readUnit(dir, name) {
 
   const stray = readdirSync(dir).filter((f) => !ARTIFACTS.includes(f))
   if (stray.length) unit.problems.push(`unexpected file(s): ${stray.join(', ')}`)
-  if (!unit.artifacts['intent.md']) unit.problems.push(`no intent.md — every unit opens with one`)
-  else {
+
+  // `phase` separates "not started" from "something is wrong". A unit holding only a valid
+  // `idea.md` is one that was opened a moment ago and has not reached its intent yet; the
+  // missing intent is the next step, not a defect. Anything else without an intent — an
+  // empty directory, an idea with no readable status, a spec or plan with no intent under
+  // it — is still reported, exactly as before. `nextAction` and `checkGate` do not read
+  // this: a pre-intent unit is still blocked on `write-intent`, because it is.
+  unit.phase = 'started'
+  if (!unit.artifacts['intent.md']) {
+    const idea = unit.artifacts['idea.md']
+    const ideaValid = idea && idea.status !== null && VALID['idea.md'].includes(idea.status)
+    const later = STAGES.slice(STAGES.findIndex((s) => s.name === 'intent') + 1).some((s) => present(unit, s.file))
+    if (ideaValid && !later) unit.phase = 'pre-intent'
+    else unit.problems.push(`no intent.md — every unit opens with one`)
+  } else {
     // Same distinction `missing()` draws below: a header with no `Type:` is a different
     // repair from a header that declares one nothing accepts. Both are reported and
     // neither is blocked — `checkGate` does not read this.
@@ -462,7 +475,13 @@ function cmdUnitBranch(unitName, cosDir) {
 // The three commands above answer about this checkout, so `--root` is refused for them.
 const LOCAL_ONLY = new Set(['check-branch', 'check-tag', 'check-version'])
 
-function cmdNewPath(slug, cosDir) {
+// `reserveFrom` widens the set of numbers already taken without widening where the unit is
+// written. The app keeps its units in a store of its own, beside a repository that may
+// have used `.cos/` for years; counting only the store would hand out `0001` again next to
+// a `0001` already in the repository. Each directory's `.cos/` is read the way the root's
+// is, and a directory without one contributes nothing. The path printed stays relative to
+// the root, because the root is the only place anything is created.
+function cmdNewPath(slug, cosDir, reserveFrom = []) {
   if (!slug) {
     console.error('usage: cos.mjs new-path <slug>')
     return 2
@@ -473,7 +492,8 @@ function cmdNewPath(slug, cosDir) {
     console.error('  because the underscore separates the number from the slug.')
     return 2
   }
-  console.log(`.cos/${nextNumber(readAll(cosDir))}_${slug}`)
+  const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))].flatMap((d) => readAll(d))
+  console.log(`.cos/${nextNumber(taken)}_${slug}`)
   return 0
 }
 
@@ -490,13 +510,28 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
   const cosDir = rootAt === -1 ? COS : join(resolve(argv[rootAt + 1]), '.cos')
   // Stripped before the command is read, so `--root` may sit on either side of it.
-  const words = rootAt === -1 ? argv : argv.filter((_, i) => i !== rootAt && i !== rootAt + 1)
+  const afterRoot = rootAt === -1 ? argv : argv.filter((_, i) => i !== rootAt && i !== rootAt + 1)
+
+  // `--reserve-from <dir>`, repeatable, stripped the same way and from any position.
+  const reserveFrom = []
+  const words = []
+  for (let i = 0; i < afterRoot.length; i++) {
+    if (afterRoot[i] !== '--reserve-from') {
+      words.push(afterRoot[i])
+      continue
+    }
+    if (!afterRoot[i + 1]) {
+      console.error('--reserve-from needs a directory')
+      process.exit(2)
+    }
+    reserveFrom.push(afterRoot[++i])
+  }
   const [cmd, ...rest] = words
 
   const run = {
     status: () => cmdStatus(rest.includes('--json'), cosDir),
     gate: () => cmdGate(rest[0], rest[1], cosDir),
-    'new-path': () => cmdNewPath(rest[0], cosDir),
+    'new-path': () => cmdNewPath(rest[0], cosDir, reserveFrom),
     'unit-branch': () => cmdUnitBranch(rest[0], cosDir),
     'check-branch': () => cmdCheckBranch(rest[0]),
     'check-tag': () => cmdCheckTag(rest[0]),
@@ -506,7 +541,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!run) {
     console.error('usage: cos.mjs [--root <dir>] <command>')
     console.error('  reading a .cos/ (these take --root):')
-    console.error('    status [--json] | gate <unit> <stage> | new-path <slug> | unit-branch <unit>')
+    console.error('    status [--json] | gate <unit> <stage> | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit>')
     console.error('  describing this checkout (these do not):')
     console.error('    check-branch [name] | check-tag <tag> | check-version')
     process.exit(2)
@@ -521,6 +556,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (rootAt !== -1 && LOCAL_ONLY.has(cmd)) {
     console.error(`--root does not apply to \`${cmd}\`: it reports on the checkout this script lives in,`)
     console.error(`  not on a .cos/ somewhere else. Run it from the repository you mean.`)
+    process.exit(2)
+  }
+
+  // `--reserve-from` means "these numbers are taken too", which is a question only
+  // `new-path` asks. Anywhere else it would be silently ignored, and a flag that is
+  // accepted and ignored reads as a flag that worked.
+  if (reserveFrom.length && cmd !== 'new-path') {
+    console.error(`--reserve-from applies only to \`new-path\`, not to \`${cmd}\`.`)
     process.exit(2)
   }
 

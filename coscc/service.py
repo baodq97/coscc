@@ -52,6 +52,11 @@ from coscc.units import BadUnit, CannotCreate
 # so the names are repeated and this comment is the warning.
 STAGE_FILES = ("idea", "intent", "spec", "plan", "impl", "pr", "review", "ship")
 
+# Where a unit's branch is cut from: the trunk as this remote has it. Constants, not
+# request fields — a caller cannot point the fetch at another remote or another branch.
+BRANCH_REMOTE = "origin"
+BRANCH_TRUNK = gitops.TRUNK
+
 
 class Invalid(Exception):
     """A request this layer refuses, carrying a reason a caller can show verbatim."""
@@ -308,6 +313,16 @@ class Service:
             None if journal is not None
             else "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR"
         )
+        if not data["units"]:
+            # `0001_product-describes-a-state-it-is-not-in` R6, R7, R8. The board reads the
+            # store, and a host repository can have a `.cos/` full of units the store never
+            # heard of. The page has to be able to say which directory it read and how many
+            # units sit in the one it did not. Counted on every call: R8 forbids a cache.
+            data["empty"] = {
+                "store": str(self._units_root(cwd)),
+                "host": units.key(cwd),
+                "host_units": units.host_unit_count(cwd),
+            }
         return data
 
     async def set_mode(self, cwd: str, unit: str, stage: str, mode: str) -> dict[str, Any]:
@@ -433,7 +448,17 @@ class Service:
         try:
             return {
                 "cwd": cwd,
-                **units.create(cwd, slug, brief, self.config.data_dir),
+                # The host repository's own `.cos/` counts toward the number, so a unit
+                # started here cannot take a number already used there
+                # (`0001_product-describes-a-state-it-is-not-in` R10). Counting is
+                # `cos.mjs`'s; this only names the directory (R11).
+                **units.create(
+                    cwd,
+                    slug,
+                    brief,
+                    self.config.data_dir,
+                    reserve_from=[Path(cwd).expanduser().resolve()],
+                ),
             }
         except (CannotCreate, BadUnit) as e:
             raise Invalid(str(e)) from e
@@ -444,17 +469,40 @@ class Service:
         The name is not chosen here and is not the caller's: `cos.mjs unit-branch` reads
         the `Type:` the intent declared and prints `<type>/<slug>`. `coscc/gitops.py`
         carries the list of what the app may do with it, which is this and nothing else.
+
+        Since `0001_product-describes-a-state-it-is-not-in` it is cut from the trunk **as the
+        remote has it**, not from whatever the local `main` last saw: fetch, read the SHA
+        that fetch brought, cut from that SHA (R1). If the fetch fails nothing is cut and
+        the refusal says so (R2) — cutting from a stale `main` with a warning would still
+        open the pull request on the wrong base. The result names the ref and the commit
+        (R3). The remote and the trunk are constants here, never taken from a request.
         """
         self._workspace_or_refuse(cwd)
         try:
             name = units.branch_name(cwd, unit, self.config.data_dir)
         except (CannotCreate, BadUnit) as e:
             raise Invalid(str(e)) from e
+        repo = Path(cwd).expanduser().resolve()
         try:
-            output = await gitops.create_branch(Path(cwd).expanduser().resolve(), name)
+            await gitops.fetch(repo, BRANCH_REMOTE, BRANCH_TRUNK)
+        except GitError as e:
+            raise Invalid(
+                f"Could not update {BRANCH_TRUNK} from {BRANCH_REMOTE}, so no branch was cut. "
+                f"Nothing in the repository changed. git said: {e}"
+            ) from e
+        try:
+            sha = await gitops.rev_parse(repo, f"refs/remotes/{BRANCH_REMOTE}/{BRANCH_TRUNK}")
+            output = await gitops.create_branch(repo, name, sha)
         except GitError as e:
             raise Invalid(str(e)) from e
-        return {"cwd": cwd, "unit": unit, "branch": name, "output": output}
+        return {
+            "cwd": cwd,
+            "unit": unit,
+            "branch": name,
+            "base": f"{BRANCH_REMOTE}/{BRANCH_TRUNK}",
+            "sha": sha[:7],
+            "output": output,
+        }
 
     async def branch_here(self, cwd: str) -> dict[str, Any]:
         """Which branch the workspace is on. A read, so the page can show it."""

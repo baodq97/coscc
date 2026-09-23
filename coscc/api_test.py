@@ -387,6 +387,13 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
              "commit", "-q", "-m", "first"],
             check=True, capture_output=True,
         )
+        # A branch is cut from what `origin` has since
+        # `0001_product-describes-a-state-it-is-not-in` R1, so there has to be one. A bare
+        # directory, pushed to once: no network.
+        remote = root / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+        for args in (("remote", "add", "origin", str(remote)), ("push", "-q", "origin", "main")):
+            subprocess.run(["git", "-C", str(self.repo), *args], check=True, capture_output=True)
         self.cwd = str(self.repo)
         self.app = build(
             Config(
@@ -451,6 +458,8 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(cut.status_code, 200, cut.text)
         self.assertEqual(cut.json()["branch"], "feat/a-problem")
+        self.assertEqual(cut.json()["base"], "origin/main")
+        self.assertEqual(len(cut.json()["sha"]), 7)
         seen = (await self.client.get("/api/branch", params={"cwd": self.cwd})).json()
         self.assertEqual(seen["branch"], "feat/a-problem")
 
