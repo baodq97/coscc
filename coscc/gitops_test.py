@@ -365,3 +365,169 @@ class Worktrees(FetchingTheTrunkFromARemote):
     def test_main_is_never_deleted(self):
         with self.assertRaises(GitError):
             asyncio.run(gitops.delete_merged_branch(self.repo, "main", self.main))
+
+
+class MeasuringAncestryAndDistance(unittest.TestCase):
+    """`0030_a-unit-branch-starts-from-a-stale-main` plan step 1: `is_ancestor`, `count_missing`.
+
+    A fixture of its own rather than a subclass of `FetchingTheTrunkFromARemote`: that
+    class's own tests each push a second commit whose message is the literal `"two"`, and
+    unittest runs every inherited test method against a subclass's `setUp` too — inheriting
+    it here, with a `"two"` already pushed, would leave those tests nothing left to commit.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.remote = root / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
+        seed = root / "seed"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True)
+        self.seed = seed
+        self._commit(seed, "one")
+        self.repo = root / "repo"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.repo)], check=True)
+        self.one = self._git(self.repo, "rev-parse", "main")
+        self.two = self._commit(self.seed, "two")
+
+    def _git(self, where: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(where), "-c", "user.name=T",
+             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    def _commit(self, where: Path, text: str) -> str:
+        (where / "f.txt").write_text(text + "\n", encoding="utf-8")
+        self._git(where, "add", "-A")
+        self._git(where, "commit", "-q", "-m", text)
+        self._git(where, "push", "-q", "origin", "main")
+        return self._git(where, "rev-parse", "HEAD")
+
+    def test_an_ancestor_is_reported_true(self):
+        asyncio.run(gitops.fetch(self.repo))
+        self.assertTrue(asyncio.run(gitops.is_ancestor(self.repo, self.one, self.two)))
+
+    def test_a_commit_is_its_own_ancestor(self):
+        self.assertTrue(asyncio.run(gitops.is_ancestor(self.repo, self.one, self.one)))
+
+    def test_a_descendant_is_not_an_ancestor_of_its_own_parent(self):
+        asyncio.run(gitops.fetch(self.repo))
+        self.assertFalse(asyncio.run(gitops.is_ancestor(self.repo, self.two, self.one)))
+
+    def test_an_unknown_commit_is_a_git_error_not_a_false(self):
+        # Exit 1 means "no"; an unknown commit is neither 0 nor 1, and must not be read as no.
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.is_ancestor(self.repo, self.one, "f" * 40))
+
+    def test_a_ref_shaped_argument_never_reaches_git(self):
+        for bad in ("main", "HEAD", self.one[:7], "", "origin/main"):
+            with self.assertRaises(GitError, msg=bad):
+                asyncio.run(gitops.is_ancestor(self.repo, bad, self.one))
+            with self.assertRaises(GitError, msg=bad):
+                asyncio.run(gitops.is_ancestor(self.repo, self.one, bad))
+
+    def test_count_missing_counts_what_have_lacks(self):
+        asyncio.run(gitops.fetch(self.repo))
+        self.assertEqual(asyncio.run(gitops.count_missing(self.repo, self.one, self.two)), 1)
+
+    def test_count_missing_is_zero_when_equal(self):
+        self.assertEqual(asyncio.run(gitops.count_missing(self.repo, self.one, self.one)), 0)
+
+    def test_count_missing_the_other_direction_is_zero(self):
+        asyncio.run(gitops.fetch(self.repo))
+        self.assertEqual(asyncio.run(gitops.count_missing(self.repo, self.two, self.one)), 0)
+
+    def test_a_ref_shaped_argument_never_reaches_git_for_count_missing(self):
+        for bad in ("main", "HEAD", self.one[:7], ""):
+            with self.assertRaises(GitError, msg=bad):
+                asyncio.run(gitops.count_missing(self.repo, bad, self.one))
+
+
+class AdvancingADetachedWorktree(unittest.TestCase):
+    """`0030_a-unit-branch-starts-from-a-stale-main` plan step 1: `advance_detached`.
+
+    A fixture of its own rather than a subclass of `Worktrees`: this one's `setUp` already
+    puts the tree where `worktree_add` left it, and unittest would run `Worktrees`'s own
+    tests against that same already-created tree too, where several expect a virgin one.
+
+    One test moves a clean detached tree forward; three refuse it, each leaving HEAD
+    exactly where it was — a refusal that moved the tree partway would be worse than one
+    that did nothing.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.remote = root / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
+        seed = root / "seed"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(seed)], check=True, capture_output=True)
+        self.seed = seed
+        self._commit(seed, "one")
+        self.repo = root / "repo"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.repo)], check=True)
+        self.main = self._git(self.repo, "rev-parse", "main")
+        self.tree = root / "trees" / "0001_a"
+        asyncio.run(gitops.worktree_add(self.repo, self.tree, self.main))
+
+    def _git(self, where: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(where), "-c", "user.name=T",
+             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    def _commit(self, where: Path, text: str) -> str:
+        (where / "f.txt").write_text(text + "\n", encoding="utf-8")
+        self._git(where, "add", "-A")
+        self._git(where, "commit", "-q", "-m", text)
+        self._git(where, "push", "-q", "origin", "main")
+        return self._git(where, "rev-parse", "HEAD")
+
+    def test_a_clean_detached_tree_is_moved_to_the_fetched_sha(self):
+        new = self._commit(self.seed, "two")
+        asyncio.run(gitops.fetch(self.tree))
+        asyncio.run(gitops.advance_detached(self.tree, new))
+        self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), new)
+        self.assertEqual(self._git(self.tree, "branch", "--show-current"), "")
+        # `main` itself never moves — only the tree does.
+        self.assertEqual(self._git(self.repo, "rev-parse", "main"), self.main)
+
+    def test_a_tree_on_its_own_branch_is_refused(self):
+        self._git(self.tree, "switch", "-q", "-c", "fix/a-problem")
+        new = self._commit(self.seed, "two")
+        asyncio.run(gitops.fetch(self.tree))
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(gitops.advance_detached(self.tree, new))
+        self.assertIn("fix/a-problem", str(caught.exception))
+        self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), self.main)
+
+    def test_a_dirty_tree_is_refused(self):
+        new = self._commit(self.seed, "two")
+        asyncio.run(gitops.fetch(self.tree))
+        (self.tree / "dirty.txt").write_text("x\n", encoding="utf-8")
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.advance_detached(self.tree, new))
+        self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), self.main)
+        self.assertTrue((self.tree / "dirty.txt").exists())
+
+    def test_a_head_that_is_not_an_ancestor_of_the_target_is_refused(self):
+        # A commit made directly on the detached tree: unpushed, and not on the remote.
+        (self.tree / "local.txt").write_text("mine\n", encoding="utf-8")
+        self._git(self.tree, "add", "-A")
+        self._git(self.tree, "commit", "-q", "-m", "local")
+        local_head = self._git(self.tree, "rev-parse", "HEAD")
+        new = self._commit(self.seed, "two")
+        asyncio.run(gitops.fetch(self.tree))
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(gitops.advance_detached(self.tree, new))
+        self.assertIn("ancestor", str(caught.exception))
+        self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), local_head)
+
+    def test_a_sha_that_is_not_a_full_sha_never_reaches_git(self):
+        for bad in ("main", "HEAD", self.main[:7], ""):
+            with self.assertRaises(GitError, msg=bad):
+                asyncio.run(gitops.advance_detached(self.tree, bad))
