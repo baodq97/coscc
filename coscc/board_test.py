@@ -334,3 +334,86 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
                     run(board.gate(REPO, "0001_no-session-management", "spec"))
             finally:
                 harness.script = original
+
+
+class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
+    """`0024`. The run button's stage is `cos.mjs next`'s answer, copied through."""
+
+    def _unit(self, tmp: str, files: dict[str, str]) -> str:
+        name = "0001_what-comes-next"
+        d = Path(tmp) / ".cos" / name
+        d.mkdir(parents=True)
+        for f, text in files.items():
+            (d / f).write_text(text)
+        return name
+
+    def _script_says(self, tmp: str, name: str, *extra: str) -> dict:
+        import json
+        import subprocess
+
+        out = subprocess.run(
+            ["node", str(harness.script()), "--root", tmp, "next", name, *extra],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        return json.loads(out)
+
+    def test_the_stage_is_the_one_the_script_printed(self):
+        chains = [
+            {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"},
+            {"intent.md": "# I\nAuthor: t. Type: fix. Status: draft.\n"},
+            {
+                "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
+                "spec.md": "Status: skipped.\n", "plan.md": "Status: accepted.\n",
+            },
+            {
+                "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
+                "spec.md": "Status: accepted.\n", "plan.md": "Status: accepted.\n",
+                "impl.md": "Status: accepted.\n",
+                "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
+                "review.md": "# R\nStatus: changes-requested.\n\n## Round 1\n\n"
+                "Reviewed: aaaaaaa. Verdict: changes-requested.\n\n### Findings\n\n- F1 [open] x\n",
+            },
+        ]
+        for files in chains:
+            with self.subTest(files=sorted(files)), tempfile.TemporaryDirectory() as tmp:
+                name = self._unit(tmp, files)
+                script = self._script_says(tmp, name)
+                got = run(board.next_step(tmp, name))
+                self.assertEqual(got["stage"], script["stage"])
+                self.assertEqual(got["action"], script["action"])
+                # `read` carries the file-only stage for the card, from the same script.
+                [u] = run(board.read(tmp))["units"]
+                self.assertEqual(u["next_stage"], script["stage"] if files.get("review.md") is None else "")
+
+    def test_the_repo_reaches_next_as_repo_with_the_gate_timeout(self):
+        seen = {}
+
+        async def fake_run(argv, timeout):
+            seen["argv"], seen["timeout"] = argv, timeout
+            return 0, '{"unit": "u", "stage": "impl", "action": "a", "blocked": true}', ""
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
+            got = run(board.next_step(tmp, "0001_x", repo=tmp))
+        argv = seen["argv"]
+        self.assertEqual(argv[argv.index("next") + 1], "0001_x")
+        self.assertEqual(argv[argv.index("--repo") + 1], str(Path(tmp).resolve()))
+        self.assertEqual(seen["timeout"], board.GATE_TIMEOUT)
+        self.assertEqual(got["stage"], "impl")
+
+    def test_read_asks_the_script_for_status_only_so_the_board_never_waits_on_gh(self):
+        calls = []
+        original = board._run
+
+        async def spy(argv, timeout):
+            calls.append(argv)
+            return await original(argv, timeout)
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", spy):
+            self._unit(tmp, {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"})
+            run(board.read(tmp))
+        self.assertEqual([a[a.index("--root") + 2:] for a in calls], [["status", "--json"]])
+
+    def test_a_unit_that_is_not_there_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(Unavailable):
+                run(board.next_step(tmp, "0009_not-here"))
