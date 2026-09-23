@@ -166,6 +166,12 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             "questions": list(u.get("questions") or []),
             "open": int(u.get("open") or 0),
             "counted": u.get("counted") or "",
+            # `0021`. The pull request `pr.md` names and the rounds `review.md` holds, each
+            # with its text verbatim — both read by `cos.mjs` and copied, so the round a
+            # comment carries is the round the gate counted. An older `cos.mjs` sends
+            # neither, which reads as no pull request and no rounds.
+            "pr": _pr_of(u),
+            "rounds": _rounds_of(u),
         }
         for u in data.get("units") or []
     ]
@@ -238,6 +244,24 @@ async def gate(
 
     said = (out_text + err_text).strip()
     return code == 0, said or f"the gate exited {code} and said nothing"
+
+def _pr_of(unit: dict[str, Any]) -> dict[str, Any] | None:
+    """`{url, number}` from `pr.md`'s `PR:` line as `cos.mjs` `parsePr` read it, or None."""
+    pr = ((unit.get("artifacts") or {}).get("pr.md") or {}).get("pr")
+    if not isinstance(pr, dict) or not pr.get("url"):
+        return None
+    return {"url": str(pr["url"]), "number": pr.get("number")}
+
+
+def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
+    """Each round of `review.md`: its number, verdict and text, as `cos.mjs` split them."""
+    review = ((unit.get("artifacts") or {}).get("review.md") or {}).get("review") or {}
+    return [
+        {"n": r.get("n"), "verdict": r.get("verdict"), "text": r.get("text") or ""}
+        for r in review.get("rounds") or []
+        if isinstance(r, dict)
+    ]
+
 
 def _why_empty(path: Path) -> str:
     if not path.exists():

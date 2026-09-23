@@ -113,6 +113,57 @@ class QuestionsAreCarriedFromTheScript(unittest.TestCase):
             self.assertEqual((u["open"], u["questions"], u["counted"]), (0, [], ""))
 
 
+REVIEW_TWO_ROUNDS = (
+    "# Review\nStatus: changes-requested.\n\n"
+    "## Round 1\n\nReviewed: abcdef1. Verdict: changes-requested.\n\n"
+    "### Findings\n\n- F1 [open] the first thing\n- F2 [open] the second thing\n\n"
+    "## Round 2\n\nReviewed: abcdef2. Verdict: changes-requested.\n\n"
+    "### Findings\n\n- F1 [fixed abcdef2] the first thing\n- F2 [open] the second thing\n"
+)
+
+
+class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
+    """`0021`. The board forwards the PR and each round's text; it splits nothing itself."""
+
+    def test_two_rounds_arrive_with_their_text_and_the_pr_number(self):
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_q"
+            unit.mkdir(parents=True)
+            (unit / "pr.md").write_text(
+                "# PR\nStatus: accepted.\nPR: https://github.com/o/r/pull/7\n", encoding="utf-8"
+            )
+            (unit / "review.md").write_text(REVIEW_TWO_ROUNDS, encoding="utf-8")
+            [u] = run(board.read(d))["units"]
+            self.assertEqual(u["pr"], {"url": "https://github.com/o/r/pull/7", "number": 7})
+            self.assertEqual([(r["n"], r["verdict"]) for r in u["rounds"]],
+                             [(1, "changes-requested"), (2, "changes-requested")])
+            self.assertTrue(u["rounds"][0]["text"].startswith("## Round 1\n"))
+            self.assertIn("- F2 [open] the second thing", u["rounds"][0]["text"])
+            self.assertNotIn("## Round 2", u["rounds"][0]["text"])
+            self.assertIn("- F1 [fixed abcdef2] the first thing", u["rounds"][1]["text"])
+
+    def test_the_script_and_the_runner_cut_rounds_at_the_same_place(self):
+        """`0021` plan, Risk 8. `coscc/runner.py` `_rounds` is an older second reading of
+        round edges; until it goes, the text posted and the text preserved must match."""
+        from coscc.runner import _rounds
+
+        text = REVIEW_TWO_ROUNDS + "\n## Answers\n\n### Câu 1\nnot a round\n"
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_q"
+            unit.mkdir(parents=True)
+            (unit / "review.md").write_text(text, encoding="utf-8")
+            [u] = run(board.read(d))["units"]
+            self.assertEqual([r["text"] for r in u["rounds"]], _rounds(text))
+
+    def test_an_older_script_that_sends_neither_reads_as_none(self):
+        async def fake_run(argv, timeout):
+            return 0, '{"stages": [], "units": [{"name": "0001_q", "artifacts": {}}]}', ""
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
+            [u] = run(board.read(d))["units"]
+            self.assertEqual((u["pr"], u["rounds"]), (None, []))
+
+
 class AnEmptyWorkspaceIsAnAnswerNotAFailure(unittest.TestCase):
     def test_a_directory_with_no_cos_reports_why_rather_than_raising(self):
         with tempfile.TemporaryDirectory() as d:

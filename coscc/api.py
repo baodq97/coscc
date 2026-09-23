@@ -165,6 +165,32 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.post("/api/units/review-comment")
+    async def post_review_comment(request: Request) -> Any:
+        """`0021` R8, R9. Post one review round to the unit's pull request, once.
+
+        Writes to GitHub **under this machine's `gh` login**, from a route with no login on
+        a default bind of `0.0.0.0`. What it posts is the round as it stands in
+        `review.md`; the request names a unit and a round number and nothing else, so no
+        caller can choose the words. A round already on the pull request comes back
+        `already` and is not posted twice. A failure is a 200 with `state: failed` and
+        gh's reason, because the request was valid and GitHub said no.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.post_review_comment(
+                str(body.get("cwd") or ""),
+                str(body.get("unit") or ""),
+                body.get("round"),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.post("/api/units/branch")
     async def start_branch(request: Request) -> Any:
         """`0014` R4. Cut this unit's branch in the workspace.

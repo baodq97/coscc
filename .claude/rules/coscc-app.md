@@ -102,6 +102,14 @@ no commands, one turn, no budget.
   stage will read as a person's decision. The only trace is the file and an `outputs` row
   with `actor = human:<name>` — watch for a name nobody recognises. `COS_HOST=127.0.0.1`
   is the mitigation that exists.
+- **`POST /api/units/review-comment` writes to GitHub under this machine's `gh` login.**
+  Since `0021` it posts a round of `review.md` to the unit's pull request, verbatim and
+  unfiltered: a finding that quotes a token or a local path goes up with it, and a public
+  repository's pull request is public. No login, `0.0.0.0` by default, so anyone who
+  reaches the port can press it. The body is only ever the round's own text, and the
+  marker on its last line stops a second copy. The trace is a `pr-comment` row in Activity
+  and the comment itself. `run_step` also posts on its own after writing a review round,
+  which can hold the `done` row up to 60s on a slow network (two `gh` calls, 30s each).
 - **Re-running a stage whose artifact holds `## Answers` erases them.** A prose stage's
   artifact is written from the reply, whole. Today the run button only offers a stage with
   no artifact, so the path is closed; whoever opens it loses answers with no trace but the
@@ -125,6 +133,7 @@ no commands, one turn, no budget.
 
 | `verify_0014.py` | **spends real money and merges a real pull request.** Needs `COS_PROOF_REPO`, a throwaway repo; unset is exit 2. Five sessions — measured $3.28 and 11m49s end to end, 2026-09-22. `--dry` stops before the first paid step |
 | `verify_0016.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
+| `verify_0021.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.

@@ -653,6 +653,22 @@ test('parseReview reads rounds, verdicts and labelled findings, and stops at Ans
   assert.deepEqual(parseReview('# Review written before rounds\nStatus: accepted.\n').rounds, [])
 })
 
+test('parseReview gives each round its text verbatim, bounded by the next ## heading', () => {
+  const one = round(1, 'changes-requested', ['- F1 [open] a `quoted` thing', '- F2 [open] b'])
+  const two = round(2, 'pass', [`- F1 [fixed ${FIX}] a`])
+  const text = `# Review\nStatus: accepted.\n\n${one}\n${two}\n## Answers\n\n### Câu 1\nnot a round\n`
+  const { rounds } = parseReview(text)
+  assert.equal(rounds[0].text, one.trimEnd())
+  assert.ok(rounds[0].text.startsWith('## Round 1\n'))
+  for (const f of ['- F1 [open] a `quoted` thing', '- F2 [open] b']) assert.ok(rounds[0].text.includes(f))
+  assert.equal(rounds[1].text, two.trimEnd())
+  assert.ok(!rounds[1].text.includes('Answers'))
+  assert.ok(!rounds[1].text.includes('not a round'))
+  const followed = parseReview(`${one}\n## Something else\n\nnot this\n`).rounds
+  assert.equal(followed[0].text, one.trimEnd())
+  assert.ok(!followed[0].text.includes('Something'))
+})
+
 test('R1: the review gate is closed while pr.md names no pull request', () => {
   const g = checkGate(unit({ ...CHAIN, 'pr.md': art('accepted') }), 'review', { probe: greenProbe() })
   assert.equal(g.ok, false)

@@ -816,3 +816,222 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
                 self._run("review")
         self.assertEqual(seen["repo"], str(self.repo))
         self.assertEqual(self.sessions.calls, 0)
+
+
+REVIEW_ONE = (
+    "# Review: a problem\nAuthor: t. Status: changes-requested.\n\n"
+    "## Round 1\n\nReviewed: abcdef1. Verdict: changes-requested.\n\n"
+    "### Findings\n\n- F1 [open] [high] the first thing\n- F2 [open] the second thing\n"
+)
+ROUND_TWO = (
+    "\n## Round 2\n\nReviewed: abcdef2. Verdict: changes-requested.\n\n"
+    "### Findings\n\n- F1 [fixed abcdef2] the first thing\n- F2 [open] the second thing\n"
+)
+PR_URL = "https://github.com/o/r/pull/7"
+
+
+class FakeGh:
+    """Stands in for `prcomment._gh`: records argv, keeps the PR's comments in memory."""
+
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.calls: list[list[str]] = []
+        self.comments: list[dict] = []
+
+    async def __call__(self, argv, cwd, stdin):
+        import json
+
+        self.calls.append(list(argv))
+        if self.fail:
+            return 1, "", "HTTP 401: Bad credentials"
+        if argv[:2] == ["pr", "view"]:
+            return 0, json.dumps({"comments": self.comments}), ""
+        if argv[:2] == ["pr", "comment"]:
+            url = f"{PR_URL}#issuecomment-{len(self.comments) + 1}"
+            self.comments.append({"body": stdin, "url": url})
+            return 0, url + "\n", ""
+        return 2, "", "unexpected"
+
+    def posts(self):
+        return [c for c in self.calls if c[:2] == ["pr", "comment"]]
+
+
+class ReviewRoundsReachThePullRequest(unittest.TestCase):
+    """`0021`. A round the app writes is posted; any round can be posted again, once."""
+
+    class Reviews:
+        """A review session that adds round 2 to the round `review.md` held."""
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", REVIEW_ONE + ROUND_TWO)
+            yield ("done", {"session_id": "sess-r", "cost": {}})
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.service = Service(
+            Config(
+                workspaces=(str(self.repo),),
+                working_dir=str(self.root / "work"),
+                data_dir=str(self.root / "data"),
+            ),
+            self.Reviews(),
+        )
+        self.made = self.service.create_unit(str(self.repo), "a-problem", "some words")
+        self.dir = Path(self.made["path"])
+        (self.dir / "pr.md").write_text(
+            f"# PR: a problem\nAuthor: t. Status: accepted.\nPR: {PR_URL}\n", encoding="utf-8"
+        )
+        (self.dir / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
+        self.unit = self.made["unit"]
+
+    def _post(self, gh, n):
+        from coscc import prcomment
+
+        with mock.patch.object(prcomment, "_gh", gh):
+            return asyncio.run(self.service.post_review_comment(str(self.repo), self.unit, n))
+
+    def _run_review(self, gh):
+        from coscc import board as board_reader
+        from coscc import prcomment
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, "open: review may proceed"
+
+        async def go():
+            out = []
+            async for item in self.service.run_step(str(self.repo), self.unit, "review"):
+                out.append(item)
+            return out
+
+        with mock.patch.object(board_reader, "gate", open_gate), \
+                mock.patch.object(prcomment, "_gh", gh):
+            return asyncio.run(go())
+
+    def _pr_rows(self):
+        from coscc.journal import Journal
+
+        j = Journal(self.service.config.working_dir, self.service.config.data_dir)
+        return j.records(str(self.repo.resolve()), kind="pr-comment")
+
+    def _rounds(self):
+        [u] = asyncio.run(self.service.board(str(self.repo)))["units"]
+        return {r["n"]: r["comment"] for r in u["rounds"]}
+
+    # R2
+    def test_a_round_the_step_writes_is_posted_once_with_its_own_text(self):
+        gh = FakeGh()
+        _, done = self._run_review(gh)[-1]
+        self.assertEqual(done["outcome"], "done")
+        self.assertEqual(len(gh.posts()), 1)
+        body = gh.comments[0]["body"]
+        self.assertIn("round 2 of", body.splitlines()[0])
+        self.assertIn("- F1 [fixed abcdef2] the first thing", body)
+        self.assertEqual([(c["round"], c["state"]) for c in done["comments"]], [(2, "posted")])
+
+    # R6
+    def test_a_failed_post_leaves_review_md_byte_for_byte_the_same(self):
+        self._run_review(FakeGh())
+        good = (self.dir / "review.md").read_bytes()
+        (self.dir / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
+        _, done = self._run_review(FakeGh(fail=True))[-1]
+        self.assertEqual((self.dir / "review.md").read_bytes(), good)
+        self.assertEqual(done["outcome"], "done")
+        self.assertEqual(done["comments"][0]["state"], "failed")
+        self.assertIn("Bad credentials", done["comments"][0]["reason"])
+
+    def test_another_stage_never_calls_gh(self):
+        from coscc import prcomment
+
+        class Spec:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+                yield ("done", {"session_id": "s", "cost": {}})
+
+        (self.dir / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        )
+        self.service.sessions = Spec()
+        gh = FakeGh()
+
+        async def go():
+            async for _ in self.service.run_step(str(self.repo), self.unit, "spec"):
+                pass
+
+        with mock.patch.object(prcomment, "_gh", gh):
+            asyncio.run(go())
+        self.assertEqual(gh.calls, [])
+
+    # R7
+    def test_the_board_says_which_round_is_not_on_the_pr(self):
+        (self.dir / "review.md").write_text(REVIEW_ONE + ROUND_TWO, encoding="utf-8")
+        self._post(FakeGh(), 1)
+        rounds = self._rounds()
+        self.assertTrue(rounds[1]["posted"])
+        self.assertTrue(rounds[1]["url"].startswith(PR_URL))
+        self.assertEqual(rounds[2], {"posted": False, "url": "", "reason": None})
+
+    def test_a_failed_attempt_shows_its_reason_until_one_succeeds(self):
+        self._post(FakeGh(fail=True), 1)
+        self.assertEqual(self._rounds()[1]["reason"], "HTTP 401: Bad credentials")
+        self._post(FakeGh(), 1)
+        self.assertTrue(self._rounds()[1]["posted"])
+
+    # R8
+    def test_posting_again_never_makes_a_second_comment(self):
+        gh = FakeGh()
+        first = self._post(gh, 1)
+        second = self._post(gh, 1)
+        self.assertEqual((first["state"], second["state"]), ("posted", "already"))
+        self.assertEqual(len(gh.posts()), 1)
+
+    def test_two_presses_at_once_still_make_one_comment(self):
+        from coscc import prcomment
+
+        gh = FakeGh()
+
+        async def both():
+            return await asyncio.gather(
+                self.service.post_review_comment(str(self.repo), self.unit, 1),
+                self.service.post_review_comment(str(self.repo), self.unit, 1),
+            )
+
+        with mock.patch.object(prcomment, "_gh", gh):
+            got = asyncio.run(both())
+        self.assertEqual(sorted(r["state"] for r in got), ["already", "posted"])
+        self.assertEqual(len(gh.posts()), 1)
+
+    def test_a_round_that_is_not_there_is_refused(self):
+        with self.assertRaises(Invalid):
+            self._post(FakeGh(), 5)
+        with self.assertRaises(Invalid):
+            self._post(FakeGh(), "one")
+
+    def test_no_pr_line_is_a_failure_with_a_reason_and_no_gh(self):
+        (self.dir / "pr.md").write_text("# PR: a problem\nAuthor: t. Status: accepted.\n")
+        gh = FakeGh()
+        r = self._post(gh, 1)
+        self.assertEqual((r["state"], r["reason"]), ("failed", "pr.md names no pull request"))
+        self.assertEqual(gh.calls, [])
+
+    # R13
+    def test_every_attempt_is_one_run_log_row(self):
+        self._post(FakeGh(), 1)
+        self._post(FakeGh(fail=True), 1)
+        rows = self._pr_rows()
+        self.assertEqual(len(rows), 2)
+        ok, bad = rows
+        self.assertEqual(
+            (ok["unit"], ok["round"], ok["pr"], ok["outcome"], ok["stage"]),
+            (self.unit, 1, PR_URL, "posted", "review"),
+        )
+        self.assertTrue(ok["comment_url"].startswith(PR_URL))
+        self.assertEqual((bad["outcome"], bad["detail"]), ("failed", "HTTP 401: Bad credentials"))
+
+    def test_a_comment_row_does_not_disturb_the_cost_timeline(self):
+        self._post(FakeGh(), 1)
+        tl = self.service.timeline(str(self.repo), self.unit)
+        self.assertEqual(tl.get("runs") or [], [])
