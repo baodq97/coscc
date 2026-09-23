@@ -123,10 +123,11 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                 policy.beyond_reading(grant), (), f"{stage} carries more than reading"
             )
 
-    def test_plan_and_review_are_the_only_prose_stages_that_read(self):
+    def test_spec_plan_and_review_read_and_idea_and_intent_do_not(self):
         # `review` joined `plan` in `0015`: the separate session that sits before the merge
-        # has to open the files it judges. It still only reads. Since `0020` in any mode.
-        readers = ("plan", "review")
+        # has to open the files it judges. `spec` joined in `0020`, because `write-spec`
+        # requires citations with line ranges. All three only read, in any mode.
+        readers = ("spec", "plan", "review")
         for reader in readers:
             self.assertEqual(policy.grant_for(reader).tools, policy.READ_TOOLS)
         for stage in policy.PROSE_STAGES:
@@ -162,6 +163,38 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
                     workspace=d, directory=Path(d) / '.cos' / UNIT, journal_key=d,
                     unit=UNIT, stage="plan", artifact="plan.md", stages=STAGES,
                     mode="autonomous",
+                ):
+                    out.append(ev)
+                return out
+
+            _, final = asyncio.run(go())[-1]
+
+        self.assertEqual(final["outcome"], "done", final)
+        self.assertEqual(sessions.granted, policy.READ_TOOLS)
+
+    def test_the_guard_lets_the_spec_stage_through_with_its_read_tools(self):
+        """`0020`: a real `spec` run reaches the session holding `READ_TOOLS`, in `manual`."""
+        class Replies:
+            def __init__(self):
+                self.granted = None
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1,
+                             tools=None, **kw):
+                self.granted = tuple(tools or ())
+                yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                yield ("done", {"session_id": "s-spec", "cost": {}})
+
+        sessions = Replies()
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            r = Runner(sessions=sessions, journal=None)
+
+            async def go():
+                out = []
+                async for ev in r.run(
+                    workspace=d, directory=Path(d) / '.cos' / UNIT, journal_key=d,
+                    unit=UNIT, stage="spec", artifact="spec.md", stages=STAGES,
+                    mode="manual",
                 ):
                     out.append(ev)
                 return out

@@ -52,6 +52,50 @@ class OneGrantPerStage(unittest.TestCase):
     def test_grant_for_takes_no_mode(self):
         self.assertEqual(list(inspect.signature(grant_for).parameters), ["stage"])
 
+    def test_spec_has_its_own_grant(self):
+        """`0020` R1. Without it `spec` fell to `Grant()`: no tools, one turn."""
+        self.assertNotEqual(grant_for("spec"), Grant())
+
+    def test_spec_reads_and_only_reads(self):
+        """`0020` R2: reading, bounded like writing, and nothing else."""
+        spec = grant_for("spec")
+        self.assertEqual(spec.tools, READ_TOOLS)
+        self.assertEqual(spec.commands, ())
+        self.assertEqual(policy.beyond_reading(spec), ())
+        self.assertTrue(spec.app_writes_artifact)
+        ws, unit = "/tmp/ws", "/tmp/data/units/ws-abc/.cos/0001_a"
+        self.assertIn(
+            "reading outside",
+            decide(spec, "Read", {"file_path": "/etc/passwd"}, ws, unit),
+        )
+        self.assertEqual(decide(spec, "Read", {"file_path": f"{ws}/a.py"}, ws, unit), "")
+        for tool in ("Write", "Bash"):
+            self.assertIn("was not granted", decide(spec, tool, {}, ws, unit))
+
+    def test_spec_has_the_turns_plan_has(self):
+        """`0020` R3. Copied from `plan`, not measured for `spec`."""
+        self.assertEqual(grant_for("spec").max_turns, grant_for("plan").max_turns)
+        self.assertEqual(grant_for("spec").max_budget_usd, grant_for("plan").max_budget_usd)
+
+    def test_every_other_grant_is_unchanged(self):
+        """`0020` R6: the values each stage held before this unit, written out."""
+        rw = READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS
+        expected = {
+            "impl": Grant(tools=rw, commands=policy.IMPL_COMMANDS, max_turns=120,
+                          max_budget_usd=8.0, app_writes_artifact=False),
+            "plan": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0),
+            "pr": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
+                        max_budget_usd=3.0, app_writes_artifact=False,
+                        warning=policy.PR_WARNING, denied=policy.MERGE_IS_SHIPS),
+            "review": Grant(tools=READ_TOOLS, max_turns=20, max_budget_usd=2.0),
+            "ship": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
+                          max_budget_usd=3.0, app_writes_artifact=False,
+                          warning=policy.SHIP_WARNING),
+        }
+        self.assertEqual(set(policy.GRANTS), set(expected) | {"spec"})
+        for stage, grant in expected.items():
+            self.assertEqual(grant_for(stage), grant, stage)
+
 
 class AToolNobodyGrantedIsRefused(unittest.TestCase):
     def test_an_mcp_tool_is_refused_by_construction(self):

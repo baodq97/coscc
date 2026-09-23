@@ -135,7 +135,7 @@ SHIP_WARNING = (
     "landed after it; nobody but an agent has read the change."
 )
 
-# Only stages that appear here get anything. Everything else — `idea`, `intent`, and any
+# Only stages that appear here get anything. The rest — `idea`, `intent`, and any
 # stage invented later — falls through to `Grant()`. Keyed by stage alone since `0020`:
 # the mode a step is started in is recorded, and grants nothing.
 GRANTS: dict[str, Grant] = {
@@ -192,6 +192,21 @@ GRANTS: dict[str, Grant] = {
         # finished were recorded at 30 and 34), so there is no measured number to set this
         # from. Forty doubles the ceiling that was hit; the budget moves with it so the
         # other limit does not become the real one.
+        max_turns=40,
+        max_budget_usd=4.0,
+    ),
+    # `spec` reads, and only reads, for the reason `plan` does. `write-spec` invariant 7
+    # requires every figure to name its source and every citation to carry a path and a
+    # line range, and until `0020` this table gave the stage no way to open a file. So it
+    # wrote from descriptions: `0016`'s R9 required a commit in the store, which has never
+    # been a git repository, and only `plan` — which could read — caught it.
+    #
+    # No write tools and no commands: the app still writes `spec.md` from the reply.
+    # Both ceilings are copied from `plan` above, not measured for `spec`. `review` below
+    # keeps 20 turns and $2.00 although its comment says "the same ceilings as `plan`";
+    # that mismatch predates `0020` and is not this unit's to settle (`0020` R6).
+    "spec": Grant(
+        tools=READ_TOOLS,
         max_turns=40,
         max_budget_usd=4.0,
     ),
