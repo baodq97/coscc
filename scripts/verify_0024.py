@@ -362,20 +362,25 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
     ci.write_text("pass")
     ok &= await check("c", unit, "review", how="ask")
 
-    # R3, the refusal: a reply that drops round 1 is not written.
+    # R3, the refusal: a reply that changes round 1 is not written. Since 2026-09-23 a
+    # reply carries only its own round and the runner keeps the earlier ones
+    # (`coscc/runner.py`, `merge_review`), so dropping round 1 is no longer the way to lose
+    # it; rewriting it is.
     sha2 = git(tree_of(unit), "rev-parse", "HEAD")
     r2 = rnd(2, sha2, "pass", [f"- F1 [fixed {sha2}] [high] the thing the proof invented"])
     old = review.read_bytes()
-    session.reply = lambda: header("accepted") + r2
+    forged = r1.replace("Verdict: changes-requested", "Verdict: pass")
+    session.reply = lambda: header("accepted") + forged + "\n" + r2
     done = await press("review")
     ok &= say(ran(done, "review", "failed") and review.read_bytes() == old
               and done["_sessions"] == 1,
-              "R3 a review reply that drops round 1 is refused and review.md is untouched",
+              "R3 a review reply that changes round 1 is refused and review.md is untouched",
               f"notice={done['notice']!r}, same={review.read_bytes() == old}")
     ok &= await check("c, after the refusal", unit, "review", how="after")
 
-    # The review round the button runs: round 1 verbatim, round 2 after it.
-    session.reply = lambda: header("accepted") + r1 + "\n" + r2
+    # The review round the button runs: the reply is round 2 alone; the runner writes
+    # round 1 back from the file, verbatim, and round 2 after it.
+    session.reply = lambda: header("accepted") + r2
     done = await press("review")
     new = review.read_text(encoding="utf-8")
     old_rounds = rounds_part(old.decode("utf-8")).rstrip()
