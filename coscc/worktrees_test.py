@@ -94,6 +94,20 @@ class Ensuring(Repo):
         git(self.repo, "branch", "fix/a", self.main)
         made = asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
         self.assertEqual(made["branch"], "fix/a")
+        self.assertTrue(made["base"]["fresh"])
+
+    def test_a_broken_origin_refuses_to_open_a_branch_when_the_unit_never_had_a_tree(self):
+        """`0030` review round 1, F2: this path — no tree yet, the branch already cut at a
+        terminal — fetches and refuses on failure just like `SwitchingOntoAnExistingBranch`
+        does for a unit that already had a detached tree. The two must not disagree about
+        when opening onto an existing branch is safe merely because one of them happens to
+        have a tree already."""
+        git(self.repo, "branch", "fix/a", self.main)
+        git(self.repo, "remote", "set-url", "origin", str(Path(self._tmp.name) / "gone.git"))
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
+        self.assertIn("was not opened", str(caught.exception))
+        self.assertFalse(worktrees.path(self.repo, "0001_a", self.data).exists())
 
     def test_a_clean_root_on_the_units_branch_is_moved_back_to_main(self):
         git(self.repo, "switch", "-q", "-c", "fix/a")
@@ -189,7 +203,12 @@ class RefreshingTheBase(Repo):
 
 class SwitchingOntoAnExistingBranch(Repo):
     """`0030_a-unit-branch-starts-from-a-stale-main` plan step 2 and R2/R4/R7: opening a
-    branch already cut at a terminal fetches first, and reports how far behind it is."""
+    branch already cut at a terminal fetches first, and reports how far behind it is.
+
+    This is the "unit already has a (still detached) tree" half of `_fetch_or_refuse`'s
+    two callers (review round 1 F2); `Ensuring`'s
+    `test_a_broken_origin_refuses_to_open_a_branch_when_the_unit_never_had_a_tree` is the
+    other half, and both must refuse alike."""
 
     def setUp(self):
         super().setUp()

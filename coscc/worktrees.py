@@ -98,6 +98,49 @@ async def _branch_exists(root: Path, name: str) -> bool:
         return False
 
 
+async def _fetch_or_refuse(where_repo: Path, branch: str) -> None:
+    """Fetch `origin/main` in `where_repo`, refusing to go on when that fails.
+
+    `0030` review round 1, F2. Neither of `ensure`'s two "open onto an existing branch"
+    paths cuts `branch` — it was already cut at a terminal, the way `.claude/CLAUDE.md`
+    step 4 still does it — so the reason to refuse here is not that a stale `main` would
+    name the wrong pull request base (only `start_branch`, which does cut a branch, has
+    that reason). It is narrower: `câu 1` asks every path that opens a tree onto an
+    existing branch to agree on when doing so is safe, and a fetch that failed is the one
+    thing both paths can check for without guessing. So both call this, and neither
+    proceeds past it — whether or not the unit already had a (still detached) tree is not
+    a reason for the two to disagree.
+    """
+    try:
+        await gitops.fetch(where_repo)
+    except GitError as e:
+        raise GitError(
+            f"Could not update {gitops.TRUNK} from origin, so {branch} was not opened "
+            f"in this unit's worktree. Nothing in the repository changed. git said: {e}"
+        ) from e
+
+
+async def _base_against_origin(where_repo: Path, branch: str, branch_sha: str) -> dict[str, Any]:
+    """`{ref, sha, fresh, behind, reason}` for `branch_sha` against `origin/main`.
+
+    Never refuses and never rebases (`intent.md ## Answers, câu 3`): a branch behind is
+    reported, not fixed — `gh pr update-branch --rebase` is what the `reason` points to.
+    """
+    origin_ref = f"origin/{gitops.TRUNK}"
+    origin_sha = await gitops.rev_parse(where_repo, f"refs/remotes/{origin_ref}")
+    behind = await gitops.count_missing(where_repo, branch_sha, origin_sha)
+    return {
+        "ref": origin_ref,
+        "sha": origin_sha[:7],
+        "fresh": behind == 0,
+        "behind": behind,
+        "reason": "" if behind == 0 else (
+            f"{branch} is missing {behind} commit(s) from {origin_ref}; "
+            "see `gh pr update-branch --rebase`."
+        ),
+    }
+
+
 async def ensure(
     workspace: str | os.PathLike[str],
     unit: str,
@@ -106,13 +149,15 @@ async def ensure(
 ) -> dict[str, Any]:
     """The unit's worktree, made if it is not there yet.
 
-    Returns `{path, branch, created, switched}`. `switched` is true when the workspace
-    was moved back to `main` to make this possible — the one thing here that touches the
-    workspace's own tree, done only when that tree is clean (`0017` spec, câu 2), and
-    returned so the page can say it happened.
+    Returns `{path, branch, created, switched}`, and also `base` when this call is the one
+    that opened the tree onto an existing branch (`_base_against_origin`). `switched` is
+    true when the workspace was moved back to `main` to make this possible — the one thing
+    here that touches the workspace's own tree, done only when that tree is clean (`0017`
+    spec, câu 2), and returned so the page can say it happened.
 
     Raises `GitError` with a reason a person can act on when the workspace is dirty and
-    standing on the branch this unit needs.
+    standing on the branch this unit needs, or when opening onto an existing branch needed
+    a fetch that failed (`_fetch_or_refuse`).
     """
     root = Path(units.key(workspace))
     where = path(workspace, unit, data_dir)
@@ -137,32 +182,11 @@ async def ensure(
 
     if found is not None:
         # A detached tree made when the unit was created, before it had a branch.
-        # `0030` R2: refuse rather than cut the branch from a `main` nobody re-fetched —
-        # opening a stale branch names the wrong pull request base, and that is not
-        # something a later rebase quietly fixes.
         tree = Path(found["path"])
-        try:
-            await gitops.fetch(tree)
-        except GitError as e:
-            raise GitError(
-                f"Could not update {gitops.TRUNK} from origin, so {branch} was not opened "
-                f"in this unit's worktree. Nothing in the repository changed. git said: {e}"
-            ) from e
+        await _fetch_or_refuse(tree, branch)
         await gitops.switch_existing(tree, branch)
-        origin_ref = f"origin/{gitops.TRUNK}"
-        origin_sha = await gitops.rev_parse(tree, f"refs/remotes/{origin_ref}")
         branch_sha = await gitops.rev_parse(tree, "HEAD")
-        behind = await gitops.count_missing(tree, branch_sha, origin_sha)
-        base = {
-            "ref": origin_ref,
-            "sha": origin_sha[:7],
-            "fresh": behind == 0,
-            "behind": behind,
-            "reason": "" if behind == 0 else (
-                f"{branch} is missing {behind} commit(s) from {origin_ref}; "
-                "see `gh pr update-branch --rebase`."
-            ),
-        }
+        base = await _base_against_origin(tree, branch, branch_sha)
         return {
             "path": str(where), "branch": branch, "created": False, "switched": switched,
             "base": base,
@@ -170,10 +194,21 @@ async def ensure(
 
     where.parent.mkdir(parents=True, exist_ok=True)
     if wanted:
+        # No tree at all yet, but the branch already exists — same situation as the block
+        # above except that this unit never had a (detached) tree to fetch inside, so the
+        # fetch runs in the workspace instead. `_fetch_or_refuse` is the same call either
+        # way, which is the point (F2).
+        await _fetch_or_refuse(root, branch)
         await gitops.worktree_add(root, where, branch)
-    else:
-        sha = await gitops.rev_parse(root, f"refs/heads/{gitops.TRUNK}")
-        await gitops.worktree_add(root, where, sha)
+        branch_sha = await gitops.rev_parse(root, f"refs/heads/{branch}")
+        base = await _base_against_origin(root, branch, branch_sha)
+        found = await find(workspace, unit, data_dir) or {"branch": ""}
+        return {
+            "path": str(where), "branch": found["branch"], "created": True, "switched": switched,
+            "base": base,
+        }
+    sha = await gitops.rev_parse(root, f"refs/heads/{gitops.TRUNK}")
+    await gitops.worktree_add(root, where, sha)
     found = await find(workspace, unit, data_dir) or {"branch": ""}
     return {"path": str(where), "branch": found["branch"], "created": True, "switched": switched}
 
