@@ -128,6 +128,19 @@ class ThePrStepSaysWhatItWillReach(unittest.TestCase):
         for bad in ("npm install x", "uv run python -m pytest"):
             self.assertIn("may not run", check_command(self.PR, bad), bad)
 
+    def test_it_may_ask_its_own_gate(self):
+        """The first line of `write-pr/SKILL.md`, which this grant used to refuse.
+
+        Measured 2026-09-23: a `pr` step running through the board was refused with
+        `this step may not run 'node'` and stopped before pushing, because the gate it is
+        told to consult is a node script. It was right to stop; the table was wrong.
+        """
+        gate = (
+            "node .claude/scripts/cos.mjs --root /store gate "
+            "0001_product-describes-a-state-it-is-not-in pr"
+        )
+        self.assertEqual(check_command(self.PR, gate), "")
+
     def test_it_carries_a_warning_and_impl_does_not(self):
         # `spec.md` C4: the capability comes from the machine's own gh login, so it has to
         # be readable before the step starts rather than only in a design document.

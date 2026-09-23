@@ -76,8 +76,24 @@ IMPL_COMMANDS = (
 # What `pr` may run. Shorter than `impl`'s on purpose: this step proposes a change that
 # already exists, so it needs version control and the reading to describe it, and nothing
 # that builds or installs.
+#
+# `node` is here for one reason: `cos.mjs` is a node script, and `.claude/skills/write-pr/
+# SKILL.md` opens by telling this stage to run `node .claude/scripts/cos.mjs gate <unit>
+# pr`. This table did not carry it, so on 2026-09-23 a real `pr` step was refused with
+# `this step may not run 'node'` and stopped — correctly, rather than deciding the gate's
+# answer by reading its rules. That is the same shape as `plan` above: a skill requiring
+# what the grant forbade, found by running a unit through the product and not by reading
+# either file.
+#
+# It is not a small addition and is not written here as one. `node -e` runs anything, so
+# this word widens the step by more than the one command it was added for. What bounds the
+# step is unchanged, and `TheKnownLimit` in `coscc/policy_test.py` already states it: the
+# session's `cwd`, the write check, and the turn and budget ceilings — never this list.
+#
+# `npm` and `uv` stay off. Nothing asks this stage to build or install, and the sentence
+# above about that is still true.
 PR_COMMANDS = (
-    "git", "gh",
+    "git", "gh", "node",
     "ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "diff",
     "echo", "printf", "test", "which", "pwd",
 )
