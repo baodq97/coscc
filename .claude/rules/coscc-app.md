@@ -44,8 +44,10 @@ no commands, one turn, no budget.
 - **Sessions spend account quota.** Nothing that talks to the app belongs in an unattended
   loop.
 - **Stage `ship` merges; `pr` no longer does.** Since `0015` `pr` stops at an open pull
-  request and its grant refuses the merge command by its leading tokens only — `gh -R o/r
-  pr …` or an alias walks past (`coscc/policy_test.py`, `test_the_known_limit_of_the_deny_list`).
+  request and its grant refuses the merge by the command's words with flags removed —
+  `gh -R o/r pr merge`, the merge endpoint through `gh api` and `gh alias set` included.
+  An alias defined before the step, or `node -e` spawning `gh`, still walks past
+  (`coscc/policy_test.py`, `test_the_known_limit_of_the_deny_list`).
   `("ship", "autonomous")` holds `git` and `gh` with this machine's login and lands the
   change on `main` after the `ship` gate opens. Read the next bullet for how far that
   reaches.

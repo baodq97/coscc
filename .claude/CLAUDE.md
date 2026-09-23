@@ -111,7 +111,11 @@ a `review` gate that never opens.
   should make that trade on purpose rather than inherit it.
 - **Hooks.** Every gate is advisory: nothing forces a session to run `cos.mjs`, or to stop
   when it exits non-zero. A `PreToolUse` hook blocking `Write` while `plan.md` is `draft`
-  would be one file.
+  would be one file. The same holds for the merge: in the app, the `pr` grant refuses the
+  merge command, `gh api …/pulls/<n>/merge` and `gh alias set` with their flags removed,
+  but `node -e` spawning `gh`, or an alias defined before the step, still walks past it,
+  and at a terminal nothing refuses anything. What stops a merge before review is the
+  `ship` gate being asked — and only when it is asked.
 - **Anything that starts the next stage.** An accepted artifact lights no gate. A person
   chooses the mode and presses the button, every time.
 - **A person's answer is not an approval, and it starts nothing either.** Since `0016` the

@@ -193,10 +193,28 @@ class MergingIsShipsNotPrs(unittest.TestCase):
         self.assertEqual(policy.beyond_reading(review), ())
         self.assertIn("review", policy.PROSE_STAGES)
 
+    def test_a_flag_in_front_does_not_walk_past_the_deny_list(self):
+        """`0015` review round 1, F1: flags are removed before the prefix is compared."""
+        for line in (
+            "gh -R o/r pr merge 7",
+            "gh --repo o/r pr merge 7",
+            "gh --repo=o/r pr merge 7",
+            "gh pr -R o/r merge 7",
+            "gh --hostname github.com pr merge 7",
+            "gh api -X PUT repos/o/r/pulls/7/merge",
+            "gh alias set m 'pr merge'",
+        ):
+            self.assertIn("merging is the ship stage's", check_command(self.PR, line), line)
+        # A value flag's value is not read as a word, but a real word after it still is.
+        self.assertEqual(check_command(self.PR, "gh -R o/r pr view 7"), "")
+        self.assertEqual(check_command(self.PR, "gh api repos/o/r/pulls/7"), "")
+
     def test_the_known_limit_of_the_deny_list(self):
-        """`0015` plan, Risk 5: the list reads tokens. A global flag before `pr` walks past
-        it. Pinned so that nobody reads this grant as a guarantee."""
-        self.assertEqual(check_command(self.PR, "gh -R o/r pr merge 7"), "")
+        """`0015` plan, Risk 5: the list still reads tokens, not what runs. `node -e` may
+        spawn `gh`, and an alias defined before the step runs under its own name. Pinned so
+        that nobody reads this grant as a guarantee; `.claude/CLAUDE.md` says the same."""
+        self.assertEqual(check_command(self.PR, "node -e 'require(\"child_process\")'"), "")
+        self.assertEqual(check_command(self.PR, "gh m 7"), "")
 
 
 class TheKnownLimit(unittest.TestCase):

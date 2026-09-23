@@ -117,7 +117,14 @@ PR_WARNING = (
 
 # `0015`: the pull request `pr` opens is merged by `ship`, after a review that passed, and
 # never by the stage that opened it.
-MERGE_IS_SHIPS = ((("gh", "pr", "merge"), "merging is the ship stage's"),)
+#
+# Matched on the words left once flags are removed (`_words` below), so a `-R o/r` in front
+# does not walk past it. `gh alias set` is refused too: an alias `pr` defines is an alias
+# `pr` can then run under another name.
+MERGE_IS_SHIPS = (
+    (("gh", "pr", "merge"), "merging is the ship stage's"),
+    (("gh", "alias", "set"), "an alias is a merge under another name; merging is the ship stage's"),
+)
 
 SHIP_WARNING = (
     "This step merges the pull request into main with `gh pr merge`, using the GitHub "
@@ -294,11 +301,40 @@ def check_command(grant: Grant, command: str) -> str:
         base = word.rsplit("/", 1)[-1]
         if base not in grant.commands:
             return f"this step may not run {base!r}"
-        tokens = (base, *segment.split()[1:])
+        words = _words(base, segment.split()[1:])
         for prefix, reason in grant.denied:
-            if tokens[: len(prefix)] == prefix:
+            if words[: len(prefix)] == prefix:
                 return f"this step may not run {' '.join(prefix)!r}: {reason}"
+        if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in words):
+            # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
+            return "this step may not call the merge endpoint: merging is the ship stage's"
     return ""
+
+
+# Flags `gh` reads a value after, anywhere on the line. Their values are dropped with them,
+# so `gh -R o/r pr merge` and `gh pr --repo o/r merge` read as `gh pr merge` (`0015` review
+# round 1, F1). Every other `-x` / `--x` / `--x=v` is dropped alone.
+_GH_VALUE_FLAGS = frozenset({"-R", "--repo", "--hostname"})
+_MERGE_ENDPOINT = re.compile(r"pulls/[^/\s]+/merge\b")
+
+
+def _words(base: str, rest: list[str]) -> tuple[str, ...]:
+    """The command and its positional words, flags removed — what a deny prefix is matched on.
+
+    Still a reading of tokens, not of what the program will do: an alias defined before
+    the step, or `node -e` spawning `gh`, is not seen. `.claude/CLAUDE.md` says so.
+    """
+    out = [base]
+    skip = False
+    for token in rest:
+        if skip:
+            skip = False
+            continue
+        if token.startswith("-"):
+            skip = base == "gh" and token in _GH_VALUE_FLAGS
+            continue
+        out.append(token)
+    return tuple(out)
 
 
 def _paths_in(tool_input: dict) -> list[str]:
