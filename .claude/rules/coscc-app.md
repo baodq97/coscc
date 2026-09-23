@@ -119,6 +119,17 @@ no commands, one turn, no budget.
   artifact is written from the reply, whole. Since `0024` the run button offers a stage
   that already has an artifact — `impl` and `review` in the fix loop — so the path is
   open; a stage re-run that way loses its answers with no trace but the `outputs` row.
+- **Each unit works in its own `git worktree`, and the app may move the workspace to
+  `main`.** Since `0017` a unit's tree is `<COS_DATA_DIR>/worktrees/<slot>/<unit>`; a step
+  runs there, and `gate`/`next` get `--repo <that tree>`. When a unit's branch is checked
+  out in the workspace itself (cut at a terminal), the app runs `git switch main` there,
+  only if that tree is clean. A person standing on that branch finds themselves on
+  `main`, and when coscc works on itself the harness it reads changes with it. Every tree
+  costs its own `.venv`, `node_modules` and `.web` (unmeasured), prepared by `uv sync
+  --frozen`, `npm ci` and `uv run coscc-build`, running the repository's own install
+  scripts under this process's user. After `ship`, or on the first board read of a
+  `finished` unit, the app removes the tree and `branch -D`s the local branch, but only
+  when `gh` says merged at the local head.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
 
@@ -138,6 +149,7 @@ no commands, one turn, no budget.
 
 | `verify_0014.py` | **spends real money and merges a real pull request.** Needs `COS_PROOF_REPO`, a throwaway repo; unset is exit 2. Five sessions — measured $3.28 and 11m49s end to end, 2026-09-22. `--dry` stops before the first paid step |
 | `verify_0016.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
+| `verify_0017.py` | no session, no quota, no network; temporary data root, bare-directory remote. `--this-repo` prepares a worktree of this checkout (`uv sync`, `npm ci`, a build: 20s measured 2026-09-23) and runs `npm test` twice. `--paid` **spends real money**: two real `impl` sessions on a clone of `COS_PROOF_REPO`; unset is exit 2 |
 | `verify_0021.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2 |
 | `verify_0024.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s own handlers through Reflex's event processor, in-process; no browser, so the compiled page is not exercised |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
