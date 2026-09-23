@@ -642,3 +642,48 @@ class AnAnswerReachesTheStageThatReadsItsArtifact(unittest.TestCase):
             )
             self.assertEqual(included, ["intent.md", "plan.md"])
             self.assertNotIn("ANSWER-TOO-LATE-0016", prompt)
+
+
+class AFixRoundCarriesTheFindings(unittest.TestCase):
+    """The first real review round, 2026-09-23: five findings, and `impl` could see none.
+
+    `0015` made `review.md: changes-requested` send a unit back to `impl`. The prompt for
+    that step was still built from `intent.md` and the stage before it, `plan.md` -- so
+    the step meant to fix the findings was given nothing that named them.
+    """
+
+    REVIEW = (
+        "# Review: x\nPR: pr.md. Concluded by: agent. Status: {status}.\n\n"
+        "## Findings\n\n- F1 [open] a.py:3 — high — FINDING-ONE-MARKER\n"
+    )
+
+    def prompt(self, d, status):
+        make_unit(
+            Path(d),
+            intent_md="Status: accepted.\nI",
+            plan_md="Status: accepted.\nP",
+            review_md=self.REVIEW.format(status=status),
+        )
+        return build_prompt(
+            d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", writes_own=True
+        )
+
+    def test_impl_sees_the_findings_when_changes_were_requested(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, included = self.prompt(d, "changes-requested")
+            self.assertIn("FINDING-ONE-MARKER", prompt)
+            self.assertIn("review.md", included)
+
+    def test_a_review_that_passed_is_not_sent_back(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, included = self.prompt(d, "accepted")
+            self.assertNotIn("FINDING-ONE-MARKER", prompt)
+            self.assertNotIn("review.md", included)
+
+    def test_no_other_stage_is_handed_the_findings(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.prompt(d, "changes-requested")
+            prompt, _ = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md"
+            )
+            self.assertNotIn("FINDING-ONE-MARKER", prompt)

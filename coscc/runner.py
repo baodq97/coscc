@@ -138,6 +138,29 @@ def build_prompt(
             parts.append(f"# The {earlier} it follows\n\n{text}")
             break
 
+    # A review that asked for changes sends the unit back to `impl`, and the whole point of
+    # going back is the findings. Without this block the step that is meant to fix them
+    # was built from `intent.md` and `plan.md` only -- it could not see a single one.
+    #
+    # Found 2026-09-23 on the first real round: `0015`'s review came back
+    # `changes-requested` with five findings, the gate reopened `impl`, and nothing in the
+    # prompt the app would have built mentioned any of them. `0015` promised the loop
+    # "fix, then review again" and had built only the second half.
+    #
+    # Only while the review is `changes-requested`. A review that passed has nothing for
+    # `impl` to act on, and one that rejected closed the unit.
+    if stage in ("impl", "implement"):
+        review = _read(directory / "review.md")
+        if review and STATUS_CHANGES_RE.search(review) and "review.md" not in included:
+            included.append("review.md")
+            parts.append(
+                "# The review that sent this back\n\n"
+                "The last review asked for changes. Fix every finding marked `[open]` below "
+                "on the branch, one commit per finding where that is possible, then record "
+                "in impl.md which commit fixed which finding.\n\n"
+                f"{review}"
+            )
+
     location = directory / artifact
     if writes_own:
         # A stage with tools does the work and then records it. Asking it to *reply* with
@@ -160,6 +183,11 @@ def build_prompt(
             "rules above describe. Prose in Vietnamese; filenames and headings in English."
         )
     return "\n\n---\n\n".join(parts), included
+
+
+# The one status that sends a unit back to `impl`. Read from the header line, the same
+# place `cos.mjs` reads it.
+STATUS_CHANGES_RE = re.compile(r"^.*Status:\s*changes-requested", re.MULTILINE)
 
 
 # How much of an unusable reply to keep beside the reason it was refused. Long enough to
