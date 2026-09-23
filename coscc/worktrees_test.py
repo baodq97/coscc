@@ -215,6 +215,18 @@ class Removing(Repo):
         self.assertFalse(self.remove()["removed"])
         self.assertTrue(self.tree.exists())
 
+    def test_a_dirty_tree_is_refused_without_asking_gh(self):
+        """`0017` review F4: the board calls this on every read; a dirty tree must not
+        cost a network call each time."""
+        asked = []
+
+        async def gh(argv, cwd, stdin):
+            asked.append(argv)
+            return 0, json.dumps({"state": "MERGED", "headRefOid": self.main}), ""
+        (self.tree / "x.txt").write_text("x", encoding="utf-8")
+        got = self.remove(gh=gh)
+        self.assertEqual((got["removed"], asked), (False, []))
+
     def test_a_local_commit_after_the_merged_head_keeps_tree_and_branch(self):
         (self.tree / "g.txt").write_text("unpushed\n", encoding="utf-8")
         git(self.tree, "add", "-A")

@@ -374,7 +374,12 @@ class Service:
 
         One `git worktree list` for the whole board. A `finished` unit that still has a tree
         is cleaned up here (R10), so a unit shipped at a terminal is cleaned up too — at the
-        cost of a `gh` call the first time the board is read after it (plan Risk 7).
+        cost of a `gh pr view` (up to 30s) on **every** board read for as long as the tree
+        stays: once, when the removal succeeds; on each read after, when it does not
+        (`gh` failing, the pull request not merged, the local branch off the merged head).
+        Nothing remembers a refusal, so a transient `gh` error is retried rather than
+        believed. A dirty tree is refused before `gh` is asked. (Plan Risk 7; `0017`
+        review F4 — this docstring said "the first time" until then.)
         """
         root = Path(cwd).expanduser().resolve()
         try:

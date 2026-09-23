@@ -312,6 +312,10 @@ async def remove_if_finished(
         pr_url = str((board_unit.get("pr") or {}).get("url") or "")
         if not prcomment.PR_URL_RE.fullmatch(pr_url):
             return {"removed": False, "reason": "no pull request url"}
+        # Before `gh`, not after: `board()` calls this on every read, and a dirty tree
+        # would otherwise cost a network call each time (`0017` review, F4).
+        if not await gitops.is_clean(tree):
+            return {"removed": False, "reason": "worktree has uncommitted changes"}
         said = await prcomment._call(
             gh, ["pr", "view", pr_url, "--json", "state,headRefOid"], str(tree), None
         )
@@ -324,8 +328,6 @@ async def remove_if_finished(
         if view.get("state") != "MERGED":
             return {"removed": False, "reason": f"pull request is {view.get('state')}"}
         merged = str(view.get("headRefOid") or "")
-        if not await gitops.is_clean(tree):
-            return {"removed": False, "reason": "worktree has uncommitted changes"}
         root = Path(units.key(workspace))
         branch = found.get("branch") or ""
         if branch and found.get("head") != merged:

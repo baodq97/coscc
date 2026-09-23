@@ -127,9 +127,11 @@ no commands, one turn, no budget.
   `main`, and when coscc works on itself the harness it reads changes with it. Every tree
   costs its own `.venv`, `node_modules` and `.web` (unmeasured), prepared by `uv sync
   --frozen`, `npm ci` and `uv run coscc-build`, running the repository's own install
-  scripts under this process's user. After `ship`, or on the first board read of a
-  `finished` unit, the app removes the tree and `branch -D`s the local branch, but only
-  when `gh` says merged at the local head.
+  scripts under this process's user. After `ship`, or on a board read of a `finished`
+  unit, the app removes the tree and `branch -D`s the local branch, but only when `gh`
+  says merged at the local head. A tree that cannot be removed that way (clean, but `gh`
+  fails or the branch is off the merged head) costs a `gh pr view`, up to 30s, on
+  **every** board read until someone removes it by hand; nothing remembers the refusal.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
 
