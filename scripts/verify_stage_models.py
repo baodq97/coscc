@@ -18,7 +18,10 @@ With `--paid`: one `claude -p --output-format json` call per distinct id `models
 ships (currently two, one per model family), asking each for `modelUsage.contextWindow`.
 `0031_shipped-model-defaults-cap-every-stage-at-200k`: this is the outcome that intent
 defines — every stage's shipped default must report 1000000, not 200000. **Spends real
-money**; what it costs has not been measured.
+money**; the one call measured so far — `claude-sonnet-5[1m]`, a one-word reply, run
+outside this script on 2026-09-23 — cost `total_cost_usd` 0.0108. One point is not enough
+to say what a full run of this flag costs, and review round 1 (F2) asked for the point to
+be named rather than left as "not measured".
 """
 
 from __future__ import annotations
