@@ -403,9 +403,9 @@ def decide(
 
     `None` means no second root, which is the shape every prose stage runs with: they are
     granted no write tools at all, so the question never arises for them.
-    """
-    from pathlib import Path
 
+    Since `0020` the same two roots bound `Read`, `Glob` and `Grep` too — see below.
+    """
     if tool not in grant.tools:
         # Covers MCP tools by construction: their names are never in a grant.
         return f"this step was not granted {tool}"

@@ -167,7 +167,7 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
 #   the head comparison is the only thing standing between this and a lost commit.
 #
 # The app may **not**: push, merge, commit, move `main` to another commit, or delete any
-# branch but that one. Those are a step's business — `("pr", "autonomous")` carries `git`
+# branch but that one. Those are a step's business — the `pr` grant carries `git`
 # and `gh` and a warning that says what that reaches (`coscc/policy.py:96-99`) — or nobody's.
 #
 # `plan.md` Risk 1 names the weakness honestly: this is a hand-written list, not a

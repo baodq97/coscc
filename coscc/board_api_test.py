@@ -127,7 +127,8 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
             (await self.client.get("/api/board", params={"cwd": str(REPO)})).json(), name
         )
 
-        self.assertEqual((before["mode"], after["mode"]), ("manual", "autonomous"))
+        self.assertEqual(before["mode"], "manual")
+        self.assertEqual(after["mode"], "autonomous")
         self.assertEqual(before["grants"], after["grants"])
         self.assertEqual(before["warning"], after["warning"])
         self.assertEqual(after["grants"], list(grant_for("pr").tools))
