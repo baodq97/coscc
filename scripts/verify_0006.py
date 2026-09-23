@@ -36,6 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from coscc import units
 from coscc.config import from_env
 from coscc.data import Data
 from coscc.store import Store
@@ -105,8 +106,17 @@ def make_scene(root: Path, data_dir: Path) -> None:
     flow 1 adopts it *through the page*, which is the part being measured.
     """
     ws = root / "proof-workspace"
-    (ws / ".cos" / UNIT).mkdir(parents=True, exist_ok=True)
-    (ws / ".cos" / UNIT / "intent.md").write_text(INTENT, encoding="utf-8")
+    ws.mkdir(parents=True, exist_ok=True)
+    # **In the store, not in the workspace, since `0014`.** Work units moved out of the
+    # repository's tree so that nothing of coscc's lands in a repository a team shares
+    # (`0014 spec.md` R2). Written to `ws / ".cos"` -- where this proof put it until
+    # 2026-09-23 -- the board looks somewhere else entirely and finds nothing, so flows 2,
+    # 3 and 6 fail on a product that is working. `units.unit_dir` is the one function that
+    # answers where it goes; computing the path here would be the second copy `0014`
+    # existed to remove.
+    unit_dir = units.unit_dir(ws, UNIT, data_dir)
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / "intent.md").write_text(INTENT, encoding="utf-8")
     (root / "second-workspace").mkdir(parents=True, exist_ok=True)
     Store(root, data_dir).add("proof-workspace", label="Written by the proof")
 
