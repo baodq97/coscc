@@ -919,11 +919,13 @@ def _settings() -> rx.Component:
         ),
         s.panel(
             rx.hstack(rx.icon("info", size=19, color=rx.color("iris", 11)),
-                      rx.heading("Six stages write their artifact from the reply.", size="4",
+                      rx.heading("Five stages write their artifact from the reply.", size="4",
                                  weight="medium")),
-            s.text("idea, intent, spec, plan, review and ship get no tools in either mode. "
-                   "A session with no tools cannot write a file, so this app writes the "
-                   "artifact from what the session says. impl and pr write their own.",
+            s.text("idea, intent, spec, plan and review cannot write a file, so this app "
+                   "writes the artifact from what the session says. spec, plan and review "
+                   "may read, and only inside the unit's worktree and its own folder in "
+                   "the store; idea and intent get no tools. The mode does not change "
+                   "this. impl, pr and ship write their own.",
                    margin_top="12px", max_width="800px", line_height="1.8"),
             background=rx.color("iris", 2),
         ),
@@ -1132,8 +1134,8 @@ def _detail_dialog() -> rx.Component:
                                        line_height="1.8"),
                                 _settings_row(
                                     "Mode",
-                                    "Which grant the step runs under. Recorded in the run "
-                                    "log before anything starts.",
+                                    "Recorded in the run log. It does not change what the "
+                                    "step may do: each stage has one grant.",
                                     rx.segmented_control.root(
                                         rx.segmented_control.item("Manual", value="manual"),
                                         rx.segmented_control.item("Auto", value="autonomous"),
