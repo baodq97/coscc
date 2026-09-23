@@ -760,3 +760,21 @@ class ReviewRoundsAccumulate(unittest.TestCase):
             self.assertNotEqual(done["outcome"], "done")
             self.assertIn("earlier review round", done["error"])
             self.assertIn("ROUND-ONE-MARKER", written.read_text(encoding="utf-8"))
+
+
+class TheReviewSeesWhatWasMeasured(unittest.TestCase):
+    """`0015` round 2: a finding stayed open because `impl.md` never reached the review."""
+
+    def test_impl_md_is_in_the_review_prompt(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(
+                Path(d),
+                intent_md="Status: accepted.\nI",
+                impl_md="Status: accepted.\nMEASURED-MARKER",
+                pr_md="Status: accepted.\nP",
+            )
+            prompt, included = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "review", STAGES, "review.md"
+            )
+            self.assertIn("MEASURED-MARKER", prompt)
+            self.assertIn("impl.md", included)

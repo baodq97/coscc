@@ -166,6 +166,17 @@ def build_prompt(
     # `0015`'s second review: round 1 and its five findings vanished from the file, and
     # with them the count `cos.mjs` reads to stop at N rounds and ask for a person. A loop
     # whose counter resets every run never reaches its limit.
+    # A review is asked to check what was measured, and `impl.md` is where that is written.
+    # The stage before `review` is `pr`, so without this `impl.md` never reached it -- and
+    # since `0014` the unit lives outside the repository, so it could not be found by
+    # looking either. Round 2 of `0015`'s review, 2026-09-23, left a finding open for
+    # exactly that reason while the evidence it asked for sat in `impl.md`.
+    if stage == "review":
+        measured = _read(directory / "impl.md")
+        if measured and "impl.md" not in included:
+            included.append("impl.md")
+            parts.append(f"# What was built and measured\n\n{measured}")
+
     if stage == "review":
         earlier = _rounds(_read(directory / "review.md"))
         if earlier:
