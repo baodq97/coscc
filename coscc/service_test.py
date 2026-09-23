@@ -805,13 +805,18 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         self.assertEqual(self._tree_head(tree), local_head)
 
     def test_r7_the_branch_start_branch_cuts_carries_the_remote_tip(self):
-        """`intent.md ## Proposed outcome`, measured through `start_branch`."""
-        self._advance_remote()
+        """`intent.md ## Proposed outcome`, measured through `start_branch`.
+
+        `0030` review round 1, F1: `tip` is the SHA `_advance_remote()` itself pushed and
+        returned, never a ref read back from the workspace — `origin/main` there is the very
+        ref `start_branch` updates when it fetches, so comparing against it would still pass
+        with the fetch removed, which is exactly what this test exists to catch.
+        """
+        tip = self._advance_remote()
         unit = self._typed_unit()
         got = asyncio.run(self.service.start_branch(str(self.repo), unit))
         tree = got["worktree"]
         branch = got["branch"]
-        tip = self._git("rev-parse", "origin/main").strip()
         self.assertEqual(
             subprocess.run(
                 ["git", "-C", tree, "merge-base", "--is-ancestor", tip, branch]
