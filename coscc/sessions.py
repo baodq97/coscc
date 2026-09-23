@@ -52,17 +52,29 @@ from coscc.config import Config
 #
 # `<cwd>/.web` is where a checkout's build belongs: `coscc/frontend.py` `web_dir` returns
 # exactly that for anything not packaged, and a session's `cwd` is the workspace.
-def child_env(cwd: str) -> dict[str, str]:
+#
+# Since `0017` a step's `cwd` is the unit's own worktree, not the workspace, and three more
+# names are laid over for the same reason: `VIRTUAL_ENV` points into the worktree, `PATH`
+# loses every entry under the workspace or the installed package (a workspace's
+# `.venv/bin` first on `PATH` runs the workspace's code, not the unit's), and every
+# `__REFLEX_*` this process set (`coscc/run.py:56,172`) is overridden with an empty value.
+def child_env(cwd: str, workspace: str | None = None) -> dict[str, str]:
     """What to lay over the environment a session would otherwise inherit whole.
 
     Every name this app puts into its own environment appears here with a value that is
     safe for somebody else's repository, because leaving one out hands the child this
     app's own.
     """
-    env = {frontend.WEB_WORKDIR_VAR: str(Path(cwd) / ".web")}
+    from coscc import worktrees  # here, not at the top: worktrees imports prcomment
+
+    env = {
+        frontend.WEB_WORKDIR_VAR: str(Path(cwd) / ".web"),
+        "VIRTUAL_ENV": str(Path(cwd) / ".venv"),
+        "PATH": worktrees.clean_path(workspace),
+    }
     # This app's settings describe this app, not the workspace. Empty reads as unset to
     # `coscc/config.py`, which takes `or None` on every one of them.
-    env.update({name: "" for name in os.environ if name.startswith("COS_")})
+    env.update({name: "" for name in os.environ if name.startswith(("COS_", "__REFLEX_"))})
     return env
 
 
@@ -203,6 +215,7 @@ def _options(
     can_use_tool: Any = None,
     tools: list[str] | None = None,
     max_budget_usd: float | None = None,
+    workspace: str | None = None,
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
@@ -219,7 +232,7 @@ def _options(
     options = ClaudeAgentOptions(
         cwd=cwd,
         # Laid over what the child would inherit. See `child_env` and what it cost twice.
-        env=child_env(cwd),
+        env=child_env(cwd, workspace),
         # A board step brings its own list from `policy.Grant`; everything else gets the
         # app default, which is empty. `tools=[]` and `tools=None` mean different things to
         # the SDK, so the distinction is `is None`, not truthiness.
@@ -321,8 +334,13 @@ class Sessions:
         can_use_tool: Any = None,
         tools: list[str] | None = None,
         max_budget_usd: float | None = None,
+        workspace: str | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
+
+        `workspace` is who is asked about membership; `cwd` is where the session runs.
+        They are the same thing except for a board step since `0017`, which runs in the
+        unit's worktree — a directory that is not a workspace and must not become one.
 
         Yields ``("chunk", text)`` zero or more times, then exactly one
         ``("done", {...})``. The browser and the proof command both consume this, which
@@ -331,8 +349,9 @@ class Sessions:
 
         Creates the session when `session_id` is None (R2), resumes it otherwise (R3).
         """
-        if not self.membership(cwd):
-            raise Refused(f"not a configured workspace: {cwd}")
+        member = workspace if workspace is not None else cwd
+        if not self.membership(member):
+            raise Refused(f"not a configured workspace: {member}")
         if session_id is not None and not self.config.may_resume(self.created_here(session_id)):
             # spec.md C1. The transcript is visible in the listing, but writing to it
             # would put a second process on a record another one may still hold open.
@@ -350,6 +369,7 @@ class Sessions:
                         can_use_tool=can_use_tool,
                         tools=tools,
                         max_budget_usd=max_budget_usd,
+                        workspace=workspace,
                     )
                 )
                 await client.connect()

@@ -338,14 +338,21 @@ class Runner:
         stages: list[str],
         mode: str,
         gate_said: str = "",
+        cwd: str | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
         The same shape `Sessions.stream` uses, so the page and a proof command consume one
         stream rather than two.
+
+        `cwd` is where the step works — since `0017` the unit's own worktree. It is the
+        session's directory, the write boundary and the repository the prompt names.
+        `workspace` stays the membership question and the journal's subject. Unset, the
+        two are the same directory, as they were before.
         """
         grant = grant_for(stage, mode)
         directory = Path(directory)
+        cwd = cwd or workspace
         if not directory.exists():
             raise RunError(f"no such work unit for {workspace}: {unit}")
 
@@ -366,7 +373,7 @@ class Runner:
                 )
 
         prompt, included = build_prompt(
-            workspace, directory, unit, stage, stages, artifact,
+            cwd, directory, unit, stage, stages, artifact,
             writes_own=not grant.app_writes_artifact,
             gate_said=gate_said,
         )
@@ -387,7 +394,7 @@ class Runner:
         detail = ""
         try:
             async for kind, payload in self.sessions.stream(
-                workspace,
+                cwd,
                 prompt,
                 None,
                 max_turns=grant.max_turns,
@@ -395,12 +402,15 @@ class Runner:
                 # with an empty grant gets exactly the session the app makes by default,
                 # which is the one the zero-tool default is about.
                 can_use_tool=(
-                    permission_gate(grant, workspace, denials, str(directory))
+                    permission_gate(grant, cwd, denials, str(directory))
                     if grant.opens_anything
                     else None
                 ),
                 tools=list(grant.tools) if grant.opens_anything else None,
                 max_budget_usd=grant.max_budget_usd or None,
+                # Only named when it differs, so a stand-in `stream` written before `0017`
+                # without a `workspace` parameter keeps working for a plain step.
+                **({"workspace": workspace} if cwd != workspace else {}),
             ):
                 if kind == "chunk":
                     collected += payload

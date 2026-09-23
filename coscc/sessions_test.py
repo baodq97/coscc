@@ -277,3 +277,28 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
             child = self.child()
             self.assertEqual(child["HOME"], "/home/someone")
             self.assertEqual(child["PATH"], "/bin")
+
+    # -- `0017` R7: a unit's session reads its own tree, not the workspace's --------
+
+    def unit_child(self, cwd, workspace):
+        inherited = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        inherited.update(sessions.child_env(cwd, workspace))
+        return inherited
+
+    def test_the_virtualenv_the_child_reads_is_the_worktrees(self):
+        with mock.patch.dict(os.environ, {"VIRTUAL_ENV": "/ws/.venv"}):
+            self.assertEqual(self.unit_child("/wt", "/ws")["VIRTUAL_ENV"], str(Path("/wt") / ".venv"))
+
+    def test_no_path_entry_under_the_workspace_or_the_package_reaches_the_child(self):
+        import coscc
+        pkg = str(Path(coscc.__file__).resolve().parent / "bin")
+        with mock.patch.dict(os.environ, {"PATH": os.pathsep.join(["/ws/.venv/bin", pkg, "/usr/bin"])}):
+            self.assertEqual(self.unit_child("/wt", "/ws")["PATH"], "/usr/bin")
+
+    def test_no_reflex_flag_of_this_process_reaches_the_child_with_a_value(self):
+        with mock.patch.dict(os.environ, {
+            "__REFLEX_SKIP_COMPILE": "1", "__REFLEX_MOUNT_FRONTEND_COMPILED_APP": "1",
+        }):
+            child = self.unit_child("/wt", "/ws")
+            self.assertEqual([k for k, v in child.items() if k.startswith("__REFLEX_") and v], [])
+            self.assertEqual(child[frontend.WEB_WORKDIR_VAR], str(Path("/wt") / ".web"))
