@@ -680,6 +680,27 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
             self.assertNotIn("FINDING-ONE-MARKER", prompt)
             self.assertNotIn("review.md", included)
 
+    def test_a_passed_review_quoting_the_status_further_down_is_not_sent_back(self):
+        # Round 2 of 0015's review, F6: the old pattern matched `Status: changes-requested`
+        # on any line, so a review whose header is `accepted` but whose body quotes that
+        # string sent a passed unit back to `impl`. Only the first `Status:` counts.
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(
+                Path(d),
+                intent_md="Status: accepted.\nI",
+                plan_md="Status: accepted.\nP",
+                review_md=(
+                    "# Review: x\nPR: pr.md. Concluded by: agent. Status: accepted.\n\n"
+                    "## Round 1\n\nThe header read\nStatus: changes-requested.\n\n"
+                    "- F1 [fixed abc1234] a.py:3 — high — FINDING-ONE-MARKER\n"
+                ),
+            )
+            prompt, included = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", writes_own=True
+            )
+            self.assertNotIn("FINDING-ONE-MARKER", prompt)
+            self.assertNotIn("review.md", included)
+
     def test_no_other_stage_is_handed_the_findings(self):
         with tempfile.TemporaryDirectory() as d:
             self.prompt(d, "changes-requested")

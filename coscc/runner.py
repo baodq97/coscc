@@ -151,7 +151,7 @@ def build_prompt(
     # `impl` to act on, and one that rejected closed the unit.
     if stage in ("impl", "implement"):
         review = _read(directory / "review.md")
-        if review and STATUS_CHANGES_RE.search(review) and "review.md" not in included:
+        if review and _header_status(review) == "changes-requested" and "review.md" not in included:
             included.append("review.md")
             parts.append(
                 "# The review that sent this back\n\n"
@@ -222,9 +222,16 @@ def _rounds(text: str) -> list[str]:
     return [m.group(0).rstrip() for m in _ROUND_RE.finditer(text or "")]
 
 
-# The one status that sends a unit back to `impl`. Read from the header line, the same
-# place `cos.mjs` reads it.
-STATUS_CHANGES_RE = re.compile(r"^.*Status:\s*changes-requested", re.MULTILINE)
+# A status as `cos.mjs` `parseStatus` reads it: the first `Status:` in the file, hyphenated
+# words as one. Only the first -- a round or a finding quoting "Status: changes-requested"
+# further down must not send a review that passed back to `impl`.
+HEADER_STATUS_RE = re.compile(r"\bStatus:\s*([A-Za-z]+(?:-[A-Za-z]+)*)")
+
+
+def _header_status(text: str) -> str | None:
+    """The artifact's own status, read the way `cos.mjs` reads it."""
+    m = HEADER_STATUS_RE.search(text or "")
+    return m.group(1).lower() if m else None
 
 
 # How much of an unusable reply to keep beside the reason it was refused. Long enough to
