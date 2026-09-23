@@ -15,10 +15,12 @@ HTTP, an error banner for the page — and neither gets to invent a different re
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import tempfile
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -67,6 +69,10 @@ class Service:
     config: Config
     sessions: Sessions
     store: Store | None = field(default=None, init=False)
+    # `0016`. Held across read-check-append so two answers arriving together cannot
+    # interleave their blocks. The page and the API share this instance (`state.py`
+    # takes `API.state.service`), so one lock covers both.
+    _answer_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # No working folder means no store, and the app behaves as it did before one existed.
@@ -479,6 +485,120 @@ class Service:
             }
         except (CannotCreate, BadUnit) as e:
             raise Invalid(str(e)) from e
+
+    async def answer(
+        self,
+        cwd: str,
+        unit: str,
+        artifact: str,
+        question: Any,
+        answer: str,
+        answered_by: str,
+    ) -> dict[str, Any]:
+        """`0016` R2–R4. A person answers one item under an artifact's `## Open questions`.
+
+        The only route in this app that writes into an artifact a stage wrote, and it only
+        ever **appends**: the file is opened `"a"`, never `"w"`, so every byte above the
+        `## Answers` block is the byte the stage left there (R4). What counts as a question
+        and whether it is answered is `cos.mjs`'s decision, read through one board read;
+        nothing here parses `## Open questions` a second time (R7).
+
+        Not an approval, and it starts nothing. `answered_by` is whatever name the caller
+        typed: no route in this app has a login, so it is a claim, not an identity.
+        """
+        self._workspace_or_refuse(cwd)
+        name = str(answered_by or "").strip()
+        text = str(answer or "").strip("\n")
+        async with self._answer_lock:
+            try:
+                data = await board_reader.read(self._units_root(cwd))
+            except Unavailable as e:
+                raise Invalid(str(e)) from e
+
+            found = next((u for u in data["units"] if u["name"] == unit), None)
+            if found is None:
+                raise Invalid(f"no such work unit in this workspace: {unit}")
+            asked = [q for q in found.get("questions") or [] if q.get("artifact") == artifact]
+            if not asked:
+                raise Invalid(f"{artifact} in {unit} has no numbered item under ## Open questions")
+            try:
+                number = int(question)
+            except (TypeError, ValueError):
+                raise Invalid(f"a question is named by its number, got {question!r}") from None
+            if number not in {q["n"] for q in asked}:
+                raise Invalid(
+                    f"{artifact} has no question {number} "
+                    f"(it has {', '.join(str(q['n']) for q in asked)})"
+                )
+            if not text.strip():
+                raise Invalid("the answer is empty")
+            if not name or "\n" in name or "\r" in name:
+                raise Invalid("say who is answering, on one line")
+            nxt = str(found.get("next") or "")
+            if nxt == "finished" or nxt.startswith("closed"):
+                raise Invalid(f"{unit} is {nxt}; its questions can no longer be answered")
+            # A line that reads as a heading would end this block early or open another,
+            # and `cos.mjs` would then read the answer wrongly. Refusing is cheaper and more
+            # honest than escaping somebody's words.
+            if any(line.lstrip().startswith("#") for line in text.splitlines()):
+                raise Invalid("no line of an answer may start with #")
+
+            path = self._unit_dir(cwd, unit) / artifact
+            try:
+                existing = path.read_text(encoding="utf-8")
+            except OSError as e:
+                raise Invalid(f"could not read {artifact}: {e}") from e
+            lines = existing.splitlines()
+            heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
+            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1:]):
+                raise Invalid(
+                    f"{artifact} has a section after its ## Answers, so a block appended at "
+                    "the end would not be read as an answer"
+                )
+
+            today = date.today().isoformat()
+            block = ""
+            if existing and not existing.endswith("\n"):
+                block += "\n"
+            if heading is None:
+                block += "\n## Answers\n"
+            block += (
+                f"\n### Câu {number}\n"
+                f"Answered by: {name}. Date: {today}. Via: product.\n\n"
+                f"{text}\n"
+            )
+            try:
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(block)
+            except OSError as e:
+                raise Invalid(f"could not write {artifact}: {e}") from e
+
+        # `0016` plan, in place of spec R9: the store is not a git repository, so there is
+        # no commit to make. The provenance this app already keeps is a row in `outputs`.
+        # Never raises: the answer is on disk, and failing the request now would tell the
+        # person it was not.
+        history = self._history()
+        if history is not None:
+            try:
+                history.add_output(
+                    self._journal_key(cwd),
+                    unit,
+                    artifact.removesuffix(".md"),
+                    "deliverable",
+                    artifact,
+                    actor=f"human:{name}",
+                    source="answer",
+                )
+            except (OSError, BadTransition, Busy):
+                pass
+
+        return {
+            "unit": unit,
+            "artifact": artifact,
+            "question": number,
+            "answered_by": name,
+            "date": today,
+        }
 
     async def start_branch(self, cwd: str, unit: str) -> dict[str, Any]:
         """`0014` R4. Cut this unit's branch in the workspace and switch to it.

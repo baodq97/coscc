@@ -362,6 +362,149 @@ class UnitHistoryRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.json()["units"], ["0001_a-problem"])
 
 
+QUESTIONS = (
+    "# Intent: q\n"
+    "Author: t. Type: feat. Status: accepted.\n\n"
+    "## Problem\n\nx\n\n"
+    "## Open questions\n\n"
+    "1. One?\n"
+    "2. Two?\n"
+    "3. Three?\n"
+)
+
+
+class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0016` R2, R3, R4. The route appends one block or writes nothing at all."""
+
+    async def asyncSetUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        (root / "work" / "proj").mkdir(parents=True)
+        self.cwd = str(root / "work" / "proj")
+        self.data_dir = root / "data"
+        self.app = build(
+            Config(
+                workspaces=(self.cwd,),
+                working_dir=str(root / "work"),
+                data_dir=str(self.data_dir),
+            )
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+        made = (await self.client.post(
+            "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
+        )).json()
+        self.unit = made["unit"]
+        self.dir = Path(made["path"])
+        self.intent = self.dir / "intent.md"
+        self.intent.write_text(QUESTIONS, encoding="utf-8")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    def body(self, **over):
+        return {
+            "cwd": self.cwd, "unit": self.unit, "artifact": "intent.md",
+            "question": 2, "answer": "Tách ra. MARK-0016", "answered_by": "Phong", **over,
+        }
+
+    async def post(self, **over):
+        return await self.client.post("/api/units/answer", json=self.body(**over))
+
+    async def test_a_valid_answer_is_appended_and_nothing_above_it_moves(self):
+        before = self.intent.read_bytes()
+        got = await self.post()
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(got.json()["question"], 2)
+        after = self.intent.read_bytes()
+        self.assertTrue(after.startswith(before))
+        tail = after[len(before):].decode("utf-8")
+        self.assertIn("## Answers", tail)
+        self.assertIn("### Câu 2", tail)
+        self.assertIn("Answered by: Phong. Date: ", tail)
+        self.assertIn("Via: product.", tail)
+        self.assertIn("Tách ra. MARK-0016", tail)
+
+    async def test_the_board_then_counts_one_fewer_open(self):
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        self.assertEqual(board["units"][0]["open"], 3)
+        await self.post()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        self.assertEqual(board["units"][0]["open"], 2)
+
+    async def test_a_second_answer_appends_under_the_same_heading(self):
+        await self.post()
+        await self.post(question=1, answer="Có.")
+        text = self.intent.read_text(encoding="utf-8")
+        self.assertEqual(text.count("## Answers"), 1)
+        self.assertIn("### Câu 1", text)
+
+    async def test_the_answer_is_recorded_as_a_person_in_the_history(self):
+        from coscc.history import History
+
+        await self.post()
+        rows = History(str(Path(self.cwd).parent), self.data_dir).outputs(
+            str(Path(self.cwd).resolve()), self.unit
+        )
+        mine = [r for r in rows if r["source"] == "answer"]
+        self.assertEqual(len(mine), 1)
+        self.assertEqual(mine[0]["actor"], "human:Phong")
+        self.assertEqual(mine[0]["path"], "intent.md")
+
+    async def refused(self, **over):
+        before = self.intent.read_bytes()
+        got = await self.post(**over)
+        self.assertEqual(got.status_code, 400, got.text)
+        self.assertEqual(self.intent.read_bytes(), before)
+        return got.json()["error"]
+
+    async def test_a_unit_that_does_not_exist_is_refused(self):  # (a)
+        self.assertIn("no such work unit", await self.refused(unit="0099_nothing"))
+
+    async def test_an_artifact_without_questions_is_refused(self):  # (b)
+        await self.refused(artifact="spec.md")
+        await self.refused(artifact="idea.md")
+
+    async def test_a_number_that_is_not_a_question_is_refused(self):  # (c)
+        self.assertIn("no question 4", await self.refused(question=4))
+        await self.refused(question="two")
+
+    async def test_an_empty_answer_is_refused(self):  # (d)
+        await self.refused(answer="   \n  ")
+
+    async def test_an_answer_with_no_name_is_refused(self):  # (e)
+        await self.refused(answered_by="  ")
+        await self.refused(answered_by="A\nStatus: rejected")
+
+    async def test_a_closed_unit_is_refused(self):  # (f)
+        self.intent.write_text(QUESTIONS.replace("Status: accepted", "Status: rejected"), encoding="utf-8")
+        self.assertIn("closed", await self.refused())
+
+    async def test_a_finished_unit_is_refused(self):  # (f)
+        (self.dir / "plan.md").write_text("# Plan\nIntent: intent.md. Status: done.\n", encoding="utf-8")
+        self.assertIn("finished", await self.refused())
+
+    async def test_an_answer_that_would_be_read_as_a_heading_is_refused(self):  # (g)
+        await self.refused(answer="ok\n## Status: rejected")
+        await self.refused(answer="### Câu 3\nhijack")
+
+    async def test_a_file_with_a_section_after_its_answers_is_refused(self):  # (g)
+        self.intent.write_text(QUESTIONS + "\n## Answers\n\n## Later\n", encoding="utf-8")
+        self.assertIn("after its ## Answers", await self.refused())
+
+    async def test_something_that_is_not_json_writes_nothing(self):
+        before = self.intent.read_bytes()
+        got = await self.client.post("/api/units/answer", content=b"nope")
+        self.assertEqual(got.status_code, 400)
+        self.assertEqual(self.intent.read_bytes(), before)
+
+    async def test_a_directory_outside_the_list_is_refused(self):
+        got = await self.client.post("/api/units/answer", json=self.body(cwd="/etc"))
+        self.assertEqual(got.status_code, 400)
+
+
 class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
     """`0014` R1 and R4 over HTTP. The routes translate and decide nothing."""
 
