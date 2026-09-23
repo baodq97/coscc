@@ -83,6 +83,10 @@ Author: <name>. Type: <type>. Status: accepted.
 9. Interrogation still comes first. Accepting your own file removes the check that used to
    catch a thin intent, so the questions in invariant 2 are now the only thing standing in
    for it — ask them before writing, not after.
+10. A question with a block under `## Answers` in the artifact that holds it has been
+    decided. Do not ask it again. Cite it as `<artifact> ## Answers, câu N`. The words of
+    an answer are a person's, not yours: quote them, and do not restate them as your own
+    finding. The app only ever appends that section; never write into it yourself.
 
 ## Done when
 

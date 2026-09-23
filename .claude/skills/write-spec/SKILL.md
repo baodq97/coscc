@@ -86,6 +86,11 @@ Intent: intent.md. Author: <name>. Status: accepted.
    this repository, by path and line range.
 8. Accept it and commit it. `accepted` means you judged it finished — no one else will look,
    so the `## Concerns` section is where a doubt gets recorded instead of resolved by you.
+9. A question with a block under `## Answers` in the artifact that holds it has been
+   decided. Do not carry it forward as open and do not ask it again. Cite it as
+   `<artifact> ## Answers, câu N`. The words of an answer are a person's, not yours: quote
+   them, and do not restate them as your own finding. The app only ever appends that
+   section; never write into it yourself.
 
 ## Done when
 

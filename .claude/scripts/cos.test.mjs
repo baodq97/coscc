@@ -2,13 +2,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import {
   parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit, STAGE_NAMES,
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
-  unitBranch, VERSION_SOURCE,
+  unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -463,4 +463,140 @@ test('--reserve-from with no directory is misuse', () => {
   const out = cli('new-path', 'x', '--reserve-from')
   assert.equal(out.status, 2)
   assert.match(out.stderr, /needs a directory/)
+})
+
+// --- 0016: the numbered items under `## Open questions`, and answers to them ---------
+
+const QUESTIONS = [
+  '# Intent: q',
+  'Author: t. Type: feat. Status: accepted.',
+  '',
+  '## Problem',
+  '',
+  '1. Not a question: this list is under Problem.',
+  '',
+  '## Open questions',
+  '',
+  '1. **First?** Asked here',
+  '   and continued on this line.',
+  '2. Second?',
+  '3. Third?',
+  '',
+].join('\n')
+
+const answerBlock = (n, by, text) =>
+  `\n### Câu ${n}\nAnswered by: ${by}. Date: 2026-09-23. Via: product.\n\n${text}\n`
+const withAnswers = (...blocks) => `${QUESTIONS}\n## Answers\n${blocks.join('')}`
+
+function questionTree(files) {
+  const root = mkdtempSync(join(tmpdir(), 'cos-questions-'))
+  const dir = join(root, '.cos', '0001_q')
+  mkdirSync(dir, { recursive: true })
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text)
+  return { root, u: readUnit(dir, '0001_q') }
+}
+
+test('questions are the numbered items under Open questions and nowhere else', () => {
+  const qs = parseQuestions(QUESTIONS)
+  assert.deepEqual(qs.map((q) => q.n), [1, 2, 3])
+  assert.match(qs[0].text, /continued on this line/)
+})
+
+test('a bullet list is numbered by position, but only when nothing is numbered', () => {
+  const bullets = '## Open questions\n\n- **One?** first\n  still one\n- Two?\n\n## Next\n- not a question\n'
+  assert.deepEqual(parseQuestions(bullets).map((q) => q.n), [1, 2])
+  assert.match(parseQuestions(bullets)[0].text, /still one/)
+  const mixed = '## Open questions\n\n1. Numbered.\n- a sub-point of it\n2. Also numbered.\n'
+  assert.deepEqual(parseQuestions(mixed).map((q) => q.n), [1, 2])
+  assert.match(parseQuestions(mixed)[0].text, /sub-point/)
+})
+
+test('no Open questions section is not the same as an empty one', () => {
+  assert.equal(parseQuestions('# x\nStatus: draft.\n'), null)
+  assert.deepEqual(parseQuestions('# x\n## Open questions\n\nNone.\n'), [])
+})
+
+test('three questions and no answers is three open', () => {
+  const { u } = questionTree({ 'intent.md': QUESTIONS })
+  assert.equal(u.open, 3)
+  assert.equal(u.questions.length, 3)
+  assert.deepEqual(u.problems, [])
+})
+
+test('one answer leaves two open, and carries who gave it', () => {
+  const { u } = questionTree({ 'intent.md': withAnswers(answerBlock(2, 'Phong Pham', 'Tách ra.')) })
+  assert.equal(u.open, 2)
+  const q2 = u.artifacts['intent.md'].questions.find((q) => q.n === 2)
+  assert.equal(q2.answered, true)
+  assert.equal(q2.answer.by, 'Phong Pham')
+  assert.equal(q2.answer.via, 'product')
+  assert.equal(q2.answer.text, 'Tách ra.')
+})
+
+test('two blocks for one number: the last is the one in force', () => {
+  const text = withAnswers(answerBlock(1, 'A', 'cũ'), answerBlock(1, 'B. C', 'mới'))
+  assert.equal(parseAnswers(text).length, 2)
+  const { u } = questionTree({ 'intent.md': text })
+  const q1 = u.artifacts['intent.md'].questions.find((q) => q.n === 1)
+  assert.equal(q1.answer.text, 'mới')
+  assert.equal(q1.answer.by, 'B. C')
+  assert.equal(u.open, 2)
+})
+
+test('a block with no header line is not an answer', () => {
+  assert.deepEqual(parseAnswers(`${QUESTIONS}\n## Answers\n\n### Câu 1\nno header here\n`), [])
+})
+
+test('Answers is never read as questions, and the Status line survives it', () => {
+  const text = withAnswers(answerBlock(3, 'A', '1. looks like a question'))
+  assert.deepEqual(parseQuestions(text).map((q) => q.n), [1, 2, 3])
+  assert.equal(parseStatus(text), 'accepted')
+  assert.equal(parseStatus(QUESTIONS), parseStatus(text))
+})
+
+test('only the latest artifact with questions is counted, but every question is listed', () => {
+  const spec = '# Spec\nIntent: intent.md. Author: t. Status: accepted.\n\n## Open questions\n\n1. Only one.\n'
+  const { u } = questionTree({ 'intent.md': QUESTIONS, 'spec.md': spec })
+  assert.equal(u.open, 1)
+  assert.equal(u.counted, 'spec.md')
+  assert.deepEqual(u.questions.map((q) => q.artifact), ['intent.md', 'intent.md', 'intent.md', 'spec.md'])
+  assert.deepEqual(u.questions.map((q) => q.counted), [false, false, false, true])
+})
+
+test('a unit with no Open questions anywhere has nothing open', () => {
+  const { u } = questionTree({ 'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n' })
+  assert.equal(u.open, 0)
+  assert.deepEqual(u.questions, [])
+})
+
+test('an open question does not close a gate', () => {
+  const { u } = questionTree({ 'intent.md': QUESTIONS })
+  assert.equal(u.open, 3)
+  assert.equal(checkGate(u, 'spec').ok, true)
+})
+
+// Read asynchronously, the way `coscc/board.py` reads it. `spawnSync` drains the pipe as
+// fast as it fills and never saw the truncation this guards against.
+test('status --json over 64 KiB reaches a pipe whole', async () => {
+  const long = `${QUESTIONS}4. ${'x'.repeat(200 * 1024)}\n`
+  const { root } = questionTree({ 'intent.md': long })
+  const script = fileURLToPath(new URL('./cos.mjs', import.meta.url))
+  const child = spawn(process.execPath, [script, '--root', root, 'status', '--json'])
+  let text = ''
+  child.stdout.setEncoding('utf8')
+  for await (const chunk of child.stdout) {
+    text += chunk
+    await new Promise((r) => setTimeout(r, 5))
+  }
+  assert.ok(text.length > 200 * 1024, `got ${text.length} characters`)
+  assert.equal(JSON.parse(text).units[0].open, 4)
+})
+
+test('status --json carries questions and open for each unit', () => {
+  const { root } = questionTree({ 'intent.md': withAnswers(answerBlock(1, 'A', 'x')) })
+  const out = cli('--root', root, 'status', '--json')
+  assert.equal(out.status, 0, out.stderr)
+  const got = JSON.parse(out.stdout).units[0]
+  assert.equal(got.open, 2)
+  assert.equal(got.questions.length, 3)
 })

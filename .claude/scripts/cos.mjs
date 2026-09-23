@@ -58,6 +58,111 @@ export function parseSkipReason(text) {
   return m ? m[1].trim() : null
 }
 
+// --- questions and the answers a person gave to them ---------------------------
+
+// The lines of one `## <title>` section: from the line that is exactly that heading to the
+// next `## ` heading or the end of the file. `null` when the file has no such section, so a
+// caller can tell "no section" from "a section with nothing in it".
+function section(text, title) {
+  const lines = text.split(/\r?\n/)
+  const start = lines.findIndex((l) => l.trimEnd() === `## ${title}`)
+  if (start === -1) return null
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((l) => l.startsWith('## '))
+  return end === -1 ? rest : rest.slice(0, end)
+}
+
+// A question is a numbered item at column 0 under `## Open questions`. Its identity is the
+// number written, not its position and not its words — a later stage may reword it, and a
+// list that skips a number still means the number it wrote. Lines up to the next numbered
+// item belong to the one above them. `null` when the file has no `## Open questions`.
+//
+// A section with no numbered item at all is read as a bullet list (`- ` or `* ` at column
+// 0), numbered by position from 1. Measured 2026-09-23 on the product's own store: two of
+// the artifacts there, `0015` `spec.md` and `0002` `intent.md`, wrote their questions that
+// way, and a numbered-only reader showed them as having none. Position is a weaker
+// identity than a written number — inserting a bullet renumbers everything below it — so
+// the numbered form wins whenever a section has both.
+export function parseQuestions(text) {
+  const lines = section(text, 'Open questions')
+  if (lines === null) return null
+  const collect = (re, numberOf) => {
+    const found = []
+    for (const line of lines) {
+      const m = line.match(re)
+      if (m) found.push({ n: numberOf(m, found.length), lines: [m[m.length - 1]] })
+      else if (found.length) found[found.length - 1].lines.push(line)
+    }
+    return found
+  }
+  let found = collect(/^(\d+)\.\s+(.*)$/, (m) => Number(m[1]))
+  if (!found.length) found = collect(/^[-*]\s+(.*)$/, (_, i) => i + 1)
+  return found.map((q) => ({ n: q.n, text: q.lines.join('\n').trim() }))
+}
+
+// The header line of an answer block. The name is lazy so that a name holding a full stop
+// still stops at `. Date:`.
+const ANSWER_META = /^Answered by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\.?\s*$/
+
+// Answers are what a person wrote through the product, appended under `## Answers` as one
+// `### Câu N` block each. Answering again adds a block rather than editing one, so when a
+// number has several the last is the one in force. A block whose header line is missing or
+// malformed is not an answer: it is not counted, because nothing says who gave it.
+export function parseAnswers(text) {
+  const lines = section(text, 'Answers')
+  if (lines === null) return []
+  const blocks = []
+  for (const line of lines) {
+    const m = line.match(/^###\s+Câu\s+(\d+)\s*$/)
+    if (m) blocks.push({ n: Number(m[1]), lines: [] })
+    else if (blocks.length) blocks[blocks.length - 1].lines.push(line)
+  }
+  const answers = []
+  for (const b of blocks) {
+    const at = b.lines.findIndex((l) => l.trim() !== '')
+    const meta = at === -1 ? null : b.lines[at].match(ANSWER_META)
+    if (!meta) continue
+    answers.push({
+      n: b.n,
+      by: meta[1].trim(),
+      date: meta[2],
+      via: meta[3],
+      text: b.lines.slice(at + 1).join('\n').trim(),
+    })
+  }
+  return answers
+}
+
+// Each question joined to the answer in force for it, if any.
+export function answeredQuestions(text) {
+  const questions = parseQuestions(text)
+  if (questions === null) return null
+  const latest = new Map()
+  for (const a of parseAnswers(text)) latest.set(a.n, a)
+  return questions.map((q) => {
+    const a = latest.get(q.n) ?? null
+    return { n: q.n, text: q.text, answered: a !== null, answer: a }
+  })
+}
+
+// The unit-level view: every question in stage order, and how many are open in the
+// **counted** artifact — the latest one, by stage, that has `## Open questions` at all.
+// Earlier artifacts' questions are usually carried forward (`write-spec` invariant 5), so
+// counting all of them would count one question several times. They stay in the list.
+// This number is information, not a gate: `checkGate` does not read it.
+export function unitQuestions(unit) {
+  let counted = null
+  for (const s of STAGES) if (unit.artifacts[s.file]?.questions) counted = s.file
+  const questions = []
+  for (const s of STAGES) {
+    for (const q of unit.artifacts[s.file]?.questions ?? []) {
+      questions.push({ artifact: s.file, n: q.n, text: q.text, answered: q.answered, counted: s.file === counted })
+    }
+  }
+  const open = counted ? unit.artifacts[counted].questions.filter((q) => !q.answered).length : 0
+  return { questions, open, counted }
+}
+
 export function readUnit(dir, name) {
   const unit = { name, artifacts: {}, problems: [] }
   let intentText = null
@@ -81,7 +186,11 @@ export function readUnit(dir, name) {
       unit.problems.push(`${file} has status "${status}", not one of ${VALID[file].join(', ')}`)
     }
     unit.artifacts[file] = { status, skipReason: file === 'plan.md' ? parseSkipReason(text) : null }
+    const questions = answeredQuestions(text)
+    if (questions !== null) unit.artifacts[file].questions = questions
   }
+
+  Object.assign(unit, unitQuestions(unit))
 
   const stray = readdirSync(dir).filter((f) => !ARTIFACTS.includes(f))
   if (stray.length) unit.problems.push(`unexpected file(s): ${stray.join(', ')}`)
@@ -567,5 +676,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(2)
   }
 
-  process.exit(run())
+  // `exitCode`, not `exit()`. With stdout a pipe, `process.exit` does not wait for the
+  // write to drain, and a reader gets the first 64 KiB of the output and nothing after.
+  // Measured 2026-09-23: once `status --json` carried each unit's questions (`0016`), this
+  // repository's output passed that size and `coscc/board.py` failed on truncated JSON.
+  process.exitCode = run()
 }

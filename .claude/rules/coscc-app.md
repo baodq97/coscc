@@ -83,6 +83,16 @@ no commands, one turn, no budget.
   schema 2 under an installed `v0.2.3`. Health checks do not see this; `curl /api/workspaces`
   does. The way out is to match the app to the database or delete the database — a downgrade
   does not remove it.
+- **`POST /api/units/answer` writes a stranger's words into a paid prompt.** Since `0016`
+  it appends an answer under a typed name to an artifact, and the next stage embeds that
+  file. No login, `0.0.0.0` by default: anyone on the network can put text there that a
+  stage will read as a person's decision. The only trace is the file and an `outputs` row
+  with `actor = human:<name>` — watch for a name nobody recognises. `COS_HOST=127.0.0.1`
+  is the mitigation that exists.
+- **Re-running a stage whose artifact holds `## Answers` erases them.** A prose stage's
+  artifact is written from the reply, whole. Today the run button only offers a stage with
+  no artifact, so the path is closed; whoever opens it loses answers with no trace but the
+  `outputs` row.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
 
@@ -101,6 +111,7 @@ no commands, one turn, no budget.
 | `verify_0013.py` | reads git history into a **temporary** data root, never `~/.cos`. No session, no quota, no network. Run it plain and it is exit 1 by design — `--import` is what fills the log and makes it exit 0 |
 
 | `verify_0014.py` | **spends real money and merges a real pull request.** Needs `COS_PROOF_REPO`, a throwaway repo; unset is exit 2. Five sessions — measured $3.28 and 11m49s end to end, 2026-09-22. `--dry` stops before the first paid step |
+| `verify_0016.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.

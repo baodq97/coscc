@@ -80,6 +80,37 @@ class ThePhaseIsCarriedFromTheScript(unittest.TestCase):
         self.assertEqual({u["phase"] for u in data["units"]}, {"started"})
 
 
+class QuestionsAreCarriedFromTheScript(unittest.TestCase):
+    """`0016` R7. The board forwards what `cos.mjs` decided and recounts nothing."""
+
+    TEXT = (
+        "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n"
+        "## Open questions\n\n1. One?\n2. Two?\n3. Three?\n\n"
+        "## Answers\n\n### Câu 2\nAnswered by: A. Date: 2026-09-23. Via: product.\n\nCó.\n"
+    )
+
+    def test_open_and_questions_arrive_as_the_script_sent_them(self):
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_q"
+            unit.mkdir(parents=True)
+            (unit / "intent.md").write_text(self.TEXT, encoding="utf-8")
+            [u] = run(board.read(d))["units"]
+            self.assertEqual(u["open"], 2)
+            self.assertEqual(u["counted"], "intent.md")
+            self.assertEqual(
+                [(q["artifact"], q["n"], q["answered"]) for q in u["questions"]],
+                [("intent.md", 1, False), ("intent.md", 2, True), ("intent.md", 3, False)],
+            )
+
+    def test_a_unit_with_no_questions_reads_as_none_open(self):
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_q"
+            unit.mkdir(parents=True)
+            (unit / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: draft.\n")
+            [u] = run(board.read(d))["units"]
+            self.assertEqual((u["open"], u["questions"], u["counted"]), (0, [], ""))
+
+
 class AnEmptyWorkspaceIsAnAnswerNotAFailure(unittest.TestCase):
     def test_a_directory_with_no_cos_reports_why_rather_than_raising(self):
         with tempfile.TemporaryDirectory() as d:

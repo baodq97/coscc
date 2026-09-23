@@ -138,6 +138,33 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.post("/api/units/answer")
+    async def answer_question(request: Request) -> Any:
+        """`0016` R2. A person answers one item under an artifact's `## Open questions`.
+
+        Appends a `### Câu N` block under `## Answers` at the end of that artifact and
+        writes nothing else. **No route here has a login and the default bind is
+        `0.0.0.0`**, so anyone who reaches the port can put words into an artifact under a
+        name they chose, and the next stage reads them as a person's decision.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.answer(
+                str(body.get("cwd") or ""),
+                str(body.get("unit") or ""),
+                str(body.get("artifact") or ""),
+                body.get("question"),
+                str(body.get("answer") or ""),
+                str(body.get("answered_by") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.post("/api/units/branch")
     async def start_branch(request: Request) -> Any:
         """`0014` R4. Cut this unit's branch in the workspace.
