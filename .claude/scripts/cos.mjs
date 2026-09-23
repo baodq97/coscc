@@ -439,7 +439,10 @@ function reviewNeeds(unit, probe, limit) {
 
 // `ship` merges. It may do so only after a pass that left nothing open, whose history is
 // intact, and after which no code reached the branch (`0015` spec, R3–R5).
-function shipNeeds(unit, probe) {
+//
+// `said.head` is set to the pull request head the gate checked, so the merge can be pinned
+// to it.
+function shipNeeds(unit, probe, said = {}) {
   const rounds = reviewOf(unit)
   if (!rounds.length) return ['review.md has no ## Round — nothing says what was reviewed or found']
   const last = rounds.at(-1)
@@ -465,6 +468,8 @@ function shipNeeds(unit, probe) {
 
   if (!probe) return ['no repository given — pass --repo <dir>']
   if (!unit.branch) return ['the unit has no branch — intent.md must declare a Type']
+  const pr = unit.artifacts['pr.md']?.pr ?? null
+  if (!pr) return ['pr.md names no pull request — nothing says what ship would merge']
   const refs = [`refs/heads/${unit.branch}`, `refs/remotes/origin/${unit.branch}`].filter(
     (ref) => probe.git('rev-parse', '--verify', '--quiet', ref).code === 0,
   )
@@ -472,10 +477,33 @@ function shipNeeds(unit, probe) {
   if (probe.git('cat-file', '-e', `${last.reviewed}^{commit}`).code !== 0) {
     return [`the reviewed commit ${last.reviewed} is not in this repository`]
   }
+
+  // What the merge lands is the pull request's head on GitHub, not a ref here: a push
+  // from another checkout moves it and leaves `origin/<branch>` stale, since the gate does
+  // not fetch (`0015` review round 1, F2). So the head is asked for and checked like a ref,
+  // and `ship` merges with `--match-head-commit` set to exactly this commit.
+  const view = probe.gh('pr', 'view', String(pr.number), '--json', 'state,headRefOid')
+  let info = null
+  try {
+    info = JSON.parse(view.out)
+  } catch {
+    info = null
+  }
+  if (!info || typeof info.headRefOid !== 'string') {
+    const said = (view.err || view.out).trim() || `gh exited ${view.code} and said nothing`
+    return [`cannot read the head of #${pr.number}: ${said}`]
+  }
+  if (info.state !== 'OPEN') return [`#${pr.number} is ${info.state}, not open — there is nothing to merge`]
+  if (probe.git('cat-file', '-e', `${info.headRefOid}^{commit}`).code !== 0) {
+    return [`the head of #${pr.number}, ${info.headRefOid}, is not in this repository — someone pushed from elsewhere: fetch, then ask again`]
+  }
+  refs.push(info.headRefOid)
+  said.head = info.headRefOid
   const own = `.cos/${unit.name}/`
   for (const ref of refs) {
+    const name = ref === said.head ? `the head of #${pr.number} (${ref})` : ref
     if (probe.git('merge-base', '--is-ancestor', last.reviewed, ref).code !== 0) {
-      need.push(`the reviewed commit ${last.reviewed} is not on ${ref} — the branch was rewritten after the pass`)
+      need.push(`the reviewed commit ${last.reviewed} is not on ${name} — the branch was rewritten after the pass`)
       continue
     }
     const diff = probe.git('diff', '--name-only', `${last.reviewed}..${ref}`)
@@ -485,7 +513,7 @@ function shipNeeds(unit, probe) {
     }
     const after = diff.out.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith(own))
     if (after.length) {
-      need.push(`${ref} changed after the reviewed commit ${last.reviewed}: ${after.join(', ')} — review again`)
+      need.push(`${name} changed after the reviewed commit ${last.reviewed}: ${after.join(', ')} — review again`)
     }
   }
   return need
@@ -521,9 +549,11 @@ export function checkGate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } =
   // Asked only once the earlier stages are behind us: a gate closed for a missing plan has
   // no business spending a network call on CI.
   if (!need.length && target.name === 'review') need.push(...reviewNeeds(unit, probe, limit))
-  if (!need.length && target.name === 'ship') need.push(...shipNeeds(unit, probe))
+  const said = {}
+  if (!need.length && target.name === 'ship') need.push(...shipNeeds(unit, probe, said))
 
-  return { ok: need.length === 0, need }
+  const ok = need.length === 0
+  return ok && said.head ? { ok, need, head: said.head } : { ok, need }
 }
 
 export function nextNumber(units) {
@@ -674,9 +704,11 @@ function cmdGate(unitName, stage, cosDir, repoDir, limit) {
     return 2
   }
   const probe = repoDir ? makeProbe(repoDir) : null
-  const { ok, need } = checkGate(readUnit(dir, unitName), stage, { probe, limit })
+  const { ok, need, head } = checkGate(readUnit(dir, unitName), stage, { probe, limit })
   if (ok) {
-    console.log(`open: ${stage} may proceed for ${unitName}`)
+    // `ship` is told the one commit it may merge; any other head is one nobody reviewed.
+    const pin = head ? ` — merge with --match-head-commit ${head}` : ''
+    console.log(`open: ${stage} may proceed for ${unitName}${pin}`)
     return 0
   }
   console.error(`blocked: ${stage} cannot proceed for ${unitName}`)

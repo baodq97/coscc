@@ -61,7 +61,19 @@ class Fixture:
         self.checks = base / "checks.json"
         self.bin.mkdir()
         gh = self.bin / "gh"
-        gh.write_text('#!/bin/sh\ncat "$FAKE_GH_CHECKS"\n', encoding="utf-8")
+        # `gh pr view` answers with the pull request's head: whatever `$FAKE_GH_HEAD` holds,
+        # else this checkout's HEAD. Everything else is `gh pr checks`.
+        gh.write_text(
+            "#!/bin/sh\n"
+            'if [ "$2" = view ]; then\n'
+            '  head=$(cat "$FAKE_GH_HEAD" 2>/dev/null || git rev-parse HEAD)\n'
+            '  printf \'{"state":"OPEN","headRefOid":"%s"}\\n\' "$head"\n'
+            "  exit 0\n"
+            "fi\n"
+            'cat "$FAKE_GH_CHECKS"\n',
+            encoding="utf-8",
+        )
+        self.head_file = base / "head"
         gh.chmod(gh.stat().st_mode | stat.S_IXUSR)
         self.set_checks([{"name": "tests", "bucket": "pass"}])
 
@@ -100,6 +112,7 @@ class Fixture:
         full |= {
             "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
             "FAKE_GH_CHECKS": str(self.checks),
+            "FAKE_GH_HEAD": str(self.head_file),
             **(env or {}),
         }
         return subprocess.run(
@@ -184,11 +197,21 @@ def claims(fx: Fixture) -> dict[str, tuple[bool, str]]:
     (fx.work / "src" / "a.txt").write_text("not reviewed\n", encoding="utf-8")
     fx.commit("code after the pass")
     after = fx.gate("ship")
-    got["C5"] = (
-        only_unit.returncode == 0 and after.returncode == 1 and "src/a.txt" in after.stderr,
-        f"only .cos/{UNIT}/ → exit {only_unit.returncode}; code after → {after.stderr.strip()}",
-    )
+    elsewhere = fx.git("rev-parse", "HEAD")
     fx.git("reset", "-q", "--hard", "HEAD~1")
+    # Review round 1, F2: the code commit reached the pull request from another checkout.
+    # Neither ref here has it; only GitHub's head does. The gate must read that head.
+    fx.head_file.write_text(elsewhere, encoding="utf-8")
+    stale = fx.gate("ship")
+    fx.head_file.unlink()
+    got["C5"] = (
+        only_unit.returncode == 0
+        and f"--match-head-commit {fx.git('rev-parse', 'HEAD')}" in only_unit.stdout
+        and after.returncode == 1 and "src/a.txt" in after.stderr
+        and stale.returncode == 1 and "head of #7" in stale.stderr and "src/a.txt" in stale.stderr,
+        f"only .cos/{UNIT}/ → {only_unit.stdout.strip()}; code after → {after.stderr.strip()}; "
+        f"pushed from elsewhere → {stale.stderr.strip()}",
+    )
 
     # C6 — CI red blocks review and names the check; green opens it.
     fx.write("review.md", review("changes-requested", (1, reviewed, "changes-requested", ["- F1 [open] a.py:1 — x"])))

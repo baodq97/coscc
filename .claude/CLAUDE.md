@@ -74,8 +74,8 @@ The order per unit, and the reason it cannot be reordered:
 7. `review`: a separate agent session appends a round to `review.md`. Findings open means
    `changes-requested`, a fix on the branch, green CI again, and another round; after
    `COS_REVIEW_ROUNDS` such rounds the gate says `needs a person`. A pass is `accepted`.
-8. `ship`: only once `cos.mjs gate <unit> ship` exits 0, `gh pr merge --squash --delete-branch`.
-   Every push resets the required checks — including the commit recording the pass — so
+8. `ship`: only once `cos.mjs gate <unit> ship` exits 0, `gh pr merge --squash --delete-branch`
+   with `--match-head-commit` set to the head the gate names. Every push resets the required checks — including the commit recording the pass — so
    the merge may first be refused with `2 of 2 required status checks are expected`: wait.
 
 When the pull request falls behind, `gh pr update-branch --rebase`. Rebase, not a merge of

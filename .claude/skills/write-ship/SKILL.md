@@ -22,17 +22,24 @@ node .claude/scripts/cos.mjs gate <NNNN_slug> ship
 ```
 
 Exit 0 means the last review round passed, no finding is open or was dropped, the rounds
-are numbered without a gap, and nothing outside `.cos/<unit>/` reached the branch after
-the reviewed commit. Exit 1 means do not merge: fix what it names. If it says code landed
-after the pass, that code goes back to `write-review` — it was never reviewed.
+are numbered without a gap, and nothing outside `.cos/<unit>/` reached the branch — local,
+`origin`, or the pull request's head as GitHub reports it — after the reviewed commit.
+Exit 1 means do not merge: fix what it names. If it says code landed after the pass, that
+code goes back to `write-review` — it was never reviewed.
+
+The open line ends `— merge with --match-head-commit <sha>`. That is the head the gate
+checked. Copy it; do not read the head again yourself.
 
 ## Merging
 
 ```
-gh pr merge <number> --squash --delete-branch
+gh pr merge <number> --squash --delete-branch --match-head-commit <sha the gate named>
 ```
 
-The number is the one in `pr.md`'s `PR:` field.
+The number is the one in `pr.md`'s `PR:` field. `--match-head-commit` is what makes the
+gate's answer hold at the moment of the merge: if anything was pushed between the gate and
+this command, GitHub refuses the merge instead of landing a head nobody checked. Then ask
+the gate again.
 
 **`2 of 2 required status checks are expected` after a pass is a wait, not a failure.**
 The commit that recorded the passing round reset the required checks. Wait for them

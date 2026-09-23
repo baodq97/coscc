@@ -18,8 +18,13 @@ const art = (status) => ({ status, skipReason: null })
 // A probe that answers the way git and gh would, without either. `checks` is what
 // `gh pr checks --json name,bucket` prints; `git` maps an argument string to an answer.
 const ok = (out = '') => ({ code: 0, out, err: '' })
-const greenProbe = (checks = [{ name: 'tests', bucket: 'pass' }], git = {}) => ({
-  gh: () => ({ code: 0, out: JSON.stringify(checks), err: '' }),
+// `view` is what `gh pr view --json state,headRefOid` prints; `null` means the head is the
+// reviewed commit (`SHA`, declared further down), so the diff to it is empty.
+const greenProbe = (checks = [{ name: 'tests', bucket: 'pass' }], git = {}, view = null) => ({
+  gh: (...args) =>
+    args[1] === 'view'
+      ? ok(JSON.stringify(view ?? { state: 'OPEN', headRefOid: SHA }))
+      : { code: 0, out: JSON.stringify(checks), err: '' },
   git: (...args) => git[args.join(' ')] ?? ok(),
 })
 
@@ -729,6 +734,28 @@ test('R5: code after the reviewed commit closes the ship gate; the unit\'s own f
   const rewritten = greenProbe(undefined, { [`merge-base --is-ancestor ${SHA} refs/heads/feat/x`]: { code: 1, out: '', err: '' } })
   assert.match(checkGate(u, 'ship', { probe: rewritten }).need[0], /not on refs\/heads\/feat\/x/)
   assert.match(checkGate(u, 'ship').need[0], /no repository given/)
+})
+
+test('F2: ship reads the pull request head, not only the refs here, and pins the merge to it', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })
+  const HEAD = 'c'.repeat(40)
+  const open = { state: 'OPEN', headRefOid: HEAD }
+  // Local and origin refs still say the reviewed commit; GitHub's head moved past it.
+  const pushedElsewhere = greenProbe(undefined, { [`diff --name-only ${SHA}..${HEAD}`]: ok('src/a.py') }, open)
+  const g = checkGate(u, 'ship', { probe: pushedElsewhere })
+  assert.equal(g.ok, false)
+  assert.match(g.need[0], new RegExp(`the head of #7 \\(${HEAD}\\) changed after the reviewed commit .*src/a\\.py`))
+
+  // The head moved only by the unit's own files: open, and the gate names the head to merge.
+  const good = checkGate(u, 'ship', { probe: greenProbe(undefined, { [`diff --name-only ${SHA}..${HEAD}`]: ok('.cos/0001_x/review.md') }, open) })
+  assert.equal(good.ok, true)
+  assert.equal(good.head, HEAD)
+
+  const missing = greenProbe(undefined, { [`cat-file -e ${HEAD}^{commit}`]: { code: 1, out: '', err: '' } }, open)
+  assert.match(checkGate(u, 'ship', { probe: missing }).need[0], /not in this repository — someone pushed from elsewhere: fetch/)
+  assert.match(checkGate(u, 'ship', { probe: greenProbe(undefined, {}, { state: 'MERGED', headRefOid: SHA }) }).need[0], /#7 is MERGED, not open/)
+  const offline = { gh: () => ({ code: 1, out: '', err: 'error connecting to api.github.com' }), git: () => ok() }
+  assert.match(checkGate(u, 'ship', { probe: offline }).need[0], /cannot read the head of #7: error connecting/)
 })
 
 test('a review.md with no rounds cannot ship', () => {
