@@ -182,10 +182,25 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
 
 
 
+# Chosen, not measured. Since `0015` the `review` gate asks GitHub for the pull request's
+# checks, so this one call now waits on a network the board's own read never touches.
+GATE_TIMEOUT = 30.0
+
+
 async def gate(
-    units_root: str | Path, unit: str, stage: str, timeout: float = TIMEOUT
+    units_root: str | Path,
+    unit: str,
+    stage: str,
+    repo: str | Path | None = None,
+    timeout: float = GATE_TIMEOUT,
 ) -> tuple[bool, str]:
     """Ask `cos.mjs gate` whether one stage of one unit may proceed.
+
+    `repo` is the workspace -- the git checkout the unit's code lives in -- and is passed as
+    `--repo`. It is not `units_root`: since `0014` that is the product's store, which holds
+    artifacts and has no git, so the `review` and `ship` gates (`0015`) would have no branch
+    to read and no pull request to ask about. Without `repo` those two gates stay closed
+    and say so; every other stage reads files only and does not care.
 
     Returns `(open, what it said)`. Exit 0 is open; exit 1 is blocked and carries the
     reasons; exit 2 is misuse, which is this app's bug and not the unit's, so it is
@@ -210,9 +225,10 @@ async def gate(
         raise Unavailable(f"the harness script is missing: {script}")
 
     try:
-        code, out_text, err_text = await _run(
-            [str(script), "--root", str(path), "gate", unit, stage], timeout
-        )
+        argv = [str(script), "--root", str(path), "gate", unit, stage]
+        if repo is not None:
+            argv += ["--repo", str(Path(repo).expanduser().resolve())]
+        code, out_text, err_text = await _run(argv, timeout)
     except (OSError, ValueError) as e:
         raise Unavailable(
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"

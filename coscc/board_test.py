@@ -9,9 +9,11 @@ apart. `spec.md` C8 is the concern these tests stand against.
 from __future__ import annotations
 
 import asyncio
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from coscc import board, harness
 from coscc.board import Unavailable
@@ -179,8 +181,18 @@ class AnUnreadableBoardRaisesRatherThanReturningEmpty(unittest.TestCase):
             harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS = originals
 
     def test_the_child_environment_carries_no_secrets(self):
-        env = board._child_env()
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("COS_REVIEW_ROUNDS", None)
+            env = board._child_env()
         self.assertEqual(set(env), {"PATH", "HOME", "LC_ALL", "NO_COLOR"})
+
+    def test_the_review_round_limit_is_the_one_setting_passed_down(self):
+        """`0015`: `COS_REVIEW_ROUNDS` reaches `cos.mjs`, and nothing else new does."""
+        extra = {"COS_REVIEW_ROUNDS": "5", "GH_TOKEN": "secret", "COS_MODEL": "m"}
+        with mock.patch.dict(os.environ, extra):
+            env = board._child_env()
+        self.assertEqual(env["COS_REVIEW_ROUNDS"], "5")
+        self.assertEqual(set(env), {"PATH", "HOME", "LC_ALL", "NO_COLOR", "COS_REVIEW_ROUNDS"})
 
 
 if __name__ == "__main__":
@@ -223,6 +235,39 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
             allowed, said = run(board.gate(tmp, "0001_nothing-here", "spec"))
             self.assertFalse(allowed)
             self.assertTrue(said.strip())
+
+    def _store_unit(self, tmp: str) -> str:
+        """A unit in a store-shaped root: artifacts only, no git — what `0014` built."""
+        name = "0001_needs-a-review"
+        d = Path(tmp) / ".cos" / name
+        d.mkdir(parents=True)
+        (d / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n")
+        for f in ("spec.md", "plan.md", "impl.md"):
+            (d / f).write_text("Status: accepted.\n")
+        (d / "pr.md").write_text("PR: https://github.com/o/r/pull/3. Status: accepted.\n")
+        return name
+
+    def test_without_a_repo_the_review_gate_says_so_instead_of_reading_the_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            name = self._store_unit(tmp)
+            allowed, said = run(board.gate(tmp, name, "review"))
+            self.assertFalse(allowed)
+            self.assertIn("no repository given", said)
+
+    def test_the_repo_reaches_the_gate_as_repo(self):
+        """`0015`: the workspace is where `review` asks gh about the pull request."""
+        seen = {}
+
+        async def fake_run(argv, timeout):
+            seen["argv"], seen["timeout"] = argv, timeout
+            return 0, "open", ""
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
+            name = self._store_unit(tmp)
+            run(board.gate(tmp, name, "review", repo=tmp))
+        argv = seen["argv"]
+        self.assertEqual(argv[argv.index("--repo") + 1], str(Path(tmp).resolve()))
+        self.assertEqual(seen["timeout"], board.GATE_TIMEOUT)
 
     def test_a_missing_script_is_unavailable_not_a_closed_gate(self):
         """A gate that cannot be asked must not read as a gate that said no.

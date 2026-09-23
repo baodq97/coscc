@@ -78,12 +78,22 @@ def child_env() -> dict[str, str]:
     same shape of mistake `0012` paid for when two modules each computed where `.claude/`
     was.
     """
-    return {
+    env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": os.environ.get("HOME", "/tmp"),
         "LC_ALL": "C",
         "NO_COLOR": "1",
     }
+    # The one setting `cos.mjs` reads (`0015`): how many review rounds may ask for changes
+    # before the loop needs a person. Passed only when set, so an unset variable keeps
+    # meaning "the default in `cos.mjs`" rather than becoming an empty string it refuses.
+    # Since `0015` the `review` and `ship` gates also run `git` and `gh`; `gh` finds its
+    # login through `HOME`, so a machine that logs in with `GH_TOKEN` alone will see those
+    # gates closed with gh's own error. That is deliberate: no secret is passed down here.
+    rounds = os.environ.get("COS_REVIEW_ROUNDS")
+    if rounds:
+        env["COS_REVIEW_ROUNDS"] = rounds
+    return env
 
 
 def is_packaged() -> bool:

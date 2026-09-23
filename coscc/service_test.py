@@ -800,3 +800,19 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
         # The guard must not close the ordinary path. `spec` follows an accepted intent.
         self._run("spec")
         self.assertEqual(self.sessions.calls, 1)
+
+    def test_the_gate_is_told_which_repository_the_unit_lives_beside(self):
+        """`0015`: the store has no git, so `review` and `ship` read the workspace's."""
+        from coscc import board as board_reader
+
+        seen = {}
+
+        async def fake_gate(units_root, unit, stage, repo=None, **kw):
+            seen["repo"] = repo
+            return False, "blocked: stop here"
+
+        with mock.patch.object(board_reader, "gate", fake_gate):
+            with self.assertRaises(Invalid):
+                self._run("review")
+        self.assertEqual(seen["repo"], str(self.repo))
+        self.assertEqual(self.sessions.calls, 0)
