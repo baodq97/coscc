@@ -288,3 +288,80 @@ class FetchingTheTrunkFromARemote(unittest.TestCase):
             capture_output=True, text=True,
         )
         self.assertEqual(got.stdout.strip(), "")
+
+
+class Worktrees(FetchingTheTrunkFromARemote):
+    """`0017` plan step 2. The worktree commands, each with the refusal that bounds it."""
+
+    def setUp(self):
+        super().setUp()
+        self.main = self._git(self.repo, "rev-parse", "main")
+        self.tree = Path(self._tmp.name) / "trees" / "0001_a"
+
+    def test_a_detached_tree_at_a_sha_is_listed_with_its_head(self):
+        asyncio.run(gitops.worktree_add(self.repo, self.tree, self.main))
+        trees = asyncio.run(gitops.worktree_list(self.repo))
+        self.assertEqual(len(trees), 2)
+        self.assertEqual(Path(trees[1]["path"]).resolve(), self.tree.resolve())
+        self.assertEqual(trees[1]["head"], self.main)
+        self.assertEqual(trees[1]["branch"], "")
+        self.assertEqual(trees[0]["branch"], "main")
+
+    def test_a_tree_on_an_existing_branch_carries_its_name(self):
+        self._git(self.repo, "branch", "fix/a-problem", self.main)
+        asyncio.run(gitops.worktree_add(self.repo, self.tree, "fix/a-problem"))
+        trees = asyncio.run(gitops.worktree_list(self.repo))
+        self.assertEqual(trees[1]["branch"], "fix/a-problem")
+
+    def test_a_start_that_is_neither_a_sha_nor_a_unit_branch_never_reaches_git(self):
+        for bad in ("main", "-b", "--force", "HEAD", self.main[:7], ""):
+            with self.assertRaises(GitError, msg=bad):
+                asyncio.run(gitops.worktree_add(self.repo, self.tree, bad))
+        self.assertFalse(self.tree.exists())
+
+    def test_remove_is_never_forced(self):
+        asyncio.run(gitops.worktree_add(self.repo, self.tree, self.main))
+        (self.tree / "dirty.txt").write_text("x\n", encoding="utf-8")
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.worktree_remove(self.repo, self.tree))
+        self.assertTrue((self.tree / "dirty.txt").exists())
+        (self.tree / "dirty.txt").unlink()
+        asyncio.run(gitops.worktree_remove(self.repo, self.tree))
+        self.assertFalse(self.tree.exists())
+
+    def test_the_workspace_itself_is_never_removed(self):
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.worktree_remove(self.repo, self.repo))
+
+    def test_switch_trunk_refuses_a_dirty_tree_and_moves_a_clean_one(self):
+        self._git(self.repo, "switch", "-q", "-c", "fix/a-problem")
+        (self.repo / "f.txt").write_text("changed\n", encoding="utf-8")
+        self.assertFalse(asyncio.run(gitops.is_clean(self.repo)))
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.switch_trunk(self.repo))
+        self.assertEqual(self._git(self.repo, "branch", "--show-current"), "fix/a-problem")
+        self._git(self.repo, "checkout", "--", "f.txt")
+        self.assertTrue(asyncio.run(gitops.is_clean(self.repo)))
+        asyncio.run(gitops.switch_trunk(self.repo))
+        self.assertEqual(self._git(self.repo, "branch", "--show-current"), "main")
+
+    def test_a_merged_branch_is_deleted_only_at_the_merged_head(self):
+        self._git(self.repo, "branch", "fix/a-problem", self.main)
+        merged = self.main
+        # A local commit after the merged head: somebody's unpushed work.
+        self._git(self.repo, "switch", "-q", "fix/a-problem")
+        (self.repo / "g.txt").write_text("unpushed\n", encoding="utf-8")
+        self._git(self.repo, "add", "-A")
+        self._git(self.repo, "commit", "-q", "-m", "unpushed")
+        self._git(self.repo, "switch", "-q", "main")
+        self.assertFalse(asyncio.run(gitops.delete_merged_branch(self.repo, "fix/a-problem", merged)))
+        self.assertNotEqual(self._git(self.repo, "branch", "--list", "fix/a-problem"), "")
+        at = self._git(self.repo, "rev-parse", "fix/a-problem")
+        self.assertTrue(asyncio.run(gitops.delete_merged_branch(self.repo, "fix/a-problem", at)))
+        self.assertEqual(self._git(self.repo, "branch", "--list", "fix/a-problem"), "")
+        # Gone already is not an error.
+        self.assertFalse(asyncio.run(gitops.delete_merged_branch(self.repo, "fix/a-problem", at)))
+
+    def test_main_is_never_deleted(self):
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.delete_merged_branch(self.repo, "main", self.main))
