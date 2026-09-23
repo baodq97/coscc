@@ -352,33 +352,47 @@ const settled = (s) => s === 'accepted' || s === 'skipped' || s === 'done'
 const missing = (u, f) => (present(u, f) ? `${f} exists but carries no Status line` : `${f} does not exist`)
 
 // One action per unit: a named skill, or the one edit that unblocks the file.
+//
+// `stage` is the same decision in a form a program can act on, read off the files alone:
+// the stage whose artifact is the next one missing, or `''` when the files do not settle
+// which stage runs. A `changes-requested` review is the case that matters — its action
+// names two stages, and only the branch can say which one is due. `nextStep` below asks it.
 export function nextAction(unit, limit = REVIEW_ROUNDS) {
+  const { why, ...next } = decide(unit, limit)
+  return next
+}
+
+// `nextAction`, plus `why`: which rule answered, so `nextStep` refines the answer without
+// reading the English of `action` back.
+function decide(unit, limit) {
   // `plan.md: done` closed five units under the three-stage loop, and it stays terminal.
   // Widening the loop must not reopen work that was finished and proved under the old
   // rules — `write-plan` only allows `done` once the proof command has passed.
-  if (statusOf(unit, 'plan.md') === 'done') return { blocked: false, action: 'finished' }
+  if (statusOf(unit, 'plan.md') === 'done') return { blocked: false, action: 'finished', stage: '', why: 'finished' }
 
   for (const s of STAGES) {
     const status = statusOf(unit, s.file)
     if (status === null) {
       // A file that exists but says nothing is a different problem from a missing one.
-      if (present(unit, s.file)) return { blocked: true, action: `fix ${s.file} — it carries no Status line` }
+      if (present(unit, s.file)) return { blocked: true, action: `fix ${s.file} — it carries no Status line`, stage: '', why: 'unreadable' }
       if (s.optional) continue
-      return { blocked: true, action: s.hint }
+      return { blocked: true, action: s.hint, stage: s.name, why: 'missing' }
     }
-    if (status === 'rejected') return { blocked: false, action: `closed — ${s.name} rejected` }
-    if (status === 'draft') return { blocked: true, action: `finish and accept ${s.file}` }
+    if (status === 'rejected') return { blocked: false, action: `closed — ${s.name} rejected`, stage: '', why: 'rejected' }
+    if (status === 'draft') return { blocked: true, action: `finish and accept ${s.file}`, stage: '', why: 'draft' }
     // Not closed and not done: the work goes back to the branch, then to another round.
     if (status === 'changes-requested') {
       const used = roundsUsed(unit)
-      if (used >= limit) return { blocked: true, action: needsAPerson(used, limit) }
+      if (used >= limit) return { blocked: true, action: needsAPerson(used, limit), stage: '', why: 'needs-person' }
       return {
         blocked: true,
         action: `fix the open findings of review round ${lastRound(unit)?.n ?? used} on the branch, then write-review again (${used} of ${limit} rounds used)`,
+        stage: '',
+        why: 'changes-requested',
       }
     }
   }
-  return { blocked: false, action: 'finished' }
+  return { blocked: false, action: 'finished', stage: '', why: 'finished' }
 }
 
 const reviewOf = (unit) => unit.artifacts['review.md']?.review?.rounds ?? []
@@ -414,7 +428,10 @@ export function makeProbe(repoDir) {
 
 // `review` may begin only on an open pull request whose required checks are green
 // (`0015` spec, Answers, Câu 2). Nothing green to read is not read as green.
-function reviewNeeds(unit, probe, limit) {
+//
+// `said.ci` records what CI said, once it was asked: `red`, `pending`, `none`, `unreadable`
+// or `green`. `nextStep` reads it to tell "back to impl" from "wait" without parsing a need.
+function reviewNeeds(unit, probe, limit, said = {}) {
   const need = []
   const pr = unit.artifacts['pr.md']?.pr ?? null
   if (!pr) need.push('pr.md names no pull request — the pr stage opens one and writes PR: <url>')
@@ -434,15 +451,48 @@ function reviewNeeds(unit, probe, limit) {
     checks = null
   }
   if (!Array.isArray(checks)) {
-    const said = (r.err || r.out).trim() || `gh exited ${r.code} and said nothing`
-    return [`cannot read the required checks of #${pr.number}: ${said}`]
+    said.ci = 'unreadable'
+    const told = (r.err || r.out).trim() || `gh exited ${r.code} and said nothing`
+    return [`cannot read the required checks of #${pr.number}: ${told}`]
   }
-  if (!checks.length) return [`#${pr.number} reports no required checks — nothing green to read is not green`]
+  if (!checks.length) {
+    said.ci = 'none'
+    return [`#${pr.number} reports no required checks — nothing green to read is not green`]
+  }
   const red = checks.filter((c) => c.bucket === 'fail' || c.bucket === 'cancel').map((c) => c.name)
-  if (red.length) return [`CI is red on #${pr.number}: ${red.join(', ')} — back to impl: fix on the branch and push`]
+  if (red.length) {
+    said.ci = 'red'
+    return [`CI is red on #${pr.number}: ${red.join(', ')} — back to impl: fix on the branch and push`]
+  }
   const waiting = checks.filter((c) => c.bucket !== 'pass' && c.bucket !== 'skipping').map((c) => c.name)
-  if (waiting.length) return [`CI has not finished on #${pr.number}: ${waiting.join(', ')} — wait, then ask again`]
+  if (waiting.length) {
+    said.ci = 'pending'
+    return [`CI has not finished on #${pr.number}: ${waiting.join(', ')} — wait, then ask again`]
+  }
+  said.ci = 'green'
   return []
+}
+
+// The pull request's head on GitHub, as `{ head }`, or `{ error }` saying why not. Shared by
+// `shipNeeds` and `nextStep`: both ask "what is on the pull request now", and two readings
+// of one `gh pr view` could disagree.
+function prHead(probe, pr) {
+  const view = probe.gh('pr', 'view', String(pr.number), '--json', 'state,headRefOid')
+  let info = null
+  try {
+    info = JSON.parse(view.out)
+  } catch {
+    info = null
+  }
+  if (!info || typeof info.headRefOid !== 'string') {
+    const said = (view.err || view.out).trim() || `gh exited ${view.code} and said nothing`
+    return { error: `cannot read the head of #${pr.number}: ${said}` }
+  }
+  if (info.state !== 'OPEN') return { error: `#${pr.number} is ${info.state}, not open — there is nothing to merge` }
+  if (probe.git('cat-file', '-e', `${info.headRefOid}^{commit}`).code !== 0) {
+    return { error: `the head of #${pr.number}, ${info.headRefOid}, is not in this repository — someone pushed from elsewhere: fetch, then ask again` }
+  }
+  return { head: info.headRefOid }
 }
 
 // `ship` merges. It may do so only after a pass that left nothing open, whose history is
@@ -490,41 +540,42 @@ function shipNeeds(unit, probe, said = {}) {
   // from another checkout moves it and leaves `origin/<branch>` stale, since the gate does
   // not fetch (`0015` review round 1, F2). So the head is asked for and checked like a ref,
   // and `ship` merges with `--match-head-commit` set to exactly this commit.
-  const view = probe.gh('pr', 'view', String(pr.number), '--json', 'state,headRefOid')
-  let info = null
-  try {
-    info = JSON.parse(view.out)
-  } catch {
-    info = null
-  }
-  if (!info || typeof info.headRefOid !== 'string') {
-    const said = (view.err || view.out).trim() || `gh exited ${view.code} and said nothing`
-    return [`cannot read the head of #${pr.number}: ${said}`]
-  }
-  if (info.state !== 'OPEN') return [`#${pr.number} is ${info.state}, not open — there is nothing to merge`]
-  if (probe.git('cat-file', '-e', `${info.headRefOid}^{commit}`).code !== 0) {
-    return [`the head of #${pr.number}, ${info.headRefOid}, is not in this repository — someone pushed from elsewhere: fetch, then ask again`]
-  }
-  refs.push(info.headRefOid)
-  said.head = info.headRefOid
-  const own = `.cos/${unit.name}/`
+  const read = prHead(probe, pr)
+  if (read.error) return [read.error]
+  refs.push(read.head)
+  said.head = read.head
   for (const ref of refs) {
     const name = ref === said.head ? `the head of #${pr.number} (${ref})` : ref
-    if (probe.git('merge-base', '--is-ancestor', last.reviewed, ref).code !== 0) {
+    const since = changedSince(probe, unit, last.reviewed, ref)
+    if (since.error) {
+      need.push(since.error)
+      continue
+    }
+    // `said.moved`: what the pass reviewed is no longer what would merge. The cure for
+    // both is another round, which is what `nextStep` offers when it sees this.
+    if (since.rewritten) {
+      said.moved = true
       need.push(`the reviewed commit ${last.reviewed} is not on ${name} — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit`)
       continue
     }
-    const diff = probe.git('diff', '--name-only', `${last.reviewed}..${ref}`)
-    if (diff.code !== 0) {
-      need.push(`git could not diff ${last.reviewed}..${ref}: ${diff.err.trim()}`)
-      continue
-    }
-    const after = diff.out.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith(own))
-    if (after.length) {
-      need.push(`${name} changed after the reviewed commit ${last.reviewed}: ${after.join(', ')} — review again`)
+    if (since.files.length) {
+      said.moved = true
+      need.push(`${name} changed after the reviewed commit ${last.reviewed}: ${since.files.join(', ')} — review again`)
     }
   }
   return need
+}
+
+// What reached `ref` after `reviewed`, outside the unit's own `.cos/` files:
+// `{ rewritten: true }` when `reviewed` is not on it at all, `{ files }` otherwise, or
+// `{ error }`. A rewrite counts as a change on purpose — the gate cannot tell a rebase that
+// changed nothing from one that changed everything (`0024` spec, Concern 4).
+function changedSince(probe, unit, reviewed, ref) {
+  if (probe.git('merge-base', '--is-ancestor', reviewed, ref).code !== 0) return { rewritten: true, files: [] }
+  const diff = probe.git('diff', '--name-only', `${reviewed}..${ref}`)
+  if (diff.code !== 0) return { error: `git could not diff ${reviewed}..${ref}: ${diff.err.trim()}` }
+  const own = `.cos/${unit.name}/`
+  return { rewritten: false, files: diff.out.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith(own)) }
 }
 
 // Does `stage` have everything it needs? Returns the reasons it does not.
@@ -533,9 +584,17 @@ function shipNeeds(unit, probe, said = {}) {
 // given, and those two gates stay closed rather than guess. `limit` is the review round
 // limit in force. Every other stage reads files only and ignores both.
 export function checkGate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
+  const { ok, need, said } = evaluate(unit, stage, { probe, limit })
+  return ok && said.head ? { ok, need, head: said.head } : { ok, need }
+}
+
+// `checkGate`, plus `said`: what `review` and `ship` learned on the way — the CI verdict,
+// the head, whether the branch moved after a pass. Kept out of `checkGate`'s answer so the
+// gate's output is what it was; `nextStep` is the one reader.
+function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   const target = stageOf(stage)
   if (!target) {
-    return { ok: false, need: [`unknown stage "${stage}" — use one of ${STAGE_NAMES.join(', ')}`] }
+    return { ok: false, need: [`unknown stage "${stage}" — use one of ${STAGE_NAMES.join(', ')}`], said: {} }
   }
 
   // Every stage ahead of the requested one has to be behind us. The loop replaces the three
@@ -556,12 +615,78 @@ export function checkGate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } =
 
   // Asked only once the earlier stages are behind us: a gate closed for a missing plan has
   // no business spending a network call on CI.
-  if (!need.length && target.name === 'review') need.push(...reviewNeeds(unit, probe, limit))
   const said = {}
+  if (!need.length && target.name === 'review') need.push(...reviewNeeds(unit, probe, limit, said))
   if (!need.length && target.name === 'ship') need.push(...shipNeeds(unit, probe, said))
 
-  const ok = need.length === 0
-  return ok && said.head ? { ok, need, head: said.head } : { ok, need }
+  return { ok: need.length === 0, need, said }
+}
+
+// --- the next stage to run ----------------------------------------------------
+
+// The one stage a run button may offer for `unit`, or `''` for none, with the sentence that
+// explains it. `0024`: the app's button used to pick "the first required stage with no
+// artifact" for itself — a second copy of the loop — and so after a review asked for
+// changes it offered `ship`, whose gate is closed, and nothing else. This is where that
+// decision lives now, beside `nextAction`, which it starts from.
+//
+// Files settle it everywhere but three places, and those three need git and the pull
+// request, which is why this takes the same `probe` the gates take:
+//   - a review asked for changes: `impl` until something outside `.cos/<unit>/` reached the
+//     pull request's head after the reviewed commit, then `review` once CI is green,
+//     `impl` again while it is red, and nothing while it runs;
+//   - `pr` is done and no review exists: `review` on green, `impl` on red, else nothing;
+//   - the review passed: `ship` if its gate is open, `review` again if the branch moved
+//     after the pass (a rebase does this), else nothing.
+// With no `probe` those three answer `''` and say `--repo` is missing, as the gates do.
+//
+// This names a stage; it opens nothing. A caller still asks `checkGate` before running it.
+export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
+  const base = decide(unit, limit)
+  const { why, ...next } = base
+  const none = (action) => ({ blocked: true, action, stage: '' })
+  const onReview = (prefix) => {
+    const g = evaluate(unit, 'review', { probe, limit })
+    const reasons = [...prefix, ...g.need].join('; ')
+    // `blocked` keeps `nextAction`'s meaning — the unit is not finished — not the gate's.
+    if (g.ok) return { blocked: true, action: [...prefix, 'CI is green: write-review'].join('; '), stage: 'review' }
+    if (g.said.ci === 'red') return { blocked: true, action: reasons, stage: 'impl' }
+    return none(reasons)
+  }
+
+  if (why === 'missing' && next.stage === 'review') return onReview([])
+
+  if (why === 'missing' && next.stage === 'ship') {
+    const g = evaluate(unit, 'ship', { probe, limit })
+    if (g.ok) return { ...next, action: `${next.action} — merge with --match-head-commit ${g.said.head}` }
+    if (g.said.moved) return onReview(g.need)
+    return none(g.need.join('; '))
+  }
+
+  if (why === 'changes-requested') {
+    if (!probe) return none(`${next.action} — no repository given to tell which: pass --repo`)
+    const pr = unit.artifacts['pr.md']?.pr ?? null
+    if (!pr) return none(`${next.action} — pr.md names no pull request to read the branch from`)
+    const last = lastRound(unit)
+    if (!last?.reviewed) return none(`${next.action} — review round ${last?.n ?? '?'} names no reviewed commit, so a fix cannot be told from none`)
+    const read = prHead(probe, pr)
+    if (read.error) return none(`${next.action} — ${read.error}`)
+    if (probe.git('cat-file', '-e', `${last.reviewed}^{commit}`).code !== 0) {
+      return none(`${next.action} — the reviewed commit ${last.reviewed} is not in this repository: fetch, then ask again`)
+    }
+    const since = changedSince(probe, unit, last.reviewed, read.head)
+    if (since.error) return none(`${next.action} — ${since.error}`)
+    if (!since.rewritten && !since.files.length) {
+      return {
+        blocked: true,
+        action: `${next.action} — nothing outside .cos/${unit.name}/ has reached #${pr.number} since ${last.reviewed.slice(0, 7)}: impl, then push`,
+        stage: 'impl',
+      }
+    }
+    return onReview([`#${pr.number} moved past ${last.reviewed.slice(0, 7)}`])
+  }
+
+  return next
 }
 
 export function nextNumber(units) {
@@ -701,6 +826,25 @@ function cmdStatus(json, cosDir, limit) {
 // `repoDir` is where the unit's code lives, which `review` and `ship` ask git and gh about.
 // `null` when `--root` was given without `--repo`: the store `--root` names has no git, and
 // answering from this checkout instead would name one place and read another.
+// The stage a run button may offer, as one line of JSON: `{unit, stage, action, blocked}`.
+// Exit 0 whatever the stage is — "nothing to run" is an answer, not a failure. Exit 2 is
+// misuse: no unit named, or no such unit.
+function cmdNext(unitName, cosDir, repoDir, limit) {
+  if (!unitName) {
+    console.error('usage: cos.mjs next <NNNN_slug> [--repo <dir>]')
+    return 2
+  }
+  const dir = join(cosDir, unitName)
+  if (!existsSync(dir)) {
+    console.error(`No such work unit: ${unitName}`)
+    return 2
+  }
+  const probe = repoDir ? makeProbe(repoDir) : null
+  const { stage, action, blocked } = nextStep(readUnit(dir, unitName), { probe, limit })
+  console.log(JSON.stringify({ unit: unitName, stage, action, blocked }))
+  return 0
+}
+
 function cmdGate(unitName, stage, cosDir, repoDir, limit) {
   if (!unitName || !stage) {
     console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}> [--repo <dir>]`)
@@ -932,6 +1076,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const run = {
     status: () => cmdStatus(rest.includes('--json'), cosDir, limit),
     gate: () => cmdGate(rest[0], rest[1], cosDir, repoDir, limit),
+    next: () => cmdNext(rest[0], cosDir, repoDir, limit),
     'new-path': () => cmdNewPath(rest[0], cosDir, reserveFrom),
     'unit-branch': () => cmdUnitBranch(rest[0], cosDir),
     'check-branch': () => cmdCheckBranch(rest[0]),
@@ -942,7 +1087,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!run) {
     console.error('usage: cos.mjs [--root <dir>] <command>')
     console.error('  reading a .cos/ (these take --root):')
-    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit>')
+    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit>')
     console.error('  describing this checkout (these do not):')
     console.error('    check-branch [name] | check-tag <tag> | check-version')
     process.exit(2)
@@ -968,9 +1113,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(2)
   }
 
-  // `--repo` names where the `review` and `ship` gates ask git and gh. Nothing else asks.
-  if (repoArg !== null && cmd !== 'gate') {
-    console.error(`--repo applies only to \`gate\`, not to \`${cmd}\`.`)
+  // `--repo` names where the `review` and `ship` gates ask git and gh, and `next`, which
+  // asks the same questions. Nothing else asks.
+  if (repoArg !== null && cmd !== 'gate' && cmd !== 'next') {
+    console.error(`--repo applies only to \`gate\` and \`next\`, not to \`${cmd}\`.`)
     process.exit(2)
   }
 
