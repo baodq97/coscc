@@ -34,7 +34,7 @@ import os
 import zipfile
 from pathlib import Path
 
-from coscc import frontend, states
+from coscc import frontend, models, states
 
 _HERE = Path(__file__).resolve().parent
 
@@ -200,6 +200,11 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
         out.append(f"no {skills_prefix}*/{SKILL_FILE} — every step would refuse to run")
     if state_set not in names:
         out.append(f"no {state_set} — no transition could be read or written")
+    # `0004_no-setting-says-which-model-runs-a-stage`, on the same reasoning as
+    # `states.json`: without it every stage falls back to `COS_MODEL`, and nothing fails.
+    model_set = _posix(models.DEFAULT_PATH.name)
+    if model_set not in names:
+        out.append(f"no {model_set} — every stage would run on COS_MODEL, silently")
 
     # The copy step takes two named directories, never `.claude/` whole. This is what says
     # so out loud: `.claude/settings.local.json` is a personal file (`.gitignore:19`) and a

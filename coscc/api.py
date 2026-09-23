@@ -108,6 +108,30 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.get("/api/settings/models")
+    async def get_stage_models() -> Any:
+        """`0004_no-setting-says-which-model-runs-a-stage`: each stage, then chat, with its
+        agent count, its model and where that model came from."""
+        return await service.stage_models()
+
+    @api.post("/api/settings/models")
+    async def set_stage_model(request: Request) -> Any:
+        """`{name, model}` sets one row's model; `{name}` alone removes its override.
+
+        No login, like every route here, and it decides what every step spends. The trace
+        is a `setting` record in the run log.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        if not isinstance(body, dict):
+            return _bad("body must be a JSON object")
+        try:
+            return await service.set_stage_model(body.get("name"), body.get("model"))
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.post("/api/workspaces/{name}/pull")
     async def pull_workspace(name: str) -> Any:
         try:

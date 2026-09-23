@@ -149,6 +149,16 @@ no commands, one turn, no budget.
   says merged at the local head. A tree that cannot be removed that way (clean, but `gh`
   fails or the branch is off the merged head) costs a `gh pr view`, up to 30s, on
   **every** board read until someone removes it by hand; nothing remembers the refusal.
+- **`POST /api/settings/models` decides what every step spends, and has no login.** Since
+  the store's `0004_no-setting-says-which-model-runs-a-stage` each stage, and chat, runs
+  on the model Settings names: an override in the `prefs` table (`model:<name>`), else
+  `coscc/models.json`, else `COS_MODEL`. Anyone who reaches the port can move `review` to
+  a weak model or every stage to a dear one, `0.0.0.0` by default. The trace is a
+  `setting` record in the run log (workspace `""`, with `old` and `new` — it shows on no
+  workspace's Activity) and the `override` badge on Settings. A model id is not checked
+  when saved; a wrong one fails the stage's next step with the CLI's error. A person who
+  had `COS_MODEL` set before this lost it for all eight stages: it now answers only chat.
+  `COS_HOST=127.0.0.1` is the mitigation that exists.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
 
@@ -171,6 +181,7 @@ no commands, one turn, no budget.
 | `verify_0017.py` | no session, no quota, no network; temporary data root, bare-directory remote. `--this-repo` prepares a worktree of this checkout (`uv sync`, `npm ci`, a build: 20s measured 2026-09-23) and runs `npm test` twice. `--paid` **spends real money**: two real `impl` sessions on a clone of `COS_PROOF_REPO`; unset is exit 2 |
 | `verify_0021.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2 |
 | `verify_0024.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s own handlers through Reflex's event processor, in-process; no browser, so the compiled page is not exercised |
+| `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: two one-turn sessions, one on `claude-sonnet-5` and one on `claude-opus-5-5`; a login that does not work is exit 2 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.

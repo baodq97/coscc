@@ -1076,3 +1076,52 @@ class ShipIsNotToldItIsInARepository(unittest.TestCase):
             prompt, _ = self.prompt(d, "impl", "impl.md")
             self.assertIn("in the repository at", prompt)
             self.assertNotIn("URL in `pr.md`'s `PR:` field", prompt)
+
+
+class TheStepRunsOnTheModelItWasGiven(unittest.TestCase):
+    """`0004_no-setting-says-which-model-runs-a-stage`. The runner does not choose a model;
+    it passes on the one it was given and writes it into the run log."""
+
+    def run_spec(self, d, **kw):
+        class Probe:
+            def __init__(self):
+                self.kw = None
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                self.kw = kw
+                yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                yield ("done", {"session_id": "s-m", "cost": {}})
+
+        probe = Probe()
+        make_unit(Path(d), intent_md="Status: accepted.\nI")
+        journal = Journal(d, d)
+        r = Runner(sessions=probe, journal=journal)
+
+        async def go():
+            return [ev async for ev in r.run(
+                workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d,
+                unit=UNIT, stage="spec", artifact="spec.md", stages=STAGES,
+                mode="manual", **kw,
+            )]
+
+        _, final = asyncio.run(go())[-1]
+        return probe, journal, final
+
+    def test_the_model_reaches_the_session_and_the_start_record(self):
+        with tempfile.TemporaryDirectory() as d:
+            probe, journal, final = self.run_spec(d, model="m", model_source="override")
+            self.assertEqual(final["outcome"], "done", final)
+            self.assertEqual(probe.kw.get("model"), "m")
+            start = journal.records(d, kind="start")[-1]
+            self.assertEqual((start["model"], start["model_source"]), ("m", "override"))
+            self.assertEqual(start["agents"], 1)
+            row = journal.timeline(d, UNIT)[-1]
+            self.assertEqual((row["model"], row["model_source"]), ("m", "override"))
+            self.assertEqual((final["model"], final["model_source"]), ("m", "override"))
+
+    def test_no_model_is_not_passed_at_all(self):
+        # A stand-in `stream` without a `model` parameter must keep working.
+        with tempfile.TemporaryDirectory() as d:
+            probe, _, final = self.run_spec(d)
+            self.assertEqual(final["outcome"], "done", final)
+            self.assertNotIn("model", probe.kw)

@@ -231,6 +231,18 @@ class Knob:
 
 
 @dataclasses.dataclass
+class ModelRow:
+    """`0004_no-setting-says-which-model-runs-a-stage`. One stage, or chat, as Settings
+    shows it. Every field is copied from `Service.stage_models`; nothing is resolved here."""
+
+    name: str = ""
+    agents: int = 1
+    model: str = ""
+    source: str = ""
+    overridden: bool = False
+
+
+@dataclasses.dataclass
 class GrantRow:
     stage: str = ""
     tools: str = ""
@@ -466,7 +478,16 @@ class StudioState(rx.State):
     # read it. A page that claims a safety property it does not have is worse than a
     # page that says nothing, and `0007` exists because of exactly that.
     loopback_only: bool = True
+    # `COS_MODEL`, the fallback for a row nothing else answers. Until `0004_no-setting-
+    # says-which-model-runs-a-stage` it was the model of every session.
     model: str = ""
+    # The model of each stage, then chat, and why a row fell back. The box being typed in
+    # is `model_target`, the same one-box-at-a-time shape the answers use.
+    model_rows: list[ModelRow] = []
+    model_problems: list[str] = []
+    model_target: str = ""
+    model_text: str = ""
+    saving_model: bool = False
 
     # -- chrome
     mobile_open: bool = False
@@ -596,7 +617,7 @@ class StudioState(rx.State):
         self.data_dir = data.get("data_dir") or ""
         self.host_port = f"{data.get('host')}:{data.get('port')}"
         self.loopback_only = data.get("host") in ("127.0.0.1", "localhost", "::1")
-        self.model = data.get("model") or "default"
+        self.model = data.get("cos_model") or "unset"
         self.knobs = [
             Knob(name=k["name"], value=k["value"], detail=k["detail"], on=bool(k["on"]))
             for k in data.get("knobs") or []
@@ -612,6 +633,22 @@ class StudioState(rx.State):
             )
             for g in data.get("grants") or []
         ]
+
+    def _show_models(self, data: dict) -> None:
+        self.model_rows = [
+            ModelRow(
+                name=str(r["name"]),
+                agents=int(r["agents"]),
+                model=str(r["model"] or "SDK default"),
+                source=str(r["source"]),
+                overridden=r["source"] == "override",
+            )
+            for r in data.get("rows") or []
+        ]
+        self.model_problems = [str(p) for p in data.get("problems") or []]
+
+    async def _load_models(self) -> None:
+        self._show_models(await SERVICE.stage_models())
 
     def _load_workspaces(self) -> None:
         data = SERVICE.workspaces()
@@ -870,6 +907,7 @@ class StudioState(rx.State):
         except Invalid as e:
             self._fail(e)
         yield
+        await self._load_models()
         await self._load_board()
         self._load_sessions()
         self._load_activity()
@@ -935,6 +973,41 @@ class StudioState(rx.State):
             return
         self.density = value
         self._remember("density", value)
+
+    @rx.event
+    def edit_model(self, name: str, value: str):
+        """Typing into one row's box makes it the row being edited."""
+        self.model_target = name
+        self.model_text = value
+
+    @rx.event
+    async def save_model(self, name: str):
+        """Set one row's model. Whether it may be set is `Service.set_stage_model`'s call."""
+        if name != self.model_target or not self.model_text.strip():
+            self.notice = "Type a model name in that row's box first."
+            return
+        await self._change_model(name, self.model_text)
+
+    @rx.event
+    async def reset_model(self, name: str):
+        """Remove the override, so the row falls back to the default or `COS_MODEL`."""
+        await self._change_model(name, None)
+
+    async def _change_model(self, name: str, model: str | None) -> None:
+        self.saving_model = True
+        try:
+            self._show_models(await SERVICE.set_stage_model(name, model))
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        finally:
+            self.saving_model = False
+        self.model_target, self.model_text = "", ""
+        self.notice = (
+            f"{name} now runs on {model.strip()} from its next session."
+            if model is not None
+            else f"{name} is back on its default."
+        )
 
     def _remember(self, key: str, value: str) -> None:
         try:

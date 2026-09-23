@@ -350,6 +350,11 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 "cost": {},
                 "denials": 0,
                 "detail": None,
+                # Which model the step was started on, and why that one (`override`,
+                # `default` or `COS_MODEL`). A start written before
+                # `0004_no-setting-says-which-model-runs-a-stage` has neither: None.
+                "model": item.get("model"),
+                "model_source": item.get("model_source"),
             }
             rows.append(row)
             open_runs[stage] = row
