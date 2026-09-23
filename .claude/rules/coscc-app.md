@@ -154,7 +154,14 @@ no commands, one turn, no budget.
   there — so a unit opened after a merge no longer starts its branch on a stale trunk. Each
   such step therefore costs one more fetch, up to `FETCH_TIMEOUT` = 20s (chosen, not
   measured) when the remote does not answer; the step still runs on whatever the tree
-  already had, and says so in its prompt and in the run log.
+  already had, and says so in its prompt and in the run log. The same `0030` change also
+  reaches a plain board read: when a unit's branch already exists but its tree is still
+  detached, or never existed, `next_step`'s call into `worktrees.ensure` opens the tree
+  onto that branch there and then, which fetches first and costs the same up to
+  `FETCH_TIMEOUT` — on **every** such read, not only when a step runs. Offline, that fetch
+  fails, `ensure` raises, and `next_step` swallows it into a plain `None`: the read still
+  answers, but with no worktree and no reason shown for why the run button has nothing to
+  offer.
 - **`POST /api/settings/models` decides what every step spends, and has no login.** Since
   the store's `0004_no-setting-says-which-model-runs-a-stage` each stage, and chat, runs
   on the model Settings names: an override in the `prefs` table (`model:<name>`), else
