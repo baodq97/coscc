@@ -34,15 +34,29 @@ class Repo(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         base = Path(self._tmp.name)
         self.data = base / "data"
-        remote = base / "remote.git"
-        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+        self.remote = base / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
         self.repo = base / "repo"
-        subprocess.run(["git", "clone", "-q", str(remote), str(self.repo)], check=True, capture_output=True)
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.repo)], check=True, capture_output=True)
         (self.repo / "f.txt").write_text("one\n", encoding="utf-8")
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", "one")
         git(self.repo, "push", "-q", "origin", "main")
         self.main = git(self.repo, "rev-parse", "main")
+
+    def _advance_remote(self, name: str = "g.txt", text: str = "from elsewhere\n") -> str:
+        """Push a commit from a second clone, so the bare remote moves out from under
+        `self.repo` without `self.repo` itself, or any tree of it, fetching."""
+        other = Path(self._tmp.name) / "other"
+        if not other.exists():
+            subprocess.run(
+                ["git", "clone", "-q", str(self.remote), str(other)], check=True, capture_output=True
+            )
+        (other / name).write_text(text, encoding="utf-8")
+        git(other, "add", "-A")
+        git(other, "commit", "-q", "-m", f"advance: {name}")
+        git(other, "push", "-q", "origin", "main")
+        return git(other, "rev-parse", "HEAD")
 
 
 class WhereATreeLives(Repo):
@@ -109,6 +123,104 @@ class Ensuring(Repo):
         self.assertIn("uncommitted", str(caught.exception))
         self.assertEqual(git(self.repo, "branch", "--show-current"), "fix/a")
         self.assertEqual((self.repo / "f.txt").read_text(), "mine\n")
+
+
+class RefreshingTheBase(Repo):
+    """`0030_a-unit-branch-starts-from-a-stale-main` plan step 2: `refresh_base`."""
+
+    def setUp(self):
+        super().setUp()
+        made = asyncio.run(worktrees.ensure(self.repo, "0001_a", None, self.data))
+        self.tree = Path(made["path"])
+
+    def test_the_tree_is_moved_to_the_fetched_tip_when_it_is_behind(self):
+        new = self._advance_remote()
+        got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        self.assertEqual(got, {"ref": "origin/main", "sha": new[:7], "fresh": True, "reason": ""})
+        self.assertEqual(git(self.tree, "rev-parse", "HEAD"), new)
+        # The workspace's own `main` never moves — only the tree does.
+        self.assertEqual(git(self.repo, "rev-parse", "main"), self.main)
+
+    def test_a_broken_origin_leaves_the_tree_and_says_why(self):
+        before = git(self.tree, "rev-parse", "HEAD")
+        git(self.tree, "remote", "set-url", "origin", str(Path(self._tmp.name) / "gone.git"))
+        got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        self.assertFalse(got["fresh"])
+        self.assertTrue(got["reason"])
+        self.assertEqual(git(self.tree, "rev-parse", "HEAD"), before)
+
+    def test_a_dirty_tree_is_left_alone(self):
+        before = git(self.tree, "rev-parse", "HEAD")
+        self._advance_remote()
+        (self.tree / "dirty.txt").write_text("mine\n", encoding="utf-8")
+        got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        self.assertFalse(got["fresh"])
+        self.assertEqual(git(self.tree, "rev-parse", "HEAD"), before)
+        self.assertTrue((self.tree / "dirty.txt").exists())
+
+    def test_a_commit_made_directly_on_the_tree_is_never_left_behind(self):
+        (self.tree / "local.txt").write_text("mine\n", encoding="utf-8")
+        git(self.tree, "add", "-A")
+        git(self.tree, "commit", "-q", "-m", "local")
+        local_head = git(self.tree, "rev-parse", "HEAD")
+        self._advance_remote()
+        got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        self.assertFalse(got["fresh"])
+        self.assertIn("ancestor", got["reason"])
+        self.assertEqual(git(self.tree, "rev-parse", "HEAD"), local_head)
+
+    def test_the_prepare_record_is_dropped_only_when_the_tree_actually_moves(self):
+        record = worktrees.prepare_record(self.tree)
+        record.write_text(json.dumps({"ok": True}), encoding="utf-8")
+        # Nothing new on the remote yet: the tree is already at the fetched tip.
+        got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        self.assertTrue(got["fresh"])
+        self.assertTrue(record.exists())
+        self._advance_remote()
+        record.write_text(json.dumps({"ok": True}), encoding="utf-8")
+        got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        self.assertTrue(got["fresh"])
+        self.assertFalse(record.exists())
+
+    def test_no_worktree_to_refresh_is_reported_not_raised(self):
+        got = asyncio.run(worktrees.refresh_base(self.repo, "0002_b", self.data))
+        self.assertEqual(got, {"ref": "origin/main", "sha": "", "fresh": False, "reason": "no worktree to refresh"})
+
+
+class SwitchingOntoAnExistingBranch(Repo):
+    """`0030_a-unit-branch-starts-from-a-stale-main` plan step 2 and R2/R4/R7: opening a
+    branch already cut at a terminal fetches first, and reports how far behind it is."""
+
+    def setUp(self):
+        super().setUp()
+        asyncio.run(worktrees.ensure(self.repo, "0001_a", None, self.data))
+        git(self.repo, "branch", "fix/a", self.main)
+
+    def test_a_broken_origin_refuses_to_open_the_branch(self):
+        tree = worktrees.path(self.repo, "0001_a", self.data)
+        git(tree, "remote", "set-url", "origin", str(Path(self._tmp.name) / "gone.git"))
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
+        self.assertIn("was not opened", str(caught.exception))
+        self.assertEqual(git(tree, "branch", "--show-current"), "")
+
+    def test_the_branch_is_opened_behind_and_says_so(self):
+        new = self._advance_remote()
+        made = asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
+        self.assertEqual(made["branch"], "fix/a")
+        self.assertEqual(made["base"]["ref"], "origin/main")
+        self.assertEqual(made["base"]["sha"], new[:7])
+        self.assertFalse(made["base"]["fresh"])
+        self.assertEqual(made["base"]["behind"], 1)
+        self.assertIn("update-branch", made["base"]["reason"])
+        tree = worktrees.path(self.repo, "0001_a", self.data)
+        self.assertEqual(git(tree, "branch", "--show-current"), "fix/a")
+
+    def test_the_branch_is_fresh_when_nothing_new_landed(self):
+        made = asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
+        self.assertTrue(made["base"]["fresh"])
+        self.assertEqual(made["base"]["behind"], 0)
+        self.assertEqual(made["base"]["reason"], "")
 
 
 class Preparing(unittest.TestCase):

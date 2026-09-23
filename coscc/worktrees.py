@@ -137,8 +137,36 @@ async def ensure(
 
     if found is not None:
         # A detached tree made when the unit was created, before it had a branch.
-        await gitops.switch_existing(Path(found["path"]), branch)
-        return {"path": str(where), "branch": branch, "created": False, "switched": switched}
+        # `0030` R2: refuse rather than cut the branch from a `main` nobody re-fetched —
+        # opening a stale branch names the wrong pull request base, and that is not
+        # something a later rebase quietly fixes.
+        tree = Path(found["path"])
+        try:
+            await gitops.fetch(tree)
+        except GitError as e:
+            raise GitError(
+                f"Could not update {gitops.TRUNK} from origin, so {branch} was not opened "
+                f"in this unit's worktree. Nothing in the repository changed. git said: {e}"
+            ) from e
+        await gitops.switch_existing(tree, branch)
+        origin_ref = f"origin/{gitops.TRUNK}"
+        origin_sha = await gitops.rev_parse(tree, f"refs/remotes/{origin_ref}")
+        branch_sha = await gitops.rev_parse(tree, "HEAD")
+        behind = await gitops.count_missing(tree, branch_sha, origin_sha)
+        base = {
+            "ref": origin_ref,
+            "sha": origin_sha[:7],
+            "fresh": behind == 0,
+            "behind": behind,
+            "reason": "" if behind == 0 else (
+                f"{branch} is missing {behind} commit(s) from {origin_ref}; "
+                "see `gh pr update-branch --rebase`."
+            ),
+        }
+        return {
+            "path": str(where), "branch": branch, "created": False, "switched": switched,
+            "base": base,
+        }
 
     where.parent.mkdir(parents=True, exist_ok=True)
     if wanted:
@@ -148,6 +176,52 @@ async def ensure(
         await gitops.worktree_add(root, where, sha)
     found = await find(workspace, unit, data_dir) or {"branch": ""}
     return {"path": str(where), "branch": found["branch"], "created": True, "switched": switched}
+
+
+async def refresh_base(
+    workspace: str | os.PathLike[str],
+    unit: str,
+    data_dir: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
+    """Bring a unit's still-detached tree to the fetched tip of `origin/main`, and say so.
+
+    `0030` R1, R5, R6. Unlike `ensure`, this never raises: a step on a detached tree runs
+    whether or not the fetch succeeds, and this is the one place that decides what to say
+    about it (`intent.md ## Answers, câu 2`). Returns `{ref, sha, fresh, reason}` — `sha`
+    is the short remote tip once known, `fresh` is whether the tree ended up there, and
+    `reason` is empty exactly when `fresh` is true.
+
+    When the tree is actually moved, the record `prepare()` left is deleted: it describes
+    a tree at the commit it was prepared at, and that commit just changed (R6).
+    """
+    ref = f"origin/{gitops.TRUNK}"
+    found = await find(workspace, unit, data_dir)
+    if found is None:
+        return {"ref": ref, "sha": "", "fresh": False, "reason": "no worktree to refresh"}
+    tree = Path(found["path"])
+    try:
+        await gitops.fetch(tree)
+    except GitError as e:
+        return {"ref": ref, "sha": "", "fresh": False, "reason": str(e)}
+    try:
+        sha = await gitops.rev_parse(tree, f"refs/remotes/{ref}")
+    except GitError as e:
+        return {"ref": ref, "sha": "", "fresh": False, "reason": str(e)}
+    try:
+        before = await gitops.rev_parse(tree, "HEAD")
+    except GitError as e:
+        return {"ref": ref, "sha": sha[:7], "fresh": False, "reason": str(e)}
+    if before == sha:
+        return {"ref": ref, "sha": sha[:7], "fresh": True, "reason": ""}
+    try:
+        await gitops.advance_detached(tree, sha)
+    except GitError as e:
+        return {"ref": ref, "sha": sha[:7], "fresh": False, "reason": str(e)}
+    try:
+        prepare_record(tree).unlink()
+    except OSError:
+        pass
+    return {"ref": ref, "sha": sha[:7], "fresh": True, "reason": ""}
 
 
 # --- preparing ---------------------------------------------------------------
