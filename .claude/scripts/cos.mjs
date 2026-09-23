@@ -186,6 +186,9 @@ const FINDING = /^- (F\d+)\s+\[([^\]]*)\]\s*(.*)$/
 // changes-requested.` and lists its findings under `### Findings`, one per line, each
 // labelled `[open]` or `[fixed <sha>]`. A label that is neither is `unreadable`, which the
 // `ship` gate treats as not fixed. Reading stops at `## Answers`, the app's section.
+// Each round also carries `text`: its lines verbatim, from `## Round N` up to the next
+// `## ` heading, trailing blank space trimmed. It is what the app posts to the pull
+// request, so the app never has to find a round's edges itself.
 export function parseReview(text) {
   const lines = text.split(/\r?\n/)
   const stop = lines.findIndex((l) => l.trimEnd() === '## Answers')
@@ -194,7 +197,7 @@ export function parseReview(text) {
   for (const line of stop === -1 ? lines : lines.slice(0, stop)) {
     const head = line.match(ROUND_HEAD)
     if (head) {
-      rounds.push({ n: Number(head[1]), reviewed: null, verdict: null, findings: [], seenText: false, closed: false })
+      rounds.push({ n: Number(head[1]), reviewed: null, verdict: null, findings: [], seenText: false, closed: false, lines: [line] })
       inFindings = false
       continue
     }
@@ -206,6 +209,7 @@ export function parseReview(text) {
     }
     const r = rounds[rounds.length - 1]
     if (!r || r.closed) continue
+    r.lines.push(line)
     if (!r.seenText && line.trim() !== '') {
       r.seenText = true
       const meta = line.trim().match(ROUND_META)
@@ -231,7 +235,11 @@ export function parseReview(text) {
       text: f[3].trim(),
     })
   }
-  return { rounds: rounds.map(({ n, reviewed, verdict, findings }) => ({ n, reviewed, verdict, findings })) }
+  return {
+    rounds: rounds.map(({ n, reviewed, verdict, findings, lines }) => ({
+      n, reviewed, verdict, findings, text: lines.join('\n').trimEnd(),
+    })),
+  }
 }
 
 // How many review rounds may end in `changes-requested` before the loop stops and needs a
