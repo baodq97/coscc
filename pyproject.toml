@@ -1,6 +1,6 @@
 [project]
 name = "coscc"
-version = "0.4.0"
+version = "0.4.1"
 description = "Web app that lists, creates and resumes Claude Code sessions across projects"
 # Every measurement this repository records is taken on the interpreter in
 # `.python-version`, and after 0007 that is 3.14. A floor naming an older one would be the
