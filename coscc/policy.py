@@ -110,11 +110,32 @@ PR_WARNING = (
 # Only pairs that appear here get anything. Everything else — every prose stage, every
 # stage in `manual`, and anything invented later — falls through to `Grant()`.
 GRANTS: dict[tuple[str, str], Grant] = {
+    # The one entry whose ceilings are measured rather than chosen. Four `impl` steps ran
+    # through the board on 2026-09-23 and three of them died at the turn ceiling:
+    #
+    #   0001, run 1   51/50 turns   $2.5317   exhausted, no impl.md
+    #   0001, run 2   51/50 turns   $1.7866   exhausted, no impl.md
+    #   0001, run 3   23/50 turns   $0.6611   done -- most of the work already existed
+    #   0016, run 1   51/50 turns   $2.4099   exhausted, no impl.md, nothing committed
+    #
+    # Fifty was never a measurement. It was picked to end a loop that would not end, and
+    # what it actually ended was three steps in the middle of working: the 0016 run left
+    # 580 uncommitted lines across 7 files and a board that said the stage had not started.
+    #
+    # The run that finished did so in 23 turns *because two exhausted runs had already
+    # done the work*, so it is not evidence that 23 is enough for a unit from cold. 120 is
+    # roughly twice the highest real attempt, and the budget goes with it -- at the
+    # measured $0.047/turn a 120-turn step lands near $5.6, so leaving the cap at $5 would
+    # only move the same premature stop from one ceiling to the other.
+    #
+    # This raises the ceiling. It does not fix what happens at it: a step that hits one
+    # still spends the money and leaves no record of what it did.
+    # `0019_a-failed-step-destroys-the-work-that-succeeded` is that, and it is the real fix.
     ("impl", "autonomous"): Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=IMPL_COMMANDS,
-        max_turns=50,
-        max_budget_usd=5.0,
+        max_turns=120,
+        max_budget_usd=8.0,
         app_writes_artifact=False,
     ),
     # `plan` reads, and only reads. `.claude/skills/write-plan/SKILL.md` has told this

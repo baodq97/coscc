@@ -224,3 +224,43 @@ class TheWriteBoundaryIsTheWorkspacePlusOneDirectory(unittest.TestCase):
             self.workspace, self.unit,
         )
         self.assertIn("redirect", reason)
+
+
+class TheImplCeilingsCameFromMeasurement(unittest.TestCase):
+    """Three of four `impl` steps run through the board died at the turn ceiling.
+
+    Recorded here rather than only in a comment, because the next person to find this
+    number too high will want to know whether it was reasoned or observed.
+    """
+
+    # turns taken, what it cost, whether the step wrote its artifact
+    RUNS = (
+        (51, 2.5317, False),
+        (51, 1.7866, False),
+        (23, 0.6611, True),
+        (51, 2.4099, False),
+    )
+
+    def test_the_ceiling_clears_every_attempt_that_was_measured(self):
+        worst = max(turns for turns, _, _ in self.RUNS)
+        self.assertGreater(
+            IMPL.max_turns, worst,
+            "a ceiling at or below the highest real attempt stops the same steps again",
+        )
+
+    def test_the_budget_does_not_stop_a_step_the_turns_would_allow(self):
+        """Two ceilings on one step: the lower one is the only one that matters.
+
+        At the measured cost per turn, a step allowed 120 turns must be allowed the money
+        those turns cost, or the budget becomes the real limit and the turn count is
+        decoration.
+        """
+        per_turn = sum(c for _, c, _ in self.RUNS) / sum(t for t, _, _ in self.RUNS)
+        self.assertGreater(IMPL.max_budget_usd, IMPL.max_turns * per_turn)
+
+    def test_the_only_run_that_finished_is_not_evidence_the_ceiling_was_enough(self):
+        """It finished in 23 turns because two exhausted runs had already done the work."""
+        finished = [turns for turns, _, done in self.RUNS if done]
+        exhausted = [turns for turns, _, done in self.RUNS if not done]
+        self.assertEqual(len(finished), 1)
+        self.assertTrue(all(t > finished[0] for t in exhausted))
