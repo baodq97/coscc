@@ -505,6 +505,79 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 400)
 
 
+class PostingAReviewRoundOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0021` R8. The route posts a round once; a second press finds it and says so."""
+
+    PR_URL = "https://github.com/o/r/pull/7"
+    REVIEW = (
+        "# Review: a problem\nAuthor: t. Status: changes-requested.\n\n"
+        "## Round 1\n\nReviewed: abcdef1. Verdict: changes-requested.\n\n"
+        "### Findings\n\n- F1 [open] a thing\n"
+    )
+
+    async def asyncSetUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        (root / "work" / "proj").mkdir(parents=True)
+        self.cwd = str(root / "work" / "proj")
+        self.app = build(
+            Config(workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+        made = (await self.client.post(
+            "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
+        )).json()
+        self.unit = made["unit"]
+        d = Path(made["path"])
+        (d / "pr.md").write_text(f"# PR\nStatus: accepted.\nPR: {self.PR_URL}\n", encoding="utf-8")
+        (d / "review.md").write_text(self.REVIEW, encoding="utf-8")
+        self.calls: list[list[str]] = []
+        self.comments: list[dict] = []
+
+        async def gh(argv, cwd, stdin):
+            self.calls.append(list(argv))
+            if argv[:2] == ["pr", "view"]:
+                return 0, json.dumps({"comments": self.comments}), ""
+            self.comments.append({"body": stdin, "url": f"{self.PR_URL}#c1"})
+            return 0, f"{self.PR_URL}#c1\n", ""
+
+        from coscc import prcomment
+
+        patcher = mock.patch.object(prcomment, "_gh", gh)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def post(self, **over):
+        body = {"cwd": self.cwd, "unit": self.unit, "round": 1, **over}
+        return await self.client.post("/api/units/review-comment", json=body)
+
+    async def test_two_presses_make_one_comment(self):
+        first, second = await self.post(), await self.post()
+        self.assertEqual((first.status_code, second.status_code), (200, 200))
+        self.assertEqual((first.json()["state"], second.json()["state"]), ("posted", "already"))
+        self.assertEqual(len([c for c in self.calls if c[:2] == ["pr", "comment"]]), 1)
+
+    async def test_the_board_then_shows_the_round_on_the_pr(self):
+        await self.post()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        [rnd] = board["units"][0]["rounds"]
+        self.assertEqual(rnd["comment"]["url"], f"{self.PR_URL}#c1")
+
+    async def test_bad_requests_are_400_and_reach_no_gh(self):
+        for over in ({"round": 9}, {"round": "x"}, {"unit": "0099_nothing"}, {"cwd": "/etc"}):
+            with self.subTest(over):
+                self.assertEqual((await self.post(**over)).status_code, 400)
+        got = await self.client.post("/api/units/review-comment", content=b"nope")
+        self.assertEqual(got.status_code, 400)
+        self.assertEqual(self.calls, [])
+
+
 class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
     """`0014` R1 and R4 over HTTP. The routes translate and decide nothing."""
 
