@@ -423,18 +423,86 @@ class Denials:
             self.reasons.append(f"{tool}: {reason}")
 
 
-def permission_gate(grant: Grant, workspace: str, denials: Denials, unit_dir: str | None = None):
+
+# `0032_impl-fills-its-context-with-whole-files-and-refusals` R9: suffixes `_capped_read`
+# leaves alone. A binary or a notebook is not measured in lines the way `policy.read_limit`
+# counts them, and a `Read` on one already answers in a shape that is not plain text — the
+# ceiling `command_rules` states is about text.
+_READ_UNCAPPED_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".ipynb")
+
+# `0032_impl-fills-its-context-with-whole-files-and-refusals` R10: a `Grep` with no
+# `head_limit` of its own is capped to this many matching lines. Chosen, not measured —
+# `command_rules` states it, and `scripts/probe_tool_limits.py` measures whether one very
+# long line still gets past it (plan.md Risk 2 does not claim this alone closes that).
+GREP_HEAD_LIMIT = 200
+
+
+def _capped_read_input(tool_input: dict, workspace: str) -> dict | None:
+    """The input `Read` should actually run with, or `None` to leave it exactly as asked.
+
+    Only ever adds a `limit`, and only when the caller gave none: a `Read` that already
+    named one said what it wanted, and this does not second-guess it (`plan.md` step 6).
+    The path is resolved the same way `policy.decide` resolves one for a read tool — against
+    `workspace`, because that is the session's own `cwd` and so what `Read` itself will
+    open — not against this process's directory.
+    """
+    if not isinstance(tool_input, dict) or "limit" in tool_input:
+        return None
+    raw = tool_input.get("file_path")
+    if not isinstance(raw, str) or not raw:
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = Path(workspace).expanduser().resolve() / path
+    if path.suffix.lower() in _READ_UNCAPPED_SUFFIXES:
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        # Unreadable, or not UTF-8 text at all — left exactly as it was asked; `Read`
+        # itself decides what to do with it, the same as before this unit.
+        return None
+    offset = tool_input.get("offset")
+    start = max(0, int(offset) - 1) if isinstance(offset, (int, float)) and offset else 0
+    limit = read_limit([len(line) for line in text.splitlines()], start)
+    if limit is None:
+        return None
+    return {**tool_input, "limit": limit}
+
+
+def permission_gate(
+    grant: Grant,
+    workspace: str,
+    denials: Denials,
+    unit_dir: str | None = None,
+    cap_reads: bool = False,
+):
     """The callback the SDK asks before every tool call.
 
     This is the enforcement `spec.md` R10 asks for, and it is separate from the tool list
     on purpose: the list was measured, and it does not cover every source of capability.
+
+    `cap_reads` is `0032_impl-fills-its-context-with-whole-files-and-refusals` R9/R10: once
+    `decide` has already allowed the call, a `Read` with no `limit` or a `Grep` with no
+    `head_limit` is handed a value that keeps its own result under the ceiling
+    `command_rules` states — the same reason a step meeting either tool with a bound of its
+    own is left alone. `Runner.run` only sets this for `impl`.
     """
 
     async def can_use_tool(tool: str, tool_input: dict, context: Any):
-        reason = decide(grant, tool, tool_input or {}, workspace, unit_dir)
+        tool_input = tool_input or {}
+        reason = decide(grant, tool, tool_input, workspace, unit_dir)
         if reason:
             denials.record(tool, reason)
             return sdk.PermissionResultDeny(message=reason)
+        if cap_reads and tool == "Read":
+            updated = _capped_read_input(tool_input, workspace)
+            if updated is not None:
+                return sdk.PermissionResultAllow(updated_input=updated)
+        if cap_reads and tool == "Grep" and "head_limit" not in tool_input:
+            return sdk.PermissionResultAllow(
+                updated_input={**tool_input, "head_limit": GREP_HEAD_LIMIT}
+            )
         return sdk.PermissionResultAllow()
 
     return can_use_tool
@@ -562,7 +630,10 @@ class Runner:
                 # with an empty grant gets exactly the session the app makes by default,
                 # which is the one the zero-tool default is about.
                 can_use_tool=(
-                    permission_gate(grant, cwd, denials, str(directory))
+                    permission_gate(
+                        grant, cwd, denials, str(directory),
+                        cap_reads=stage in ("impl", "implement"),
+                    )
                     if grant.opens_anything
                     else None
                 ),

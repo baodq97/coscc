@@ -19,11 +19,13 @@ from coscc import harness, policy
 from coscc.journal import Journal
 from coscc.policy import decide, grant_for
 from coscc.runner import (
+    Denials,
     RunError,
     Runner,
     build_prompt,
     check_reply,
     merge_review,
+    permission_gate,
     skill_for,
 )
 
@@ -131,6 +133,75 @@ class TheImplPromptCarriesItsOwnCommandRules(unittest.TestCase):
                 d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", writes_own=True,
             )
             self.assertNotIn("# Commands this step may run", prompt)
+
+
+class CapReadsBoundsAReadOrAGrepThatNamedNoLimitOfItsOwn(unittest.TestCase):
+    """`0032_impl-fills-its-context-with-whole-files-and-refusals` R9/R10: once `decide`
+    already allowed the call, `permission_gate(..., cap_reads=True)` hands `Read` and
+    `Grep` a bound they did not ask for, and leaves them alone otherwise."""
+
+    IMPL = grant_for("impl")
+
+    def _allow(self, workspace, tool, tool_input, cap_reads=True):
+        gate = permission_gate(self.IMPL, workspace, Denials(), cap_reads=cap_reads)
+        return asyncio.run(gate(tool, tool_input, None))
+
+    def test_a_large_file_read_with_no_limit_is_given_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            big = Path(d) / "big.txt"
+            big.write_text("\n".join("x" * 200 for _ in range(1000)), encoding="utf-8")
+            result = self._allow(d, "Read", {"file_path": str(big)})
+            self.assertIn("limit", result.updated_input)
+            capped = result.updated_input["limit"]
+            self.assertLess(capped, 1000)
+            lines = big.read_text(encoding="utf-8").splitlines()
+            self.assertLessEqual(sum(len(l) + 8 for l in lines[:capped]), policy.READ_CEILING)
+
+    def test_a_small_file_or_an_explicit_limit_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            small = Path(d) / "small.txt"
+            small.write_text("just a few lines\nof text\n", encoding="utf-8")
+            result = self._allow(d, "Read", {"file_path": str(small)})
+            self.assertIsNone(result.updated_input)
+
+            big = Path(d) / "big.txt"
+            big.write_text("\n".join("x" * 200 for _ in range(1000)), encoding="utf-8")
+            result = self._allow(d, "Read", {"file_path": str(big), "limit": 50})
+            self.assertIsNone(result.updated_input)
+
+    def test_cap_reads_off_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            big = Path(d) / "big.txt"
+            big.write_text("\n".join("x" * 200 for _ in range(1000)), encoding="utf-8")
+            result = self._allow(d, "Read", {"file_path": str(big)}, cap_reads=False)
+            self.assertIsNone(result.updated_input)
+
+    def test_a_path_outside_the_boundary_is_still_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            outside = Path(tempfile.gettempdir()) / "outside-cap-reads-test.txt"
+            outside.write_text("x", encoding="utf-8")
+            try:
+                result = self._allow(d, "Read", {"file_path": str(outside)})
+                self.assertEqual(result.behavior, "deny")
+            finally:
+                outside.write_text("", encoding="utf-8")
+
+    def test_a_binary_suffix_is_left_uncapped(self):
+        with tempfile.TemporaryDirectory() as d:
+            png = Path(d) / "big.png"
+            png.write_bytes(b"\x89PNG" + b"\x00" * 200000)
+            result = self._allow(d, "Read", {"file_path": str(png)})
+            self.assertIsNone(result.updated_input)
+
+    def test_a_grep_with_no_head_limit_is_given_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            result = self._allow(d, "Grep", {"pattern": "x"})
+            self.assertEqual(result.updated_input["head_limit"], 200)
+
+    def test_a_grep_with_its_own_head_limit_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            result = self._allow(d, "Grep", {"pattern": "x", "head_limit": 5})
+            self.assertIsNone(result.updated_input)
 
 
 class AReplyIsCheckedBeforeItBecomesAFile(unittest.TestCase):
