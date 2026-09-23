@@ -283,6 +283,51 @@ class TheScannerReadsQuotesAndHeredocs(unittest.TestCase):
         for bad in ("gh 'pr' merge", 'gh "pr" merge'):
             self.assertIn("merging is the ship stage's", check_command(pr, bad), bad)
 
+    # -- review round 1, F1: a stray quote inside a "#" comment must not open a real one --
+
+    def test_a_quote_character_inside_a_hash_comment_does_not_hide_the_next_command(self):
+        # Measured against `pr`'s grant: before F1 was fixed, `_scan` read the `'` right
+        # after each `#` as opening a real single quote, so everything up to the next `'`
+        # — including the whole `gh pr merge 7` line — was swallowed into one segment
+        # starting with `echo`, and `check_command` returned "" for it.
+        pr = grant_for("pr")
+        cmd = "echo a # '\ngh pr merge 7\necho b # '"
+        self.assertIn("merging is the ship stage's", check_command(pr, cmd))
+
+    def test_the_same_shape_hides_an_impl_only_command_too(self):
+        cmd = "echo a # '\nrm x\necho b # '"
+        self.assertIn("may not run 'rm'", check_command(IMPL, cmd))
+
+    def test_a_hash_comment_on_an_otherwise_clean_line_is_not_a_refusal(self):
+        self.assertEqual(check_command(IMPL, "git status # just checking"), "")
+
+    def test_a_hash_that_does_not_start_a_word_is_not_a_comment(self):
+        # `echo#b` is one word to bash, not `echo` followed by a comment — there is no
+        # whitespace or separator right before the `#`.
+        self.assertEqual(check_command(IMPL, "echo a#b"), "")
+
+    def test_a_comment_holding_unbalanced_punctuation_does_not_reach_the_next_line(self):
+        # A second stray quote, and a `$(` that would otherwise be refused as substitution,
+        # both sit only in the comment: neither should affect the command that follows.
+        cmd = 'git status # "unbalanced and $(rm x) but harmless\ngit log'
+        self.assertEqual(check_command(IMPL, cmd), "")
+
+    # -- review round 1, F2: a lone trailing backslash must not reach `shlex.split` -------
+
+    def test_a_trailing_backslash_with_nothing_after_it_is_refused(self):
+        # Before F2 was fixed, this reached `shlex.split(segment, posix=True)` and raised
+        # `ValueError: No escaped character`, an exception with no `REFUSALS` prefix on it
+        # — escaping `check_command` uncounted instead of becoming a refusal.
+        self.assertIn("backslash", check_command(IMPL, "echo a \\"))
+
+    def test_an_escaped_trailing_space_is_not_a_bare_trailing_backslash(self):
+        # `\` immediately followed by another character — even a space — is an ordinary
+        # escape, not the shape F2 refuses.
+        self.assertEqual(check_command(IMPL, "echo a\\ b"), "")
+
+    def test_a_backslash_newline_continuation_is_not_a_bare_trailing_backslash(self):
+        self.assertEqual(check_command(IMPL, "echo a \\\ngit status"), "")
+
 
 class ThePrStepSaysWhatItWillReach(unittest.TestCase):
     PR = grant_for("pr")

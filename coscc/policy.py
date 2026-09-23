@@ -300,6 +300,11 @@ REFUSAL_UNBALANCED_QUOTE = "an unbalanced quote is not allowed"
 REFUSAL_HEREDOC_UNCLOSED = "a heredoc that never closes is not allowed"
 REFUSAL_HEREDOC_MULTIPLE = "more than one heredoc on the same line is not allowed"
 REFUSAL_ANSI_QUOTE = "an ANSI-C or a locale-quoted string is not allowed"
+# `0032_impl-fills-its-context-with-whole-files-and-refusals` review round 1, F2: a lone
+# trailing backslash used to fall through `_scan` with `state == "N"` and reach
+# `shlex.split`, which raises `ValueError` for it — an exception with no `REFUSALS` prefix,
+# escaping `check_command` uncounted instead of becoming a refusal.
+REFUSAL_TRAILING_BACKSLASH = "a trailing backslash with nothing after it is not allowed"
 
 REFUSALS = (
     REFUSAL_EMPTY,
@@ -315,6 +320,7 @@ REFUSALS = (
     REFUSAL_HEREDOC_UNCLOSED,
     REFUSAL_HEREDOC_MULTIPLE,
     REFUSAL_ANSI_QUOTE,
+    REFUSAL_TRAILING_BACKSLASH,
 )
 
 # R4/R7: what to do instead, said once and appended to the refusal it belongs to *and* to
@@ -435,6 +441,29 @@ def _scan(text: str) -> tuple[list[str], str, str]:
     A second `<<`/`<<-` before the first is resolved, an unterminated quote, an
     unterminated heredoc delimiter, and a heredoc whose closing line never comes are each
     refused rather than guessed at.
+
+    A `#` that starts a word — the very first character, or the first non-blank character
+    after whitespace, a newline, or one of `;`, `&`, `|` — opens a bash comment that runs to
+    the end of the physical line, outside every quote state, the same way bash's own
+    tokeniser does. This is `0032_impl-fills-its-context-with-whole-files-and-refusals`
+    review round 1, F1: an earlier version had no notion of a comment at all, so a stray
+    quote character sitting inside one — `echo a # '` — opened a real quote state that
+    swallowed every line up to the next matching quote, hiding whatever ran in between from
+    being split into its own segment at all. The comment's text is dropped from both
+    `segments` and `checked_text` before that text is ever looked at, exactly like a
+    quoted heredoc body is (R6) — bash never runs or expands it either. A `#` that is not at
+    the start of a word (`foo#bar`) is not a comment, same as bash.
+
+    A backslash that is the very last character of `text`, outside every quote, is refused
+    rather than silently treated as escaping nothing: review round 1, F2. Without this,
+    `_scan` would return with `state == "N"` — signalling a clean scan — and leave the
+    orphaned backslash inside the final segment, which then raised `ValueError` out of
+    `shlex.split` in `check_command`, an exception with no `REFUSALS` prefix on it, rather
+    than a counted refusal. Bash itself would keep reading input past a lone trailing
+    backslash (it escapes the newline that would otherwise end the command); a `Bash` tool
+    call is not going to grow more input this scan can wait for, so treating it as
+    incomplete and refusing it is the same call `check_command` already makes for an
+    unbalanced quote.
     """
     n = len(text)
     i = 0
@@ -444,6 +473,11 @@ def _scan(text: str) -> tuple[list[str], str, str]:
     checked_parts: list[str] = []
     seg_last = 0
     chk_last = 0
+    # True right where a new bash "word" could start: the very first character, and right
+    # after whitespace, a newline, or a separator that is also a word boundary in bash
+    # (`;`, `&`, `|`, and by extension `&&`/`||`, whose last character is one of those).
+    # Only meaningful in state "N" — a "#" is never re-examined while inside a quote.
+    at_word_start = True
 
     def flush_segment(end: int) -> None:
         nonlocal seg_last
@@ -474,20 +508,44 @@ def _scan(text: str) -> tuple[list[str], str, str]:
             continue
         # state == "N"
         if ch == "\\":
+            if i + 1 >= n:
+                # F2: a bare backslash with nothing after it. Bash would read this as an
+                # escaped newline and keep waiting for more input; there is none coming, so
+                # this is refused as incomplete rather than left for `shlex.split` to raise
+                # an uncounted exception on.
+                return [], "", f"{REFUSAL_TRAILING_BACKSLASH}: {text!r}"
             i += 2
+            at_word_start = False
             continue
         if ch == "'":
             state = "S"
             i += 1
+            at_word_start = False
             continue
         if ch == '"':
             state = "D"
             i += 1
+            at_word_start = False
+            continue
+        if ch == "#" and at_word_start:
+            # F1: a comment runs to the end of the physical line and is never scanned for
+            # quotes, substitution or redirection — bash does not expand it either. Ending
+            # the current segment here, and skipping straight past the comment's text
+            # (never handing it to the quote-state machine at all), is what keeps a stray
+            # quote character inside a comment from opening a state that would otherwise
+            # swallow every line up to its next match.
+            nl = text.find("\n", i)
+            end = nl if nl != -1 else n
+            flush_segment(i)
+            exclude_from_checked(i, end)
+            seg_last = end
+            i = end
             continue
         if text[i : i + 2] in ("$'", '$"'):
             return [], "", f"{REFUSAL_ANSI_QUOTE}: {text[i:i+2]}"
         if text[i : i + 3] == "<<<":
             i += 3
+            at_word_start = False
             continue
         if text[i : i + 2] == "<<":
             if heredoc_pending is not None:
@@ -548,13 +606,16 @@ def _scan(text: str) -> tuple[list[str], str, str]:
                 return [], "", f"{REFUSAL_HEREDOC_UNCLOSED}: no delimiter word after '<<'"
             heredoc_pending = (quoted, delim, dash)
             i = j
+            at_word_start = False
             continue
         if ch == ">":
             m = _FD_REDIRECT.match(text, i)
             if m:
                 i = m.end()
+                at_word_start = False
                 continue
             i += 1
+            at_word_start = False
             continue
         if ch == "\n":
             if heredoc_pending is not None:
@@ -581,21 +642,26 @@ def _scan(text: str) -> tuple[list[str], str, str]:
                     exclude_from_checked(body_start, body_end)
                 seg_last = body_end
                 i = body_end
+                at_word_start = True
                 continue
             flush_segment(i)
             seg_last = i + 1
             i += 1
+            at_word_start = True
             continue
         if text[i : i + 2] in _MULTI_SEPARATORS:
             flush_segment(i)
             seg_last = i + 2
             i += 2
+            at_word_start = True
             continue
         if ch in _SINGLE_SEPARATORS:
             flush_segment(i)
             seg_last = i + 1
             i += 1
+            at_word_start = True
             continue
+        at_word_start = ch in " \t"
         i += 1
 
     if state != "N":
@@ -637,9 +703,16 @@ def check_command(grant: Grant, command: str) -> str:
         return f"{REFUSAL_REDIRECT} — {REDIRECT_ALTERNATIVE}"
     for segment in segments:
         # `shlex.split`, not `str.split()`: a segment `_scan` cut is quote-balanced by
-        # construction (a split only ever happens while outside every quote), so this
-        # cannot raise for text that reached here, and it is what lets `"rm"`, `'gh' pr
-        # merge` and `gh "pr" merge` all compare equal to their bare spelling (R8).
+        # construction (a split only ever happens while outside every quote), and lets
+        # `"rm"`, `'gh' pr merge` and `gh "pr" merge` all compare equal to their bare
+        # spelling (R8). Review round 1, F2: this was once commented as unable to raise,
+        # and that was wrong — a segment ending in a lone, unescaped-anything backslash
+        # (only possible when it is also the very last character of the whole command,
+        # since `\` before any other character is consumed as an escape by `_scan` itself)
+        # made `shlex.split` raise `ValueError`. `_scan` now refuses that shape itself
+        # (`REFUSAL_TRAILING_BACKSLASH`) before a segment reaches here, so this call is not
+        # additionally wrapped in a `try`/`except` — the one input shape that could raise it
+        # never gets this far.
         words = shlex.split(segment, posix=True)
         if not words:
             continue
