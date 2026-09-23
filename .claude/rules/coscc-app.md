@@ -149,6 +149,12 @@ no commands, one turn, no budget.
   says merged at the local head. A tree that cannot be removed that way (clean, but `gh`
   fails or the branch is off the merged head) costs a `gh pr view`, up to 30s, on
   **every** board read until someone removes it by hand; nothing remembers the refusal.
+  Since `0030_a-unit-branch-starts-from-a-stale-main` the app also moves a still-detached
+  tree's HEAD to `origin/main` as a fetch just brought it, before every step that runs
+  there — so a unit opened after a merge no longer starts its branch on a stale trunk. Each
+  such step therefore costs one more fetch, up to `FETCH_TIMEOUT` = 20s (chosen, not
+  measured) when the remote does not answer; the step still runs on whatever the tree
+  already had, and says so in its prompt and in the run log.
 - **`POST /api/settings/models` decides what every step spends, and has no login.** Since
   the store's `0004_no-setting-says-which-model-runs-a-stage` each stage, and chat, runs
   on the model Settings names: an override in the `prefs` table (`model:<name>`), else
