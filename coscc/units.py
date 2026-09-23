@@ -6,8 +6,16 @@ loop is one person's, so nothing of coscc's goes into a shared repository's tree
 this module that was a decision written down; here it becomes the one enforced.
 
 So a unit's artifacts sit under this app's data root, and the repository being worked on
-receives only three things: the branch, the commits a step's own session makes to its code,
-and the pull request body. `scripts/verify_0014.py` claim 5 is the check.
+receives only four things: the branch, the commits a step's own session makes to its code,
+the pull request body, and — since `0021` — one review comment per review round on that
+pull request. `scripts/verify_0014.py` claim 5 is the check for the tree; comments are not
+in the tree, and `scripts/verify_0021.py` is the check for them.
+
+**The review comment is a deliberate exception to `0013`/`0014`.** The pull request is
+where the team reads, and a round that found a high-severity problem looked, there, exactly
+like a round that found nothing (`0021` intent). Only text already in `review.md` goes out,
+verbatim, as an ordinary comment the app posts under this machine's `gh` login
+(`coscc/prcomment.py`). It is not an approval, and no gate reads it.
 
 **Nothing here re-implements the loop.** `.claude/CLAUDE.md` says `cos.mjs` is the one
 place it is defined and nothing may hold a second copy. Numbering a unit and validating a

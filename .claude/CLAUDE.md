@@ -129,6 +129,15 @@ a `review` gate that never opens.
   is a name the person typed, not an identity. No route has a login and the default bind
   is `0.0.0.0`, so anyone who can reach the port can answer under any name, and the next
   stage will read it as a person's decision.
+- **A review comment is not an approval, and no gate reads it.** Since `0021` the app posts
+  each round of `review.md` to the unit's pull request as one ordinary review comment —
+  never `gh pr review` — under this machine's `gh` login, verbatim, first line saying an
+  agent session wrote it. It is a deliberate exception to "nothing of coscc's goes into
+  the repository": the pull request is where the team reads. A round the board ran is
+  posted when it is written; a round written at a terminal reaches the pull request only
+  when someone presses *Post to PR* on the board, or calls `POST /api/units/review-comment`.
+  That route has no login either, so anyone who can reach the port can make this
+  machine's login post a round. Neither gate changes its answer because of a comment.
 - **CI that decides more than one thing.** Since `0015` CI decides whether `review` may
   begin: the gate reads the pull request's required checks and stays closed on red,
   pending or none. Nothing else reads it. A green check also measures a different
