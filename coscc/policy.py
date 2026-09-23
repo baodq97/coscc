@@ -179,10 +179,18 @@ GRANTS: dict[tuple[str, str], Grant] = {
     # that true if this entry is ever widened.
     ("plan", "autonomous"): Grant(
         tools=READ_TOOLS,
-        # Chosen, not measured. Five files named in a spec is the case in front of me;
-        # twenty turns leaves room to follow a reference and still ends a loop that will not.
-        max_turns=20,
-        max_budget_usd=2.0,
+        # Twenty was chosen, not measured, and on 2026-09-23 it cut a plan mid-read:
+        # `0021_review-findings-never-reach-the-pull-request` stopped at the ceiling after
+        # $1.0777 and returned nothing, because what it had to read had grown -- the gates,
+        # the runner and the service, plus everything `0015` added to all three. Earlier
+        # plans finished under the same ceiling.
+        #
+        # The `turns` the app records is not the counter `max_turns` stops on (plans that
+        # finished were recorded at 30 and 34), so there is no measured number to set this
+        # from. Forty doubles the ceiling that was hit; the budget moves with it so the
+        # other limit does not become the real one.
+        max_turns=40,
+        max_budget_usd=4.0,
     ),
     ("pr", "autonomous"): Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,

@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 from coscc import policy
-from coscc.policy import Grant, check_command, decide, grant_for
+from coscc.policy import READ_TOOLS, Grant, check_command, decide, grant_for
 
 IMPL = grant_for("impl", "autonomous")
 
@@ -323,3 +323,15 @@ class TheImplCeilingsCameFromMeasurement(unittest.TestCase):
         exhausted = [turns for turns, _, done in self.RUNS if not done]
         self.assertEqual(len(finished), 1)
         self.assertTrue(all(t > finished[0] for t in exhausted))
+
+
+class ThePlanCeilingClearsTheOneItHit(unittest.TestCase):
+    """`0021`'s plan stopped at 20 turns on 2026-09-23 and returned nothing."""
+
+    def test_the_plan_ceiling_is_above_the_one_that_was_hit(self):
+        self.assertGreater(grant_for("plan", "autonomous").max_turns, 20)
+
+    def test_plan_still_only_reads(self):
+        # Raising the ceiling must not widen what the stage may do.
+        self.assertEqual(grant_for("plan", "autonomous").tools, READ_TOOLS)
+        self.assertEqual(grant_for("plan", "autonomous").commands, ())
