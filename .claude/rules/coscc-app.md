@@ -67,9 +67,11 @@ no commands, one turn, no budget.
 - **The run button offers the stage `cos.mjs next` names, even one that already has an
   artifact.** Since `0024` the fix → review-again loop is driven from the board: after a
   review asks for changes it offers `impl`, then `review` once a fix is on the pull request
-  and CI is green. Re-running `impl` overwrites `impl.md`; `review.md` alone is guarded:
-  the reply carries only its new round, the runner writes the earlier ones back from the
-  file, and it refuses a reply that rewrites one. Opening a unit, finishing a step and
+  and CI is green. Re-running `impl` overwrites `impl.md`; `review.md`'s rounds are guarded
+  on top of that: the reply carries only its new round, the runner writes the earlier ones
+  back from the file, and it refuses a reply that rewrites one. Since `0025` every prose
+  stage's `## Answers` section is guarded the same way, `review.md` included — see the
+  hazard below. Opening a unit, finishing a step and
   pressing *Ask again* each ask `gh` in the workspace under this machine's login, up to
   60s; nothing re-asks on a timer, so a pending CI shows no button until someone asks.
   An `impl` that commits and does not push leaves the button on `impl`.
@@ -132,10 +134,21 @@ no commands, one turn, no budget.
   marker on its last line stops a second copy. The trace is a `pr-comment` row in Activity
   and the comment itself. `run_step` also posts on its own after writing a review round,
   which can hold the `done` row up to 60s on a slow network (two `gh` calls, 30s each).
-- **Re-running a stage whose artifact holds `## Answers` erases them.** A prose stage's
-  artifact is written from the reply, whole. Since `0024` the run button offers a stage
-  that already has an artifact — `impl` and `review` in the fix loop — so the path is
-  open; a stage re-run that way loses its answers with no trace but the `outputs` row.
+- **Re-running a prose stage keeps `## Answers` byte for byte; a reply's own attempt at
+  one is dropped, silently.** Since `0025` the runner (`coscc/runner.py`: `answers_section`,
+  `strip_answers`, `with_answers`) reads the section already on disk right before it
+  writes — not at the step's start — and writes it back after the stage's own text, on
+  all five prose stages: `idea`, `intent`, `spec`, `plan` and `review`. Whatever a reply
+  says under its own `## Answers` heading — copied from the artifact, forged, or a model
+  answering its own question — never reaches disk, and nothing records that a reply tried.
+  A window remains between the answer route's read and the runner's: the two hold no lock
+  in common (`_answer_lock` is `Service`'s, `coscc/service.py:140`, and `Runner` carries
+  no reference to it). Byte-identical is not meaning-identical: a re-run that renumbers
+  `## Open questions` leaves `### Câu N` on disk pointing at whichever question now
+  carries that number, not the one a person answered
+  (`.cos/0025_rerunning-a-stage-erases-what-was-added-to-it/spec.md` C1). `impl.md` is
+  still overwritten whole — a session writes it with its own tools, and this unit never
+  covered it.
 - **Each unit works in its own `git worktree`, and the app may move the workspace to
   `main`.** Since `0017` a unit's tree is `<COS_DATA_DIR>/worktrees/<slot>/<unit>`; a step
   runs there, and `gate`/`next` get `--repo <that tree>`. When a unit's branch is checked
@@ -194,6 +207,7 @@ no commands, one turn, no budget.
 | `verify_0017.py` | no session, no quota, no network; temporary data root, bare-directory remote. `--this-repo` prepares a worktree of this checkout (`uv sync`, `npm ci`, a build: 20s measured 2026-09-23) and runs `npm test` twice. `--paid` **spends real money**: two real `impl` sessions on a clone of `COS_PROOF_REPO`; unset is exit 2 |
 | `verify_0021.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2 |
 | `verify_0024.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s own handlers through Reflex's event processor, in-process; no browser, so the compiled page is not exercised |
+| `verify_0025.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 
