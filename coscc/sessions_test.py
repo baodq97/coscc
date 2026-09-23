@@ -154,6 +154,23 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         c = Config(model="from-env")
         self.assertEqual(_options(c, "/p", None, model="x").model, "x")
 
+    # -- `0032_impl-fills-its-context-with-whole-files-and-refusals` R11 -----------------
+
+    def test_a_board_step_locks_out_mcp(self):
+        step = _options(Config(), "/p", None, tools=["Read"])
+        self.assertEqual(step.mcp_servers, {})
+        self.assertTrue(step.strict_mcp_config)
+
+    def test_chat_carries_neither_knob(self):
+        chat = _options(Config(), "/p", None)
+        self.assertFalse(chat.mcp_servers)
+        self.assertFalse(chat.strict_mcp_config)
+
+    def test_an_empty_tool_list_still_locks_it_because_it_is_still_a_step(self):
+        # `is None`, not truthiness — a step granted no tools at all is still a step.
+        step = _options(Config(), "/p", None, tools=[])
+        self.assertTrue(step.strict_mcp_config)
+
     def test_no_resolved_model_falls_back_to_cos_model(self):
         c = Config(model="from-env")
         self.assertEqual(_options(c, "/p", None).model, "from-env")
@@ -321,3 +338,18 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
             child = self.unit_child("/wt", "/ws")
             self.assertEqual([k for k, v in child.items() if k.startswith("__REFLEX_") and v], [])
             self.assertEqual(child[frontend.WEB_WORKDIR_VAR], str(Path("/wt") / ".web"))
+
+    # -- `0032_impl-fills-its-context-with-whole-files-and-refusals` R10 -----------------
+
+    def test_bash_max_output_length_is_capped_regardless_of_what_was_inherited(self):
+        with mock.patch.dict(os.environ, {"BASH_MAX_OUTPUT_LENGTH": "999999"}):
+            self.assertEqual(
+                self.child()["BASH_MAX_OUTPUT_LENGTH"], sessions.BASH_MAX_OUTPUT_CHARS
+            )
+
+    def test_bash_max_output_length_is_within_the_clis_own_valid_range(self):
+        # Found by reading the installed CLI (see the comment at BASH_MAX_OUTPUT_CHARS):
+        # it validates as a positive integer, capped at 150000.
+        value = int(sessions.BASH_MAX_OUTPUT_CHARS)
+        self.assertGreater(value, 0)
+        self.assertLessEqual(value, 150000)

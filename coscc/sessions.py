@@ -58,6 +58,16 @@ from coscc.config import Config
 # loses every entry under the workspace or the installed package (a workspace's
 # `.venv/bin` first on `PATH` runs the workspace's code, not the unit's), and every
 # `__REFLEX_*` this process set (`coscc/run.py:56,172`) is overridden with an empty value.
+#
+# `0032_impl-fills-its-context-with-whole-files-and-refusals` R10: `BASH_MAX_OUTPUT_LENGTH`
+# is the CLI's own name for the size it reads a `Bash` result back at — found in
+# `~/.local/share/claude/versions/2.1.280` (`grep -a`, 2026-09-23): it validates as a
+# positive integer capped at 150000, defaults to 30000 unset, and its own text says it
+# "sizes the read-back window". 20000 matches `policy.READ_CEILING` for the same reason
+# that value was chosen: headroom under intent.md's 25000-character ceiling.
+BASH_MAX_OUTPUT_CHARS = "20000"
+
+
 def child_env(cwd: str, workspace: str | None = None) -> dict[str, str]:
     """What to lay over the environment a session would otherwise inherit whole.
 
@@ -71,6 +81,7 @@ def child_env(cwd: str, workspace: str | None = None) -> dict[str, str]:
         frontend.WEB_WORKDIR_VAR: str(Path(cwd) / ".web"),
         "VIRTUAL_ENV": str(Path(cwd) / ".venv"),
         "PATH": worktrees.clean_path(workspace),
+        "BASH_MAX_OUTPUT_LENGTH": BASH_MAX_OUTPUT_CHARS,
     }
     # This app's settings describe this app, not the workspace. Empty reads as unset to
     # `coscc/config.py` `from_env` for every one of them (host and port only since the
@@ -268,6 +279,19 @@ def _options(
         options.can_use_tool = can_use_tool
     if max_budget_usd:
         options.max_budget_usd = float(max_budget_usd)
+    if tools is not None:
+        # `0032_impl-fills-its-context-with-whole-files-and-refusals` R11: a board step —
+        # `tools is not None` is exactly what tells `_options` apart from a chat call, two
+        # lines above — never needs an MCP server, and `intent.md`'s tiêu chí 3 is partly
+        # what one costs to wire up before the model ever answers. `mcp_servers={}` is
+        # already the field's default, set again here so deleting the line is visible; the
+        # flag is what actually closes the door if a caller ever hands one in anyway.
+        # `strict_mcp_config` is a real dataclass field on this SDK build (checked
+        # 2026-09-23 against the installed `claude_agent_sdk`), so no `extra_args` is
+        # needed to reach the CLI's `--strict-mcp-config`. Chat (`tools is None`) is left
+        # exactly as it was — `plan.md ## What was chosen not to be done`.
+        options.mcp_servers = {}
+        options.strict_mcp_config = True
     return options
 
 
