@@ -285,6 +285,101 @@ class TheWriteBoundaryIsTheWorkspacePlusOneDirectory(unittest.TestCase):
         self.assertIn("redirect", reason)
 
 
+class ReadsStayInTheCheckoutAndTheUnit(unittest.TestCase):
+    """`0020` `spec.md` `## Answers`, answer 2: reading has the boundary writing has.
+
+    Every grant holding `Read` is held to it, `impl` included, not only the prose stages.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.ws = root / "ws"
+        self.unit = root / "data" / "units" / "ws-abc" / ".cos" / "0001_a-problem"
+        (self.ws / "src").mkdir(parents=True)
+        self.unit.mkdir(parents=True)
+        self.grant = Grant(tools=READ_TOOLS)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _decide(self, tool: str, tool_input: dict, grant: Grant | None = None) -> str:
+        return decide(grant or self.grant, tool, tool_input, str(self.ws), str(self.unit))
+
+    def test_a_read_in_the_workspace_passes(self):
+        self.assertEqual(self._decide("Read", {"file_path": str(self.ws / "src" / "a.py")}), "")
+
+    def test_a_read_in_the_units_own_directory_passes(self):
+        self.assertEqual(self._decide("Read", {"file_path": str(self.unit / "spec.md")}), "")
+
+    def test_a_read_anywhere_else_is_refused(self):
+        sibling = self.unit.parent / "0002_another" / "impl.md"
+        for bad in (
+            "/etc/passwd", "~/.ssh/id_rsa", "~/.config/coscc/env",
+            str(sibling), str(self.ws / ".." / "x"),
+        ):
+            self.assertIn(
+                "reading outside the workspace", self._decide("Read", {"file_path": bad}), bad
+            )
+
+    def test_a_relative_path_is_read_from_the_workspace(self):
+        self.assertEqual(self._decide("Read", {"file_path": "src/a.py"}), "")
+        self.assertIn("outside", self._decide("Read", {"file_path": "../../etc/passwd"}))
+
+    def test_a_glob_without_a_path_searches_the_workspace(self):
+        self.assertEqual(self._decide("Glob", {"pattern": "**/*.py"}), "")
+
+    def test_a_glob_aimed_elsewhere_is_refused(self):
+        for tool_input in (
+            {"pattern": "*", "path": "/etc"},
+            {"pattern": "/home/*/.ssh/*"},
+            {"pattern": "../**/*"},
+        ):
+            self.assertIn("reading outside", self._decide("Glob", tool_input), tool_input)
+
+    def test_an_absolute_glob_inside_the_workspace_passes(self):
+        self.assertEqual(self._decide("Glob", {"pattern": f"{self.ws}/src/*.py"}), "")
+
+    def test_a_grep_aimed_elsewhere_is_refused(self):
+        self.assertIn("reading outside", self._decide("Grep", {"pattern": "x", "path": "/etc"}))
+        self.assertEqual(self._decide("Grep", {"pattern": "x", "path": str(self.ws)}), "")
+
+    def test_a_symlink_out_of_the_workspace_is_refused(self):
+        link = self.ws / "escape"
+        link.symlink_to("/etc")
+        self.assertIn(
+            "reading outside", self._decide("Read", {"file_path": str(link / "passwd")})
+        )
+
+    def test_the_boundary_holds_for_impl_too(self):
+        self.assertIn(
+            "reading outside",
+            self._decide("Read", {"file_path": "/etc/passwd"}, grant=IMPL),
+        )
+        self.assertEqual(
+            self._decide("Read", {"file_path": str(self.ws / "src" / "a.py")}, grant=IMPL), ""
+        )
+
+
+class TheReadBoundaryIsNotASandbox(unittest.TestCase):
+    """`0020` plan, Risk 3, pinned as passing tests so nobody reads the boundary as a guarantee.
+
+    `impl`, `pr` and `ship` keep `cat` and `head` in their commands, and `check_command`
+    reads no paths, so a shell read walks past the `Read` check. Only `spec`, `plan` and
+    `review`, which hold no `Bash`, are actually held by it.
+    """
+
+    def test_a_shell_read_is_not_checked(self):
+        self.assertEqual(decide(IMPL, "Bash", {"command": "cat ~/.ssh/id_rsa"}, "/tmp/ws"), "")
+
+    def test_a_glob_pattern_is_read_only_up_to_its_first_wildcard(self):
+        # Only the fixed prefix is checked. A pattern that does not start with `/` or `~`
+        # is taken as relative to the workspace, whatever the tool later makes of it.
+        self.assertEqual(
+            decide(Grant(tools=READ_TOOLS), "Glob", {"pattern": "{a,b}/*"}, "/tmp/ws"), ""
+        )
+
+
 class TheImplCeilingsCameFromMeasurement(unittest.TestCase):
     """Three of four `impl` steps run through the board died at the turn ceiling.
 

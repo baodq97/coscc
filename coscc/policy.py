@@ -395,21 +395,94 @@ def decide(
             return reason
 
     if tool in WRITE_TOOLS:
-        roots = []
-        for candidate in (workspace, unit_dir):
-            if not candidate:
-                continue
-            try:
-                roots.append(Path(candidate).expanduser().resolve())
-            except OSError:
-                return "the workspace path could not be resolved"
-        if not roots:
-            return "the workspace path could not be resolved"
+        # Relative paths resolve against the app's own directory here, as they always have.
+        # Changing that would widen writing in one corner, and nothing asked for it
+        # (`0020` plan, step 1).
+        roots, reason = _roots(workspace, unit_dir)
+        if reason:
+            return reason
         for raw in _paths_in(tool_input):
-            try:
-                target = Path(raw).expanduser().resolve()
-            except OSError:
-                return f"that path could not be resolved: {raw}"
-            if not any(target == root or root in target.parents for root in roots):
+            if not _inside(raw, roots, None):
                 return f"writing outside the workspace is not allowed: {raw}"
+
+    if tool in READ_TOOLS:
+        # `0020` `spec.md` `## Answers`, answer 2: reading is held to the same two roots as
+        # writing. Before this a step that could `Read` could read anything the app's own
+        # process could — `~/.ssh`, `~/.config/coscc/env`, every other unit in the store.
+        # Relative paths resolve against the workspace, because that is the session's `cwd`
+        # and so what the tool itself will read.
+        roots, reason = _roots(workspace, unit_dir)
+        if reason:
+            return reason
+        for raw in _read_paths_in(tool, tool_input):
+            if raw is _TRAVERSAL:
+                return (
+                    "reading outside the workspace is not allowed: "
+                    f"{tool_input.get('pattern')}"
+                )
+            if not _inside(raw, roots, roots[0]):
+                return f"reading outside the workspace is not allowed: {raw}"
     return ""
+
+
+def _roots(workspace: str, unit_dir: str | None) -> tuple[list, str]:
+    """The directories a step may touch, resolved: the workspace, then its own unit."""
+    from pathlib import Path
+
+    roots = []
+    for candidate in (workspace, unit_dir):
+        if not candidate:
+            continue
+        try:
+            roots.append(Path(candidate).expanduser().resolve())
+        except OSError:
+            return [], "the workspace path could not be resolved"
+    if not roots:
+        return [], "the workspace path could not be resolved"
+    return roots, ""
+
+
+def _inside(raw: str, roots: list, base) -> bool:
+    """Whether `raw`, once resolved (symlinks included), lies in one of `roots`.
+
+    `base` is what a relative path is resolved against; `None` means the process's own
+    directory, which is what the write check has always used.
+    """
+    from pathlib import Path
+
+    try:
+        path = Path(raw).expanduser()
+        if base is not None and not path.is_absolute():
+            path = base / path
+        target = path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return any(target == root or root in target.parents for root in roots)
+
+
+# Stands in for a path when a `Glob` pattern climbs with `..`: there is no fixed prefix to
+# check, and the pattern itself says it is leaving.
+_TRAVERSAL = object()
+_GLOB_CHARS = "*?[{"
+
+
+def _read_paths_in(tool: str, tool_input: dict) -> list:
+    """Every path a read tool was given, plus the fixed prefix of an absolute `Glob` pattern.
+
+    No `path` at all is fine: the SDK then searches the session's `cwd`, which is the
+    workspace (`coscc/runner.py`). Reading a pattern this way is best-effort — `0020`
+    plan, Risk 3 — and `TheReadBoundaryIsNotASandbox` below pins what it does not see.
+    """
+    out: list = list(_paths_in(tool_input))
+    pattern = tool_input.get("pattern")
+    if tool == "Glob" and isinstance(pattern, str) and pattern:
+        if ".." in pattern.replace("\\", "/").split("/"):
+            out.append(_TRAVERSAL)
+        elif pattern.startswith(("/", "~")):
+            fixed = []
+            for part in pattern.split("/"):
+                if any(c in part for c in _GLOB_CHARS):
+                    break
+                fixed.append(part)
+            out.append("/".join(fixed) or "/")
+    return out
