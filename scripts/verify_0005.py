@@ -295,7 +295,9 @@ async def _init_tools(config, cwd: str) -> tuple[list[str], list[str]]:
     stage whose grant is empty. Asking the grant table instead would only prove the table
     agrees with itself; the table was measured, and it is not the whole answer.
     """
-    grant = policy.grant_for("spec", "autonomous")
+    # `intent`, not `spec`: since `0020` `spec` reads, and this claim is about a session
+    # whose grant is empty.
+    grant = policy.grant_for("intent")
     options = _options(
         config, cwd, None,
         max_turns=grant.max_turns,
@@ -372,11 +374,11 @@ async def claim_7(http, cwd: str) -> Claim:
         encoding="utf-8",
     )
 
-    original = policy.GRANTS.get(("impl", "autonomous"))
+    original = policy.GRANTS.get("impl")
     # The ceiling is a number in the grant table, so lowering it is configuration rather
     # than a second code path. One turn plus a task that needs tools is the shortest
     # reliable way to reach it: any tool call forces a second turn there is no room for.
-    policy.GRANTS[("impl", "autonomous")] = policy.Grant(
+    policy.GRANTS["impl"] = policy.Grant(
         tools=original.tools if original else ("Read", "Write"),
         commands=original.commands if original else (),
         max_turns=1,
@@ -392,9 +394,9 @@ async def claim_7(http, cwd: str) -> Claim:
         return c
     finally:
         if original is None:
-            policy.GRANTS.pop(("impl", "autonomous"), None)
+            policy.GRANTS.pop("impl", None)
         else:
-            policy.GRANTS[("impl", "autonomous")] = original
+            policy.GRANTS["impl"] = original
 
     if "refused" in done:
         c.check("the step ran", False, done["refused"])

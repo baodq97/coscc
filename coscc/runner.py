@@ -26,7 +26,7 @@ from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
-from coscc import harness
+from coscc import gitops, harness
 from coscc.journal import Journal
 from coscc.policy import Grant, beyond_reading, decide, grant_for, is_prose_stage
 from coscc.sessions import Refused, Sessions
@@ -83,6 +83,7 @@ def build_prompt(
     artifact: str,
     writes_own: bool = False,
     gate_said: str = "",
+    head: str = "",
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -191,6 +192,31 @@ def build_prompt(
                 "your header, unchanged, and appends yours after them.\n\n"
                 + "\n".join(earlier)
             )
+
+    # `write-review` step 2 needs the commit it reviewed, and the `ship` gate reads that
+    # line. Until `0020` the stage read it out of `.git/` itself. Since `0017` a step runs
+    # in the unit's worktree, whose `.git` is a file pointing into the main repository's
+    # `.git/worktrees/`, and since `0020` a `Read` there is refused: it lies outside both
+    # the worktree and the unit (`0020` review round 1, F1). The app has already read the
+    # head for the run log, so it hands the same value over rather than widen the boundary.
+    if stage == "review" and head:
+        parts.append(
+            "# The commit you are reviewing\n\n"
+            "The app read the head of this checkout before starting the step. Record it "
+            "on the round's `Reviewed:` line:\n\n"
+            f"    {head}\n\n"
+            "It is the same value the run log's `start` record carries. Do not read it out "
+            "of `.git/`: the checkout is a git worktree whose git directory lies outside "
+            "what this step may read."
+        )
+    elif stage == "review":
+        parts.append(
+            "# The commit you are reviewing\n\n"
+            "The app could not read the head of this checkout: it is not a git checkout, "
+            "or `git rev-parse HEAD` failed. Do not guess one. Leave the round's "
+            "`Reviewed:` line without a commit and say why under "
+            "`### What was not reviewed`; the `ship` gate will stay closed, which is right."
+        )
 
     location = directory / artifact
     if writes_own and stage == "ship":
@@ -376,6 +402,22 @@ def permission_gate(grant: Grant, workspace: str, denials: Denials, unit_dir: st
     return can_use_tool
 
 
+async def _head_of(cwd: str) -> str:
+    """The commit a step ran on, for its `start` record — `""` when there is none to name.
+
+    `0020` R5: the outcome is measured by checking a `spec.md`'s citations at the commit
+    the stage read, and until this the run log never said which commit that was. A failure
+    here costs the record one field; it never stops the step.
+    """
+    path = Path(cwd)
+    if not (path / ".git").exists():
+        return ""
+    try:
+        return await gitops.rev_parse(path, "HEAD")
+    except gitops.GitError:
+        return ""
+
+
 class Runner:
     """Runs one step. Owns no state of its own beyond what it was handed."""
 
@@ -406,7 +448,7 @@ class Runner:
         `workspace` stays the membership question and the journal's subject. Unset, the
         two are the same directory, as they were before.
         """
-        grant = grant_for(stage, mode)
+        grant = grant_for(stage)
         directory = Path(directory)
         cwd = cwd or workspace
         if not directory.exists():
@@ -428,10 +470,12 @@ class Runner:
                     f"{stage} is a prose stage and must not carry {', '.join(beyond)}"
                 )
 
+        head = await _head_of(cwd)
         prompt, included = build_prompt(
             cwd, directory, unit, stage, stages, artifact,
             writes_own=not grant.app_writes_artifact,
             gate_said=gate_said,
+            head=head,
         )
 
         if self.journal is not None:
@@ -439,6 +483,7 @@ class Runner:
                 journal_key, unit, stage, mode,
                 prompt_chars=len(prompt), included=included,
                 granted=list(grant.tools), max_turns=grant.max_turns,
+                head=head,
             )
 
         denials = Denials()

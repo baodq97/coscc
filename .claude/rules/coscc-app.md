@@ -35,7 +35,8 @@ One page at `/`, six screens: Overview, Workspaces, Board, Sessions, Activity & 
 Settings. Components in `screens.py`, state in `state.py`, logic behind `service.py`.
 **A handler that decides anything is a bug in `service.py`, not in the page.**
 
-`policy.py` is the grant table, keyed by `(stage, mode)`, and it sits **outside `Config`**
+`policy.py` is the grant table, keyed by stage; the mode is recorded but grants nothing
+(since `0020`). It sits **outside `Config`**
 so the four knobs keep meaning what they meant. Default is the locked position: no tools,
 no commands, one turn, no budget.
 
@@ -48,14 +49,14 @@ no commands, one turn, no budget.
   `gh -R o/r pr merge`, the merge endpoint through `gh api` and `gh alias set` included.
   An alias defined before the step, or `node -e` spawning `gh`, still walks past
   (`coscc/policy_test.py`, `test_the_known_limit_of_the_deny_list`).
-  `("ship", "autonomous")` holds `git` and `gh` with this machine's login and lands the
+  `ship`'s grant holds `git` and `gh` with this machine's login and lands the
   change on `main` after the `ship` gate opens. Read the next bullet for how far that
   reaches.
 - **`/api/timeline` returns what a failed paid step replied.** Since `0014` a step whose
   reply could not be used keeps the last 2000 characters of it (`coscc/runner.py:150`), and
   that text reaches the board as `detail`. No route has a login and the default bind is
   `0.0.0.0`.
-- **`("pr", "autonomous")` and `("ship", "autonomous")` reach further than this
+- **The `pr` and `ship` grants reach further than this
   repository.** Their capability comes from this machine's `gh` login, so they reach every
   repository that login reaches. The page shows a warning string before the button is
   pressed; do not remove either.
@@ -84,11 +85,26 @@ no commands, one turn, no budget.
 - **The board's lanes must not use the harness's `blocked` flag.** `cos.mjs` returns
   `blocked: true` for every unfinished unit, so that mapping puts all of them in *Needs
   review* and empties the other three. `state.py` reads lanes off artifact statuses.
-- **The five prose stages get no write tools and no commands in either mode.** `plan` and,
-  since `0015`, `review` may read in `autonomous`; `ship` is no longer prose. A session
-  that cannot write a file needs the app to write its artifact from the reply.
+- **The five prose stages get no write tools and no commands, in any mode.** `plan`,
+  `review` (since `0015`) and `spec` (since `0020`) may read, in every mode, inside the
+  read boundary below; `ship` is no longer prose. A session that cannot write a file
+  needs the app to write its artifact from the reply.
   Settings says so on the page, because otherwise it looks like the agent wrote the file.
   `.cos/0005_hand-driven-invisible-loop/plan.md` Risk 1 records why.
+- **The mode no longer grants anything, so the default button hands `pr` and `ship`
+  their full grant.** Before `0020` a step started in `manual` had no tools and failed
+  harmlessly; now `pr` pushes and `ship` merges with this machine's `gh` login whatever
+  mode is set. What still stands in front is the gate `run_step` asks and the warning
+  string shown before the button.
+- **The read boundary is not a sandbox.** Since `0020` `Read`, `Glob` and `Grep` are held
+  to the unit's worktree and its own folder in the store, for every grant. It binds only
+  the stages without `Bash`: `impl`, `pr` and `ship` still have `cat` and `head`, and
+  `check_command` reads no paths. A `Glob` pattern is checked only up to its first
+  wildcard. `ship` runs in the store's unit folder, so it can no longer `Read` the
+  worktree. `coscc/policy_test.py`, `TheReadBoundaryIsNotASandbox`, pins the gaps. A
+  worktree's `.git` is a file pointing outside both roots, so no read-only stage can read
+  a commit out of `.git/`: `review` is handed the head in its prompt instead
+  (`build_prompt`, *The commit you are reviewing*; `0020` review round 1, F1).
 - **A `coscc/_harness/` left in a checkout shadows `.claude/`.** Both are gitignored and
   both are built, not committed, so `git status` stays clean while the app reads the stale
   copy — edit a skill, and the step still runs the old text. `coscc/harness.py` prefers the

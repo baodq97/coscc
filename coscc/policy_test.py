@@ -8,6 +8,7 @@ tool nobody granted is refused whatever declared it — which is the shape that 
 
 from __future__ import annotations
 
+import inspect
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,7 +16,7 @@ from pathlib import Path
 from coscc import policy
 from coscc.policy import READ_TOOLS, Grant, check_command, decide, grant_for
 
-IMPL = grant_for("impl", "autonomous")
+IMPL = grant_for("impl")
 
 
 class OnlyImplAndOnlyAutonomous(unittest.TestCase):
@@ -26,12 +27,74 @@ class OnlyImplAndOnlyAutonomous(unittest.TestCase):
         self.assertGreater(IMPL.max_turns, 1)
         self.assertGreater(IMPL.max_budget_usd, 0)
 
-    def test_the_same_stage_in_manual_carries_nothing(self):
-        self.assertFalse(grant_for("impl", "manual").opens_anything)
+    def test_a_stage_the_table_does_not_name_carries_nothing(self):
+        """Was `test_the_same_stage_in_manual_carries_nothing`.
+
+        `0020` `spec.md` `## Answers`, answer 1: grants follow the stage, not the mode, so
+        there is no `manual` left to carry nothing. What stays locked is a stage the table
+        does not name.
+        """
+        self.assertEqual(grant_for("idea"), Grant())
+        self.assertEqual(grant_for("intent"), Grant())
 
     def test_impl_writes_its_own_artifact_and_prose_stages_do_not(self):
         self.assertFalse(IMPL.app_writes_artifact)
-        self.assertTrue(grant_for("spec", "autonomous").app_writes_artifact)
+        self.assertTrue(grant_for("spec").app_writes_artifact)
+
+
+class OneGrantPerStage(unittest.TestCase):
+    """`0020` `spec.md` `## Answers`, answer 1: tools follow the stage, in every mode."""
+
+    def test_grants_are_keyed_by_stage_alone(self):
+        for key in policy.GRANTS:
+            self.assertIsInstance(key, str, key)
+
+    def test_grant_for_takes_no_mode(self):
+        self.assertEqual(list(inspect.signature(grant_for).parameters), ["stage"])
+
+    def test_spec_has_its_own_grant(self):
+        """`0020` R1. Without it `spec` fell to `Grant()`: no tools, one turn."""
+        self.assertNotEqual(grant_for("spec"), Grant())
+
+    def test_spec_reads_and_only_reads(self):
+        """`0020` R2: reading, bounded like writing, and nothing else."""
+        spec = grant_for("spec")
+        self.assertEqual(spec.tools, READ_TOOLS)
+        self.assertEqual(spec.commands, ())
+        self.assertEqual(policy.beyond_reading(spec), ())
+        self.assertTrue(spec.app_writes_artifact)
+        ws, unit = "/tmp/ws", "/tmp/data/units/ws-abc/.cos/0001_a"
+        self.assertIn(
+            "reading outside",
+            decide(spec, "Read", {"file_path": "/etc/passwd"}, ws, unit),
+        )
+        self.assertEqual(decide(spec, "Read", {"file_path": f"{ws}/a.py"}, ws, unit), "")
+        for tool in ("Write", "Bash"):
+            self.assertIn("was not granted", decide(spec, tool, {}, ws, unit))
+
+    def test_spec_has_the_turns_plan_has(self):
+        """`0020` R3. Copied from `plan`, not measured for `spec`."""
+        self.assertEqual(grant_for("spec").max_turns, grant_for("plan").max_turns)
+        self.assertEqual(grant_for("spec").max_budget_usd, grant_for("plan").max_budget_usd)
+
+    def test_every_other_grant_is_unchanged(self):
+        """`0020` R6: the values each stage held before this unit, written out."""
+        rw = READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS
+        expected = {
+            "impl": Grant(tools=rw, commands=policy.IMPL_COMMANDS, max_turns=120,
+                          max_budget_usd=8.0, app_writes_artifact=False),
+            "plan": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0),
+            "pr": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
+                        max_budget_usd=3.0, app_writes_artifact=False,
+                        warning=policy.PR_WARNING, denied=policy.MERGE_IS_SHIPS),
+            "review": Grant(tools=READ_TOOLS, max_turns=20, max_budget_usd=2.0),
+            "ship": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
+                          max_budget_usd=3.0, app_writes_artifact=False,
+                          warning=policy.SHIP_WARNING),
+        }
+        self.assertEqual(set(policy.GRANTS), set(expected) | {"spec"})
+        for stage, grant in expected.items():
+            self.assertEqual(grant_for(stage), grant, stage)
 
 
 class AToolNobodyGrantedIsRefused(unittest.TestCase):
@@ -119,7 +182,7 @@ class CommandsAreCheckedSegmentBySegment(unittest.TestCase):
 
 
 class ThePrStepSaysWhatItWillReach(unittest.TestCase):
-    PR = grant_for("pr", "autonomous")
+    PR = grant_for("pr")
 
     def test_it_may_run_git_and_gh_and_not_a_package_manager(self):
         self.assertEqual(check_command(self.PR, "git push -u origin HEAD"), "")
@@ -148,10 +211,14 @@ class ThePrStepSaysWhatItWillReach(unittest.TestCase):
         self.assertIn("every repository", self.PR.warning)
         self.assertEqual(IMPL.warning, "")
 
-    def test_manual_carries_neither_tools_nor_warning(self):
-        manual = grant_for("pr", "manual")
-        self.assertFalse(manual.opens_anything)
-        self.assertEqual(manual.warning, "")
+    def test_the_warning_is_on_the_only_grant_pr_has(self):
+        """Was `test_manual_carries_neither_tools_nor_warning`.
+
+        `0020` `spec.md` `## Answers`, answer 1: there is one grant per stage now, so no
+        mode exists in which `pr` runs without its warning shown before the button.
+        """
+        self.assertTrue(grant_for("pr").opens_anything)
+        self.assertEqual(grant_for("pr").warning, policy.PR_WARNING)
 
     def test_its_ceilings_are_lower_than_impls(self):
         self.assertLess(self.PR.max_turns, IMPL.max_turns)
@@ -161,8 +228,8 @@ class ThePrStepSaysWhatItWillReach(unittest.TestCase):
 class MergingIsShipsNotPrs(unittest.TestCase):
     """`0015`: `pr` stops at an open pull request; `ship` merges after a review passed."""
 
-    PR = grant_for("pr", "autonomous")
-    SHIP = grant_for("ship", "autonomous")
+    PR = grant_for("pr")
+    SHIP = grant_for("ship")
 
     def test_pr_is_refused_the_merge_and_told_whose_it_is(self):
         for line in (
@@ -183,12 +250,15 @@ class MergingIsShipsNotPrs(unittest.TestCase):
         self.assertFalse(self.SHIP.app_writes_artifact)
         self.assertIn("gh pr merge", self.SHIP.warning)
 
-    def test_ship_is_no_longer_a_prose_stage_and_manual_ship_carries_nothing(self):
+    def test_ship_is_no_longer_a_prose_stage(self):
+        """Was `..._and_manual_ship_carries_nothing`. `0020` `spec.md` `## Answers`,
+        answer 1, removed the mode from the grant, so the second half now says what `ship`
+        does carry rather than what `manual` did not."""
         self.assertNotIn("ship", policy.PROSE_STAGES)
-        self.assertFalse(grant_for("ship", "manual").opens_anything)
+        self.assertNotEqual(grant_for("ship").commands, ())
 
     def test_review_reads_and_only_reads(self):
-        review = grant_for("review", "autonomous")
+        review = grant_for("review")
         self.assertEqual(review.tools, policy.READ_TOOLS)
         self.assertEqual(policy.beyond_reading(review), ())
         self.assertIn("review", policy.PROSE_STAGES)
@@ -242,7 +312,7 @@ class TheWriteBoundaryIsTheWorkspacePlusOneDirectory(unittest.TestCase):
     """
 
     def setUp(self):
-        self.grant = policy.grant_for("impl", "autonomous")
+        self.grant = policy.grant_for("impl")
         self.workspace = "/tmp/ws"
         self.unit = "/tmp/data/units/ws-abc/.cos/0001_a-problem"
 
@@ -283,6 +353,101 @@ class TheWriteBoundaryIsTheWorkspacePlusOneDirectory(unittest.TestCase):
             self.workspace, self.unit,
         )
         self.assertIn("redirect", reason)
+
+
+class ReadsStayInTheCheckoutAndTheUnit(unittest.TestCase):
+    """`0020` `spec.md` `## Answers`, answer 2: reading has the boundary writing has.
+
+    Every grant holding `Read` is held to it, `impl` included, not only the prose stages.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.ws = root / "ws"
+        self.unit = root / "data" / "units" / "ws-abc" / ".cos" / "0001_a-problem"
+        (self.ws / "src").mkdir(parents=True)
+        self.unit.mkdir(parents=True)
+        self.grant = Grant(tools=READ_TOOLS)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _decide(self, tool: str, tool_input: dict, grant: Grant | None = None) -> str:
+        return decide(grant or self.grant, tool, tool_input, str(self.ws), str(self.unit))
+
+    def test_a_read_in_the_workspace_passes(self):
+        self.assertEqual(self._decide("Read", {"file_path": str(self.ws / "src" / "a.py")}), "")
+
+    def test_a_read_in_the_units_own_directory_passes(self):
+        self.assertEqual(self._decide("Read", {"file_path": str(self.unit / "spec.md")}), "")
+
+    def test_a_read_anywhere_else_is_refused(self):
+        sibling = self.unit.parent / "0002_another" / "impl.md"
+        for bad in (
+            "/etc/passwd", "~/.ssh/id_rsa", "~/.config/coscc/env",
+            str(sibling), str(self.ws / ".." / "x"),
+        ):
+            self.assertIn(
+                "reading outside the workspace", self._decide("Read", {"file_path": bad}), bad
+            )
+
+    def test_a_relative_path_is_read_from_the_workspace(self):
+        self.assertEqual(self._decide("Read", {"file_path": "src/a.py"}), "")
+        self.assertIn("outside", self._decide("Read", {"file_path": "../../etc/passwd"}))
+
+    def test_a_glob_without_a_path_searches_the_workspace(self):
+        self.assertEqual(self._decide("Glob", {"pattern": "**/*.py"}), "")
+
+    def test_a_glob_aimed_elsewhere_is_refused(self):
+        for tool_input in (
+            {"pattern": "*", "path": "/etc"},
+            {"pattern": "/home/*/.ssh/*"},
+            {"pattern": "../**/*"},
+        ):
+            self.assertIn("reading outside", self._decide("Glob", tool_input), tool_input)
+
+    def test_an_absolute_glob_inside_the_workspace_passes(self):
+        self.assertEqual(self._decide("Glob", {"pattern": f"{self.ws}/src/*.py"}), "")
+
+    def test_a_grep_aimed_elsewhere_is_refused(self):
+        self.assertIn("reading outside", self._decide("Grep", {"pattern": "x", "path": "/etc"}))
+        self.assertEqual(self._decide("Grep", {"pattern": "x", "path": str(self.ws)}), "")
+
+    def test_a_symlink_out_of_the_workspace_is_refused(self):
+        link = self.ws / "escape"
+        link.symlink_to("/etc")
+        self.assertIn(
+            "reading outside", self._decide("Read", {"file_path": str(link / "passwd")})
+        )
+
+    def test_the_boundary_holds_for_impl_too(self):
+        self.assertIn(
+            "reading outside",
+            self._decide("Read", {"file_path": "/etc/passwd"}, grant=IMPL),
+        )
+        self.assertEqual(
+            self._decide("Read", {"file_path": str(self.ws / "src" / "a.py")}, grant=IMPL), ""
+        )
+
+
+class TheReadBoundaryIsNotASandbox(unittest.TestCase):
+    """`0020` plan, Risk 3, pinned as passing tests so nobody reads the boundary as a guarantee.
+
+    `impl`, `pr` and `ship` keep `cat` and `head` in their commands, and `check_command`
+    reads no paths, so a shell read walks past the `Read` check. Only `spec`, `plan` and
+    `review`, which hold no `Bash`, are actually held by it.
+    """
+
+    def test_a_shell_read_is_not_checked(self):
+        self.assertEqual(decide(IMPL, "Bash", {"command": "cat ~/.ssh/id_rsa"}, "/tmp/ws"), "")
+
+    def test_a_glob_pattern_is_read_only_up_to_its_first_wildcard(self):
+        # Only the fixed prefix is checked. A pattern that does not start with `/` or `~`
+        # is taken as relative to the workspace, whatever the tool later makes of it.
+        self.assertEqual(
+            decide(Grant(tools=READ_TOOLS), "Glob", {"pattern": "{a,b}/*"}, "/tmp/ws"), ""
+        )
 
 
 class TheImplCeilingsCameFromMeasurement(unittest.TestCase):
@@ -329,9 +494,9 @@ class ThePlanCeilingClearsTheOneItHit(unittest.TestCase):
     """`0021`'s plan stopped at 20 turns on 2026-09-23 and returned nothing."""
 
     def test_the_plan_ceiling_is_above_the_one_that_was_hit(self):
-        self.assertGreater(grant_for("plan", "autonomous").max_turns, 20)
+        self.assertGreater(grant_for("plan").max_turns, 20)
 
     def test_plan_still_only_reads(self):
         # Raising the ceiling must not widen what the stage may do.
-        self.assertEqual(grant_for("plan", "autonomous").tools, READ_TOOLS)
-        self.assertEqual(grant_for("plan", "autonomous").commands, ())
+        self.assertEqual(grant_for("plan").tools, READ_TOOLS)
+        self.assertEqual(grant_for("plan").commands, ())

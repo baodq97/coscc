@@ -1,4 +1,4 @@
-"""What a step is allowed to do, keyed on the stage and the mode it runs in.
+"""What a step is allowed to do, keyed on the stage it runs.
 
 This is not a fifth knob. `Config` keeps meaning one thing — the app's default, which
 `coscc/config.py:44` states as *chat only, no tools at all* — and this table says what
@@ -8,12 +8,14 @@ true again.
 
 Three properties, each deliberate:
 
-- **Deny by default.** A pair this table does not name gets `Grant()`, which is no tools,
+- **Deny by default.** A stage this table does not name gets `Grant()`, which is no tools,
   one turn and no budget. A stage invented tomorrow is therefore locked, not open.
 - **Pure.** Nothing here reads the environment, the store, or a request. There is no path
   from HTTP to these values, the same way there is none to `COS_WORKING_DIR`.
-- **Mode matters.** `manual` never carries tools for any stage. Choosing `autonomous` is
-  the act that grants them, and it is recorded in the journal when it happens.
+- **The tools go with the stage, not the mode.** Until `0020` `manual` carried nothing and
+  `autonomous` carried the grant. `0020` `spec.md` `## Answers`, answer 1, ended that: a
+  stage's tools follow from its task, in every mode. The mode is still recorded in the
+  journal; it decides nothing here.
 
 That measurement is why `Grant.tools` is not the whole enforcement. A list handed to
 the SDK covers the built-in set and nothing else — eleven MCP tools walked past `tools=[]`
@@ -133,9 +135,10 @@ SHIP_WARNING = (
     "landed after it; nobody but an agent has read the change."
 )
 
-# Only pairs that appear here get anything. Everything else — every prose stage, every
-# stage in `manual`, and anything invented later — falls through to `Grant()`.
-GRANTS: dict[tuple[str, str], Grant] = {
+# Only stages that appear here get anything. The rest — `idea`, `intent`, and any
+# stage invented later — falls through to `Grant()`. Keyed by stage alone since `0020`:
+# the mode a step is started in is recorded, and grants nothing.
+GRANTS: dict[str, Grant] = {
     # The one entry whose ceilings are measured rather than chosen. Four `impl` steps ran
     # through the board on 2026-09-23 and three of them died at the turn ceiling:
     #
@@ -157,7 +160,7 @@ GRANTS: dict[tuple[str, str], Grant] = {
     # This raises the ceiling. It does not fix what happens at it: a step that hits one
     # still spends the money and leaves no record of what it did.
     # `0019_a-failed-step-destroys-the-work-that-succeeded` is that, and it is the real fix.
-    ("impl", "autonomous"): Grant(
+    "impl": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=IMPL_COMMANDS,
         max_turns=120,
@@ -177,7 +180,7 @@ GRANTS: dict[tuple[str, str], Grant] = {
     # No write tools and no commands: the app still writes `plan.md` from the reply, which
     # is what stops a plan from authoring itself, and `beyond_reading` below is what keeps
     # that true if this entry is ever widened.
-    ("plan", "autonomous"): Grant(
+    "plan": Grant(
         tools=READ_TOOLS,
         # Twenty was chosen, not measured, and on 2026-09-23 it cut a plan mid-read:
         # `0021_review-findings-never-reach-the-pull-request` stopped at the ceiling after
@@ -192,7 +195,22 @@ GRANTS: dict[tuple[str, str], Grant] = {
         max_turns=40,
         max_budget_usd=4.0,
     ),
-    ("pr", "autonomous"): Grant(
+    # `spec` reads, and only reads, for the reason `plan` does. `write-spec` invariant 7
+    # requires every figure to name its source and every citation to carry a path and a
+    # line range, and until `0020` this table gave the stage no way to open a file. So it
+    # wrote from descriptions: `0016`'s R9 required a commit in the store, which has never
+    # been a git repository, and only `plan` — which could read — caught it.
+    #
+    # No write tools and no commands: the app still writes `spec.md` from the reply.
+    # Both ceilings are copied from `plan` above, not measured for `spec`. `review` below
+    # keeps 20 turns and $2.00 although its comment says "the same ceilings as `plan`";
+    # that mismatch predates `0020` and is not this unit's to settle (`0020` R6).
+    "spec": Grant(
+        tools=READ_TOOLS,
+        max_turns=40,
+        max_budget_usd=4.0,
+    ),
+    "pr": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=PR_COMMANDS,
         max_turns=30,
@@ -205,7 +223,7 @@ GRANTS: dict[tuple[str, str], Grant] = {
     # reads and only reads, like `plan`: the app still writes `review.md` from the reply.
     # It cannot run `git diff`, so it sees the working tree and `impl.md`, not the diff —
     # `0015` plan, Risk 3, and a later unit.
-    ("review", "autonomous"): Grant(
+    "review": Grant(
         tools=READ_TOOLS,
         # Chosen, not measured; the same ceilings as `plan`.
         max_turns=20,
@@ -213,7 +231,7 @@ GRANTS: dict[tuple[str, str], Grant] = {
     ),
     # `0015`: `ship` merges, so it needs what `pr` has. Its ceilings are copied from `pr`,
     # chosen rather than measured.
-    ("ship", "autonomous"): Grant(
+    "ship": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=PR_COMMANDS,
         max_turns=30,
@@ -240,9 +258,12 @@ def beyond_reading(grant: Grant) -> tuple[str, ...]:
     return tuple(t for t in grant.tools if t not in READ_TOOLS) + tuple(grant.commands)
 
 
-def grant_for(stage: str, mode: str) -> Grant:
-    """The grant for one step. Unknown pairs are locked, not open."""
-    return GRANTS.get((stage, mode), Grant())
+def grant_for(stage: str) -> Grant:
+    """The grant for one step. A stage the table does not name is locked, not open.
+
+    No mode: `0020` `spec.md` `## Answers`, answer 1 — the tools go with the stage's task.
+    """
+    return GRANTS.get(stage, Grant())
 
 
 def is_prose_stage(stage: str) -> bool:
@@ -382,9 +403,9 @@ def decide(
 
     `None` means no second root, which is the shape every prose stage runs with: they are
     granted no write tools at all, so the question never arises for them.
-    """
-    from pathlib import Path
 
+    Since `0020` the same two roots bound `Read`, `Glob` and `Grep` too — see below.
+    """
     if tool not in grant.tools:
         # Covers MCP tools by construction: their names are never in a grant.
         return f"this step was not granted {tool}"
@@ -395,21 +416,94 @@ def decide(
             return reason
 
     if tool in WRITE_TOOLS:
-        roots = []
-        for candidate in (workspace, unit_dir):
-            if not candidate:
-                continue
-            try:
-                roots.append(Path(candidate).expanduser().resolve())
-            except OSError:
-                return "the workspace path could not be resolved"
-        if not roots:
-            return "the workspace path could not be resolved"
+        # Relative paths resolve against the app's own directory here, as they always have.
+        # Changing that would widen writing in one corner, and nothing asked for it
+        # (`0020` plan, step 1).
+        roots, reason = _roots(workspace, unit_dir)
+        if reason:
+            return reason
         for raw in _paths_in(tool_input):
-            try:
-                target = Path(raw).expanduser().resolve()
-            except OSError:
-                return f"that path could not be resolved: {raw}"
-            if not any(target == root or root in target.parents for root in roots):
+            if not _inside(raw, roots, None):
                 return f"writing outside the workspace is not allowed: {raw}"
+
+    if tool in READ_TOOLS:
+        # `0020` `spec.md` `## Answers`, answer 2: reading is held to the same two roots as
+        # writing. Before this a step that could `Read` could read anything the app's own
+        # process could — `~/.ssh`, `~/.config/coscc/env`, every other unit in the store.
+        # Relative paths resolve against the workspace, because that is the session's `cwd`
+        # and so what the tool itself will read.
+        roots, reason = _roots(workspace, unit_dir)
+        if reason:
+            return reason
+        for raw in _read_paths_in(tool, tool_input):
+            if raw is _TRAVERSAL:
+                return (
+                    "reading outside the workspace is not allowed: "
+                    f"{tool_input.get('pattern')}"
+                )
+            if not _inside(raw, roots, roots[0]):
+                return f"reading outside the workspace is not allowed: {raw}"
     return ""
+
+
+def _roots(workspace: str, unit_dir: str | None) -> tuple[list, str]:
+    """The directories a step may touch, resolved: the workspace, then its own unit."""
+    from pathlib import Path
+
+    roots = []
+    for candidate in (workspace, unit_dir):
+        if not candidate:
+            continue
+        try:
+            roots.append(Path(candidate).expanduser().resolve())
+        except OSError:
+            return [], "the workspace path could not be resolved"
+    if not roots:
+        return [], "the workspace path could not be resolved"
+    return roots, ""
+
+
+def _inside(raw: str, roots: list, base) -> bool:
+    """Whether `raw`, once resolved (symlinks included), lies in one of `roots`.
+
+    `base` is what a relative path is resolved against; `None` means the process's own
+    directory, which is what the write check has always used.
+    """
+    from pathlib import Path
+
+    try:
+        path = Path(raw).expanduser()
+        if base is not None and not path.is_absolute():
+            path = base / path
+        target = path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return any(target == root or root in target.parents for root in roots)
+
+
+# Stands in for a path when a `Glob` pattern climbs with `..`: there is no fixed prefix to
+# check, and the pattern itself says it is leaving.
+_TRAVERSAL = object()
+_GLOB_CHARS = "*?[{"
+
+
+def _read_paths_in(tool: str, tool_input: dict) -> list:
+    """Every path a read tool was given, plus the fixed prefix of an absolute `Glob` pattern.
+
+    No `path` at all is fine: the SDK then searches the session's `cwd`, which is the
+    workspace (`coscc/runner.py`). Reading a pattern this way is best-effort — `0020`
+    plan, Risk 3 — and `TheReadBoundaryIsNotASandbox` below pins what it does not see.
+    """
+    out: list = list(_paths_in(tool_input))
+    pattern = tool_input.get("pattern")
+    if tool == "Glob" and isinstance(pattern, str) and pattern:
+        if ".." in pattern.replace("\\", "/").split("/"):
+            out.append(_TRAVERSAL)
+        elif pattern.startswith(("/", "~")):
+            fixed = []
+            for part in pattern.split("/"):
+                if any(c in part for c in _GLOB_CHARS):
+                    break
+                fixed.append(part)
+            out.append("/".join(fixed) or "/")
+    return out

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from coscc import harness, policy
 from coscc.journal import Journal
+from coscc.policy import decide, grant_for
 from coscc.runner import (
     RunError,
     Runner,
@@ -113,30 +114,26 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
     prose stage may write or run anything, in any mode.
     """
 
-    def test_no_prose_stage_can_write_or_run_in_either_mode(self):
+    def test_no_prose_stage_can_write_or_run(self):
+        """Was `..._in_either_mode`. `0020` `spec.md` `## Answers`, answer 1: the grant no
+        longer depends on the mode, so there is one grant per stage to check."""
         for stage in policy.PROSE_STAGES:
-            for mode in ("manual", "autonomous"):
-                grant = policy.grant_for(stage, mode)
-                self.assertEqual(grant.commands, (), f"{stage}/{mode} carries commands")
-                self.assertEqual(
-                    policy.beyond_reading(grant), (),
-                    f"{stage}/{mode} carries more than reading",
-                )
+            grant = policy.grant_for(stage)
+            self.assertEqual(grant.commands, (), f"{stage} carries commands")
+            self.assertEqual(
+                policy.beyond_reading(grant), (), f"{stage} carries more than reading"
+            )
 
-    def test_plan_and_review_are_the_only_prose_stages_that_read_and_only_when_autonomous(self):
+    def test_spec_plan_and_review_read_and_idea_and_intent_do_not(self):
         # `review` joined `plan` in `0015`: the separate session that sits before the merge
-        # has to open the files it judges. It still only reads.
-        for reader in ("plan", "review"):
-            self.assertEqual(policy.grant_for(reader, "autonomous").tools, policy.READ_TOOLS)
-            self.assertEqual(policy.grant_for(reader, "manual").tools, ())
+        # has to open the files it judges. `spec` joined in `0020`, because `write-spec`
+        # requires citations with line ranges. All three only read, in any mode.
+        readers = ("spec", "plan", "review")
+        for reader in readers:
+            self.assertEqual(policy.grant_for(reader).tools, policy.READ_TOOLS)
         for stage in policy.PROSE_STAGES:
-            if stage in ("plan", "review"):
-                continue
-            for mode in ("manual", "autonomous"):
-                self.assertEqual(
-                    policy.grant_for(stage, mode).tools, (),
-                    f"{stage}/{mode} carries tools",
-                )
+            if stage not in readers:
+                self.assertEqual(policy.grant_for(stage).tools, (), f"{stage} carries tools")
 
     def test_the_guard_lets_the_plan_stage_through_with_its_read_tools(self):
         """The half a grant-table test cannot cover.
@@ -176,13 +173,45 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
         self.assertEqual(final["outcome"], "done", final)
         self.assertEqual(sessions.granted, policy.READ_TOOLS)
 
+    def test_the_guard_lets_the_spec_stage_through_with_its_read_tools(self):
+        """`0020`: a real `spec` run reaches the session holding `READ_TOOLS`, in `manual`."""
+        class Replies:
+            def __init__(self):
+                self.granted = None
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1,
+                             tools=None, **kw):
+                self.granted = tuple(tools or ())
+                yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                yield ("done", {"session_id": "s-spec", "cost": {}})
+
+        sessions = Replies()
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            r = Runner(sessions=sessions, journal=None)
+
+            async def go():
+                out = []
+                async for ev in r.run(
+                    workspace=d, directory=Path(d) / '.cos' / UNIT, journal_key=d,
+                    unit=UNIT, stage="spec", artifact="spec.md", stages=STAGES,
+                    mode="manual",
+                ):
+                    out.append(ev)
+                return out
+
+            _, final = asyncio.run(go())[-1]
+
+        self.assertEqual(final["outcome"], "done", final)
+        self.assertEqual(sessions.granted, policy.READ_TOOLS)
+
     def test_the_app_still_writes_the_plan_artifact(self):
         """The reason `plan` gets no write tools. If the session wrote `plan.md` itself,
         an unaccepted plan could author the thing that authorizes it."""
-        self.assertTrue(policy.grant_for("plan", "autonomous").app_writes_artifact)
+        self.assertTrue(policy.grant_for("plan").app_writes_artifact)
 
-    def test_an_unknown_pair_is_locked_rather_than_open(self):
-        grant = policy.grant_for("a-stage-invented-tomorrow", "autonomous")
+    def test_an_unknown_stage_is_locked_rather_than_open(self):
+        grant = policy.grant_for("a-stage-invented-tomorrow")
         self.assertFalse(grant.opens_anything)
         self.assertEqual(grant.max_turns, 1)
         self.assertEqual(grant.max_budget_usd, 0.0)
@@ -194,7 +223,7 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
         failing, so the runner checks rather than trusting the table it just read.
         """
         original = dict(policy.GRANTS)
-        policy.GRANTS[("spec", "autonomous")] = policy.Grant(tools=("Write",))
+        policy.GRANTS["spec"] = policy.Grant(tools=("Write",))
         try:
             with tempfile.TemporaryDirectory() as d:
                 make_unit(Path(d), intent_md="Status: accepted.\nI")
@@ -216,6 +245,135 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
         finally:
             policy.GRANTS.clear()
             policy.GRANTS.update(original)
+
+
+class AStepRecordsTheCommitItRanOn(unittest.TestCase):
+    """`0020` R5: the outcome checks a spec's citations at the commit the stage read."""
+
+    class Replies:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+            yield ("done", {"session_id": "s-spec", "cost": {}})
+
+    def _start_record(self, d: str) -> dict:
+        make_unit(Path(d), intent_md="Status: accepted.\nI")
+        journal = Journal(d, d)
+        r = Runner(sessions=self.Replies(), journal=journal)
+
+        async def go():
+            async for _ in r.run(
+                workspace=d, directory=Path(d) / '.cos' / UNIT, journal_key=d, unit=UNIT,
+                stage="spec", artifact="spec.md", stages=STAGES, mode="manual",
+            ):
+                pass
+
+        asyncio.run(go())
+        [start] = journal.records(d, kind="start")
+        return start
+
+    def test_a_step_records_the_commit_it_ran_on(self):
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as d:
+            git = ["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t"]
+            subprocess.run(["git", "init", "-q", d], check=True)
+            (Path(d) / "a.txt").write_text("a\n", encoding="utf-8")
+            subprocess.run(git + ["add", "a.txt"], check=True)
+            subprocess.run(git + ["commit", "-qm", "a"], check=True)
+            head = subprocess.run(
+                ["git", "-C", d, "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+            self.assertEqual(self._start_record(d)["head"], head)
+
+    def test_a_step_outside_git_records_no_commit(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self._start_record(d)["head"], "")
+
+
+class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
+    """`0020` review round 1, F1.
+
+    Every step runs in the unit's git worktree, whose `.git` is a file naming a directory
+    under the main repository's `.git/worktrees/`. Since `0020` a `Read` there is refused,
+    so `write-review` step 2 can no longer read the head itself. The app reads it and puts
+    it in the prompt instead.
+    """
+
+    def _worktree(self, d: str) -> tuple[Path, str]:
+        import subprocess
+
+        main = Path(d) / "main"
+        tree = Path(d) / "tree"
+        git = ["git", "-C", str(main), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(["git", "init", "-q", str(main)], check=True)
+        (main / "a.txt").write_text("a\n", encoding="utf-8")
+        subprocess.run(git + ["add", "a.txt"], check=True)
+        subprocess.run(git + ["commit", "-qm", "a"], check=True)
+        subprocess.run(git + ["worktree", "add", "-q", "-b", "fix/x", str(tree)], check=True)
+        head = subprocess.run(
+            ["git", "-C", str(tree), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        return tree, head
+
+    def test_the_worktree_git_directory_is_outside_what_review_may_read(self):
+        # The shape F1 named: this is why the head has to come from the app.
+        with tempfile.TemporaryDirectory() as d:
+            tree, _ = self._worktree(d)
+            self.assertTrue((tree / ".git").is_file())
+            gitdir = (tree / ".git").read_text(encoding="utf-8").split(":", 1)[1].strip()
+            unit = Path(d) / "store" / UNIT
+            reason = decide(grant_for("review"), "Read", {"file_path": gitdir + "/HEAD"},
+                            str(tree), str(unit))
+            self.assertIn("reading outside the workspace", reason)
+
+    def test_a_review_run_in_a_worktree_is_handed_its_head(self):
+        seen = {}
+
+        class Replies:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                seen["prompt"] = text
+                yield ("chunk", "# Review: x\nStatus: accepted.\n\n## Round 1\n")
+                yield ("done", {"session_id": "s-r", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as d:
+            tree, head = self._worktree(d)
+            store = Path(d) / "store"
+            make_unit(store, intent_md="Status: accepted.\nI")
+            journal = Journal(str(tree), str(tree))
+            r = Runner(sessions=Replies(), journal=journal)
+
+            async def go():
+                async for _ in r.run(
+                    workspace=str(tree), directory=store / ".cos" / UNIT,
+                    journal_key=str(tree), unit=UNIT, stage="review", artifact="review.md",
+                    stages=STAGES, mode="manual", cwd=str(tree),
+                ):
+                    pass
+
+            asyncio.run(go())
+            self.assertIn("# The commit you are reviewing", seen["prompt"])
+            self.assertIn(f"    {head}\n", seen["prompt"])
+            [start] = journal.records(str(tree), kind="start")
+            self.assertEqual(start["head"], head)
+
+    def test_no_head_is_said_rather_than_left_to_a_guess(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "review", STAGES, "review.md")
+            self.assertIn("# The commit you are reviewing", prompt)
+            self.assertIn("could not read the head", prompt)
+            self.assertIn("Do not guess one", prompt)
+
+    def test_only_review_is_handed_the_head(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            prompt, _ = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md", head="a" * 40
+            )
+            self.assertNotIn("# The commit you are reviewing", prompt)
+            self.assertNotIn("a" * 40, prompt)
 
 
 class AFailedStepIsRecordedAsFailed(unittest.TestCase):

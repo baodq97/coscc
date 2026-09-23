@@ -153,8 +153,9 @@ a `review` gate that never opens.
 - Ask `cos.mjs gate` before a stage and stop when it exits non-zero. Fix what it names; do
   not reason your way past it. A stage started from the coscc board has had this asked for
   it already — the app refuses to start a step the gate closes, and puts the gate's answer
-  in the prompt. That is for the four prose stages that run with no tools and could never
-  obey this line themselves; at a terminal it still means you.
+  in the prompt. That is for the five prose stages, which run no command — `idea` and
+  `intent` hold no tools at all, `spec`, `plan` and `review` may only read — and so could
+  never obey this line themselves; at a terminal it still means you.
 - No code while `plan.md` is `draft`. Accept the plan in its own commit, so the
   authorization is separable from the thing it authorizes.
 - Take unit paths from `cos.mjs new-path`. Never guess a number.

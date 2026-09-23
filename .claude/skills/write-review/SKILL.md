@@ -33,8 +33,10 @@ rewritten or removed.
 
 1. Read the pull request as it stands: `pr.md`, `impl.md`, and the files it changed.
 2. Record the commit at the head of the branch you reviewed. In the app this stage can
-   only read files, so read it from `.git/` (`.git/HEAD`, then the ref it names) rather
-   than guessing.
+   only read files, and only inside the unit's worktree and the unit's own directory —
+   the worktree's git directory is outside both — so the app reads the head before the
+   step starts and puts it in the prompt under *The commit you are reviewing*. Copy that
+   value. At a terminal, `git rev-parse HEAD`. Never guess.
 3. List every finding. Carry forward **every** finding any earlier round raised, marked
    `[fixed <sha>]` with the commit that fixed it, or `[open]`. Dropping one is refused by
    the `ship` gate.

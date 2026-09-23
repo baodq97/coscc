@@ -102,6 +102,38 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         # and only that step moved
         self.assertEqual(by_stage["spec"], "manual")
 
+    async def test_the_mode_does_not_change_what_a_step_may_do(self):
+        """`0020` `spec.md` `## Answers`, answer 1: tools follow the stage, not the mode.
+
+        Before `0020` a `pr` step in `manual` carried nothing, and choosing `autonomous`
+        was what granted `git` and `gh`. Now the same grant and the same warning show
+        before the button whichever mode is set.
+        """
+        from coscc.policy import grant_for
+
+        def pr_row(body: dict, name: str) -> dict:
+            unit = next(u for u in body["units"] if u["name"] == name)
+            row = next(r for r in unit["stages"] if r["stage"] == "pr")
+            return {"grants": row["grants"], "warning": row["warning"], "mode": row["mode"]}
+
+        first = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
+        name = _a_unit(first)
+        before = pr_row(first, name)
+        r = await self.client.post("/api/board/mode", json={
+            "cwd": str(REPO), "unit": name, "stage": "pr", "mode": "autonomous",
+        })
+        self.assertEqual(r.status_code, 200, r.text)
+        after = pr_row(
+            (await self.client.get("/api/board", params={"cwd": str(REPO)})).json(), name
+        )
+
+        self.assertEqual(before["mode"], "manual")
+        self.assertEqual(after["mode"], "autonomous")
+        self.assertEqual(before["grants"], after["grants"])
+        self.assertEqual(before["warning"], after["warning"])
+        self.assertEqual(after["grants"], list(grant_for("pr").tools))
+        self.assertTrue(after["warning"])
+
     async def test_a_mode_is_validated_against_the_board_not_a_second_list(self):
         body = (await self.client.get("/api/board", params={"cwd": str(REPO)})).json()
         unit = _a_unit(body)
