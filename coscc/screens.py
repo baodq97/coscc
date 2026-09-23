@@ -1112,6 +1112,18 @@ def _detail_dialog() -> rx.Component:
                                        color_scheme="red", variant="surface", size="1"),
                         ),
                         rx.heading("The next step", size="4", weight="medium"),
+                        # `0024`. What `cos.mjs next` said about this unit, verbatim. The
+                        # stage below is its answer; the page works nothing out itself.
+                        rx.hstack(
+                            s.text(P.run_said, size="1", overflow_wrap="anywhere",
+                                   id="next-said"),
+                            rx.button(
+                                rx.icon("refresh-cw", size=13), "Ask again",
+                                id="ask-next", on_click=P.load_next, variant="soft",
+                                size="1", disabled=P.is_running,
+                            ),
+                            justify="between", align="center", width="100%", spacing="3",
+                        ),
                         rx.cond(
                             P.next_stage != "",
                             rx.vstack(
@@ -1186,8 +1198,9 @@ def _detail_dialog() -> rx.Component:
                                 ),
                                 spacing="4", width="100%", align="start",
                             ),
-                            s.text("Every step this unit is waiting on has an artifact. "
-                                   "There is no next step to run."),
+                            s.text("cos.mjs names no stage to run now — the line above "
+                                   "says why. Nothing re-asks on its own: press Ask again "
+                                   "once that has changed."),
                         ),
                         rx.cond(
                             P.run_log != "",

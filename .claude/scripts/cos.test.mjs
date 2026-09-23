@@ -9,7 +9,7 @@ import {
   parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit, STAGE_NAMES,
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
-  reviewRounds,
+  reviewRounds, nextStep,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -249,7 +249,8 @@ test('a unit holding only a valid idea is pre-intent and reports nothing', () =>
   assert.equal(u.phase, 'pre-intent')
   assert.deepEqual(u.problems, [])
   // Still blocked on its intent, because it is: the phase changes the lane, not the gate.
-  assert.deepEqual(nextAction(u), { blocked: true, action: 'write-intent — the unit has no intent.md' })
+  // `stage` since `0024`: the same answer, in the form the run button acts on.
+  assert.deepEqual(nextAction(u), { blocked: true, action: 'write-intent — the unit has no intent.md', stage: 'intent' })
   assert.equal(checkGate(u, 'spec').ok, false)
 })
 
@@ -853,4 +854,139 @@ test('with --root and no --repo, review says there is no repository instead of r
   const out = cli('--root', root, 'gate', '0001_q', 'review')
   assert.equal(out.status, 1)
   assert.match(out.stderr, /no repository given — pass --repo/)
+})
+
+// --- `0024`: the stage a run button offers -------------------------------------
+
+test('nextAction.stage names the missing stage, and nothing where the files do not settle it', () => {
+  assert.equal(nextAction(unit({ 'intent.md': art('accepted') })).stage, 'spec')
+  assert.equal(nextAction(unit(CHAIN)).stage, 'review')
+  assert.equal(nextAction(unit({ 'intent.md': art('draft') })).stage, '')
+  assert.equal(nextAction(unit({ 'intent.md': art('rejected') })).stage, '')
+  assert.equal(nextAction(unit({ 'intent.md': art(null) })).stage, '')
+  assert.equal(nextAction(unit({ ...CHAIN, 'review.md': reviewArt('changes-requested', round(1, 'changes-requested', ['- F1 [open] x'])) })).stage, '')
+})
+
+const HEAD2 = 'e'.repeat(40)
+const asked = (text = round(1, 'changes-requested', ['- F1 [open] x'])) =>
+  branched({ ...CHAIN, 'review.md': reviewArt('changes-requested', text) })
+const movedTo = (files, checks) =>
+  greenProbe(checks, { [`diff --name-only ${SHA}..${HEAD2}`]: ok(files.join('\n')) }, { state: 'OPEN', headRefOid: HEAD2 })
+
+test('0024 a: a missing stage that needs no git is offered as it was', () => {
+  const { 'pr.md': _, ...noPr } = CHAIN
+  for (const [artifacts, stage] of [
+    [{ 'intent.md': art('accepted') }, 'spec'],
+    [{ 'intent.md': art('accepted'), 'spec.md': art('skipped') }, 'plan'],
+    [{ 'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('accepted') }, 'impl'],
+    [noPr, 'pr'],
+  ]) {
+    const u = unit(artifacts)
+    assert.equal(nextStep(u).stage, stage)
+    assert.equal(nextStep(u, { probe: greenProbe() }).stage, stage)
+    assert.equal(nextStep(u).action, nextAction(u).action)
+  }
+})
+
+test('0024 b: changes asked, nothing new on the pull request: impl, though impl.md exists', () => {
+  const n = nextStep(asked(), { probe: greenProbe() })
+  assert.equal(n.stage, 'impl')
+  assert.match(n.action, /fix the open findings of review round 1 .*nothing outside \.cos\/0001_x\/ has reached #7/)
+  // Only the unit's own files moved: still no fix.
+  assert.equal(nextStep(asked(), { probe: movedTo(['.cos/0001_x/review.md']) }).stage, 'impl')
+})
+
+test('0024 c: changes asked, a fix is on the head and CI is green: review, though review.md exists', () => {
+  assert.equal(nextStep(asked(), { probe: movedTo(['src/a.py']) }).stage, 'review')
+  // A rebase counts as moved (spec Concern 4), by the ship gate's own rule.
+  const rebased = greenProbe(undefined, { [`merge-base --is-ancestor ${SHA} ${HEAD2}`]: { code: 1, out: '', err: '' } }, { state: 'OPEN', headRefOid: HEAD2 })
+  assert.equal(nextStep(asked(), { probe: rebased }).stage, 'review')
+})
+
+test('0024 d: the fix is on the head but CI runs, or failed', () => {
+  const pending = nextStep(asked(), { probe: movedTo(['src/a.py'], [{ name: 'tests', bucket: 'pending' }]) })
+  assert.equal(pending.stage, '')
+  assert.match(pending.action, /CI has not finished on #7/)
+  const red = nextStep(asked(), { probe: movedTo(['src/a.py'], [{ name: 'tests', bucket: 'fail' }]) })
+  assert.equal(red.stage, 'impl')
+  assert.match(red.action, /CI is red on #7/)
+  const unreadable = {
+    gh: (...a) => (a[1] === 'view' ? ok(JSON.stringify({ state: 'OPEN', headRefOid: HEAD2 })) : { code: 1, out: '', err: 'HTTP 401' }),
+    git: (...a) => (a[0] === 'diff' ? ok('src/a.py') : ok()),
+  }
+  assert.equal(nextStep(asked(), { probe: unreadable }).stage, '')
+})
+
+test('0024 e: pr is open, no review yet: review on green, impl on red, nothing while it runs', () => {
+  const u = branched(CHAIN)
+  assert.equal(nextStep(u, { probe: greenProbe() }).stage, 'review')
+  assert.equal(nextStep(u, { probe: greenProbe([{ name: 'tests', bucket: 'fail' }]) }).stage, 'impl')
+  assert.equal(nextStep(u, { probe: greenProbe([{ name: 'tests', bucket: 'pending' }]) }).stage, '')
+  assert.equal(nextStep(u, { probe: greenProbe([]) }).stage, '')
+})
+
+test('0024 f: the round limit used up offers nothing and says needs a person', () => {
+  const text = [1, 2, 3].map((n) => round(n, 'changes-requested', ['- F1 [open] x'])).join('\n')
+  const n = nextStep(asked(text), { probe: movedTo(['src/a.py']) })
+  assert.equal(n.stage, '')
+  assert.match(n.action, /needs a person — review used 3 of 3 rounds/)
+  assert.equal(nextStep(asked(text), { probe: movedTo(['src/a.py']), limit: 4 }).stage, 'review')
+})
+
+test('0024 g: the last round passed and the ship gate is open: ship, pinned', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })
+  const n = nextStep(u, { probe: greenProbe() })
+  assert.equal(n.stage, 'ship')
+  assert.match(n.action, new RegExp(`write-ship — merge with --match-head-commit ${SHA}`))
+})
+
+test('0024 h: a done plan offers nothing, whatever the later files say', () => {
+  const u = unit({ ...CHAIN, 'plan.md': art('done'), 'review.md': reviewArt('changes-requested', round(1, 'changes-requested', ['- F1 [open] x'])) })
+  assert.deepEqual(nextStep(u, { probe: greenProbe() }), { blocked: false, action: 'finished', stage: '' })
+})
+
+test('0024 i: the branch moved after the pass: review again, not ship', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })
+  const n = nextStep(u, { probe: movedTo(['src/a.py']) })
+  assert.equal(n.stage, 'review')
+  assert.match(n.action, /changed after the reviewed commit/)
+  assert.equal(nextStep(u, { probe: movedTo(['src/a.py'], [{ name: 'tests', bucket: 'fail' }]) }).stage, 'impl')
+  // Closed for a reason that is not movement: nothing.
+  const open = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass', ['- F1 [open] x'])) })
+  assert.equal(nextStep(open, { probe: greenProbe() }).stage, '')
+})
+
+test('0024: with no repository, the three git cases offer nothing and say --repo', () => {
+  for (const u of [asked(), branched(CHAIN), branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })]) {
+    const n = nextStep(u)
+    assert.equal(n.stage, '')
+    assert.match(n.action, /--repo/)
+  }
+})
+
+test('0024: nextStep never offers a stage whose gate is closed', () => {
+  const probes = [greenProbe(), movedTo(['src/a.py']), movedTo(['src/a.py'], [{ name: 't', bucket: 'fail' }])]
+  const units = [asked(), branched(CHAIN), branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) }), unit({ 'intent.md': art('accepted') })]
+  for (const probe of probes) {
+    for (const u of units) {
+      const { stage } = nextStep(u, { probe })
+      if (stage) assert.equal(checkGate(u, stage, { probe }).ok, true, `${stage} offered with its gate closed`)
+    }
+  }
+})
+
+test('cos.mjs next prints one JSON line, and misuse is exit 2', () => {
+  const { root } = questionTree({ 'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n' })
+  const out = cli('--root', root, 'next', '0001_q')
+  assert.equal(out.status, 0)
+  assert.deepEqual(JSON.parse(out.stdout), { unit: '0001_q', stage: 'spec', action: 'write-spec — it assesses whether to skip first', blocked: true })
+  assert.equal(cli('--root', root, 'next').status, 2)
+  assert.equal(cli('--root', root, 'next', '0009_nope').status, 2)
+  assert.equal(cli('--root', root, 'next', '0001_q', '--repo', tmpdir()).status, 0)
+})
+
+test('status --json carries next.stage for each unit', () => {
+  const { root } = questionTree({ 'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n' })
+  const out = cli('--root', root, 'status', '--json')
+  assert.equal(JSON.parse(out.stdout).units[0].next.stage, 'spec')
 })

@@ -152,6 +152,10 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             # Carried through rather than recomputed. Two answers to "what next" is the
             # drift this module exists to avoid.
             "next": (u.get("next") or {}).get("action", ""),
+            # `0024`. The same answer as a stage name, read off the files alone. Enough for
+            # the card's mode badge; the run button asks `next_step`, which can read git.
+            # An older `cos.mjs` sends no `stage`, which reads as the empty string.
+            "next_stage": str((u.get("next") or {}).get("stage") or ""),
             "blocked": bool((u.get("next") or {}).get("blocked")),
             "problems": u.get("problems") or [],
             # `pre-intent` or `started`, decided by `cos.mjs` `readUnit`. Copied through for
@@ -244,6 +248,55 @@ async def gate(
 
     said = (out_text + err_text).strip()
     return code == 0, said or f"the gate exited {code} and said nothing"
+
+
+async def next_step(
+    units_root: str | Path,
+    unit: str,
+    repo: str | Path | None = None,
+    timeout: float = GATE_TIMEOUT,
+) -> dict[str, Any]:
+    """Ask `cos.mjs next` which one stage the run button may offer for `unit`.
+
+    `0024`. Until then the page chose for itself -- "the first required stage with no
+    artifact" -- which is a second copy of the loop `.claude/CLAUDE.md` forbids, and which
+    offered `ship` after a review asked for changes. The answer is now `cos.mjs`'s, copied:
+    `{"stage": <name or "">, "action": <why>, "blocked": <bool>}`. Nothing here reads
+    `action` to decide anything.
+
+    `repo` is passed as `--repo` exactly as `gate` passes it, so the two questions read the
+    same checkout. It costs up to two `gh` calls, which is why only the open unit asks and
+    `read` does not.
+    """
+    path = Path(units_root)
+    script = harness.script()
+    if not script.exists():
+        raise Unavailable(f"the harness script is missing: {script}")
+
+    try:
+        argv = [str(script), "--root", str(path), "next", unit]
+        if repo is not None:
+            argv += ["--repo", str(Path(repo).expanduser().resolve())]
+        code, out_text, err_text = await _run(argv, timeout)
+    except (OSError, ValueError) as e:
+        raise Unavailable(
+            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
+        ) from e
+    except asyncio.TimeoutError:
+        raise Unavailable(f"asking what comes next timed out after {timeout:.0f}s") from None
+
+    if code != 0:
+        raise Unavailable((err_text or out_text).strip() or f"the harness script exited {code}")
+    try:
+        data = json.loads(out_text)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise Unavailable(f"the harness script did not return JSON: {e}") from e
+    return {
+        "unit": str(data.get("unit") or unit),
+        "stage": str(data.get("stage") or ""),
+        "action": str(data.get("action") or ""),
+        "blocked": bool(data.get("blocked")),
+    }
 
 def _pr_of(unit: dict[str, Any]) -> dict[str, Any] | None:
     """`{url, number}` from `pr.md`'s `PR:` line as `cos.mjs` `parsePr` read it, or None."""

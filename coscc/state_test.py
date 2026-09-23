@@ -212,6 +212,69 @@ class PostingARoundLocksTheButtonWhileItRuns(unittest.TestCase):
         self.assertIsInstance(first.body[0], ast.Return)
 
 
+class TheRunButtonHoldsNoCopyOfTheLoop(unittest.TestCase):
+    """`0024` R1. The stage the button offers is `cos.mjs next`'s, copied; nothing in the
+    page works it out from which artifacts exist."""
+
+    def setUp(self):
+        self.tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+        self.state = _state_class(self.tree)
+        self.methods = {
+            n.name: n for n in self.state.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    def test_the_old_rule_is_gone_by_name(self):
+        names = {n.id for n in ast.walk(self.tree) if isinstance(n, ast.Name)}
+        names |= {n.name for n in ast.walk(self.tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        self.assertNotIn("_next_required", names)
+
+    def test_next_stage_only_hands_back_run_stage(self):
+        body = [s for s in self.methods["next_stage"].body
+                if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+        self.assertEqual(len(body), 1)
+        self.assertIsInstance(body[0], ast.Return)
+        self.assertEqual(ast.unparse(body[0].value), "self.run_stage")
+
+    def test_only_load_next_sets_run_stage_and_it_takes_it_from_run_target(self):
+        setters = set()
+        for name, fn in self.methods.items():
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Assign) and any(
+                    "run_stage" in _self_names(t) for t in node.targets
+                ):
+                    setters.add(name)
+        self.assertEqual(setters, {"load_next"})
+        calls = [n for n in ast.walk(self.methods["load_next"])
+                 if isinstance(n, ast.Call) and ast.unparse(n.func) == "_run_target"]
+        self.assertEqual(len(calls), 1)
+        self.assertIn("SERVICE.next_step", ast.unparse(calls[0]))
+
+    def test_load_next_runs_in_the_background(self):
+        decorators = [ast.unparse(d) for d in self.methods["load_next"].decorator_list]
+        self.assertIn("rx.event(background=True)", decorators)
+
+    def test_run_step_and_set_mode_run_the_stage_next_stage_names(self):
+        for name in ("run_step", "set_mode"):
+            with self.subTest(handler=name):
+                self.assertIn("self.next_stage", ast.unparse(self.methods[name]))
+
+    def test_opening_a_unit_and_ending_a_step_both_ask_again(self):
+        for name in ("open_unit", "run_step"):
+            with self.subTest(handler=name):
+                self.assertIn("return StudioState.load_next", ast.unparse(self.methods[name]))
+
+
+class RunTargetCopies(unittest.TestCase):
+    def test_it_copies_stage_and_action_and_nothing_else(self):
+        from coscc.state import _run_target
+
+        self.assertEqual(_run_target({"stage": "impl", "action": "fix it", "blocked": True}), ("impl", "fix it"))
+        self.assertEqual(_run_target({"stage": "", "action": "needs a person"}), ("", "needs a person"))
+        self.assertEqual(_run_target({}), ("", ""))
+        # An action naming a stage is still not a stage.
+        self.assertEqual(_run_target({"action": "then write-review again"})[0], "")
+
+
 def _self_names(target: ast.expr) -> list[str]:
     """Every `self.X` being assigned by one target, tuple unpacking included."""
     if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):

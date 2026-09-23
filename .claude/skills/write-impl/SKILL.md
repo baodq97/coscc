@@ -19,6 +19,15 @@ node .claude/scripts/cos.mjs gate <NNNN_slug> impl
 Exit 0 means proceed. The gate clears on an accepted plan. `implement` is accepted as an
 alias for the same stage name.
 
+## When a review sent the work back
+
+If `review.md` is `changes-requested`, or the pull request's required checks are red, this
+stage runs again on the same branch. Fix what the review or CI named, commit, and **push**:
+`cos.mjs next <unit> --repo <dir>` offers `impl` until a commit outside the unit's own
+`.cos/` files reaches the pull request's head, so a fix that stays local keeps the loop on
+this stage. Then record in `impl.md` which commit fixed which finding. The step after is
+`write-review` once CI is green — not `write-pr`, which already ran.
+
 ## Output
 
 One file, `impl.md`, in the unit's directory.

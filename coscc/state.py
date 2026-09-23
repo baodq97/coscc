@@ -222,21 +222,16 @@ class GrantRow:
 # --- formatting --------------------------------------------------------------
 
 
-def _next_required(cells: list) -> "Cell | None":
-    """The first step with no artifact that something is actually waiting on.
+def _run_target(data: dict) -> tuple[str, str]:
+    """`0024`. The stage the run button offers and the sentence beside it, copied from
+    `Service.next_step` -- which is `cos.mjs next`'s answer.
 
-    Optional stages are stepped over. `idea` is the only one, it gates nothing, and
-    offering to run it on a unit whose card reads "Next: write-pr" would put two answers to
-    one question on the same screen — seen on 2026-09-22 in a screenshot, which is the only
-    place it was visible.
-
-    Shared by the run button and by the card's mode badge. They are the same question, and
-    when they were two scans only one of them learned about `optional`.
+    Until `0024` the page worked this out for itself: "the first required stage with no
+    artifact". That was a second copy of the loop `.claude/CLAUDE.md` forbids, and once a
+    review asked for changes both `impl.md` and `review.md` existed, so it offered `ship`,
+    whose gate was closed, and nothing else. Nothing here reads `action` to pick a stage.
     """
-    for cell in cells:
-        if not cell.started and not cell.optional:
-            return cell
-    return None
+    return str(data.get("stage") or ""), str(data.get("action") or "")
 
 
 def _tokens(cost: dict) -> tuple[int, str]:
@@ -408,6 +403,10 @@ class StudioState(rx.State):
     # writing into one unit would race on the same files.
     running: str = ""
     run_log: str = ""
+    # `0024`. The stage `cos.mjs next` names for the open unit, and what it said. Set only
+    # by `load_next`, from `_run_target`; `next_stage` reads it and nothing computes it.
+    run_stage: str = ""
+    run_said: str = ""
 
     # -- answering a question (`0016`). One text box is live at a time: typing into a
     # question's box makes it the target, and the box of every other question reads empty.
@@ -522,9 +521,8 @@ class StudioState(rx.State):
 
     @rx.var
     def next_stage(self) -> str:
-        """The stage the run button would run: the first required one with no artifact."""
-        nxt = _next_required(self.current_unit.cells)
-        return nxt.stage if nxt is not None else ""
+        """The stage the run button would run: the one `cos.mjs next` named (`0024`)."""
+        return self.run_stage
 
     @rx.var
     def next_cell(self) -> Cell:
@@ -665,7 +663,9 @@ class StudioState(rx.State):
             lane = _lane(u)
             stage = _current_stage(u, self.stages)
             count, shown = _tokens(u.get("cost") or {})
-            nxt = _next_required(cells)
+            # The file-only stage `cos.mjs` names, not the one the run button asks for: that
+            # one can cost two `gh` calls, and this runs for every card (`0024` plan, Risk 7).
+            nxt = next((c for c in cells if c.stage == (u.get("next_stage") or "")), None)
             mode = nxt.mode if nxt is not None else "manual"
             waiting, asked = _questions(u)
             units.append(
@@ -1030,6 +1030,33 @@ class StudioState(rx.State):
         self.error = ""
         self._load_timeline()
         self._load_artifact()
+        return StudioState.load_next
+
+    @rx.event(background=True)
+    async def load_next(self):
+        """`0024`. Ask `cos.mjs next` which stage the run button may offer for the open unit.
+
+        In the background because the answer can wait on `gh` for up to 60s (two calls,
+        `board.GATE_TIMEOUT` each), and a handler holding the page's lock that long freezes
+        every other control. Runs when a unit is opened, after a step ends, and when a
+        person presses *Ask again* -- never on a timer: nothing here starts anything (R5).
+        """
+        async with self:
+            unit, cwd = self.unit_id, self.cwd
+            self.run_stage = ""
+            self.run_said = "Asking cos.mjs what comes next…"
+        if not (unit and cwd):
+            async with self:
+                self.run_said = ""
+            return
+        try:
+            stage, said = _run_target(await SERVICE.next_step(cwd, unit))
+        except Invalid as e:
+            stage, said = "", str(e)
+        async with self:
+            # A unit opened while this was asking is not the unit this answer is about.
+            if self.unit_id == unit and self.cwd == cwd:
+                self.run_stage, self.run_said = stage, said
 
     @rx.event
     def toggle_detail(self, value: bool):
@@ -1230,6 +1257,9 @@ class StudioState(rx.State):
                 self._load_timeline()
                 self._load_artifact()
                 self._load_activity()
+        # `0024`. The stage that ran is behind the unit now; ask again what is next. This
+        # names a stage and runs nothing — a person still presses the button (R5).
+        return StudioState.load_next
 
     # -- sessions ------------------------------------------------------------
 

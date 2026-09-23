@@ -684,3 +684,28 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 400)
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
         self.assertEqual(board["count"], 0)
+
+
+class TheNextStageOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0024`. `GET /api/units/next` is `cos.mjs next`'s answer, and it starts nothing."""
+
+    # The fixture of `AnsweringAQuestionOverHttp`, borrowed so its tests run once.
+    asyncSetUp = AnsweringAQuestionOverHttp.asyncSetUp
+    asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
+
+    async def test_the_route_names_the_stage_the_script_names(self):
+        got = await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": self.unit})
+        self.assertEqual(got.status_code, 200, got.text)
+        body = got.json()
+        # QUESTIONS is an accepted intent, so the files alone say `spec`.
+        self.assertEqual((body["stage"], body["blocked"]), ("spec", True))
+        self.assertIn("write-spec", body["action"])
+        # Asking wrote nothing: the unit still holds only what the fixture put there.
+        self.assertFalse((self.dir / "spec.md").exists())
+
+    async def test_missing_or_unknown_arguments_are_a_400(self):
+        for params in ({"unit": self.unit}, {"cwd": self.cwd}, {"cwd": self.cwd, "unit": "0099_nope"},
+                       {"cwd": "/etc", "unit": self.unit}):
+            with self.subTest(params=params):
+                got = await self.client.get("/api/units/next", params=params)
+                self.assertEqual(got.status_code, 400)

@@ -365,6 +365,23 @@ class Service:
             }
         return data
 
+    async def next_step(self, cwd: str, unit: str) -> dict[str, Any]:
+        """`0024`. The one stage the run button may offer, and why -- `cos.mjs next`'s answer.
+
+        Read with the same store and the same `repo=cwd` that `run_step` hands the gate, so
+        the stage offered and the gate that will be asked read one checkout (`0024` spec,
+        *Repo mà `cos.mjs` đọc*). Nothing here chooses a stage.
+        """
+        self._workspace_or_refuse(cwd)
+        if not unit:
+            raise Invalid("name a work unit")
+        self._unit_dir(cwd, unit)
+        try:
+            found = await board_reader.next_step(self._units_root(cwd), unit, repo=cwd)
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        return {"cwd": cwd, "unit": unit, **{k: found[k] for k in ("stage", "action", "blocked")}}
+
     async def set_mode(self, cwd: str, unit: str, stage: str, mode: str) -> dict[str, Any]:
         """Choose how one step runs. Validated against the board, not against a second list."""
         self._workspace_or_refuse(cwd)

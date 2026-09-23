@@ -63,9 +63,14 @@ no commands, one turn, no budget.
   passes `--repo` and waits 30s (chosen). `child_env` carries `PATH`, `HOME` and
   `COS_REVIEW_ROUNDS` only, so a machine logged in through `GH_TOKEN` alone sees the
   `review` gate closed with gh's own error. Offline, `review` cannot start.
-- **A review that asked for changes cannot be re-run from the board.** The run button only
-  offers a stage with no artifact, and re-running a prose stage overwrites its file. The
-  fix → review-again loop runs at a terminal (`0015` plan, Risk 1).
+- **The run button offers the stage `cos.mjs next` names, even one that already has an
+  artifact.** Since `0024` the fix → review-again loop is driven from the board: after a
+  review asks for changes it offers `impl`, then `review` once a fix is on the pull request
+  and CI is green. Re-running `impl` overwrites `impl.md`; `review.md` alone is guarded,
+  by the runner refusing a reply that drops a round. Opening a unit, finishing a step and
+  pressing *Ask again* each ask `gh` in the workspace under this machine's login, up to
+  60s; nothing re-asks on a timer, so a pending CI shows no button until someone asks.
+  An `impl` that commits and does not push leaves the button on `impl`.
 - **Two roots, and backing up one does not back up the other.** `COS_DATA_DIR` (default
   `~/.cos`) holds `cos.db`; `COS_WORKING_DIR` holds somebody else's git checkouts. A stored
   workspace is a *name*, never a path — the path is rebuilt from the root on every read,
@@ -111,9 +116,9 @@ no commands, one turn, no budget.
   and the comment itself. `run_step` also posts on its own after writing a review round,
   which can hold the `done` row up to 60s on a slow network (two `gh` calls, 30s each).
 - **Re-running a stage whose artifact holds `## Answers` erases them.** A prose stage's
-  artifact is written from the reply, whole. Today the run button only offers a stage with
-  no artifact, so the path is closed; whoever opens it loses answers with no trace but the
-  `outputs` row.
+  artifact is written from the reply, whole. Since `0024` the run button offers a stage
+  that already has an artifact — `impl` and `review` in the fix loop — so the path is
+  open; a stage re-run that way loses its answers with no trace but the `outputs` row.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
 
@@ -134,6 +139,7 @@ no commands, one turn, no budget.
 | `verify_0014.py` | **spends real money and merges a real pull request.** Needs `COS_PROOF_REPO`, a throwaway repo; unset is exit 2. Five sessions — measured $3.28 and 11m49s end to end, 2026-09-22. `--dry` stops before the first paid step |
 | `verify_0016.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
 | `verify_0021.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2 |
+| `verify_0024.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s own handlers through Reflex's event processor, in-process; no browser, so the compiled page is not exercised |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.
