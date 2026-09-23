@@ -246,6 +246,50 @@ class ProseStagesCarryNothingThatWrites(unittest.TestCase):
             policy.GRANTS.update(original)
 
 
+class AStepRecordsTheCommitItRanOn(unittest.TestCase):
+    """`0020` R5: the outcome checks a spec's citations at the commit the stage read."""
+
+    class Replies:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+            yield ("done", {"session_id": "s-spec", "cost": {}})
+
+    def _start_record(self, d: str) -> dict:
+        make_unit(Path(d), intent_md="Status: accepted.\nI")
+        journal = Journal(d, d)
+        r = Runner(sessions=self.Replies(), journal=journal)
+
+        async def go():
+            async for _ in r.run(
+                workspace=d, directory=Path(d) / '.cos' / UNIT, journal_key=d, unit=UNIT,
+                stage="spec", artifact="spec.md", stages=STAGES, mode="manual",
+            ):
+                pass
+
+        asyncio.run(go())
+        [start] = journal.records(d, kind="start")
+        return start
+
+    def test_a_step_records_the_commit_it_ran_on(self):
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as d:
+            git = ["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t"]
+            subprocess.run(["git", "init", "-q", d], check=True)
+            (Path(d) / "a.txt").write_text("a\n", encoding="utf-8")
+            subprocess.run(git + ["add", "a.txt"], check=True)
+            subprocess.run(git + ["commit", "-qm", "a"], check=True)
+            head = subprocess.run(
+                ["git", "-C", d, "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+            self.assertEqual(self._start_record(d)["head"], head)
+
+    def test_a_step_outside_git_records_no_commit(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self._start_record(d)["head"], "")
+
+
 class AFailedStepIsRecordedAsFailed(unittest.TestCase):
     def test_a_session_that_returns_nothing_writes_no_artifact_and_says_why(self):
         class Silent:

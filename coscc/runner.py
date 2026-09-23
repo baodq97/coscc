@@ -26,7 +26,7 @@ from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
-from coscc import harness
+from coscc import gitops, harness
 from coscc.journal import Journal
 from coscc.policy import Grant, beyond_reading, decide, grant_for, is_prose_stage
 from coscc.sessions import Refused, Sessions
@@ -376,6 +376,22 @@ def permission_gate(grant: Grant, workspace: str, denials: Denials, unit_dir: st
     return can_use_tool
 
 
+async def _head_of(cwd: str) -> str:
+    """The commit a step ran on, for its `start` record — `""` when there is none to name.
+
+    `0020` R5: the outcome is measured by checking a `spec.md`'s citations at the commit
+    the stage read, and until this the run log never said which commit that was. A failure
+    here costs the record one field; it never stops the step.
+    """
+    path = Path(cwd)
+    if not (path / ".git").exists():
+        return ""
+    try:
+        return await gitops.rev_parse(path, "HEAD")
+    except gitops.GitError:
+        return ""
+
+
 class Runner:
     """Runs one step. Owns no state of its own beyond what it was handed."""
 
@@ -439,6 +455,7 @@ class Runner:
                 journal_key, unit, stage, mode,
                 prompt_chars=len(prompt), included=included,
                 granted=list(grant.tools), max_turns=grant.max_turns,
+                head=await _head_of(cwd),
             )
 
         denials = Denials()
