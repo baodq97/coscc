@@ -33,6 +33,7 @@ RUNNABLE = (
     # Committed rather than generated, unlike the four above, and checked anyway: an
     # installed copy cannot tell how a missing file came to be missing (`0013` step 8).
     "coscc/states.json",
+    "coscc/models.json",
     "coscc/__init__.py",
 )
 
@@ -135,6 +136,16 @@ class AWheelIsChecked(unittest.TestCase):
             complaints = harness.wheel_complaints(wheel)
             self.assertEqual(len(complaints), 1, complaints)
             self.assertIn("states.json", complaints[0])
+
+    def test_a_wheel_without_the_model_defaults_is_caught(self):
+        # `0004_no-setting-says-which-model-runs-a-stage`: every stage would fall back to
+        # `COS_MODEL` and nothing would fail.
+        with tempfile.TemporaryDirectory() as tmp:
+            names = [n for n in RUNNABLE if not n.endswith("models.json")]
+            wheel = _wheel(Path(tmp) / "nomodels.whl", names)
+            complaints = harness.wheel_complaints(wheel)
+            self.assertEqual(len(complaints), 1, complaints)
+            self.assertIn("models.json", complaints[0])
 
     def test_a_wheel_with_no_frontend_is_caught_too(self):
         with tempfile.TemporaryDirectory() as tmp:

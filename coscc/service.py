@@ -44,7 +44,8 @@ from coscc.journal import (
     zero_cost,
 )
 from coscc.policy import GRANTS, PROSE_STAGES, grant_for
-from coscc.runner import STATUS_RE, RunError, Runner
+from coscc import models
+from coscc.runner import SESSIONS_PER_STEP, STATUS_RE, RunError, Runner
 from coscc.sessions import Sessions
 from coscc.store import BadName, Store, require_name
 from coscc import units, worktrees
@@ -573,6 +574,9 @@ class Service:
             {r.get("n") for r in found.get("rounds") or []}
             if row["file"] == "review.md" else None
         )
+        # `0004_no-setting-says-which-model-runs-a-stage`. Resolved after the gate, so a
+        # refused step reads nothing more. `stage` was checked against the board above.
+        model, model_source = self._model_for(stage)
         runner = Runner(self.sessions, journal)
         try:
             async for item in runner.run(
@@ -586,6 +590,8 @@ class Service:
                 mode=mode,
                 gate_said=said,
                 cwd=step_cwd(stage, work, directory),
+                model=model,
+                model_source=model_source,
             ):
                 if item[0] == "done":
                     self._record_transition(cwd, unit, row["file"], directory, item[1])
@@ -1159,8 +1165,112 @@ class Service:
         doing them twice costs nothing and leaves no caller able to skip them.
         """
         self.check_send(cwd, text)
-        async for item in self.sessions.stream(cwd, text, session_id):
+        # `0004_no-setting-says-which-model-runs-a-stage`. Chat is a row of the same table
+        # as the stages.
+        model, model_source = self._model_for(models.CHAT)
+        async for item in self.sessions.stream(
+            cwd, text, session_id, **({"model": model} if model is not None else {})
+        ):
+            if item[0] == "done":
+                # Chat wrote nothing to the run log before this. Now one record per turn
+                # says which model it asked for — the model a *new* client is created with.
+                # A client already live keeps the model it was made with (plan Risk 7).
+                journal = self._journal()
+                if journal is not None:
+                    try:
+                        journal.append({
+                            "kind": "chat",
+                            "workspace": self._journal_key(cwd),
+                            "unit": "",
+                            "stage": "",
+                            "model": model,
+                            "model_source": model_source,
+                            "session_id": (item[1] or {}).get("session_id", ""),
+                        })
+                    except (BadRecord, Busy):
+                        pass  # a busy log must not cost the reply that was already paid for
             yield item
+
+    # -- which model each stage runs on --------------------------------------
+    #
+    # `0004_no-setting-says-which-model-runs-a-stage`. The resolving is `coscc/models.py`;
+    # this is where its three inputs are gathered: the stage list from `cos.mjs`, the
+    # overrides from `prefs`, `COS_MODEL` from `Config`.
+
+    def _model_overrides(self) -> tuple[dict[str, str], list[str]]:
+        return models.overrides_from(Data(self.config.data_dir).pref_rows(models.PREFIX))
+
+    def _model_for(self, name: str) -> tuple[str | None, str]:
+        """`(model, source)` for one stage, or for `chat`. Never raises on bad data.
+
+        Takes no stage list: the caller has already checked `name` against `cos.mjs`
+        (`run_step` found the row), and resolving one row does not need the others.
+        """
+        overrides, _ = self._model_overrides()
+        defaults, _ = models.load_defaults()
+        return models.resolve(name, overrides, defaults, self.config.model)
+
+    async def stage_models(self) -> dict[str, Any]:
+        """Every row Settings shows: stage, agents, model, where the model came from.
+
+        When `node` cannot run there is no stage list, and inventing one here would be the
+        second copy of the loop. So the table is empty and `problems` says why.
+        """
+        try:
+            stages = await board_reader.stages()
+        except Unavailable as e:
+            return {"rows": [], "problems": [str(e)], "cos_model": self.config.model}
+        overrides, bad_rows = self._model_overrides()
+        defaults, bad_defaults = models.load_defaults()
+        table = models.table(stages, overrides, defaults, self.config.model, SESSIONS_PER_STEP)
+        table["problems"] = bad_defaults + bad_rows + table["problems"]
+        table["cos_model"] = self.config.model
+        return table
+
+    async def set_stage_model(self, name: Any, model: Any = None) -> dict[str, Any]:
+        """Set one row's model, or remove the override when `model` is None.
+
+        **No login, like every route here.** Whoever reaches the port can move `review` to
+        a weaker model, or every stage to a dearer one. The one trace is the `setting`
+        record appended below, with the old and new value. It chooses a model and nothing
+        else: no gate reads it, and no stage starts because of it.
+
+        The model name is not checked against the API — an unknown one fails at the next
+        step of that stage, with the CLI's own error (spec Out of scope).
+        """
+        if not isinstance(name, str) or not name:
+            raise Invalid("name is required")
+        try:
+            stages = await board_reader.stages()
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        if name not in stages and name != models.CHAT:
+            raise Invalid(
+                f"no such stage: {name} (use one of {', '.join(stages + [models.CHAT])})"
+            )
+        if model is not None:
+            if not isinstance(model, str) or not model.strip():
+                raise Invalid("model is required")
+            model = model.strip()
+
+        data = Data(self.config.data_dir)
+        key = models.PREFIX + name
+        old = self._model_overrides()[0].get(name)
+        if model is None:
+            data.delete_pref(key)
+        else:
+            data.set_pref(key, model)
+
+        journal = self._journal()
+        if journal is not None:
+            try:
+                journal.append({
+                    "kind": "setting", "workspace": "", "unit": "", "stage": "",
+                    "name": key, "old": old, "new": model,
+                })
+            except (BadRecord, Busy) as e:
+                raise Invalid(f"the setting was saved but not logged: {e}") from e
+        return await self.stage_models()
 
     # -- activity, usage and settings ---------------------------------------
     #
@@ -1261,6 +1371,13 @@ class Service:
         change neither. There is no setter here for the same reason there is none in
         `config.from_env` — a request that could turn a knob is a request that could turn
         it on.
+
+        **The model per stage is the one thing Settings can change**, and it is not here:
+        `stage_models` and `set_stage_model` are. `0004_no-setting-says-which-model-runs-
+        a-stage` made it changeable on purpose — a model is a choice of cost, not of
+        capability, and the originator asked for it without a release. The price is a
+        route with no login that decides what every step spends. `cos_model` below is only
+        the fallback for a row nothing else answers.
         """
         c = self.config
         return {
@@ -1268,7 +1385,7 @@ class Service:
             "data_dir": str(Data(c.data_dir).root),
             "host": c.host,
             "port": c.port,
-            "model": c.model,
+            "cos_model": c.model,
             "knobs": [
                 {
                     "name": "tools",

@@ -32,6 +32,7 @@ from coscc.state import (
     Event,
     GrantRow,
     Knob,
+    ModelRow,
     Message,
     Question,
     Round,
@@ -840,6 +841,39 @@ def _grant_row(grant: rx.Var[GrantRow]) -> rx.Component:
     )
 
 
+def _model_row(row: rx.Var[ModelRow]) -> rx.Component:
+    """`0004_no-setting-says-which-model-runs-a-stage`. One stage, or chat: how many agents
+    run it, on what model, and where that model came from."""
+    return rx.box(
+        rx.hstack(
+            s.badge(row.name, "iris"),
+            s.text(row.agents.to_string() + " agent", size="1"),
+            rx.spacer(),
+            s.text(row.model, size="1", font_family="ui-monospace, monospace"),
+            s.badge(row.source, rx.cond(row.overridden, "amber", "gray")),
+            width="100%", align="center", wrap="wrap",
+        ),
+        rx.hstack(
+            rx.input(
+                value=rx.cond(P.model_target == row.name, P.model_text, ""),
+                on_change=lambda v: P.edit_model(row.name, v),
+                placeholder="model id, e.g. claude-sonnet-5",
+                aria_label="Model for " + row.name, size="1", width="100%",
+            ),
+            rx.button("Save", on_click=P.save_model(row.name), size="1",
+                      loading=P.saving_model),
+            rx.cond(
+                row.overridden,
+                rx.button("Reset", on_click=P.reset_model(row.name), size="1",
+                          variant="soft", loading=P.saving_model),
+            ),
+            width="100%", align="center", margin_top="8px",
+        ),
+        padding="12px 0", border_bottom=f"1px solid {s.LINE}", width="100%",
+        data_testid="model-row",
+    )
+
+
 def _settings() -> rx.Component:
     return rx.vstack(
         s.heading("Make it feel like yours.",
@@ -893,7 +927,9 @@ def _settings() -> rx.Component:
                               ),
                               s.text(P.host_port, size="1",
                                      font_family="ui-monospace, monospace")),
-                _settings_row("Model", "What a session is created with.",
+                _settings_row("COS_MODEL (fallback)",
+                              "Used only by a row below that has neither an override nor a "
+                              "shipped default — today, chat.",
                               s.badge(P.model, "gray")),
             ),
             s.panel(
@@ -916,6 +952,23 @@ def _settings() -> rx.Component:
                    "turn, no budget.", size="1"),
             rx.foreach(P.grants, _grant_row),
             id="grants-panel",
+        ),
+        s.panel(
+            s.section_head("Which model runs each stage",
+                           rx.icon("cpu", size=18, color=s.MUTED)),
+            s.text("The stages come from cos.mjs; chat is last. A model is taken from the "
+                   "override set here, else the default shipped with coscc, else "
+                   "COS_MODEL. A change applies to the next session a step or a chat "
+                   "starts. It opens no gate and starts nothing.", size="1"),
+            rx.callout("Anyone who can reach this port can change these — coscc has no "
+                       "login. Every change is written to the run log with its old and "
+                       "new value.", icon="triangle_alert", color_scheme="amber",
+                       variant="surface", size="1", margin_top="12px"),
+            rx.foreach(P.model_problems,
+                       lambda p: rx.callout(p, icon="circle_alert", color_scheme="red",
+                                            variant="surface", size="1", margin_top="8px")),
+            rx.foreach(P.model_rows, _model_row),
+            id="models-panel",
         ),
         s.panel(
             rx.hstack(rx.icon("info", size=19, color=rx.color("iris", 11)),

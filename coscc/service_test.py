@@ -854,6 +854,128 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
         self.assertEqual(self.sessions.calls, 0)
 
 
+class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
+    """`0004_no-setting-says-which-model-runs-a-stage`. The setting chooses the model a
+    step's session is created with, and nothing else."""
+
+    class Probe:
+        def __init__(self):
+            self.models = []
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.models.append(kw.get("model"))
+            yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+            yield ("done", {"session_id": "sess-m", "cost": {}})
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.probe = self.Probe()
+        self.service = Service(
+            Config(
+                workspaces=(str(self.repo),),
+                working_dir=str(self.root / "work"),
+                data_dir=str(self.root / "data"),
+            ),
+            self.probe,
+        )
+        self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        (Path(self.made["path"]) / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        )
+
+    def _run(self, stage: str):
+        async def go():
+            return [i async for i in self.service.run_step(str(self.repo), self.made["unit"], stage)]
+
+        return asyncio.run(go())
+
+    def _start(self):
+        journal = self.service._journal()
+        return journal.records(self.service._journal_key(str(self.repo)), kind="start")[-1]
+
+    def test_the_shipped_default_reaches_the_session(self):
+        self._run("spec")
+        self.assertEqual(self.probe.models, ["claude-opus-5-5"])
+        self.assertEqual(self._start()["model_source"], "default")
+
+    def test_an_override_reaches_the_session_and_the_log_then_goes_away(self):
+        asyncio.run(self.service.set_stage_model("spec", "claude-sonnet-5"))
+        self._run("spec")
+        self.assertEqual(self.probe.models[-1], "claude-sonnet-5")
+        self.assertEqual(
+            (self._start()["model"], self._start()["model_source"]),
+            ("claude-sonnet-5", "override"),
+        )
+        asyncio.run(self.service.set_stage_model("spec", None))
+        self._run("spec")
+        self.assertEqual(self._start()["model_source"], "default")
+
+    def test_bad_names_and_empty_models_are_invalid(self):
+        for name, model in (("bogus", "m"), ("spec", "  "), ("spec", 3), ("", "m"), (None, "m")):
+            with self.assertRaises(Invalid, msg=(name, model)):
+                asyncio.run(self.service.set_stage_model(name, model))
+
+    def test_each_change_leaves_one_setting_record(self):
+        asyncio.run(self.service.set_stage_model("impl", "a"))
+        asyncio.run(self.service.set_stage_model("impl", "b"))
+        asyncio.run(self.service.set_stage_model("impl", None))
+        records = self.service._journal().records("", kind="setting")
+        self.assertEqual(
+            [(r["name"], r["old"], r["new"]) for r in records],
+            [("model:impl", None, "a"), ("model:impl", "a", "b"), ("model:impl", "b", None)],
+        )
+
+    def test_the_gate_is_asked_the_same_question_either_way(self):
+        from coscc import board as board_reader
+
+        seen = []
+        real = board_reader.gate
+
+        async def spy(*a, **kw):
+            seen.append((a, kw))
+            return await real(*a, **kw)
+
+        with mock.patch.object(board_reader, "gate", spy):
+            self._run("spec")
+            asyncio.run(self.service.set_stage_model("spec", "x"))
+            self._run("spec")
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[0], seen[1])
+
+    def test_model_prefs_are_not_preferences(self):
+        asyncio.run(self.service.set_stage_model("impl", "a"))
+        self.assertNotIn("model:impl", self.service.preferences())
+        with self.assertRaises(Invalid):
+            self.service.set_preference("model:impl", "b")
+
+    def test_chat_uses_cos_model_and_is_logged(self):
+        service = Service(
+            Config(
+                workspaces=(str(self.repo),),
+                working_dir=str(self.root / "work"),
+                data_dir=str(self.root / "data"),
+                model="env-model",
+            ),
+            self.probe,
+        )
+
+        async def go():
+            return [i async for i in service.stream(str(self.repo), "hi")]
+
+        asyncio.run(go())
+        self.assertEqual(self.probe.models[-1], "env-model")
+        [rec] = service._journal().records(service._journal_key(str(self.repo)), kind="chat")
+        self.assertEqual((rec["model"], rec["model_source"]), ("env-model", "COS_MODEL"))
+
+    def test_settings_names_cos_model_as_the_fallback(self):
+        self.assertIn("cos_model", self.service.settings())
+        self.assertNotIn("model", self.service.settings())
+
+
 class TheNextStageComesFromTheScript(unittest.TestCase):
     """`0024`. `Service.next_step` asks `cos.mjs next` and chooses nothing itself."""
 

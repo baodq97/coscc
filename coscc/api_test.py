@@ -207,6 +207,51 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
 
 
+class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0004_no-setting-says-which-model-runs-a-stage`."""
+
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        self.app = build(
+            Config(workspaces=(), working_dir=str(self.root), data_dir=str(self.root))
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def rows(self):
+        r = await self.client.get("/api/settings/models")
+        self.assertEqual(r.status_code, 200)
+        return {row["name"]: row for row in r.json()["rows"]}
+
+    async def test_nine_rows_with_nothing_configured(self):
+        rows = await self.rows()
+        self.assertEqual(len(rows), 9)
+        self.assertEqual(list(rows)[-1], "chat")
+        self.assertEqual(rows["impl"]["source"], "default")
+
+    async def test_set_then_remove(self):
+        r = await self.client.post("/api/settings/models", json={"name": "impl", "model": "m"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual((await self.rows())["impl"]["source"], "override")
+        r = await self.client.post("/api/settings/models", json={"name": "impl"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual((await self.rows())["impl"]["source"], "default")
+
+    async def test_bad_requests_are_400(self):
+        for body in ({"name": "bogus", "model": "m"}, {"name": "plan", "model": "  "},
+                     {"model": "m"}, {"name": "plan", "model": 3}):
+            r = await self.client.post("/api/settings/models", json=body)
+            self.assertEqual(r.status_code, 400, body)
+        r = await self.client.post("/api/settings/models", content=b"not json")
+        self.assertEqual(r.status_code, 400)
+
+
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
     """Without a store: the write routes say why rather than crashing."""
 
