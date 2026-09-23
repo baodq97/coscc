@@ -163,8 +163,8 @@ def build_prompt(
                 f"{review}"
             )
 
-    # `review.md` accumulates rounds, and the app writes it from the reply -- so the reply
-    # has to carry every earlier round, or writing it erases them. Found 2026-09-23 on
+    # `review.md` accumulates rounds, and the app writes it from the reply -- so writing
+    # it must not erase the rounds already there (`merge_review`). Found 2026-09-23 on
     # `0015`'s second review: round 1 and its five findings vanished from the file, and
     # with them the count `cos.mjs` reads to stop at N rounds and ask for a person. A loop
     # whose counter resets every run never reaches its limit.
@@ -185,9 +185,10 @@ def build_prompt(
             included.append("review.md")
             parts.append(
                 "# The rounds so far\n\n"
-                "Copy every `## Round N` section below into your reply exactly as it is, "
-                "byte for byte, then add the next round after the last one. The app refuses "
-                "to write a review.md that drops or changes an earlier round.\n\n"
+                "These are already in `review.md` and the app keeps them. Do not copy them "
+                "into your reply. Reply with the title, the header line and the next "
+                "`## Round N` section only; the app writes the earlier rounds back under "
+                "your header, unchanged, and appends yours after them.\n\n"
                 + "\n".join(earlier)
             )
 
@@ -232,6 +233,46 @@ def build_prompt(
 
 # One `## Round N` section of review.md: from its heading to the next `## ` heading.
 _ROUND_RE = re.compile(r"^## Round \d+\b.*?(?=^## |\Z)", re.MULTILINE | re.DOTALL)
+
+
+def _round_number(section: str) -> int:
+    return int(re.match(r"## Round (\d+)", section).group(1))
+
+
+def merge_review(existing: str, reply: str) -> str:
+    """`review.md` from what is on disk and a reply carrying only the new round.
+
+    Until 2026-09-23 the reply had to copy every earlier round byte for byte, and the app
+    refused one that did not. On `0017` that copy is where it broke: twice a review was
+    stopped mid-reply while reproducing round 2 -- once leaving a truncated round 2 in the
+    file, once leaving nothing -- and each attempt paid to regenerate ~10k characters it
+    was not asked to judge. The earlier rounds are the app's to keep, so the app keeps them.
+
+    The header (everything before the first `## Round`) comes from the reply: the status
+    moves every round. Earlier rounds come from the file, verbatim. A round in the reply
+    whose number is already on disk must match it exactly -- so a reply written the old
+    way is still accepted -- and one that differs is refused, as before. A reply that adds
+    no round is refused: a review step that did not review has nothing to write.
+    """
+    kept = _rounds(existing)
+    on_disk = {_round_number(r): r for r in kept}
+    changed, new = [], []
+    for r in _rounds(reply):
+        n = _round_number(r)
+        if n not in on_disk:
+            new.append(r)
+        elif r != on_disk[n]:
+            changed.append(r.splitlines()[0])
+    if changed:
+        raise RunError(
+            "the reply changes an earlier review round, so review.md was left as it "
+            f"was: {', '.join(changed)}"
+        )
+    if not new:
+        raise RunError("the reply adds no review round, so review.md was left as it was")
+    first = re.search(r"^## Round \d+\b", reply, re.MULTILINE)
+    header = reply[: first.start()].rstrip() if first else reply.rstrip()
+    return header + "\n\n" + "\n\n".join(kept + new) + "\n"
 
 
 def _rounds(text: str) -> list[str]:
@@ -456,16 +497,7 @@ class Runner:
             if grant.app_writes_artifact:
                 body = check_reply(collected)
                 if artifact == "review.md":
-                    lost = [
-                        r.splitlines()[0]
-                        for r in _rounds(_read(directory / artifact))
-                        if r not in body
-                    ]
-                    if lost:
-                        raise RunError(
-                            "the reply drops or changes an earlier review round, so "
-                            f"review.md was left as it was: {', '.join(lost)}"
-                        )
+                    body = merge_review(_read(directory / artifact), body)
                 (directory / artifact).write_text(body, encoding="utf-8")
             else:
                 # The session had the tools to write it. Believing it did, rather than

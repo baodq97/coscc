@@ -66,8 +66,9 @@ no commands, one turn, no budget.
 - **The run button offers the stage `cos.mjs next` names, even one that already has an
   artifact.** Since `0024` the fix → review-again loop is driven from the board: after a
   review asks for changes it offers `impl`, then `review` once a fix is on the pull request
-  and CI is green. Re-running `impl` overwrites `impl.md`; `review.md` alone is guarded,
-  by the runner refusing a reply that drops a round. Opening a unit, finishing a step and
+  and CI is green. Re-running `impl` overwrites `impl.md`; `review.md` alone is guarded:
+  the reply carries only its new round, the runner writes the earlier ones back from the
+  file, and it refuses a reply that rewrites one. Opening a unit, finishing a step and
   pressing *Ask again* each ask `gh` in the workspace under this machine's login, up to
   60s; nothing re-asks on a timer, so a pending CI shows no button until someone asks.
   An `impl` that commits and does not push leaves the button on `impl`.

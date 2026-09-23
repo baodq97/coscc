@@ -22,6 +22,7 @@ from coscc.runner import (
     Runner,
     build_prompt,
     check_reply,
+    merge_review,
     skill_for,
 )
 
@@ -778,16 +779,63 @@ class ReviewRoundsAccumulate(unittest.TestCase):
             self.assertIn("ROUND-ONE-MARKER", body)
             self.assertIn("## Round 2", body)
 
-    def test_a_reply_that_drops_round_one_leaves_the_file_as_it_was(self):
+    def test_a_reply_with_only_the_new_round_keeps_round_one(self):
+        """`0017`, 2026-09-23: copying round 2 back is where two reviews were stopped."""
         with tempfile.TemporaryDirectory() as d:
             _, written, go = self.run_review(
                 d, "# Review: x\nStatus: accepted.\n\n## Round 2\n\nall fine\n"
             )
+            done = asyncio.run(go())
+            self.assertEqual(done["outcome"], "done", done["error"])
+            body = written.read_text(encoding="utf-8")
+            self.assertTrue(body.startswith("# Review: x\nStatus: accepted.\n\n## Round 1"))
+            self.assertLess(body.index("ROUND-ONE-MARKER"), body.index("## Round 2"))
+
+    def test_the_prompt_no_longer_asks_for_a_copy(self):
+        with tempfile.TemporaryDirectory() as d:
+            session, _, go = self.run_review(d, "# Review: x\nStatus: accepted.\n\n## Round 2\n\nok\n")
+            asyncio.run(go())
+            self.assertIn("Do not copy them", session.prompt)
+            self.assertNotIn("byte for byte", session.prompt)
+
+    def test_a_reply_that_changes_round_one_leaves_the_file_as_it_was(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, written, go = self.run_review(
+                d,
+                "# Review: x\nStatus: accepted.\n\n## Round 1\n\nnothing was wrong\n\n"
+                "## Round 2\n\nall fine\n",
+            )
             # The runner reports a refusal as the step's outcome rather than raising.
             done = asyncio.run(go())
             self.assertNotEqual(done["outcome"], "done")
-            self.assertIn("earlier review round", done["error"])
+            self.assertIn("changes an earlier review round", done["error"])
+            self.assertEqual(
+                written.read_text(encoding="utf-8"),
+                "# Review: x\nPR: pr.md. Status: changes-requested.\n\n" + self.ROUND1,
+            )
+
+    def test_a_reply_that_adds_no_round_leaves_the_file_as_it_was(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, written, go = self.run_review(d, "# Review: x\nStatus: accepted.\n\nlooks fine\n")
+            done = asyncio.run(go())
+            self.assertNotEqual(done["outcome"], "done")
+            self.assertIn("adds no review round", done["error"])
             self.assertIn("ROUND-ONE-MARKER", written.read_text(encoding="utf-8"))
+
+
+class MergeReview(unittest.TestCase):
+    def test_the_first_round_needs_nothing_on_disk(self):
+        body = merge_review("", "# Review: x\nStatus: accepted.\n\n## Round 1\n\nok\n")
+        self.assertEqual(body, "# Review: x\nStatus: accepted.\n\n## Round 1\n\nok\n")
+
+    def test_the_header_is_the_replys(self):
+        body = merge_review(
+            "# Review: x\nStatus: changes-requested.\n\n## Round 1\n\nF1\n",
+            "# Review: x\nStatus: accepted.\n\n## Round 2\n\nok\n",
+        )
+        self.assertEqual(
+            body, "# Review: x\nStatus: accepted.\n\n## Round 1\n\nF1\n\n## Round 2\n\nok\n"
+        )
 
 
 class TheReviewSeesWhatWasMeasured(unittest.TestCase):
