@@ -9,7 +9,7 @@
     { "name": "plan",   "artifact": "plan.md",   "statuses": ["draft", "accepted", "rejected", "done"] },
     { "name": "impl",   "artifact": "impl.md",   "statuses": ["draft", "accepted", "rejected", "done"] },
     { "name": "pr",     "artifact": "pr.md",     "statuses": ["draft", "accepted", "rejected"] },
-    { "name": "review", "artifact": "review.md", "statuses": ["draft", "accepted", "rejected"] },
+    { "name": "review", "artifact": "review.md", "statuses": ["draft", "changes-requested", "accepted", "rejected"] },
     { "name": "ship",   "artifact": "ship.md",   "statuses": ["draft", "accepted", "rejected"] }
   ]
 }

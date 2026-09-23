@@ -107,6 +107,19 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
         unit = self._fresh("started") | {"problems": ["no intent.md — every unit opens with one"]}
         self.assertEqual(_lane(unit), "Needs review")
 
+    def test_a_review_that_asked_for_changes_needs_review(self):
+        """`0015`: the review found something and the unit waits on a fix."""
+        from coscc.state import STATUS_COLOR, _lane
+
+        unit = self._fresh("started")
+        unit["next"] = "fix the open findings of review round 1 on the branch"
+        for row in unit["stages"]:
+            row["status"] = "accepted" if row["stage"] not in ("review", "ship") else "not started"
+            if row["stage"] == "review":
+                row["status"] = "changes-requested"
+        self.assertEqual(_lane(unit), "Needs review")
+        self.assertIn("changes-requested", STATUS_COLOR)
+
 
 class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
     """`0016` R7 and R8, on one temporary `.cos/` read the way the page reads it."""
