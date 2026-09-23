@@ -116,6 +116,20 @@ class Question:
 
 
 @dataclasses.dataclass
+class Round:
+    """`0021`. One round of `review.md` and whether it is on the pull request as a comment.
+    The round is `cos.mjs`'s; whether it is posted is `Service.board`'s reading of the run
+    log. Nothing here decides either."""
+
+    number: int = 0
+    verdict: str = ""
+    posted: bool = False
+    url: str = ""
+    # Why the latest attempt failed, or empty when none has been made.
+    reason: str = ""
+
+
+@dataclasses.dataclass
 class Unit:
     id: str = ""
     title: str = ""
@@ -139,6 +153,9 @@ class Unit:
     # an open question does not move a unit into *Needs review*.
     open_questions: int = 0
     questions: list[Question] = dataclasses.field(default_factory=list)
+    # `0021`. The pull request `pr.md` names, and every review round with its comment state.
+    pr_url: str = ""
+    rounds: list[Round] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -275,6 +292,23 @@ def _questions(unit: dict) -> tuple[int, list[Question]]:
     ]
 
 
+def _rounds(unit: dict) -> list[Round]:
+    """`0021`. Each review round as `Service.board` sent it, with its comment state."""
+    out = []
+    for r in unit.get("rounds") or []:
+        c = r.get("comment") or {}
+        out.append(
+            Round(
+                number=int(r.get("n") or 0),
+                verdict=str(r.get("verdict") or "unreadable"),
+                posted=bool(c.get("posted")),
+                url=str(c.get("url") or ""),
+                reason=str(c.get("reason") or ""),
+            )
+        )
+    return out
+
+
 def _lane(unit: dict) -> str:
     """Which column a unit sits in.
 
@@ -383,6 +417,8 @@ class StudioState(rx.State):
     answer_text: str = ""
     answer_by: str = ""
     answering: bool = False
+    # `0021`. The round being posted, 0 while none is.
+    posting_round: int = 0
 
     # -- sessions
     conversations: list[Conversation] = []
@@ -651,6 +687,8 @@ class StudioState(rx.State):
                     cells=cells,
                     open_questions=waiting,
                     questions=asked,
+                    pr_url=str((u.get("pr") or {}).get("url") or ""),
+                    rounds=_rounds(u),
                 )
             )
         self.units = units
@@ -1000,7 +1038,7 @@ class StudioState(rx.State):
 
     @rx.event
     def set_detail_tab(self, value: str):
-        if value not in ("overview", "artifacts", "questions", "timeline"):
+        if value not in ("overview", "artifacts", "questions", "comments", "timeline"):
             self.notice = "That tab does not exist."
             return
         self.detail_tab = value
@@ -1041,6 +1079,29 @@ class StudioState(rx.State):
         )
         await self._load_board()
         self._load_artifact()
+
+    @rx.event
+    async def post_review_comment(self, number: int):
+        """`0021` R8. Post one review round to the pull request. Whether it may, and whether
+        it is already there, is `Service.post_review_comment`'s decision."""
+        self.posting_round = int(number)
+        try:
+            done = await SERVICE.post_review_comment(self.cwd, self.unit_id, number)
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        finally:
+            self.posting_round = 0
+        if done["state"] == "failed":
+            self.notice = f"Round {done['round']} is not on the PR: {done['reason']}"
+        elif done["state"] == "already":
+            self.notice = f"Round {done['round']} was already on the PR. Nothing was posted."
+        else:
+            self.notice = (
+                f"Posted round {done['round']} to the PR as a comment. It is not an approval "
+                "and no gate reads it."
+            )
+        await self._load_board()
 
     @rx.event
     def set_new_slug(self, value: str):

@@ -34,6 +34,7 @@ from coscc.state import (
     Knob,
     Message,
     Question,
+    Round,
     Run,
     StudioState,
     Unit,
@@ -1019,6 +1020,61 @@ def _questions_tab() -> rx.Component:
     )
 
 
+def _round_row(r: rx.Var[Round]) -> rx.Component:
+    """`0021` R7, R8. One review round: on the PR with its link, or not and a button."""
+    return s.panel(
+        rx.hstack(
+            s.text("Round " + r.number.to_string(), size="2"),
+            s.badge(r.verdict, "gray"),
+            rx.spacer(),
+            rx.cond(r.posted, s.badge("on the PR", "grass"),
+                    s.badge("comment not on the PR", "amber")),
+            width="100%", align="center",
+        ),
+        rx.cond(
+            r.posted,
+            rx.cond(r.url != "",
+                    rx.link(r.url, href=r.url, is_external=True, size="1", margin_top="8px")),
+            rx.vstack(
+                rx.cond(r.reason != "",
+                        s.text("Last attempt: " + r.reason, size="1", overflow_wrap="anywhere")),
+                rx.button(
+                    rx.icon("send", size=14), "Post to PR",
+                    on_click=P.post_review_comment(r.number),
+                    loading=P.posting_round == r.number,
+                    disabled=P.posting_round != 0,
+                    size="1", id="post-round-" + r.number.to_string(),
+                ),
+                spacing="2", margin_top="8px", align="start",
+            ),
+        ),
+        width="100%",
+    )
+
+
+def _comments_tab() -> rx.Component:
+    """`0021` R4, R10, said on the page: what a comment is and what it is not."""
+    return rx.vstack(
+        s.text(
+            "Each round of review.md goes to the pull request as one ordinary comment, "
+            "posted under this machine's gh login and marked as written by an agent "
+            "session. It is not an approval, and no gate reads it. A round the board ran "
+            "is posted when it is written; a round written at a terminal waits here until "
+            "someone presses Post to PR. The text goes up verbatim. This app has no login, "
+            "so anyone who reaches this port can press the button.",
+            size="1", line_height="1.8",
+        ),
+        rx.cond(P.current_unit.pr_url != "",
+                rx.link(P.current_unit.pr_url, href=P.current_unit.pr_url,
+                        is_external=True, size="1"),
+                s.text("pr.md names no pull request yet.", size="1")),
+        rx.foreach(P.current_unit.rounds, _round_row),
+        rx.cond(P.current_unit.rounds.length() == 0,
+                s.text("review.md holds no round yet.")),
+        spacing="3", padding="26px", width="100%", align="start", id="comments-body",
+    )
+
+
 def _detail_dialog() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
@@ -1044,6 +1100,7 @@ def _detail_dialog() -> rx.Component:
                     rx.tabs.trigger("Overview", value="overview"),
                     rx.tabs.trigger("Artifact", value="artifacts"),
                     rx.tabs.trigger("Questions", value="questions"),
+                    rx.tabs.trigger("PR comments", value="comments"),
                     rx.tabs.trigger("Timeline", value="timeline"),
                     width="100%", padding="0 24px",
                 ),
@@ -1162,6 +1219,7 @@ def _detail_dialog() -> rx.Component:
                     value="artifacts",
                 ),
                 rx.tabs.content(_questions_tab(), value="questions"),
+                rx.tabs.content(_comments_tab(), value="comments"),
                 rx.tabs.content(
                     rx.vstack(
                         s.text("Every run of every step of this unit, oldest first. Read "
