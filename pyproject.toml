@@ -13,7 +13,7 @@ description = "Web app that lists, creates and resumes Claude Code sessions acro
 # that off, so it is on by default.
 requires-python = ">=3.14"
 dependencies = [
-    "claude-agent-sdk>=0.2.158",
+    "claude-agent-sdk>=0.2.159",
     "reflex>=0.9.12",
     "fastapi>=0.141.1",
 ]
