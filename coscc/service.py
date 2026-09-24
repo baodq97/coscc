@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -490,7 +491,13 @@ class Service:
             found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo)
         except Unavailable as e:
             raise Invalid(str(e)) from e
-        return {"cwd": cwd, "unit": unit, **{k: found[k] for k in ("stage", "action", "blocked")}}
+        return {
+            "cwd": cwd,
+            "unit": unit,
+            **{k: found[k] for k in ("stage", "action", "blocked")},
+            # `0028`. The findings a person is awaited on, copied from `cos.mjs next`.
+            "waiting": list(found.get("waiting") or []),
+        }
 
     async def set_mode(self, cwd: str, unit: str, stage: str, mode: str) -> dict[str, Any]:
         """Choose how one step runs. Validated against the board, not against a second list."""
@@ -867,6 +874,10 @@ class Service:
 
         Not an approval, and it starts nothing. `answered_by` is whatever name the caller
         typed: no route in this app has a login, so it is a claim, not an identity.
+
+        `0028`: `question` may be `"F<n>"`, a finding `cos.mjs` lists in the unit's
+        `personFindings`; then `artifact` must be `review.md` and the block is `### F<n>`.
+        Unlike a numbered answer, that block is read by `cos.mjs next` and the `ship` gate.
         """
         self._workspace_or_refuse(cwd)
         name = str(answered_by or "").strip()
@@ -880,18 +891,35 @@ class Service:
             found = next((u for u in data["units"] if u["name"] == unit), None)
             if found is None:
                 raise Invalid(f"no such work unit in this workspace: {unit}")
-            asked = [q for q in found.get("questions") or [] if q.get("artifact") == artifact]
-            if not asked:
-                raise Invalid(f"{artifact} in {unit} has no numbered item under ## Open questions")
-            try:
-                number = int(question)
-            except (TypeError, ValueError):
-                raise Invalid(f"a question is named by its number, got {question!r}") from None
-            if number not in {q["n"] for q in asked}:
-                raise Invalid(
-                    f"{artifact} has no question {number} "
-                    f"(it has {', '.join(str(q['n']) for q in asked)})"
-                )
+            # `0028`. A finding the last review round confirmed needs a person is answered
+            # by its id, `F<n>`, into `review.md` -- and only while `cos.mjs` lists it in
+            # `personFindings`, so what may be answered is its decision, not this route's.
+            finding = str(question).strip() if isinstance(question, str) else ""
+            finding = finding if re.fullmatch(r"F\d+", finding) else ""
+            if finding:
+                if artifact != "review.md":
+                    raise Invalid(f"a finding is answered in review.md, not {artifact}")
+                awaited = [p["id"] for p in found.get("person_findings") or []]
+                if finding not in awaited:
+                    raise Invalid(
+                        f"{finding} is not a finding the last review round of {unit} "
+                        "confirmed needs a person"
+                        + (f" (those are {', '.join(awaited)})" if awaited else "")
+                    )
+                number: int | str = finding
+            else:
+                asked = [q for q in found.get("questions") or [] if q.get("artifact") == artifact]
+                if not asked:
+                    raise Invalid(f"{artifact} in {unit} has no numbered item under ## Open questions")
+                try:
+                    number = int(question)
+                except (TypeError, ValueError):
+                    raise Invalid(f"a question is named by its number, got {question!r}") from None
+                if number not in {q["n"] for q in asked}:
+                    raise Invalid(
+                        f"{artifact} has no question {number} "
+                        f"(it has {', '.join(str(q['n']) for q in asked)})"
+                    )
             if not text.strip():
                 raise Invalid("the answer is empty")
             if not name or "\n" in name or "\r" in name:
@@ -924,8 +952,8 @@ class Service:
                 block += "\n"
             if heading is None:
                 block += "\n## Answers\n"
+            block += f"\n### {finding}\n" if finding else f"\n### Câu {number}\n"
             block += (
-                f"\n### Câu {number}\n"
                 f"Answered by: {name}. Date: {today}. Via: product.\n\n"
                 f"{text}\n"
             )

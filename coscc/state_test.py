@@ -275,6 +275,51 @@ class RunTargetCopies(unittest.TestCase):
         self.assertEqual(_run_target({"action": "then write-review again"})[0], "")
 
 
+class FindingsAwaitingAPersonAreCopied(unittest.TestCase):
+    """`0028` plan step 9. The Questions tab lists `cos.mjs`'s `personFindings`, and the run
+    frame shows `cos.mjs next`'s `waiting`; the page derives neither."""
+
+    UNIT = {
+        "open": 1,
+        "questions": [{"artifact": "intent.md", "n": 2, "text": "Two?", "answered": False, "counted": True}],
+        "person_findings": [
+            {"id": "F2", "reason": "no budget", "answered": True},
+            {"id": "F3", "reason": "no gh", "answered": False},
+        ],
+    }
+
+    def test_questions_carry_findings_after_the_numbered_ones(self):
+        from coscc.state import _questions
+
+        count, asked = _questions(self.UNIT)
+        self.assertEqual(count, 1)
+        self.assertEqual(
+            [(q.key, q.artifact, q.label, q.number, q.text, q.answered, q.counted) for q in asked],
+            [
+                ("intent.md#2", "intent.md", "2", 2, "Two?", False, True),
+                ("review.md#F2", "review.md", "F2", 0, "no budget", True, False),
+                ("review.md#F3", "review.md", "F3", 0, "no gh", False, False),
+            ],
+        )
+
+    def test_run_waiting_copies_and_absent_reads_as_none(self):
+        from coscc.state import _run_waiting
+
+        self.assertEqual(_run_waiting({"stage": "", "waiting": ["F2", "F3"]}), ["F2", "F3"])
+        self.assertEqual(_run_waiting({"stage": "impl"}), [])
+
+    def test_only_load_next_sets_run_waiting(self):
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+        setters = set()
+        for fn in _state_class(tree).body:
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Assign) and any("run_waiting" in _self_names(t) for t in node.targets):
+                    setters.add(fn.name)
+        self.assertEqual(setters, {"load_next"})
+
+
 class CellLabelNamesAFailureTheArtifactCannot(unittest.TestCase):
     """`0019_a-failed-step-destroys-the-work-that-succeeded` plan step 7, `spec.md` R5."""
 
