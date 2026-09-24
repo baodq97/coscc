@@ -1182,7 +1182,12 @@ class Runner:
                 # would hide that the work may be half finished.
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         finally:
-            if not shutting_down and stopped() and outcome != "done":
+            # `0034` review round 1, F2. The outcome is decided here, so the door closes
+            # here: a Stop that arrives while the attempt record is captured below is
+            # refused (`Finishing`) rather than told "stopped" and logged as something
+            # else. `seal` is False only when a Stop already came, and that one is honoured.
+            stop_came = not steps.seal(running)
+            if not shutting_down and stop_came and outcome != "done":
                 # `0034`. Whatever the stop raised on its way in -- a closed stream, a
                 # cancel, `_Stopped` at the seal -- a person asked, and that is the outcome.
                 outcome = "stopped"
@@ -1244,7 +1249,7 @@ class Runner:
                     **extra,
                 )
             if pending is not None:
-                if not stopped():
+                if not stop_came:
                     raise pending
                 # A Stop's cancel that landed in the capture rather than the session.
                 task = asyncio.current_task()

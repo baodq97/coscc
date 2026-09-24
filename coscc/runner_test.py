@@ -2317,6 +2317,43 @@ class AStoppedStepEndsStopped(unittest.TestCase):
             [end] = self._ends(journal)
             self.assertEqual((end["outcome"], end["cost_usd"]), ("done", 0.25))
 
+    def test_a_stop_after_the_outcome_is_decided_is_refused_and_the_end_says_failed(self):
+        """Review round 1, F2: a Stop that lands while a failed step captures its attempt
+        used to be told "stopped" while the `end` said `failed`."""
+        from coscc import steps
+
+        registry_box = []
+        refused = []
+
+        class Fails(self.Waits):
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "thinking ")
+                await self.release.wait()
+                raise RuntimeError("the CLI died")
+
+        async def capture(cwd, session_id):
+            registry, running = registry_box[0]
+            try:
+                registry.request_stop(running.workspace, running.unit, "Lan")
+            except steps.Finishing as e:
+                refused.append(e)
+            return {}, None
+
+        async def release(registry, running, sessions):
+            registry_box.append((registry, running))
+            sessions.release.set()
+
+        with tempfile.TemporaryDirectory() as d, mock.patch("coscc.runner.snapshot", capture):
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            out, journal, running = self._run(d, Fails(), "spec", "spec.md", release)
+            self.assertEqual(len(refused), 1)
+            self.assertFalse(running.stop_requested)
+            self.assertEqual(out[-1][1]["outcome"], "failed")
+            self.assertNotIn("stopped_by", out[-1][1])
+            [end] = self._ends(journal)
+            self.assertEqual(end["outcome"], "failed")
+            self.assertNotIn("stopped_by", end)
+
     def test_a_cancel_with_no_stop_behind_it_writes_no_end(self):
         async def cancel(registry, running, sessions):
             running.task.cancel()
