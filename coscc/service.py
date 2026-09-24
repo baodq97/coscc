@@ -1148,6 +1148,16 @@ class Service:
                     "plan_sha": None, "main_sha": None, "files": None,
                     "checked": False, "reason": str(e) or type(e).__name__,
                 }
+        # `0041` R2. The unit's open pull request, for `pr` only, after the gate and before
+        # any money is spent. One `gh pr list`, up to `integrate.GH_TIMEOUT`; a lookup that
+        # fails still starts the step, and its prompt says so.
+        pr_note, pr_before = "", None
+        if stage == "pr":
+            if tree is not None:
+                lookup = await integrate.pr_for_branch(work, tree.get("branch") or "")
+            else:
+                lookup = {"state": "unknown", "reason": "this workspace is not a git checkout"}
+            pr_note, pr_before = integrate.describe_pr_lookup(lookup), lookup.get("url", "")
         runner = Runner(self.sessions, journal)
         # `0035` R12: an integration refuses a unit with a step running, and a step refuses
         # one being integrated -- both ways, or the first to finish would clear the other's
@@ -1183,6 +1193,8 @@ class Service:
                 plan_drift=plan_drift,
                 drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
                 end_fields=end_fields,
+                pr_note=pr_note,
+                pr_before=pr_before,
                 **config,
                 # Only named for a spike, so a stand-in `run` without it keeps working.
                 **({"watch": work} if scratch is not None else {}),

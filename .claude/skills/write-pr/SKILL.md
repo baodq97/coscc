@@ -27,27 +27,46 @@ Recording `draft` because no pull request exists never clears the gate after thi
 
 ## Opening it — and not merging it
 
-`.claude/CLAUDE.md` step 6 is where this comes from:
+`.claude/CLAUDE.md` step 6 is where this comes from. In this order — `pr.md` is written
+before anything waits, because a step that runs out of turns while waiting must still
+leave the file behind:
 
-```
-git push -u origin HEAD
-gh pr create --fill-first --body-file <the pr.md you just wrote>
-gh pr checks <number> --required --watch
-```
+1. **Does the pull request already exist?** In the app, the prompt carries *The pull
+   request, already looked up*. At a terminal, or when that block says the lookup failed,
+   ask once: `gh pr view --json url,number,mergeable`. If one is open for this branch, use
+   its URL and skip step 2 — never open a second pull request for one branch.
+2. **Open it.** Write `pr.md` with its three body sections, `Status: draft` and no `PR:`
+   yet, then:
 
-The push is listed because `gh pr create` cannot open a pull request for a branch the
-remote has never seen, and in a non-interactive session it has no way to ask.
+   ```
+   git push -u origin HEAD
+   gh pr create --fill-first --body-file <that pr.md>
+   ```
+
+   The push is listed because `gh pr create` cannot open a pull request for a branch the
+   remote has never seen, and in a non-interactive session it has no way to ask.
+3. **Record it at once.** As soon as you have the URL, put `PR: <url>` in the header and
+   set `Status: accepted`.
+4. **Then read the checks, once.** `gh pr checks <number> --required`, without `--watch`.
+   Write under `## Where` what it said — `pending`, `green` or `red` — exactly as it said
+   it. Pending is not green, and a repository with no required checks never opens the
+   `review` gate. Do not write that CI passed unless `gh pr checks` said so.
 
 **This stage stops at an open pull request.** It does not merge. The merge belongs to
 `ship`, and `ship`'s gate opens only after a review round passed with no finding open and
 no code landed after it. In the app, the `pr` step is refused the merge command outright;
 at a terminal nothing refuses it, so this sentence is the rule.
 
-**Wait for the required checks.** The `review` gate asks GitHub for them and stays closed
-until every one is green — pending is not green, and a repository with no required
-checks never opens it. If a check is red, the work goes back to `impl`: fix it on the same
-branch, push, and wait again. Each fix is its own commit; name it in `## Where`. Do not
-write that CI passed unless `gh pr checks` said so.
+**It does not integrate either.** Never `git rebase`, `git merge`, `git pull`,
+`gh pr update-branch` or a forced push; in the app the grant refuses each by its words.
+
+- **The branch conflicts with `main`:** `pr.md` is still `accepted`, with its URL, and
+  `## Where` says the pull request conflicts and that resolving it is *Integrate*'s, on
+  the board. It must be accepted: the board offers *Integrate* only to a unit whose
+  `pr.md` is accepted and names its pull request (`betweenPrAndShip`,
+  `.claude/scripts/cos.mjs`).
+- **A required check is red:** name the red checks under `## Where` and stop. The fix is
+  `impl`'s, on the same branch; `cos.mjs next` sends the unit there. Do not fix it here.
 
 ## Output
 
@@ -64,14 +83,16 @@ Intent: intent.md. Impl: impl.md. PR: <url>. Author: <name>. Status: accepted.
 ## What a reviewer should look at first
 ```
 
-`PR: <url>` is the URL `gh pr create` printed, ending in `/pull/<number>`. `## Where`
+`PR: <url>` is the URL `gh pr create` printed — or, when the pull request already existed,
+the one the lookup or `gh pr view` returned — ending in `/pull/<number>`. `## Where`
 carries the URL again, the branch, and the state of the required checks when this file was
-written. `Status` is `draft`, `accepted` or `rejected`.
+written. `Status` is `draft`, `accepted` or `rejected`; `draft` only between steps 2 and 3
+above, or when no pull request could be opened (invariant 5).
 
 ## Invariants
 
-1. **The URL is real and was returned by the command that opened the PR.** Never compose
-   one from a pattern.
+1. **The URL is real and was returned by `gh`** — by the command that opened the PR, or by
+   `gh pr view` or the app's lookup for one already open. Never compose one from a pattern.
 2. **`PR: <url>` is in the header.** Without it the `review` gate is closed with
    `pr.md names no pull request`.
 3. **`## Scope of the diff` names files and counts**, both taken from `git diff --stat`.

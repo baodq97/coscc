@@ -86,7 +86,8 @@ class OneGrantPerStage(unittest.TestCase):
             "plan": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0),
             "pr": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
                         max_budget_usd=3.0, app_writes_artifact=False,
-                        warning=policy.PR_WARNING, denied=policy.MERGE_IS_SHIPS),
+                        warning=policy.PR_WARNING, denied=policy.PR_DENIED,
+                        push_no_force=True),  # `0041` R3; the ceilings are R6's, unchanged
             "review": Grant(tools=READ_TOOLS, max_turns=20, max_budget_usd=2.0),
             "ship": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
                           max_budget_usd=3.0, app_writes_artifact=False,
@@ -615,6 +616,56 @@ class GeboPushesOnlyWithTheLease(unittest.TestCase):
 
     def test_other_grants_push_as_before(self):
         self.assertEqual(check_command(grant_for("pr"), "git push origin feat/x"), "")
+
+
+class IntegrationIsNotPrs(unittest.TestCase):
+    """`0041` R3. `pr` met a conflict with `main` on 2026-09-24, rebased it itself and ran
+    out of turns in the middle. Bringing `main` in is integration's; `pr` records the
+    conflict and stops. By the command's words, like the merge — C2 is the same limit."""
+
+    PR = grant_for("pr")
+
+    def test_integration_is_refused_and_named(self):
+        for command in ("git rebase origin/main", "git -C . rebase main", "git -c k=v rebase main",
+                        "git merge origin/main", "git pull --rebase", "gh pr update-branch 7 --rebase",
+                        "git push --force", "git push -f", "git push -uf origin HEAD",
+                        "git push --force-with-lease", "git push --force-with-lease=b:abc",
+                        "git push --force-if-includes origin b", "git push origin +HEAD:b",
+                        "git -C . push --force origin b"):
+            with self.subTest(command=command):
+                self.assertIn("Integrate", check_command(self.PR, command))
+
+    def test_opening_and_reading_the_pull_request_stay_open(self):
+        for command in ("git push -u origin HEAD", "git push origin HEAD:fix/x",
+                        "gh pr create --fill-first --body-file pr.md", "gh pr view --json url",
+                        "gh pr checks 7 --required", "git log --grep rebase",
+                        "git commit -m merge", "git log --oneline main..HEAD"):
+            with self.subTest(command=command):
+                self.assertEqual(check_command(self.PR, command), "")
+
+    def test_ship_and_integrate_are_unchanged(self):
+        self.assertEqual(grant_for("ship").denied, ())
+        self.assertFalse(grant_for("ship").push_no_force)
+        self.assertIs(grant_for("integrate").denied, policy.INTEGRATE_DENIED)
+        self.assertFalse(grant_for("integrate").push_no_force)
+        self.assertEqual(check_command(grant_for("ship"), "git rebase origin/main"), "")
+
+    def test_the_merge_is_still_ships(self):
+        self.assertIn("ship stage's", check_command(self.PR, "gh pr merge 7"))
+
+    def test_the_other_roads_to_the_same_words_are_refused(self):
+        # Review round 1, F1: an alias made during the step, or the endpoint behind
+        # `gh pr update-branch`, renamed what the prefixes above refuse.
+        for command in ("git -c alias.r=rebase r main", "git config alias.r rebase",
+                        "git -c alias.p=push p --force", "GIT_CONFIG_COUNT=1 git r main",
+                        "gh api -X PUT repos/o/r/pulls/7/update-branch",
+                        "gh api graphql -f query=mutation{updatePullRequestBranch(input:{})}"):
+            with self.subTest(command=command):
+                self.assertIn("Integrate", check_command(self.PR, command))
+
+    def test_the_known_limit_c2(self):
+        # Words, not capability: a program the grant may start can still rebase.
+        self.assertEqual(check_command(self.PR, "node -e 'require(\"child_process\")'"), "")
 
 
 class GeboReadsAnExplicitList(unittest.TestCase):
