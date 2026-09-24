@@ -487,6 +487,14 @@ def _run_waiting(data: dict) -> list[str]:
     return [str(x) for x in data.get("waiting") or []]
 
 
+def _key_label(key: str) -> str:
+    """`0071` R3. A Questions row's key as a person reads it: `intent.md#1` is
+    `question 1 of intent.md`, `review.md#F2` is `finding F2 of review.md`."""
+    artifact, _, number = key.rpartition("#")
+    kind = "finding" if number.startswith("F") else "question"
+    return f"{kind} {number} of {artifact}"
+
+
 def _tokens(cost: dict) -> tuple[int, str]:
     """Every token the turn was billed for, as one number.
 
@@ -757,7 +765,9 @@ class StudioState(rx.State):
     answer_target: str = ""
     answer_text: str = ""
     answer_by: str = ""
-    answering: bool = False
+    # `0071` R6. The key of the question being sent, `""` while none is: only that row's
+    # button shows it is sending.
+    answering_key: str = ""
     # `0021`. The round being posted, 0 while none is.
     posting_round: int = 0
     # `0035`. True while an integration runs; locks the *Integrate* button.
@@ -1566,7 +1576,8 @@ class StudioState(rx.State):
         self.unit_id = unit
         self.detail_tab = "overview"
         self.run_log = ""
-        self.error = ""
+        # `0071` R9: a message shown in the dialog is one made after it opened.
+        self.error, self.notice = "", ""
         self._load_timeline()
         self._load_artifact()
         return StudioState.load_next
@@ -1740,29 +1751,53 @@ class StudioState(rx.State):
     @rx.event
     async def answer_question(self, key: str):
         """`0016` R2. Send one answer. Every rule about whether it may be written is
-        `Service.answer`'s; a refusal arrives here as its words and is shown as they are."""
+        `Service.answer`'s; a refusal arrives here as its words and is shown as they are.
+
+        `0071` R1: every press ends in a block written or a reason shown, never in nothing.
+        The `yield` after raising `answering_key` is what sends it to the browser, as in
+        `post_review_comment`. There is no guard against a second press: Reflex queues it
+        behind the first, by then the box is empty, and the first branch gives it a reason.
+        """
+        self.notice, self.error = "", ""
         if key != self.answer_target or not self.answer_text.strip():
-            self.notice = "Write the answer in that question's box first."
+            self.error = f"Nothing was sent: you pressed Send on {_key_label(key)}, but its box is empty."
+            if self.answer_target and self.answer_text.strip():
+                self.error += (
+                    f" Your text is in the box of {_key_label(self.answer_target)}, and it is "
+                    "still there."
+                )
             return
         artifact, _, number = key.rpartition("#")
-        self.answering = True
+        self.answering_key = key
+        yield
         try:
             done = await SERVICE.answer(
                 self.cwd, self.unit_id, artifact, number, self.answer_text, self.answer_by
             )
         except Invalid as e:
-            self.notice = str(e)
+            self._fail(e)
+            return
+        except Exception as e:  # noqa: BLE001 - R5: an unexpected failure is shown, not lost
+            # Not "nothing was written": `Service.answer` writes the block before it touches
+            # the history, so a failure after that leaves it on disk (`spec.md` R5).
+            self.error = (
+                f"{type(e).__name__}: {e}. It is not known whether the answer was written; "
+                f"open {artifact} to check."
+            )
             return
         finally:
-            self.answering = False
+            self.answering_key = ""
         self.answer_target, self.answer_text = "", ""
         kind = "finding" if str(done["question"]).startswith("F") else "question"
         self.notice = (
             f"Answered {kind} {done['question']} of {done['artifact']} as "
             f"{done['answered_by']}. Nothing was started; the next step reads it when it runs."
         )
-        await self._load_board()
-        self._load_artifact()
+        try:
+            await self._load_board()
+            self._load_artifact()
+        except Exception as e:  # noqa: BLE001 - R5: the answer is written; say so regardless
+            self.notice += f" The board could not be read again: {type(e).__name__}: {e}"
 
     @rx.event
     def set_outcome_result(self, value: str):
