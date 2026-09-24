@@ -8,8 +8,10 @@ What is running lives here instead, in the process that runs it, where both the 
 **In memory, this process only.** A restart forgets every row, and so does a second copy
 of the app on the same data root -- the same limit `Sessions.live_in` names.
 
-Nothing here decides whether a step may run: that is `cos.mjs gate`. This only refuses a
-second step on a unit that already has one, and records who asked for a stop.
+Nothing here decides whether a step may run: that is `cos.mjs gate`. Since `0050` what
+keeps a second step, a hold or an integration off a unit is a `Mark` in `Service._active`,
+taken before `run_step`'s first `await`; this registry is what *Stop* and the Board's list
+read once the step is running, and it records who asked for a stop.
 """
 
 from __future__ import annotations
@@ -19,6 +21,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from coscc.sessions import StepHandle
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 class Busy(ValueError):
@@ -31,6 +37,40 @@ class NotRunning(ValueError):
 
 class Finishing(ValueError):
     """The step has begun writing its artifact; stopping now would leave half of one."""
+
+
+@dataclass(eq=False)  # identity, not value: `Service._release` removes this one and no other
+class Mark:
+    """What holds a unit in `Service._active`: a step, an integration or a hold (`0050`).
+
+    `phase` is a step's only: `preparing` from `run_step`'s first line until the registry
+    lists it, `running` after. `started_at` is the one time both the refusal and the
+    Board's list show for that step.
+    """
+
+    kind: str  # "step" | "integrate" | "hold"
+    stage: str = ""
+    phase: str = ""
+    started_at: str = field(default_factory=now)
+
+
+def describe(unit: str, mark: Mark) -> str:
+    """The one sentence every refusal of a busy unit carries (`0050` R3): what, and since when."""
+    t = mark.started_at
+    if mark.kind == "integrate":
+        return f"{unit} is busy: it is being integrated since {t}; wait for the integration to end"
+    if mark.kind == "hold":
+        return f"{unit} is busy: a hold is being recorded since {t}; try again in a moment"
+    if mark.phase == "preparing":
+        return (
+            f"{unit} is busy: a {mark.stage} step is being prepared since {t} and is not on the "
+            "Board's list of running steps yet, so it cannot be stopped; wait for it to start "
+            "or fail, then try again"
+        )
+    return (
+        f"{unit} is busy: a {mark.stage} step is running since {t}; stop it with its Stop "
+        "button on the Board (0034), or wait for it to end"
+    )
 
 
 @dataclass(eq=False)  # identity, not value: `release` removes this object and no other
@@ -53,18 +93,15 @@ class Registry:
     def __init__(self) -> None:
         self._rows: dict[tuple[str, str], Running] = {}
 
-    def claim(self, workspace: str, unit: str, stage: str) -> Running:
+    def claim(self, workspace: str, unit: str, stage: str, started_at: str | None = None) -> Running:
         held = self._rows.get((workspace, unit))
         if held is not None:
-            raise Busy(
-                f"{unit} is already running {held.stage} (started {held.started_at}); "
-                "one step per unit at a time"
-            )
+            raise Busy(describe(unit, Mark("step", held.stage, "running", held.started_at)))
         running = Running(
             workspace=workspace,
             unit=unit,
             stage=stage,
-            started_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            started_at=started_at or now(),
         )
         self._rows[(workspace, unit)] = running
         return running

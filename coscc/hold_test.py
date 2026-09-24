@@ -14,11 +14,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import hold, prcomment, worktrees
+from coscc import hold, prcomment, steps, worktrees
 from coscc.config import Config
 from coscc.service import Invalid, Service
 
 SLUG = "proof-of-hold"
+# What `Service` hands `hold.refusal` while a spec step runs on the unit (`0050` R3).
+BUSY = steps.describe("0001_x", steps.Mark("step", "spec", "running", "2026-09-24T01:02:03+00:00"))
 BRANCH = f"feat/{SLUG}"
 PR = 7
 
@@ -57,34 +59,35 @@ def unit_row(**over) -> dict:
 
 class TheRefusals(unittest.TestCase):
     def test_in_the_spec_order(self):
-        self.assertEqual(hold.refusal(None, "paused", "r", "b", False), "no such work unit in this workspace")
+        self.assertEqual(hold.refusal(None, "paused", "r", "b", ""), "no such work unit in this workspace")
         paused = unit_row(hold={"state": "paused"}, hold_moves=["dropped", "active"])
         self.assertEqual(
-            hold.refusal(paused, "paused", "r", "b", False),
+            hold.refusal(paused, "paused", "r", "b", ""),
             "0001_x is paused; from there it can go to dropped, active, not paused",
         )
         dropped = unit_row(hold={"state": "dropped"}, hold_moves=["paused"])
-        self.assertIn("not active", hold.refusal(dropped, "active", "r", "b", False))
-        self.assertIn("finished", hold.refusal(unit_row(next="finished", hold_moves=[]), "paused", "r", "b", False))
-        self.assertIn("closed", hold.refusal(unit_row(next="closed — spec rejected", hold_moves=[]), "paused", "r", "b", False))
-        self.assertIn("no intent.md", hold.refusal(unit_row(next="write-intent", hold_moves=[]), "paused", "r", "b", False))
+        self.assertIn("not active", hold.refusal(dropped, "active", "r", "b", ""))
+        self.assertIn("finished", hold.refusal(unit_row(next="finished", hold_moves=[]), "paused", "r", "b", ""))
+        self.assertIn("closed", hold.refusal(unit_row(next="closed — spec rejected", hold_moves=[]), "paused", "r", "b", ""))
+        self.assertIn("no intent.md", hold.refusal(unit_row(next="write-intent", hold_moves=[]), "paused", "r", "b", ""))
         # The move is checked before the words, the words before the running step.
-        self.assertIn("from there", hold.refusal(paused, "paused", "", "", True))
-        self.assertEqual(hold.refusal(unit_row(), "paused", "  ", "b", True), "the reason is empty")
+        self.assertIn("from there", hold.refusal(paused, "paused", "", "", BUSY))
+        self.assertEqual(hold.refusal(unit_row(), "paused", "  ", "b", BUSY), "the reason is empty")
 
     def test_reason_and_name_are_one_line_not_read_as_a_heading(self):
         for reason, said in (("", "the reason is empty"), ("a\nb", "the reason must be one line"), ("# x", "the reason may not start with #")):
-            self.assertEqual(hold.refusal(unit_row(), "paused", reason, "b", False), said)
+            self.assertEqual(hold.refusal(unit_row(), "paused", reason, "b", ""), said)
         for by, said in (("", "the name is empty"), ("a\rb", "the name must be one line"), ("#b", "the name may not start with #")):
-            self.assertEqual(hold.refusal(unit_row(), "paused", "r", by, False), said)
+            self.assertEqual(hold.refusal(unit_row(), "paused", "r", by, ""), said)
 
     def test_a_running_step_is_refused_and_nothing_is_stopped(self):
+        # `0050` R3: the sentence is `steps.describe`'s, and names the Stop and the time.
         self.assertEqual(
-            hold.refusal(unit_row(), "dropped", "r", "b", True),
-            "a step or an integration is running on 0001_x — stop the step with its Stop button on the Board "
-            "(0034), or wait for the integration to end, then try again; a hold does not stop anything itself",
+            hold.refusal(unit_row(), "dropped", "r", "b", BUSY),
+            BUSY + "; a hold does not stop anything itself",
         )
-        self.assertEqual(hold.refusal(unit_row(), "dropped", "r", "b", False), "")
+        self.assertIn("its Stop button on the Board (0034)", BUSY)
+        self.assertEqual(hold.refusal(unit_row(), "dropped", "r", "b", ""), "")
 
 
 class TheShapes(unittest.TestCase):
@@ -278,16 +281,17 @@ class HoldThroughTheService(Repo):
         self.assertEqual(len(self.records()), 1)
 
     def test_a_running_step_refuses_and_keeps_its_mark(self):
-        self.service._active.add((self.key, self.unit))
+        mark = self.service._take(self.key, self.unit, "step", "spec")
+        mark.phase = "running"
         before = self.intent()
         with self.assertRaises(Invalid) as said:
             self.move("paused")
         self.assertIn("its Stop button on the Board (0034)", str(said.exception))
         self.assertEqual(self.intent(), before)
-        self.assertIn((self.key, self.unit), self.service._active)
-        self.service._active.discard((self.key, self.unit))
+        self.assertIs(self.service._active.get((self.key, self.unit)), mark)
+        self.service._release(self.key, self.unit, mark)
         self.move("paused")
-        self.assertNotIn((self.key, self.unit), self.service._active)
+        self.assertEqual(self.service._active, {})
 
     def test_a_section_after_answers_is_refused(self):
         with (self.directory / "intent.md").open("a", encoding="utf-8") as f:

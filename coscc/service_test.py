@@ -2387,11 +2387,11 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
 
     def test_a_step_refused_as_busy_leaves_none_and_keeps_the_other(self):
         key = self.service._journal_key(str(self.repo))
-        self.service._active.add((key, self.unit))
+        self.service._take(key, self.unit, "step", "spec")
         self.service._running["other"] = {"workspace": key, "unit": self.unit}
         with self.assertRaises(Invalid) as caught:
             self._run("spec")
-        self.assertIn("has a step running", str(caught.exception))
+        self.assertIn("a spec step is being prepared", str(caught.exception))
         self.assertEqual(list(self.service._running), ["other"])
 
 

@@ -188,7 +188,10 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual([e["outcome"] for e in ends], ["failed"])
 
     def test_a_step_is_refused_while_the_unit_is_being_integrated(self):
-        """F1, one way: `run_step` asks `_active`, and does not clear Gebo's mark."""
+        """F1, one way: `run_step` asks `_active`, and does not clear Gebo's mark.
+
+        Since `0050` it asks before its first `await`, and the refusal is `steps.describe`'s.
+        """
         said = {}
 
         async def act(tree, gate):
@@ -241,17 +244,17 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(self.service._running, {})
 
     def test_a_refused_integration_leaves_no_entry(self):
-        self.service._active.add((self.key, self.unit))
+        self.service._take(self.key, self.unit, "step", "spec").phase = "running"
         with self.assertRaises(Invalid):
             self.integrate_with(self._no_act)
         self.assertEqual(self.service._running, {})
 
     def test_an_integration_is_refused_while_a_step_runs(self):
         """F1, the other way: the mark a step holds refuses Gebo, and opens no session."""
-        self.service._active.add((self.key, self.unit))
+        self.service._take(self.key, self.unit, "step", "spec").phase = "running"
         with self.assertRaises(Invalid) as caught:
             self.integrate_with(self._no_act)
-        self.assertIn("a step is running", str(caught.exception))
+        self.assertIn("a spec step is running", str(caught.exception))
         self.assertIn((self.key, self.unit), self.service._active)
         self.assertEqual(self.records("start"), [])
 

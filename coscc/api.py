@@ -433,8 +433,9 @@ def build(config: Config | None = None) -> FastAPI:
     async def stop_step(request: Request) -> Any:
         """`0034`. Stop the step running on one unit: `{cwd, unit, by}`.
 
-        Whoever holds the password or a live session can stop any step, under any name. `by` is what the `end` record's `stopped_by` says, and it is
-        a claim, not an identity. It opens no gate and starts nothing.
+        Whoever holds the password or a live session can stop any step, under any name. `by` is what the `end` record's `stopped_by` says -- or
+        nothing at all when the cancel lands before the step's first turn, which leaves no
+        record -- and it is a claim, not an identity. It opens no gate and starts nothing.
         """
         try:
             body = await request.json()

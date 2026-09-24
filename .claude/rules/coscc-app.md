@@ -336,7 +336,10 @@ no commands, one turn, no budget.
   app, and SIGKILL `KILL_AFTER` (3s, chosen) later — through the SDK's private
   `_transport._process`, so an SDK that renames it loses this silently; the step ends `stopped`, writes no artifact and records no
   transition, and whatever it already committed or pushed stays. `stopped_by` is a name
-  the person typed, not an identity, and the trace is that one `end` record. A step that
+  the person typed, not an identity, and the trace is that one `end` record. A Stop whose
+  cancel reaches the step's task before its first turn leaves no trace at all: the runner
+  never ran, so there is neither `start` nor `end`, and only the Stop's own reply names
+  `stopped_by` (`Service._never_driven`, since `0050`). A step that
   has begun writing its artifact refuses the stop. A step stopped before its session
   reported a cost records `cost_unknown` and no cost at all, so Activity reads it as free.
   Stopping a `pr` or `ship` midway can leave a pushed branch or a merged pull request with
@@ -349,7 +352,11 @@ no commands, one turn, no budget.
   already running; the rest of two steps' `git` in one workspace — `switch main` among it —
   can still collide on a lock, and nothing here serialises it (unmeasured). The list
   of running steps is in memory: a restart forgets it, and a step cut off by a restart has
-  no `end` record.
+  no `end` record. Since `0050` a unit is held from before `run_step`'s first board read:
+  a second request for any stage of it is refused before it runs `cos.mjs`, `git` or `gh`,
+  with a reason naming the stage, the phase (`preparing` or `running`) and when it began
+  (`steps.describe`). Still one process only: a second copy of the app, a chat or a
+  terminal is not seen.
 - **Every board read with a unit between `pr` and `ship` costs one `gh pr list`.** Since
   `0035`, up to 30s (chosen), plus a `gh pr checks` for a unit whose head is the one its
   last integration pushed. Offline, every such unit reads `unknown` and the board waits
@@ -380,7 +387,11 @@ no commands, one turn, no budget.
   part of `intent.md`. An older `cos.mjs` reads the reason as the tail of the answer above
   it and offers the next stage again: downgrading past `0045` with held units is unsafe.
   `next_step` now asks `cos.mjs next` once more, files only, before opening a worktree
-  (unmeasured).
+  (unmeasured). Since `0050` a move — and *Integrate* — is also refused while a step of
+  the unit is still being prepared: the gate, the fetch (up to `FETCH_TIMEOUT` = 20s),
+  `impl`'s `prepare` and `pr`'s `gh pr list`, a stretch whose length is unmeasured. A step
+  in that phase is not on `/api/board/steps` and has no *Stop*, so the only thing to do is
+  wait; the refusal says so and says since when.
 
 - **An `impl` prompt carries file names taken from other people's commits on `main`.**
   Since `0042` `run_step` diffs the commit the unit's last `done` run of `plan` ran on
@@ -413,7 +424,8 @@ no commands, one turn, no budget.
 
 - **`POST /api/update/*` stops work, restarts the app and builds upstream code, for whoever
   holds the password.** Since `0068`. *Áp dụng ngay* stops every board step (through Stop's road, so
-  each gets an `end` with `stopped_by`) and cuts every chat turn of this process; *Áp
+  each that had begun gets an `end` with `stopped_by`; one cut before its first turn gets
+  none) and cuts every chat turn of this process; *Áp
   dụng* waits for them instead, and a person can keep it waiting forever by starting new
   work. *Build từ origin/main* runs `scripts/build_wheel.sh` of the configured workspace's
   upstream `main` under this user — `uv sync`, Reflex fetching Node/Bun, all of it. The

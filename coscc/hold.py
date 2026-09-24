@@ -43,7 +43,7 @@ def _line_problem(what: str, value: str) -> str:
     return ""
 
 
-def refusal(found: dict[str, Any] | None, to: str, reason: str, by: str, active: bool) -> str:
+def refusal(found: dict[str, Any] | None, to: str, reason: str, by: str, busy: str) -> str:
     """The first reason this move is refused, or `""`. Spec R5, R6, R7, R13, in that order."""
     if found is None:
         return "no such work unit in this workspace"
@@ -59,14 +59,11 @@ def refusal(found: dict[str, Any] | None, to: str, reason: str, by: str, active:
         said = _line_problem(what, value)
         if said:
             return said
-    if active:
-        # R13, intent answer 5. The Board's Stop (`0034`) ends a step; an integration has no
-        # Stop and must be waited out. A hold never stops either itself.
-        return (
-            f"a step or an integration is running on {found.get('name')} — stop the step with its Stop "
-            "button on the Board (0034), or wait for the integration to end, then try again; "
-            "a hold does not stop anything itself"
-        )
+    if busy:
+        # R13, intent answer 5. `busy` is `steps.describe`'s sentence (`0050` R3): it names
+        # the Stop (`0034`) when a step is running, and what to wait for otherwise. A hold
+        # never stops either itself.
+        return f"{busy}; a hold does not stop anything itself"
     return ""
 
 

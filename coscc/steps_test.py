@@ -44,12 +44,42 @@ class OneStepPerUnit(unittest.TestCase):
         r.release(old)  # a late release of the finished step
         self.assertIs(r.get("w", "0001_a"), new)
 
+    def test_claim_keeps_the_start_it_is_given(self):
+        r = Registry()
+        running = r.claim("w", "0001_a", "spec", started_at="2026-09-24T01:02:03+00:00")
+        self.assertEqual(running.started_at, "2026-09-24T01:02:03+00:00")
+        self.assertEqual(r.listing("w")[0]["started_at"], "2026-09-24T01:02:03+00:00")
+
     def test_listing_carries_what_the_page_shows(self):
         r = Registry()
         r.claim("w", "0001_a", "spec")
         [row] = r.listing("w")
         self.assertEqual(set(row), {"unit", "stage", "started_at", "stopping"})
         self.assertFalse(row["stopping"])
+
+
+class Describe(unittest.TestCase):
+    """`0050` R3: every refusal of a busy unit names what holds it and since when."""
+
+    def test_describe_names_the_kind_the_stage_the_phase_and_the_time(self):
+        t = "2026-09-24T01:02:03+00:00"
+        cases = [
+            (steps.Mark("step", "spec", "preparing", t), "a spec step is being prepared since "),
+            (steps.Mark("step", "spec", "running", t), "a spec step is running since "),
+            (steps.Mark("integrate", started_at=t), "it is being integrated since "),
+            (steps.Mark("hold", started_at=t), "a hold is being recorded since "),
+        ]
+        for mark, said in cases:
+            with self.subTest(kind=mark.kind, phase=mark.phase):
+                text = steps.describe("0001_a", mark)
+                self.assertTrue(text.startswith("0001_a is busy: "), text)
+                self.assertIn(said + t, text)
+
+    def test_a_mark_starts_now_unless_told(self):
+        mark = steps.Mark("hold")
+        self.assertTrue(mark.started_at)
+        # Identity, not value: a release holding an equal mark must not free this one.
+        self.assertNotEqual(mark, steps.Mark("hold", started_at=mark.started_at))
 
 
 class Stopping(unittest.TestCase):
