@@ -1015,6 +1015,26 @@ class Service:
             details.append(f"could not read the pull request's head afterwards: {e}")
         reply = str(end.get("reply") or "")
         outcome = integrate.outcome_of_session(head_before, head_now, reply)
+        if outcome == "pushed":
+            # `0052` review round 2, F1: a head that moved is Gebo's push only if Gebo's tree
+            # ends on it. A GitHub rebase finishing late, which the lease then refused Gebo's
+            # push over, is not — the tree follows it as on the mechanical road.
+            try:
+                local_head, _ = await gitops.head_and_branch(tree)
+            except GitError as e:
+                local_head = ""
+                details.append(f"could not read the tree's HEAD afterwards: {e}")
+            if local_head != head_now:
+                outcome = "failed"
+                details.append(
+                    f"the pull request's head moved to {head_now[:7]}, but this session's tree is at "
+                    f"{local_head[:7] or 'an unread HEAD'}, so the push was not this session's"
+                )
+                try:
+                    await gitops.reset_branch_to(tree, branch, local_head, head_now)
+                    details.append(f"the local branch was moved to {head_now[:7]}")
+                except GitError as e:
+                    details.append(f"the local branch was not moved: {e}")
         try:
             journal.finished(
                 key, unit, "integrate", "done" if outcome in ("pushed", "needs-person") else "failed",

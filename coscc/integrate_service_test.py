@@ -362,6 +362,40 @@ class GeboThroughTheService(unittest.TestCase):
     async def _refused(self):
         return 1, "", "stand-in gh: refused"
 
+    def test_a_head_github_moved_under_the_session_is_not_gebos_push(self):
+        """`0052` review round 2, F1: GitHub's rebase lands after the one read, while Gebo
+        works. The lease refuses Gebo's push; the moved head is not counted as Gebo's, and
+        the tree follows it."""
+        scratch = Path(self._tmp.name) / "github-side"
+        pushed = {}
+
+        async def act(tree, gate):
+            self.rebase(tree)
+            (tree / "f.txt").write_text("main\nbranch\n", encoding="utf-8")
+            git(tree, "add", "f.txt")
+            git(tree, "-c", "core.editor=true", "rebase", "--continue")
+            subprocess.run(["git", "clone", "-q", "-b", BRANCH, str(self.remote), str(scratch)],
+                           check=True, capture_output=True)
+            commit(scratch, "rebased by GitHub, late\n", BRANCH)
+            push = subprocess.run(
+                ["git", "push", f"--force-with-lease={BRANCH}:{self.head_before}", "origin", BRANCH],
+                cwd=tree, capture_output=True, text=True)
+            pushed["code"] = push.returncode
+            return "rebased; kept both lines of f.txt"
+
+        with mock.patch.object(integrate, "_gh", self.mergeable_gh(self._refused)):
+            rec = self.integrate_with(act)
+        moved = self.remote_head()
+        self.assertNotEqual(pushed["code"], 0)
+        self.assertNotEqual(moved, self.head_before)
+        self.assertEqual((rec["mode"], rec["outcome"], rec["head_after"]), ("agent", "failed", ""))
+        self.assertIn("the push was not this session's", rec["detail"])
+        self.assertIn(f"the local branch was moved to {moved[:7]}", rec["detail"])
+        self.assertEqual(git(self.tree, "rev-parse", "HEAD"), moved)
+        self.assertEqual(len(self.records("integration")), 1)
+        ends = [r for r in self.records("end") if r.get("stage") == "integrate"]
+        self.assertEqual([e["outcome"] for e in ends], ["failed"])
+
     def test_a_refused_integration_leaves_no_entry(self):
         self.service._take(self.key, self.unit, "step", "spec").phase = "running"
         with self.assertRaises(Invalid):
