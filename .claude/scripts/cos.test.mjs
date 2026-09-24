@@ -10,6 +10,7 @@ import {
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
+  readAll,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -1340,4 +1341,69 @@ test('0047 R5: an outcome block changes nothing but outcome, for next and every 
   assert.equal(after.outcome.result, 'met')
   assert.equal(after.outcome.invalid, 1)
   assert.equal(after.json, before.json)
+})
+
+// --- 0003_one-idea-is-trapped-inside-one-unit: ideas live in `.cos/ideas/` ---------------
+
+const ideaRoot = (units = {}, ideas = {}) => {
+  const root = mkdtempSync(join(tmpdir(), 'cos-ideas-'))
+  const cos = join(root, '.cos')
+  mkdirSync(cos)
+  for (const [u, files] of Object.entries(units)) {
+    mkdirSync(join(cos, u))
+    for (const [f, text] of Object.entries(files)) writeFileSync(join(cos, u, f), text)
+  }
+  if (Object.keys(ideas).length) mkdirSync(join(cos, 'ideas'))
+  for (const [f, text] of Object.entries(ideas)) writeFileSync(join(cos, 'ideas', f), text)
+  return root
+}
+const statusJson = (root) => {
+  const out = cli('--root', root, 'status', '--json')
+  assert.equal(out.status, 0, out.stderr)
+  return JSON.parse(out.stdout)
+}
+const IDEA = (units = []) =>
+  `# Idea: x\nAuthor: the originator. Status: accepted.\n\n## In their own words\n\nx\n` +
+  (units.length ? `\n## Units\n\n${units.map((u) => `- ${u}\n`).join('')}` : '')
+
+test('0003 R6: readAll does not read ideas/ as a unit', () => {
+  const root = ideaRoot({ '0001_a': { 'intent.md': 'Type: feat. Status: draft.\n' } }, { '0001_x.md': IDEA() })
+  assert.deepEqual(readAll(join(root, '.cos')).map((u) => u.name), ['0001_a'])
+})
+
+test('0003 R6: the units array is the same with an ideas/ beside unrelated units', () => {
+  const units = {
+    '0001_a': { 'intent.md': 'Type: feat. Status: accepted.\n' },
+    '0002_b': { 'idea.md': '# Idea: b\nStatus: accepted.\n' },
+    '0003_c': {},
+  }
+  const without = statusJson(ideaRoot(units))
+  const withIdeas = statusJson(ideaRoot(units, { '0001_x.md': IDEA(), '0002_y.md': '# Idea: y\n' }))
+  assert.deepEqual(withIdeas.units, without.units)
+  assert.deepEqual(without.ideas, [])
+})
+
+test('0003 R5: an idea with no Status line, or a wrong name, is reported on the idea', () => {
+  const { ideas } = statusJson(ideaRoot({}, { '0001_x.md': '# Idea: x\n', 'notes.md': IDEA(), '0002_y.md': '# Idea\nStatus: done.\n' }))
+  const by = Object.fromEntries(ideas.map((i) => [i.name, i]))
+  assert.deepEqual(by['0001_x'].problems, ['carries no Status line'])
+  assert.deepEqual(by['notes'].problems, ['file name does not match NNNN_<slug>.md'])
+  assert.match(by['0002_y'].problems[0], /status "done"/)
+})
+
+test('0003 R5: an idea with no unit proposes the intent stage and nothing else', () => {
+  const { ideas } = statusJson(ideaRoot({}, { '0004_x.md': IDEA() }))
+  assert.deepEqual(ideas, [{
+    name: '0004_x', file: 'ideas/0004_x.md', status: 'accepted', units: [], problems: [], number: 4, slug: 'x',
+    next: { blocked: true, action: 'write-intent — open a unit from this idea', stage: 'intent' },
+  }])
+})
+
+test('0003 R6: the text table of a store with no idea is unchanged, and an idea adds a table', () => {
+  const units = { '0001_a': { 'intent.md': 'Type: feat. Status: accepted.\n' } }
+  const plain = cli('--root', ideaRoot(units), 'status').stdout
+  assert.ok(!plain.includes('| Idea |'))
+  const withIdea = cli('--root', ideaRoot(units, { '0001_x.md': IDEA() }), 'status').stdout
+  assert.ok(withIdea.startsWith(plain.trimEnd()), 'the unit table comes first, as it was')
+  assert.match(withIdea, /\| ideas\/0001_x\.md \| accepted \| write-intent — open a unit from this idea \|/)
 })

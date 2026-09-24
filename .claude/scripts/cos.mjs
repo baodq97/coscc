@@ -472,9 +472,72 @@ export function readUnit(dir, name) {
 export function readAll(cosDir = COS) {
   if (!existsSync(cosDir)) return []
   return readdirSync(cosDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
+    // `ideas/` is not a unit (`0003_one-idea-is-trapped-inside-one-unit` R6); `readIdeas`
+    // reads it.
+    .filter((e) => e.isDirectory() && e.name !== IDEAS_DIR)
     .map((e) => readUnit(join(cosDir, e.name), e.name))
     .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+// --- ideas -------------------------------------------------------------------
+
+// `0003_one-idea-is-trapped-inside-one-unit`. An idea is one file, `.cos/ideas/NNNN_<slug>.md`,
+// outside every unit, so that several units can come from it without a copy of its words
+// in each. It is a source, not a stage: no gate reads it and `STAGES` does not list it.
+// Its numbers are a sequence of their own, and a name is always written `ideas/<name>.md`
+// so `0001` of an idea is never read as `0001` of a unit.
+const IDEAS_DIR = 'ideas'
+const IDEA_STATUSES = ['draft', 'accepted', 'rejected']
+
+export function readIdeas(cosDir = COS) {
+  const dir = join(cosDir, IDEAS_DIR)
+  if (!existsSync(dir)) return []
+  return readdirSync(dir, { withFileTypes: true })
+    .map((e) => {
+      const name = e.name.endsWith('.md') ? e.name.slice(0, -3) : e.name
+      const idea = { name, file: `${IDEAS_DIR}/${e.name}`, status: null, units: [], listed: [], problems: [] }
+      const match = name.match(UNIT_RE)
+      if (!e.isFile() || !e.name.endsWith('.md') || !match) {
+        idea.problems.push(`file name does not match NNNN_<slug>.md`)
+        return idea
+      }
+      idea.number = Number(match[1])
+      idea.slug = match[2]
+      const text = readFileSync(join(dir, e.name), 'utf8')
+      idea.status = parseStatus(text)
+      if (idea.status === null) idea.problems.push(`carries no Status line`)
+      else if (!IDEA_STATUSES.includes(idea.status)) {
+        idea.problems.push(`has status "${idea.status}", not one of ${IDEA_STATUSES.join(', ')}`)
+      }
+      idea.listed = parseIdeaUnits(text)
+      return idea
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+// Every line `- <name>` under every `## Units` heading, in order. The app only ever appends
+// that section (`coscc/units.py`), so a second one may follow `## Answers`; all are read.
+export function parseIdeaUnits(text) {
+  const listed = []
+  let inUnits = false
+  for (const line of text.split(/\r?\n/)) {
+    if (line.startsWith('## ')) {
+      inUnits = line.trimEnd() === '## Units'
+      continue
+    }
+    if (!inUnits) continue
+    const m = line.match(/^- (\S+)\s*$/)
+    if (m && !listed.includes(m[1])) listed.push(m[1])
+  }
+  return listed
+}
+
+// An idea's answer to "what next". It has no gate and no stage of its own, so the only
+// thing it can propose is the first unit (`intent.md ## Answers, câu 1`); once it has one,
+// it lists them and proposes nothing (`spec.md ## Answers, câu 3`).
+export function ideaNext(idea) {
+  if (!idea.units.length) return { blocked: true, action: 'write-intent — open a unit from this idea', stage: 'intent' }
+  return { blocked: false, action: `units: ${idea.units.join(', ')}`, stage: '' }
 }
 
 // --- deciding ----------------------------------------------------------------
@@ -1044,27 +1107,40 @@ export function betweenPrAndShip(unit, limit = REVIEW_ROUNDS) {
 function cmdStatus(json, cosDir, limit) {
   const units = readAll(cosDir)
   const rows = units.map((u) => ({ ...u, next: nextAction(u, limit), betweenPrAndShip: betweenPrAndShip(u, limit) }))
+  const ideas = readIdeas(cosDir).map(({ listed, ...i }) => ({ ...i, next: ideaNext(i) }))
 
   if (json) {
     // The stage list ships with the data so a reader never has to keep its own copy of it.
-    console.log(JSON.stringify({ root: cosDir, stages: STAGES, units: rows }, null, 2))
+    console.log(JSON.stringify({ root: cosDir, stages: STAGES, units: rows, ideas }, null, 2))
     return 0
   }
 
-  if (!units.length) {
+  if (!units.length && !ideas.length) {
     console.log('No work units yet. `write-intent` opens one.')
     return 0
   }
 
-  console.log(`| Unit | ${STAGE_NAMES.join(' | ')} | Next action |`)
-  console.log(`|---|${STAGE_NAMES.map(() => '---').join('|')}|---|`)
-  for (const u of rows) {
-    const cells = STAGES.map((s) => cell(u, s.file)).join(' | ')
-    console.log(`| ${u.name} | ${cells} | ${u.next.action} |`)
+  if (units.length) {
+    console.log(`| Unit | ${STAGE_NAMES.join(' | ')} | Next action |`)
+    console.log(`|---|${STAGE_NAMES.map(() => '---').join('|')}|---|`)
+    for (const u of rows) {
+      const cells = STAGES.map((s) => cell(u, s.file)).join(' | ')
+      console.log(`| ${u.name} | ${cells} | ${u.next.action} |`)
+    }
+    console.log(`\nA accepted · d draft · c changes-requested · s skipped · D done · x rejected · ${dash} not started`)
   }
-  console.log(`\nA accepted · d draft · c changes-requested · s skipped · D done · x rejected · ${dash} not started`)
 
-  const problems = rows.flatMap((u) => u.problems.map((p) => `${u.name}: ${p}`))
+  // Printed only when there is an idea, so a store without `ideas/` prints what it always did.
+  if (ideas.length) {
+    console.log(`${units.length ? '\n' : ''}| Idea | status | Next action |`)
+    console.log('|---|---|---|')
+    for (const i of ideas) console.log(`| ${i.file} | ${i.status ?? dash} | ${i.next.action} |`)
+  }
+
+  const problems = [
+    ...rows.flatMap((u) => u.problems.map((p) => `${u.name}: ${p}`)),
+    ...ideas.flatMap((i) => i.problems.map((p) => `${i.file}: ${p}`)),
+  ]
   if (problems.length) {
     console.log('\nProblems (report these, do not infer past them):')
     for (const p of problems) console.log(`  - ${p}`)
