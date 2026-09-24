@@ -361,6 +361,11 @@ class Journal:
 
         attempt = None
         for i in range(last - 1, -1, -1):
+            # Only the attempt written by *this* run: an earlier run's `end` ends the
+            # search, so a run whose capture failed is described as having none, rather
+            # than with the tree of a run before it.
+            if seq[i].get("kind") == "end":
+                break
             if seq[i].get("kind") == "attempt":
                 attempt = seq[i]
                 break

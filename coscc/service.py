@@ -613,7 +613,7 @@ class Service:
         # spent — the same place `model` is resolved. `Runner` does not read the run log
         # itself; `build_prompt` only places what it is handed, the same as `base_note`.
         try:
-            found = journal.failed_attempts(key, unit, stage)
+            failed = journal.failed_attempts(key, unit, stage)
         except Busy as e:
             raise Invalid(str(e)) from e
         runner = Runner(self.sessions, journal)
@@ -633,7 +633,7 @@ class Service:
                 model_source=model_source,
                 base=base,
                 base_note=describe_base(base),
-                last_attempt=describe_attempt(found) if found else "",
+                last_attempt=describe_attempt(failed) if failed else "",
             ):
                 if item[0] == "done":
                     item = ("done", {**item[1], "base": base})

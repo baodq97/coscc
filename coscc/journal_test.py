@@ -201,6 +201,18 @@ class AFailedStepLeavesARecord(unittest.TestCase):
             self.assertIsNone(found["latest"]["turns"])
             self.assertIsNone(found["latest"]["cost_usd"])
 
+    def test_a_run_whose_capture_failed_is_not_described_by_an_older_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.attempted("w", "0009_x", "impl", head="old")
+            j.finished("w", "0009_x", "impl", "exhausted", turns=121, cost_usd=6.88)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "failed")  # no attempt row: capture failed
+            found = j.failed_attempts("w", "0009_x", "impl")
+            self.assertIsNone(found["attempt"])
+            self.assertEqual(len(found["earlier"]), 1)
+
     def test_timeline_with_no_attempt_row_still_has_no_kind_attempt(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
