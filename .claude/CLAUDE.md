@@ -76,7 +76,10 @@ The order per unit, and the reason it cannot be reordered:
    `impl` on the same branch; the `review` gate stays closed until every check is green.
 7. `review`: a separate agent session appends a round to `review.md`. Findings open means
    `changes-requested`, a fix on the branch, green CI again, and another round; after
-   `COS_REVIEW_ROUNDS` such rounds the gate says `needs a person`. A pass is `accepted`.
+   `COS_REVIEW_ROUNDS` such rounds the gate says `needs a person`. A round whose every
+   remaining finding the review confirmed needs a person ends `Verdict: needs-person`,
+   does not count toward that limit, and `next` offers nothing until each is answered.
+   A pass is `accepted`.
 8. `ship`: only once `cos.mjs gate <unit> ship` exits 0, `gh pr merge --squash --delete-branch`
    with `--match-head-commit` set to the head the gate names. Every push resets the required checks — including the commit recording the pass — so
    the merge may first be refused with `2 of 2 required status checks are expected`: wait.
@@ -112,9 +115,13 @@ a `review` gate that never opens.
   passes with nothing open. But the one saying it is a separate agent session, not a
   person, so `accepted` is still an agent's word about an agent's work. The chair is in
   front of the door now, and an agent sits in it — nobody who is not an agent approves
-  anything. The loop waits for a person in exactly one place: when `COS_REVIEW_ROUNDS`
-  rounds have asked for changes and findings are still open. Anyone copying this template
-  should make that trade on purpose rather than inherit it.
+  anything. The loop waits for a person in two places: when `COS_REVIEW_ROUNDS` rounds have
+  asked for changes and findings are still open; and, since `0028`, when a review round
+  ends `Verdict: needs-person` — every finding left is one `impl` listed under
+  `impl.md ## Needs a person` and the review accepted as needing one. That second stop is
+  an agent's claim confirmed by another agent, not proof that the finding could not be
+  fixed. Anyone copying this template should make that trade on purpose rather than
+  inherit it.
 - **Hooks.** Every gate is advisory: nothing forces a session to run `cos.mjs`, or to stop
   when it exits non-zero. A `PreToolUse` hook blocking `Write` while `plan.md` is `draft`
   would be one file. The same holds for the merge: in the app, the `pr` grant refuses the
@@ -132,6 +139,12 @@ a `review` gate that never opens.
   is a name the person typed, not an identity. No route has a login and the default bind
   is `0.0.0.0`, so anyone who can reach the port can answer under any name, and the next
   stage will read it as a person's decision.
+  One kind of answer is read by more than a prompt. Since `0028` a finding the last review
+  round marked `[needs-person]` is answered as `F<n>` into `review.md`, as a `### F<n>`
+  block: `cos.mjs next` reads it to offer `review` again once every such finding has one,
+  and the `ship` gate counts a finding that review then marks `[answered]` as closed only
+  when that block exists. So a block anyone who reaches the port can write, followed by
+  one agent's round, is part of what opens `ship`.
 - **A review comment is not an approval, and no gate reads it.** Since `0021` the app posts
   each round of `review.md` to the unit's pull request as one ordinary review comment —
   never `gh pr review` — under this machine's `gh` login, verbatim, first line saying an

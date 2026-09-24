@@ -28,6 +28,19 @@ stage runs again on the same branch. Fix what the review or CI named, commit, an
 this stage. Then record in `impl.md` which commit fixed which finding. The step after is
 `write-review` once CI is green — not `write-pr`, which already ran.
 
+**A finding this stage cannot close.** Some findings cannot be fixed with this stage's
+grant: a proof that spends real money, a command the grant does not hold (`gh`, a login),
+a measurement only a person can take. List each one under `## Needs a person`, one line
+each, exactly `- F<k>: <reason>`, `F<k>` being the finding's id in `review.md`. The reason
+names what the grant lacks or what would cost real money — not "hard", not "out of scope".
+`cos.mjs` reads only the id, and a line of any other shape is not read at all.
+
+This is a claim, not a verdict. When every open finding is claimed, `cos.mjs next` sends
+the unit to `review`, which accepts or rejects each claim; only an accepted one makes the
+loop wait for a person, and a rejected one comes back here. Listing a finding this stage
+could have fixed is using the section to get past the review — do not. Fix everything you
+can first; claim only what is left.
+
 ## Output
 
 One file, `impl.md`, in the unit's directory.
@@ -43,7 +56,14 @@ Intent: intent.md. Plan: plan.md. Author: <name>. Status: accepted.
 ## What was measured
 
 ## What is still open
+
+## Needs a person
+
+- F<k>: <what the grant lacks, or what costs real money>
 ```
+
+`## Needs a person` is present only on a run a review sent back, and only when a finding
+is left that this stage cannot close. Omit it otherwise.
 
 `Status` is `draft`, `accepted`, `rejected` or `done`.
 

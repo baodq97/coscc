@@ -74,7 +74,11 @@ no commands, one turn, no budget.
   hazard below. Opening a unit, finishing a step and
   pressing *Ask again* each ask `gh` in the workspace under this machine's login, up to
   60s; nothing re-asks on a timer, so a pending CI shows no button until someone asks.
-  An `impl` that commits and does not push leaves the button on `impl`.
+  An `impl` that commits and does not push leaves the button on `impl`. Since `0028` the
+  button offers nothing when `next` returns `waiting`: the last review round confirmed
+  those findings need a person, and the frame names them and links to *Questions* instead.
+  An `impl.md ## Needs a person` that claims every open finding sends the button to
+  `review`, not `impl`, even with no new commit — nothing but the review checks the claim.
 - **Two roots, and backing up one does not back up the other.** `COS_DATA_DIR` (default
   `~/.cos`) holds `cos.db`; `COS_WORKING_DIR` holds somebody else's git checkouts. A stored
   workspace is a *name*, never a path — the path is rebuilt from the root on every read,
@@ -125,7 +129,12 @@ no commands, one turn, no budget.
   file. No login, `0.0.0.0` by default: anyone on the network can put text there that a
   stage will read as a person's decision. The only trace is the file and an `outputs` row
   with `actor = human:<name>` — watch for a name nobody recognises. `COS_HOST=127.0.0.1`
-  is the mitigation that exists.
+  is the mitigation that exists. Since `0028` it also takes `question: "F<n>"` with
+  `artifact: "review.md"` for a finding `cos.mjs` lists in `personFindings`, and that block
+  does more than reach a prompt: `next` offers `review` once every such finding has one,
+  and the `ship` gate counts a finding the review then marks `[answered]` as closed only
+  when its block exists. A stranger's answer plus one agent's round is part of what opens
+  a merge.
 - **`POST /api/units/review-comment` writes to GitHub under this machine's `gh` login.**
   Since `0021` it posts a round of `review.md` to the unit's pull request, verbatim and
   unfiltered: a finding that quotes a token or a local path goes up with it, and a public
