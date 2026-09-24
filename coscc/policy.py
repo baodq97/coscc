@@ -63,6 +63,10 @@ class Grant:
     # reason given. Matched on the leading tokens of a segment, so it catches the plain
     # spelling and nothing cleverer — see `plan.md` Risk 5 of `0015`.
     denied: tuple[tuple[tuple[str, ...], str], ...] = ()
+    # `0035` R6: every `git push` must carry `--force-with-lease` bound to the head the pull
+    # request had when the step began, and name the unit's own branch. The lease itself is
+    # not in the grant — it is per run — and reaches `decide` as `lease`.
+    push_needs_lease: bool = False
 
     @property
     def opens_anything(self) -> bool:
@@ -133,6 +137,30 @@ SHIP_WARNING = (
     "login already on this machine. That login reaches every repository its account can "
     "reach. The gate has checked that the review passed with nothing open and that no code "
     "landed after it; nobody but an agent has read the change."
+)
+
+# `0035`: Gebo, the integration step. Not a stage — it runs outside the loop, on a unit
+# between `pr` and `ship`, only when a person presses the button — but keyed in the same
+# table so it starts from the locked position like everything else.
+#
+# `impl`'s commands, because resolving a conflict means running the repository's tests
+# before pushing, plus `gh` to read the pull request and its CI.
+INTEGRATE_COMMANDS = IMPL_COMMANDS + ("gh",)
+
+INTEGRATE_WARNING = (
+    "Integrating runs `git` and `gh` with the GitHub login already on this machine, and "
+    "force-pushes (with a lease) to this unit's branch. That login reaches every repository "
+    "its account can reach, not just this workspace. What it resolves is an agent's word, "
+    "not a person's approval."
+)
+
+# R6: rebase only. `git merge` and `git pull` would bring `main` in by merging, and
+# `gh pr update-branch` would move the head on GitHub's side under the lease the push is
+# bound to — the push has exactly one road.
+INTEGRATE_DENIED = MERGE_IS_SHIPS + (
+    (("git", "merge"), "integration is by rebase, never by merge"),
+    (("git", "pull"), "integration is by rebase, never by merge"),
+    (("gh", "pr", "update-branch"), "the head the push is leased to would move under it"),
 )
 
 # Only stages that appear here get anything. The rest — `idea`, `intent`, and any
@@ -239,6 +267,19 @@ GRANTS: dict[str, Grant] = {
         app_writes_artifact=False,
         warning=SHIP_WARNING,
     ),
+    # `0035`. Ceilings chosen, not measured: `spec.md ## Answers`, answer 1 — "start from
+    # impl's ceilings (120 turns, $8)", and lower them once real runs are recorded. No
+    # Gebo run existed when this was written.
+    "integrate": Grant(
+        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
+        commands=INTEGRATE_COMMANDS,
+        max_turns=120,
+        max_budget_usd=8.0,
+        app_writes_artifact=False,
+        warning=INTEGRATE_WARNING,
+        denied=INTEGRATE_DENIED,
+        push_needs_lease=True,
+    ),
 }
 
 
@@ -301,7 +342,49 @@ def _segments(command: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
-def check_command(grant: Grant, command: str) -> str:
+_FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+# Flags a leased push may carry besides the lease: they change what is printed or tracked,
+# never what is overwritten. Anything else is refused by name.
+_PUSH_HARMLESS = frozenset({"-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--porcelain"})
+_PUSH_WIDE = frozenset({"--all", "--mirror", "--tags", "--delete", "-d", "--prune", "--follow-tags"})
+
+
+def check_push(words: list[str], branch: str, lease_head: str) -> str:
+    """"" if `git push <words>` is the one push `0035` R6 allows, else why not.
+
+    `words` are the tokens after `push`. The one allowed shape is `origin <branch>` or
+    `origin HEAD:<branch>`, carrying exactly one `--force-with-lease=<branch>:<lease_head>`
+    with a full SHA. Pure: the branch and the head come from the app, never the session.
+    """
+    if not branch or not _FULL_SHA.match(lease_head or ""):
+        return "no lease was fixed for this step, so it may not push"
+    leases = []
+    positional = []
+    for token in words:
+        if token in ("--force", "-f") or (token.startswith("-") and not token.startswith("--") and "f" in token[1:]):
+            return "a push may not use --force: only --force-with-lease bound to the head this step began at"
+        if token == "--force-with-lease":
+            return "--force-with-lease needs a value: --force-with-lease=<branch>:<head this step began at>"
+        if token.startswith("--force-with-lease="):
+            leases.append(token.split("=", 1)[1])
+            continue
+        if token in _PUSH_WIDE:
+            return f"a push may not use {token}: it reaches more than this unit's branch"
+        if token.startswith("-"):
+            if token not in _PUSH_HARMLESS:
+                return f"a push may not use {token}"
+            continue
+        positional.append(token)
+    if len(leases) != 1:
+        return "a push must carry exactly one --force-with-lease=<branch>:<head this step began at>"
+    if leases[0] != f"{branch}:{lease_head}":
+        return f"the lease must be bound to {branch}:{lease_head}, the head this step began at"
+    if positional not in (["origin", branch], ["origin", f"HEAD:{branch}"]):
+        return f"a push may only name `origin {branch}` or `origin HEAD:{branch}`"
+    return ""
+
+
+def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = None) -> str:
     """"" if the command may run, else why not.
 
     **This is a best-effort reading of a shell command, and it is the weakest guard here.**
@@ -337,6 +420,16 @@ def check_command(grant: Grant, command: str) -> str:
         if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in words):
             # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
             return "this step may not call the merge endpoint: merging is the ship stage's"
+        if base == "git" and grant.push_needs_lease and "push" in words:
+            # `0035` R6. `push` must be the first word after `git`, so a `-C dir` or
+            # `-c k=v` in front cannot hide what it pushes.
+            raw = segment.split()[1:]
+            if not raw or raw[0] != "push":
+                return "a push must be spelled `git push …`, with nothing between"
+            branch, head = lease if lease else ("", "")
+            reason = check_push(raw[1:], branch, head)
+            if reason:
+                return reason
     return ""
 
 
@@ -382,6 +475,8 @@ def decide(
     tool_input: dict,
     workspace: str,
     unit_dir: str | None = None,
+    read_also: tuple[str, ...] = (),
+    lease: tuple[str, str] | None = None,
 ) -> str:
     """"" if this call may proceed, else the reason it may not.
 
@@ -405,13 +500,18 @@ def decide(
     granted no write tools at all, so the question never arises for them.
 
     Since `0020` the same two roots bound `Read`, `Glob` and `Grep` too — see below.
+
+    `0035`: `read_also` widens **reading only**, by an explicit list of paths the app built
+    from the data root (Gebo's own unit folder and the intent/spec/plan of the related
+    units). Writing keeps its roots. `lease` is `(branch, head)`, which a grant with
+    `push_needs_lease` binds every `git push` to.
     """
     if tool not in grant.tools:
         # Covers MCP tools by construction: their names are never in a grant.
         return f"this step was not granted {tool}"
 
     if tool in EXEC_TOOLS:
-        reason = check_command(grant, str(tool_input.get("command", "")))
+        reason = check_command(grant, str(tool_input.get("command", "")), lease)
         if reason:
             return reason
 
@@ -435,6 +535,13 @@ def decide(
         roots, reason = _roots(workspace, unit_dir)
         if reason:
             return reason
+        from pathlib import Path
+
+        for extra in read_also:
+            try:
+                roots.append(Path(extra).expanduser().resolve())
+            except OSError:
+                return "a path this step may read could not be resolved"
         for raw in _read_paths_in(tool, tool_input):
             if raw is _TRAVERSAL:
                 return (
