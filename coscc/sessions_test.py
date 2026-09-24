@@ -406,6 +406,48 @@ class _CountingClient(_FakeClient):
         self.disconnects += 1
 
 
+class _Transport:
+    def __init__(self):
+        self.closes = 0
+
+    async def close(self):
+        self.closes += 1
+
+
+class _StartingClient(_CountingClient):
+    """Shaped like the SDK's own around `connect`: the transport (the CLI process) exists
+    from the start of `connect`, the control protocol only once it returns, and
+    `disconnect` closes nothing without the latter -- it only drops the transport."""
+
+    made: list = []
+    spawned: asyncio.Event
+    go: asyncio.Event
+
+    def __init__(self, options=None):
+        self.transport = _Transport()
+        self._transport = None
+        self._query = None
+        self.closed_connected = 0
+        self.queries = 0
+        _StartingClient.made.append(self)
+
+    async def connect(self):
+        self._transport = self.transport
+        _StartingClient.spawned.set()
+        await _StartingClient.go.wait()
+        self._query = object()
+
+    async def query(self, text):
+        self.queries += 1
+
+    async def disconnect(self):
+        if self._query is not None:
+            self.closed_connected += 1
+            await self._transport.close()
+            self._query = None
+        self._transport = None
+
+
 class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
     """`0034`. A board step's client is closed however the step ends, exactly once, and
     never kept in `_live` for resuming. Chat's clients still are."""
@@ -415,6 +457,9 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
         _CountingClient.hold = None
         _CountingClient.fail = False
         _CountingClient.messages = [_assistant("a", "sid-s"), _result("sid-s")]
+        _StartingClient.made = []
+        _StartingClient.spawned = asyncio.Event()
+        _StartingClient.go = asyncio.Event()
         patcher = mock.patch("coscc.sessions.ClaudeSDKClient", _CountingClient)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -479,6 +524,40 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
                 pass
         [client] = _CountingClient.made
         self.assertEqual(client.disconnects, 1)
+
+    async def test_a_stop_while_the_cli_starts_still_closes_it_once_connected(self):
+        """Review round 1, F1: a `disconnect` during `connect` is empty in the SDK, so a
+        Stop there must not count as the close."""
+        h = sessions.StepHandle()
+        with mock.patch("coscc.sessions.ClaudeSDKClient", _StartingClient):
+            task = asyncio.create_task(self._drain(h))
+            await _StartingClient.spawned.wait()
+            await h.close()
+            _StartingClient.go.set()
+            with self.assertRaises(Refused):
+                await task
+        [client] = _StartingClient.made
+        self.assertEqual(client.closed_connected, 1)
+        self.assertEqual(client.queries, 0)
+        self.assertEqual(self.s._steps, set())
+
+    async def test_a_cancel_while_the_cli_starts_closes_what_was_spawned(self):
+        h = sessions.StepHandle()
+        with mock.patch("coscc.sessions.ClaudeSDKClient", _StartingClient):
+            task = asyncio.create_task(self._drain(h))
+            await _StartingClient.spawned.wait()
+            await h.close()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        [client] = _StartingClient.made
+        self.assertEqual(client.transport.closes, 1)
+        self.assertEqual(client.queries, 0)
+        self.assertEqual(self.s._steps, set())
+
+    async def _drain(self, h):
+        async for _ in self.s.stream("/tmp", "hi", step=h):
+            pass
 
     async def test_chat_still_keeps_its_client_for_resuming(self):
         [_ async for _ in self.s.stream("/tmp", "hi")]

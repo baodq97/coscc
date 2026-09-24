@@ -231,8 +231,9 @@ class StepHandle:
     is never resumed, so it has no reason to stay: `stream(step=...)` closes it however
     the step ends, and `Service.stop_step` closes it early.
 
-    `close` may be called before the client exists; `stream` then closes the client the
-    moment it connects and never sends the prompt.
+    `close` may be called before the client exists -- `client` is set only once `connect`
+    has returned; `stream` then closes the client the moment it connects and never sends
+    the prompt.
     """
 
     cwd: str = ""
@@ -248,6 +249,28 @@ class StepHandle:
         try:
             await asyncio.wait_for(self.client.disconnect(), DISCONNECT_TIMEOUT)
         except Exception:  # noqa: BLE001 - closing is best-effort; the step's end must not wait on it
+            pass
+
+
+async def _abandon(client: Any) -> None:
+    """Close a client whose `connect` did not finish.
+
+    The SDK's `disconnect` closes only a client that got as far as its control protocol;
+    one stopped inside the transport's own `connect` may already have spawned the CLI, and
+    `disconnect` would drop that transport without closing it. So the transport is taken
+    first and closed here when `disconnect` could not reach it. `_transport` and `_query`
+    are the SDK's private names; `getattr` keeps a client without them (a stand-in) working.
+    """
+    transport = getattr(client, "_transport", None)
+    reached = getattr(client, "_query", None) is not None
+    try:
+        await asyncio.wait_for(client.disconnect(), DISCONNECT_TIMEOUT)
+    except Exception:  # noqa: BLE001 - best-effort, as in `StepHandle.close`
+        pass
+    if transport is not None and not reached:
+        try:
+            await asyncio.wait_for(transport.close(), DISCONNECT_TIMEOUT)
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -520,11 +543,20 @@ class Sessions:
                         effort=effort,
                     )
                 )
-                if step is not None:
-                    # Before `connect`, so a step cancelled while its CLI is starting still
-                    # has the client to close in `stream`'s `finally`.
+                if step is None:
+                    await client.connect()
+                else:
+                    try:
+                        await client.connect()
+                    except BaseException:
+                        # A cancel or a failure while the CLI was starting. The handle
+                        # has no client yet, so nothing else will close what `connect`
+                        # got as far as spawning (`0034` review round 1, F1).
+                        await _abandon(client)
+                        raise
+                    # Only now: `disconnect` during `connect` closes nothing and drops the
+                    # transport, so a Stop before this point only marks the handle closed.
                     step.client = client
-                await client.connect()
                 live = Live(client=client, session_id=session_id or "", cwd=cwd)
         if step is not None and step.closed:
             raise Refused("the step was stopped before its prompt was sent")
