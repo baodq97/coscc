@@ -580,6 +580,20 @@ async def log_range(
     return commits
 
 
+async def diff_names(path: Path, a: str, b: str, timeout: float = BRANCH_TIMEOUT) -> list[str]:
+    """`git diff a..b --name-only`, verbatim — the command `0042`'s intent checks with.
+
+    No `-z`, `--no-renames` or `core.quotePath`: the check and the computation must print
+    the same list, quoting and renames included (`0042` plan, Risk 6).
+    """
+    _require_repo(path)
+    for sha in (a, b):
+        if not _SHA_RE.fullmatch(sha or ""):
+            raise GitError(f"a full commit SHA is required, not {sha!r}")
+    out = await _run(["git", "-C", str(path), "diff", f"{a}..{b}", "--name-only"], timeout)
+    return out.splitlines()
+
+
 async def status_porcelain(path: Path, timeout: float = BRANCH_TIMEOUT) -> list[str]:
     """`git status --porcelain`, each line verbatim — the leading space of a line like
     `" M a.txt"` matters, so this is one of the two callers that ask `_run` not to strip.
