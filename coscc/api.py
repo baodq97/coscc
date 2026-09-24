@@ -161,9 +161,11 @@ def build(config: Config | None = None) -> FastAPI:
     async def create_unit(request: Request) -> Any:
         """`0014` R1. Start a work unit. The first route that makes something.
 
-        `brief` is the originator's own words and becomes the unit's `idea.md`, which is
-        what the intent step reads. `write-intent` invariant 1 asks for exactly that, and
-        until now there was no way to give it to the app at all.
+        `brief` is the originator's own words and becomes an idea file,
+        `.cos/ideas/NNNN_<slug>.md`, which the intent step reads. `write-intent` invariant 1
+        asks for exactly that. `idea` instead names an idea that exists and opens one more
+        unit from it (`0003_one-idea-is-trapped-inside-one-unit` R9); both at once is 400.
+        No login: anyone who reaches the port can list a unit under any idea.
         """
         try:
             body = await request.json()
@@ -176,6 +178,7 @@ def build(config: Config | None = None) -> FastAPI:
                 str(body.get("cwd") or ""),
                 str(body.get("slug") or ""),
                 str(body.get("brief") or ""),
+                str(body.get("idea") or ""),
             )
         except Invalid as e:
             return _bad(str(e))

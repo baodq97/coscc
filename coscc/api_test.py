@@ -837,8 +837,36 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         )
         body = made.json()
         self.assertTrue(body["brief"])
-        text = (Path(body["path"]) / "idea.md").read_text(encoding="utf-8")
-        self.assertIn("Nút Run im lặng.", text)
+        # Since `0003_one-idea-is-trapped-inside-one-unit` the brief is an idea of its own,
+        # beside the unit rather than inside it (R1, R8).
+        self.assertFalse((Path(body["path"]) / "idea.md").exists())
+        idea = Path(body["path"]).parent / "ideas" / f"{body['idea']}.md"
+        self.assertIn("Nút Run im lặng.", idea.read_text(encoding="utf-8"))
+
+    async def test_a_second_unit_is_opened_from_an_idea(self):
+        first = (await self.client.post(
+            "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
+        )).json()
+        got = await self.client.post(
+            "/api/units", json={"cwd": self.cwd, "slug": "b-problem", "idea": first["idea"]}
+        )
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(got.json()["idea"], first["idea"])
+
+    async def test_a_brief_with_an_idea_or_an_idea_that_is_not_there_is_400(self):
+        first = (await self.client.post(
+            "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
+        )).json()
+        for body in (
+            {"slug": "b", "brief": "y", "idea": first["idea"]},
+            {"slug": "b", "idea": "0042_nothing"},
+            {"slug": "b", "idea": "../../etc"},
+        ):
+            with self.subTest(body):
+                got = await self.client.post("/api/units", json={"cwd": self.cwd, **body})
+                self.assertEqual(got.status_code, 400, got.text)
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        self.assertEqual(board["count"], 1)
 
     async def test_a_directory_outside_the_list_is_refused_with_400(self):
         for call in (
