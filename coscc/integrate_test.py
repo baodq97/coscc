@@ -86,6 +86,14 @@ class Warnings(unittest.TestCase):
         self.assertIn("offers review", ig.warnings([{"verdict": "changes-requested"}], "changes-requested", False, "W")[0])
         self.assertEqual(ig.warnings([], "", True, "W"), ["W"])
 
+    def test_a_passed_unit_is_told_what_integrating_costs(self):
+        # `0061` R11.1: the four things the warning must say.
+        said = ig.warnings([{"verdict": "pass"}], "accepted", False, "W")[0]
+        self.assertIn("rewrites the reviewed commit", said)
+        self.assertIn("another review round is needed — it does not count toward COS_REVIEW_ROUNDS, but it is another paid session", said)
+        self.assertIn("Run ship first", said)
+        self.assertIn("only when GitHub reports a conflict or refuses the merge because the branch is behind main", said)
+
 
 class Related(unittest.TestCase):
     UNITS = [{"name": "0030_a", "pr": {"number": 41}}, {"name": "0035_x", "pr": {"number": 50}},
