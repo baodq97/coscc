@@ -79,5 +79,59 @@ class TheVersionAnswer(unittest.TestCase):
             run.main(["--verison"])
         self.assertEqual(caught.exception.code, 2)
 
+
+class TheServerIsHeld(unittest.TestCase):
+    """`0068` plan step 5. `main` keeps its own `uvicorn.Server`, registers it for the
+    updater, and after `run()` returns installs only when a hand-off was left."""
+
+    def main_with(self, on_run):
+        import contextlib
+        import io
+        from unittest import mock
+
+        from coscc import update
+
+        class FakeServer:
+            def __init__(self, config):
+                self.config = config
+                self.should_exit = False
+
+            def run(self):
+                on_run(self)
+
+        finished = []
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch("uvicorn.Server", FakeServer))
+            stack.enter_context(mock.patch("uvicorn.Config", lambda *a, **k: (a, k)))
+            stack.enter_context(mock.patch.object(run.frontend, "is_packaged", lambda: False))
+            stack.enter_context(mock.patch.object(run, "_refuse_a_bundle_that_does_not_match_the_source", lambda *a: None))
+            stack.enter_context(mock.patch.object(update, "finish", lambda h: finished.append(h) or 75))
+            stack.enter_context(mock.patch.dict("os.environ", {}, clear=False))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            try:
+                run.main([])
+                code = None
+            except SystemExit as e:
+                code = e.code
+            finally:
+                update.SERVER.server = None
+        return code, finished
+
+    def test_no_hand_off_means_main_just_returns(self):
+        code, finished = self.main_with(lambda server: None)
+        self.assertEqual((code, finished), (None, []))
+
+    def test_a_hand_off_installs_once_and_exits_75(self):
+        from coscc import update
+
+        def asked_to_stop(server):
+            self.assertIs(update.SERVER.server, server)
+            update.SERVER.hand_off("the hand-off")  # type: ignore[arg-type]
+
+        code, finished = self.main_with(asked_to_stop)
+        self.assertEqual((code, finished), (75, ["the hand-off"]))
+        self.assertIsNone(update.take_handoff())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -41,6 +41,9 @@ from pathlib import Path
 # Reflex, so it cannot disturb the ordering the two environment variables depend on.
 from coscc import frontend
 
+# The same: standard library only (`coscc/update.py`'s docstring says why it must be).
+from coscc import update
+
 MOUNT_FLAG = "__REFLEX_MOUNT_FRONTEND_COMPILED_APP"
 
 REPO = Path(__file__).resolve().parent.parent
@@ -76,13 +79,23 @@ def main(argv: list[str] | None = None) -> None:
 
     for line in banner(config):
         print(line)
-    uvicorn.run(
+    # `0068` R12 step 7: the app keeps its own `Server`, because `uvicorn.run` does not
+    # hand it out and the updater has to ask it to stop from inside. Measured in
+    # `spike.md ## U5` part 1: `run()` returns 0.119 s after `should_exit` is set.
+    server = uvicorn.Server(uvicorn.Config(
         "coscc.coscc:app",
         factory=True,
         host=config.host,
         port=config.port,
         log_level="warning",
-    )
+    ))
+    update.SERVER.register(server)
+    server.run()
+    # A hand-off exists only when the updater asked the server to stop. SIGTERM never gets
+    # here: the process dies with 143 first (`spike.md ## U5`, the `sigterm` control).
+    handoff = update.take_handoff()
+    if handoff is not None:
+        raise SystemExit(update.finish(handoff))
 
 
 def installed_version() -> str:
