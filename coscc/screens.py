@@ -204,12 +204,19 @@ def _status_bar() -> rx.Component:
     )
 
 
-def _banners() -> rx.Component:
+def _banners(where: str = "page") -> rx.Component:
+    """The one `notice` and one `error`, drawn where `where` says.
+
+    `0071` R7, R8: drawn twice — at the top of the page (`page-*`, which the older proofs
+    read) and at the top of the unit dialog (`detail-*`), which covers the page's copy.
+    Both read the same two fields and dismiss through the same handler, so they cannot
+    disagree.
+    """
     return rx.vstack(
         rx.cond(
             P.error != "",
             rx.callout(P.error, icon="triangle_alert", color_scheme="red", variant="surface",
-                       width="100%", role="alert", id="page-error"),
+                       width="100%", role="alert", id=f"{where}-error"),
         ),
         rx.cond(
             P.notice != "",
@@ -218,11 +225,12 @@ def _banners() -> rx.Component:
                 rx.text(P.notice, size="2"), rx.spacer(),
                 s.icon_button("x", "Dismiss message", on_click=P.dismiss_notice),
                 padding="12px 16px", background=rx.color("iris", 3), border_radius="10px",
-                role="status", align="center", width="100%", id="page-notice",
+                role="status", align="center", width="100%", id=f"{where}-notice",
             ),
         ),
         spacing="3", width="100%",
-        margin_bottom=rx.cond((P.error != "") | (P.notice != ""), "20px", "0"),
+        margin_bottom=rx.cond((P.error != "") | (P.notice != ""),
+                              "20px" if where == "page" else "0", "0"),
     )
 
 
@@ -1320,7 +1328,7 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
         ),
         rx.button(
             rx.icon("send", size=14), "Send this answer",
-            on_click=P.answer_question(q.key), loading=P.answering,
+            on_click=P.answer_question(q.key), loading=P.answering_key == q.key,
             size="1", margin_top="8px", id="answer-" + q.key,
         ),
         width="100%",
@@ -1588,6 +1596,14 @@ def _comments_tab() -> rx.Component:
 def _detail_dialog() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
+            # `0071` R2, R7. Sticky at the top of the content, which is what scrolls here
+            # (`overflow_y` below), so a message is in view however far down the tab is.
+            rx.box(
+                _banners("detail"),
+                position="sticky", top="0", z_index="2", background=s.CANVAS,
+                padding=rx.cond((P.error != "") | (P.notice != ""), "12px 28px 12px", "0"),
+                id="detail-messages",
+            ),
             rx.box(
                 rx.hstack(
                     s.text(P.current_unit.id, size="1",

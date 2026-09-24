@@ -768,5 +768,202 @@ class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
         self.assertEqual(refuse.args, ("/w", "0001_x", "đạt", "agent", "", "", "", "Phong"))
 
 
+class AnsweringAlwaysSaysSomething(unittest.TestCase):
+    """`0071` R1, R3–R6, R9. Every press of *Send this answer* ends in a block written or a
+    reason shown; none ends in nothing. The handler runs in process on a stand-in page, as
+    `TheOutcomeIsCopiedFromTheService` does."""
+
+    def page(self, **over):
+        from types import SimpleNamespace
+
+        from coscc import state
+
+        async def loaded():
+            page.reloaded = True
+
+        page = SimpleNamespace(
+            cwd="/w", unit_id="0001_x", answer_target="intent.md#1", answer_text="yes",
+            answer_by="Phong", answering_key="", notice="old notice", error="old error",
+            reloaded=False, _load_board=loaded, _load_artifact=lambda: None,
+        )
+        page._fail = lambda e: state.StudioState._fail(page, e)
+        for k, v in over.items():
+            setattr(page, k, v)
+        return page
+
+    def press(self, page, key, answer):
+        """Run the handler to its end with `answer` standing in for `Service.answer`.
+        Returns what `answering_key` was at each `yield`."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+
+        seen = []
+
+        async def drive():
+            async for _ in state.StudioState.answer_question.fn(page, key):
+                seen.append(page.answering_key)
+
+        with mock.patch.object(state, "SERVICE", SimpleNamespace(answer=answer)):
+            asyncio.run(drive())
+        return seen
+
+    @staticmethod
+    def never():
+        async def answer(*args):
+            raise AssertionError("a press with nothing to send must not reach the service")
+        return answer
+
+    @staticmethod
+    def wrote(question="1", artifact="intent.md"):
+        async def answer(*args):
+            answer.args = args
+            return {"question": question, "artifact": artifact, "answered_by": "Phong"}
+        return answer
+
+    def test_text_in_another_questions_box_is_named_and_kept(self):
+        page = self.page()
+        self.press(page, "intent.md#2", self.never())
+        self.assertIn("question 2 of intent.md", page.error)
+        self.assertIn("question 1 of intent.md", page.error)
+        self.assertEqual((page.answer_target, page.answer_text), ("intent.md#1", "yes"))
+        self.assertEqual(page.notice, "old notice")
+        self.assertEqual(page.answering_key, "")
+
+    def test_an_empty_box_names_the_button_pressed(self):
+        page = self.page(answer_target="", answer_text="")
+        self.press(page, "review.md#F2", self.never())
+        self.assertIn("finding F2 of review.md", page.error)
+        self.assertIn("empty", page.error)
+        self.assertEqual(page.notice, "old notice")
+
+    def test_a_second_press_queued_behind_the_first_keeps_what_the_first_wrote(self):
+        """Review round 1, F1: a double click whose second press reaches the queue before
+        the loading state reaches the browser runs after the first, on an emptied box."""
+        page = self.page()
+        self.press(page, "intent.md#1", self.wrote())
+        self.press(page, "intent.md#1", self.never())
+        self.assertTrue(page.notice.startswith("Answered question 1 of intent.md as Phong."),
+                        page.notice)
+        self.assertIn("Nothing was sent", page.error)
+        self.assertEqual(page.answering_key, "")
+
+    def test_a_refusal_is_shown_verbatim_and_the_text_is_kept(self):
+        from coscc.service import Invalid
+
+        async def refuse(*args):
+            raise Invalid("say who is answering, on one line")
+
+        async def never_reload():
+            raise AssertionError("a refused answer must not reload the board")
+
+        page = self.page(answer_by="", _load_board=never_reload)
+        self.press(page, "intent.md#1", refuse)
+        self.assertEqual(page.error, "say who is answering, on one line")
+        self.assertEqual((page.answer_target, page.answer_text, page.answer_by),
+                         ("intent.md#1", "yes", ""))
+        self.assertEqual(page.notice, "")
+        self.assertEqual(page.answering_key, "")
+
+    def test_an_unexpected_failure_says_it_is_not_known_whether_it_was_written(self):
+        async def broken(*args):
+            raise RuntimeError("disk")
+
+        page = self.page()
+        self.press(page, "intent.md#1", broken)
+        for part in ("RuntimeError", "disk", "intent.md", "not known whether"):
+            self.assertIn(part, page.error)
+        self.assertNotIn("Nothing was written", page.error)
+        self.assertEqual(page.answer_text, "yes")
+        self.assertEqual(page.answering_key, "")
+
+    def test_a_written_answer_is_reported_even_when_the_reload_fails(self):
+        async def broken_reload():
+            raise RuntimeError("board unreadable")
+
+        page = self.page(_load_board=broken_reload)
+        self.press(page, "intent.md#1", self.wrote())
+        self.assertTrue(page.notice.startswith("Answered question 1 of intent.md as Phong."),
+                        page.notice)
+        self.assertIn("board unreadable", page.notice + page.error)
+        self.assertEqual((page.answer_target, page.answer_text), ("", ""))
+
+    def test_a_finding_is_answered_like_a_question(self):
+        answer = self.wrote("F2", "review.md")
+        page = self.page(answer_target="review.md#F2")
+        self.press(page, "review.md#F2", answer)
+        self.assertIn("Answered finding F2 of review.md", page.notice)
+        self.assertEqual(page.error, "")
+        self.assertEqual(answer.args, ("/w", "0001_x", "review.md", "F2", "yes", "Phong"))
+        self.assertEqual((page.answer_target, page.answer_text), ("", ""))
+        self.assertTrue(page.reloaded)
+
+    def test_the_sending_key_reaches_the_browser_before_the_service_is_called(self):
+        async def answer(*args):
+            answer.called_with_key = page.answering_key
+            return {"question": "1", "artifact": "intent.md", "answered_by": "Phong"}
+
+        page = self.page()
+        seen = self.press(page, "intent.md#1", answer)
+        self.assertEqual(seen[:1], ["intent.md#1"])
+        self.assertEqual(answer.called_with_key, "intent.md#1")
+        self.assertEqual(page.answering_key, "")
+
+    def test_the_first_yield_comes_before_the_service_is_called(self):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+
+        page = self.page()
+        answer = self.wrote()
+        answer.args = None
+
+        async def first_step():
+            gen = state.StudioState.answer_question.fn(page, "intent.md#1")
+            await gen.__anext__()
+            at_yield = (page.answering_key, answer.args)
+            await gen.aclose()
+            return at_yield
+
+        with mock.patch.object(state, "SERVICE", SimpleNamespace(answer=answer)):
+            self.assertEqual(asyncio.run(first_step()), ("intent.md#1", None))
+
+    def test_opening_a_unit_clears_the_last_notice(self):
+        from types import SimpleNamespace
+
+        from coscc import state
+
+        page = SimpleNamespace(
+            unit_id="0001_x", detail_tab="questions", run_log="x", error="e", notice="old",
+            _load_timeline=lambda: None, _load_artifact=lambda: None,
+        )
+        state.StudioState.open_unit.fn(page, "0002_y")
+        self.assertEqual((page.unit_id, page.notice, page.error), ("0002_y", "", ""))
+
+
+class TheDialogDrawsTheMessagesToo(unittest.TestCase):
+    """`0071` R2, R7, R8, by structure only. Whether the dialog's copy is really in view is
+    `scripts/verify_0071.py`'s to measure; this only keeps both copies from disappearing."""
+
+    def test_the_dialog_carries_its_own_sticky_copy(self):
+        from coscc import screens
+
+        drawn = str(screens._detail_dialog())
+        for part in ("detail-messages", "detail-notice", "detail-error", "sticky"):
+            self.assertIn(part, drawn)
+
+    def test_the_page_keeps_the_ids_older_proofs_read(self):
+        from coscc import screens
+
+        drawn = str(screens._banners())
+        self.assertIn("page-notice", drawn)
+        self.assertIn("page-error", drawn)
+        self.assertNotIn("detail-", drawn)
+
+
 if __name__ == "__main__":
     unittest.main()
