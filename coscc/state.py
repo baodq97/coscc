@@ -1168,6 +1168,12 @@ class StudioState(rx.State):
         self.cwd = path
         self.unit_id, self.session_id = "", ""
         self.query, self.error = "", ""
+        # The last read answered for the workspace just left; a unit of the same name here
+        # must not show its session (`0051` review round 1, F1).
+        try:
+            self._running_read = SERVICE.running(path)
+        except Invalid:
+            self._running_read = {}
         yield
         await self._load_board()
         self._load_sessions()

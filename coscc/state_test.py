@@ -520,6 +520,59 @@ class OneLoopPerTab(unittest.TestCase):
         self.assertFalse(after_close)
 
 
+class ChangingWorkspaceForgetsTheOldRead(unittest.TestCase):
+    """Review round 1, F1: a unit named as one running in the workspace just left must not
+    show that session in the one chosen, not even until the loop's next ask."""
+
+    def test_same_unit_name_in_another_workspace_shows_nothing(self):
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        token = "state-test-switch"
+        running_in = {"/a": {"running": {"0009_x": [{"kind": "step", "stage": "impl",
+                                                     "agent": {"glyph": "ᚢ", "name": "Uruz"},
+                                                     "started": "2026-09-24T01:00:00+00:00",
+                                                     "turns": None, "cost_usd": None}]},
+                             "unknown_end": {}},
+                      "/b": {"running": {}, "unknown_end": {}}}
+        board = {"stages": [], "recording": True, "units": [
+            {"name": "0009_x", "stages": [], "phase": "impl", "next": "", "blocked": True, "problems": []},
+        ]}
+
+        async def branch_here(cwd):
+            return {"branch": "main"}
+
+        async def read_board(cwd):
+            return board
+
+        async def go():
+            manager, processor, fire = _processor(token)
+            async with processor:
+                async with manager.modify_state(_key(token)) as root:
+                    studio = await root.get_state(page.StudioState)
+                    studio.workspaces = [page.Workspace(id="/a"), page.Workspace(id="/b")]
+                    studio.cwd = "/a"
+                    studio.screen = "sessions"  # no loop: only `choose_workspace` reads
+                    studio._running_read = running_in["/a"]
+                await fire("choose_workspace", path="/b")
+                async with manager.modify_state(_key(token)) as root:
+                    studio = await root.get_state(page.StudioState)
+                    return [(u.id, len(u.live)) for u in studio.units]
+
+        with (
+            mock.patch.object(page.SERVICE, "running", lambda cwd: running_in[cwd]),
+            mock.patch.object(page.SERVICE, "branch_here", branch_here),
+            mock.patch.object(page.SERVICE, "board", read_board),
+            mock.patch.object(page.SERVICE, "sessions_for", lambda cwd, limit: {"sessions": []}),
+            mock.patch.object(page.SERVICE, "activity_and_usage",
+                              mock.Mock(side_effect=page.Invalid("not here"))),
+        ):
+            cards = asyncio.run(go())
+        self.assertEqual(cards, [("0009_x", 0)])
+
+
 def _key(token: str):
     from reflex.istate.manager.token import BaseStateToken
     from reflex.state import State
