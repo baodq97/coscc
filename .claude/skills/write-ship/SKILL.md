@@ -21,7 +21,8 @@ merge waits for a review round that passed.
 node .claude/scripts/cos.mjs gate <NNNN_slug> ship
 ```
 
-Exit 0 means the last review round passed, no finding is open or was dropped, the rounds
+Exit 0 means the last review round passed, no finding that blocks is open, none was
+dropped, the rounds
 are numbered without a gap, and nothing outside `.cos/<unit>/` reached the branch — local,
 `origin`, or the pull request's head as GitHub reports it — after the reviewed commit.
 Exit 1 means do not merge: fix what it names. If it says code landed after the pass, that
@@ -81,18 +82,25 @@ Review: review.md. Author: <name>. Status: accepted.
 
 1. **`## What went out` names the merge commit on `main`** as `gh pr view <url> --json
    mergeCommit,mergedAt` reported it.
-2. **`## Did the outcome hold` answers `intent.md`'s outcome directly**, in its own terms,
+2. **`## What went out` lists what went out unfixed.** Since `0061` an `[open]` finding the
+   review rated `low` does not block the merge; it goes out with it. Under the words
+   "không chặn", list each one — id, location and what — or write "không có". Take the
+   list from the unit's `nonBlocking` field in
+   `node .claude/scripts/cos.mjs status --json`, with the same `--root` you gave the gate;
+   do not read `review.md` and decide for yourself which findings qualify. No new unit is
+   opened for them.
+3. **`## Did the outcome hold` answers `intent.md`'s outcome directly**, in its own terms,
    with the number it named. This is the only place the unit is judged against what it
    promised, so answering "yes" without restating the measurement is not answering.
-3. **An outcome that came back false is recorded as false.** The intent was written so it
+4. **An outcome that came back false is recorded as false.** The intent was written so it
    could fail; a unit that quietly reinterprets its outcome to pass has removed the only
    check it had.
-4. **`## How it is watched` names a command or a signal, not an intention.** "We will keep
+5. **`## How it is watched` names a command or a signal, not an intention.** "We will keep
    an eye on it" is not watching.
-5. **`## What to do if it breaks` names the way back.** For this repository that is usually
+6. **`## What to do if it breaks` names the way back.** For this repository that is usually
    a commit to revert; name it.
-6. Every figure names its source or is marked unverifiable.
-7. Set `plan.md` to `done` only after this file is accepted — `nextAction` treats a `done`
+7. Every figure names its source or is marked unverifiable.
+8. Set `plan.md` to `done` only after this file is accepted — `nextAction` treats a `done`
    plan as terminal, and setting it early hides the stages that have not run.
 
 ## Done when
