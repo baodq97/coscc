@@ -12,6 +12,14 @@ was actually noticed rather than against what the intent wanted to be true.
 It is the only optional stage. A unit may open straight at `intent.md`, and eight units in
 this repository did — `.claude/scripts/cos.mjs` never asks for an idea and never will.
 
+**An idea is no longer inside a unit.** Since `0003_one-idea-is-trapped-inside-one-unit` a
+new idea is one file, `.cos/ideas/NNNN_<slug>.md`, numbered by `cos.mjs new-idea <slug>`,
+so that several units can come from it without a copy of its words in each. The format
+below is the same. The app lists each unit opened from it under a `## Units` section it
+appends; each unit's `intent.md` names it with `Idea:`. This stage still writes `idea.md`
+into a unit that has no idea linked — the units written before `0003` — and the app
+refuses to run it on one that has.
+
 ## Output
 
 One file, `idea.md`, in the unit's directory.

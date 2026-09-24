@@ -52,7 +52,7 @@ for the name, then cut the branch, and commit nothing before that branch exists.
 
 ````markdown
 # Intent: <title>
-Author: <name>. Type: <type>. Status: accepted.
+Author: <name>. Type: <type>. Idea: ideas/NNNN_<slug>.md. Status: accepted.
 
 ## Problem
 
@@ -64,6 +64,12 @@ Author: <name>. Type: <type>. Status: accepted.
 
 ## Open questions
 ````
+
+`Idea:` is required when the unit was opened from an idea in `.cos/ideas/`, and names
+exactly one; leave it out only when there is none. It is how the intent is traced back to
+its source, and one idea may be the source of several intents — split outcomes across
+units, never copy the idea. `cos.mjs status` reports a field that names a missing idea, or
+one another idea's `## Units` contradicts; the app refuses an intent reply that drops it.
 
 ## Invariants
 
