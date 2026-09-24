@@ -197,6 +197,7 @@ def build_prompt(
     last_attempt: str = "",
     integration_note: str = "",
     drift_note: str = "",
+    worktree: str = "",
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -266,6 +267,43 @@ def build_prompt(
             included.append(name)
             parts.append(f"# The {earlier} it follows\n\n{text}")
             break
+
+    # `0039` R14. The loop above takes one artifact, and two stages need a second. `plan`
+    # follows `spike` when one ran, but the requirements it orders are still in `spec.md`.
+    # A `spec` re-run after a spike found a question that does not hold must be rewritten on
+    # that measurement. A `spike` re-run needs the one before it to set `Round:`.
+    spike = _read(directory / "spike.md")
+    if stage == "plan" and "spike.md" in included and "spec.md" not in included:
+        spec = _read(directory / "spec.md")
+        if spec:
+            included.append("spec.md")
+            parts.append(f"# The spec the spike measured\n\n{spec}")
+    if stage == "spec" and spike and "spike.md" not in included:
+        included.append("spike.md")
+        parts.append(
+            "# What the spike measured\n\n"
+            "A spike ran on the spec before this one. Rewrite the spec on these results: a "
+            "question whose verdict is `fails` does not hold, so drop its `U<n>` and every "
+            "requirement that rested on it. A new question takes a new `U<n>`.\n\n"
+            f"{spike}"
+        )
+    if stage == "spike" and spike and "spike.md" not in included:
+        included.append("spike.md")
+        parts.append(f"# The previous spike\n\n{spike}")
+    if stage == "spike":
+        parts.append(
+            "# Where you work\n\n"
+            f"Your working directory is `{Path(workspace).expanduser().resolve()}`, a "
+            "throwaway directory the app deletes when this step ends. Write probe code "
+            "there and nowhere else.\n\n"
+            + (
+                f"The unit's worktree is `{worktree}`. Read it; never write to it. The app "
+                "records its `HEAD` and `git status --porcelain` before this step and again "
+                "after, and fails the step, writing no `spike.md`, if either changed."
+                if worktree
+                else "No worktree was named for this step."
+            )
+        )
 
     # `spec.md` R7. A prose stage re-run against an artifact that already carries
     # `## Answers` is one of `intent.md ## Affected users and systems`' "later stages" too:
@@ -759,6 +797,31 @@ async def _head_of(cwd: str) -> str:
         return ""
 
 
+async def _tree_state(path: str) -> tuple[str, str]:
+    """`gitops.tree_state`, with a git failure turned into a reason the step stops for."""
+    try:
+        return await gitops.tree_state(Path(path))
+    except gitops.GitError as e:
+        raise RunError(f"could not read the worktree's state: {e}") from e
+
+
+def describe_tree_change(before: tuple[str, str], after: tuple[str, str]) -> str:
+    """`""` when the two `(HEAD, porcelain)` readings agree, else what moved (`0039` R13).
+
+    Lists the porcelain lines on one side only — a new file, a file edited, one reverted —
+    and a `HEAD` that moved as `HEAD <a>→<b>`.
+    """
+    parts: list[str] = []
+    if before[0] != after[0]:
+        parts.append(f"HEAD {before[0][:12]}→{after[0][:12]}")
+    old, new = before[1].splitlines(), after[1].splitlines()
+    moved = [line for line in new if line not in old] + [
+        f"{line} (no longer)" for line in old if line not in new
+    ]
+    parts.extend(line.strip() for line in moved)
+    return ", ".join(parts)
+
+
 class Runner:
     """Runs one step. Owns no state of its own beyond what it was handed."""
 
@@ -793,6 +856,7 @@ class Runner:
         label_source: str | None = None,
         impl_run: int | None = None,
         end_fields: Any = None,
+        watch: str | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -822,6 +886,12 @@ class Runner:
         `plan_drift` is what `service.py` worked out with `coscc/drift.py` for an `impl`
         step (`0042`); this module only carries it into the `start` record, and
         `drift_note` into the prompt. `None` leaves the record without the field.
+
+        `watch` (`0039`) is the unit's worktree when `cwd` is a spike's throwaway directory.
+        Writing is then held to `cwd` alone; the worktree and the unit are read only. Its
+        `HEAD` and `git status --porcelain` are read before the session and again after it,
+        and a difference fails the step before any artifact is written (R13). Nothing is
+        restored — the difference is reported, in `detail`, and left for a person.
         """
         grant = grant_for(stage)
         directory = Path(directory)
@@ -845,7 +915,7 @@ class Runner:
                     f"{stage} is a prose stage and must not carry {', '.join(beyond)}"
                 )
 
-        head = await _head_of(cwd)
+        head = await _head_of(watch or cwd)
         prompt, included = build_prompt(
             cwd, directory, unit, stage, stages, artifact,
             writes_own=not grant.app_writes_artifact,
@@ -855,6 +925,7 @@ class Runner:
             last_attempt=last_attempt,
             integration_note=integration_note,
             drift_note=drift_note,
+            worktree=watch or "",
         )
 
         # `0037`: the same condition that decides whether a gate and a tool list are sent.
@@ -892,7 +963,10 @@ class Runner:
         # `0019` plan step 5 / `spec.md` R1 a. Set only in an `except` branch, so a step
         # that finished (even one that merely hit its ceiling) carries no error here.
         error: dict[str, str] | None = None
+        # `0039` R11: a spike writes only its `cwd`; the worktree and the unit are read.
+        gate_args = (None, (watch, str(directory))) if watch else (str(directory),)
         try:
+            before = await _tree_state(watch) if watch else None
             async for kind, payload in self.sessions.stream(
                 cwd,
                 prompt,
@@ -902,7 +976,7 @@ class Runner:
                 # with an empty grant gets exactly the session the app makes by default,
                 # which is the one the zero-tool default is about.
                 can_use_tool=(
-                    permission_gate(grant, cwd, denials, str(directory))
+                    permission_gate(grant, cwd, denials, *gate_args)
                     if grant.opens_anything
                     else None
                 ),
@@ -950,6 +1024,13 @@ class Runner:
                     cost = payload.get("cost", {}) or {}
                     terminal = str(payload.get("terminal_reason") or "")
                     models_used = list(payload.get("models_used") or [])
+
+            if watch:
+                # `0039` R13. Before anything is written: a spike that touched the branch
+                # it was meant only to read must leave no `spike.md` saying it measured.
+                changed = describe_tree_change(before, await _tree_state(watch))
+                if changed:
+                    raise RunError(f"the worktree changed during spike: {changed}")
 
             if grant.app_writes_artifact:
                 # `0025` `spec.md` R1-R6. The reply's own `## Answers`, if it has one, is

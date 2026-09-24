@@ -35,7 +35,7 @@ from coscc.runner import (
     with_answers,
 )
 
-STAGES = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
+STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
 UNIT = "0009_a-test-unit"
 
 
@@ -1730,7 +1730,7 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
         with_tools = [s for s in STAGES if grant_for(s).opens_anything]
         # Pinned, so a change to the grant table turns this red rather than quietly
         # leaving a stage out of what it checks.
-        self.assertEqual(with_tools, ["spec", "plan", "impl", "pr", "review", "ship"])
+        self.assertEqual(with_tools, ["spec", "spike", "plan", "impl", "pr", "review", "ship"])
         for stage in with_tools:
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
                 probe, _ = self.run_stage(d, stage)
@@ -1982,3 +1982,114 @@ class DescribeAttemptRendersTheRecord(unittest.TestCase):
         text = describe_attempt(found)
         self.assertIn("No snapshot record was captured", text)
         self.assertIn("unknown — the session returned no result", text)
+
+
+SPIKE_REPLY = (
+    "# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Round: 1. Status: accepted.\n\n"
+    "## U1\n\nVerdict: holds.\n\n```\n$ python -c 'print(1)'\n1\n```\n"
+)
+
+
+class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
+    """`0039` R14: the prompts that need a second artifact get it, and `included` says so."""
+
+    def unit(self, d: str, **files: str) -> Path:
+        return make_unit(Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nSPEC", **files)
+
+    def test_plan_reads_the_spike_and_the_spec(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d, spike_md="Status: accepted.\nSPIKE")
+            prompt, included = build_prompt(d, directory, UNIT, "plan", STAGES, "plan.md")
+            self.assertEqual(included, ["intent.md", "spike.md", "spec.md"])
+            self.assertIn("SPIKE", prompt)
+            self.assertIn("SPEC", prompt)
+
+    def test_plan_without_a_spike_is_what_it_was(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d)
+            _, included = build_prompt(d, directory, UNIT, "plan", STAGES, "plan.md")
+            self.assertEqual(included, ["intent.md", "spec.md"])
+
+    def test_a_spec_rerun_reads_the_spike(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d, spike_md="Status: accepted.\nU2 FAILS")
+            prompt, included = build_prompt(d, directory, UNIT, "spec", STAGES, "spec.md")
+            self.assertIn("spike.md", included)
+            self.assertIn("U2 FAILS", prompt)
+            self.assertIn("# What the spike measured", prompt)
+
+    def test_the_spike_prompt_builds_names_its_directories_and_the_last_spike(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d, spike_md="Status: accepted.\nROUND-ONE")
+            prompt, included = build_prompt(
+                d, directory, UNIT, "spike", STAGES, "spike.md", worktree="/the/tree"
+            )
+            self.assertEqual(included, ["intent.md", "spec.md", "spike.md"])
+            self.assertIn("# The previous spike\n\nStatus: accepted.\nROUND-ONE", prompt)
+            self.assertIn("# Where you work", prompt)
+            self.assertIn("`/the/tree`", prompt)
+            self.assertIn("Reply with the file's complete contents", prompt)
+
+
+class ASpikeThatTouchesTheWorktreeFails(unittest.TestCase):
+    """`0039` R11, R13: the spike writes its scratch; a change to the worktree fails it."""
+
+    def run_spike(self, touch):
+        class Fake:
+            def __init__(self):
+                self.answers = {}
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1,
+                             can_use_tool=None, workspace=None, **kw):
+                for name, target in (("scratch", f"{cwd}/p.py"), ("tree", f"{tree}/p.py"),
+                                     ("unit", f"{directory}/spec.md")):
+                    got = await can_use_tool("Write", {"file_path": target}, None)
+                    self.answers[name] = type(got).__name__
+                read = await can_use_tool("Read", {"file_path": f"{tree}/a.txt"}, None)
+                self.answers["read-tree"] = type(read).__name__
+                touch(tree)
+                yield ("chunk", SPIKE_REPLY)
+                yield ("done", {"session_id": "s-spike", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as scratch:
+            tree = _git_repo(Path(ws))
+            directory = make_unit(Path(ws) / "store", intent_md="Status: accepted.\nI",
+                                  spec_md="Status: accepted.\nS")
+            fake = Fake()
+            r = Runner(sessions=fake, journal=None)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=ws, directory=directory, journal_key=ws, unit=UNIT,
+                    stage="spike", artifact="spike.md", stages=STAGES, mode="autonomous",
+                    cwd=scratch, watch=str(tree),
+                )]
+
+            _, final = asyncio.run(go())[-1]
+            return final, fake.answers, (directory / "spike.md").exists()
+
+    def test_an_untouched_worktree_gets_its_spike_md(self):
+        final, answers, written = self.run_spike(lambda tree: None)
+        self.assertEqual(final["outcome"], "done", final)
+        self.assertTrue(written)
+        self.assertEqual(answers, {"scratch": "PermissionResultAllow", "tree": "PermissionResultDeny",
+                                   "unit": "PermissionResultDeny", "read-tree": "PermissionResultAllow"})
+
+    def test_a_file_left_in_the_worktree_fails_the_step_and_writes_nothing(self):
+        final, _, written = self.run_spike(lambda tree: (tree / "probe.py").write_text("x"))
+        self.assertEqual(final["outcome"], "failed")
+        self.assertFalse(written)
+        self.assertIn("the worktree changed during spike", final["error"])
+        self.assertIn("?? probe.py", final["error"])
+
+    def test_a_commit_in_the_worktree_fails_the_step(self):
+        def commit(tree):
+            subprocess.run(
+                ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid",
+                 "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x"],
+                cwd=tree, check=True,
+            )
+        final, _, written = self.run_spike(commit)
+        self.assertEqual(final["outcome"], "failed")
+        self.assertFalse(written)
+        self.assertIn("HEAD ", final["error"])

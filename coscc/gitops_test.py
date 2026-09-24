@@ -755,3 +755,48 @@ class IntegratingABranchThatFellBehind(unittest.TestCase):
         asyncio.run(gitops.abort_rebase(self.tree))
         self.assertFalse(asyncio.run(gitops.rebase_in_progress(self.tree)))
         self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), self.old)
+
+
+class TreeStateSeesAWriteAndACommit(unittest.TestCase):
+    """`0039` R13: what the spike step compares before and after it runs."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.repo = Path(self._tmp.name) / "repo"
+        self.repo.mkdir()
+        self._git("init", "-q", "-b", "main")
+        (self.repo / "README.md").write_text("x\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "first")
+
+    def _git(self, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "user.name=T",
+             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
+            capture_output=True, text=True, check=True,
+        ).stdout
+
+    def state(self) -> tuple[str, str]:
+        return asyncio.run(gitops.tree_state(self.repo))
+
+    def test_nothing_done_reads_the_same_twice(self):
+        self.assertEqual(self.state(), self.state())
+
+    def test_a_new_file_changes_the_porcelain(self):
+        before = self.state()
+        (self.repo / "probe.py").write_text("print(1)\n", encoding="utf-8")
+        after = self.state()
+        self.assertEqual(before[0], after[0])
+        self.assertIn("?? probe.py", after[1])
+
+    def test_a_commit_changes_head(self):
+        before = self.state()
+        self._git("commit", "-q", "--allow-empty", "-m", "sneaked in")
+        after = self.state()
+        self.assertNotEqual(before[0], after[0])
+        self.assertEqual(before[1], after[1])
+
+    def test_not_a_repository_is_refused(self):
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.tree_state(Path(self._tmp.name)))

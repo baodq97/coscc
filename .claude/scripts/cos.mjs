@@ -13,7 +13,7 @@ const COS = join(ROOT, '.cos')
 const UNIT_RE = /^(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)$/
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
-// The eight stages, in order. This list is the single place the loop is defined: the
+// The nine stages, in order. This list is the single place the loop is defined: the
 // artifacts a unit may hold, the statuses each may carry, what the gate demands, and what
 // `status` proposes next are all read off it. Adding a stage is editing this array.
 //
@@ -22,10 +22,16 @@ const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 // intent, and eight units on disk were opened that way. Making `idea` mandatory would
 // retroactively mark all of them incomplete. So it gates nothing: it is a place to record
 // a thought that preceded the intent, and its absence means only that nobody recorded one.
+//
+// `when: 'unmeasured'` on `spike` (`0039`) is the other: the stage is required only when
+// `spec.md` marks a concern `[unmeasured] U<n>`, or `spike.md` already exists (`required`
+// below). Every other unit walks the loop as if it were not there. It is not `optional`,
+// which means "blocks nothing" — once required, it blocks `plan` and everything after.
 const STAGES = [
   { name: 'idea', file: 'idea.md', optional: true, hint: 'write-idea', statuses: ['draft', 'accepted', 'rejected'] },
   { name: 'intent', file: 'intent.md', hint: 'write-intent — the unit has no intent.md', statuses: ['draft', 'accepted', 'rejected'] },
   { name: 'spec', file: 'spec.md', hint: 'write-spec — it assesses whether to skip first', statuses: ['draft', 'accepted', 'rejected', 'skipped'] },
+  { name: 'spike', file: 'spike.md', when: 'unmeasured', hint: 'write-spike — spec.md has [unmeasured] items', statuses: ['draft', 'accepted', 'rejected'] },
   { name: 'plan', file: 'plan.md', hint: 'write-plan', statuses: ['draft', 'accepted', 'rejected', 'done'] },
   { name: 'impl', file: 'impl.md', hint: 'write-impl — implementation starts', statuses: ['draft', 'accepted', 'rejected', 'done'] },
   { name: 'pr', file: 'pr.md', hint: 'write-pr', statuses: ['draft', 'accepted', 'rejected'] },
@@ -371,6 +377,76 @@ export function parseNeedsPerson(text) {
   return claims
 }
 
+// --- the questions a spec could not answer, and what a spike measured -----------
+
+// `0039` R1/R2: a concern `spec.md` could not measure is an item at column 0 under
+// `## Concerns` that opens `[unmeasured] U<n>` (`- `, `* ` or `N. ` first). `U<n>` is the
+// question's identity across rewrites of the spec. `[unmeasured]` mid-sentence, or outside
+// `## Concerns`, is prose and is not counted. An item with no readable id, or an id given
+// twice, is a problem, never silently dropped: a question that cannot be named cannot be
+// matched to its measurement.
+export function parseUnmeasured(text) {
+  const lines = section(text, 'Concerns') ?? []
+  const ids = []
+  const problems = []
+  for (const line of lines) {
+    const m = line.match(/^(?:[-*]|\d+\.)\s+\[unmeasured\](.*)$/)
+    if (!m) continue
+    const id = m[1].match(/^\s(U\d+)\b/)?.[1]
+    if (!id) problems.push(`spec.md: an [unmeasured] item carries no U<n>: "${line.trim()}"`)
+    else if (ids.includes(id)) problems.push(`spec.md: ${id} is marked [unmeasured] twice`)
+    else ids.push(id)
+  }
+  return { ids, problems }
+}
+
+// `0039` R6: `spike.md` holds one `## U<n>` per question, each with `Verdict: holds.` or
+// `Verdict: fails.` and at least one fenced block — the command run and what it printed.
+// `round` is the header's `Round: N`, which `write-spike` sets; `null` when absent. Only the
+// header line — the one carrying `Status:` before the first `## ` — is read for it: a
+// `Round:` inside a fenced block is a command's output, not the round. Reading stops at
+// `## Answers`, as `parseReview` does.
+export function parseSpike(text) {
+  const lines = text.split(/\r?\n/)
+  const stop = lines.findIndex((l) => l.trimEnd() === '## Answers')
+  const own = stop === -1 ? lines : lines.slice(0, stop)
+  const first = own.findIndex((l) => l.startsWith('## '))
+  const header = (first === -1 ? own : own.slice(0, first)).find((l) => /\bStatus:/.test(l))
+  const round = header?.match(/\bRound:\s*(\d+)/)
+  const items = {}
+  let at = null
+  let fence = null
+  for (const line of own) {
+    if (fence === null && line.startsWith('## ')) {
+      const head = line.match(/^## (U\d+)\s*$/)
+      at = head ? (items[head[1]] = { verdict: null, hasBlock: false, _body: false }) : null
+      continue
+    }
+    if (!at) continue
+    if (fence !== null) {
+      if (line.trim().startsWith(fence)) {
+        if (at._body) at.hasBlock = true
+        fence = null
+      } else if (line.trim() !== '') at._body = true
+      continue
+    }
+    const open = line.trim().match(/^(`{3,}|~{3,})/)
+    if (open) {
+      fence = open[1]
+      at._body = false
+      continue
+    }
+    const v = line.match(/^Verdict:\s*(holds|fails)\.?\s*$/i)
+    if (v) at.verdict = v[1].toLowerCase()
+  }
+  for (const item of Object.values(items)) delete item._body
+  return { round: round ? Number(round[1]) : null, items }
+}
+
+// How many `spec → spike` rounds may end with a question that does not hold before the
+// loop needs a person (`0039` spec, Answers, Câu 3). A choice, not a measurement.
+export const SPIKE_ROUNDS = 2
+
 // How many review rounds may end in `changes-requested` before the loop stops and needs a
 // person. The originator chose 3 (`0015` intent, Answers, Câu 3); it is a choice, not a
 // measurement. `COS_REVIEW_ROUNDS` overrides it, in the same `COS_*` family as the model
@@ -421,6 +497,19 @@ export function readUnit(dir, name) {
       unit.artifacts[file].personAnswers = [...new Set(parseAnswers(text).filter((a) => a.id !== null).map((a) => a.id))]
     }
     if (file === 'impl.md') unit.artifacts[file].needsPerson = parseNeedsPerson(text)
+    // `0039`: attached only when there is something to attach, so that `status --json` of
+    // every unit that never used `[unmeasured]` stays what it was, byte for byte (R4).
+    if (file === 'spec.md') {
+      const unmeasured = parseUnmeasured(text)
+      if (unmeasured.ids.length || unmeasured.problems.length) {
+        unit.artifacts[file].unmeasured = unmeasured
+        unit.problems.push(...unmeasured.problems)
+      }
+    }
+    if (file === 'spike.md') unit.artifacts[file].spike = parseSpike(text)
+    // Read after `spec.md` and `spike.md`, which `STAGES` puts before it. Only when `spike`
+    // is required: a plan may mention `spike.md` without needing one — this unit's does.
+    if (file === 'plan.md' && required(unit, SPIKE)) unit.artifacts[file].citesSpike = text.includes('spike.md')
     const questions = answeredQuestions(text)
     if (questions !== null) unit.artifacts[file].questions = questions
   }
@@ -491,6 +580,58 @@ const settled = (s) => s === 'accepted' || s === 'skipped' || s === 'done'
 // saying so is the difference between "write it" and "fix the one line at the top of it".
 const missing = (u, f) => (present(u, f) ? `${f} exists but carries no Status line` : `${f} does not exist`)
 
+const SPIKE = STAGES.find((s) => s.when === 'unmeasured')
+const unmeasuredOf = (u) => u.artifacts['spec.md']?.unmeasured ?? { ids: [], problems: [] }
+
+// Whether stage `s` has to be behind a unit before what follows it (`0039` R4, R5). Every
+// stage but `idea` always does. `spike` does when `spec.md` names a `U<n>`, or `spike.md`
+// already exists — a spec rewritten without its questions still leaves the measurement it
+// was rewritten on — and never when the spec was skipped.
+export function required(unit, s) {
+  if (!s.when) return !s.optional
+  if (statusOf(unit, 'spec.md') === 'skipped') return false
+  return unmeasuredOf(unit).ids.length > 0 || present(unit, s.file)
+}
+
+// `0039` R7: for every `U<n>` the spec names now, what `spike.md` does not yet show. An id
+// the spec no longer names is not read: it was a question of an earlier spec.
+function spikeFindings(unit) {
+  const spike = unit.artifacts['spike.md']?.spike ?? { round: null, items: {} }
+  const fails = []
+  const missingIds = []
+  const reasons = []
+  for (const id of unmeasuredOf(unit).ids) {
+    const item = spike.items[id]
+    if (!item) {
+      missingIds.push(id)
+      reasons.push(`${id}: spike.md has no ## ${id}`)
+    } else if (item.verdict === null) {
+      missingIds.push(id)
+      reasons.push(`${id}: spike.md ## ${id} has no readable Verdict: holds. or Verdict: fails.`)
+    } else if (!item.hasBlock) {
+      missingIds.push(id)
+      reasons.push(`${id}: spike.md ## ${id} carries no fenced block with the command and what it printed`)
+    } else if (item.verdict === 'fails') {
+      fails.push(id)
+      reasons.push(`${id}: spike.md measured that it does not hold — spec.md must be rewritten on it`)
+    }
+  }
+  return { round: spike.round ?? 1, fails, missing: missingIds, reasons }
+}
+
+// The gate's reasons for everything after `spike`. R2 problems close it whether or not a
+// `spike` is required — an item that cannot be named might be the one that requires it.
+function spikeNeeds(unit) {
+  const need = [...unmeasuredOf(unit).problems]
+  if (!required(unit, SPIKE)) return need
+  const status = statusOf(unit, 'spike.md')
+  if (status !== 'accepted') {
+    for (const id of unmeasuredOf(unit).ids) need.push(`${id}: spike.md is ${status === null ? 'missing' : `"${status}"`}, not accepted`)
+    return need
+  }
+  return [...need, ...spikeFindings(unit).reasons]
+}
+
 // One action per unit: a named skill, or the one edit that unblocks the file.
 //
 // `stage` is the same decision in a form a program can act on, read off the files alone:
@@ -511,7 +652,32 @@ function decide(unit, limit) {
   if (statusOf(unit, 'plan.md') === 'done') return { blocked: false, action: 'finished', stage: '', why: 'finished' }
 
   for (const s of STAGES) {
+    if (s.when) {
+      // `0039` R2: before `required`, so an item with no readable id still stops the loop.
+      const problems = unmeasuredOf(unit).problems
+      if (problems.length) return { blocked: true, action: `fix spec.md — ${problems[0].replace(/^spec\.md: /, '')}`, stage: '', why: 'unreadable' }
+      if (!required(unit, s)) continue
+    }
     const status = statusOf(unit, s.file)
+    if (s.when && status === 'accepted') {
+      const found = spikeFindings(unit)
+      // R8: a question measured not to hold sends the unit back to `spec`, ahead of one
+      // that is merely missing — rewriting the spec may drop it.
+      if (found.fails.length && found.round >= SPIKE_ROUNDS) {
+        return {
+          blocked: true,
+          action: `needs a person — spike round ${found.round} of ${SPIKE_ROUNDS} found ${found.fails.join(', ')} does not hold`,
+          stage: '',
+          why: 'needs-person',
+        }
+      }
+      if (found.fails.length) {
+        return { blocked: true, action: `write-spec again — spike.md measured ${found.fails.join(', ')} does not hold`, stage: 'spec', why: 'spike-fails' }
+      }
+      if (found.missing.length) {
+        return { blocked: true, action: `write-spike again — spike.md does not measure ${found.missing.join(', ')}`, stage: 'spike', why: 'spike-missing' }
+      }
+    }
     if (status === null) {
       // A file that exists but says nothing is a different problem from a missing one.
       if (present(unit, s.file)) return { blocked: true, action: `fix ${s.file} — it carries no Status line`, stage: '', why: 'unreadable' }
@@ -824,11 +990,13 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   }
 
   // Every stage ahead of the requested one has to be behind us. The loop replaces the three
-  // hand-written cases it grew out of, so a ninth stage needs no edit here.
+  // hand-written cases it grew out of; `spike`, the ninth, added only its own `when` below.
   const need = []
+  if (target.when && !required(unit, target)) need.push(`${target.name} is not required: spec.md has no [unmeasured] item`)
   for (const s of STAGES) {
     if (s.name === target.name) break
     if (s.optional) continue
+    if (s.when && !required(unit, s)) continue
     const status = statusOf(unit, s.file)
     // Only a file that may legitimately be skipped gets told it has that option.
     const canSkip = s.statuses.includes('skipped')
@@ -836,6 +1004,16 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
       need.push(canSkip ? `${missing(unit, s.file)} — write it, or record the skip in it` : missing(unit, s.file))
     } else if (!settled(status)) {
       need.push(`${s.file} is "${status}", not accepted${canSkip ? ' or skipped' : ''}`)
+    }
+  }
+
+  // `0039` R7 and R9, for a target after `spike`. Both add nothing for a unit that never
+  // wrote `[unmeasured]`, so every gate it had reads as it did.
+  const at = (name) => STAGES.findIndex((s) => s.name === name)
+  if (at(target.name) > at(SPIKE.name)) {
+    need.push(...spikeNeeds(unit))
+    if (at(target.name) >= at('impl') && required(unit, SPIKE) && !unit.artifacts['plan.md']?.citesSpike) {
+      need.push('plan.md does not cite spike.md — every step that rests on a U<n> cites spike.md ## U<n>')
     }
   }
 
@@ -1019,7 +1197,7 @@ export function unitBranch(unitName, intentText) {
 // --- commands ----------------------------------------------------------------
 
 const dash = '—'
-// Eight stages will not fit across a terminal spelled out, so the table carries one letter
+// Nine stages will not fit across a terminal spelled out, so the table carries one letter
 // each and prints the key underneath. The full words stay in `status --json`, which is what
 // anything other than a human reads.
 const CODE = { draft: 'd', accepted: 'A', rejected: 'x', skipped: 's', done: 'D', 'changes-requested': 'c' }

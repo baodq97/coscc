@@ -45,7 +45,7 @@ def write(raw: dict, into: Path) -> Path:
 
 
 class TheDefaultIsTheSetInUseToday(unittest.TestCase):
-    """`spec.md` R6, first half: eight stages and the statuses `cos.mjs` enforces."""
+    """`spec.md` R6, first half: nine stages and the statuses `cos.mjs` enforces."""
 
     def test_it_matches_the_stage_table_cos_mjs_prints(self):
         # Run rather than parsed. `cos.mjs` is JavaScript and its table is a literal in

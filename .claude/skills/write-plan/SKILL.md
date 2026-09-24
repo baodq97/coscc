@@ -78,6 +78,13 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: a
     or when `## Files that change` names a file in `coscc/labels.py` `SECURITY_SURFACE`.
     Otherwise `routine`. A missing label is run as `novel`. The label picks the model and
     effort a later stage runs on in the coscc app; it opens and closes no gate.
+12. When the spec carried `[unmeasured] U<n>` items, `spike.md` measured them. Every step
+    that rests on one cites `spike.md ## U<n>`, and the `impl` gate stays closed on a plan
+    that never names `spike.md`. Never write a step of the shape "measure X first; if it
+    does not hold, stop and revise this plan" for a question the spec marked unmeasured:
+    that is `spike`'s work, left to `impl`. A question that surfaces only now goes back to
+    the spec as a new `U<n>`, not into the order of work. The gate checks the citation,
+    not this — no script can.
 
 ## Done when
 

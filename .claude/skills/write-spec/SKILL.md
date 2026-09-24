@@ -91,6 +91,17 @@ Intent: intent.md. Author: <name>. Status: accepted.
    `<artifact> ## Answers, câu N`. The words of an answer are a person's, not yours: quote
    them, and do not restate them as your own finding. The app only ever appends that
    section; never write into it yourself.
+10. A concern you could not measure from here — whether an SDK, a CLI or a process behaves
+    the way the design assumes — is written as an item at column 0 under `## Concerns`
+    that opens `[unmeasured]` and an id: `- [unmeasured] U1. Does disconnect() make the
+    process exit within 10 s?`. `cos.mjs` reads these, and a spec that carries one sends
+    the unit to `spike` (`write-spike`) before `plan`. `U<n>` is the question's identity:
+    keep it across rewrites. An item with no id, or one id used twice, closes the `plan`
+    gate. A spec with no such item never runs `spike`.
+11. Rewritten after a spike found a `U<n>` that `fails`: drop that id and every
+    requirement resting on it — never keep it. A new question takes a new id; never reuse
+    one. When no direction left holds, write `Status: draft` with the question under
+    `## Open questions`: a draft stops the loop until a person answers.
 
 ## Done when
 
@@ -99,7 +110,8 @@ them later is already written down under `## Concerns`.
 
 ## Next
 
-`write-plan`, once this file is accepted and committed. If the spec was skipped instead,
+`write-spike`, once this file is accepted, when it carries an `[unmeasured] U<n>` item.
+Otherwise `write-plan`, once this file is accepted and committed. If the spec was skipped instead,
 `write-plan` runs on the accepted intent alone and records the reason.
 
 You may run it yourself. Nothing now separates the two stages, so the separation has to come

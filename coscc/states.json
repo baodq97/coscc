@@ -6,6 +6,7 @@
     { "name": "idea",   "artifact": "idea.md",   "optional": true, "statuses": ["draft", "accepted", "rejected"] },
     { "name": "intent", "artifact": "intent.md", "statuses": ["draft", "accepted", "rejected"] },
     { "name": "spec",   "artifact": "spec.md",   "statuses": ["draft", "accepted", "rejected", "skipped"] },
+    { "name": "spike",  "artifact": "spike.md",  "statuses": ["draft", "accepted", "rejected"] },
     { "name": "plan",   "artifact": "plan.md",   "statuses": ["draft", "accepted", "rejected", "done"] },
     { "name": "impl",   "artifact": "impl.md",   "statuses": ["draft", "accepted", "rejected", "done"] },
     { "name": "pr",     "artifact": "pr.md",     "statuses": ["draft", "accepted", "rejected"] },

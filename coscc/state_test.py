@@ -77,7 +77,7 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
     """
 
     def _fresh(self, phase: str) -> dict:
-        stages = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
+        stages = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
         return {
             "name": "0015_fresh",
             "next": "write-intent — the unit has no intent.md",
