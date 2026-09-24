@@ -160,5 +160,88 @@ class ThePrompt(unittest.TestCase):
             self.assertIn(want, text)
 
 
+class TheReviewPromptCarriesTheIntegration(unittest.TestCase):
+    """R10, plan step 8: `build_prompt` places the note for `review` only."""
+
+    def test_review_only(self):
+        import tempfile
+
+        from coscc.runner import build_prompt
+        from coscc.runner_test import STAGES, UNIT, make_unit
+
+        note = ig.describe_for_review({"mode": "mechanical", "head_after": NEW})
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            unit_dir = Path(d) / ".cos" / UNIT
+            prompt, included = build_prompt(d, unit_dir, UNIT, "review", STAGES, "review.md", integration_note=note)
+            self.assertIn("An integration since the last round", prompt)
+            self.assertIn("integration", included)
+            prompt, included = build_prompt(d, unit_dir, UNIT, "impl", STAGES, "impl.md", integration_note=note)
+            self.assertNotIn("An integration since the last round", prompt)
+
+
+class TheLatestIntegrationSinceTheLastRound(unittest.TestCase):
+    """R10: a `pushed` integration counts only when written after the last `review` done."""
+
+    def test_order_decides(self):
+        import tempfile
+
+        from coscc.journal import Journal
+        from coscc.service import integration_since_review
+
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            pushed = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD,
+                               head_after=NEW, origin_sha=MAIN, outcome="pushed")
+            self.assertIsNone(integration_since_review(j, "w", "u"))
+            j.append(pushed)
+            self.assertEqual(integration_since_review(j, "w", "u")["head_after"], NEW)
+            j.finished("w", "u", "review", "done")
+            self.assertIsNone(integration_since_review(j, "w", "u"), "older than the last round")
+            j.append({**pushed, "outcome": "refused"})
+            self.assertIsNone(integration_since_review(j, "w", "u"), "only a push counts")
+            j.finished("w", "u", "review", "failed")
+            j.append(pushed)
+            self.assertIsNotNone(integration_since_review(j, "w", "u"))
+
+
+class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
+    """Plan step 7, with a stand-in `stream`: what the session is handed, and what it yields."""
+
+    def test_the_session_gets_the_gate_and_the_ceilings(self):
+        import asyncio
+
+        from coscc.policy import grant_for
+
+        seen: dict = {}
+
+        class FakeSessions:
+            async def stream(self, cwd, prompt, session_id, **kw):
+                seen.update(kw, cwd=cwd)
+                gate = kw["can_use_tool"]
+                seen["push_ok"] = await gate("Bash", {"command": f"git push --force-with-lease=feat/x:{HEAD} origin feat/x"}, None)
+                seen["push_bad"] = await gate("Bash", {"command": "git push --force origin feat/x"}, None)
+                yield ("chunk", "[needs-person] A vs B")
+                yield ("done", {"session_id": "s", "cost": {"usd": 0.1}})
+
+        async def go():
+            out = []
+            async for item in ig.run_gebo(FakeSessions(), tree="/t", workspace="/w", prompt="p",
+                                          grant=grant_for("integrate"), read_also=(), lease=("feat/x", HEAD),
+                                          model=None):
+                out.append(item)
+            return out
+
+        out = asyncio.run(go())
+        self.assertEqual(seen["max_turns"], 120)
+        self.assertEqual(seen["cwd"], "/t")
+        self.assertEqual(type(seen["push_ok"]).__name__, "PermissionResultAllow")
+        self.assertEqual(type(seen["push_bad"]).__name__, "PermissionResultDeny")
+        end = out[-1][1]
+        self.assertEqual(end["reply"], "[needs-person] A vs B")
+        self.assertEqual(end["denials"], 1)
+        self.assertEqual(ig.outcome_of_session(HEAD, HEAD, end["reply"]), "needs-person")
+
+
 if __name__ == "__main__":
     unittest.main()

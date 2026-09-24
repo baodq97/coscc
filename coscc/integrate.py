@@ -109,6 +109,8 @@ def refusal(
         return "this unit is not between pr and ship with an open pull request"
     if active:
         return "a step is running on this unit"
+    if clean is None:
+        return "the unit has no worktree to integrate in"
     if clean is not True:
         return "the unit's worktree has uncommitted changes"
     if branch_ok is not True:
