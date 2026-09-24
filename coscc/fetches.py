@@ -22,6 +22,7 @@ retry covers those (`spec.md ## Out of scope`).
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,7 +110,7 @@ class Fetches:
             return {"outcome": "joined", "attempts": attempts, "age": self._age(started)}
         now = self.clock()
         if entry.last_ok_started is not None and now - entry.last_ok_started < REUSE_SECONDS:
-            return {"outcome": "reused", "attempts": 0, "age": round(now - entry.last_ok_started, 1)}
+            return {"outcome": "reused", "attempts": 0, "age": _tenths(now - entry.last_ok_started)}
         future: asyncio.Future = loop.create_future()
         entry.inflight = future
 
@@ -151,13 +152,21 @@ class Fetches:
                 entry.inflight = None
 
     def _age(self, started: float) -> float:
-        return round(self.clock() - started, 1)
+        return _tenths(self.clock() - started)
 
     @staticmethod
     def _settle(future: asyncio.Future, error: FetchFailed) -> None:
         future.set_exception(error)
         # Marks it retrieved, so asyncio prints nothing when no call joined.
         future.exception()
+
+
+def _tenths(seconds: float) -> float:
+    """`seconds` rounded **down** to 0.1. Callers call a fetch fresh when its `age` is under
+    `REUSE_SECONDS`; rounded to nearest, a reuse at 29.97s read 30.0 and was reported not
+    fresh (`0048` review round 1, F1). The inner `round` only absorbs float noise, so a
+    29.9 computed as 29.8999… still reads 29.9."""
+    return math.floor(round(seconds, 6) * 10) / 10
 
 
 # One per process: the point is that every caller shares it.

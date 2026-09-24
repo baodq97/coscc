@@ -256,6 +256,17 @@ class RefreshingTheBase(Repo):
         self.assertEqual(got["sha"], before[:7])
         self.assertEqual(git(self.tree, "rev-parse", "HEAD"), before)
 
+    def test_a_fetch_reused_just_under_thirty_seconds_is_still_fresh(self):
+        """`0048` review round 1, F1: reused at 29.97s, the record must not say 30.0 and
+        call the same fetch stale that the coordinator just called young enough."""
+        now = self._own_clock()
+        asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        now[0] += 29.97
+        got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        self.assertEqual(got["fetch"], {"outcome": "reused", "attempts": 0, "age": 29.9})
+        self.assertTrue(got["fresh"])
+        self.assertEqual(got["reason"], "")
+
     def test_no_worktree_to_refresh_is_reported_not_raised(self):
         got = asyncio.run(worktrees.refresh_base(self.repo, "0002_b", self.data))
         self.assertEqual(got, {
