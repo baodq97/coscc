@@ -483,6 +483,10 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
             # `0016` R8. A number, not a lane: an open question does not stop the loop.
             rx.cond(unit.open_questions > 0,
                     s.badge(unit.open_questions.to_string() + " waiting on you", "amber")),
+            # `0035` R1. Only for a unit in the window; the button lives on the unit screen.
+            rx.cond(unit.integration_state != "",
+                    s.badge("main: " + unit.integration_state,
+                            rx.cond(unit.integrate_button, "amber", "gray"))),
             rx.spacer(),
             rx.center(rx.text(unit.owner, size="1", weight="medium"),
                       width="27px", height="27px", border_radius="50%",
@@ -1083,6 +1087,45 @@ def _questions_tab() -> rx.Component:
     )
 
 
+def _integration_panel() -> rx.Component:
+    """`0035` R1, R3, R8, R13. A separate component from the run button, which still offers
+    only the stage `cos.mjs next` names. Hidden for a unit outside the window."""
+    u = P.current_unit
+    return rx.cond(
+        u.integration_state != "",
+        s.panel(
+            rx.hstack(
+                s.eyebrow("INTEGRATION WITH MAIN"),
+                rx.spacer(),
+                s.badge(u.integration_state, rx.cond(u.integrate_button, "amber", "gray")),
+                width="100%", align="center",
+            ),
+            rx.cond(u.integration_behind != "",
+                    s.text(u.integration_behind + " commit(s) behind origin/main "
+                           + u.integration_origin, size="1", margin_top="8px")),
+            rx.cond(u.integration_reason != "",
+                    s.text(u.integration_reason, size="1", overflow_wrap="anywhere")),
+            rx.foreach(u.integration_needs_person,
+                       lambda n: s.text("[needs-person] " + n, size="1", color=rx.color("red", 11))),
+            rx.cond(
+                u.integrate_button,
+                rx.vstack(
+                    rx.foreach(u.integration_warnings, lambda w: s.text(w, size="1", line_height="1.7")),
+                    rx.button(
+                        rx.icon("git-pull-request-arrow", size=14), "Integrate",
+                        on_click=P.integrate,
+                        loading=P.integrating,
+                        disabled=P.integrating,
+                        size="1", id="integrate-button",
+                    ),
+                    spacing="2", margin_top="8px", align="start",
+                ),
+            ),
+            width="100%", id="integration-panel",
+        ),
+    )
+
+
 def _round_row(r: rx.Var[Round]) -> rx.Component:
     """`0021` R7, R8. One review round: on the PR with its link, or not and a button."""
     return s.panel(
@@ -1286,6 +1329,7 @@ def _detail_dialog() -> rx.Component:
                                    "says why. Nothing re-asks on its own: press Ask again "
                                    "once that has changed."),
                         ),
+                        _integration_panel(),
                         rx.cond(
                             P.run_log != "",
                             s.panel(

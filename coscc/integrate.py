@@ -1,0 +1,467 @@
+"""Integrating a unit whose pull request fell behind `main` (`0035`).
+
+Not a stage. `.claude/scripts/cos.mjs` defines the loop and this module adds nothing to it:
+it runs only on a unit `cos.mjs` says sits between `pr` and ship (`betweenPrAndShip`),
+only when a person presses the button, and it writes no artifact. What it leaves behind is
+one `integration` record in the run log per attempt (R9).
+
+Two roads:
+
+- **mechanical** (`behind`): `gh pr update-branch --rebase`, then the local branch follows
+  the new head. No session, no quota (R4).
+- **agent** (`conflicting`, `red-after-integration`): Gebo, a session under the
+  `integrate` grant in `coscc/policy.py`, which may push only with a lease bound to the
+  head it began at (R5, R6).
+
+The pure functions come first; the `gh` calls after them; the session last.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+from pathlib import Path
+from typing import Any, AsyncIterator
+
+from coscc.harness import child_env
+
+STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown")
+# R3: the three states that carry a button.
+BUTTON_STATES = ("behind", "conflicting", "red-after-integration")
+GEBO_STATES = ("conflicting", "red-after-integration")
+OUTCOMES = ("pushed", "needs-person", "refused", "failed")
+
+# Seconds. Chosen, not measured — the same figure as `board.GATE_TIMEOUT` and
+# `prcomment.TIMEOUT`.
+GH_TIMEOUT = 30.0
+# R4: how long the app waits for GitHub's rebase to show as a new head. Chosen, not measured.
+POLL_TRIES = 5
+POLL_DELAY = 2.0
+
+_RED = ("fail", "cancel")
+_PR_NUMBER = re.compile(r"\(#(\d+)\)\s*$")
+_NEEDS_PERSON = re.compile(r"^\s*(?:[-*]\s*)?\[needs-person\]\s*(.+?)\s*$")
+
+
+class IntegrateError(Exception):
+    """A `gh` call that failed, carrying `gh`'s own words."""
+
+
+# --- pure --------------------------------------------------------------------
+
+
+def needs_checks(pr_row: dict | str, last_record: dict | None) -> bool:
+    """Whether `classify` needs the required checks: only when the pull request's head is
+    the one the last integration pushed. Most board reads therefore cost no extra `gh`."""
+    if not isinstance(pr_row, dict) or not last_record:
+        return False
+    after = str(last_record.get("head_after") or "")
+    return bool(after) and after == str(pr_row.get("headRefOid") or "")
+
+
+def classify(
+    pr_row: dict | str,
+    missing: int | str,
+    origin_sha: str,
+    last_record: dict | None,
+    checks: list | str | None = None,
+) -> dict[str, Any]:
+    """R1: one of `STATES`, with the reason. Errors arrive as strings and become `unknown`.
+
+    Order, as `plan.md` step 4 fixes it: an error; `CONFLICTING`; the integration's own
+    head with red required checks; commits missing; otherwise current. `UNKNOWN`
+    mergeability (GitHub still computing) goes by the count.
+    """
+    if isinstance(pr_row, str):
+        return {"state": "unknown", "reason": pr_row}
+    if isinstance(missing, str):
+        return {"state": "unknown", "reason": missing}
+    if str(pr_row.get("mergeable") or "") == "CONFLICTING":
+        return {"state": "conflicting", "reason": "GitHub reports the pull request as CONFLICTING"}
+    if needs_checks(pr_row, last_record):
+        if isinstance(checks, str):
+            return {"state": "unknown", "reason": checks}
+        red = [str(c.get("name") or "?") for c in (checks or []) if str(c.get("bucket") or "") in _RED]
+        if red:
+            return {
+                "state": "red-after-integration",
+                "reason": "required checks red on the head the last integration pushed: " + ", ".join(red),
+                "red": red,
+            }
+    if missing > 0:
+        return {"state": "behind", "reason": f"{missing} commit(s) behind origin/main {origin_sha[:7]}"}
+    return {"state": "current", "reason": ""}
+
+
+def refusal(
+    *,
+    in_window: bool,
+    active: bool,
+    clean: bool | None,
+    branch_ok: bool | None,
+    local_head: str,
+    pr_head: str,
+    state: str,
+) -> str:
+    """R12: the first condition that does not hold, in the spec's order, or `""`."""
+    if not in_window:
+        return "this unit is not between pr and ship with an open pull request"
+    if active:
+        return "a step is running on this unit"
+    if clean is None:
+        return "the unit has no worktree to integrate in"
+    if clean is not True:
+        return "the unit's worktree has uncommitted changes"
+    if branch_ok is not True:
+        return "the unit's worktree is not on the unit's branch"
+    if not pr_head:
+        # Nothing to compare the local head with: `gh` could not be read, so the state is
+        # `unknown` too. Said as that, not as a head mismatch against "none".
+        return f"the pull request's head could not be read, so the unit is {state or 'unknown'}: nothing to integrate"
+    if not local_head or local_head != pr_head:
+        return (
+            f"the local head ({local_head[:7] or 'none'}) is not the pull request's head "
+            f"({pr_head[:7] or 'none'})"
+        )
+    if state not in BUTTON_STATES:
+        return f"the unit is {state}, which has nothing to integrate"
+    return ""
+
+
+def warnings(rounds: list[dict], review_status: str, gebo: bool, grant_warning: str) -> list[str]:
+    """R13: what the page says before the button is pressed."""
+    out: list[str] = []
+    if rounds and str(rounds[-1].get("verdict") or "") == "pass":
+        out.append(
+            "The last review round passed. Integrating rewrites the reviewed commit: the ship "
+            "gate closes and another review round is needed."
+        )
+    if review_status == "changes-requested":
+        out.append(
+            "review.md asks for changes. After integrating, cos.mjs next offers review, not "
+            "impl, and that round counts toward COS_REVIEW_ROUNDS (spec C2)."
+        )
+    if gebo and grant_warning:
+        out.append(grant_warning)
+    return out
+
+
+def pr_number_of(subject: str) -> int | None:
+    """The `(#N)` GitHub's squash puts at the end of a subject, or None."""
+    m = _PR_NUMBER.search(subject or "")
+    return int(m.group(1)) if m else None
+
+
+def related(
+    main_commits: list[dict],
+    branch_files: list[str],
+    units: list[dict],
+    others: list[dict],
+    self_unit: str,
+) -> dict[str, list[dict]]:
+    """R7, both groups, computed by the app and never by Gebo.
+
+    `main_commits`: `{sha, subject, files}` on `origin/main` since the merge-base.
+    `units`: board unit dicts (`name`, `pr`). `others`: `{unit, files}` for the other
+    units in the window, `files` None when their head is not here to compare.
+    """
+    mine = set(branch_files)
+    by_pr = {
+        int(u["pr"]["number"]): u["name"]
+        for u in units
+        if isinstance(u.get("pr"), dict) and u["pr"].get("number") is not None
+    }
+    merged = []
+    for c in main_commits:
+        shared = sorted(mine & set(c.get("files") or []))
+        if not shared:
+            continue
+        n = pr_number_of(str(c.get("subject") or ""))
+        merged.append({
+            "sha": c.get("sha", ""),
+            "subject": c.get("subject", ""),
+            "unit": by_pr.get(n) if n is not None else None,
+            "files": shared,
+        })
+    open_ = []
+    for o in others:
+        if o.get("unit") == self_unit:
+            continue
+        files = o.get("files")
+        if files is None:
+            open_.append({"unit": o["unit"], "files": None})
+            continue
+        shared = sorted(mine & set(files))
+        if shared:
+            open_.append({"unit": o["unit"], "files": shared})
+    return {"merged": merged, "open": open_}
+
+
+def related_units(rel: dict[str, list[dict]]) -> list[str]:
+    """Every unit named by either group, once, in order."""
+    out: list[str] = []
+    for item in rel.get("merged", []) + rel.get("open", []):
+        name = item.get("unit")
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def read_paths(units_root: Path, own: str, rel: dict[str, list[dict]]) -> tuple[str, ...]:
+    """R7: Gebo's own unit folder, and intent/spec/plan of the related units — nothing else."""
+    paths = [str(units_root / own)]
+    for name in related_units(rel):
+        for f in ("intent.md", "spec.md", "plan.md"):
+            paths.append(str(units_root / name / f))
+    return tuple(paths)
+
+
+def parse_needs_person(reply: str) -> list[str]:
+    """Every `[needs-person] …` line in a reply, the text after the marker."""
+    out = []
+    for line in (reply or "").splitlines():
+        m = _NEEDS_PERSON.match(line)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+def record(
+    *,
+    workspace: str,
+    unit: str,
+    pr: int | None,
+    mode: str,
+    head_before: str,
+    head_after: str,
+    origin_sha: str,
+    outcome: str,
+    related_: dict | None = None,
+    report: str = "",
+    needs_person: list[str] | None = None,
+    detail: str = "",
+) -> dict[str, Any]:
+    """R9: the one record every integration leaves, whatever happened."""
+    if outcome not in OUTCOMES:
+        raise ValueError(f"outcome must be one of {', '.join(OUTCOMES)}, got {outcome!r}")
+    return {
+        "kind": "integration",
+        "workspace": workspace,
+        "unit": unit,
+        "stage": "integrate",
+        "pr": pr,
+        "mode": mode,
+        "head_before": head_before,
+        "head_after": head_after if outcome == "pushed" else "",
+        "origin_sha": origin_sha,
+        "outcome": outcome,
+        "related": related_ or {"merged": [], "open": []},
+        "report": report,
+        "needs_person": list(needs_person or []),
+        "detail": detail,
+    }
+
+
+def outcome_of_session(head_before: str, head_now: str, reply: str) -> str:
+    """What a Gebo session did, read from git and not from what it said (spec, design 4)."""
+    if head_now and head_now != head_before:
+        return "pushed"
+    if parse_needs_person(reply):
+        return "needs-person"
+    return "failed"
+
+
+def describe_for_review(rec: dict[str, Any]) -> str:
+    """R10: the section the next `review` prompt carries."""
+    who = "the app, mechanically" if rec.get("mode") == "mechanical" else "an agent session (Gebo)"
+    body = json.dumps(rec, ensure_ascii=False, indent=2)
+    return (
+        "# An integration since the last round\n\n"
+        f"The branch was rebased onto `origin/main` by {who} — not by a person, and no "
+        "person approved how any conflict was resolved. The head you review is the one it "
+        "pushed. Read what it changed with the same care as any other change; a conflict "
+        "resolved by dropping one side can leave the tests green. Its record, verbatim:\n\n"
+        f"```json\n{body}\n```\n"
+    )
+
+
+def build_prompt(
+    *,
+    skill: str,
+    unit: str,
+    branch: str,
+    pr: int,
+    state: str,
+    reason: str,
+    head_before: str,
+    origin_sha: str,
+    rel: dict[str, list[dict]],
+    units_root: Path,
+    own_artifacts: dict[str, str],
+) -> str:
+    """Gebo's prompt: its rules, what is wrong, where to start, and whose intent to read.
+
+    The app does not rebase to find the conflicting files first (`plan.md` step 7): that
+    would write to the tree before the session began, and R12 wants it clean.
+    """
+    parts = [skill.strip(), ""]
+    parts.append(f"# This integration\n\nUnit: `{unit}`. Branch: `{branch}`. Pull request: #{pr}.")
+    parts.append(f"State: `{state}` — {reason}")
+    parts.append(f"Head at start: `{head_before}`. `origin/main` at start: `{origin_sha}`.")
+    parts.append(
+        f"The only push allowed: `git push --force-with-lease={branch}:{head_before} origin {branch}`."
+    )
+    parts.append("\n# Units merged into main since the branch was cut, touching the same files\n")
+    if rel.get("merged"):
+        for m in rel["merged"]:
+            who = m.get("unit") or "no unit found"
+            parts.append(f"- `{str(m.get('sha'))[:7]}` {m.get('subject')} — unit: {who}; files: {', '.join(m['files'])}")
+    else:
+        parts.append("- none")
+    parts.append("\n# Other open units touching the same files (read only, never change them)\n")
+    if rel.get("open"):
+        for o in rel["open"]:
+            files = ", ".join(o["files"]) if o.get("files") is not None else "no local commit, files not compared"
+            parts.append(f"- {o['unit']}: {files}")
+    else:
+        parts.append("- none")
+    names = related_units(rel)
+    if names:
+        parts.append("\n# Artifacts you may read for their intent\n")
+        for name in names:
+            for f in ("intent.md", "spec.md", "plan.md"):
+                parts.append(f"- {units_root / name / f}")
+    parts.append("\n# This unit's own artifacts\n")
+    for name, text in own_artifacts.items():
+        parts.append(f"## {name}\n\n{text.strip()}\n")
+    return "\n".join(parts) + "\n"
+
+
+# --- gh ----------------------------------------------------------------------
+
+
+async def _gh(argv: list[str], cwd: str) -> tuple[int, str, str]:
+    """One `gh` call, as `prcomment._gh` makes it: exit code and both streams."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "gh", *argv, cwd=cwd, env=child_env(),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as e:
+        raise IntegrateError(f"gh could not be started: {e}") from e
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=GH_TIMEOUT)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise IntegrateError(f"gh {' '.join(argv[:2])} did not answer within {GH_TIMEOUT:.0f}s") from None
+    return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
+
+
+def _said(out: str, err: str) -> str:
+    return (err.strip() or out.strip() or "gh failed and said nothing").splitlines()[-1]
+
+
+async def open_prs(root: str) -> list[dict]:
+    """Every open pull request in one call: number, head, head branch, mergeable."""
+    code, out, err = await _gh(
+        ["pr", "list", "--state", "open", "--json", "number,headRefOid,headRefName,mergeable",
+         "--limit", "200"],
+        root,
+    )
+    if code != 0:
+        raise IntegrateError(_said(out, err))
+    try:
+        rows = json.loads(out or "[]")
+    except ValueError as e:
+        raise IntegrateError(f"gh pr list did not return JSON: {e}") from e
+    return [r for r in rows if isinstance(r, dict)]
+
+
+async def required_checks(tree: str, n: int) -> list[dict]:
+    """The same call the `review` gate makes (`cos.mjs`, `pr checks --required`)."""
+    code, out, err = await _gh(["pr", "checks", str(int(n)), "--required", "--json", "name,bucket"], tree)
+    # `gh pr checks` exits 8 while checks are pending and 1 when one failed; both still
+    # print the JSON, which is what is read.
+    try:
+        rows = json.loads(out or "null")
+    except ValueError:
+        rows = None
+    if not isinstance(rows, list):
+        raise IntegrateError(_said(out, err) if code else "gh pr checks returned no list")
+    return [r for r in rows if isinstance(r, dict)]
+
+
+async def update_branch(tree: str, n: int) -> tuple[bool, str]:
+    """`gh pr update-branch <n> --rebase`. `(ok, what gh said)`; never raises on refusal."""
+    code, out, err = await _gh(["pr", "update-branch", str(int(n)), "--rebase"], tree)
+    return code == 0, (out.strip() or err.strip())
+
+
+async def pr_head(tree: str, n: int) -> str:
+    """The pull request's head as GitHub has it now."""
+    code, out, err = await _gh(["pr", "view", str(int(n)), "--json", "headRefOid"], tree)
+    if code != 0:
+        raise IntegrateError(_said(out, err))
+    try:
+        return str(json.loads(out).get("headRefOid") or "")
+    except (ValueError, AttributeError) as e:
+        raise IntegrateError(f"gh pr view did not return JSON: {e}") from e
+
+
+# --- Gebo --------------------------------------------------------------------
+
+
+async def run_gebo(
+    sessions: Any,
+    *,
+    tree: str,
+    workspace: str,
+    prompt: str,
+    grant: Any,
+    read_also: tuple[str, ...],
+    lease: tuple[str, str],
+    model: str | None,
+) -> AsyncIterator[tuple[str, Any]]:
+    """One Gebo session, streamed. Not `Runner.run`: that requires an artifact written, and
+    Gebo writes none. Yields `("chunk", text)` and finally `("end", {reply, cost, ...})`."""
+    from coscc.runner import CLAUDE_CODE_PRESET, Denials, permission_gate
+
+    denials = Denials()
+    reply = ""
+    end: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"system_prompt": dict(CLAUDE_CODE_PRESET)}
+    if tree != workspace:
+        kwargs["workspace"] = workspace
+    if model is not None:
+        kwargs["model"] = model
+    async for kind, payload in sessions.stream(
+        tree,
+        prompt,
+        None,
+        max_turns=grant.max_turns,
+        can_use_tool=permission_gate(grant, tree, denials, None, read_also=read_also, lease=lease),
+        tools=list(grant.tools),
+        max_budget_usd=grant.max_budget_usd or None,
+        **kwargs,
+    ):
+        if kind == "chunk":
+            reply += payload
+            yield ("chunk", payload)
+        elif kind == "tool":
+            continue
+        elif kind == "session":
+            end["session_id"] = str(payload)
+        else:  # `done`, as `Runner.run` reads it
+            end.update(
+                session_id=payload.get("session_id", end.get("session_id", "")),
+                cost=payload.get("cost", {}) or {},
+                terminal_reason=str(payload.get("terminal_reason") or ""),
+                models_used=list(payload.get("models_used") or []),
+            )
+    end["reply"] = reply
+    end["denials"] = denials.count
+    end["denied"] = denials.reasons or None
+    yield ("end", end)

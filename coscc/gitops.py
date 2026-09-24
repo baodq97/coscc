@@ -589,3 +589,111 @@ async def status_porcelain(path: Path, timeout: float = BRANCH_TIMEOUT) -> list[
         ["git", "-C", str(path), "status", "--porcelain"], timeout, strip=False
     )
     return out.splitlines()
+
+
+# --- integrating a unit that fell behind (`0035`) ---------------------------------
+#
+# Every ref here is a full SHA or a unit branch that passed `_BRANCH_RE`; nothing a request
+# carries reaches `git`. The one function that moves anything is `reset_branch_to`, and it
+# checks its four conditions together for the reason `advance_detached` does.
+
+
+def _require_shas(*shas: str) -> None:
+    for sha in shas:
+        if not _SHA_RE.fullmatch(sha or ""):
+            raise GitError(f"a full commit SHA is required, not {sha!r}")
+
+
+async def merge_base_of(path: Path, a: str, b: str, timeout: float = BRANCH_TIMEOUT) -> str:
+    """`git merge-base a b`, both full SHAs. `merge_base` above is fixed to HEAD and the trunk."""
+    _require_repo(path)
+    _require_shas(a, b)
+    return await _run(["git", "-C", str(path), "merge-base", a, b], timeout)
+
+
+async def commits_between(
+    path: Path, base: str, head: str, timeout: float = BRANCH_TIMEOUT
+) -> list[dict[str, str]]:
+    """`base..head` as `{sha, subject}` — `log_range`, named for what `0035` asks of it."""
+    return await log_range(path, base, head, timeout)
+
+
+async def files_of_commit(path: Path, sha: str, timeout: float = BRANCH_TIMEOUT) -> list[str]:
+    """The paths one commit touched, against its first parent."""
+    _require_repo(path)
+    _require_shas(sha)
+    out = await _run(
+        ["git", "-C", str(path), "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha],
+        timeout,
+    )
+    return [line for line in out.splitlines() if line.strip()]
+
+
+async def files_between(path: Path, base: str, head: str, timeout: float = BRANCH_TIMEOUT) -> list[str]:
+    """The paths `base..head` touched, as one diff."""
+    _require_repo(path)
+    _require_shas(base, head)
+    out = await _run(["git", "-C", str(path), "diff", "--name-only", base, head], timeout)
+    return [line for line in out.splitlines() if line.strip()]
+
+
+async def has_commit(path: Path, sha: str, timeout: float = BRANCH_TIMEOUT) -> bool:
+    """Whether this repository holds `sha` as a commit. A malformed SHA is simply no."""
+    _require_repo(path)
+    if not _SHA_RE.fullmatch(sha or ""):
+        return False
+    code, _ = await _run_code(["git", "-C", str(path), "cat-file", "-e", f"{sha}^{{commit}}"], timeout)
+    return code == 0
+
+
+async def _git_dir(path: Path, timeout: float) -> Path:
+    out = await _run(["git", "-C", str(path), "rev-parse", "--absolute-git-dir"], timeout)
+    return Path(out.strip())
+
+
+async def rebase_in_progress(path: Path, timeout: float = BRANCH_TIMEOUT) -> bool:
+    """Whether a rebase stopped part-way in this tree (a linked worktree's own git dir)."""
+    _require_repo(path)
+    git_dir = await _git_dir(path, timeout)
+    return (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()
+
+
+async def abort_rebase(path: Path, timeout: float = BRANCH_TIMEOUT) -> str:
+    """`git rebase --abort`: back to where the rebase began. Nothing else."""
+    _require_repo(path)
+    return await _run(["git", "-C", str(path), "rebase", "--abort"], timeout)
+
+
+async def reset_branch_to(
+    tree: Path, branch: str, expected_old: str, new_sha: str, timeout: float = FETCH_TIMEOUT
+) -> str:
+    """Move the unit's own branch in its own tree from `expected_old` to `new_sha`.
+
+    `0035` R4: after GitHub rebased the pull request, the local branch follows it. Refused,
+    with nothing changed, unless all four hold: the tree is clean; it is on `branch`; its
+    HEAD is `expected_old`; and `new_sha` is present after `git fetch origin <branch>`.
+    `reset --keep`, never `--hard`: `--keep` refuses rather than discard a local change,
+    so even a race past the clean check loses nothing.
+    """
+    _require_repo(tree)
+    if branch == TRUNK or not _BRANCH_RE.fullmatch(branch or ""):
+        raise GitError(f"not a branch name this app will move: {branch!r}")
+    _require_shas(expected_old, new_sha)
+    if not await is_clean(tree, timeout):
+        raise GitError(f"{tree} has uncommitted changes, so its branch was not moved")
+    on = await current_branch(tree, timeout)
+    if on != branch:
+        raise GitError(f"{tree} is on {on or 'a detached HEAD'}, not {branch}, so nothing was moved")
+    head = await _run(["git", "-C", str(tree), "rev-parse", "HEAD"], timeout)
+    if head != expected_old:
+        raise GitError(f"{tree}'s HEAD is {head[:7]}, not {expected_old[:7]}, so nothing was moved")
+    # Not `fetch`: its name check takes one path part, and a unit branch has two. The
+    # branch already passed `_BRANCH_RE`, which is stricter than `_REF_PART_RE`.
+    await _run(
+        ["git", "-C", str(tree), "fetch", "--no-tags", "--", "origin",
+         f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+        timeout,
+    )
+    if not await has_commit(tree, new_sha, timeout):
+        raise GitError(f"{new_sha[:7]} is not here even after fetching {branch}, so nothing was moved")
+    return await _run(["git", "-C", str(tree), "reset", "--keep", new_sha], timeout)

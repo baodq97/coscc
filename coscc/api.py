@@ -326,6 +326,43 @@ def build(config: Config | None = None) -> FastAPI:
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
 
+    @api.post("/api/units/integrate")
+    async def integrate_unit(request: Request) -> Any:
+        """`0035`. Integrate one unit onto `main`, on request. Streams like `/api/board/run`.
+
+        No login, like every route here: whoever reaches the port can make this machine's
+        `gh` login rebase a unit's pull request, or open a paid Gebo session. A refusal
+        (R12) is a 400 before anything changes.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        stream = service.integrate(str(body.get("cwd", "")), str(body.get("unit", "")))
+        try:
+            first = await stream.__anext__()
+        except Invalid as e:
+            return _bad(str(e))
+        except StopAsyncIteration:
+            return _bad("the integration produced nothing")
+
+        async def lines() -> AsyncIterator[bytes]:
+            def out(obj: dict[str, Any]) -> bytes:
+                return json.dumps(obj).encode() + b"\n"
+
+            try:
+                for kind, payload in (first,):
+                    yield out({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
+                async for kind, payload in stream:
+                    if kind == "chunk":
+                        yield out({"type": "chunk", "text": payload})
+                    else:
+                        yield out({"type": "done", **payload})
+            except Exception as e:
+                yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
     @api.get("/api/timeline")
     async def get_timeline(request: Request) -> Any:
         """R15. What happened to one unit, oldest first."""

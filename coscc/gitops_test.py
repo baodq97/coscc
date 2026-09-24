@@ -636,3 +636,90 @@ class ReadingAFailedAttemptsTree(unittest.TestCase):
             asyncio.run(gitops.log_range(not_repo, self.base, self.base))
         with self.assertRaises(GitError):
             asyncio.run(gitops.status_porcelain(not_repo))
+
+
+class IntegratingABranchThatFellBehind(unittest.TestCase):
+    """`0035` plan step 3. A unit branch on a bare remote, rebased "on GitHub's side" by a
+    second clone, and the local tree following it — or refusing, changing nothing.
+
+    Borrows `AdvancingADetachedWorktree`'s fixture without subclassing it, so its tests do
+    not run a second time against this tree."""
+
+    BRANCH = "feat/x"
+    _git = AdvancingADetachedWorktree._git
+    _commit = AdvancingADetachedWorktree._commit
+
+    def setUp(self):
+        AdvancingADetachedWorktree.setUp(self)
+        # Remove the detached tree the parent made; this fixture wants the branch.
+        self._git(self.repo, "worktree", "remove", "--force", str(self.tree))
+        self._git(self.seed, "switch", "-q", "-c", self.BRANCH)
+        (self.seed / "g.txt").write_text("branch\n", encoding="utf-8")
+        self._git(self.seed, "add", "-A")
+        self._git(self.seed, "commit", "-q", "-m", "branch work")
+        self._git(self.seed, "push", "-q", "origin", self.BRANCH)
+        self.old = self._git(self.seed, "rev-parse", "HEAD")
+        self._git(self.repo, "fetch", "-q", "origin", f"+refs/heads/{self.BRANCH}:refs/remotes/origin/{self.BRANCH}")
+        self._git(self.repo, "branch", self.BRANCH, f"origin/{self.BRANCH}")
+        asyncio.run(gitops.worktree_add(self.repo, self.tree, self.BRANCH))
+        # Main moves; the branch is rebased onto it on the remote, as update-branch would.
+        self._git(self.seed, "switch", "-q", "main")
+        self.main2 = self._commit(self.seed, "two")
+        self._git(self.seed, "switch", "-q", self.BRANCH)
+        self._git(self.seed, "rebase", "-q", "main")
+        self._git(self.seed, "push", "-q", "--force", "origin", self.BRANCH)
+        self.new = self._git(self.seed, "rev-parse", "HEAD")
+
+    def test_the_read_helpers(self):
+        asyncio.run(gitops.fetch(self.repo))
+        base = asyncio.run(gitops.merge_base_of(self.repo, self.old, self.main2))
+        self.assertEqual(base, self.main)
+        commits = asyncio.run(gitops.commits_between(self.repo, base, self.main2))
+        self.assertEqual([c["subject"] for c in commits], ["two"])
+        self.assertEqual(asyncio.run(gitops.files_of_commit(self.repo, self.main2)), ["f.txt"])
+        self.assertEqual(asyncio.run(gitops.files_between(self.repo, base, self.old)), ["g.txt"])
+        self.assertTrue(asyncio.run(gitops.has_commit(self.repo, self.old)))
+        self.assertFalse(asyncio.run(gitops.has_commit(self.repo, "f" * 40)))
+        self.assertFalse(asyncio.run(gitops.rebase_in_progress(self.tree)))
+
+    def test_a_clean_tree_on_its_branch_follows_the_rebased_head(self):
+        asyncio.run(gitops.reset_branch_to(self.tree, self.BRANCH, self.old, self.new))
+        self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), self.new)
+        self.assertEqual(self._git(self.tree, "branch", "--show-current"), self.BRANCH)
+
+    def _refused(self, expected_old=None, new=None, want="nothing was moved"):
+        with self.assertRaises(GitError) as caught:
+            asyncio.run(gitops.reset_branch_to(self.tree, self.BRANCH, expected_old or self.old, new or self.new))
+        self.assertIn(want, str(caught.exception))
+        self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), self.old)
+
+    def test_a_dirty_tree_is_refused(self):
+        (self.tree / "g.txt").write_text("mine\n", encoding="utf-8")
+        self._refused(want="uncommitted")
+
+    def test_the_wrong_branch_is_refused(self):
+        self._git(self.tree, "switch", "-q", "--detach")
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.reset_branch_to(self.tree, self.BRANCH, self.old, self.new))
+        self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), self.old)
+
+    def test_a_head_other_than_expected_is_refused(self):
+        self._refused(expected_old="e" * 40)
+
+    def test_a_sha_the_remote_does_not_have_is_refused(self):
+        self._refused(new="d" * 40)
+
+    def test_a_stopped_rebase_is_seen_and_aborted(self):
+        self._git(self.tree, "fetch", "-q", "origin")
+        self._git(self.seed, "switch", "-q", "main")
+        (self.seed / "g.txt").write_text("main's\n", encoding="utf-8")
+        self._git(self.seed, "add", "-A")
+        self._git(self.seed, "commit", "-q", "-m", "main touches g")
+        self._git(self.seed, "push", "-q", "origin", "main")
+        self._git(self.tree, "fetch", "-q", "origin")
+        subprocess.run(["git", "-C", str(self.tree), "-c", "user.name=T", "-c", "user.email=t@e.invalid",
+                        "rebase", "origin/main"], capture_output=True)
+        self.assertTrue(asyncio.run(gitops.rebase_in_progress(self.tree)))
+        asyncio.run(gitops.abort_rebase(self.tree))
+        self.assertFalse(asyncio.run(gitops.rebase_in_progress(self.tree)))
+        self.assertEqual(self._git(self.tree, "rev-parse", "HEAD"), self.old)

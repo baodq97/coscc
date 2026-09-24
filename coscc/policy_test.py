@@ -92,7 +92,8 @@ class OneGrantPerStage(unittest.TestCase):
                           max_budget_usd=3.0, app_writes_artifact=False,
                           warning=policy.SHIP_WARNING),
         }
-        self.assertEqual(set(policy.GRANTS), set(expected) | {"spec"})
+        # `integrate` since `0035`: not a stage, and pinned in `GeboPushesOnlyWithTheLease`.
+        self.assertEqual(set(policy.GRANTS), set(expected) | {"spec", "integrate"})
         for stage, grant in expected.items():
             self.assertEqual(grant_for(stage), grant, stage)
 
@@ -500,3 +501,150 @@ class ThePlanCeilingClearsTheOneItHit(unittest.TestCase):
         # Raising the ceiling must not widen what the stage may do.
         self.assertEqual(grant_for("plan").tools, READ_TOOLS)
         self.assertEqual(grant_for("plan").commands, ())
+
+
+class GeboPushesOnlyWithTheLease(unittest.TestCase):
+    """`0035` R6: one push, leased to the head the step began at, on the unit's branch."""
+
+    G = grant_for("integrate")
+    BRANCH = "feat/x"
+    HEAD = "a" * 40
+    LEASE = (BRANCH, HEAD)
+    OK = f"git push --force-with-lease=feat/x:{'a' * 40} origin feat/x"
+
+    def run_(self, command, lease=LEASE):
+        return check_command(self.G, command, lease)
+
+    def test_the_ceilings_are_impls_chosen_not_measured(self):
+        self.assertEqual((self.G.max_turns, self.G.max_budget_usd), (120, 8.0))
+        self.assertTrue(self.G.push_needs_lease)
+        self.assertFalse(self.G.app_writes_artifact)
+        self.assertEqual(self.G.warning, policy.INTEGRATE_WARNING)
+        self.assertIn("gh", self.G.commands)
+
+    def test_the_one_allowed_push(self):
+        self.assertEqual(self.run_(self.OK), "")
+        self.assertEqual(self.run_(f"git push --force-with-lease=feat/x:{self.HEAD} origin HEAD:feat/x"), "")
+        self.assertEqual(self.run_(f"git push -u --force-with-lease=feat/x:{self.HEAD} origin feat/x"), "")
+
+    def test_every_other_push_is_refused_with_its_own_reason(self):
+        cases = {
+            "git push origin feat/x": "exactly one",
+            "git push --force origin feat/x": "--force",
+            "git push -f origin feat/x": "--force",
+            "git push --force-with-lease origin feat/x": "needs a value",
+            f"git push --force-with-lease=feat/x:{'b' * 40} origin feat/x": "bound to",
+            f"git push --force-with-lease=feat/x:{'a' * 7} origin feat/x": "bound to",
+            f"git push --force-with-lease=feat/x:{self.HEAD} origin main": "may only name",
+            f"git push --force-with-lease=feat/x:{self.HEAD} origin feat/x:main": "may only name",
+            f"git push --force-with-lease=feat/x:{self.HEAD} --all origin": "--all",
+            f"git push --force-with-lease=feat/x:{self.HEAD} --mirror origin": "--mirror",
+            f"git push --force-with-lease=feat/x:{self.HEAD} --tags origin feat/x": "--tags",
+            f"git push --force-with-lease=feat/x:{self.HEAD} --delete origin feat/x": "--delete",
+            f"git -C . push --force-with-lease=feat/x:{self.HEAD} origin feat/x": "nothing between",
+        }
+        for command, why in cases.items():
+            with self.subTest(command=command):
+                reason = self.run_(command)
+                self.assertIn(why, reason)
+
+    def test_a_push_in_anothers_arguments_is_not_a_push(self):
+        """`0035` review round 1, F3: `push` as a word, not as the subcommand."""
+        for command in ("git log --grep push", "git commit -m push", "git branch push-fix"):
+            with self.subTest(command=command):
+                self.assertEqual(self.run_(command), "")
+        for command in ("git --no-pager push origin feat/x", "git -c a=b push origin feat/x"):
+            with self.subTest(command=command):
+                self.assertIn("nothing between", self.run_(command))
+
+    def test_no_lease_means_no_push(self):
+        self.assertIn("no lease", self.run_(self.OK, lease=None))
+
+    def test_merge_pull_and_update_branch_are_refused(self):
+        for command in ("git merge origin/main", "git pull --rebase origin main", "gh pr merge 7",
+                        "gh -R o/r pr update-branch 7 --rebase", "gh api -X PUT repos/o/r/pulls/7/merge"):
+            with self.subTest(command=command):
+                self.assertNotEqual(self.run_(command), "")
+
+    def test_rebase_and_tests_run(self):
+        for command in ("git rebase origin/main", "git rebase --continue", "git rebase --abort",
+                        "npm test", "uv run python -m unittest", "gh pr checks 7"):
+            with self.subTest(command=command):
+                self.assertEqual(self.run_(command), "")
+
+    def test_roads_past_the_lease_that_the_grant_holds_are_refused(self):
+        """`0035` review round 2, F4: moving the branch without saying `git push`."""
+        cases = {
+            "gh api -X PATCH repos/o/r/git/refs/heads/feat/x -f sha=abc -F force=true": "no lease",
+            "gh -R o/r api graphql -f query=x": "no lease",
+            "gh repo sync o/r --branch feat/x --force": "no lease",
+            "gh extension install o/gh-x": "extension",
+            "git send-pack origin +HEAD:refs/heads/feat/x": "without the lease",
+            "git http-push origin feat/x": "without the lease",
+            "git -c alias.p=push p --force origin feat/x": "alias",
+            "git -c Alias.p=push p --force origin feat/x": "alias",
+            "git config alias.p push": "alias",
+            "git config --global alias.p push": "alias",
+            "git -c include.path=x p": "alias",
+            "git --config-env=alias.p=V p": "alias",
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p": "alias",
+        }
+        for command, why in cases.items():
+            with self.subTest(command=command):
+                self.assertIn(why, self.run_(command))
+
+    def test_reading_the_pull_request_stays_open(self):
+        for command in ("gh pr view 7 --json headRefOid", "gh pr checks 7", "git config user.name",
+                        "GIT_EDITOR=true git rebase --continue"):
+            with self.subTest(command=command):
+                self.assertEqual(self.run_(command), "")
+
+    def test_the_known_limit_c6(self):
+        """`0035` spec C6: tokens, not what runs. A program the grant may start can spawn
+        `git push --force` itself — `node -e`, `python -c`, or a script the step wrote and
+        then ran through `npm test`."""
+        for command in ("node -e 'require(\"child_process\")'", "python -c 'import subprocess'",
+                        "python3 push.py", "npm test"):
+            with self.subTest(command=command):
+                self.assertEqual(self.run_(command), "")
+
+    def test_the_new_refusals_are_geboes_alone(self):
+        self.assertEqual(check_command(grant_for("pr"), "gh api repos/o/r/pulls/7"), "")
+        self.assertEqual(check_command(grant_for("impl"), "git config alias.st status"), "")
+
+    def test_other_grants_push_as_before(self):
+        self.assertEqual(check_command(grant_for("pr"), "git push origin feat/x"), "")
+
+
+class GeboReadsAnExplicitList(unittest.TestCase):
+    """`0035` R7: `read_also` widens reading by named paths, and never writing."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.tree = base / "tree"
+        self.own = base / "units" / "0035_x"
+        self.other = base / "units" / "0030_y"
+        for d in (self.tree, self.own, self.other):
+            d.mkdir(parents=True)
+        (self.other / "intent.md").write_text("x")
+        (self.other / "impl.md").write_text("x")
+        self.G = grant_for("integrate")
+        self.also = (str(self.own), str(self.other / "intent.md"))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def d(self, tool, path):
+        return decide(self.G, tool, {"file_path": str(path)}, str(self.tree), None, read_also=self.also)
+
+    def test_a_listed_file_reads_and_its_neighbour_does_not(self):
+        self.assertEqual(self.d("Read", self.other / "intent.md"), "")
+        self.assertIn("reading outside", self.d("Read", self.other / "impl.md"))
+
+    def test_its_own_unit_folder_reads_but_is_never_written(self):
+        self.assertEqual(self.d("Read", self.own / "plan.md"), "")
+        self.assertIn("writing outside", self.d("Write", self.own / "impl.md"))
+
+    def test_the_worktree_is_written(self):
+        self.assertEqual(self.d("Write", self.tree / "a.py"), "")

@@ -154,6 +154,20 @@ a `review` gate that never opens.
   when someone presses *Post to PR* on the board, or calls `POST /api/units/review-comment`.
   That route has no login either, so anyone who can reach the port can make this
   machine's login post a round. Neither gate changes its answer because of a comment.
+- **An integration is not an approval, and nothing starts one.** Since `0035` the board
+  shows whether a unit between `pr` and `ship` has fallen behind `main`, and an
+  *Integrate* button (`POST /api/units/integrate`) rebases it: the app itself through
+  `gh pr update-branch --rebase` when GitHub reports no conflict, or Gebo — an agent
+  session under the `integrate` grant, rules in `.claude/skills/integrate/SKILL.md` — when
+  it conflicts or CI went red after an integration. Gebo's grant allows one push, with a
+  lease bound to the head it began at, and refuses the other roads its own commands hold
+  (`gh api`, `git send-pack`, an alias made during the step) — but, like every grant here,
+  it reads words: `node -e` or `python -c` pushing by itself still walks past. Gebo stops with `[needs-person]` rather than drop one side. How
+  a conflict was resolved is the app's or an agent's word; the next review round is the
+  only thing that reads it. No board read, timer or finished step presses the button, and
+  the route has no login: anyone who reaches the port can make this machine's `gh` login
+  rebase a unit's pull request or open a paid session. It is not a stage and `cos.mjs`
+  does not know it exists beyond the `betweenPrAndShip` field `status --json` carries.
 - **CI that decides more than one thing.** Since `0015` CI decides whether `review` may
   begin: the gate reads the pull request's required checks and stays closed on red,
   pending or none. Nothing else reads it. A green check also measures a different

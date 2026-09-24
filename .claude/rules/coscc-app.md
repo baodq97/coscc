@@ -211,6 +211,28 @@ no commands, one turn, no budget.
   `Runner.run`'s `finally` swallows every exception around it, so a step's outcome and its
   `end` record never depend on the capture succeeding.
 
+- **`POST /api/units/integrate` force-pushes under this machine's `gh` login.** Since
+  `0035`. On a `behind` unit it runs `gh pr update-branch --rebase` and then moves the
+  unit's local branch with `reset --keep`; on a `conflicting` or `red-after-integration`
+  unit it opens Gebo, a paid session (ceilings 120 turns / $8, chosen, not measured) whose
+  grant allows exactly one push: `--force-with-lease=<branch>:<head at start>` to the
+  unit's own branch. The roads to the branch the grant's own commands hold are refused by
+  their words: `gh api` (it reaches `git/refs` with `force=true`), `gh repo sync`,
+  `gh extension`, `git send-pack`, `git http-push`, and an alias, include or
+  `GIT_CONFIG_*` made during the step. The grant still reads tokens, so any program it may
+  start can push past the lease itself — `node -e`, `python -c`, or a script the step
+  wrote and then runs through `npm test` — and so can an alias already in a git config
+  before the step (`coscc/policy_test.py`, `test_the_known_limit_c6`). What stops a force
+  on `main` is the GitHub ruleset, not this grant. Gebo may read the
+  intent, spec and plan of the units the app lists as related — a widening of the read
+  boundary, and not a sandbox while it has `cat`. No login, `0.0.0.0` by default. Every
+  attempt, refused ones included, is one `integration` row in the run log.
+- **Every board read with a unit between `pr` and `ship` costs one `gh pr list`.** Since
+  `0035`, up to 30s (chosen), plus a `gh pr checks` for a unit whose head is the one its
+  last integration pushed. Offline, every such unit reads `unknown` and the board waits
+  out the timeout. Unmeasured. The counts use the `origin/main` of the last fetch; the
+  read does not fetch.
+
 ## The proofs, and what each one costs
 
 | | |
@@ -232,6 +254,7 @@ no commands, one turn, no budget.
 | `verify_0021.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2 |
 | `verify_0024.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s own handlers through Reflex's event processor, in-process; no browser, so the compiled page is not exercised |
 | `verify_0025.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
+| `verify_0035.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` whose `pr update-branch` really rebases in a scratch clone. Needs `node`, `uv` and `git`; any missing is exit 2. Proves the mechanical road only: `--paid` (a real Gebo session) is not built and exits 2 |
 | `verify_0037.py` | plain: no session, no quota, no network; temporary data root, only the SDK client replaced. Claim (b) calls the SDK's private `SubprocessCLITransport._build_command`; if that cannot be called it is exit 2, not a pass. `--baseline` and `--measure` read `<COS_DATA_DIR>/cos.db` (`mode=ro`, never through `Data`) and `~/.claude/projects/*/<session>.jsonl`, and write only to `<COS_DATA_DIR>/measurements/`; too few sessions to compare is exit 2. `--paid` **spends real money**: six `claude -p` runs, three per branch. No `claude` on `PATH` is exit 2 |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |

@@ -832,3 +832,34 @@ class TheNextStageOverHttp(unittest.IsolatedAsyncioTestCase):
             with self.subTest(params=params):
                 got = await self.client.get("/api/units/next", params=params)
                 self.assertEqual(got.status_code, 400)
+
+
+class IntegratingOverHttp(PostingAReviewRoundOverHttp):
+    """`0035` R12 over HTTP: outside the window is a 400 before anything runs, and the
+    route is never a stage `next` offers (R3)."""
+
+    async def test_a_unit_outside_the_window_is_a_400_and_leaves_a_record(self):
+        # A draft pr.md: `cos.mjs` says the unit is not between pr and ship, so no gh is asked.
+        pr_md = Path(self.app.state.service._unit_dir(self.cwd, self.unit)) / "pr.md"
+        pr_md.write_text(f"# PR\nStatus: draft.\nPR: {self.PR_URL}\n", encoding="utf-8")
+        got = await self.client.post("/api/units/integrate", json={"cwd": self.cwd, "unit": self.unit})
+        self.assertEqual(got.status_code, 400)
+        self.assertIn("not between pr and ship", got.json()["error"])
+        service = self.app.state.service
+        rows = service._journal().records(service._journal_key(self.cwd), kind="integration")
+        self.assertEqual([r["outcome"] for r in rows], ["refused"])
+
+    async def test_unknown_arguments_are_a_400(self):
+        for body in ({"cwd": self.cwd, "unit": "0099_nope"}, {"cwd": "/etc", "unit": self.unit}, {}):
+            with self.subTest(body=body):
+                got = await self.client.post("/api/units/integrate", json=body)
+                self.assertEqual(got.status_code, 400)
+
+    async def test_next_never_offers_it(self):
+        got = await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": self.unit})
+        self.assertNotEqual(got.json().get("stage"), "integrate")
+
+    # The parent's own tests post comments; they are not this class's to run again.
+    test_two_presses_make_one_comment = None  # type: ignore[assignment]
+    test_the_board_then_shows_the_round_on_the_pr = None  # type: ignore[assignment]
+    test_bad_requests_are_400_and_reach_no_gh = None  # type: ignore[assignment]

@@ -9,7 +9,7 @@ import {
   parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit, STAGE_NAMES,
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
-  reviewRounds, nextStep, parseNeedsPerson,
+  reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -1182,4 +1182,43 @@ test('0028: nextStep never offers a stage whose gate is closed, in any of the ne
       if (stage) assert.equal(checkGate(u, stage, { probe }).ok, true, `${stage} offered with its gate closed`)
     }
   }
+})
+
+// --- between pr and ship (0035) -------------------------------------------------
+
+const between = (artifacts) => betweenPrAndShip(unit(artifacts))
+
+test('0035: betweenPrAndShip is true only on an accepted pr.md naming a pull request, unfinished', () => {
+  const noPrMd = { 'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('accepted'), 'impl.md': art('accepted') }
+  assert.equal(between(noPrMd), false, 'no pr.md')
+  assert.equal(between({ ...noPrMd, 'pr.md': { ...art('draft'), pr: PR.pr } }), false, 'pr.md draft')
+  assert.equal(between({ ...noPrMd, 'pr.md': { ...art('accepted'), pr: null } }), false, 'accepted with no PR:')
+  assert.equal(
+    between({ ...CHAIN, 'review.md': reviewArt('changes-requested', round(1, 'changes-requested', ['- F1 [open] x'])) }),
+    true,
+    'accepted with a PR, review changes-requested',
+  )
+  assert.equal(between({ ...CHAIN, 'plan.md': art('done') }), false, 'plan.md done')
+  assert.equal(between({ ...CHAIN, 'review.md': art('rejected') }), false, 'closed by a rejection')
+})
+
+test('0035: status --json carries betweenPrAndShip for every unit; gate and next do not change', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cos-0035-'))
+  const cos = join(root, '.cos')
+  const put = (u, f, text) => { mkdirSync(join(cos, u), { recursive: true }); writeFileSync(join(cos, u, f), text) }
+  for (const f of ['intent.md', 'spec.md', 'plan.md', 'impl.md']) {
+    put('0001_open', f, `# X\n${f === 'intent.md' ? 'Type: feat. ' : ''}Status: accepted.\n`)
+  }
+  put('0001_open', 'pr.md', '# PR\nPR: https://github.com/o/r/pull/7. Status: accepted.\n')
+  put('0002_early', 'intent.md', '# X\nType: fix. Status: draft.\n')
+  const cli = (...args) =>
+    spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', root], { encoding: 'utf8' })
+  const before = { gate: cli('gate', '0001_open', 'impl'), next: cli('next', '0001_open') }
+  const status = JSON.parse(cli('status', '--json').stdout)
+  assert.deepEqual(status.units.map((u) => [u.name, u.betweenPrAndShip]), [['0001_open', true], ['0002_early', false]])
+  const after = { gate: cli('gate', '0001_open', 'impl'), next: cli('next', '0001_open') }
+  assert.equal(after.gate.stdout, before.gate.stdout)
+  assert.equal(after.gate.status, before.gate.status)
+  assert.equal(after.next.stdout, before.next.stdout)
+  assert.ok(!('betweenPrAndShip' in JSON.parse(after.next.stdout)), 'next carries no integration field')
 })
