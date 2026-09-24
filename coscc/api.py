@@ -54,6 +54,9 @@ def build(config: Config | None = None) -> FastAPI:
         # (`.cos/0001_no-session-management/spec.md:121`). Shutdown is wired to the server's
         # lifecycle rather than left to whoever remembers. Nothing to do on the way up.
         yield
+        # `0034`. Steps first: each is a task that would otherwise write its `end` after
+        # its client had been closed under it. `shutdown` writes none, on purpose.
+        await service.shutdown()
         await sessions.close_all()
 
     api = FastAPI(title="coscc", lifespan=lifespan)
@@ -386,6 +389,33 @@ def build(config: Config | None = None) -> FastAPI:
                 yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
+
+    @api.post("/api/board/stop")
+    async def stop_step(request: Request) -> Any:
+        """`0034`. Stop the step running on one unit: `{cwd, unit, by}`.
+
+        No login, like every route here: anyone who reaches the port can stop anyone's
+        step, under any name. `by` is what the `end` record's `stopped_by` says, and it is
+        a claim, not an identity. It opens no gate and starts nothing.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        try:
+            return await service.stop_step(
+                str(body.get("cwd", "")), str(body.get("unit", "")), str(body.get("by", ""))
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/board/running")
+    async def running_steps(request: Request) -> Any:
+        """`0034`. The board steps running now in one workspace. This process only."""
+        try:
+            return service.running_steps(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
 
     @api.post("/api/units/integrate")
     async def integrate_unit(request: Request) -> Any:
