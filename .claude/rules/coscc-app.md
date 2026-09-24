@@ -295,6 +295,22 @@ no commands, one turn, no budget.
   `gh api` as a whole, as the `integrate` grant does. `node -e`, or an alias defined before
   the step, still walks past (`coscc/policy_test.py`, `IntegrationIsNotPrs`).
 
+- **`POST /api/units/hold` closes a pull request under this machine's `gh` login.** Since
+  `0045`. `to: "dropped"` appends `### Dropped` under `intent.md ## Answers`, then runs
+  `gh pr list` and `gh pr close <n>` for each open pull request whose head is the unit's
+  branch (no `--delete-branch`), and `git worktree remove` without `--force` — a tree with
+  uncommitted changes stays and the move reports `failed` for it. Each `gh` call waits up to
+  30s (chosen). A side effect that failed cannot be retried from the board: `dropped →
+  dropped` is refused, so the person closes the pull request or removes the tree by hand;
+  the route's reply and the `hold` row on Activity say which. `paused` and `→ active` run
+  no `git` and no `gh`. The block is read by `cos.mjs`: no stage is offered and every gate
+  is closed, so anyone who reaches the port — no login, `0.0.0.0` by default — can stop
+  every unit under a name they chose. The block also reaches every later stage's prompt as
+  part of `intent.md`. An older `cos.mjs` reads the reason as the tail of the answer above
+  it and offers the next stage again: downgrading past `0045` with held units is unsafe.
+  `next_step` now asks `cos.mjs next` once more, files only, before opening a worktree
+  (unmeasured).
+
 - **An `impl` prompt carries file names taken from other people's commits on `main`.**
   Since `0042` `run_step` diffs the commit the unit's last `done` run of `plan` ran on
   (its `start` record's `head`) against the tree's `origin/main`, keeps the paths the
@@ -352,6 +368,7 @@ no commands, one turn, no budget.
 | `verify_0037.py` | plain: no session, no quota, no network; temporary data root, only the SDK client replaced. Claim (b) calls the SDK's private `SubprocessCLITransport._build_command`; if that cannot be called it is exit 2, not a pass. `--baseline` and `--measure` read `<COS_DATA_DIR>/cos.db` (`mode=ro`, never through `Data`) and `~/.claude/projects/*/<session>.jsonl`, and write only to `<COS_DATA_DIR>/measurements/`; too few sessions to compare is exit 2. `--paid` **spends real money**: six `claude -p` runs, three per branch. No `claude` on `PATH` is exit 2 |
 | `verify_0041.py` | plain: no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `git` and `uv`; either missing is exit 2. `--measure` reads `<COS_DATA_DIR>/cos.db` (`mode=ro`) and the store's `pr.md` files, and writes only to `<COS_DATA_DIR>/measurements/`; fewer than five `pr` steps since `0041` is exit 2. `--paid` **spends real money, pushes to `main` of `COS_PROOF_REPO` and leaves two pull requests open there**: two real `pr` steps; unset is exit 2. Not run when it was written |
 | `verify_0042.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. The session is a stand-in, so it cannot show that a real `impl` stops on a contradiction |
+| `verify_0045.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` that logs every call. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `POST /api/units/hold` in-process. Does not touch the real `0032`: pausing it from the board is a person's measurement after ship |
 | `verify_0047.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2. Fixes the board's `today` at 2026-10-08 for C5 and C6; does not measure the intent's outcome, which is three real units on the real board that day |
 | `verify_0048.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Exit 2 also when `--baseline` reproduces no ref-lock race |
 | `verify_0051.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` that refuses everything. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState` as `verify_0024` does, so the compiled page and its socket are not exercised; the ten steps go through `POST /api/board/run` on the in-process ASGI app, never through a second copy of the app, so the one-process limit is not measured |

@@ -126,6 +126,10 @@ const ANSWER_META = /^Answered by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\
 //
 // Since `0047` a block may be headed `### Outcome` (`parseOutcome`). It ends the block above
 // it, so its lines never become part of an answer's text, and it is not an answer itself.
+//
+// Since `0045` the section may also hold hold blocks (`HOLD_HEAD`). Each one ends the block
+// above it, so a reason is never read as the tail of the answer before it, and none is ever
+// returned as an answer.
 function answerBlocks(text) {
   const lines = section(text, 'Answers')
   if (lines === null) return []
@@ -133,6 +137,7 @@ function answerBlocks(text) {
   for (const line of lines) {
     const m = line.match(/^###\s+(?:Câu\s+(\d+)|(F\d+)|(Outcome))\s*$/)
     if (m) blocks.push({ n: m[1] !== undefined ? Number(m[1]) : null, id: m[2] ?? null, outcome: m[3] !== undefined, lines: [] })
+    else if (HOLD_HEAD.test(line)) blocks.push({ hold: true, lines: [] })
     else if (blocks.length) blocks[blocks.length - 1].lines.push(line)
   }
   return blocks
@@ -141,7 +146,7 @@ function answerBlocks(text) {
 export function parseAnswers(text) {
   const answers = []
   for (const b of answerBlocks(text)) {
-    if (b.outcome) continue
+    if (b.outcome || b.hold) continue
     const at = b.lines.findIndex((l) => l.trim() !== '')
     const meta = at === -1 ? null : b.lines[at].match(ANSWER_META)
     if (!meta) continue
@@ -155,6 +160,56 @@ export function parseAnswers(text) {
     })
   }
   return answers
+}
+
+// --- a person's decision to pause or drop a unit --------------------------------
+
+// `0045`. A unit may be held: `paused`, which resumes, or `dropped`, which ends it. The
+// decision is appended under `intent.md ## Answers` — the one way the app writes into an
+// artifact — as a `### Paused`, `### Dropped` or `### Resumed` block whose first line is
+// `Decided by: <name>. Date: <YYYY-MM-DD>. Via: product.` and whose rest is the reason.
+const HOLD_HEAD = /^###\s+(Paused|Dropped|Resumed)\s*$/
+const HOLD_META = /^Decided by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\.?\s*$/
+const HOLD_TO = { Paused: 'paused', Dropped: 'dropped', Resumed: 'active' }
+
+// The five moves, and only these (`0045` spec R6). `active` is a unit with no hold. There is
+// no road from `dropped` straight back to `active`: it resumes through `paused`. The app's
+// route and page read `holdMoves` off a unit rather than keep a copy of this.
+export const HOLD_MOVES = { active: ['paused', 'dropped'], paused: ['dropped', 'active'], dropped: ['paused'] }
+
+// The hold in force: walk the blocks in file order from `active`; the last valid one
+// decides. A block with no well-formed `Decided by:` line is not counted, because nothing
+// says who decided. A block describing a move `HOLD_MOVES` lacks is not counted either,
+// and is reported. `hold` is `null` when the unit ends `active`.
+export function parseHold(text) {
+  const lines = section(text ?? '', 'Answers')
+  const problems = []
+  if (lines === null) return { hold: null, problems }
+  const blocks = []
+  for (const line of lines) {
+    const m = line.match(HOLD_HEAD)
+    if (m) blocks.push({ head: m[1], lines: [] })
+    else if (/^###\s/.test(line)) blocks.push({ head: null, lines: [] })
+    else if (blocks.length) blocks[blocks.length - 1].lines.push(line)
+  }
+  let state = 'active'
+  let hold = null
+  let n = 0
+  for (const b of blocks) {
+    if (!b.head) continue
+    n += 1
+    const at = b.lines.findIndex((l) => l.trim() !== '')
+    const meta = at === -1 ? null : b.lines[at].match(HOLD_META)
+    if (!meta) continue
+    const to = HOLD_TO[b.head]
+    if (!HOLD_MOVES[state].includes(to)) {
+      problems.push(`hold block ${n} (### ${b.head}) is not a valid move from ${state} — it is ignored`)
+      continue
+    }
+    state = to
+    hold = to === 'active' ? null : { state: to, reason: b.lines.slice(at + 1).join('\n').trim(), by: meta[1].trim(), date: meta[2] }
+  }
+  return { hold, problems }
 }
 
 // Each question joined to the answer in force for it, if any.
@@ -550,6 +605,22 @@ export function readUnit(dir, name) {
   // `checkGate` do not read it — a finished unit stays finished whatever it says.
   unit.outcome = intentText === null ? null : unitOutcome(intentText)
 
+  // `0045`. Read off `intent.md ## Answers`, every unit that has one. `plan.md: done` and a
+  // rejected artifact win over a hold (spec R5): the unit stays finished or closed, and the
+  // block is reported rather than obeyed.
+  const held = parseHold(intentText)
+  unit.problems.push(...held.problems.map((p) => `intent.md: ${p}`))
+  unit.hold = held.hold
+  const ended = statusOf(unit, 'plan.md') === 'done'
+    ? 'finished'
+    : STAGES.some((s) => statusOf(unit, s.file) === 'rejected') ? 'closed' : null
+  if (ended && unit.hold) {
+    unit.problems.push(`intent.md carries a hold block, but the unit is ${ended} — it is ignored`)
+    unit.hold = null
+  }
+  // No intent — a pre-intent unit, or a broken one — has nowhere to write a block.
+  unit.holdMoves = ended || intentText === null ? [] : HOLD_MOVES[unit.hold?.state ?? 'active']
+
   return unit
 }
 
@@ -650,6 +721,14 @@ function decide(unit, limit) {
   // Widening the loop must not reopen work that was finished and proved under the old
   // rules — `write-plan` only allows `done` once the proof command has passed.
   if (statusOf(unit, 'plan.md') === 'done') return { blocked: false, action: 'finished', stage: '', why: 'finished' }
+
+  // `0045`: a person held the unit. No stage is offered; `paused` is still unfinished work,
+  // `dropped` ended like a rejection. `readUnit` has already cleared a hold on a closed unit.
+  const hold = unit.hold ?? null
+  if (hold) {
+    const how = hold.state === 'paused' ? ' — resume it from the board' : ''
+    return { blocked: hold.state === 'paused', action: `${hold.state} — ${hold.reason} (${hold.by}, ${hold.date})${how}`, stage: '', why: hold.state }
+  }
 
   for (const s of STAGES) {
     if (s.when) {
@@ -989,6 +1068,10 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     return { ok: false, need: [`unknown stage "${stage}" — use one of ${STAGE_NAMES.join(', ')}`], said: {} }
   }
 
+  // `0045` R4: a held unit runs nothing, and git and gh are not asked why.
+  const hold = unit.hold ?? null
+  if (hold) return { ok: false, need: [`the unit is ${hold.state}: ${hold.reason} (${hold.by}, ${hold.date})`], said: {} }
+
   // Every stage ahead of the requested one has to be behind us. The loop replaces the three
   // hand-written cases it grew out of; `spike`, the ninth, added only its own `when` below.
   const need = []
@@ -1057,6 +1140,9 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     if (g.said.ci === 'red') return { blocked: true, action: reasons, stage: 'impl' }
     return none(reasons)
   }
+
+  // `0045` R3: a held unit is answered from the files, before anything reaches for `probe`.
+  if (why === 'paused' || why === 'dropped') return next
 
   if (why === 'missing' && next.stage === 'review') return onReview([])
 
@@ -1216,7 +1302,8 @@ export function betweenPrAndShip(unit, limit = REVIEW_ROUNDS) {
   if (statusOf(unit, 'pr.md') !== 'accepted') return false
   if (!unit.artifacts['pr.md']?.pr) return false
   const { why } = decide(unit, limit)
-  return why !== 'finished' && why !== 'rejected'
+  // `0045` R15: nothing integrates a held unit, so the board asks `gh` nothing about it.
+  return !['finished', 'rejected', 'paused', 'dropped'].includes(why)
 }
 
 function cmdStatus(json, cosDir, limit) {
@@ -1267,9 +1354,12 @@ function cmdNext(unitName, cosDir, repoDir, limit) {
     return 2
   }
   const probe = repoDir ? makeProbe(repoDir) : null
-  const { stage, action, blocked, waiting } = nextStep(readUnit(dir, unitName), { probe, limit })
-  // `waiting` only when a person is awaited (`0028`), so every other answer is unchanged.
-  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}) }))
+  const unit = readUnit(dir, unitName)
+  const { stage, action, blocked, waiting } = nextStep(unit, { probe, limit })
+  // `waiting` only when a person is awaited (`0028`), `hold` only when the unit is held
+  // (`0045`), so every other answer is unchanged.
+  const hold = unit.hold ? { hold: unit.hold } : {}
+  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...hold }))
   return 0
 }
 

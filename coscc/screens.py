@@ -24,6 +24,7 @@ from __future__ import annotations
 import reflex as rx
 from reflex.style import set_color_mode
 
+from coscc import hold as hold_rules
 from coscc import models
 from coscc import studio as s
 from coscc.state import (
@@ -521,6 +522,8 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
             # `0047` R8. The label is the service's; the page only shows it.
             rx.cond(unit.outcome_text != "",
                     s.badge("outcome: " + unit.outcome_text, unit.outcome_color)),
+            # `0045` R14. `cos.mjs`'s hold, never worked out on the page.
+            rx.cond(unit.hold_state != "", s.badge(unit.hold_state, "amber")),
             rx.spacer(),
             rx.center(rx.text(unit.owner, size="1", weight="medium"),
                       width="27px", height="27px", border_radius="50%",
@@ -718,6 +721,7 @@ def _board() -> rx.Component:
                 ),
             ),
         ),
+        _dropped_group(),
         rx.hstack(
             rx.icon("info", size=13, color=s.MUTED),
             s.text("Lanes organise attention. Stage statuses come from each artifact's "
@@ -1292,6 +1296,77 @@ def _outcome_panel() -> rx.Component:
     )
 
 
+# `0045`. The button each move gets, keyed by the value `cos.mjs` puts in `holdMoves`.
+_HOLD_BUTTONS = (
+    ("paused", "Pause", "pause"),
+    ("dropped", "Drop", "circle-x"),
+    ("active", "Resume", "play"),
+)
+
+
+def _hold_panel() -> rx.Component:
+    """`0045` R14. The unit's hold as `cos.mjs` read it, and one button per move it allows.
+
+    Nothing here decides which moves exist: a button shows only when its value is in
+    `hold_moves`. The *Drop* warning is always on screen before the button, because a drop
+    closes a pull request with this machine's `gh` login.
+    """
+    u = P.current_unit
+    return rx.cond(
+        u.hold_moves.length() > 0,
+        s.panel(
+            rx.hstack(
+                s.eyebrow("PAUSE OR DROP"),
+                rx.spacer(),
+                rx.cond(u.hold_state != "", s.badge(u.hold_state, "amber")),
+                width="100%", align="center",
+            ),
+            rx.cond(
+                u.hold_state != "",
+                s.text(u.hold_reason + " — " + u.hold_by + ", " + u.hold_date,
+                       size="1", margin_top="8px", overflow_wrap="anywhere"),
+            ),
+            rx.input(placeholder="Why, in one line", value=P.hold_reason, on_change=P.set_hold_reason,
+                     aria_label="Reason for this change", id="hold-reason", width="100%", margin_top="8px"),
+            rx.input(placeholder="Your name", value=P.hold_by, on_change=P.set_hold_by,
+                     aria_label="Who decides this", id="hold-by", width="100%"),
+            rx.cond(u.hold_moves.contains("dropped"), s.text(hold_rules.DROP_WARNING, size="1", line_height="1.7")),
+            rx.hstack(
+                *(
+                    rx.cond(
+                        u.hold_moves.contains(value),
+                        rx.button(rx.icon(icon, size=14), label, on_click=P.set_hold(value),
+                                  loading=P.holding, disabled=P.holding, size="1",
+                                  variant="soft", id=f"hold-{value}"),
+                    )
+                    for value, label, icon in _HOLD_BUTTONS
+                ),
+                spacing="2", margin_top="4px",
+            ),
+            width="100%", id="hold-panel",
+        ),
+    )
+
+
+def _dropped_group() -> rx.Component:
+    """`0045` (`spec.md ## Answers, câu 1`). Dropped units, collapsed at the foot of the board."""
+    return rx.cond(
+        P.dropped_units.length() > 0,
+        rx.el.details(
+            rx.el.summary(
+                s.text("Dropped (" + P.dropped_units.length().to_string() + ")", size="2"),
+                cursor="pointer",
+            ),
+            rx.grid(
+                rx.foreach(P.dropped_units, _unit_card),
+                columns=rx.breakpoints(initial="1", sm="2", lg="4"),
+                gap="12px", width="100%", margin_top="12px",
+            ),
+            width="100%", id="dropped-group",
+        ),
+    )
+
+
 def _round_row(r: rx.Var[Round]) -> rx.Component:
     """`0021` R7, R8. One review round: on the PR with its link, or not and a button."""
     return s.panel(
@@ -1497,6 +1572,7 @@ def _detail_dialog() -> rx.Component:
                         ),
                         _integration_panel(),
                         _outcome_panel(),
+                        _hold_panel(),
                         rx.cond(
                             P.log_here,
                             s.panel(

@@ -245,6 +245,34 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.post("/api/units/hold")
+    async def hold_unit(request: Request) -> Any:
+        """`0045`. Pause, drop or resume a unit: body `{cwd, unit, to, reason, by}`.
+
+        Appends a `### Paused|Dropped|Resumed` block under `intent.md ## Answers` and a
+        `hold` row to the run log; `cos.mjs` then offers no stage and closes every gate.
+        **No route here has a login and the default bind is `0.0.0.0`**: anyone who reaches
+        the port can pause every unit under a name they chose, and `to: "dropped"` closes the
+        unit's open pull request **with this machine's `gh` login** and removes its worktree.
+        It starts nothing, a resume included.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.hold(
+                str(body.get("cwd") or ""),
+                str(body.get("unit") or ""),
+                str(body.get("to") or ""),
+                str(body.get("reason") or ""),
+                str(body.get("by") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.post("/api/units/review-comment")
     async def post_review_comment(request: Request) -> Any:
         """`0021` R8, R9. Post one review round to the unit's pull request, once.

@@ -247,6 +247,78 @@ class ThePageHoldsNoRunningFlagOfItsOwn(unittest.TestCase):
         self.assertIn("SERVICE.running_steps(", text)
 
 
+class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
+    """`0045` R14, R16. The card's hold is `cos.mjs`'s; the handler calls `SERVICE.hold` and
+    never a step."""
+
+    TEXT = (
+        "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n## Answers\n\n"
+        "### Dropped\nDecided by: Leif. Date: 2026-09-24. Via: product.\n\nkhông đáng\n"
+    )
+
+    def test_the_card_fields_are_the_boards(self):
+        import asyncio
+        import tempfile
+
+        from coscc import board
+        from coscc.state import _hold_fields
+
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_q"
+            unit.mkdir(parents=True)
+            (unit / "intent.md").write_text(self.TEXT, encoding="utf-8")
+            [u] = asyncio.run(board.read(d))["units"]
+        got = _hold_fields(u)
+        self.assertEqual(
+            (got["hold_state"], got["hold_reason"], got["hold_by"], got["hold_date"], got["hold_moves"]),
+            ("dropped", "không đáng", "Leif", "2026-09-24", ["paused"]),
+        )
+        self.assertEqual(_hold_fields({})["hold_state"], "")
+
+    def test_the_activity_row_says_which_pull_requests_were_already_closed(self):
+        from coscc.state import _hold_detail
+
+        row = {"reason": "không đáng", "by": "Leif", "effects": [
+            {"effect": "close-pr", "result": "failed", "detail": "closed #7; #9: HTTP 502: Bad Gateway"},
+            {"effect": "remove-worktree", "result": "done", "detail": "removed /t"},
+        ]}
+        self.assertEqual(
+            _hold_detail(row),
+            " / không đáng / by Leif / close-pr: failed (closed #7; #9: HTTP 502: Bad Gateway)",
+        )
+
+    def test_dropped_units_leave_the_lanes_and_paused_ones_stay(self):
+        from types import SimpleNamespace
+
+        from coscc.state import StudioState, Unit
+
+        page = SimpleNamespace(
+            units=[Unit(id="a", hold_state="dropped"), Unit(id="b", hold_state="paused"), Unit(id="c")],
+            query="", focus="All work",
+        )
+        visible = StudioState.computed_vars["visible_units"].fget(page)
+        dropped = StudioState.computed_vars["dropped_units"].fget(page)
+        self.assertEqual([u.id for u in visible], ["b", "c"])
+        self.assertEqual([u.id for u in dropped], ["a"])
+
+    def test_the_handler_calls_hold_and_no_step(self):
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+        [handler] = [
+            n for n in _state_class(tree).body
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "set_hold"
+        ]
+        text = "\n".join(ast.unparse(s) for s in handler.body[1:])  # past the docstring
+        self.assertIn("SERVICE.hold(", text)
+        for forbidden in ("run_step", "run_next", "SERVICE.integrate"):
+            self.assertNotIn(forbidden, text)
+        raised = next(
+            i for i, stmt in enumerate(handler.body)
+            if isinstance(stmt, ast.Assign) and "holding" in [x for t in stmt.targets for x in _self_names(t)]
+        )
+        after = handler.body[raised + 1]
+        self.assertTrue(isinstance(after, ast.Expr) and isinstance(after.value, ast.Yield))
+
+
 class TheRunButtonHoldsNoCopyOfTheLoop(unittest.TestCase):
     """`0024` R1. The stage the button offers is `cos.mjs next`'s, copied; nothing in the
     page works it out from which artifacts exist."""

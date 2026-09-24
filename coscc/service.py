@@ -30,6 +30,7 @@ from coscc import agents
 from coscc import board as board_reader
 from coscc import drift, fetches, gitops
 from coscc import harness, integrate
+from coscc import hold as hold_rules
 from coscc import prcomment
 from coscc import sessions as reader
 from coscc.board import Unavailable
@@ -972,6 +973,17 @@ class Service:
         if not unit:
             raise Invalid("name a work unit")
         self._unit_dir(cwd, unit)
+        # `0045` R15. Asked first with no `--repo`, which reads files only: a held unit is
+        # answered here, before `_worktree` could reopen the tree a drop just removed.
+        try:
+            held = await board_reader.next_step(self._units_root(cwd), unit, repo=None)
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        if held.get("hold"):
+            return {
+                "cwd": cwd, "unit": unit, **{k: held[k] for k in ("stage", "action", "blocked")},
+                "waiting": [], "hold": held["hold"],
+            }
         # `0017`. The unit's worktree is the checkout its branch and pull request are read
         # from. None when there is none to open, and `cos.mjs` then keeps `review` and
         # `ship` closed rather than read the workspace's branch, which is not this unit's.
@@ -1047,6 +1059,11 @@ class Service:
         row = next((r for r in found["stages"] if r["stage"] == stage), None)
         if row is None:
             raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
+        # `0045` R4/R15. `cos.mjs`'s own field, read before any worktree is opened — the gate
+        # below would refuse too, but only after `_worktree` had reopened a dropped tree.
+        held = found.get("hold")
+        if held:
+            raise Invalid(f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it")
         # `0035` review round 1, F1. Before the worktree is opened or refreshed: an
         # integration may be mid-rebase in it. Asked again where the mark is taken.
         if (self._journal_key(cwd), unit) in self._active:
@@ -1777,6 +1794,97 @@ class Service:
             "date": today,
         }
 
+    async def hold(self, cwd: str, unit: str, to: str, reason: str, by: str) -> dict[str, Any]:
+        """`0045`. A person pauses, drops or resumes a unit (`to`: paused, dropped, active).
+
+        Appends one `### Paused|Dropped|Resumed` block under `intent.md ## Answers` — the
+        way `answer` appends, never rewriting a byte above it (R8) — and one `hold` row to
+        the run log (R10). Which moves exist is `cos.mjs`'s `holdMoves`, read off the board;
+        nothing here decides it (R6). Dropping also closes the unit's open pull request with
+        this machine's `gh` login and removes its worktree (R12); a failure there is
+        reported, never raised, and undoes nothing.
+
+        Not an approval, and it starts nothing (R16): no step runs, no session opens, even on
+        a resume. `by` is whatever name the caller typed. Refused while a step or an
+        integration of this unit runs in this process (R13); it holds that same mark itself
+        while it writes, so no step can begin halfway through.
+        """
+        self._workspace_or_refuse(cwd)
+        journal = self._journal()
+        if journal is None:
+            raise Invalid("no working folder is set, so a hold cannot be recorded — set COS_WORKING_DIR")
+        if not unit:
+            raise Invalid("name a work unit")
+        to = str(to or "").strip()
+        reason = str(reason or "").strip()
+        by = str(by or "").strip()
+        directory = self._unit_dir(cwd, unit)
+        key = self._journal_key(cwd)
+        # No `await` between the check and the add: the same mark `run_step` and
+        # `integrate` take, so neither starts while this writes.
+        active_key = (key, unit)
+        busy = active_key in self._active
+        if not busy:
+            self._active.add(active_key)
+        try:
+            try:
+                data = await board_reader.read(self._units_root(cwd))
+            except Unavailable as e:
+                raise Invalid(str(e)) from e
+            found = next((u for u in data["units"] if u["name"] == unit), None)
+            said = hold_rules.refusal(found, to, reason, by, busy)
+            if said:
+                raise Invalid(said)
+            assert found is not None
+            from_ = (found.get("hold") or {}).get("state") or "active"
+            today = date.today().isoformat()
+            path = directory / "intent.md"
+            async with self._answer_lock:
+                try:
+                    existing = path.read_text(encoding="utf-8")
+                except OSError as e:
+                    raise Invalid(f"could not read intent.md: {e}") from e
+                lines = existing.splitlines()
+                heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
+                if heading is not None and any(l.startswith("## ") for l in lines[heading + 1:]):
+                    raise Invalid(
+                        "intent.md has a section after its ## Answers, so a block appended at "
+                        "the end would not be read as a hold"
+                    )
+                text = ""
+                if existing and not existing.endswith("\n"):
+                    text += "\n"
+                if heading is None:
+                    text += "\n## Answers\n"
+                text += hold_rules.block(to, by, today, reason)
+                try:
+                    with path.open("a", encoding="utf-8") as f:
+                        f.write(text)
+                except OSError as e:
+                    raise Invalid(f"could not write intent.md: {e}") from e
+
+            effects: list[dict[str, str]] = []
+            if to == "dropped":
+                try:
+                    branch = units.branch_name(cwd, unit, self.config.data_dir)
+                except (CannotCreate, BadUnit):
+                    branch = ""
+                root = str(Path(cwd).expanduser().resolve())
+                effects.append(await hold_rules.close_pr(root, branch))
+                effects.append(await hold_rules.remove_tree(cwd, unit, self.config.data_dir))
+            try:
+                journal.append(hold_rules.record(
+                    workspace=key, unit=unit, from_=from_, to=to, reason=reason, by=by, effects=effects,
+                ))
+            except (BadRecord, Busy):
+                # The block is on disk and `cos.mjs` reads it; failing now would tell the
+                # person their decision was not recorded when it was.
+                pass
+        finally:
+            if not busy:
+                self._active.discard(active_key)
+        return {"unit": unit, "from": from_, "to": to, "reason": reason, "by": by, "date": today, "effects": effects}
+
     async def start_branch(self, cwd: str, unit: str) -> dict[str, Any]:
         """`0014` R4. Cut this unit's branch in the workspace and switch to it.
 
@@ -2255,6 +2363,13 @@ class Service:
                 "artifact": r.get("artifact") or "",
                 "denials": int(r.get("denials") or 0),
                 "cost": {f: r.get(f) for f in COST_FIELDS + (COST_USD,) if r.get(f)},
+                # `0045` R10. A `hold` row's move, reason, name and side effects; empty on
+                # every other kind.
+                "from": r.get("from") or "",
+                "to": r.get("to") or "",
+                "reason": r.get("reason") or "",
+                "by": r.get("by") or "",
+                "effects": [e for e in r.get("effects") or [] if isinstance(e, dict)],
             }
             for r in rows
         ]

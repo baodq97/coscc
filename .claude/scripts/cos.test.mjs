@@ -10,7 +10,7 @@ import {
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
-  parseUnmeasured, parseSpike, SPIKE_ROUNDS,
+  parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -1501,4 +1501,137 @@ test('with a spike required, impl opens only on a plan that cites spike.md (R9)'
   assert.deepEqual(checkGate(silent, 'impl').need, ['plan.md does not cite spike.md — every step that rests on a U<n> cites spike.md ## U<n>'])
   const cites = spikeUnit({ ...files, 'plan.md': 'Status: accepted.\n\n1. build it (spike.md ## U1)\n' })
   assert.equal(checkGate(cites, 'impl').ok, true)
+})
+
+// --- 0045: a person pauses or drops a unit ---------------------------------------
+
+const holdBlock = (head, reason, by = 'Leif') => `\n### ${head}\nDecided by: ${by}. Date: 2026-09-24. Via: product.\n\n${reason}\n`
+const HELD_INTENT = '# Intent: x\nType: feat. Status: accepted.\n\n## Open questions\n\n1. Một?\n2. Hai?\n\n## Answers\n'
+
+function heldTree(intentTail, extra = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'cos-0045-'))
+  const dir = join(root, '.cos', '0001_held')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'intent.md'), HELD_INTENT + intentTail)
+  for (const [f, text] of Object.entries(extra)) writeFileSync(join(dir, f), text)
+  const cli = (...args) =>
+    spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', root], { encoding: 'utf8' })
+  return { root, dir, u: readUnit(dir, '0001_held'), cli }
+}
+
+test('0045 R9: a hold block ends the answer before it, and is never an answer', () => {
+  const text = HELD_INTENT + answerBlock(2, 'A', 'Tách ra.') + holdBlock('Paused', 'chờ 0034')
+  const answers = parseAnswers(text)
+  assert.equal(answers.length, 1)
+  assert.equal(answers[0].text, 'Tách ra.')
+  assert.equal(parseHold(text).hold.reason, 'chờ 0034')
+})
+
+test('0045 R1: no hold block is hold null and the active moves', () => {
+  const { u } = heldTree(answerBlock(1, 'A', 'x'))
+  assert.equal(u.hold, null)
+  assert.deepEqual(u.holdMoves, ['paused', 'dropped'])
+  assert.deepEqual(u.problems, [])
+})
+
+test('0045 R9: blocks are read in order and the last valid one decides', () => {
+  const walk = (...heads) => parseHold(HELD_INTENT + heads.map((h, i) => holdBlock(h, `r${i}`)).join(''))
+  assert.equal(walk('Paused').hold.state, 'paused')
+  assert.equal(walk('Paused', 'Resumed').hold, null)
+  assert.equal(walk('Dropped').hold.state, 'dropped')
+  assert.equal(walk('Paused', 'Dropped').hold.state, 'dropped')
+  assert.equal(walk('Dropped', 'Paused').hold.reason, 'r1')
+  assert.deepEqual(walk('Dropped', 'Paused', 'Resumed'), { hold: null, problems: [] })
+})
+
+test('0045 R9: an invalid move is ignored and reported', () => {
+  const resumed = parseHold(HELD_INTENT + holdBlock('Dropped', 'bỏ') + holdBlock('Resumed', 'lại'))
+  assert.equal(resumed.hold.state, 'dropped')
+  assert.deepEqual(resumed.problems, ['hold block 2 (### Resumed) is not a valid move from dropped — it is ignored'])
+  const twice = parseHold(HELD_INTENT + holdBlock('Paused', 'a') + holdBlock('Paused', 'b'))
+  assert.equal(twice.hold.reason, 'a')
+  assert.equal(twice.problems.length, 1)
+  assert.equal(parseHold(HELD_INTENT + holdBlock('Resumed', 'x')).problems.length, 1)
+  const { u } = heldTree(holdBlock('Dropped', 'bỏ') + holdBlock('Resumed', 'lại'))
+  assert.deepEqual(u.problems, ['intent.md: hold block 2 (### Resumed) is not a valid move from dropped — it is ignored'])
+})
+
+test('0045 R9: a block without a well-formed Decided by line is not counted', () => {
+  assert.equal(parseHold(`${HELD_INTENT}\n### Paused\n\nkhông ai ký\n`).hold, null)
+  assert.equal(parseHold(`${HELD_INTENT}\n### Paused\nDecided by: A\n\nthiếu ngày\n`).hold, null)
+  assert.deepEqual(parseHold(`${HELD_INTENT}\n### Paused\n`).problems, [])
+})
+
+test('0045 R3: next offers no stage and asks no probe, for paused and dropped', () => {
+  const boom = { gh: () => { throw new Error('gh was asked') }, git: () => { throw new Error('git was asked') } }
+  const later = { 'spec.md': 'Status: accepted.\n', 'plan.md': 'Status: accepted.\n', 'impl.md': 'Status: accepted.\n', 'pr.md': 'PR: https://github.com/o/r/pull/7. Status: accepted.\n' }
+  const paused = heldTree(holdBlock('Paused', 'chờ người'), later)
+  const n = nextStep(paused.u, { probe: boom })
+  assert.equal(n.stage, '')
+  assert.equal(n.blocked, true)
+  assert.equal(n.action, 'paused — chờ người (Leif, 2026-09-24) — resume it from the board')
+  const dropped = heldTree(holdBlock('Dropped', 'không đáng'), later)
+  const d = nextStep(dropped.u, { probe: boom })
+  assert.deepEqual(d, { blocked: false, action: 'dropped — không đáng (Leif, 2026-09-24)', stage: '' })
+  assert.equal(betweenPrAndShip(paused.u), false)
+  assert.equal(betweenPrAndShip(dropped.u), false)
+  const cli = JSON.parse(paused.cli('next', '0001_held').stdout)
+  assert.equal(cli.stage, '')
+  assert.deepEqual(cli.hold, { state: 'paused', reason: 'chờ người', by: 'Leif', date: '2026-09-24' })
+})
+
+test('0045 R4: every gate is closed on a held unit, and says why', () => {
+  const { u, cli } = heldTree(holdBlock('Paused', 'chờ 0034'), { 'spec.md': 'Status: accepted.\n' })
+  for (const s of STAGE_NAMES) {
+    const g = checkGate(u, s, { probe: greenProbe() })
+    assert.equal(g.ok, false, s)
+    assert.deepEqual(g.need, ['the unit is paused: chờ 0034 (Leif, 2026-09-24)'], s)
+    const r = cli('gate', '0001_held', s)
+    assert.equal(r.status, 1, s)
+    assert.match(r.stderr, /the unit is paused: chờ 0034/)
+  }
+  assert.equal(checkGate(u, 'nope').need[0].startsWith('unknown stage'), true)
+})
+
+test('0045 R2: status --json carries hold and holdMoves, and the table says paused —', () => {
+  const { cli } = heldTree(holdBlock('Paused', 'chờ 0034'))
+  const [held] = JSON.parse(cli('status', '--json').stdout).units
+  assert.deepEqual(held.hold, { state: 'paused', reason: 'chờ 0034', by: 'Leif', date: '2026-09-24' })
+  assert.deepEqual(held.holdMoves, HOLD_MOVES.paused)
+  assert.equal(held.betweenPrAndShip, false)
+  assert.match(cli('status').stdout, /\| paused — chờ 0034 \(Leif, 2026-09-24\) — resume it from the board \|/)
+})
+
+test('0045 R5: a done plan or a rejection wins over a hold, and the block is reported', () => {
+  const done = heldTree(holdBlock('Paused', 'x'), { 'spec.md': 'Status: accepted.\n', 'plan.md': 'Status: done.\n' })
+  assert.equal(done.u.hold, null)
+  assert.deepEqual(done.u.holdMoves, [])
+  assert.ok(done.u.problems.includes('intent.md carries a hold block, but the unit is finished — it is ignored'))
+  assert.equal(nextAction(done.u).action, 'finished')
+  const closed = heldTree(holdBlock('Dropped', 'x'), { 'spec.md': 'Status: rejected.\n' })
+  assert.equal(closed.u.hold, null)
+  assert.deepEqual(closed.u.holdMoves, [])
+  assert.ok(closed.u.problems.includes('intent.md carries a hold block, but the unit is closed — it is ignored'))
+})
+
+test('0045: a unit with no intent has nowhere to hold', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cos-0045-idea-'))
+  writeFileSync(join(dir, 'idea.md'), '# Idea\nStatus: accepted.\n')
+  const u = readUnit(dir, '0001_x')
+  assert.equal(u.hold, null)
+  assert.deepEqual(u.holdMoves, [])
+})
+
+test('0045 R1: next on an unheld unit carries no hold field', () => {
+  const { cli } = heldTree('')
+  assert.ok(!('hold' in JSON.parse(cli('next', '0001_held').stdout)))
+})
+
+test('0045 R1: every unit in this repository reads unheld and answers as it did', () => {
+  for (const u of readdirSync(new URL('../../.cos/', import.meta.url)).filter((d) => /^\d{4}_/.test(d))) {
+    const read = readUnit(fileURLToPath(new URL(`../../.cos/${u}`, import.meta.url)), u)
+    assert.equal(read.hold, null, u)
+    const { hold, holdMoves, ...bare } = read
+    assert.deepEqual(nextAction(read), nextAction(bare), u)
+  }
 })

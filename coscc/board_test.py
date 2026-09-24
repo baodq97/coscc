@@ -535,3 +535,37 @@ class TheOutcomeIsCopiedFromTheScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
             [u] = run(board.read(d))["units"]
         self.assertIsNone(u["outcome"])
+
+
+PAUSED_INTENT = (
+    "# I\nAuthor: t. Type: fix. Status: accepted.\n\n## Answers\n\n"
+    "### Paused\nDecided by: Leif. Date: 2026-09-24. Via: product.\n\nchờ 0034\n"
+)
+
+
+class TheHoldIsCarriedFromTheScript(unittest.TestCase):
+    """`0045`. `hold` and `hold_moves` are `cos.mjs`'s, copied and nothing more."""
+
+    _unit = TheNextStageIsAskedNotWorkedOut._unit
+
+    def test_read_copies_hold_and_moves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._unit(tmp, {"intent.md": PAUSED_INTENT})
+            [u] = run(board.read(tmp))["units"]
+        self.assertEqual(u["hold"], {"state": "paused", "reason": "chờ 0034", "by": "Leif", "date": "2026-09-24"})
+        self.assertEqual(u["hold_moves"], ["dropped", "active"])
+        self.assertTrue(u["next"].startswith("paused — chờ 0034"))
+
+    def test_next_step_copies_hold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            name = self._unit(tmp, {"intent.md": PAUSED_INTENT})
+            got = run(board.next_step(tmp, name))
+        self.assertEqual((got["stage"], got["hold"]["state"]), ("", "paused"))
+
+    def test_an_older_script_reads_as_unheld(self):
+        async def fake_run(argv, timeout):
+            return 0, '{"root": "r", "stages": [], "units": [{"name": "0001_x"}]}', ""
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
+            [u] = run(board.read(tmp))["units"]
+        self.assertEqual((u["hold"], u["hold_moves"]), (None, []))

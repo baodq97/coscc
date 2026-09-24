@@ -191,6 +191,12 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             # `cos.mjs` `unitOutcome` read them from `intent.md`. Copied, never derived here;
             # the label is the service's. An older `cos.mjs` sends nothing, which reads as None.
             "outcome": _outcome_of(u),
+            # `0045`. The hold a person set (`{state, reason, by, date}`, or None) and the
+            # moves allowed from it, both as `cos.mjs` decided them. Copied, never derived:
+            # the route refuses and the page offers buttons off `hold_moves` alone. An older
+            # `cos.mjs` sends neither, which reads as unheld with no moves.
+            "hold": u.get("hold") or None,
+            "hold_moves": [str(x) for x in u.get("holdMoves") or []],
         }
         for u in data.get("units") or []
     ]
@@ -328,6 +334,8 @@ async def next_step(
         "blocked": bool(data.get("blocked")),
         # `0028`. Present only when a person is awaited; its absence reads as none.
         "waiting": [str(x) for x in data.get("waiting") or []],
+        # `0045`. Present only when the unit is held; its absence reads as None.
+        "hold": data.get("hold") or None,
     }
 
 
