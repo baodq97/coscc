@@ -2074,6 +2074,24 @@ class AUnitOpenedFromAnIdea(unittest.TestCase):
             with self.subTest(end):
                 self.assertEqual(idea_field_refusal(self.intent(f" Idea: {file}{end}"), file), "")
 
+    def test_a_second_field_after_a_non_ascii_letter_is_counted_as_cos_mjs_counts_it(self):
+        # Review round 2, F2: a Unicode `\b` saw no field in `đIdea:`, JS `\b` sees one, so
+        # the runner wrote a header `cos.mjs` then read as naming two ideas.
+        import json
+
+        from coscc.runner import idea_field_refusal
+
+        file = f"ideas/{self.IDEA_NAME}.md"
+        body = self.intent(f" Idea: {file}. đIdea: ideas/0009_other.md.")
+        self.assertNotEqual(idea_field_refusal(body, file), "")
+        (self.directory / "intent.md").write_text(body, encoding="utf-8")
+        out = subprocess.run(
+            ["node", str(harness.script()), "--root", str(self.root), "status", "--json"],
+            capture_output=True, text=True, check=True,
+        )
+        [unit] = json.loads(out.stdout)["units"]
+        self.assertIsNone(unit.get("idea"))
+
     def test_a_right_reply_is_written_and_cos_mjs_reads_the_same_idea_from_it(self):
         # The one place the runner's check and `cos.mjs` `parseIdea` meet: if they drift so
         # that the runner accepts what `cos.mjs` does not read, this is red (plan Risk 4).
