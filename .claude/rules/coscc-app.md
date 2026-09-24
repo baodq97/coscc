@@ -303,15 +303,18 @@ no commands, one turn, no budget.
   intent, spec and plan of the units the app lists as related — a widening of the read
   boundary, and not a sandbox while it has `cat`. Behind the password like every route. Every
   attempt, refused ones included, is one `integration` row in the run log.
-  Since `0052` a `behind` or `current` unit can open a paid session too: every non-zero exit
-  of `update-branch` opens Gebo with gh's code and words in its prompt — a lapsed login, the
-  network or a missing permission included, and that session will likely fail the same way
-  (`.cos/0052_*/plan.md` Risk 1). A timeout, and a head GitHub has not moved yet, stay
-  `failed` with no session. So does a non-zero exit after which the pull request's head
-  has moved (taken as GitHub's rebase, `pushed`, and the tree follows it) or cannot be
-  read (`failed`): the head is read once before Gebo opens, not polled, so a rebase GitHub
-  finishes after that read still races the session: the lease refuses Gebo's push, and the
-  row still counts the moved head as Gebo's `pushed`. Every press inside the window costs one fetch through the
+  Since `0052` a `behind` or `current` unit can open a paid session too: a non-zero exit of
+  `update-branch` after which `gh pr view` still reads the pull request's head unmoved opens
+  Gebo with gh's code and words in its prompt — a missing permission, or a network that
+  failed only the first call, included, and that session will likely fail the same way
+  (`.cos/0052_*/plan.md` Risk 1). A lapsed login fails that read too and opens none. A
+  timeout, and a head GitHub has not moved yet, stay `failed` with no session. A non-zero
+  exit after which the head has moved is taken as GitHub's rebase (`pushed`, the tree
+  follows it); one after which it cannot be read is `failed`. The head is read once, not
+  polled, so a rebase GitHub finishes after that read still races the session: the lease
+  refuses Gebo's push, and since review round 2 of `0052` the row is `failed` rather than
+  Gebo's `pushed` whenever Gebo's tree does not end on the moved head, and the tree is moved
+  to it — the session is paid for either way. Every press inside the window costs one fetch through the
   `0048` coordinator (up to `FETCH_TIMEOUT` 20s, and one reused under 30s old) and one
   `gh pr view` for `mergeStateStatus` (up to 30s), both before the lock and the answer. The
   fetch moves `refs/remotes/origin/main` for every worktree of the workspace. `merge_state`
