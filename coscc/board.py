@@ -350,13 +350,23 @@ def _pr_of(unit: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """Each round of `review.md`: its number, verdict and text, as `cos.mjs` split them."""
+    """Each round of `review.md`: its number, verdict and text, as `cos.mjs` split them.
+
+    `findings` and `findings_open` are counted off `parseReview`'s own list (`0033` spec
+    R10) — the run log's numbers come from the one parser, not a second one here.
+    """
     review = ((unit.get("artifacts") or {}).get("review.md") or {}).get("review") or {}
-    return [
-        {"n": r.get("n"), "verdict": r.get("verdict"), "text": r.get("text") or ""}
-        for r in review.get("rounds") or []
-        if isinstance(r, dict)
-    ]
+    out = []
+    for r in review.get("rounds") or []:
+        if not isinstance(r, dict):
+            continue
+        found = [f for f in r.get("findings") or [] if isinstance(f, dict)]
+        out.append({
+            "n": r.get("n"), "verdict": r.get("verdict"), "text": r.get("text") or "",
+            "findings": len(found),
+            "findings_open": sum(1 for f in found if f.get("label") == "open"),
+        })
+    return out
 
 
 def _why_empty(path: Path) -> str:

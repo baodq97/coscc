@@ -193,6 +193,13 @@ no commands, one turn, no budget.
   workspace's Activity) and the `override` badge on Settings. A model id is not checked
   when saved; a wrong one fails the stage's next step with the CLI's error. A person who
   had `COS_MODEL` set before this lost it for all eight stages: it now answers only chat.
+  Since `0033` every row also has an effort (`effort:<name>`, `POST /api/settings/efforts`,
+  the same `setting` trace), and each stage after `plan` has a `<stage>:novel` row used when
+  the plan's label is `novel`: declared, forced by a file in `coscc/labels.py`
+  `SECURITY_SURFACE`, missing (every plan written before `0033`), or escalated because an
+  earlier `impl` of the unit stopped at `max_turns`. So a routine `impl` that runs out of
+  turns reruns on the dearer row with nobody pressing anything different. `max` is refused
+  from `models.json` and taken from an override, so anyone who reaches the port can set it.
   `COS_HOST=127.0.0.1` is the mitigation that exists.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.

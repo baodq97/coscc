@@ -1222,3 +1222,26 @@ test('0035: status --json carries betweenPrAndShip for every unit; gate and next
   assert.equal(after.next.stdout, before.next.stdout)
   assert.ok(!('betweenPrAndShip' in JSON.parse(after.next.stdout)), 'next carries no integration field')
 })
+
+test('0033 R11: the plan\'s Impl: label opens and closes no gate, and moves no next', () => {
+  const ask = (label) => {
+    const root = mkdtempSync(join(tmpdir(), 'cos-0033-'))
+    const dir = join(root, '.cos', '0001_same')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'intent.md'), '# X\nType: feat. Status: accepted.\n')
+    writeFileSync(join(dir, 'spec.md'), '# X\nStatus: accepted.\n')
+    writeFileSync(join(dir, 'plan.md'), `# X\nStatus: accepted.${label === null ? '' : ` Impl: ${label}.`}\n`)
+    const cli = (...args) =>
+      spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', root], { encoding: 'utf8' })
+    const gate = cli('gate', '0001_same', 'implement')
+    const next = cli('next', '0001_same')
+    return { code: gate.status, gate: gate.stdout, next: JSON.parse(next.stdout) }
+  }
+  const [routine, novel, none] = [ask('routine'), ask('novel'), ask(null)]
+  assert.equal(routine.code, 0, routine.gate)
+  for (const other of [novel, none]) {
+    assert.equal(other.code, routine.code)
+    assert.equal(other.gate, routine.gate)
+    assert.deepEqual(other.next, routine.next)
+  }
+})

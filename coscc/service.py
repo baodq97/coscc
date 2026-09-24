@@ -47,7 +47,7 @@ from coscc.journal import (
     zero_cost,
 )
 from coscc.policy import GRANTS, PROSE_STAGES, grant_for
-from coscc import models
+from coscc import labels, models
 from coscc.runner import SESSIONS_PER_STEP, STATUS_RE, RunError, Runner, describe_attempt
 from coscc.sessions import Sessions
 from coscc.store import BadName, Store, require_name
@@ -962,14 +962,19 @@ class Service:
         )
         # `0004_no-setting-says-which-model-runs-a-stage`. Resolved after the gate, so a
         # refused step reads nothing more. `stage` was checked against the board above.
-        model, model_source = self._model_for(stage)
+        # `0033`: with the plan's label, the effort and, for `impl`, which run this is.
         # `0019` plan step 6 / `spec.md` R6. Read after the gate, before any money is
         # spent — the same place `model` is resolved. `Runner` does not read the run log
         # itself; `build_prompt` only places what it is handed, the same as `base_note`.
         try:
+            config = self._stage_config(stage, list(data["stages"]), directory, journal, key, unit)
             failed = journal.failed_attempts(key, unit, stage)
         except Busy as e:
             raise Invalid(str(e)) from e
+        end_fields = None
+        if rounds_before is not None:
+            async def end_fields() -> dict[str, int]:
+                return await self._findings_added(cwd, unit, rounds_before)
         # `0035` R10. The integration pushed since the last review round, for `review` only.
         integration_note = ""
         if stage == "review":
@@ -1011,14 +1016,14 @@ class Service:
                 mode=mode,
                 gate_said=said,
                 cwd=step_cwd(stage, work, directory),
-                model=model,
-                model_source=model_source,
                 base=base,
                 base_note=describe_base(base),
                 last_attempt=describe_attempt(failed) if failed else "",
                 integration_note=integration_note,
                 plan_drift=plan_drift,
                 drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
+                end_fields=end_fields,
+                **config,
             ):
                 if item[0] == "done":
                     item = ("done", {**item[1], "base": base})
@@ -1656,18 +1661,65 @@ class Service:
     def _model_overrides(self) -> tuple[dict[str, str], list[str]]:
         return models.overrides_from(Data(self.config.data_dir).pref_rows(models.PREFIX))
 
+    def _effort_overrides(self) -> tuple[dict[str, str], list[str]]:
+        return models.overrides_from(
+            Data(self.config.data_dir).pref_rows(models.EFFORT_PREFIX), models.EFFORT_PREFIX
+        )
+
     def _model_for(self, name: str) -> tuple[str | None, str]:
-        """`(model, source)` for one stage, or for `chat`. Never raises on bad data.
+        """`(model, source)` for chat, and for Gebo on `impl`'s base row. Never raises on bad data.
 
         Takes no stage list: the caller has already checked `name` against `cos.mjs`
         (`run_step` found the row), and resolving one row does not need the others.
+        A board step goes through `_stage_config` instead, which also reads the label.
         """
         overrides, _ = self._model_overrides()
         defaults, _ = models.load_defaults()
-        return models.resolve(name, overrides, defaults, self.config.model)
+        return models.resolve(name, None, overrides, {}, defaults, self.config.model)[:2]
+
+    def _stage_config(
+        self, stage: str, stages: list[str], directory: Path, journal: Journal, key: str, unit: str
+    ) -> dict[str, Any]:
+        """`0033`. The label a step runs under, the model and effort it resolves to, and
+        for `impl` which run of the unit's this is. Called after the gate, before any money
+        is spent. The label chooses a configuration and nothing else (spec R11).
+
+        `Busy` from the run log is left to the caller, as `failed_attempts` is.
+        """
+        try:
+            plan_text: str | None = (Path(directory) / "plan.md").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            plan_text = None
+        history = [r for r in journal.records(key, unit) if r.get("stage") == "impl"]
+        label_declared, label, label_source = labels.label_for(stage, stages, plan_text, history)
+        model, model_source, effort, effort_source = models.resolve(
+            stage, label, self._model_overrides()[0], self._effort_overrides()[0],
+            models.load_defaults()[0], self.config.model,
+        )
+        return {
+            "model": model, "model_source": model_source,
+            "effort": effort, "effort_source": effort_source,
+            "label_declared": label_declared, "label": label, "label_source": label_source,
+            # R10: every `start` of `impl` counts, the review-driven fixes included; the
+            # reading "before the first `pr`" is done from the log (spec Answers, câu 2).
+            "impl_run": (
+                sum(1 for r in history if r.get("kind") == "start") + 1 if stage == "impl" else None
+            ),
+        }
+
+    async def _findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, int]:
+        """`0033` R10. The findings in the rounds a `review` step added, off the board —
+        `parseReview`'s count, read the way `_post_new_rounds` reads it."""
+        data = await board_reader.read(self._units_root(cwd))
+        found = next((u for u in data["units"] if u["name"] == unit), None) or {}
+        added = [r for r in found.get("rounds") or [] if r.get("n") not in before]
+        return {
+            "findings": sum(int(r.get("findings") or 0) for r in added),
+            "findings_open": sum(int(r.get("findings_open") or 0) for r in added),
+        }
 
     async def stage_models(self) -> dict[str, Any]:
-        """Every row Settings shows: stage, agents, model, where the model came from.
+        """Every row Settings shows: stage, agents, model, effort, where each came from.
 
         When `node` cannot run there is no stage list, and inventing one here would be the
         second copy of the loop. So the table is empty and `problems` says why.
@@ -1677,11 +1729,40 @@ class Service:
         except Unavailable as e:
             return {"rows": [], "problems": [str(e)], "cos_model": self.config.model}
         overrides, bad_rows = self._model_overrides()
+        efforts, bad_efforts = self._effort_overrides()
         defaults, bad_defaults = models.load_defaults()
-        table = models.table(stages, overrides, defaults, self.config.model, SESSIONS_PER_STEP)
-        table["problems"] = bad_defaults + bad_rows + table["problems"]
+        table = models.table(stages, overrides, efforts, defaults, self.config.model, SESSIONS_PER_STEP)
+        for r in table["rows"]:
+            r["overridden"] = r["name"] in overrides
+            r["effort_overridden"] = r["name"] in efforts
+        table["problems"] = bad_defaults + bad_rows + bad_efforts + table["problems"]
         table["cos_model"] = self.config.model
         return table
+
+    async def _setting_row(self, name: Any, allow_chat: bool) -> str:
+        """Check a Settings row name against `cos.mjs`: a stage, `<stage>:novel` for a
+        stage after `plan`, or `chat` when the setting has one."""
+        if not isinstance(name, str) or not name:
+            raise Invalid("name is required")
+        try:
+            stages = await board_reader.stages()
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        allowed = [r for r in models.rows_for(stages) if allow_chat or r != models.CHAT]
+        if name not in allowed:
+            raise Invalid(f"no such stage: {name} (use one of {', '.join(allowed)})")
+        return name
+
+    def _log_setting(self, key: str, old: Any, new: Any) -> None:
+        journal = self._journal()
+        if journal is not None:
+            try:
+                journal.append({
+                    "kind": "setting", "workspace": "", "unit": "", "stage": "",
+                    "name": key, "old": old, "new": new,
+                })
+            except (BadRecord, Busy) as e:
+                raise Invalid(f"the setting was saved but not logged: {e}") from e
 
     async def set_stage_model(self, name: Any, model: Any = None) -> dict[str, Any]:
         """Set one row's model, or remove the override when `model` is None.
@@ -1694,16 +1775,7 @@ class Service:
         The model name is not checked against the API — an unknown one fails at the next
         step of that stage, with the CLI's own error (spec Out of scope).
         """
-        if not isinstance(name, str) or not name:
-            raise Invalid("name is required")
-        try:
-            stages = await board_reader.stages()
-        except Unavailable as e:
-            raise Invalid(str(e)) from e
-        if name not in stages and name != models.CHAT:
-            raise Invalid(
-                f"no such stage: {name} (use one of {', '.join(stages + [models.CHAT])})"
-            )
+        name = await self._setting_row(name, allow_chat=True)
         if model is not None:
             if not isinstance(model, str) or not model.strip():
                 raise Invalid("model is required")
@@ -1716,16 +1788,29 @@ class Service:
             data.delete_pref(key)
         else:
             data.set_pref(key, model)
+        self._log_setting(key, old, model)
+        return await self.stage_models()
 
-        journal = self._journal()
-        if journal is not None:
-            try:
-                journal.append({
-                    "kind": "setting", "workspace": "", "unit": "", "stage": "",
-                    "name": key, "old": old, "new": model,
-                })
-            except (BadRecord, Busy) as e:
-                raise Invalid(f"the setting was saved but not logged: {e}") from e
+    async def set_stage_effort(self, name: Any, effort: Any = None) -> dict[str, Any]:
+        """`0033` R9. Set one row's effort, or remove the override when `effort` is None.
+
+        The same exposure as `set_stage_model`: no login, and the `setting` record is the
+        trace. `max` is accepted here and only here — `models.json` may not ship it, so
+        every `max` run traces back to one of these records (spec R7, C8). `chat` has no
+        effort (spec Out of scope).
+        """
+        name = await self._setting_row(name, allow_chat=False)
+        if effort is not None and effort not in models.EFFORTS:
+            raise Invalid(f"effort must be one of {', '.join(models.EFFORTS)}")
+
+        data = Data(self.config.data_dir)
+        key = models.EFFORT_PREFIX + name
+        old = self._effort_overrides()[0].get(name)
+        if effort is None:
+            data.delete_pref(key)
+        else:
+            data.set_pref(key, effort)
+        self._log_setting(key, old, effort)
         return await self.stage_models()
 
     # -- activity, usage and settings ---------------------------------------
