@@ -2051,6 +2051,29 @@ class AUnitOpenedFromAnIdea(unittest.TestCase):
                 self.assertIn(f"Idea: ideas/{self.IDEA_NAME}.md", done["error"])
                 self.assertFalse((self.directory / "intent.md").exists())
 
+    def test_a_field_with_a_suffix_after_md_is_refused_as_cos_mjs_refuses_it(self):
+        # Review round 1, F1: `.md_old` and `.mdx` passed a substring check, and `cos.mjs`
+        # (`\.md\b`) then read no link from the file that was written.
+        import json
+
+        from coscc.runner import idea_field_refusal
+
+        file = f"ideas/{self.IDEA_NAME}.md"
+        for suffix in ("_old.", "x.", "1."):
+            with self.subTest(suffix):
+                body = self.intent(f" Idea: {file}{suffix}")
+                self.assertNotEqual(idea_field_refusal(body, file), "")
+                (self.directory / "intent.md").write_text(body, encoding="utf-8")
+                out = subprocess.run(
+                    ["node", str(harness.script()), "--root", str(self.root), "status", "--json"],
+                    capture_output=True, text=True, check=True,
+                )
+                [unit] = json.loads(out.stdout)["units"]
+                self.assertIsNone(unit.get("idea"))
+        for end in (".", " ", "\n", ","):
+            with self.subTest(end):
+                self.assertEqual(idea_field_refusal(self.intent(f" Idea: {file}{end}"), file), "")
+
     def test_a_right_reply_is_written_and_cos_mjs_reads_the_same_idea_from_it(self):
         # The one place the runner's check and `cos.mjs` `parseIdea` meet: if they drift so
         # that the runner accepts what `cos.mjs` does not read, this is red (plan Risk 4).

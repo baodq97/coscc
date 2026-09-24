@@ -89,13 +89,15 @@ def idea_field_refusal(body: str, file: str) -> str:
     `parseIdea` reads the field and stays the judge. This only asks whether the header —
     the lines above the first `## ` — carries exactly `Idea: <file>` and no other `Idea:`.
     A test writes an accepted reply and asks `cos.mjs` about it, so the two cannot drift
-    apart unnoticed in the direction that lets a broken link through.
+    apart unnoticed in the direction that lets a broken link through. The field must end
+    where `cos.mjs`'s `\\.md\\b` ends it: `Idea: ideas/x.md_old` or `.mdx` is no link there,
+    so it is none here either (`0003` review round 1, F1).
     """
     lines = body.splitlines()
     end = next((i for i, ln in enumerate(lines) if ln.startswith("## ")), len(lines))
     header = "\n".join(lines[:end])
     fields = re.findall(r"\bIdea:", header)
-    if len(fields) == 1 and f"Idea: {file}" in header:
+    if len(fields) == 1 and re.search(rf"\bIdea: {re.escape(file)}(?!\w)", header, re.ASCII):
         return ""
     return (
         f"intent.md must name the idea it comes from in its header — `Idea: {file}.` — "
