@@ -680,6 +680,36 @@ class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.intent.read_bytes(), before)
 
 
+class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0045`. `POST /api/units/hold` appends one block, or answers 400 and writes nothing."""
+
+    asyncSetUp = AnsweringAQuestionOverHttp.asyncSetUp
+    asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
+
+    async def hold(self, **over):
+        body = {"cwd": self.cwd, "unit": self.unit, "to": "paused", "reason": "chờ 0034", "by": "Leif", **over}
+        return await self.client.post("/api/units/hold", json=body)
+
+    async def test_a_pause_is_appended_and_read_back(self):
+        before = self.intent.read_bytes()
+        got = await self.hold()
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual((got.json()["from"], got.json()["to"], got.json()["effects"]), ("active", "paused", []))
+        self.assertTrue(self.intent.read_bytes().startswith(before))
+        self.assertIn("### Paused\nDecided by: Leif. Date: ", self.intent.read_text(encoding="utf-8"))
+        nxt = (await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": self.unit})).json()
+        self.assertEqual(nxt["stage"], "")
+
+    async def test_a_refusal_is_400_and_writes_nothing(self):
+        before = self.intent.read_bytes()
+        for over in ({"to": "active"}, {"reason": ""}, {"by": ""}, {"to": "sideways"}, {"cwd": "/etc"}):
+            got = await self.hold(**over)
+            self.assertEqual(got.status_code, 400, over)
+        got = await self.client.post("/api/units/hold", content=b"nope")
+        self.assertEqual(got.status_code, 400)
+        self.assertEqual(self.intent.read_bytes(), before)
+
+
 _ROUND_0028 = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
 REVIEW_CLAIMED = (
     "# Review: q\nAuthor: t. Status: changes-requested.\n"

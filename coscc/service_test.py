@@ -1739,6 +1739,9 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
         ]
 
         async def fake_next(units_root, unit, repo=None, **kw):
+            # `0045`: `next_step` first asks with no `--repo` whether the unit is held.
+            if repo is None:
+                return {"unit": "u", "stage": "", "action": "", "blocked": True, "hold": None}
             return answers.pop(0)
 
         with mock.patch.object(board_reader, "next_step", fake_next):
