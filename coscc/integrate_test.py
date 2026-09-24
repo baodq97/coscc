@@ -54,13 +54,14 @@ class ClassifyGivesAllFiveStates(unittest.TestCase):
 
 
 class RefusalNamesTheFirstConditionMissing(unittest.TestCase):
-    OK = dict(in_window=True, active=False, clean=True, branch_ok=True,
+    OK = dict(in_window=True, busy="", clean=True, branch_ok=True,
               local_head=HEAD, pr_head=HEAD, state="behind")
 
     def test_each_condition(self):
         cases = [
             ({"in_window": False}, "not between pr and ship"),
-            ({"active": True}, "a step is running"),
+            ({"busy": "0001_a is busy: a spec step is running since 2026-09-24T01:02:03+00:00"},
+             "a spec step is running"),
             ({"clean": False}, "uncommitted"),
             ({"branch_ok": False}, "not on the unit's branch"),
             ({"local_head": NEW}, "not the pull request's head"),
@@ -76,7 +77,7 @@ class RefusalNamesTheFirstConditionMissing(unittest.TestCase):
             self.assertEqual(ig.refusal(**{**self.OK, "state": state}), "")
 
     def test_the_order_is_the_specs(self):
-        self.assertIn("not between", ig.refusal(**{**self.OK, "in_window": False, "active": True}))
+        self.assertIn("not between", ig.refusal(**{**self.OK, "in_window": False, "busy": "0001_a is busy"}))
 
 
 class Warnings(unittest.TestCase):

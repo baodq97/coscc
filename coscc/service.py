@@ -68,9 +68,6 @@ STAGE_FILES = ("idea", "intent", "spec", "plan", "impl", "pr", "review", "ship")
 BRANCH_REMOTE = "origin"
 BRANCH_TRUNK = gitops.TRUNK
 
-# `0035` R12, the other way round: a step refused while the unit is being integrated.
-_BUSY = "{unit} is being integrated or has a step running; wait for it to finish"
-
 # `0051` spec, answer 4: an `ended, unknown` row stops being shown this long after it began,
 # unless a later `start` of the same unit retired it first.
 UNKNOWN_END_FOR = timedelta(hours=24)
@@ -266,9 +263,11 @@ class Service:
     _comment_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     # `0017` R8. Per workspace, created on first use.
     _create_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
-    # `0035` R12. `(journal key, unit)` for every step or integration running now, and one
-    # lock per workspace held across check-and-mark. One process only, like `pull`.
-    _active: set[tuple[str, str]] = field(default_factory=set, init=False, repr=False)
+    # `0035` R12. `(journal key, unit)` for every step, integration or hold holding its unit
+    # now, and one lock per workspace held across an integration's check-and-mark. Since
+    # `0050` each holds a `Mark` saying what and since when, and a step takes its own before
+    # its first `await` (`_take`). One process only, like `pull`.
+    _active: dict[tuple[str, str], steps_mod.Mark] = field(default_factory=dict, init=False, repr=False)
     _integrate_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     # `0051` R1. What is running now, for the board to show: one entry per step or
     # integration, keyed by an id that never leaves this process. Added and removed beside
@@ -457,6 +456,26 @@ class Service:
             if self.config.working_dir
             else None
         )
+
+    # `0050`. Check-and-mark with no `await` in any of these, so nothing on the event loop
+    # can come between the look and the write.
+    def _busy(self, key: str, unit: str) -> str:
+        """What holds this unit, in the one sentence every refusal carries, or `""`."""
+        mark = self._active.get((key, unit))
+        return steps_mod.describe(unit, mark) if mark is not None else ""
+
+    def _take(self, key: str, unit: str, kind: str, stage: str = "") -> steps_mod.Mark:
+        said = self._busy(key, unit)
+        if said:
+            raise Invalid(said)
+        mark = steps_mod.Mark(kind, stage, "preparing" if kind == "step" else "")
+        self._active[(key, unit)] = mark
+        return mark
+
+    def _release(self, key: str, unit: str, mark: steps_mod.Mark) -> None:
+        """Only this mark: a refused or late caller never frees a unit someone else holds."""
+        if self._active.get((key, unit)) is mark:
+            del self._active[(key, unit)]
 
     @staticmethod
     def _journal_key(cwd: str) -> str:
@@ -811,7 +830,7 @@ class Service:
                 except GitError:
                     clean = on_branch = None
             reason = integrate.refusal(
-                in_window=info is not None, active=(key, unit) in self._active,
+                in_window=info is not None, busy=self._busy(key, unit),
                 clean=clean, branch_ok=on_branch, local_head=local_head, pr_head=pr_head, state=state,
             )
             if reason:
@@ -821,7 +840,7 @@ class Service:
                     detail=reason,
                 ))
                 raise Invalid(reason)
-            self._active.add((key, unit))
+            mark = self._take(key, unit, "integrate")
             # `0051` spec, answer 1: Gebo shows as running under its agent name; a mechanical
             # rebase has no agent and shows as rebasing. The same condition as below.
             rid = self._mark_running(key, unit, "integrate", "rebase" if state == "behind" else "gebo")
@@ -838,7 +857,7 @@ class Service:
             ):
                 yield item
         finally:
-            self._active.discard((key, unit))
+            self._release(key, unit, mark)
             self._running.pop(rid, None)
             self.updater.job_ended()
 
@@ -1080,186 +1099,189 @@ class Service:
                 "no working folder is set, so a run cannot be recorded — set COS_WORKING_DIR"
             )
 
-        try:
-            data = await board_reader.read(self._units_root(cwd))
-        except Unavailable as e:
-            raise Invalid(str(e)) from e
-
-        found = next((u for u in data["units"] if u["name"] == unit), None)
-        if found is None:
-            raise Invalid(f"no such work unit in this workspace: {unit}")
-        row = next((r for r in found["stages"] if r["stage"] == stage), None)
-        if row is None:
-            raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
-        # `0045` R4/R15. `cos.mjs`'s own field, read before any worktree is opened — the gate
-        # below would refuse too, but only after `_worktree` had reopened a dropped tree.
-        held = found.get("hold")
-        if held:
-            raise Invalid(f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it")
-        # `0035` review round 1, F1. Before the worktree is opened or refreshed: an
-        # integration may be mid-rebase in it. Asked again where the mark is taken.
-        if (self._journal_key(cwd), unit) in self._active:
-            raise Invalid(_BUSY.format(unit=unit))
-
-        # `.claude/CLAUDE.md` invariant 2: *"Ask `cos.mjs gate` before a stage and stop
-        # when it exits non-zero."* Until 2026-09-23 this app did neither. It read the
-        # board, found the row, and started the session -- so the board would run `ship`
-        # on a unit whose `intent.md` was still a draft, and the only thing standing
-        # between it and that was a sentence in a skill file addressed to a session that
-        # often has no way to run a command.
-        #
-        # Asked here rather than in `Runner` because a refusal must arrive before any
-        # money is spent, and `run_step` is the last place that is still true.
-        # `0017`. Every step runs in the unit's own worktree. A workspace that is not a git
-        # repository has none, and its steps run where they always did — there is no
-        # branch there for another unit to take away.
-        is_repo = (Path(cwd).expanduser().resolve() / ".git").exists()
-        tree = await self._worktree(cwd, unit, strict=True) if is_repo else None
-        if is_repo and tree is None:
-            try:
-                tree = {"path": (await worktrees.ensure(cwd, unit, None, self.config.data_dir))["path"]}
-            except (GitError, BadUnit) as e:
-                raise Invalid(f"{unit} has no worktree and one could not be opened: {e}") from e
-        work = tree["path"] if tree else cwd
-        # `0039` R13. A spike is watched through the worktree's `HEAD` and `git status`;
-        # with no git there is nothing to watch, so it does not run at all.
-        if stage == "spike" and tree is None:
-            raise Invalid("spike needs a git worktree to watch, and this workspace is not a git repository")
-        # `0030_a-unit-branch-starts-from-a-stale-main` R1/R4/R5. A tree already on its
-        # branch carries whatever `_worktree` read when it was opened onto it (or nothing,
-        # when it was already there before this call); a tree still detached is refreshed
-        # now, on the spot, because a session about to run on it is about to read it.
-        base: dict[str, Any] | None = None
-        if tree is not None:
-            if tree.get("branch"):
-                base = tree.get("base")
-            else:
-                base = await worktrees.refresh_base(cwd, unit, self.config.data_dir)
-        try:
-            # `work` is the checkout the `review` and `ship` gates read git and the pull
-            # request from (`0015`). The store has no git to read.
-            allowed, said = await board_reader.gate(
-                self._units_root(cwd), unit, stage, repo=work
-            )
-        except Unavailable as e:
-            raise Invalid(str(e)) from e
-        if not allowed:
-            raise Invalid(said)
-
-        if stage == "impl" and tree is not None:
-            # R6. A tree that cannot run its tests turns every `impl` red from the start, so
-            # the step is not started on one. Tried once more first: a network blip is the
-            # ordinary reason, and the page has nothing better to offer than *try again*.
-            prepared = worktrees.read_prepare(Path(work))
-            if not (prepared or {}).get("ok"):
-                prepared = await worktrees.prepare(Path(work), cwd, data_dir=self.config.data_dir)
-            if not prepared.get("ok"):
-                raise Invalid(worktrees.describe_failure(prepared))
-
+        # `0050` R4. The unit is held from here, before the first `await`: a second request
+        # for any stage of it is refused before it reads the board, opens a worktree, runs
+        # the gate or fetches -- not after all of that, as it was (`spike.md ## U1`). Until
+        # the step is handed to `_drive` the mark is this frame's to return, on every road
+        # out: a refusal, an exception, or a cancel when the client goes away (R5).
         key = self._journal_key(cwd)
-        directory = self._unit_dir(cwd, unit)
-        mode = journal.modes(key).get((unit, stage), "manual")
-        # `0021` D3. The rounds `review.md` held before this step, so that the ones it adds
-        # can be told apart afterwards. Taken from the board already read above.
-        rounds_before = (
-            {r.get("n") for r in found.get("rounds") or []}
-            if row["file"] == "review.md" else None
-        )
-        # `0004_no-setting-says-which-model-runs-a-stage`. Resolved after the gate, so a
-        # refused step reads nothing more. `stage` was checked against the board above.
-        # `0033`: with the plan's label, the effort and, for `impl`, which run this is.
-        # `0019` plan step 6 / `spec.md` R6. Read after the gate, before any money is
-        # spent — the same place `model` is resolved. `Runner` does not read the run log
-        # itself; `build_prompt` only places what it is handed, the same as `base_note`.
+        mark = self._take(key, unit, "step", stage)
+        handed = False
         try:
-            config = self._stage_config(stage, list(data["stages"]), directory, journal, key, unit)
-            failed = journal.failed_attempts(key, unit, stage)
-        except Busy as e:
-            raise Invalid(str(e)) from e
-        end_fields = None
-        if rounds_before is not None:
-            async def end_fields() -> dict[str, int]:
-                return await self._findings_added(cwd, unit, rounds_before)
-        # `0035` R10. The integration pushed since the last review round, for `review` only.
-        integration_note = ""
-        if stage == "review":
-            since = integration_since_review(journal, key, unit)
-            integration_note = integrate.describe_for_review(since) if since else ""
-        # `0042`. Which files the plan names `main` changed since the plan ran, for `impl`
-        # only. Unlike `failed_attempts` above, nothing here may refuse the step (R8): a
-        # busy run log, an unreadable `plan.md` or a bug in `drift.py` is "could not check".
-        plan_drift: dict[str, Any] | None = None
-        if stage in ("impl", "implement"):
             try:
-                plan_drift = await drift.compute(
-                    journal.records(key, unit),
-                    (directory / "plan.md").read_text(encoding="utf-8"),
-                    tree["path"] if tree else None,
-                )
-            except Exception as e:  # noqa: BLE001 — R8, recorded as the reason
-                plan_drift = {
-                    "plan_sha": None, "main_sha": None, "files": None,
-                    "checked": False, "reason": str(e) or type(e).__name__,
-                }
-        # `0041` R2. The unit's open pull request, for `pr` only, after the gate and before
-        # any money is spent. One `gh pr list`, up to `integrate.GH_TIMEOUT`; a lookup that
-        # fails still starts the step, and its prompt says so.
-        pr_note, pr_before = "", None
-        if stage == "pr":
+                data = await board_reader.read(self._units_root(cwd))
+            except Unavailable as e:
+                raise Invalid(str(e)) from e
+
+            found = next((u for u in data["units"] if u["name"] == unit), None)
+            if found is None:
+                raise Invalid(f"no such work unit in this workspace: {unit}")
+            row = next((r for r in found["stages"] if r["stage"] == stage), None)
+            if row is None:
+                raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
+            # `0045` R4/R15. `cos.mjs`'s own field, read before any worktree is opened — the gate
+            # below would refuse too, but only after `_worktree` had reopened a dropped tree.
+            held = found.get("hold")
+            if held:
+                raise Invalid(f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it")
+
+            # `.claude/CLAUDE.md` invariant 2: *"Ask `cos.mjs gate` before a stage and stop
+            # when it exits non-zero."* Until 2026-09-23 this app did neither. It read the
+            # board, found the row, and started the session -- so the board would run `ship`
+            # on a unit whose `intent.md` was still a draft, and the only thing standing
+            # between it and that was a sentence in a skill file addressed to a session that
+            # often has no way to run a command.
+            #
+            # Asked here rather than in `Runner` because a refusal must arrive before any
+            # money is spent, and `run_step` is the last place that is still true.
+            # `0017`. Every step runs in the unit's own worktree. A workspace that is not a git
+            # repository has none, and its steps run where they always did — there is no
+            # branch there for another unit to take away.
+            is_repo = (Path(cwd).expanduser().resolve() / ".git").exists()
+            tree = await self._worktree(cwd, unit, strict=True) if is_repo else None
+            if is_repo and tree is None:
+                try:
+                    tree = {"path": (await worktrees.ensure(cwd, unit, None, self.config.data_dir))["path"]}
+                except (GitError, BadUnit) as e:
+                    raise Invalid(f"{unit} has no worktree and one could not be opened: {e}") from e
+            work = tree["path"] if tree else cwd
+            # `0039` R13. A spike is watched through the worktree's `HEAD` and `git status`;
+            # with no git there is nothing to watch, so it does not run at all.
+            if stage == "spike" and tree is None:
+                raise Invalid("spike needs a git worktree to watch, and this workspace is not a git repository")
+            # `0030_a-unit-branch-starts-from-a-stale-main` R1/R4/R5. A tree already on its
+            # branch carries whatever `_worktree` read when it was opened onto it (or nothing,
+            # when it was already there before this call); a tree still detached is refreshed
+            # now, on the spot, because a session about to run on it is about to read it.
+            base: dict[str, Any] | None = None
             if tree is not None:
-                lookup = await integrate.pr_for_branch(work, tree.get("branch") or "")
-            else:
-                lookup = {"state": "unknown", "reason": "this workspace is not a git checkout"}
-            pr_note, pr_before = integrate.describe_pr_lookup(lookup), lookup.get("url", "")
-        runner = Runner(self.sessions, journal)
-        # `0035` R12: an integration refuses a unit with a step running, and a step refuses
-        # one being integrated -- both ways, or the first to finish would clear the other's
-        # mark (review round 1, F1). No `await` between the check and the add. One process only.
-        active_key = (key, unit)
-        if active_key in self._active:
-            raise Invalid(_BUSY.format(unit=unit))
-        # `0034` R11. The registry is what the page lists and what a Stop finds; `_active`
-        # is still what an integration asks. Taken together, with no `await` between.
-        try:
-            running = self.steps.claim(key, unit, stage)
-        except steps_mod.Busy as e:
-            raise Invalid(str(e)) from e
-        self._active.add(active_key)
-        # `0039` R12: emptied before the step, whatever an earlier one left, and removed
-        # after it however it ends -- in `_drive`, so a client that drops the stream no
-        # longer decides when (`0034`).
-        scratch = units.spike_dir(cwd, unit, self.config.data_dir) if stage == "spike" else None
-        rid = self._mark_running(key, unit, stage, "step")
-        queue: asyncio.Queue = asyncio.Queue()
-        running.listeners.add(queue)
-        running.task = asyncio.create_task(self._drive(
-            running, runner, cwd, unit, stage, row["file"], directory, tree, base, rounds_before,
-            rid, scratch,
-            dict(
-                workspace=cwd,
-                directory=directory,
-                journal_key=key,
-                unit=unit,
-                stage=stage,
-                artifact=row["file"],
-                stages=list(data["stages"]),
-                mode=mode,
-                gate_said=said,
-                cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None),
-                base=base,
-                base_note=describe_base(base),
-                last_attempt=describe_attempt(failed) if failed else "",
-                integration_note=integration_note,
-                plan_drift=plan_drift,
-                drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
-                end_fields=end_fields,
-                pr_note=pr_note,
-                pr_before=pr_before,
-                **config,
-                # Only named for a spike, so a stand-in `run` without it keeps working.
-                **({"watch": work} if scratch is not None else {}),
-            ),
-        ))
+                if tree.get("branch"):
+                    base = tree.get("base")
+                else:
+                    base = await worktrees.refresh_base(cwd, unit, self.config.data_dir)
+            try:
+                # `work` is the checkout the `review` and `ship` gates read git and the pull
+                # request from (`0015`). The store has no git to read.
+                allowed, said = await board_reader.gate(
+                    self._units_root(cwd), unit, stage, repo=work
+                )
+            except Unavailable as e:
+                raise Invalid(str(e)) from e
+            if not allowed:
+                raise Invalid(said)
+
+            if stage == "impl" and tree is not None:
+                # R6. A tree that cannot run its tests turns every `impl` red from the start, so
+                # the step is not started on one. Tried once more first: a network blip is the
+                # ordinary reason, and the page has nothing better to offer than *try again*.
+                prepared = worktrees.read_prepare(Path(work))
+                if not (prepared or {}).get("ok"):
+                    prepared = await worktrees.prepare(Path(work), cwd, data_dir=self.config.data_dir)
+                if not prepared.get("ok"):
+                    raise Invalid(worktrees.describe_failure(prepared))
+
+            directory = self._unit_dir(cwd, unit)
+            mode = journal.modes(key).get((unit, stage), "manual")
+            # `0021` D3. The rounds `review.md` held before this step, so that the ones it adds
+            # can be told apart afterwards. Taken from the board already read above.
+            rounds_before = (
+                {r.get("n") for r in found.get("rounds") or []}
+                if row["file"] == "review.md" else None
+            )
+            # `0004_no-setting-says-which-model-runs-a-stage`. Resolved after the gate, so a
+            # refused step reads nothing more. `stage` was checked against the board above.
+            # `0033`: with the plan's label, the effort and, for `impl`, which run this is.
+            # `0019` plan step 6 / `spec.md` R6. Read after the gate, before any money is
+            # spent — the same place `model` is resolved. `Runner` does not read the run log
+            # itself; `build_prompt` only places what it is handed, the same as `base_note`.
+            try:
+                config = self._stage_config(stage, list(data["stages"]), directory, journal, key, unit)
+                failed = journal.failed_attempts(key, unit, stage)
+            except Busy as e:
+                raise Invalid(str(e)) from e
+            end_fields = None
+            if rounds_before is not None:
+                async def end_fields() -> dict[str, int]:
+                    return await self._findings_added(cwd, unit, rounds_before)
+            # `0035` R10. The integration pushed since the last review round, for `review` only.
+            integration_note = ""
+            if stage == "review":
+                since = integration_since_review(journal, key, unit)
+                integration_note = integrate.describe_for_review(since) if since else ""
+            # `0042`. Which files the plan names `main` changed since the plan ran, for `impl`
+            # only. Unlike `failed_attempts` above, nothing here may refuse the step (R8): a
+            # busy run log, an unreadable `plan.md` or a bug in `drift.py` is "could not check".
+            plan_drift: dict[str, Any] | None = None
+            if stage in ("impl", "implement"):
+                try:
+                    plan_drift = await drift.compute(
+                        journal.records(key, unit),
+                        (directory / "plan.md").read_text(encoding="utf-8"),
+                        tree["path"] if tree else None,
+                    )
+                except Exception as e:  # noqa: BLE001 — R8, recorded as the reason
+                    plan_drift = {
+                        "plan_sha": None, "main_sha": None, "files": None,
+                        "checked": False, "reason": str(e) or type(e).__name__,
+                    }
+            # `0041` R2. The unit's open pull request, for `pr` only, after the gate and before
+            # any money is spent. One `gh pr list`, up to `integrate.GH_TIMEOUT`; a lookup that
+            # fails still starts the step, and its prompt says so.
+            pr_note, pr_before = "", None
+            if stage == "pr":
+                if tree is not None:
+                    lookup = await integrate.pr_for_branch(work, tree.get("branch") or "")
+                else:
+                    lookup = {"state": "unknown", "reason": "this workspace is not a git checkout"}
+                pr_note, pr_before = integrate.describe_pr_lookup(lookup), lookup.get("url", "")
+            runner = Runner(self.sessions, journal)
+            # `0034` R11. The registry is what the page lists and what a Stop finds; the mark
+            # taken above is what everything else asks. The same start time for both, and no
+            # `await` between the listing and the phase (`0050` R3).
+            try:
+                running = self.steps.claim(key, unit, stage, started_at=mark.started_at)
+            except steps_mod.Busy as e:
+                raise Invalid(str(e)) from e
+            mark.phase = "running"
+            # `0039` R12: emptied before the step, whatever an earlier one left, and removed
+            # after it however it ends -- in `_drive`, so a client that drops the stream no
+            # longer decides when (`0034`).
+            scratch = units.spike_dir(cwd, unit, self.config.data_dir) if stage == "spike" else None
+            rid = self._mark_running(key, unit, stage, "step")
+            queue: asyncio.Queue = asyncio.Queue()
+            running.listeners.add(queue)
+            running.task = asyncio.create_task(self._drive(
+                running, mark, runner, cwd, unit, stage, row["file"], directory, tree, base, rounds_before,
+                rid, scratch,
+                dict(
+                    workspace=cwd,
+                    directory=directory,
+                    journal_key=key,
+                    unit=unit,
+                    stage=stage,
+                    artifact=row["file"],
+                    stages=list(data["stages"]),
+                    mode=mode,
+                    gate_said=said,
+                    cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None),
+                    base=base,
+                    base_note=describe_base(base),
+                    last_attempt=describe_attempt(failed) if failed else "",
+                    integration_note=integration_note,
+                    plan_drift=plan_drift,
+                    drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
+                    end_fields=end_fields,
+                    pr_note=pr_note,
+                    pr_before=pr_before,
+                    **config,
+                    # Only named for a spike, so a stand-in `run` without it keeps working.
+                    **({"watch": work} if scratch is not None else {}),
+                ),
+            ))
+            handed = True
+        finally:
+            if not handed:
+                self._release(key, unit, mark)
         # `0034` R3/R4. Only the reader lives here. A reader that goes away -- a closed
         # tab, a dropped NDJSON client -- takes its queue with it and nothing else: the
         # step runs on to its own end in `_drive`. Stopping it is `stop_step`, and only that.
@@ -1275,7 +1297,7 @@ class Service:
             running.listeners.discard(queue)
 
     async def _drive(
-        self, running: steps_mod.Running, runner: Runner, cwd: str, unit: str, stage: str,
+        self, running: steps_mod.Running, mark: steps_mod.Mark, runner: Runner, cwd: str, unit: str, stage: str,
         artifact: str, directory: Path, tree: dict[str, Any] | None, base: dict[str, Any] | None,
         rounds_before: set[Any] | None, rid: str, scratch: Path | None, kwargs: dict[str, Any],
     ) -> None:
@@ -1329,7 +1351,7 @@ class Service:
         finally:
             if not told_done:
                 tell(("raise", Invalid(f"{unit}'s {stage} step ended without an outcome; the app may be shutting down")))
-            self._active.discard((running.workspace, running.unit))
+            self._release(running.workspace, running.unit, mark)
             self._running.pop(rid, None)
             if scratch is not None:
                 shutil.rmtree(scratch, ignore_errors=True)
@@ -1929,19 +1951,18 @@ class Service:
         by = str(by or "").strip()
         directory = self._unit_dir(cwd, unit)
         key = self._journal_key(cwd)
-        # No `await` between the check and the add: the same mark `run_step` and
-        # `integrate` take, so neither starts while this writes.
-        active_key = (key, unit)
-        busy = active_key in self._active
-        if not busy:
-            self._active.add(active_key)
+        # No `await` between the check and the take: the same mark `run_step` and
+        # `integrate` take, so neither starts while this writes. When the unit is already
+        # held, the board is still read, so a move refused for another reason says that one.
+        held = self._active.get((key, unit))
+        mark = self._take(key, unit, "hold") if held is None else None
         try:
             try:
                 data = await board_reader.read(self._units_root(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)
-            said = hold_rules.refusal(found, to, reason, by, busy)
+            said = hold_rules.refusal(found, to, reason, by, steps_mod.describe(unit, held) if held else "")
             if said:
                 raise Invalid(said)
             assert found is not None
@@ -1990,8 +2011,8 @@ class Service:
                 # person their decision was not recorded when it was.
                 pass
         finally:
-            if not busy:
-                self._active.discard(active_key)
+            if mark is not None:
+                self._release(key, unit, mark)
         return {"unit": unit, "from": from_, "to": to, "reason": reason, "by": by, "date": today, "effects": effects}
 
     async def start_branch(self, cwd: str, unit: str) -> dict[str, Any]:

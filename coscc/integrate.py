@@ -97,7 +97,7 @@ def classify(
 def refusal(
     *,
     in_window: bool,
-    active: bool,
+    busy: str,
     clean: bool | None,
     branch_ok: bool | None,
     local_head: str,
@@ -107,8 +107,9 @@ def refusal(
     """R12: the first condition that does not hold, in the spec's order, or `""`."""
     if not in_window:
         return "this unit is not between pr and ship with an open pull request"
-    if active:
-        return "a step is running on this unit"
+    if busy:
+        # `steps.describe`'s sentence (`0050` R3): what holds the unit, and since when.
+        return busy
     if clean is None:
         return "the unit has no worktree to integrate in"
     if clean is not True:
