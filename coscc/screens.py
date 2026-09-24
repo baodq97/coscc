@@ -618,10 +618,43 @@ def _start_unit() -> rx.Component:
     )
 
 
+def _running_steps() -> rx.Component:
+    """`0034` R6, R13. Every step running in this workspace, one Stop each.
+
+    The list is the service's, re-read on each board load and after each Stop; nothing
+    refreshes it on a timer. The name is a claim, not a login -- it is what the run log's
+    `stopped_by` will say.
+    """
+    return rx.cond(
+        P.running_steps.length() > 0,
+        s.panel(
+            s.eyebrow("RUNNING STEPS"),
+            rx.input(placeholder="Your name, to stop a step", value=P.stop_by,
+                     on_change=P.set_stop_by, size="1", margin_top="10px",
+                     aria_label="Your name, to stop a step", id="stop-by"),
+            rx.foreach(P.running_steps, lambda r: rx.hstack(
+                s.text(r.unit, size="1", font_family="ui-monospace, monospace"),
+                s.badge(r.stage, "iris"),
+                s.text(r.started_at, size="1"),
+                rx.spacer(),
+                rx.button(
+                    rx.icon("square", size=13),
+                    rx.cond(r.stopping, "Stopping", "Stop"),
+                    id="stop-step", on_click=P.stop_step(r.unit), disabled=r.stopping,
+                    color_scheme="red", variant="soft", size="1",
+                ),
+                width="100%", align="center", spacing="3", margin_top="10px", flex_wrap="wrap",
+            )),
+            id="running-steps", padding="16px",
+        ),
+    )
+
+
 def _board() -> rx.Component:
     return rx.vstack(
         s.heading("Work board", "From an idea to something real. One clear step at a time."),
         rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
+        _running_steps(),
         rx.flex(
             rx.input(rx.input.slot(rx.icon("search", size=15)), id="work-search",
                      placeholder="Search work...", value=P.query, on_change=P.search_work,
@@ -1359,7 +1392,7 @@ def _detail_dialog() -> rx.Component:
                             rx.button(
                                 rx.icon("refresh-cw", size=13), "Ask again",
                                 id="ask-next", on_click=P.load_next, variant="soft",
-                                size="1", disabled=P.is_running,
+                                size="1", disabled=P.running_here,
                             ),
                             justify="between", align="center", width="100%", spacing="3",
                         ),
@@ -1426,7 +1459,7 @@ def _detail_dialog() -> rx.Component:
                                     rx.icon("play", size=15),
                                     "Run " + P.next_stage + " — spends quota",
                                     id="run-step", on_click=P.run_step,
-                                    disabled=P.is_running | ~P.recording,
+                                    disabled=P.running_here | ~P.recording,
                                     loading=P.running_here, width="100%",
                                 ),
                                 # `0014` R8. The one control on this page that writes to
@@ -1465,7 +1498,7 @@ def _detail_dialog() -> rx.Component:
                         _integration_panel(),
                         _outcome_panel(),
                         rx.cond(
-                            P.run_log != "",
+                            P.log_here,
                             s.panel(
                                 s.eyebrow("OUTPUT / LATEST RUN"),
                                 rx.text(P.run_log, size="1",

@@ -123,7 +123,7 @@ class Page:
             s = await root.get_state(self.studio)
             return {
                 "cwd": s.cwd, "unit": s.unit_id, "next_stage": s.next_stage,
-                "notice": s.notice, "error": s.error, "running": s.running,
+                "notice": s.notice, "error": s.error, "running": [r.unit for r in s.running_steps],
                 "rows": {r.name: (r.model, r.source) for r in s.model_rows},
             }
 

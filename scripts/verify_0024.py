@@ -175,7 +175,7 @@ class Page:
             return {
                 "cwd": s.cwd, "unit": s.unit_id, "next_stage": s.next_stage,
                 "run_said": s.run_said, "notice": s.notice, "error": s.error,
-                "running": s.running,
+                "running": [r.unit for r in s.running_steps],
             }
 
 
