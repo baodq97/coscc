@@ -934,5 +934,25 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
         self.assertEqual((page.unit_id, page.notice, page.error), ("0002_y", "", ""))
 
 
+class TheDialogDrawsTheMessagesToo(unittest.TestCase):
+    """`0071` R2, R7, R8, by structure only. Whether the dialog's copy is really in view is
+    `scripts/verify_0071.py`'s to measure; this only keeps both copies from disappearing."""
+
+    def test_the_dialog_carries_its_own_sticky_copy(self):
+        from coscc import screens
+
+        drawn = str(screens._detail_dialog())
+        for part in ("detail-messages", "detail-notice", "detail-error", "sticky"):
+            self.assertIn(part, drawn)
+
+    def test_the_page_keeps_the_ids_older_proofs_read(self):
+        from coscc import screens
+
+        drawn = str(screens._banners())
+        self.assertIn("page-notice", drawn)
+        self.assertIn("page-error", drawn)
+        self.assertNotIn("detail-", drawn)
+
+
 if __name__ == "__main__":
     unittest.main()
