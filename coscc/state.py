@@ -231,6 +231,13 @@ class Unit:
     # `0051`. What is running on this unit now, or ended unseen: one line each, copied from
     # `Service.running` by `_activities`. Never from `StudioState.running` (R8).
     live: list[Activity] = dataclasses.field(default_factory=list)
+    # `0045`. The hold `cos.mjs` read (`paused`, `dropped`, or empty) and the moves it allows
+    # from there, copied from the board. The page offers one button per move and decides none.
+    hold_state: str = ""
+    hold_reason: str = ""
+    hold_by: str = ""
+    hold_date: str = ""
+    hold_moves: list[str] = dataclasses.field(default_factory=list)
 
 
 def _outcome_fields(label: dict | None) -> dict:
@@ -330,6 +337,18 @@ def _tab_gone(token: str) -> bool:
     if namespace is None or not token:
         return False
     return token not in namespace.token_to_sid
+
+
+def _hold_fields(u: dict) -> dict:
+    """`Unit`'s hold fields from one board unit, or all empty when it is not held."""
+    held = u.get("hold") or {}
+    return {
+        "hold_state": str(held.get("state") or ""),
+        "hold_reason": str(held.get("reason") or ""),
+        "hold_by": str(held.get("by") or ""),
+        "hold_date": str(held.get("date") or ""),
+        "hold_moves": [str(m) for m in u.get("hold_moves") or []],
+    }
 
 
 def _integration_fields(info: dict | None) -> dict:
@@ -686,6 +705,11 @@ class StudioState(rx.State):
     outcome_reason: str = ""
     outcome_note: str = ""
     recording_outcome: bool = False
+    # `0045`. The reason and name typed into the hold panel, and whether a move is in flight.
+    # Like `answer_by`, the name is a claim nobody verifies and is not stored as a preference.
+    hold_reason: str = ""
+    hold_by: str = ""
+    holding: bool = False
 
     # -- sessions
     conversations: list[Conversation] = []
@@ -750,7 +774,9 @@ class StudioState(rx.State):
     @rx.var
     def visible_units(self) -> list[Unit]:
         q = self.query.strip().lower()
-        rows = self.units
+        # `0045` (`spec.md ## Answers, câu 1`). A dropped unit leaves the four lanes for the
+        # collapsed group at the foot of the board; a paused one stays in its lane.
+        rows = [u for u in self.units if u.hold_state != "dropped"]
         if q:
             rows = [u for u in rows if q in u.id.lower() or q in u.title.lower()]
         if self.focus == "Autonomous":
@@ -781,7 +807,12 @@ class StudioState(rx.State):
 
     @rx.var
     def attention_count(self) -> int:
-        return len([u for u in self.units if u.needs_attention])
+        return len([u for u in self.units if u.needs_attention and u.hold_state != "dropped"])
+
+    @rx.var
+    def dropped_units(self) -> list[Unit]:
+        """`0045`. The units `cos.mjs` reads as dropped, for the collapsed group."""
+        return [u for u in self.units if u.hold_state == "dropped"]
 
     @rx.var
     def current_unit(self) -> Unit:
@@ -1006,6 +1037,7 @@ class StudioState(rx.State):
                     **_integration_fields(u.get("integration")),
                     **_outcome_fields(u.get("outcome_label")),
                     live=_activities(u["name"], self._running_read),
+                    **_hold_fields(u),
                 )
             )
         self.units = units
@@ -1090,6 +1122,8 @@ class StudioState(rx.State):
             # `0019` plan step 7. What a stopped step left behind, captured just before
             # `end` — its own row, distinct from the `end` row that follows it.
             "attempt": ("camera", "amber"),
+            # `0045` R10. A person paused, dropped or resumed a unit.
+            "hold": ("pause", "amber"),
         }
         events: list[Event] = []
         for row in feed["events"]:
@@ -1101,8 +1135,14 @@ class StudioState(rx.State):
                 "start": f"{row['stage']} started ({row['mode']})",
                 "end": f"{row['stage']} {row['outcome']}",
                 "attempt": f"{row['stage']} stopped — what it left was recorded",
+                "hold": f"{row.get('from', '')} → {row.get('to', '')}",
             }.get(row["kind"], row["kind"])
             detail = f"{row['unit']}"
+            if row["kind"] == "hold":
+                detail += f" / {row.get('reason', '')} / by {row.get('by', '')}"
+                for e in row.get("effects") or []:
+                    if e.get("result") != "done":
+                        detail += f" / {e.get('effect')}: {e.get('result')}"
             if row["denials"]:
                 detail += f" / {row['denials']} tool call(s) refused"
             if row["artifact"]:
@@ -1668,6 +1708,45 @@ class StudioState(rx.State):
         else:
             self.notice = f"Integration {outcome or 'ended'}: {done.get('detail') or 'see Activity'}"
         await self._load_board()
+
+    @rx.event
+    def set_hold_reason(self, value: str):
+        self.hold_reason = value
+
+    @rx.event
+    def set_hold_by(self, value: str):
+        self.hold_by = value
+
+    @rx.event
+    async def set_hold(self, to: str):
+        """`0045`. Pause, drop or resume the open unit. Whether the move exists and whether
+        the words will do is `Service.hold`'s decision; a refusal is shown as it is. Reads
+        the board again afterwards and starts nothing (R16) — not `run_step`, not `load_next`'s
+        stage: the button still waits for a person to press it."""
+        if self.holding:
+            return
+        self.holding = True
+        yield
+        try:
+            done = await SERVICE.hold(self.cwd, self.unit_id, to, self.hold_reason, self.hold_by)
+        except Invalid as e:
+            self.notice = f"Not changed: {e}"
+            return
+        finally:
+            self.holding = False
+        self.hold_reason = ""
+        effects = "; ".join(
+            f"{e['effect']}: {e['result']}" + (f" ({e['detail']})" if e["result"] != "done" else "")
+            for e in done["effects"]
+        )
+        self.notice = (
+            f"{done['unit']}: {done['from']} → {done['to']}, by {done['by']}."
+            + (f" {effects}." if effects else "")
+            + " Nothing was started."
+        )
+        await self._load_board()
+        self._load_activity()
+        yield StudioState.load_next
 
     @rx.event
     def set_new_slug(self, value: str):
