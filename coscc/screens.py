@@ -29,6 +29,7 @@ from coscc import studio as s
 from coscc.state import (
     LANE_COLOR,
     NAVIGATION,
+    Activity,
     Cell,
     Event,
     GrantRow,
@@ -465,6 +466,35 @@ def _workspaces_screen() -> rx.Component:
 # --- board -------------------------------------------------------------------
 
 
+def _activity_line(line: rx.Var[Activity]) -> rx.Component:
+    """`0051` R6. `running` and `ended, unknown` differ in colour, icon and words, so one
+    is never read as the other. `rebasing` looks like `running` without an agent."""
+    unknown = line.label == "ended, unknown"
+    return rx.hstack(
+        rx.cond(
+            unknown,
+            rx.icon("circle-help", size=13, color=rx.color("gray", 9)),
+            rx.box(width="8px", height="8px", border_radius="50%",
+                   background=rx.color("iris", 9), flex_shrink="0"),
+        ),
+        rx.text(
+            rx.cond(
+                unknown,
+                line.stage + " · ended, unknown · started " + line.started,
+                rx.cond(line.agent != "", line.agent + "  ", "")
+                + rx.cond(line.label == "rebasing", "rebasing", line.stage)
+                + " · since " + line.started
+                + rx.cond(line.turns != "", " · " + line.turns + " turns", "")
+                + rx.cond(line.cost != "", " · " + line.cost, ""),
+            ),
+            size="1",
+            color=rx.cond(unknown, rx.color("gray", 10), rx.color("iris", 11)),
+        ),
+        data_testid=rx.cond(unknown, "card-unknown-end", "card-running"),
+        width="100%", align="center", spacing="2", margin_top="10px",
+    )
+
+
 def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
     return rx.el.button(
         rx.hstack(
@@ -497,6 +527,8 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
                       background=rx.color("gray", 4), color=s.MUTED),
             width="100%", align="center", margin_top="18px",
         ),
+        # `0051`. One line per session on this unit, from `Service.running` alone (R8).
+        rx.foreach(unit.live, _activity_line),
         id="unit-" + unit.id, data_testid="work-card", type="button",
         aria_label="Open " + unit.title, on_click=P.open_unit(unit.id),
         padding=rx.cond(P.density == "compact", "12px", "17px"),
