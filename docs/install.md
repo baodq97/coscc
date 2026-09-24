@@ -163,6 +163,12 @@ purpose.** The version you are running checks a trial copy of the new one by ask
 `/api/workspaces` for `200`, and from that release on the answer without a session is `401`.
 The panel reports the trial failed and nothing is installed. Install that one release with
 the `curl … | sh` line above; every update after it logs in to its own trial and passes.
+**Then reload every board tab that was open before it.** Such a tab still runs the old page,
+which reads the new `401` as an app that never came back: it says `đang khởi động lại…` and,
+two minutes later, `không kết nối lại được`, pointing at the rollback below. Nothing failed —
+the tab has no session. Reloading it lands on `/setup` or `/login`; a tab loaded from that
+release on goes to `/login` by itself when its session ends. A browser that cached the old
+page may show the old board until that reload too.
 
 **Upgrading past the release that adds per-stage models changes which model runs.**
 `COS_MODEL` no longer decides the model of the eight stages: each now ships with a default
@@ -233,6 +239,8 @@ running service notices on its next request: every browser is logged out, and th
 goes back to `/setup` with a new token in the log. There is no way to reset it over the web.
 
 **A session lasts 30 days from its last use**; *Đăng xuất* at the bottom of the sidebar ends it.
+When a session ends under an open board — it expired, you logged out in another tab, or
+someone ran `coscc reset-password` — that board goes to `/login` the next time it asks `/api/update`, which it does every 5 s.
 **Five wrong passwords from one address in a minute lock that address out** for 60 s, then twice
 as long after each further failure, up to an hour. The count lives in memory: restarting the
 service clears it.

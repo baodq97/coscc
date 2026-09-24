@@ -593,6 +593,41 @@ def _renewed_on_101(page, context, root: Path, requests: list) -> bool:
     return ok
 
 
+SESSION_END_S = 20  # chosen: the watcher asks every 5 s, plus a page load to /login
+
+
+def _ended_in_an_open_tab(browser, base: str, root: Path) -> bool:
+    """F3: a session removed under an open board sends it to /login, not a restart notice."""
+    import time
+
+    from coscc import auth
+    from coscc.data import Data
+
+    context = browser.new_context()
+    page = context.new_page()
+    page.set_default_timeout(PAGE_TIMEOUT_MS)
+    try:
+        page.goto(base + "/login")
+        page.fill("#password", PASSWORD)
+        with page.expect_navigation():
+            page.click("button[type=submit]")
+        page.wait_for_selector("#logout")
+        # Let the watcher take its first answer, so what follows is the tick after a live one.
+        page.wait_for_timeout(1000)
+        value = next(c["value"] for c in context.cookies() if c["name"] == auth.COOKIE)
+        Data(root).auth_session_delete(auth._sha(value))
+        deadline = time.monotonic() + SESSION_END_S
+        while time.monotonic() < deadline and _path(page.url) != "/login":
+            page.wait_for_timeout(250)
+        ok = say(_path(page.url) == "/login",
+                 f"[{base}] F3 an open board whose session ends goes to /login", page.url)
+        restarting = page.locator("#update-reconnect").count() > 0 and \
+            page.locator("#update-reconnect").is_visible()
+        return ok & say(not restarting, f"[{base}] F3 no restart notice was left showing")
+    finally:
+        context.close()
+
+
 def in_browser() -> int:
     from coscc.config import from_env
     from scripts.proof_harness import require_browser, require_build, require_free_port
@@ -614,6 +649,7 @@ def in_browser() -> int:
     try:
         ok = _walk_in(browser, f"http://127.0.0.1:{config.port}", served, True, root)
         ok &= _walk_in(browser, f"http://{address}:{config.port}", served, False, root)
+        ok &= _ended_in_an_open_tab(browser, f"http://127.0.0.1:{config.port}", root)
     finally:
         browser.close()
         playwright.stop()

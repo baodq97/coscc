@@ -767,6 +767,8 @@ def _update_warning() -> rx.Component:
 # R14. Asks `/api/update` every 5 s outside Reflex's socket, and reloads the page when the
 # build it answers for is not the one the page was loaded under. The overlay says
 # `đang khởi động lại` while nothing answers, and after 120 s says it could not reconnect.
+# A `401` is not a restart: the session ended (expiry, logout elsewhere, `reset-password`),
+# so the page goes to `/login` rather than point at a rollback (`0070` review F3).
 _RECONNECT_JS = """
 (function () {
   if (window.__coscc_update_watch) return;
@@ -784,9 +786,11 @@ _RECONNECT_JS = """
   }
   function tick() {
     fetch("/api/update", {cache: "no-store"}).then(function (r) {
+      if (r.status === 401) { window.location.replace("/login"); return null; }
       if (!r.ok) throw new Error(String(r.status));
       return r.json();
     }).then(function (u) {
+      if (u === null) return;
       if (u.log) log = u.log;
       if (first === null) { first = u.build_id; }
       else if (u.build_id !== first) { window.location.reload(); return; }
