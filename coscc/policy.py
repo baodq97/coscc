@@ -376,29 +376,534 @@ def is_prose_stage(stage: str) -> bool:
 # arrived at a session created with `tools=[]`, because `--tools` names the built-in set and
 # nothing else. A callback sits on the path every call takes, whatever declared it.
 
-# Shell metacharacters that make the first word of a segment stop predicting what runs.
-_SUBSTITUTION = ("$(", "`", "${", "<(", ">(")
-_SEPARATORS = (";", "&&", "||", "|", "\n", "&")
-
-# Redirection into a file, which is a write that no write-tool check would ever see.
-# Measured on 2026-09-22: a real `impl` step was refused four times, and one of those was
-# `Write` aimed at the working folder above the workspace — so the boundary matters and a
-# shell that can reach past it matters just as much. `2>&1` is not this: the `&` says the
-# target is another descriptor, not a path.
-_REDIRECT = re.compile(r">>?\s*(?![&\s])")
-
-# `2>&1` and friends: a redirect between descriptors, touching no file. Removed before the
-# line is split, because the `&` in it would otherwise be read as a separator and the `1`
-# as a command — which is exactly what `npm test 2>&1` did on 2026-09-22.
-_FD_REDIRECT = re.compile(r"\d?>&\d?")
+# `0060`: the line is read the way bash reads it, not split as raw text. Until then `;`, `|`
+# and `&&` were split on wherever they stood, quotes and heredoc bodies included, and
+# `$(`, `` ` `` and `${` were refused wherever they stood, single quotes included. The
+# originator counted 165 refusals naming a "command" that was only a fragment of text, on
+# 2026-09-23..24 (`0060 intent.md ## Problem`; the transcripts are not in this repository).
+#
+# Bash's own rules, copied: `0060 spike.md ## U2` measured that a board step's `Bash` runs
+# `bash -c "… eval '<command>'"`, bash 5.3, `extglob` off. Anything this reader is not sure
+# of is `_Unreadable`, and an unreadable line is refused, never guessed (`0060` R6).
 
 
-def _segments(command: str) -> list[str]:
-    """Split a command line into the pieces that each start a process."""
-    parts = [_FD_REDIRECT.sub(" ", command)]
-    for sep in _SEPARATORS:
-        parts = [piece for part in parts for piece in part.split(sep)]
-    return [p.strip() for p in parts if p.strip()]
+@dataclass(frozen=True)
+class _Redirect:
+    op: str
+    fd: str
+    # Quotes removed. For `<<` and `<<-` this is the delimiter.
+    target: str
+    # A parameter expansion, an unquoted leading `~`, or an unquoted `*`, `?` or `[`:
+    # bash will open some other path than the one written here.
+    expanded: bool
+
+
+@dataclass(frozen=True)
+class _Simple:
+    """One simple command: assignments, words and redirects, up to the next operator."""
+
+    # The command's own text, quotes kept — what `_GIT_CONFIG_ROAD` reads.
+    source: str
+    # Quotes removed, nothing expanded: `"$X"` is the word `$X`.
+    words: tuple[str, ...]
+    # Per word: a parameter expansion outside single quotes.
+    expanded: tuple[bool, ...]
+    redirects: tuple[_Redirect, ...]
+
+
+@dataclass(frozen=True)
+class _Parsed:
+    commands: tuple[_Simple, ...]
+    # Every substitution in effect, as `(token, at)`: `$(`, `` ` ``, `<(`, `>(`, `$((`.
+    substitutions: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
+class _Unreadable:
+    what: str
+    at: int
+
+
+class _Stop(Exception):
+    def __init__(self, what: str, at: int):
+        super().__init__(what)
+        self.what, self.at = what, at
+
+
+class _Word:
+    def __init__(self, at: int):
+        self.at = at
+        self.buf: list[str] = []
+        self.quoted = False
+        self.expanded = False
+        self.glob = False
+
+    @property
+    def text(self) -> str:
+        return "".join(self.buf)
+
+
+_NAME_START = re.compile(r"[A-Za-z_]")
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_SPECIAL_PARAMS = "0123456789@*#?$!-"
+# Bash's own test for `NAME=value` in front of a command, `NAME[i]=` and `NAME+=` included.
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
+_ANSI_ESCAPES = {"n": "\n", "t": "\t", "\\": "\\", "'": "'", '"': '"'}
+
+
+class _Reader:
+    """A state machine over one command line. `_read` is the only caller."""
+
+    def __init__(self, s: str, base: int = 0):
+        self.s = s
+        self.n = len(s)
+        self.i = 0
+        # Where `s` sits in the line the caller passed, so a heredoc body read on its own
+        # still reports its position in the whole command.
+        self.base = base
+        self.subs: list[tuple[str, int]] = []
+
+    def at(self, j: int) -> int:
+        return self.base + j
+
+    def skip(self, j: int) -> int:
+        """`j`, moved past any `\\` + newline: bash removes those before reading a token."""
+        while self.s.startswith("\\\n", j):
+            j += 2
+        return j
+
+    def char(self, j: int) -> str:
+        return self.s[j] if j < self.n else ""
+
+    # --- the command level ---------------------------------------------------
+
+    def commands(self, opened: int | None = None) -> list[_Simple]:
+        """Read commands until the end, or — when `opened` is the position of a `$(`, `<(`
+        or `>(` — until the `)` that closes it."""
+        s = self.s
+        out: list[_Simple] = []
+        start = self.i
+        words: list[str] = []
+        flags: list[bool] = []
+        redirects: list[_Redirect] = []
+        word: _Word | None = None
+        pending: tuple[str, str, int] | None = None
+        heredocs: list[tuple[str, bool, bool, int]] = []
+        depth = 0
+
+        def end_word() -> None:
+            nonlocal word, pending
+            if word is None:
+                return
+            if pending is not None:
+                op, fd, _ = pending
+                if op in ("<<", "<<-"):
+                    heredocs.append((word.text, word.quoted, op == "<<-", word.at))
+                    redirects.append(_Redirect(op, fd, word.text, False))
+                else:
+                    redirects.append(_Redirect(op, fd, word.text, word.expanded or word.glob))
+                pending = None
+            else:
+                words.append(word.text)
+                flags.append(word.expanded)
+            word = None
+
+        def end_command(j: int) -> None:
+            nonlocal start, words, flags, redirects
+            end_word()
+            if pending is not None:
+                raise _Stop(f"a redirect ({pending[0]}) with no target", self.at(pending[2]))
+            if words or redirects:
+                out.append(_Simple(s[start:j].strip(), tuple(words), tuple(flags), tuple(redirects)))
+            words, flags, redirects = [], [], []
+            start = j + 1
+
+        def at_command_start() -> bool:
+            return word is None and not words and not redirects and pending is None
+
+        while True:
+            self.i = self.skip(self.i)
+            if self.i >= self.n:
+                break
+            c = s[self.i]
+            if c in " \t":
+                end_word()
+                self.i += 1
+            elif c == "\n":
+                end_command(self.i)
+                self.i += 1
+                if heredocs:
+                    self.bodies(heredocs)
+                    heredocs = []
+                    start = self.i
+            elif c == "#" and word is None:
+                # A comment runs to the end of the line; the newline itself is still read.
+                nl = s.find("\n", self.i)
+                self.i = self.n if nl < 0 else nl
+            elif c == ";":
+                end_command(self.i)
+                self.i += 1
+            elif c == "&":
+                j = self.skip(self.i + 1)
+                if self.char(j) == ">":
+                    amp = self.i
+                    k = self.skip(j + 1)
+                    op, self.i = ("&>>", k + 1) if self.char(k) == ">" else ("&>", j + 1)
+                    end_word()
+                    if pending is not None:
+                        raise _Stop(f"a redirect ({pending[0]}) with no target", self.at(pending[2]))
+                    pending = (op, "", amp)
+                else:
+                    end_command(self.i)
+                    self.i = j + 1 if self.char(j) == "&" else self.i + 1
+            elif c == "|":
+                j = self.skip(self.i + 1)
+                end_command(self.i)
+                self.i = j + 1 if self.char(j) in ("|", "&") else self.i + 1
+            elif c in "<>":
+                j = self.skip(self.i + 1)
+                if self.char(j) == "(":
+                    # `<(…)` and `>(…)`: a process whose output is a path. Part of a word.
+                    if word is None:
+                        word = _Word(self.i)
+                    self.subs.append((c + "(", self.at(self.i)))
+                    word.expanded = True
+                    self.i = j + 1
+                    self.commands(opened=self.i - 2)
+                    continue
+                op, self.i = self.redirect_op(c, j)
+                fd = ""
+                if pending is None and word is not None and word.text.isdigit() and not word.quoted \
+                        and not word.expanded:
+                    fd, word = word.text, None
+                end_word()
+                if pending is not None:
+                    raise _Stop(f"a redirect ({pending[0]}) with no target", self.at(pending[2]))
+                pending = (op, fd, self.i - len(op))
+            elif c == "(" and at_command_start():
+                depth += 1
+                self.i += 1
+                start = self.i
+            elif c == "(" and word is not None and pending is None and _is_array_open(word, words):
+                self.array(word)
+            elif c == ")" and depth:
+                end_command(self.i)
+                depth -= 1
+                self.i += 1
+            elif c == ")" and opened is not None:
+                end_command(self.i)
+                self.i += 1
+                if heredocs:
+                    raise _Stop(f"a here-document ({heredocs[0][0]}) with no line to end it", self.at(heredocs[0][3]))
+                return out
+            else:
+                # `(` and `)` anywhere else are kept as text: bash refuses the line as a
+                # syntax error, so nothing runs, and the words around them are still read.
+                if word is None:
+                    word = _Word(self.i)
+                self.part(word)
+        if opened is not None:
+            raise _Stop(f"an unclosed {s[opened:opened + 2]}", self.at(opened))
+        end_command(self.n)
+        if heredocs:
+            raise _Stop(f"a here-document ({heredocs[0][0]}) with no line to end it", self.at(heredocs[0][3]))
+        if depth:
+            raise _Stop("an unclosed (", self.at(start))
+        return out
+
+    def redirect_op(self, c: str, j: int) -> tuple[str, int]:
+        """The redirect operator starting with `c`, whose next character is at `j`, and where
+        the text after it begins."""
+        nxt = self.char(j)
+        if c == ">":
+            if nxt in (">", "&", "|"):
+                return ">" + nxt, j + 1
+            return ">", j
+        if nxt == "<":
+            k = self.skip(j + 1)
+            if self.char(k) == "<":
+                return "<<<", k + 1
+            if self.char(k) == "-":
+                return "<<-", k + 1
+            return "<<", k
+        if nxt in ("&", ">"):
+            return "<" + nxt, j + 1
+        return "<", j
+
+    def array(self, word: _Word) -> None:
+        """`NAME=(a b c)`: one word, blanks and newlines included, up to its `)`."""
+        depth = 0
+        opened = self.i
+        while True:
+            self.i = self.skip(self.i)
+            c = self.char(self.i)
+            if not c:
+                raise _Stop("an unclosed (", self.at(opened))
+            if c in ";&|<>":
+                raise _Stop("an operator inside an array assignment", self.at(self.i))
+            if c in "( \t\n)":
+                depth += {"(": 1, ")": -1}.get(c, 0)
+                word.buf.append(c)
+                self.i += 1
+                if depth == 0:
+                    return
+            else:
+                self.part(word)
+
+    def bodies(self, heredocs: list[tuple[str, bool, bool, int]]) -> None:
+        """Every here-document queued on the line just ended, in order."""
+        s = self.s
+        for delimiter, literal, strip, opened in heredocs:
+            begin = self.i
+            logical, line_start = "", self.i
+            while True:
+                if self.i >= self.n:
+                    raise _Stop(f"a here-document ({delimiter}) with no line to end it", self.at(opened))
+                nl = s.find("\n", self.i)
+                end = self.n if nl < 0 else nl
+                line = s[self.i:end]
+                self.i = end + 1
+                if strip:
+                    line = line.lstrip("\t")
+                if not literal and (len(line) - len(line.rstrip("\\"))) % 2 == 1:
+                    # Bash joins a line ending in `\` to the next before comparing it.
+                    logical += line[:-1]
+                    continue
+                logical += line
+                if logical == delimiter:
+                    if not literal:
+                        body = _Reader(s[begin:line_start], self.at(begin))
+                        body.expanding()
+                        self.subs.extend(body.subs)
+                    break
+                logical, line_start = "", self.i
+            self.i = min(self.i, self.n)
+
+    # --- inside a word -------------------------------------------------------
+
+    def part(self, word: _Word) -> None:
+        """One piece of a word outside quotes, at `self.i`."""
+        s = self.s
+        c = s[self.i]
+        if c == "\\":
+            if self.i + 1 >= self.n:
+                word.buf.append("\\")
+                self.i += 1
+                return
+            word.buf.append(s[self.i + 1])
+            word.quoted = True
+            self.i += 2
+        elif c == "'":
+            close = s.find("'", self.i + 1)
+            if close < 0:
+                raise _Stop("an unclosed '", self.at(self.i))
+            word.buf.append(s[self.i + 1:close])
+            word.quoted = True
+            self.i = close + 1
+        elif c == '"':
+            self.double(word)
+        elif c == "$":
+            self.dollar(word, quoted=False)
+        elif c == "`":
+            self.backtick(word)
+        else:
+            if c in "*?[" or (c == "~" and not word.buf and not word.quoted):
+                word.glob = True
+            word.buf.append(c)
+            self.i += 1
+
+    def double(self, word: _Word) -> None:
+        """A `"…"` at `self.i`: `$`, `` ` `` and `\\` keep their meaning inside."""
+        s = self.s
+        opened = self.i
+        word.quoted = True
+        self.i += 1
+        while True:
+            if self.i >= self.n:
+                raise _Stop('an unclosed "', self.at(opened))
+            c = s[self.i]
+            if c == '"':
+                self.i += 1
+                return
+            if c == "\\" and self.char(self.i + 1) in ("$", "`", '"', "\\", "\n"):
+                if s[self.i + 1] != "\n":
+                    word.buf.append(s[self.i + 1])
+                self.i += 2
+            elif c == "$":
+                self.dollar(word, quoted=True)
+            elif c == "`":
+                self.backtick(word)
+            else:
+                word.buf.append(c)
+                self.i += 1
+
+    def expanding(self) -> None:
+        """A heredoc body whose delimiter was not quoted: as `"…"`, but `"` is only a
+        character and there is no closing quote."""
+        s = self.s
+        word = _Word(0)
+        while self.i < self.n:
+            c = s[self.i]
+            if c == "\\" and self.char(self.i + 1) in ("$", "`", "\\", "\n"):
+                self.i += 2
+            elif c == "$":
+                self.dollar(word, quoted=True)
+            elif c == "`":
+                self.backtick(word)
+            else:
+                self.i += 1
+
+    def dollar(self, word: _Word, quoted: bool) -> None:
+        """A `$` at `self.i`, in or out of double quotes."""
+        s = self.s
+        opened = self.i
+        j = self.skip(self.i + 1)
+        c = self.char(j)
+        if c == "(":
+            k = self.skip(j + 1)
+            word.expanded = True
+            if self.char(k) == "(" and self.arithmetic(k + 1):
+                self.subs.append(("$((", self.at(opened)))
+            else:
+                self.subs.append(("$(", self.at(opened)))
+                self.i = j + 1
+                self.commands(opened=opened)
+            # The word keeps the text as written: nothing here is expanded.
+            word.buf.append(s[opened:self.i])
+        elif c == "{":
+            word.expanded = True
+            self.i = j + 1
+            self.brace(opened)
+            word.buf.append(s[opened:self.i])
+        elif c == "'" and not quoted:
+            self.ansi(word, j + 1)
+        elif c == '"' and not quoted:
+            # `$"…"` is a translated string: to this reader, a double-quoted one.
+            self.i = j
+            self.double(word)
+        elif c and _NAME_START.match(c):
+            name = _NAME.match(s, j)
+            word.expanded = True
+            word.buf.append("$" + name.group(0))
+            self.i = name.end()
+        elif c and c in _SPECIAL_PARAMS:
+            word.expanded = True
+            word.buf.append("$" + c)
+            self.i = j + 1
+        else:
+            # `$[` is bash's old arithmetic: it runs nothing, but it is not the text either.
+            if c == "[":
+                word.expanded = True
+            word.buf.append("$")
+            self.i += 1
+
+    def arithmetic(self, j: int) -> bool:
+        """Whether `$((` has its `))` from `j`; if so, `self.i` moves past it. If not, bash
+        reads it as `$( (`, and so does the caller."""
+        s = self.s
+        depth = 0
+        while j < self.n:
+            c = s[j]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                if depth:
+                    depth -= 1
+                elif self.char(self.skip(j + 1)) == ")":
+                    self.i = self.skip(j + 1) + 1
+                    return True
+                else:
+                    return False
+            j += 1
+        return False
+
+    def brace(self, opened: int) -> None:
+        """The inside of `${…}`, from `self.i`. Braces nest; quotes and substitutions keep
+        their meaning, single quotes included, even inside `"…"` — measured on bash 5.3."""
+        s = self.s
+        depth = 1
+        scratch = _Word(0)
+        while True:
+            self.i = self.skip(self.i)
+            if self.i >= self.n:
+                raise _Stop("an unclosed ${", self.at(opened))
+            c = s[self.i]
+            if c == "\\":
+                self.i += 2
+            elif c == "'":
+                close = s.find("'", self.i + 1)
+                if close < 0:
+                    raise _Stop("an unclosed '", self.at(self.i))
+                self.i = close + 1
+            elif c == '"':
+                self.double(scratch)
+            elif c == "$":
+                self.dollar(scratch, quoted=False)
+            elif c == "`":
+                self.backtick(scratch)
+            else:
+                depth += {"{": 1, "}": -1}.get(c, 0)
+                self.i += 1
+                if depth == 0:
+                    return
+
+    def backtick(self, word: _Word) -> None:
+        s = self.s
+        opened = self.i
+        self.subs.append(("`", self.at(opened)))
+        word.expanded = True
+        j = self.i + 1
+        while j < self.n and s[j] != "`":
+            j += 2 if s[j] == "\\" else 1
+        if j >= self.n:
+            raise _Stop("an unclosed `", self.at(opened))
+        self.i = j + 1
+        word.buf.append(s[opened:self.i])
+
+    def ansi(self, word: _Word, j: int) -> None:
+        """`$'…'` from `j`: only `\\` means anything inside."""
+        s = self.s
+        opened = j - 2
+        word.quoted = True
+        while True:
+            if j >= self.n:
+                raise _Stop("an unclosed $'", self.at(opened))
+            c = s[j]
+            if c == "'":
+                self.i = j + 1
+                return
+            if c == "\\" and j + 1 < self.n:
+                e = s[j + 1]
+                if e in _ANSI_ESCAPES:
+                    word.buf.append(_ANSI_ESCAPES[e])
+                    j += 2
+                    continue
+                hexa = re.match(r"x([0-9A-Fa-f]{1,2})", s[j + 1:j + 4])
+                if hexa:
+                    word.buf.append(chr(int(hexa.group(1), 16)))
+                    j += 1 + len(hexa.group(0))
+                    continue
+                word.buf.append(s[j:j + 2])
+                j += 2
+                continue
+            word.buf.append(c)
+            j += 1
+
+
+def _is_array_open(word: _Word, words: list[str]) -> bool:
+    """`NAME=(`: an array assignment, in front of any command word."""
+    return all(_ASSIGNMENT.match(w) for w in words) and bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\+?=", word.text))
+
+
+def _read(command: str) -> _Parsed | _Unreadable:
+    """The simple commands and the substitutions in effect in `command`, or where reading
+    it failed. Pure: nothing here runs, expands or looks anything up."""
+    reader = _Reader(command)
+    try:
+        commands = reader.commands()
+    except _Stop as stop:
+        return _Unreadable(stop.what, stop.at)
+    return _Parsed(tuple(commands), tuple(sorted(reader.subs, key=lambda t: t[1])))
 
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -443,7 +948,7 @@ def check_push(words: list[str], branch: str, lease_head: str) -> str:
     return ""
 
 
-def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = None) -> str:
+def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = None, unit: str = "") -> str:
     """"" if the command may run, else why not.
 
     **This is a best-effort reading of a shell command, and it is the weakest guard here.**
@@ -451,59 +956,167 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
     be told to do, and it cannot. What actually bounds the step is that the session runs
     with `cwd` set to the workspace and that writes are checked against it. Treat this as
     the thing that turns obvious mistakes into refusals, not as a sandbox.
+
+    Since `0060` the line is read as bash reads it (`_read`), and checked in this order: a
+    line that cannot be read, a substitution in effect, a redirect that writes, then every
+    simple command. `unit` is the step's own unit, `NNNN_<slug>`: a redirect may write under
+    a `/tmp` directory naming it (`_redirect_refused`). **That write is outside the write
+    boundary `decide` keeps**, and nothing creates or removes the directory.
     """
     text = (command or "").strip()
     if not text:
         return "an empty command"
-    for token in _SUBSTITUTION:
-        if token in text:
-            # With substitution in play the first word no longer says what runs.
-            return f"command substitution is not allowed: {token}"
-    if _REDIRECT.search(text):
-        # A redirect writes a file without any write tool being called, so the path check
-        # in `decide` never sees it. The step has `Write` and `Edit` for making files.
-        return "redirecting into a file is not allowed — use the write tools"
-    for segment in _segments(text):
-        whole = segment
-        word = segment.split()[0] if segment.split() else ""
-        # `VAR=x cmd` puts the assignment first; step over any of them.
-        while "=" in word and not word.startswith("-") and len(segment.split()) > 1:
-            segment = segment.split(maxsplit=1)[1]
-            word = segment.split()[0] if segment.split() else ""
-        base = word.rsplit("/", 1)[-1]
-        if base not in grant.commands:
-            return f"this step may not run {base!r}"
-        words = _words(base, segment.split()[1:])
-        for prefix, reason in grant.denied:
-            if words[: len(prefix)] == prefix:
-                return f"this step may not run {' '.join(prefix)!r}: {reason}"
-        if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in words):
-            # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
-            return "this step may not call the merge endpoint: merging is the ship stage's"
-        if base == "gh" and grant.push_no_force and any(_UPDATE_BRANCH_ENDPOINT.search(t) for t in segment.split()):
-            # `0041` review round 1, F1: `gh pr update-branch` by the API, REST or GraphQL.
-            return f"this step may not call the update-branch endpoint: {_INTEGRATION_IS_NOT_PRS}"
-        raw = segment.split()[1:]
-        if base == "git" and grant.push_needs_lease and _GIT_CONFIG_ROAD.search(whole):
-            return "this step may not define a git alias, an include or GIT_CONFIG_*: it can rename `push` past the lease"
-        if base == "git" and grant.push_no_force and _GIT_CONFIG_ROAD.search(whole):
-            # `0041` review round 1, F1: `git -c alias.r=rebase r main`, or `git config
-            # alias.p push` and then `git p --force`, renames the refused words.
-            return f"this step may not define a git alias, an include or GIT_CONFIG_*: it can rename a refused command; {_INTEGRATION_IS_NOT_PRS}"
-        if base == "git" and grant.push_needs_lease and _may_be_push(raw):
-            # `0035` R6. `push` must be the first word after `git`, so a `-C dir` or
-            # `-c k=v` in front cannot hide what it pushes.
-            if raw[0] != "push":
-                return "a push must be spelled `git push …`, with nothing between"
-            branch, head = lease if lease else ("", "")
-            reason = check_push(raw[1:], branch, head)
+    parsed = _read(command)
+    if isinstance(parsed, _Unreadable):
+        return (
+            f"this command could not be read as the shell reads it: {parsed.what} "
+            f"at character {parsed.at + 1}; nothing was guessed"
+        )
+    if parsed.substitutions:
+        # With substitution in play the first word no longer says what runs.
+        token = parsed.substitutions[0][0]
+        kind = {"$((": "arithmetic", "<(": "process", ">(": "process"}.get(token, "command")
+        return f"{kind} substitution is not allowed: {token}"
+    for simple in parsed.commands:
+        for redirect in simple.redirects:
+            reason = _redirect_refused(redirect, unit)
             if reason:
                 return reason
-        if base == "git" and grant.push_no_force and _may_be_push(raw):
-            forced = _forces(raw[raw.index("push") + 1:])
-            if forced:
-                return f"a push may not use {forced}: {_INTEGRATION_IS_NOT_PRS}"
+    for simple in parsed.commands:
+        reason = _check_simple(grant, simple, lease)
+        if reason:
+            return reason
     return ""
+
+
+def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) -> str:
+    """"" if one simple command may run, else why not."""
+    all_words = list(simple.words)
+    if not all_words:
+        # Redirects alone: `_redirect_refused` has already read them.
+        return ""
+    # `VAR=x cmd` puts the assignment first; step over any of them. One standing alone is
+    # still refused by its name.
+    k = 0
+    while k < len(all_words) - 1 and _ASSIGNMENT.match(all_words[k]):
+        k += 1
+    word = all_words[k]
+    if _ASSIGNMENT.match(word):
+        # Still refused, as before `0060` — but by what it is. Named by the last `/` of its
+        # value it read `this step may not run 'coscc-fb0599d12eeb'` for `S=/home/…/coscc-
+        # fb0599d12eeb`, a name that is no command at all (R6).
+        name = _ASSIGNMENT.match(word).group(0)
+        return f"a command that only assigns ({name}…) is not allowed: this step runs only the commands it names"
+    if simple.expanded[k]:
+        # `0060` R4: what runs is whatever the variable holds, which this reader cannot know.
+        return f"the command's name is a variable ({word}): this step runs only names it can read"
+    base = word.rsplit("/", 1)[-1]
+    if base not in grant.commands:
+        return f"this step may not run {base!r}"
+    if base in ("git", "gh") and (grant.denied or grant.push_needs_lease or grant.push_no_force):
+        # `0060` R4: `gh $P merge` is `gh pr merge` once `P=pr`. Refused by the variable's
+        # name, since the value is not known here.
+        for other, expanded in zip(all_words, simple.expanded):
+            if expanded:
+                return f"this step may not pass {other} to {base}: a variable can hide a refused word"
+    raw = all_words[k + 1:]
+    words = _words(base, raw)
+    for prefix, reason in grant.denied:
+        if words[: len(prefix)] == prefix:
+            return f"this step may not run {' '.join(prefix)!r}: {reason}"
+    if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in words):
+        # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
+        return "this step may not call the merge endpoint: merging is the ship stage's"
+    if base == "gh" and grant.push_no_force and any(_UPDATE_BRANCH_ENDPOINT.search(t) for t in all_words):
+        # `0041` review round 1, F1: `gh pr update-branch` by the API, REST or GraphQL.
+        return f"this step may not call the update-branch endpoint: {_INTEGRATION_IS_NOT_PRS}"
+    # Read on the text as written, quotes kept, as before `0060` — and on the words with
+    # their quotes removed too, so `al\ias.p` or `$'\x61lias.p'` is not a way round it.
+    config_road = bool(_GIT_CONFIG_ROAD.search(simple.source)) or any(
+        _GIT_CONFIG_ROAD.search(" " + t) for t in all_words
+    )
+    if base == "git" and grant.push_needs_lease and config_road:
+        return "this step may not define a git alias, an include or GIT_CONFIG_*: it can rename `push` past the lease"
+    if base == "git" and grant.push_no_force and config_road:
+        # `0041` review round 1, F1: `git -c alias.r=rebase r main`, or `git config
+        # alias.p push` and then `git p --force`, renames the refused words.
+        return f"this step may not define a git alias, an include or GIT_CONFIG_*: it can rename a refused command; {_INTEGRATION_IS_NOT_PRS}"
+    if base == "git" and grant.push_needs_lease and _may_be_push(raw):
+        # `0035` R6. `push` must be the first word after `git`, so a `-C dir` or
+        # `-c k=v` in front cannot hide what it pushes.
+        if raw[0] != "push":
+            return "a push must be spelled `git push …`, with nothing between"
+        branch, head = lease if lease else ("", "")
+        reason = check_push(raw[1:], branch, head)
+        if reason:
+            return reason
+    if base == "git" and grant.push_no_force and _may_be_push(raw):
+        forced = _forces(raw[raw.index("push") + 1:])
+        if forced:
+            return f"a push may not use {forced}: {_INTEGRATION_IS_NOT_PRS}"
+    return ""
+
+
+# Redirection into a file, which is a write that no write-tool check would ever see.
+# Measured on 2026-09-22: a real `impl` step was refused four times, and one of those was `Write` aimed at the working
+# folder above the workspace — so the boundary matters and a shell that can reach past it
+# matters just as much. A redirect writes a file without any write tool being called, so
+# the path check in `decide` never sees it; the step has `Write` and `Edit` for files.
+#
+# `0060` `intent.md ## Answers, câu 3` names what is safe: "`> /dev/null`, `2>&1`, và ghi
+# vào thư mục tạm riêng của bước (dưới /tmp, tên có unit). Ghi vào file trong worktree vẫn
+# bị chặn — phải dùng công cụ Write/Edit."
+_READ_REDIRECTS = frozenset({"<", "<<", "<<-", "<<<", "<&"})
+_DESCRIPTOR = re.compile(r"\d*-?")
+# Copied from `coscc/units.py:53`, not imported: this module depends on no other of the app's.
+_UNIT_NAME = re.compile(r"\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+def _redirect_refused(redirect: _Redirect, unit: str) -> str:
+    """"" if the redirect may happen, else why not."""
+    if redirect.op in _READ_REDIRECTS:
+        return ""
+    if redirect.op == ">&" and redirect.target and _DESCRIPTOR.fullmatch(redirect.target):
+        # `2>&1`, `>&2`, `3>&-`: between descriptors, touching no file. `>&word` is `&>word`.
+        return ""
+    allowed = "a redirect may go only to /dev/null or to another descriptor (2>&1)"
+    if _UNIT_NAME.fullmatch(unit or ""):
+        allowed = (
+            "a redirect may go only to /dev/null, to another descriptor (2>&1), "
+            f"or under a /tmp/<directory naming {unit}>/"
+        )
+    else:
+        allowed += ": this step has no /tmp directory of its own"
+    if redirect.op == "<>":
+        return f"redirecting into a file is not allowed: {redirect.target} (<> opens it for writing) — use the write tools; {allowed}"
+    if redirect.target == "/dev/null" and not redirect.expanded:
+        return ""
+    if _in_step_tmp(redirect, unit):
+        return ""
+    return f"redirecting into a file is not allowed: {redirect.target} — use the write tools; {allowed}"
+
+
+def _in_step_tmp(redirect: _Redirect, unit: str) -> bool:
+    """Whether the target, symlinks resolved now, lies below a directory directly under
+    `/tmp` whose name carries `unit`, and is not that directory itself.
+
+    Resolved when `decide` runs, not when bash opens the file: a directory swapped for a
+    symlink in between is not seen (`0060 plan.md` Risk 2). `/tmp` is shared, so anyone can
+    make a directory carrying a unit's name before the step does (`0060 spec.md` C1).
+    """
+    from pathlib import Path
+
+    # `"" in name` is always true, so a step with no unit must never get this far.
+    if not _UNIT_NAME.fullmatch(unit or ""):
+        return False
+    if redirect.expanded or not redirect.target.startswith("/"):
+        return False
+    try:
+        tmp = Path("/tmp").resolve()
+        rel = Path(redirect.target).resolve().relative_to(tmp)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return len(rel.parts) >= 2 and unit in rel.parts[0]
 
 
 def _forces(words: list[str]) -> str:
@@ -619,7 +1232,12 @@ def decide(
         return f"this step was not granted {tool}"
 
     if tool in EXEC_TOOLS:
-        reason = check_command(grant, str(tool_input.get("command", "")), lease)
+        # `0060`: the unit's name opens a `/tmp` directory to redirects. Writes there are
+        # outside the boundary the write tools are held to below.
+        from pathlib import Path
+
+        unit = Path(unit_dir).name if unit_dir else ""
+        reason = check_command(grant, str(tool_input.get("command", "")), lease, unit)
         if reason:
             return reason
 
