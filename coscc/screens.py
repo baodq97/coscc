@@ -644,7 +644,8 @@ def _running_steps() -> rx.Component:
 
     The list is the service's, re-read on each board load and after each Stop; nothing
     refreshes it on a timer. The name is a claim, not a login -- it is what the run log's
-    `stopped_by` will say.
+    `stopped_by` will say, unless the cancel lands before the step's first turn, which
+    leaves no record at all.
     """
     return rx.cond(
         P.running_steps.length() > 0,
