@@ -411,6 +411,76 @@ async def pr_head(tree: str, n: int) -> str:
         raise IntegrateError(f"gh pr view did not return JSON: {e}") from e
 
 
+async def pr_for_branch(tree: str, branch: str) -> dict:
+    """`0041` R2: the open pull request of one branch, asked before a `pr` step starts.
+
+    One of `{"state": "found", "url", "number", "mergeable", "head"}`, `{"state": "none",
+    "branch"}` or `{"state": "unknown", "reason"}`. Never raises: a lookup that fails
+    must not stop the step, only be said in its prompt. Not `open_prs`, which carries no
+    `url` — widening it would change every board read for this one caller.
+    """
+    if not branch:
+        return {"state": "unknown", "reason": "this checkout is on no branch"}
+    try:
+        code, out, err = await _gh(
+            ["pr", "list", "--head", branch, "--state", "open",
+             "--json", "url,number,mergeable,headRefOid", "--limit", "5"],
+            tree,
+        )
+    except IntegrateError as e:
+        return {"state": "unknown", "reason": str(e)}
+    if code != 0:
+        return {"state": "unknown", "reason": _said(out, err)}
+    try:
+        rows = json.loads(out or "[]")
+    except ValueError as e:
+        return {"state": "unknown", "reason": f"gh pr list did not return JSON: {e}"}
+    rows = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    if not rows:
+        return {"state": "none", "branch": branch}
+    row = rows[0]
+    return {
+        "state": "found",
+        "url": str(row.get("url") or ""),
+        "number": row.get("number"),
+        "mergeable": str(row.get("mergeable") or ""),
+        "head": str(row.get("headRefOid") or ""),
+    }
+
+
+def describe_pr_lookup(rec: dict) -> str:
+    """The prompt block `pr_for_branch`'s answer becomes. Pure."""
+    heading = "# The pull request, already looked up\n\n"
+    state = rec.get("state")
+    if state == "found":
+        text = (
+            f"The app asked `gh` before this step started. This unit's branch already has an "
+            f"open pull request:\n\n"
+            f"    {rec.get('url')}\n\n"
+            f"Number {rec.get('number')}, mergeable `{rec.get('mergeable') or 'UNKNOWN'}`, "
+            f"head `{rec.get('head')}`. Use this URL for `PR:` in pr.md. Do not run "
+            "`gh pr create` again: a second pull request for one branch is not what this "
+            "step is for."
+        )
+        if rec.get("mergeable") == "CONFLICTING":
+            text += (
+                "\n\nIt conflicts with `main`. Do not rebase, merge or pull — the grant "
+                "refuses it and it is not this step's work. Write the conflict under "
+                "`## Where` in pr.md, set `Status: accepted`, and stop: a person resolves "
+                "it with *Integrate* on the board."
+            )
+        return heading + text
+    if state == "none":
+        return heading + (
+            f"The app asked `gh` before this step started. There is no open pull request "
+            f"for the branch `{rec.get('branch')}`. Open one, as the rules above say."
+        )
+    return heading + (
+        f"The app could not ask `gh` before this step started: {rec.get('reason') or 'no reason given'}. "
+        "Ask once yourself with `gh pr view --json url,number,mergeable` before opening one."
+    )
+
+
 # --- Gebo --------------------------------------------------------------------
 
 
