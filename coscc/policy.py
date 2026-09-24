@@ -67,6 +67,9 @@ class Grant:
     # request had when the step began, and name the unit's own branch. The lease itself is
     # not in the grant — it is per run — and reaches `decide` as `lease`.
     push_needs_lease: bool = False
+    # `0041` R3: no `git push` may force — `--force`, `-f`, `--force-with-lease`,
+    # `--force-if-includes` or a `+` refspec. A plain push stays open.
+    push_no_force: bool = False
 
     @property
     def opens_anything(self) -> bool:
@@ -130,6 +133,21 @@ PR_WARNING = (
 MERGE_IS_SHIPS = (
     (("gh", "pr", "merge"), "merging is the ship stage's"),
     (("gh", "alias", "set"), "an alias is a merge under another name; merging is the ship stage's"),
+)
+
+# `0041` R3: on 2026-09-24 a `pr` step of `0019` met a conflict with `main`, rebased it
+# itself, and ran out of turns in the middle — no `pr.md`, and a rebase left half done in
+# the tree. Bringing `main` in is integration's (`0035`, Gebo), never `pr`'s. The push
+# itself stays open; forcing it is refused by `push_no_force`.
+_INTEGRATION_IS_NOT_PRS = (
+    "bringing main in is integration's — record the conflict in pr.md, accept it and stop; "
+    "a person presses *Integrate* on the board"
+)
+PR_DENIED = MERGE_IS_SHIPS + (
+    (("git", "rebase"), _INTEGRATION_IS_NOT_PRS),
+    (("git", "merge"), _INTEGRATION_IS_NOT_PRS),
+    (("git", "pull"), _INTEGRATION_IS_NOT_PRS),
+    (("gh", "pr", "update-branch"), _INTEGRATION_IS_NOT_PRS),
 )
 
 SHIP_WARNING = (
@@ -285,7 +303,8 @@ GRANTS: dict[str, Grant] = {
         max_budget_usd=3.0,
         app_writes_artifact=False,
         warning=PR_WARNING,
-        denied=MERGE_IS_SHIPS,
+        denied=PR_DENIED,
+        push_no_force=True,
     ),
     # `0015`: a separate agent session reviews the open pull request, before the merge. It
     # reads and only reads, like `plan`: the app still writes `review.md` from the reply.
@@ -473,6 +492,25 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
             reason = check_push(raw[1:], branch, head)
             if reason:
                 return reason
+        if base == "git" and grant.push_no_force and _may_be_push(raw):
+            forced = _forces(raw[raw.index("push") + 1:])
+            if forced:
+                return f"a push may not use {forced}: {_INTEGRATION_IS_NOT_PRS}"
+    return ""
+
+
+def _forces(words: list[str]) -> str:
+    """The first token after `push` that overwrites what is on the remote, or ""."""
+    for token in words:
+        if token in ("--force", "-f", "--force-with-lease", "--force-if-includes"):
+            return token
+        if token.startswith("--force-with-lease="):
+            return "--force-with-lease"
+        # A cluster of short flags carrying `f`, read as `check_push` reads it.
+        if token.startswith("-") and not token.startswith("--") and "f" in token[1:]:
+            return token
+        if token.startswith("+"):
+            return f"the forced refspec {token}"
     return ""
 
 
@@ -480,6 +518,9 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
 # so `gh -R o/r pr merge` and `gh pr --repo o/r merge` read as `gh pr merge` (`0015` review
 # round 1, F1). Every other `-x` / `--x` / `--x=v` is dropped alone.
 _GH_VALUE_FLAGS = frozenset({"-R", "--repo", "--hostname"})
+# The same for `git`, in front of the subcommand: `git -C . rebase main` must read as
+# `git rebase main` (`0041` R3). Only the two git itself reads a separate value after.
+_GIT_VALUE_FLAGS = frozenset({"-C", "-c"})
 _MERGE_ENDPOINT = re.compile(r"pulls/[^/\s]+/merge\b")
 
 
@@ -510,7 +551,9 @@ def _words(base: str, rest: list[str]) -> tuple[str, ...]:
             skip = False
             continue
         if token.startswith("-"):
-            skip = base == "gh" and token in _GH_VALUE_FLAGS
+            skip = (base == "gh" and token in _GH_VALUE_FLAGS) or (
+                base == "git" and len(out) == 1 and token in _GIT_VALUE_FLAGS
+            )
             continue
         out.append(token)
     return tuple(out)
