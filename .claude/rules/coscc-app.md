@@ -303,6 +303,15 @@ no commands, one turn, no budget.
   intent, spec and plan of the units the app lists as related — a widening of the read
   boundary, and not a sandbox while it has `cat`. Behind the password like every route. Every
   attempt, refused ones included, is one `integration` row in the run log.
+  Since `0052` a `behind` or `current` unit can open a paid session too: every non-zero exit
+  of `update-branch` opens Gebo with gh's code and words in its prompt — a lapsed login, the
+  network or a missing permission included, and that session will likely fail the same way
+  (`.cos/0052_*/plan.md` Risk 1). A timeout, and a head GitHub has not moved yet, stay
+  `failed` with no session. Every press inside the window costs one fetch through the
+  `0048` coordinator (up to `FETCH_TIMEOUT` 20s, and one reused under 30s old) and one
+  `gh pr view` for `mergeStateStatus` (up to 30s), both before the lock and the answer. The
+  fetch moves `refs/remotes/origin/main` for every worktree of the workspace. `merge_state`
+  is written to the row and decides nothing.
 - **A session reads a scratch `COS_DATA_DIR`, and `cos.db` is a tripwire, not a lock.**
   Since `0076` every session `Sessions` opens — each stage's step, Gebo, chat — gets
   `COS_DATA_DIR` pointed at a fresh `/tmp/coscc-session-*` (`sessions.scratch_dir`), and it
@@ -361,7 +370,8 @@ no commands, one turn, no budget.
   `0035`, up to 30s (chosen), plus a `gh pr checks` for a unit whose head is the one its
   last integration pushed. Offline, every such unit reads `unknown` and the board waits
   out the timeout. Unmeasured. The counts use the `origin/main` of the last fetch; the
-  read does not fetch.
+  read does not fetch. Since `0052` a `current` unit has the *Integrate* button too, since
+  only a press fetches; pressed on a unit that is really current, it leaves a `refused` row.
 - **Every `pr` step costs one `gh pr list` before the session starts.** Since `0041`,
   under this machine's `gh` login, up to 30s (`integrate.GH_TIMEOUT`, chosen, not
   measured). Offline or logged out, the step still runs and its prompt says the lookup
@@ -481,7 +491,7 @@ no commands, one turn, no budget.
 | `verify_0025.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
 | `verify_0034.py` | plain: no session, no quota, no network; temporary data root, the session replaced, the app driven in-process over ASGI (the dropped NDJSON client is a raw `http.disconnect`). Needs `node`; missing is exit 2 |
 | `verify_0034.py --paid` | **spends real money**: three sessions through `Sessions.stream(step=...)` — two short `claude-haiku-4-5` ones, run to its end and closed after its first chunk, and one `claude-sonnet-5[1m]` stopped while it runs `sleep 47` through `Bash` (haiku holding `Bash` was refused with a long-context 400, measured 2026-09-24); counts the bundled `claude` processes under its own PID 10s later, the third from the Stop. No `/proc` is exit 2 |
-| `verify_0035.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` whose `pr update-branch` really rebases in a scratch clone. Needs `node`, `uv` and `git`; any missing is exit 2. Proves the mechanical road only: `--paid` (a real Gebo session) is not built and exits 2 |
+| `verify_0035.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` whose `pr update-branch` really rebases in a scratch clone. Needs `node`, `uv` and `git`; any missing is exit 2. Proves the mechanical road only: `--paid` (a real Gebo session) is not built and exits 2. Since `0052` the app's `Sessions` is a stand-in from the start of `run`, since a refused `update-branch` now reaches Gebo, and one more claim presses a unit counted `current` against a stale `origin/main` |
 | `verify_0037.py` | plain: no session, no quota, no network; temporary data root, only the SDK client replaced. Claim (b) calls the SDK's private `SubprocessCLITransport._build_command`; if that cannot be called it is exit 2, not a pass. `--baseline` and `--measure` read `<COS_DATA_DIR>/cos.db` (`mode=ro`, never through `Data`) and `~/.claude/projects/*/<session>.jsonl`, and write only to `<COS_DATA_DIR>/measurements/`; too few sessions to compare is exit 2. `--paid` **spends real money**: six `claude -p` runs, three per branch. No `claude` on `PATH` is exit 2 |
 | `verify_0041.py` | plain: no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `git` and `uv`; either missing is exit 2. `--measure` reads `<COS_DATA_DIR>/cos.db` (`mode=ro`) and the store's `pr.md` files, and writes only to `<COS_DATA_DIR>/measurements/`; fewer than five `pr` steps since `0041` is exit 2. `--paid` **spends real money, pushes to `main` of `COS_PROOF_REPO` and leaves two pull requests open there**: two real `pr` steps; unset is exit 2. Not run when it was written |
 | `verify_0042.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. The session is a stand-in, so it cannot show that a real `impl` stops on a contradiction |
