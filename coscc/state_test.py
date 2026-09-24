@@ -1156,6 +1156,45 @@ class TheUnitDialogKnowsMissingAndDropped(unittest.TestCase):
                                (True, False), (False, False), "/board?ws=proj"])
 
 
+class ADroppedUnitsDialogOffersNothingThatWrites(unittest.TestCase):
+    """`0056` R11, review round 1, F3. `verify_0056` sees the run block, Integrate and Outcome
+    absent for its dropped unit, but `cos.mjs` would hide them there anyway; this reads the
+    dialog itself: every control that writes sits in the true branch of a
+    `rx.cond(~P.unit_dropped, …)`, and the hold panel's does not."""
+
+    WRITES = {"set_mode", "run_step", "start_branch", "integrate", "record_outcome",
+              "edit_answer", "answer_question", "post_review_comment"}
+
+    def _handlers(self):
+        import re
+
+        from coscc import screens
+
+        found: dict[str, set[bool]] = {}
+
+        def walk(c, guarded):
+            for chain in (getattr(c, "event_triggers", None) or {}).values():
+                for name in re.findall(r"StudioState\.(\w+) at", str(chain)):
+                    found.setdefault(name, set()).add(guarded)
+            children = list(getattr(c, "children", None) or [])
+            cond = str(getattr(c, "cond", "")) if type(c).__name__ == "Cond" else ""
+            if "!(" in cond and "unit_dropped" in cond.partition("!(")[2].partition(")")[0]:
+                walk(children[0], True)
+                children = children[1:]
+            for child in children:
+                walk(child, guarded)
+
+        walk(screens._detail_dialog(), False)
+        return found
+
+    def test_every_control_that_writes_is_behind_not_dropped(self):
+        found = self._handlers()
+        self.assertEqual({n: found.get(n) for n in self.WRITES}, {n: {True} for n in self.WRITES})
+
+    def test_the_way_back_is_not(self):
+        self.assertEqual(self._handlers().get("set_hold"), {False})
+
+
 class TheRoutesAreTheNavigation(unittest.TestCase):
     """`0056`: `coscc/place.py` may not import the state, so its screen list is a copy."""
 
