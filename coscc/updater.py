@@ -47,6 +47,7 @@ TRIAL_STOP_GRACE = 5
 BUILD_TIMEOUT = 15 * 60
 LOG_TAIL = 40
 HTTP_TIMEOUT = 30
+FETCH_LOCK_WAIT = 120  # chosen: how long an apply waits for a download already under way
 
 CHANNELS = ("release", "local")
 MODES = ("wait", "now")
@@ -149,6 +150,10 @@ class Updater:
         self._apply_task: asyncio.Task | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # Held by a check while it writes `release/` or `current/`, and by an apply from the
+        # moment it reads them until it hands off: a wheel handed to `finish` is never
+        # replaced underneath it (review round 1, F3).
+        self._fetch_lock = threading.Lock()
         if start:
             self.start()
 
@@ -290,7 +295,16 @@ class Updater:
         except Exception:  # noqa: BLE001 - offline, 403/429, a body that is not JSON
             return
         self.checked_at = update.now()
-        self._ensure_current()
+        # Waiting or applying: the channels stay as the person saw them until the next check.
+        if self.state != "idle" or not self._fetch_lock.acquire(blocking=False):
+            return
+        try:
+            self._ensure_current()
+            self._take(raw)
+        finally:
+            self._fetch_lock.release()
+
+    def _take(self, raw: Any) -> None:
         cand = update.candidate(raw, self.me()["version"], self._check_tag)
         if cand is None:
             if self.release.get("state") != "ready":
@@ -314,18 +328,47 @@ class Updater:
             self.release = before
 
     def _ensure_current(self) -> None:
-        """R5: a release keeps its own wheel in `current/`, so R12 has something to go back to."""
+        """R5: a release keeps its own wheel in `current/`, so R12 has something to go back to.
+
+        The caller holds `_fetch_lock`.
+        """
         version = self.me()["version"]
-        found = update.verified_wheel(self.root / "current")
-        if found and found["version"] == version:
+        if self._current_matches():
             return
-        if "+" in version or update.public(version) is None:
+        if not self._refetchable(version):
             return
         wheel_url, sums_url = update.release_urls(f"v{version}")
         cand = {"version": version, "wheel_name": update.wheel_name(version),
                 "wheel_url": wheel_url, "sums_url": sums_url}
         update.fetch_into(self.root / "current", cand, self._opener)
 
+    def _current_matches(self) -> dict[str, Any] | None:
+        found = update.verified_wheel(self.root / "current")
+        return found if found and found["version"] == self.me()["version"] else None
+
+    @staticmethod
+    def _refetchable(version: str) -> bool:
+        """A plain `X.Y.Z` has a release to fetch its wheel from; a local build has none."""
+        return "+" not in version and update.public(version) is not None
+
+    def rollback(self) -> str:
+        """`""` when R12 step 1 will find a way back, else the reason it will refuse.
+
+        Step 1 fills an empty `current/` itself when the running version is a release, so
+        the Checker is not the only road there: with `COS_UPDATE_CHECK=0` or no `node` it
+        never runs (review round 1, F1). A local build running with no `current/` has no
+        road at all, and the panel says so instead of offering a press step 1 refuses.
+        """
+        version = self.me()["version"]
+        if self._refetchable(version) or self._current_matches():
+            return ""
+        return f"ô current không có wheel của bản đang chạy ({version}), và một bản local không tải lại được, nên không có đường quay về"
+
+    @staticmethod
+    def _offered(channel: dict[str, Any], blocked: str) -> dict[str, Any]:
+        if channel.get("state") == "ready" and blocked:
+            return {**channel, "state": "blocked", "reason": blocked}
+        return dict(channel)
     # -- what is running (R8) ------------------------------------------------
 
     def jobs(self) -> list[dict[str, Any]]:
@@ -370,13 +413,14 @@ class Updater:
         # R9's ten seconds, belt and braces: a job whose end was not told still clears here.
         self._maybe_apply()
         jobs = self.jobs() if self.state == "pending" else []
+        blocked = self.rollback()
         return {
             **out,
             "state": self.state,
             "window": self.window,
             "pending": ({**self.pending, "waiting": jobs} if self.pending else None),
-            "release": dict(self.release),
-            "local": dict(self.local),
+            "release": self._offered(self.release, blocked),
+            "local": self._offered(self.local, blocked),
             "checked_at": self.checked_at,
             "error": self.error,
             "last": self.last,
@@ -410,6 +454,9 @@ class Updater:
             raise Updating(UPDATING)
         if getattr(self, channel).get("state") != "ready":
             raise Refused(f"kênh {channel} chưa có bản sẵn sàng")
+        blocked = self.rollback()
+        if blocked:
+            raise Refused(blocked)
         if mode == "now":
             listing = self.cut_list()
             if token != listing["token"]:
@@ -468,6 +515,9 @@ class Updater:
         logs.mkdir(parents=True, exist_ok=True)
         log = logs / f"{_stamp()}-update.log"
         self.log = str(log)
+        if not await asyncio.to_thread(self._fetch_lock.acquire, True, FETCH_LOCK_WAIT):
+            return self._fail("một lần tải khác vẫn đang ghi vào updates/; bấm lại sau")
+        handed = False
         try:
             # Step 1: from disk, right now, before anything changes.
             if update.SERVER.server is None:
@@ -475,8 +525,11 @@ class Updater:
             target = update.verified_wheel(self.root / channel)
             if target is None:
                 return self._fail(f"wheel của kênh {channel} không khớp checksum đã lưu")
-            current = update.verified_wheel(self.root / "current")
-            if current is None or current["version"] != me["version"]:
+            current = self._current_matches()
+            if current is None and self._refetchable(me["version"]):
+                await asyncio.to_thread(self._ensure_current)
+                current = self._current_matches()
+            if current is None:
                 return self._fail("ô current không có wheel khớp với bản đang chạy, nên không có đường quay về")
             # Step 2: a trial run, while this one keeps serving.
             log.write_text(f"trial of {target['version']} from {channel}, pressed by {by}\n", encoding="utf-8")
@@ -517,10 +570,15 @@ class Updater:
                 bin_dir=me["bin_dir"], log=str(log), last=str(self.root / "last.json"),
                 env=self.env(),
             )
-            if not update.SERVER.hand_off(handoff):
+            handed = update.SERVER.hand_off(handoff)
+            if not handed:
                 self._fail("uvicorn.Server biến mất trước khi được yêu cầu dừng", log)
         except Exception as e:  # noqa: BLE001 - the panel says what went wrong
             self._fail(f"{type(e).__name__}: {e}", log)
+        finally:
+            # Handed off, the lock stays held: this process exits with the wheels as they were.
+            if not handed:
+                self._fetch_lock.release()
 
     async def _trial(self, target: dict[str, Any], log: Path) -> str:
         """R12 step 2. `""` when the new version installed, answered and was stopped."""

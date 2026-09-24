@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 import sqlite3
 import tempfile
@@ -74,6 +75,25 @@ def _wheel(directory: Path, version: str, body: bytes = b"wheel", sums: bool = T
     if sums:
         (directory / update.SUMS).write_text(f"{hashlib.sha256(body).hexdigest()}  {wheel.name}\n")
     return wheel
+
+
+def _offline(url):
+    raise OSError("offline")
+
+
+def _serving(files):
+    def opener(url):
+        if url not in files:
+            raise OSError("offline")
+        return io.BytesIO(files[url])
+
+    return opener
+
+
+def _running_release(body: bytes = b"old wheel") -> dict[str, bytes]:
+    """The running `0.12.0`'s own release files, as `_ensure_current` asks for them."""
+    wheel_url, sums_url = update.release_urls("v0.12.0")
+    return {wheel_url: body, sums_url: f"{hashlib.sha256(body).hexdigest()}  {update.wheel_name('0.12.0')}\n".encode()}
 
 
 STEP = {"kind": "step", "id": "step:/w:0001_a", "workspace": "/w", "unit": "0001_a", "stage": "impl", "started": "t"}
@@ -253,9 +273,49 @@ class TheSequence(_Base):
     async def test_an_empty_current_stops_before_anything(self):
         _wheel(self.root / "release", "0.13.0")
         u = self.make_real()
+        u._opener = _offline
         await self.run_apply(u)
         self.assertIn("current", u.error["message"])
         self.assertFalse(self.server.should_exit)
+        self.assertFalse(u._fetch_lock.locked())
+
+    async def test_an_empty_current_is_filled_by_the_apply_when_the_checker_never_ran(self):
+        # Review round 1, F1: `COS_UPDATE_CHECK=0`, so nothing but step 1 fills `current/`.
+        self.assertFalse(self.config.update_check)
+        _wheel(self.root / "release", "0.13.0")
+        u = self.make_real()
+        self.assertEqual(u.status()["release"]["state"], "ready")
+        u._opener = _serving(_running_release())
+        await self.run_apply(u)
+        self.assertIsNone(u.error)
+        self.assertTrue(self.server.should_exit)
+        self.assertEqual(update.verified_wheel(self.root / "current")["version"], "0.12.0")
+        self.assertEqual(update.take_handoff().current_version, "0.12.0")
+
+    async def test_a_local_build_with_no_current_is_not_offered(self):
+        # Review round 1, F1: a local build has no release to fetch itself back from.
+        self.me["version"] = "0.12.0+gabcdef0"
+        _wheel(self.root / "release", "0.13.0")
+        u = self.make_real()
+        status = u.status()
+        self.assertEqual(status["release"]["state"], "blocked")
+        self.assertIn("không có đường quay về", status["release"]["reason"])
+        with self.assertRaises(updater.Refused):
+            await u.apply("release", "wait", "an")
+        self.assertIsNone(u._apply_task)
+        _wheel(self.root / "current", "0.12.0+gabcdef0")
+        self.assertEqual(u.status()["release"]["state"], "ready")
+
+    async def test_the_lock_is_held_after_the_hand_off_and_released_after_a_failure(self):
+        # Review round 1, F3: a check cannot replace the wheel `finish` was handed.
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+        u = self.make_real("the trial failed")
+        await self.run_apply(u)
+        self.assertFalse(u._fetch_lock.locked())
+        u = self.make_real()
+        await self.run_apply(u)
+        self.assertTrue(u._fetch_lock.locked())
 
     async def test_no_server_refuses_at_step_one(self):
         update.SERVER.server = None
@@ -421,6 +481,21 @@ class TheChecker(_Base):
         u = self.checker(self.opener_for(latest=b"<html>rate limited</html>"))
         u.check_once()
         self.assertEqual((u.checked_at, self.service.rows), ("", []))
+
+    def test_nothing_is_fetched_while_an_update_waits_or_applies(self):
+        # Review round 1, F3: the wheel an apply read stays where it read it.
+        old = _wheel(self.root / "release", "0.12.5")
+        for state in ("pending", "applying"):
+            u = self.checker(self.opener_for())
+            u.state = state
+            u.check_once()
+            self.assertEqual(list((self.root / "release").glob("*.whl")), [old])
+            self.assertEqual(self.service.rows, [])
+        u = self.checker(self.opener_for())
+        u._fetch_lock.acquire()
+        u.check_once()
+        self.assertEqual(list((self.root / "release").glob("*.whl")), [old])
+        self.assertFalse((self.root / "current").exists())
 
 
 class TheLocalChannel(_Base):

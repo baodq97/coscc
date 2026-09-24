@@ -129,6 +129,12 @@ then stops the app, installs the wheel offline, checks `coscc --version`, and ex
 code 75 so `Restart=on-failure` brings it back. The page reloads itself when it answers
 again. Every step is written to `<COS_DATA_DIR>/updates/logs/<time>-update.log`.
 
+Applying keeps the running version's own wheel in `<COS_DATA_DIR>/updates/current/`, to go
+back to. A release fetches it from its own GitHub release — at each check, or, with
+`COS_UPDATE_CHECK=0`, when *Áp dụng* is pressed, so that press needs the network. A local
+build has no release to fetch from: once it is running, `current/` holds it only if it was
+applied from the board, and otherwise the panel says `blocked` and offers no press.
+
 **What does not come back by itself.** If the new version passes its trial but fails to
 start for real, there is no board left to say so and nothing rolls it back: `systemctl
 --user status coscc` shows it restarting. The log of that update ends with the command to

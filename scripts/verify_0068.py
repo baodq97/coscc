@@ -278,10 +278,17 @@ async def run_plain(root: Path) -> bool:
     update.SERVER.register(server := _Server())
     shutil.rmtree(u.root / "current")
     u.release = {"state": "ready", "version": "0.13.0"}
+    served = u._opener
+
+    def offline(url):
+        raise OSError("offline")
+
+    u._opener = offline  # step 1 fetches the running release's wheel itself; here it cannot
     await u.apply("release", "wait", "Proof")
     await u._apply_task
+    u._opener = served
     ok &= say(bool(u.error) and "current" in u.error["message"] and not server.should_exit,
-              "(f) R12 step 1 an empty current/ stops before anything changes", str(u.error))
+              "(f) R12 step 1 an empty current/ it cannot fill stops before anything changes", str(u.error))
     _wheel(u.root / "current", "0.12.0", b"old")
     broken = u.root / "release" / update.wheel_name("0.13.0")
     broken.write_bytes(b"torn")
