@@ -545,6 +545,15 @@ class Denials:
             self.reasons.append(f"{tool}: {reason}")
 
 
+# `0037_board-sessions-run-without-claude-codes-system-prompt`. What a board step holding
+# any tool runs on, instead of the empty system prompt the SDK sends when none is set.
+# Without it a step with `Read` and `Grep` had no guidance on using them, and searched
+# with `grep` through Bash instead. Bare on purpose: no `append`. It grants nothing —
+# `permission_gate` below and the grant's own tool list still decide every call — and a
+# tool-less step (`idea`, `intent`) and chat never get it. A copy is what goes out.
+CLAUDE_CODE_PRESET: dict[str, str] = {"type": "preset", "preset": "claude_code"}
+
+
 def permission_gate(grant: Grant, workspace: str, denials: Denials, unit_dir: str | None = None):
     """The callback the SDK asks before every tool call.
 
@@ -804,6 +813,9 @@ class Runner:
             last_attempt=last_attempt,
         )
 
+        # `0037`: the same condition that decides whether a gate and a tool list are sent.
+        preset = CLAUDE_CODE_PRESET if grant.opens_anything else None
+
         if self.journal is not None:
             self.journal.started(
                 journal_key, unit, stage, mode,
@@ -813,6 +825,11 @@ class Runner:
                 model=model, model_source=model_source,
                 agents=SESSIONS_PER_STEP,
                 base=base,
+                # Which system prompt the step ran on, so a measurement can pick the steps
+                # that ran after the fix by what they ran on rather than by a date — the
+                # board runs the installed copy, not this checkout. `""` is the SDK's
+                # empty one; a record written before `0037` has no field, read as `""`.
+                system_prompt="claude_code" if preset else "",
             )
 
         denials = Denials()
@@ -849,6 +866,9 @@ class Runner:
                 # The same reasoning: a stand-in with no `model` parameter keeps working
                 # for a step nobody resolved a model for.
                 **({"model": model} if model is not None else {}),
+                # And again: a tool-less step passes nothing, so it gets the session it
+                # always got, and a stand-in without the parameter keeps working for it.
+                **({"system_prompt": dict(preset)} if preset else {}),
             ):
                 if kind == "chunk":
                     collected += payload

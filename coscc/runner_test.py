@@ -1561,6 +1561,99 @@ class TheStepRunsOnTheModelItWasGiven(unittest.TestCase):
             self.assertNotIn("model", probe.kw)
 
 
+class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
+    """`0037_board-sessions-run-without-claude-codes-system-prompt`.
+
+    A step holding any tool is handed Claude Code's preset system prompt; a step holding
+    none is handed nothing, exactly as before. The preset must not widen the grant: the
+    callback a preset step receives still refuses what its stage may not do.
+    """
+
+    PRESET = {"type": "preset", "preset": "claude_code"}
+
+    class Probe:
+        """Records what `stream` was given, then answers the way each stage needs."""
+
+        def __init__(self):
+            self.kw = None
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.kw = kw
+            stage, directory = self.stage, self.directory
+            if grant_for(stage).app_writes_artifact:
+                title = stage.capitalize()
+                body = f"# {title}: x\nStatus: accepted.\n"
+                if stage == "review":
+                    body = "# Review: x\nStatus: accepted.\n\n## Round 1\n"
+                yield ("chunk", body)
+            else:
+                (directory / f"{stage}.md").write_text(
+                    f"# {stage}: x\nStatus: accepted.\n", encoding="utf-8"
+                )
+                yield ("chunk", "done")
+            yield ("done", {"session_id": f"s-{stage}", "cost": {}})
+
+    def run_stage(self, d, stage, journal=None):
+        probe = self.Probe()
+        directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
+        probe.stage, probe.directory = stage, directory
+        r = Runner(sessions=probe, journal=journal)
+
+        async def go():
+            return [ev async for ev in r.run(
+                workspace=d, directory=directory, journal_key=d,
+                unit=UNIT, stage=stage, artifact=f"{stage}.md", stages=STAGES,
+                mode="manual",
+            )]
+
+        _, final = asyncio.run(go())[-1]
+        return probe, final
+
+    def test_every_stage_with_tools_gets_the_preset(self):
+        with_tools = [s for s in STAGES if grant_for(s).opens_anything]
+        # Pinned, so a change to the grant table turns this red rather than quietly
+        # leaving a stage out of what it checks.
+        self.assertEqual(with_tools, ["spec", "plan", "impl", "pr", "review", "ship"])
+        for stage in with_tools:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
+                probe, _ = self.run_stage(d, stage)
+                # Asserted on what the session was handed, before the runner looks at
+                # the artifact, so the outcome is not what this depends on.
+                self.assertEqual(probe.kw.get("system_prompt"), self.PRESET)
+                self.assertNotIn("append", probe.kw["system_prompt"])
+
+    def test_a_stage_without_tools_gets_none(self):
+        for stage in ("idea", "intent"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
+                probe, _ = self.run_stage(d, stage)
+                self.assertIsNotNone(probe.kw)
+                self.assertNotIn("system_prompt", probe.kw)
+
+    def test_the_read_only_stage_is_still_refused_writes_and_commands(self):
+        import claude_agent_sdk as sdk
+
+        with tempfile.TemporaryDirectory() as d:
+            probe, _ = self.run_stage(d, "spec")
+            self.assertEqual(probe.kw.get("system_prompt"), self.PRESET)
+            # The very callback the preset session was given, not one rebuilt from `decide`.
+            gate = probe.kw["can_use_tool"]
+            inside = str(Path(d) / "a.txt")
+            for tool, data in (("Write", {"file_path": inside, "content": "x"}),
+                               ("Bash", {"command": "ls"})):
+                verdict = asyncio.run(gate(tool, data, None))
+                self.assertIsInstance(verdict, sdk.PermissionResultDeny, tool)
+
+    def test_the_start_record_says_which_prompt_ran(self):
+        with tempfile.TemporaryDirectory() as d:
+            journal = Journal(d, d)
+            self.run_stage(d, "impl", journal)
+            self.run_stage(d, "idea", journal)
+            starts = journal.records(d, kind="start")
+            by_stage = {s["stage"]: s for s in starts}
+            self.assertEqual(by_stage["impl"]["system_prompt"], "claude_code")
+            self.assertEqual(by_stage["idea"]["system_prompt"], "")
+
+
 def _git_repo(root: Path) -> Path:
     repo = root / "repo"
     repo.mkdir()

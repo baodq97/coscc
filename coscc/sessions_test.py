@@ -229,6 +229,44 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         self.assertEqual(_options(c, "/p", None).model, "from-env")
         self.assertIsNone(_options(Config(), "/p", None).model)
 
+    # `0037`. A board step with tools runs on Claude Code's own system prompt; nothing
+    # else does, and the preset must not move any knob that decides what a step may do.
+
+    def test_no_system_prompt_is_set_unless_asked(self):
+        # R2: chat and tool-less steps keep the SDK's default, as before.
+        self.assertIsNone(_options(Config(), "/p", None).system_prompt)
+
+    def test_a_preset_reaches_the_options_as_given(self):
+        # R1 at the options layer. No `append`: the spec keeps the preset bare.
+        from coscc.runner import CLAUDE_CODE_PRESET
+
+        got = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET).system_prompt
+        self.assertEqual(got, {"type": "preset", "preset": "claude_code"})
+        self.assertNotIn("append", got)
+        # A copy, so nothing downstream can edit the module's constant through it.
+        self.assertIsNot(got, CLAUDE_CODE_PRESET)
+
+    def test_a_preset_changes_nothing_else(self):
+        # R3: the grant is `tools` + `can_use_tool` + `permission_mode`, and project
+        # settings stay out. The preset may move none of them, in either permission mode.
+        from coscc import policy
+        from coscc.runner import CLAUDE_CODE_PRESET
+
+        def gate(name, data, ctx):  # never called; compared by identity
+            raise AssertionError("not called")
+
+        for config in (Config(), Config(bypass_permissions=True)):
+            common = dict(max_turns=40, tools=list(policy.READ_TOOLS), can_use_tool=gate)
+            bare = _options(config, "/p", None, **common)
+            preset = _options(config, "/p", None, system_prompt=CLAUDE_CODE_PRESET, **common)
+            self.assertEqual(preset.tools, bare.tools)
+            self.assertIs(preset.can_use_tool, gate)
+            self.assertIs(bare.can_use_tool, gate)
+            self.assertIsNone(preset.setting_sources)
+            self.assertTrue(preset.verbatim_prompts)
+            self.assertEqual(preset.permission_mode, bare.permission_mode)
+            self.assertEqual(preset.max_turns, bare.max_turns)
+
 
 class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
     async def test_a_directory_outside_the_workspaces_is_refused(self):
