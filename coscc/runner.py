@@ -708,6 +708,15 @@ class Runner:
                 # yield, so a block a person appended while the step ran is still on
                 # disk when this runs and is carried through untouched.
                 body = strip_answers(check_reply(collected))
+                # `check_reply` looked at the whole reply, the reply's own `## Answers`
+                # included. A `Status:` line that lived only there has just been cut, and
+                # the gate reads nothing below the header anyway, so ask again of what
+                # will actually be written (`0025` review round 1, F1).
+                if not STATUS_RE.search(body):
+                    raise RunError(
+                        "the reply carries no `Status:` line above its own `## Answers`, "
+                        "so the gate could not read it"
+                    )
                 target = directory / artifact
                 try:
                     raw = target.read_bytes()

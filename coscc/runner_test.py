@@ -1341,6 +1341,22 @@ class RerunningKeepsTheAnswers(unittest.TestCase):
             self.assertNotEqual(done["outcome"], "done")
             self.assertEqual(path.read_bytes(), before)
 
+    def test_e2_a_status_line_only_under_the_replys_own_answers_is_refused(self):
+        # `0025` review round 1, F1: `check_reply` saw the whole reply, so a `Status:`
+        # living only under the reply's `## Answers` passed it, and `strip_answers` then
+        # cut the one line the gate reads.
+        with tempfile.TemporaryDirectory() as d:
+            self.unit_dir(d, spec_md=self.ANSWERED.format(mark="F1-MARK-0025"))
+            path = Path(d) / ".cos" / UNIT / "spec.md"
+            before = path.read_bytes()
+            reply = (
+                "# Spec: x\n\n## Requirements\n\nbody\n\n"
+                "## Answers\n\n### Câu 1\nStatus: accepted.\n"
+            )
+            done = self.run_once(d, "spec", "spec.md", reply)
+            self.assertNotEqual(done["outcome"], "done")
+            self.assertEqual(path.read_bytes(), before)
+
     def test_f_a_block_appended_while_the_step_runs_is_still_on_disk_after(self):
         with tempfile.TemporaryDirectory() as d:
             self.unit_dir(
