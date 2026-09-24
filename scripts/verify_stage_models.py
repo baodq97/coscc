@@ -105,12 +105,42 @@ class Page:
         from reflex_base.utils.format import format_event_handler
 
         name = format_event_handler(self.studio.event_handlers[handler])
-        await self.processor.enqueue(self.TOKEN, Event(name=name, payload=payload))
+        return await self._drain(Event(name=name, payload=payload))
+
+    async def arrive_at(self, href: str, sid: str = "verify") -> bool:
+        """`0056`. What a browser sends on landing at `href`: every route's `on_load`,
+        `arrive`, with the address and the socket's id in `router_data`. A navigation button
+        only returns a redirect since `0056`, and no browser here follows it."""
+        from reflex.event import Event
+        from reflex.istate.manager.token import BaseStateToken
+        from reflex_base.constants import RouteVar
+        from reflex_base.utils.format import format_event_handler
+
+        async with self.manager.modify_state(
+            BaseStateToken(ident=self.TOKEN, cls=self.root_cls)
+        ) as root:
+            if not root.router_data:
+                # Else the processor rehydrates first, which needs a registered App.
+                root.router_data = {RouteVar.CLIENT_TOKEN: self.TOKEN}
+        path = href.partition("?")[0]
+        router_data = {RouteVar.PATH: path, RouteVar.ORIGIN: href, RouteVar.SESSION_ID: sid,
+                       RouteVar.CLIENT_TOKEN: self.TOKEN,
+                       RouteVar.HEADERS: {"origin": "http://verify"}}
+        name = format_event_handler(self.studio.event_handlers["arrive"])
+        return await self._drain(Event(name=name, payload={}, router_data=router_data))
+
+    async def _drain(self, event) -> bool:
+        from coscc import state
+
+        await self.processor.enqueue(self.TOKEN, event)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.DRAIN
         while loop.time() < deadline:
             await asyncio.sleep(0.02)
-            if not self.processor._tasks and self.processor._queue.empty():
+            # Since `0056` a unit opens over the Board, whose `poll_running` asks on until
+            # the page leaves it: that one task, held in `_POLLING`, is not waited for.
+            polling = 1 if self.TOKEN in state._POLLING else 0
+            if len(self.processor._tasks) <= polling and self.processor._queue.empty():
                 return True
         return False
 
@@ -269,14 +299,16 @@ async def free(root: Path, workspace: Path) -> bool:
     processor = BaseStateEventProcessor().configure(state_manager=manager)
     async with processor:
         page = Page(processor, manager, StudioState, State)
-        drained = await page.fire("load") and await page.fire("choose_workspace", path=cwd)
+        # `0056`: the load and the choice of workspace are one arrival at its address.
+        ws = Path(cwd).name
+        drained = await page.arrive_at(f"/?ws={ws}")
         drained &= await page.fire("edit_model", name="impl", value=SONNET)
         drained &= await page.fire("save_model", name="impl")
         seen = await page.read()
         ok &= say(drained and seen["rows"].get("impl") == (SONNET, "override") and not seen["error"],
                   f"f Settings saved impl as {SONNET} through the page's handlers",
                   f"rows={seen['rows']}, notice={seen['notice']!r}, error={seen['error']!r}")
-        drained = await page.fire("open_unit", unit=unit)
+        drained = await page.arrive_at(f"/unit?ws={ws}&id={unit}")
         seen = await page.read()
         offered = seen["next_stage"]
         drained &= await page.fire("run_step")

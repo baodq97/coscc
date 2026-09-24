@@ -1313,16 +1313,15 @@ class StudioState(rx.State):
         self._load_update()
 
     def _load_unit(self, forget: bool = True) -> None:
-        """What opening a unit reads. A unit the board does not list reads nothing: the
-        dialog shows it as not found (R9), and the service would only refuse it."""
+        """What opening a unit reads. Asked even of a unit the board does not list: the
+        board may predate it, and whether it exists is the service's to say (R9)."""
         self.run_log = ""
         if forget:
             # `0071` R9: a message shown in the dialog is one made after it opened. Not on
             # a page's first arrival, whose messages are about the load itself.
             self.error, self.notice = "", ""
-        if any(u.id == self.unit_id for u in self.units):
-            self._load_timeline()
-            self._load_artifact()
+        self._load_timeline()
+        self._load_artifact()
 
     # -- where the page is (`0056`) ------------------------------------------
     #
@@ -1415,7 +1414,7 @@ class StudioState(rx.State):
             self._load_unit(forget=not first)
         if stray:
             self.notice = "That workspace is not on the list."
-        if read_unit and any(u.id == unit for u in self.units):
+        if read_unit:
             yield StudioState.load_next
         # A reload that finds the tab already on the Board: nothing else would start the loop.
         yield StudioState.poll_running
