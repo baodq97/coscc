@@ -18,10 +18,14 @@ from coscc.harness import MissingRules
 REPO = Path(__file__).resolve().parent.parent
 
 
-def _wheel(path: Path, names) -> Path:
+STAMP = "coscc/_build.json"
+GOOD_STAMP = '{"commit": "' + "0123456789abcdef" * 2 + '01234567"}'
+
+
+def _wheel(path: Path, names, stamp: str = GOOD_STAMP) -> Path:
     with zipfile.ZipFile(path, "w") as archive:
         for name in names:
-            archive.writestr(name, "x")
+            archive.writestr(name, stamp if name == STAMP else "x")
     return path
 
 
@@ -34,6 +38,8 @@ RUNNABLE = (
     # installed copy cannot tell how a missing file came to be missing (`0013` step 8).
     "coscc/states.json",
     "coscc/models.json",
+    # `0068` R1: the commit the board shows is read from here.
+    STAMP,
     "coscc/__init__.py",
 )
 
@@ -178,6 +184,23 @@ class AWheelIsChecked(unittest.TestCase):
             names = list(RUNNABLE) + ["coscc/_harness/skills/write-settings/SKILL.md"]
             wheel = _wheel(Path(tmp) / "skill.whl", names)
             self.assertEqual(harness.wheel_complaints(wheel), [])
+
+    def test_a_wheel_without_a_build_stamp_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            names = [n for n in RUNNABLE if n != STAMP]
+            complaints = harness.wheel_complaints(_wheel(Path(tmp) / "w.whl", names))
+            self.assertEqual(len(complaints), 1, complaints)
+            self.assertIn("_build.json", complaints[0])
+
+    def test_a_build_stamp_without_a_full_commit_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for bad in ('{"commit": "abc1234"}', '{"commit": null}', "not json", "[]",
+                        '{"commit": "' + "G" * 40 + '"}'):
+                with self.subTest(stamp=bad):
+                    wheel = _wheel(Path(tmp) / "w.whl", RUNNABLE, stamp=bad)
+                    complaints = harness.wheel_complaints(wheel)
+                    self.assertEqual(len(complaints), 1, complaints)
+                    self.assertIn("40-hex", complaints[0])
 
     def test_something_that_is_not_a_wheel_is_one_complaint_not_a_traceback(self):
         with tempfile.TemporaryDirectory() as tmp:
