@@ -361,6 +361,129 @@ class CellLabelNamesAFailureTheArtifactCannot(unittest.TestCase):
         self.assertEqual(color, "grass")
 
 
+class ACardShowsWhatServiceRunningSaid(unittest.TestCase):
+    """`0051` plan step 6: `_activities` copies, and only `poll_running` feeds it."""
+
+    READ = {
+        "running": {
+            "0009_x": [{"kind": "step", "stage": "impl", "agent": {"glyph": "ᚢ", "name": "Uruz"},
+                        "started": "2026-09-24T01:00:00+00:00", "turns": None, "cost_usd": None}],
+            "0010_y": [{"kind": "gebo", "stage": "integrate", "agent": {"glyph": "ᚷ", "name": "Gebo"},
+                        "started": "2026-09-24T02:00:00+00:00", "turns": 3, "cost_usd": 0.25}],
+            "0011_z": [{"kind": "rebase", "stage": "integrate", "agent": None,
+                        "started": "2026-09-24T03:00:00+00:00", "turns": None, "cost_usd": None}],
+        },
+        "unknown_end": {"0012_w": [{"stage": "plan", "started": "2026-09-24T00:00:00+00:00"}]},
+    }
+
+    def test_a_step(self):
+        from coscc.state import _activities
+
+        [a] = _activities("0009_x", self.READ)
+        self.assertEqual((a.label, a.agent, a.stage, a.started), ("running", "ᚢ Uruz", "impl", "2026-09-24T01:00:00+00:00"))
+
+    def test_unknown_turns_and_cost_are_empty_not_zero(self):
+        from coscc.state import _activities
+
+        [a] = _activities("0009_x", self.READ)
+        self.assertEqual((a.turns, a.cost), ("", ""))
+
+    def test_gebo_with_turns_and_cost(self):
+        from coscc.state import _activities
+
+        [a] = _activities("0010_y", self.READ)
+        self.assertEqual((a.label, a.agent, a.turns, a.cost), ("running", "ᚷ Gebo", "3", "$0.25"))
+
+    def test_a_rebase_has_no_agent(self):
+        from coscc.state import _activities
+
+        [a] = _activities("0011_z", self.READ)
+        self.assertEqual((a.label, a.agent, a.kind), ("rebasing", "", "rebase"))
+
+    def test_ended_unknown(self):
+        from coscc.state import _activities
+
+        [a] = _activities("0012_w", self.READ)
+        self.assertEqual((a.label, a.agent, a.stage, a.kind), ("ended, unknown", "", "plan", "unknown"))
+
+    def test_a_unit_with_nothing_and_an_empty_read_have_no_lines(self):
+        from coscc.state import _activities
+
+        self.assertEqual(_activities("0099_q", self.READ), [])
+        self.assertEqual(_activities("0009_x", {}), [])
+
+    def test_building_live_never_reads_the_tab_running_var(self):
+        """R8: `running` is this tab's own press; it must not be a second source."""
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+        state = _state_class(tree)
+        methods = {n.name: n for n in state.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        for fn in (functions["_activities"], methods["_apply_running"], methods["poll_running"]):
+            with self.subTest(fn=fn.name):
+                self.assertNotIn("self.running", ast.unparse(fn))
+        self.assertIn("SERVICE.running", ast.unparse(methods["poll_running"]))
+        decorators = [ast.unparse(d) for d in methods["poll_running"].decorator_list]
+        self.assertIn("rx.event(background=True)", decorators)
+
+
+class OneLoopPerTab(unittest.TestCase):
+    """`0051` plan Risk 2: three presses of *Board* leave one loop, and leaving ends it.
+
+    Driven through Reflex's own event processor, as `scripts/verify_0024.py` does.
+    """
+
+    def test_three_navigations_one_loop(self):
+        import asyncio
+        from unittest import mock
+
+        from reflex.event import Event
+        from reflex.istate.manager.memory import StateManagerMemory
+        from reflex.istate.manager.token import BaseStateToken
+        from reflex.state import State
+        from reflex_base.event.processor import BaseStateEventProcessor
+        from reflex_base.utils.format import format_event_handler
+
+        from coscc import state as page
+
+        token = "state-test-one-loop"
+        calls: list[str] = []
+
+        def running(cwd):
+            calls.append(cwd)
+            return {"running": {}, "unknown_end": {}}
+
+        async def go():
+            manager = StateManagerMemory()
+            processor = BaseStateEventProcessor().configure(state_manager=manager)
+            key = BaseStateToken(ident=token, cls=State)
+
+            async def fire(handler: str, **payload):
+                name = format_event_handler(page.StudioState.event_handlers[handler])
+                await processor.enqueue(token, Event(name=name, payload=payload))
+                await asyncio.sleep(0.05)
+
+            async with processor:
+                async with manager.modify_state(key) as root:
+                    (await root.get_state(page.StudioState)).cwd = "/somewhere"
+                for _ in range(3):
+                    await fire("navigate", screen="board")
+                await asyncio.sleep(0.3)
+                alive = token in page._POLLING
+                asked = len(calls)
+                await fire("navigate", screen="sessions")
+                await asyncio.sleep(0.3)
+                return alive, asked, token in page._POLLING
+
+        with mock.patch.object(page, "RUNNING_POLL", 0.1), mock.patch.object(page.SERVICE, "running", running):
+            alive, asked, still = asyncio.run(go())
+        self.assertTrue(alive)
+        # One loop, asking every 0.1s over roughly 0.45s: about five asks. Three loops
+        # would have asked about three times as often.
+        self.assertLessEqual(asked, 8)
+        self.assertGreaterEqual(asked, 2)
+        self.assertFalse(still)
+
+
 def _self_names(target: ast.expr) -> list[str]:
     """Every `self.X` being assigned by one target, tuple unpacking included."""
     if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
