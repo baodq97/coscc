@@ -212,6 +212,36 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.post("/api/units/outcome")
+    async def record_outcome(request: Request) -> Any:
+        """`0047` R1–R4. Record whether a finished unit met its intent's outcome.
+
+        Appends a `### Outcome` block under `intent.md`'s `## Answers` and writes nothing
+        else. `result` is `đạt`, `trượt` or `không đo được`. **No login, and the default
+        bind is `0.0.0.0`**: anyone who reaches the port can record `đạt` under any name,
+        and `measured_by` is a word they typed too. No gate reads the block; the board shows
+        it as the ground for keeping or dropping a unit.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.record_outcome(
+                str(body.get("cwd") or ""),
+                str(body.get("unit") or ""),
+                str(body.get("result") or ""),
+                str(body.get("measured_by") or ""),
+                str(body.get("source") or ""),
+                str(body.get("reason") or ""),
+                str(body.get("note") or ""),
+                str(body.get("recorded_by") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.post("/api/units/review-comment")
     async def post_review_comment(request: Request) -> Any:
         """`0021` R8, R9. Post one review round to the unit's pull request, once.
