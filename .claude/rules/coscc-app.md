@@ -261,8 +261,10 @@ no commands, one turn, no budget.
   the block. The trace is the block in the file and an `outputs` row with `source =
   outcome`. `COS_HOST=127.0.0.1` is the mitigation that exists.
 - **`POST /api/board/stop` ends anyone's step, under any name, and has no login.** Since
-  `0034`. It closes the step's CLI client (`sessions.DISCONNECT_TIMEOUT` = 5s, chosen) and
-  cancels the step's task; the step ends `stopped`, writes no artifact and records no
+  `0034`. It closes the step's CLI client and cancels the step's task; a CLI still running
+  `sessions.DISCONNECT_TIMEOUT` (5s, chosen) after the close began gets SIGTERM from the
+  app, and SIGKILL `KILL_AFTER` (3s, chosen) later — through the SDK's private
+  `_transport._process`, so an SDK that renames it loses this silently; the step ends `stopped`, writes no artifact and records no
   transition, and whatever it already committed or pushed stays. `stopped_by` is a name
   the person typed, not an identity, and the trace is that one `end` record. A step that
   has begun writing its artifact refuses the stop. A step stopped before its session
@@ -345,7 +347,7 @@ no commands, one turn, no budget.
 | `verify_0024.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s own handlers through Reflex's event processor, in-process; no browser, so the compiled page is not exercised |
 | `verify_0025.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
 | `verify_0034.py` | plain: no session, no quota, no network; temporary data root, the session replaced, the app driven in-process over ASGI (the dropped NDJSON client is a raw `http.disconnect`). Needs `node`; missing is exit 2 |
-| `verify_0034.py --paid` | **spends real money**: two short `claude-haiku-4-5` sessions through `Sessions.stream(step=...)`, one run to its end and one closed after its first chunk; counts the bundled `claude` processes under its own PID 10s later. No `/proc` is exit 2 |
+| `verify_0034.py --paid` | **spends real money**: three sessions through `Sessions.stream(step=...)` — two short `claude-haiku-4-5` ones, run to its end and closed after its first chunk, and one `claude-sonnet-5[1m]` stopped while it runs `sleep 47` through `Bash` (haiku holding `Bash` was refused with a long-context 400, measured 2026-09-24); counts the bundled `claude` processes under its own PID 10s later, the third from the Stop. No `/proc` is exit 2 |
 | `verify_0035.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` whose `pr update-branch` really rebases in a scratch clone. Needs `node`, `uv` and `git`; any missing is exit 2. Proves the mechanical road only: `--paid` (a real Gebo session) is not built and exits 2 |
 | `verify_0037.py` | plain: no session, no quota, no network; temporary data root, only the SDK client replaced. Claim (b) calls the SDK's private `SubprocessCLITransport._build_command`; if that cannot be called it is exit 2, not a pass. `--baseline` and `--measure` read `<COS_DATA_DIR>/cos.db` (`mode=ro`, never through `Data`) and `~/.claude/projects/*/<session>.jsonl`, and write only to `<COS_DATA_DIR>/measurements/`; too few sessions to compare is exit 2. `--paid` **spends real money**: six `claude -p` runs, three per branch. No `claude` on `PATH` is exit 2 |
 | `verify_0041.py` | plain: no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `git` and `uv`; either missing is exit 2. `--measure` reads `<COS_DATA_DIR>/cos.db` (`mode=ro`) and the store's `pr.md` files, and writes only to `<COS_DATA_DIR>/measurements/`; fewer than five `pr` steps since `0041` is exit 2. `--paid` **spends real money, pushes to `main` of `COS_PROOF_REPO` and leaves two pull requests open there**: two real `pr` steps; unset is exit 2. Not run when it was written |

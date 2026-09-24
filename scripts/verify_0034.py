@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Proof for `.cos/0034_a-running-step-cannot-be-stopped-and-outlives-itself`.
 
-    --paid   **spends real money**: two short sessions on this machine's `claude` login.
+    --paid   **spends real money**: three short sessions on this machine's `claude` login.
              Each is closed the way a board step is closed, and the CLI processes this
-             script itself spawned are counted 10 seconds after the step's end.
+             script itself spawned are counted 10 seconds after the step's end -- for the
+             third, stopped inside a Bash `sleep`, 10 seconds after the Stop.
 
     0  every claim held
     1  at least one did not
@@ -33,6 +34,11 @@ BUNDLED = "claude_agent_sdk/_bundled/claude"
 # The window `intent.md ## Proposed outcome` gives a step's processes to be gone.
 GRACE_S = 10.0
 PAID_MODEL = "claude-haiku-4-5-20251001"
+# Case (c) holds `Bash`, and on `PAID_MODEL` it could not start: measured 2026-09-24,
+# twice, its reply was "API Error: 400 The long context beta is not yet available for this
+# subscription." while (a) and (b) on the same model ran. Which call asked for it was not
+# found. This is the model `coscc/models.json` gives `impl`, whose steps run `Bash`.
+TOOL_MODEL = "claude-sonnet-5[1m]"
 
 
 def _children(pid: int) -> list[int]:
@@ -45,8 +51,8 @@ def _children(pid: int) -> list[int]:
     return out
 
 
-def bundled_descendants(root: int | None = None) -> list[int]:
-    """PIDs under `root` (this process by default) whose command line is the bundled CLI."""
+def descendants(needle: str, root: int | None = None) -> list[int]:
+    """PIDs under `root` (this process by default) whose command line contains `needle`."""
     seen: list[int] = []
     stack = _children(root or os.getpid())
     while stack:
@@ -56,18 +62,27 @@ def bundled_descendants(root: int | None = None) -> list[int]:
             cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode()
         except OSError:
             continue
-        if BUNDLED in cmdline:
+        if needle in cmdline:
             seen.append(pid)
     return seen
 
 
-async def settle(label: str) -> bool:
-    """True when no bundled CLI is left under this process within `GRACE_S`."""
-    deadline = time.monotonic() + GRACE_S
+def bundled_descendants(root: int | None = None) -> list[int]:
+    """PIDs under `root` (this process by default) whose command line is the bundled CLI."""
+    return descendants(BUNDLED, root)
+
+
+async def settle(label: str, since: float | None = None) -> bool:
+    """True when no bundled CLI is left under this process within `GRACE_S` of `since`
+    (now, by default)."""
+    start = since if since is not None else time.monotonic()
+    deadline = start + GRACE_S
     left = bundled_descendants()
     while left and time.monotonic() < deadline:
         await asyncio.sleep(0.25)
         left = bundled_descendants()
+    if not left:
+        print(f"  {label}: the last one was gone {time.monotonic() - start:.1f}s in")
     return say(not left, f"{label}: {len(left)} bundled claude process(es) left after {GRACE_S:.0f}s",
                f"pids {left}")
 
@@ -91,6 +106,57 @@ async def paid_case(sessions, cwd: str, prompt: str, stop_after_first_chunk: boo
                 seen["done"] = payload
     finally:
         await agen.aclose()
+    return seen
+
+
+# What case (c) asks the CLI to run. Distinct enough to find among this process's own
+# descendants, and longer than `GRACE_S`, so a step that waited for it would fail.
+SLEEP = "sleep 47"
+
+
+async def paid_mid_tool(sessions, cwd: str) -> dict:
+    """Stop a step while its CLI is inside a tool call (`0034` review round 2, F3).
+
+    The clock starts at the Stop, before `handle.close()` is awaited -- not after it
+    returns -- so a close that takes long counts against the 10 seconds.
+    """
+    import claude_agent_sdk as sdk
+
+    from coscc.sessions import StepHandle
+
+    handle = StepHandle()
+    seen: dict = {"tool": False, "during": 0, "done": None, "stopped_at": 0.0}
+
+    async def allow(tool: str, tool_input: dict, context) -> object:
+        if tool == "Bash" and str((tool_input or {}).get("command", "")).strip() == SLEEP:
+            return sdk.PermissionResultAllow()
+        return sdk.PermissionResultDeny(message=f"only `{SLEEP}` is allowed in this proof")
+
+    async def consume() -> None:
+        async for kind, payload in sessions.stream(
+            cwd, f"Run exactly this shell command with the Bash tool: {SLEEP}\nThen reply: done",
+            max_turns=3, tools=["Bash"], can_use_tool=allow, model=TOOL_MODEL, step=handle,
+        ):
+            if kind == "done":
+                seen["done"] = payload
+
+    task = asyncio.create_task(consume())
+    deadline = time.monotonic() + 120
+    while not task.done() and time.monotonic() < deadline:
+        if [p for p in descendants(SLEEP) if p not in bundled_descendants()]:
+            seen["tool"] = True
+            seen["during"] = len(bundled_descendants())
+            break
+        await asyncio.sleep(0.25)
+    seen["stopped_at"] = time.monotonic()
+    # What `Service.stop_step` does: close the handle, then cancel the task.
+    await handle.close()
+    seen["closed_in"] = time.monotonic() - seen["stopped_at"]
+    task.cancel()
+    try:
+        await task
+    except BaseException:  # noqa: BLE001 - the cancel, or whatever the stopped step raised
+        pass
     return seen
 
 
@@ -120,6 +186,19 @@ async def run_paid() -> int:
               "(b) the step was stopped while its CLI was running",
               f"{stopped['during']} process(es) seen during, done={stopped['done'] is not None}")
     ok &= await settle("(b) stopped after its first chunk")
+
+    mid = await paid_mid_tool(sessions, cwd)
+    # Not `done is None`: once the client is closed the real stream ends and yields its
+    # `done`, empty, before the cancel lands. The runner reads `stop_requested`, not that.
+    ok &= say(mid["tool"] and mid["during"] >= 1,
+              f"(c) the step was stopped while its CLI ran `{SLEEP}` through Bash",
+              f"tool seen={mid['tool']}, {mid['during']} process(es) during, "
+              f"reply {(mid['done'] or {}).get('text', '')[-300:]!r}")
+    print(f"  (c) handle.close() returned {mid['closed_in']:.1f}s after the Stop")
+    ok &= await settle("(c) stopped inside a tool call, counted from the Stop", mid["stopped_at"])
+    # The CLI's own children are outside this unit (`spec.md ## Answers`, câu 2): reported,
+    # not judged.
+    print(f"  (c) `{SLEEP}` processes still under this one: {len(descendants(SLEEP))}")
     return EXIT_PASS if ok else EXIT_BROKEN
 
 
