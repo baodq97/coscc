@@ -27,7 +27,7 @@ from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
-from coscc import gitops, harness
+from coscc import gitops, harness, steps
 from coscc import sessions as sessions_mod
 from coscc.journal import Journal
 from coscc.policy import Grant, beyond_reading, decide, grant_for, is_prose_stage
@@ -46,6 +46,10 @@ SESSIONS_PER_STEP = 1
 
 class RunError(Exception):
     """A step that cannot start, or one whose reply cannot be stored."""
+
+
+class _Stopped(Exception):
+    """`0034`: a Stop came before `steps.seal`, so the artifact is not to be written."""
 
 
 def skill_for(stage: str) -> str:
@@ -893,6 +897,7 @@ class Runner:
         watch: str | None = None,
         pr_note: str = "",
         pr_before: str | None = None,
+        running: steps.Running | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -931,6 +936,14 @@ class Runner:
 
         `pr_note` and `pr_before` are `0041` R2's: the pull request `service.run_step`
         looked up before a `pr` step, as a prompt block and as its URL (`""` for none).
+
+        `running` is the step's row in `Service.steps` (`0034`). With it the session's
+        client is closed when the step ends, and a person's Stop ends the step as
+        `stopped`: decided by `running.stop_requested`, never by the kind of exception the
+        stop happened to cause. A stop is honoured only before `steps.seal`, which is
+        called before anything of the artifact is written or read, so a stopped step
+        leaves no artifact behind it and a sealed one cannot be stopped halfway.
+        A cancellation nobody asked for is the app shutting down, and writes no `end`.
         """
         grant = grant_for(stage)
         directory = Path(directory)
@@ -1010,6 +1023,13 @@ class Runner:
         error: dict[str, str] | None = None
         # `0039` R11: a spike writes only its `cwd`; the worktree and the unit are read.
         gate_args = (None, (watch, str(directory))) if watch else (str(directory),)
+        # `0034`. Set when the task is cancelled with no Stop behind it: the app is going
+        # down, and no `end` is what says so.
+        shutting_down = False
+
+        def stopped() -> bool:
+            return running is not None and running.stop_requested
+
         try:
             before = await _tree_state(watch) if watch else None
             async for kind, payload in self.sessions.stream(
@@ -1037,6 +1057,8 @@ class Runner:
                 # And again: a tool-less step passes nothing, so it gets the session it
                 # always got, and a stand-in without the parameter keeps working for it.
                 **({"system_prompt": dict(preset)} if preset else {}),
+                # `0034`, the same reasoning once more: only a board step has a row.
+                **({"step": running.handle} if running is not None else {}),
             ):
                 if kind == "chunk":
                     collected += payload
@@ -1077,6 +1099,10 @@ class Runner:
                 if changed:
                     raise RunError(f"the worktree changed during spike: {changed}")
 
+            # `0034`. Nothing of the artifact has been read or written yet. From here on a
+            # Stop is refused; before here, one that already came ends the step unwritten.
+            if not steps.seal(running):
+                raise _Stopped()
             if grant.app_writes_artifact:
                 # `0025` `spec.md` R1-R6. The reply's own `## Answers`, if it has one, is
                 # never what reaches disk (R3) -- only the section already there is, and
@@ -1118,6 +1144,16 @@ class Runner:
                 if not STATUS_RE.search(written.read_text(encoding="utf-8", errors="replace")):
                     raise RunError(f"{artifact} carries no `Status:` line")
             outcome = "done"
+        except asyncio.CancelledError:
+            if not stopped():
+                shutting_down = True
+                raise
+            # The cancel was `Service.stop_step`'s own. Taken back, so the `end` below is
+            # written and the step's reader still gets its `done` row.
+            task = asyncio.current_task()
+            if task is not None:
+                task.uncancel()
+            outcome = "stopped"
         except (RunError, Refused) as e:
             # `spec.md` R1 a: "the step did not write impl.md" is a real reason to stop,
             # so it goes into the attempt record's `error` exactly like any other one.
@@ -1146,12 +1182,30 @@ class Runner:
                 # would hide that the work may be half finished.
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         finally:
+            # `0034` review round 1, F2. The outcome is decided here, so the door closes
+            # here: a Stop that arrives while the attempt record is captured below is
+            # refused (`Finishing`) rather than told "stopped" and logged as something
+            # else. `seal` is False only when a Stop already came, and that one is honoured.
+            stop_came = not steps.seal(running)
+            if not shutting_down and stop_came and outcome != "done":
+                # `0034`. Whatever the stop raised on its way in -- a closed stream, a
+                # cancel, `_Stopped` at the seal -- a person asked, and that is the outcome.
+                outcome = "stopped"
+                error = None
+                detail = f"stopped by {running.stopped_by}"
+                if not terminal:
+                    # No `ResultMessage` came back, so nothing was billed that this app
+                    # saw. Absent, not zero: `spec.md` R8.
+                    cost = {}
+            # C6: an app going down writes neither record. No `end` is what an
+            # interrupted step looks like, and the next start says nothing about it.
+            record = self.journal is not None and not shutting_down
             # `0019` plan step 5 / `spec.md` R1-R3. A stopped step's tree and transcript
             # are captured *before* `end` is written, and only for a run that is not
             # `done` — a step that wrote its artifact needs no attempt record, and R2
             # forbids this from touching anything a `done` run left behind.
             pending: BaseException | None = None
-            if self.journal is not None and outcome != "done":
+            if record and outcome != "done":
                 try:
                     fields, pending = await snapshot(cwd, session_id)
                     self.journal.attempted(
@@ -1170,13 +1224,13 @@ class Runner:
                     # `end` row is the one thing this unit will not put at risk.
                     pass
             extra: dict[str, Any] = {}
-            if self.journal is not None and outcome == "done" and end_fields is not None:
+            if record and outcome == "done" and end_fields is not None:
                 try:
                     extra = dict(await end_fields())
                 except Exception:
                     # The same rule as the attempt record: the `end` row never depends on it.
                     extra = {}
-            if self.journal is not None:
+            if record:
                 self.journal.finished(
                     journal_key, unit, stage, outcome,
                     session_id=session_id,
@@ -1186,11 +1240,21 @@ class Runner:
                     denied=denials.reasons or None,
                     models_used=models_used or None,
                     terminal=terminal or None,
+                    **(
+                        {"stopped_by": running.stopped_by, **({} if cost else {"cost_unknown": True})}
+                        if outcome == "stopped"
+                        else {}
+                    ),
                     **cost,
                     **extra,
                 )
             if pending is not None:
-                raise pending
+                if not stop_came:
+                    raise pending
+                # A Stop's cancel that landed in the capture rather than the session.
+                task = asyncio.current_task()
+                if task is not None:
+                    task.uncancel()
 
         yield (
             "done",
@@ -1205,5 +1269,6 @@ class Runner:
                 "cost": cost,
                 "model": model,
                 "model_source": model_source,
+                **({"stopped_by": running.stopped_by} if outcome == "stopped" else {}),
             },
         )

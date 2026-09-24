@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import aclosing, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -216,6 +217,113 @@ class Live:
     spent: dict[str, float] = field(default_factory=dict)
 
 
+# How long `_shut` lets the SDK close the CLI its own way before signalling the process
+# itself. Chosen, not measured: with `KILL_AFTER` it stays under the 10 seconds `0034`'s
+# intent gives a step's process to be gone.
+DISCONNECT_TIMEOUT = 5.0
+
+# How long `_shut` waits after its SIGTERM before SIGKILL. Chosen, not measured.
+KILL_AFTER = 3.0
+
+# Closings in flight. asyncio keeps only a weak reference to a task, and a closing must
+# outlive the task that began it when that one is cancelled.
+_CLOSING: set[asyncio.Task] = set()
+
+
+def _begin(coro: Any) -> asyncio.Task:
+    task = asyncio.ensure_future(coro)
+    _CLOSING.add(task)
+    task.add_done_callback(_CLOSING.discard)
+    return task
+
+
+async def _shut(client: Any, transport: Any, reached: bool) -> None:
+    """Close a client, and see that the CLI it spawned is gone.
+
+    `0034` review round 2, F3. The SDK's own close waits 5s for the CLI to exit on stdin
+    EOF before it sends SIGTERM, then SIGKILL -- but a raw asyncio cancel skips that
+    escalation (its own docstring says so), and an `asyncio.wait_for` around it is one. So
+    the SDK's close runs as its own task, shielded: nothing here cancels it. Past
+    `DISCONNECT_TIMEOUT` the process is signalled from here, and the SDK's close, still
+    waiting on it, then finishes. `_process` is the SDK transport's private name, read
+    with `getattr` like `_transport` and `_query`; a stand-in without it is not signalled.
+
+    `reached` is whether `connect` got as far as the control protocol. Without it the SDK's
+    `disconnect` closes nothing and only drops the transport (review round 1, F1), so the
+    transport is closed here.
+    """
+    process = getattr(transport, "_process", None)
+
+    async def sdk() -> None:
+        try:
+            await client.disconnect()
+        except Exception:  # noqa: BLE001 - closing is best-effort; the step's end must not wait on it
+            pass
+        if transport is not None and not reached:
+            try:
+                await transport.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    closing = _begin(sdk())
+    try:
+        await asyncio.wait_for(asyncio.shield(closing), DISCONNECT_TIMEOUT)
+    except TimeoutError:
+        pass
+    process = process or getattr(transport, "_process", None)
+    if process is None or process.returncode is not None:
+        return
+    with suppress(ProcessLookupError):
+        process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), KILL_AFTER)
+    except Exception:  # noqa: BLE001 - a timeout, or anything else: SIGKILL either way
+        with suppress(ProcessLookupError):
+            process.kill()
+
+
+@dataclass(eq=False)  # identity, not value: handles live in a set
+class StepHandle:
+    """The one client a board step spawned, and the one way to close it.
+
+    `0034`. A board step used to leave its client in `_live` for the life of the app, so
+    every step ever run kept a CLI process (measured: 14 of them, 230-285 MB each). A step
+    is never resumed, so it has no reason to stay: `stream(step=...)` closes it however
+    the step ends, and `Service.stop_step` closes it early.
+
+    `close` may be called before the client exists -- `client` is set only once `connect`
+    has returned; `stream` then closes the client the moment it connects and never sends
+    the prompt. Every later call waits on the one closing the first began, and cancelling
+    a caller does not cancel that closing (review round 2, F3 and F4).
+    """
+
+    cwd: str = ""
+    client: Any = None
+    closed: bool = False
+    _closing: asyncio.Task | None = None
+
+    async def close(self) -> None:
+        self.closed = True
+        if self.client is None:
+            return
+        if self._closing is None:
+            transport = getattr(self.client, "_transport", None)
+            self._closing = _begin(_shut(self.client, transport, reached=True))
+        await asyncio.shield(self._closing)
+
+
+async def _abandon(client: Any) -> None:
+    """Close a client whose `connect` did not finish.
+
+    One stopped inside the transport's own `connect` may already have spawned the CLI,
+    and the SDK's `disconnect` would drop that transport without closing it, so `_shut`
+    closes the transport itself. Both are read before anything is closed.
+    """
+    transport = getattr(client, "_transport", None)
+    reached = getattr(client, "_query", None) is not None
+    await asyncio.shield(_begin(_shut(client, transport, reached)))
+
+
 # What one turn cost, in the shape `journal.COST_FIELDS` adds up.
 COST_FIELDS = (
     "input_tokens",
@@ -364,6 +472,9 @@ class Sessions:
         self.membership = config.is_workspace
         self._live: dict[str, Live] = {}
         self._created_here: set[str] = set()
+        # `0034`. Board steps in flight, each with the one client it spawned. Never in
+        # `_live`: a step is not resumed, so its client is closed when the step ends.
+        self._steps: set[StepHandle] = set()
         self._lock = asyncio.Lock()
 
     def created_here(self, session_id: str) -> bool:
@@ -386,7 +497,11 @@ class Sessions:
         target = _resolve(directory)
         if target is None:
             return []
-        return [sid for sid, live in self._live.items() if _resolve(live.cwd) == target]
+        found = [sid for sid, live in self._live.items() if _resolve(live.cwd) == target]
+        # A step in flight counts too (`0034`), with no session id to name it by until the
+        # step ends. A finished one no longer blocks `pull` until the next restart.
+        found += ["(running step)" for h in self._steps if _resolve(h.cwd) == target]
+        return found
 
     def adopt(self, session_id: str) -> None:
         """Record a session as this app's.
@@ -409,6 +524,7 @@ class Sessions:
         model: str | None = None,
         system_prompt: dict[str, str] | None = None,
         effort: str | None = None,
+        step: StepHandle | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -422,7 +538,39 @@ class Sessions:
         a path nobody runs for real.
 
         Creates the session when `session_id` is None (R2), resumes it otherwise (R3).
+
+        `step` is a board step's handle (`0034`). With one, the client is closed however
+        this ends -- finished, raised, closed early through the handle, or abandoned by
+        its reader -- and is never kept for resuming. Without one nothing here changes:
+        chat needs `_live`.
         """
+        inner = self._stream(
+            cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
+            workspace, model, system_prompt, effort, step,
+        )
+        if step is None:
+            async with aclosing(inner):
+                async for item in inner:
+                    yield item
+            return
+        step.cwd = cwd
+        self._steps.add(step)
+        try:
+            async with aclosing(inner):
+                async for item in inner:
+                    yield item
+        finally:
+            try:
+                await step.close()
+            finally:
+                # A Stop's cancel can land on this very close (review round 2, F4); the
+                # closing goes on without us, and the handle must still leave the set.
+                self._steps.discard(step)
+
+    async def _stream(
+        self, cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
+        workspace, model, system_prompt, effort, step,
+    ):
         member = workspace if workspace is not None else cwd
         if not self.membership(member):
             raise Refused(f"not a configured workspace: {member}")
@@ -435,7 +583,7 @@ class Sessions:
             )
 
         async with self._lock:
-            live = self._live.get(session_id) if session_id else None
+            live = self._live.get(session_id) if session_id and step is None else None
             if live is None:
                 client = ClaudeSDKClient(
                     options=_options(
@@ -449,8 +597,23 @@ class Sessions:
                         effort=effort,
                     )
                 )
-                await client.connect()
+                if step is None:
+                    await client.connect()
+                else:
+                    try:
+                        await client.connect()
+                    except BaseException:
+                        # A cancel or a failure while the CLI was starting. The handle
+                        # has no client yet, so nothing else will close what `connect`
+                        # got as far as spawning (`0034` review round 1, F1).
+                        await _abandon(client)
+                        raise
+                    # Only now: `disconnect` during `connect` closes nothing and drops the
+                    # transport, so a Stop before this point only marks the handle closed.
+                    step.client = client
                 live = Live(client=client, session_id=session_id or "", cwd=cwd)
+        if step is not None and step.closed:
+            raise Refused("the step was stopped before its prompt was sent")
 
         resolved = live.session_id
         collected: list[str] = []
@@ -518,7 +681,8 @@ class Sessions:
             )
 
         live.session_id = resolved
-        self._live[resolved] = live
+        if step is None:
+            self._live[resolved] = live
         self._created_here.add(resolved)
         cost = {name: int(turn.get(name, 0.0)) for name in COST_FIELDS}
         cost["turns"] = turns
@@ -557,3 +721,6 @@ class Sessions:
         """
         for session_id in list(self._live):
             await self.close(session_id)
+        for step in list(self._steps):
+            await step.close()
+            self._steps.discard(step)

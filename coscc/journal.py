@@ -56,7 +56,9 @@ MODES = ("manual", "autonomous")
 
 # How a run ended. `cancelled` and `exhausted` exist so that "no end record" can keep
 # meaning the one thing it should: the app stopped while the step was still running.
-OUTCOMES = ("done", "failed", "exhausted", "cancelled")
+# `stopped` is a person pressing Stop (`0034`), and carries `stopped_by`, the name they
+# typed. `cancelled` is still written by nothing.
+OUTCOMES = ("done", "failed", "exhausted", "cancelled", "stopped")
 
 # The fields a caller may report about what a turn cost. Anything else in a record is
 # carried through untouched; these are the ones `totals` knows how to add up.

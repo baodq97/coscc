@@ -212,6 +212,41 @@ class PostingARoundLocksTheButtonWhileItRuns(unittest.TestCase):
         self.assertIsInstance(first.body[0], ast.Return)
 
 
+class ThePageHoldsNoRunningFlagOfItsOwn(unittest.TestCase):
+    """`0034` R6, R11, R12. Which units are running is the service's list; whether a unit
+    may start, or be stopped, is the service's to refuse."""
+
+    def setUp(self):
+        self.tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+        self.state = _state_class(self.tree)
+        self.methods = {
+            n.name: n for n in self.state.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+    def test_there_is_no_single_running_attribute(self):
+        fields = {
+            t.target.id for t in self.state.body
+            if isinstance(t, ast.AnnAssign) and isinstance(t.target, ast.Name)
+        }
+        self.assertNotIn("running", fields)
+        self.assertIn("running_steps", fields)
+        self.assertNotIn("is_running", self.methods)
+
+    def test_stop_step_asks_the_service(self):
+        text = ast.unparse(self.methods["stop_step"])
+        self.assertIn("SERVICE.stop_step(", text)
+
+    def test_run_step_has_no_already_running_check_of_its_own(self):
+        text = ast.unparse(self.methods["run_step"])
+        self.assertNotIn("already running", text)
+        self.assertNotIn("self.running ", text)
+        self.assertNotIn("self.running:", text)
+
+    def test_the_list_comes_from_the_service(self):
+        text = ast.unparse(self.methods["_load_running"])
+        self.assertIn("SERVICE.running_steps(", text)
+
+
 class TheRunButtonHoldsNoCopyOfTheLoop(unittest.TestCase):
     """`0024` R1. The stage the button offers is `cos.mjs next`'s, copied; nothing in the
     page works it out from which artifacts exist."""

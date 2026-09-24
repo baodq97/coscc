@@ -369,6 +369,58 @@ class ShutdownClosesSessions(unittest.IsolatedAsyncioTestCase):
             app.state.sessions.close_all.assert_not_awaited()
         app.state.sessions.close_all.assert_awaited_once()
 
+    async def test_running_steps_are_cancelled_before_the_sessions_close(self):
+        # `0034`. A step's task goes first, so it is not left writing after its client
+        # was closed under it.
+        app = self.app
+        order = []
+        app.state.service.shutdown = mock.AsyncMock(side_effect=lambda: order.append("steps"))
+        app.state.sessions.close_all.side_effect = lambda: order.append("sessions")
+        async with app.router.lifespan_context(app):
+            app.state.service.shutdown.assert_not_awaited()
+        app.state.service.shutdown.assert_awaited_once()
+        self.assertEqual(order, ["steps", "sessions"])
+
+
+class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0034`. The route decides nothing; it translates `Service.stop_step`."""
+
+    async def asyncSetUp(self):
+        self.app = build(Config(workspaces=("/tmp",)))
+        self.service = self.app.state.service
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_a_stop_on_nothing_running_is_a_400(self):
+        r = await self.client.post("/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": "Lan"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("no step running", r.json()["error"])
+
+    async def test_a_stop_without_a_name_is_a_400(self):
+        r = await self.client.post("/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": ""})
+        self.assertEqual(r.status_code, 400)
+
+    async def test_a_stop_of_a_running_step_is_a_200_naming_it(self):
+        running = self.service.steps.claim(self.service._journal_key("/tmp"), "0001_a", "spec")
+        r = await self.client.post("/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": "Lan"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"unit": "0001_a", "stage": "spec", "stopped_by": "Lan"})
+        self.assertTrue(running.stop_requested)
+
+    async def test_the_running_list_is_what_the_registry_holds(self):
+        self.assertEqual((await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), [])
+        self.service.steps.claim(self.service._journal_key("/tmp"), "0001_a", "plan")
+        [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
+        self.assertEqual((row["unit"], row["stage"], row["stopping"]), ("0001_a", "plan", False))
+
+    async def test_the_running_list_refuses_a_directory_that_is_not_a_workspace(self):
+        r = await self.client.get("/api/board/steps", params={"cwd": "/etc"})
+        self.assertEqual(r.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

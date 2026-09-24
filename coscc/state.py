@@ -363,6 +363,16 @@ class Conversation:
 
 
 @dataclasses.dataclass
+class RunningStep:
+    """`0034`. One board step running now, as `Service.running_steps` lists it."""
+
+    unit: str = ""
+    stage: str = ""
+    started_at: str = ""
+    stopping: bool = False
+
+
+@dataclasses.dataclass
 class Run:
     """One row of a unit's timeline."""
 
@@ -637,10 +647,16 @@ class StudioState(rx.State):
     artifact_file: str = ""
     artifact_missing: bool = False
     runs: list[Run] = []
-    # "<unit>/<stage>" while a step is running, empty otherwise. One at a time: two steps
-    # writing into one unit would race on the same files.
-    running: str = ""
+    # `0034`. Every step running in this workspace, as the service lists it. One per unit
+    # -- the service refuses a second -- and any number of units at once. This page holds
+    # no running flag of its own; the list is re-read, never patched.
+    running_steps: list[RunningStep] = []
     run_log: str = ""
+    # The unit whose step this page is streaming into `run_log`, so another unit's
+    # reply is never shown under the one now open.
+    log_unit: str = ""
+    # A name typed to stop a step. Like `answer_by`, never stored as a preference.
+    stop_by: str = ""
     # `0024`. The stage `cos.mjs next` names for the open unit, and what it said. Set only
     # by `load_next`, from `_run_target`; `next_stage` reads it and nothing computes it.
     run_stage: str = ""
@@ -793,12 +809,12 @@ class StudioState(rx.State):
         return Cell()
 
     @rx.var
-    def is_running(self) -> bool:
-        return self.running != ""
+    def running_here(self) -> bool:
+        return self.unit_id != "" and any(r.unit == self.unit_id for r in self.running_steps)
 
     @rx.var
-    def running_here(self) -> bool:
-        return self.running.startswith(self.unit_id + "/") and self.unit_id != ""
+    def log_here(self) -> bool:
+        return self.run_log != "" and self.log_unit == self.unit_id
 
     @rx.var
     def command_units(self) -> list[Unit]:
@@ -894,10 +910,22 @@ class StudioState(rx.State):
         if not self.cwd and self.workspaces:
             self.cwd = self.workspaces[0].id
 
+    def _load_running(self) -> None:
+        """`0034`. In memory and synchronous: no `gh`, no git, so a step's first chunk
+        can ask it without waiting on anything a full board read waits on."""
+        self.running_steps = []
+        if not self.cwd:
+            return
+        try:
+            self.running_steps = [RunningStep(**r) for r in SERVICE.running_steps(self.cwd)]
+        except Invalid:
+            self.running_steps = []
+
     async def _load_board(self) -> None:
         self.units, self.stages, self.board_note = [], [], ""
         self.empty_store, self.empty_host, self.empty_host_units = "", "", 0
         self.branch = ""
+        self._load_running()
         if not self.cwd:
             return
         try:
@@ -1492,6 +1520,24 @@ class StudioState(rx.State):
         self.answer_by = value
 
     @rx.event
+    def set_stop_by(self, value: str):
+        self.stop_by = value
+
+    @rx.event
+    async def stop_step(self, unit: str):
+        """`0034` R6. Stop one unit's running step. Every rule is `Service.stop_step`'s --
+        a missing name, nothing running, a step already writing its artifact -- and its
+        refusal is shown as its words. The streaming handler sees the `stopped` outcome."""
+        self.error = ""
+        try:
+            done = await SERVICE.stop_step(self.cwd, unit, self.stop_by)
+            self.notice = f"Stopping {done['unit']} {done['stage']} (by {done['stopped_by']})."
+        except Invalid as e:
+            self._fail(e)
+        finally:
+            self._load_running()
+
+    @rx.event
     async def answer_question(self, key: str):
         """`0016` R2. Send one answer. Every rule about whether it may be written is
         `Service.answer`'s; a refusal arrives here as its words and is shown as they are."""
@@ -1716,21 +1762,25 @@ class StudioState(rx.State):
         bursts, which is why every write below sits inside `async with self`.
         """
         async with self:
-            if self.running:
-                self.notice = "A step is already running."
-                return
+            # `0034`. No "already running" check of the page's own: whether this unit may
+            # start a step is the service's to refuse, and its `Invalid` lands in `_fail`.
             unit, stage, cwd = self.unit_id, self.next_stage, self.cwd
             if not (unit and stage and cwd):
                 self.notice = "There is no next step to run."
                 return
-            self.running = f"{unit}/{stage}"
             self.run_log = ""
+            self.log_unit = unit
             self.error = ""
 
+        listed = False
         try:
             async for kind, payload in SERVICE.run_step(cwd, unit, stage):
                 async with self:
-                    if kind == "chunk":
+                    if not listed:
+                        # The step is in the service's list from its first item on.
+                        listed = True
+                        self._load_running()
+                    if kind == "chunk" and self.log_unit == unit:
                         self.run_log += payload
                     elif kind == "done" and isinstance(payload, dict):
                         if payload.get("error"):
@@ -1754,7 +1804,6 @@ class StudioState(rx.State):
             # Re-read rather than patch. The artifact on disk is the truth about a stage's
             # status, and this is the moment it changed.
             async with self:
-                self.running = ""
                 await self._load_board()
                 self._load_timeline()
                 self._load_artifact()

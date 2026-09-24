@@ -1095,6 +1095,159 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
 
 
+class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
+    """`0034`. A step is its own task: a reader leaving does not end it (R3), a second
+    step on one unit is refused before it spends anything (R11), two units run at once
+    (R12), the page can list them (R13), and a Stop ends one `stopped` with nothing
+    recorded after it (R5, R9)."""
+
+    class Waits:
+        def __init__(self):
+            self.release: dict[str, asyncio.Event] = {}
+            self.calls = 0
+
+        def gate(self, unit):
+            return self.release.setdefault(unit, asyncio.Event())
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.calls += 1
+            step = kw.get("step")
+            # The prompt names its unit; `cwd` is the workspace for a prose stage.
+            [unit] = [u for u in self.units if u in text]
+            try:
+                yield ("chunk", "# Spec: a problem\n")
+                await asyncio.wait_for(self.gate(unit).wait(), 10)
+                yield ("chunk", "Author: t. Status: accepted.\n")
+                yield ("done", {"session_id": "sess-7", "terminal_reason": "success",
+                                "cost": {"output_tokens": 3, "cost_usd": 0.01}})
+            finally:
+                if step is not None:
+                    await step.close()
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        config = Config(
+            workspaces=(str(self.repo),),
+            working_dir=str(self.root / "work"),
+            data_dir=str(self.root / "data"),
+        )
+        self.sessions = self.Waits()
+        self.service = Service(config, self.sessions)
+        self.units = []
+        for slug in ("a-problem", "b-problem"):
+            made = create_sync(self.service, str(self.repo), slug, "some words")
+            (Path(made["path"]) / "intent.md").write_text(
+                "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+            )
+            self.units.append(made)
+        self.sessions.units = [u["unit"] for u in self.units]
+        self.ws = str(self.repo)
+
+    def _release(self, made):
+        self.sessions.gate(made["unit"]).set()
+
+    async def _first_chunk(self, made):
+        agen = self.service.run_step(self.ws, made["unit"], "spec")
+        first = await agen.__anext__()
+        self.assertEqual(first[0], "chunk")
+        return agen
+
+    def _ends(self, unit):
+        journal = self.service._journal()
+        return [r for r in journal.records() if r["kind"] == "end" and r["unit"] == unit]
+
+    def test_a_reader_that_leaves_does_not_take_the_step_with_it(self):
+        a = self.units[0]
+
+        async def go():
+            agen = await self._first_chunk(a)
+            await agen.aclose()  # the NDJSON client went away
+            running = self.service.steps.get(self.service._journal_key(self.ws), a["unit"])
+            self.assertIsNotNone(running)
+            self._release(a)
+            await running.task
+
+        asyncio.run(go())
+        self.assertIn("Status: accepted.", (Path(a["path"]) / "spec.md").read_text())
+        [end] = self._ends(a["unit"])
+        self.assertEqual(end["outcome"], "done")
+
+    def test_a_second_step_on_one_unit_is_refused_and_two_units_run_at_once(self):
+        a, b = self.units
+
+        async def go():
+            first = await self._first_chunk(a)
+            with self.assertRaises(Invalid):
+                await self.service.run_step(self.ws, a["unit"], "spec").__anext__()
+            self.assertEqual(self.sessions.calls, 1)  # refused before a session
+            second = await self._first_chunk(b)
+            listed = self.service.running_steps(self.ws)
+            self.assertEqual(sorted(r["unit"] for r in listed), sorted([a["unit"], b["unit"]]))
+            self._release(a)
+            self._release(b)
+            outs = [[i async for i in g] for g in (first, second)]
+            self.assertEqual([o[-1][1]["outcome"] for o in outs], ["done", "done"])
+            self.assertEqual(self.service.running_steps(self.ws), [])
+
+        asyncio.run(go())
+
+    def test_a_stop_ends_the_step_stopped_and_records_nothing_after_it(self):
+        a = self.units[0]
+
+        async def go():
+            agen = await self._first_chunk(a)
+            said = await self.service.stop_step(self.ws, a["unit"], "Lan")
+            self.assertEqual(said, {"unit": a["unit"], "stage": "spec", "stopped_by": "Lan"})
+            # A second press is the same stop.
+            running = self.service.steps.get(self.service._journal_key(self.ws), a["unit"])
+            if running is not None:
+                await self.service.stop_step(self.ws, a["unit"], "Minh")
+            rest = [i async for i in agen]
+            return rest
+
+        rest = asyncio.run(go())
+        self.assertEqual(rest[-1][1]["outcome"], "stopped")
+        self.assertEqual(rest[-1][1]["stopped_by"], "Lan")
+        self.assertFalse((Path(a["path"]) / "spec.md").exists())
+        [end] = self._ends(a["unit"])
+        self.assertEqual((end["outcome"], end["stopped_by"]), ("stopped", "Lan"))
+        found = self.service.unit_history(self.ws, a["unit"])
+        self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
+        self.assertIn("Status: accepted.", (Path(a["path"]) / "intent.md").read_text())
+        self.assertEqual(self.service.running_steps(self.ws), [])
+
+    def test_stopping_nothing_or_without_a_name_is_refused(self):
+        a = self.units[0]
+
+        async def go():
+            with self.assertRaises(Invalid):
+                await self.service.stop_step(self.ws, a["unit"], "Lan")
+            agen = await self._first_chunk(a)
+            with self.assertRaises(Invalid):
+                await self.service.stop_step(self.ws, a["unit"], "  ")
+            self._release(a)
+            [i async for i in agen]
+
+        asyncio.run(go())
+
+    def test_shutdown_cancels_a_running_step_and_writes_no_end(self):
+        a = self.units[0]
+
+        async def go():
+            agen = await self._first_chunk(a)
+            await self.service.shutdown()
+            with self.assertRaises(Invalid):
+                [i async for i in agen]
+
+        asyncio.run(go())
+        self.assertEqual(self._ends(a["unit"]), [])
+        self.assertEqual(self.service.running_steps(self.ws), [])
+
+
 class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
     """`0019_a-failed-step-destroys-the-work-that-succeeded` plan step 6, `spec.md` R5-R7."""
 

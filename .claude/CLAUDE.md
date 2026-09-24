@@ -179,6 +179,13 @@ a `review` gate that never opens.
   the route has no login: anyone who reaches the port can make this machine's `gh` login
   rebase a unit's pull request or open a paid session. It is not a stage and `cos.mjs`
   does not know it exists beyond the `betweenPrAndShip` field `status --json` carries.
+- **Stopping a step is not an approval, and anyone who reaches the port can do it.** Since
+  `0034` the board lists the steps running in a workspace, each with a *Stop* button
+  (`POST /api/board/stop`). A stopped step ends `stopped` in the run log with
+  `stopped_by`, a name the person typed rather than an identity; it writes no artifact,
+  opens and closes no gate, and starts nothing. What it had already committed or pushed
+  stays. No route has a login and the default bind is `0.0.0.0`, so anyone who can reach
+  the port can stop anyone's step under any name.
 - **CI that decides more than one thing.** Since `0015` CI decides whether `review` may
   begin: the gate reads the pull request's required checks and stays closed on red,
   pending or none. Nothing else reads it. A green check also measures a different

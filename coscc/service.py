@@ -53,6 +53,7 @@ from coscc import labels, models
 from coscc.runner import SESSIONS_PER_STEP, STATUS_RE, RunError, Runner, describe_attempt
 from coscc.sessions import Sessions
 from coscc.store import BadName, Store, require_name
+from coscc import steps as steps_mod
 from coscc import units, worktrees
 from coscc.units import BadUnit, CannotCreate
 
@@ -246,6 +247,9 @@ class Service:
     # integration, keyed by an id that never leaves this process. Added and removed beside
     # `_active`, read only by `running`. Display only: `_active` still does the refusing.
     _running: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
+    # `0034`. The board steps running now, each as its own task, so a reader that goes
+    # away does not take the step with it and a Stop has something to cancel.
+    steps: steps_mod.Registry = field(default_factory=lambda: steps_mod.Registry(), init=False, repr=False)
 
     def __post_init__(self) -> None:
         # No working folder means no store, and the app behaves as it did before one existed.
@@ -1165,17 +1169,24 @@ class Service:
         active_key = (key, unit)
         if active_key in self._active:
             raise Invalid(_BUSY.format(unit=unit))
+        # `0034` R11. The registry is what the page lists and what a Stop finds; `_active`
+        # is still what an integration asks. Taken together, with no `await` between.
+        try:
+            running = self.steps.claim(key, unit, stage)
+        except steps_mod.Busy as e:
+            raise Invalid(str(e)) from e
         self._active.add(active_key)
         # `0039` R12: emptied before the step, whatever an earlier one left, and removed
-        # after it however it ends. A client that drops the stream runs the `finally` only
-        # when the generator is closed or collected; the next spike clears it either way.
+        # after it however it ends -- in `_drive`, so a client that drops the stream no
+        # longer decides when (`0034`).
         scratch = units.spike_dir(cwd, unit, self.config.data_dir) if stage == "spike" else None
         rid = self._mark_running(key, unit, stage, "step")
-        try:
-            if scratch is not None:
-                shutil.rmtree(scratch, ignore_errors=True)
-                scratch.mkdir(parents=True)
-            async for item in runner.run(
+        queue: asyncio.Queue = asyncio.Queue()
+        running.listeners.add(queue)
+        running.task = asyncio.create_task(self._drive(
+            running, runner, cwd, unit, stage, row["file"], directory, tree, base, rounds_before,
+            rid, scratch,
+            dict(
                 workspace=cwd,
                 directory=directory,
                 journal_key=key,
@@ -1198,10 +1209,48 @@ class Service:
                 **config,
                 # Only named for a spike, so a stand-in `run` without it keeps working.
                 **({"watch": work} if scratch is not None else {}),
-            ):
+            ),
+        ))
+        # `0034` R3/R4. Only the reader lives here. A reader that goes away -- a closed
+        # tab, a dropped NDJSON client -- takes its queue with it and nothing else: the
+        # step runs on to its own end in `_drive`. Stopping it is `stop_step`, and only that.
+        try:
+            while True:
+                kind, payload = await queue.get()
+                if kind == "raise":
+                    raise payload
+                yield (kind, payload)
+                if kind == "done":
+                    return
+        finally:
+            running.listeners.discard(queue)
+
+    async def _drive(
+        self, running: steps_mod.Running, runner: Runner, cwd: str, unit: str, stage: str,
+        artifact: str, directory: Path, tree: dict[str, Any] | None, base: dict[str, Any] | None,
+        rounds_before: set[Any] | None, rid: str, scratch: Path | None, kwargs: dict[str, Any],
+    ) -> None:
+        """One board step, start to end, as its own task (`0034`).
+
+        What `run_step` used to do inline, unchanged, except that every item goes to the
+        step's listeners with `put_nowait` -- this never waits on a reader -- and that a
+        `stopped` step records no transition, cleans nothing and posts nothing (R9).
+        """
+
+        def tell(item: tuple[str, Any]) -> None:
+            for q in list(running.listeners):
+                q.put_nowait(item)
+
+        told_done = False
+        try:
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
+                scratch.mkdir(parents=True)
+            async for item in runner.run(**kwargs, running=running):
                 if item[0] == "done":
                     item = ("done", {**item[1], "base": base})
-                    self._record_transition(cwd, unit, row["file"], directory, item[1])
+                    if item[1].get("outcome") != "stopped":
+                        self._record_transition(cwd, unit, artifact, directory, item[1])
                     if stage == "ship" and tree is not None and item[1].get("outcome") == "done":
                         # R10. Only if `cos.mjs` now says `finished` and GitHub says merged;
                         # otherwise nothing is touched and the board tries again later.
@@ -1213,14 +1262,67 @@ class Service:
                             "done",
                             {**item[1], "comments": await self._post_new_rounds(cwd, unit, rounds_before)},
                         )
-                yield item
+                    told_done = True
+                tell(item)
         except RunError as e:
-            raise Invalid(str(e)) from e
+            tell(("raise", Invalid(str(e))))
+            told_done = True
+        except asyncio.CancelledError:
+            if not running.stop_requested:
+                raise
+            # A Stop's cancel that arrived after the runner had already ended.
+            task = asyncio.current_task()
+            if task is not None:
+                task.uncancel()
+        except Exception as e:  # noqa: BLE001 - the reader raises it, as it always did
+            tell(("raise", e))
+            told_done = True
         finally:
-            self._active.discard(active_key)
+            if not told_done:
+                tell(("raise", Invalid(f"{unit}'s {stage} step ended without an outcome; the app may be shutting down")))
+            self._active.discard((running.workspace, running.unit))
             self._running.pop(rid, None)
             if scratch is not None:
                 shutil.rmtree(scratch, ignore_errors=True)
+            self.steps.release(running)
+
+    async def stop_step(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
+        """Stop one running board step (`0034` R2, R5, R6). The route and the page's
+        button both call this, and nothing else.
+
+        `by` is a name the person typed, not an identity: no route has a login. What it
+        leaves is an `end` record with `outcome: stopped` and `stopped_by`. It opens and
+        closes no gate, and starts nothing.
+        """
+        self._workspace_or_refuse(cwd)
+        name = (by or "").strip()
+        if not name:
+            raise Invalid("a name is required to stop a step")
+        try:
+            running = self.steps.request_stop(self._journal_key(cwd), unit, name)
+        except (steps_mod.NotRunning, steps_mod.Finishing) as e:
+            raise Invalid(str(e)) from e
+        await running.handle.close()
+        if running.task is not None:
+            running.task.cancel()
+        return {"unit": running.unit, "stage": running.stage, "stopped_by": running.stopped_by}
+
+    def running_steps(self, cwd: str) -> list[dict[str, Any]]:
+        """The board steps running now in this workspace (`0034` R13). This process only."""
+        self._workspace_or_refuse(cwd)
+        return self.steps.listing(self._journal_key(cwd))
+
+    async def shutdown(self) -> None:
+        """Cancel every step still running, and wait for them, 10 seconds at most.
+
+        No `end` is written for them (C6): a step with no `end` is what an app that went
+        down in the middle of it looks like, and that is what happened.
+        """
+        tasks = [r.task for r in self.steps.all() if r.task is not None and not r.task.done()]
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            await asyncio.wait(tasks, timeout=10)
 
     async def _post_new_rounds(
         self, cwd: str, unit: str, before: set[Any]

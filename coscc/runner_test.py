@@ -2204,3 +2204,163 @@ class ASpikeThatTouchesTheWorktreeFails(unittest.TestCase):
         self.assertEqual(final["outcome"], "failed")
         self.assertFalse(written)
         self.assertIn("HEAD ", final["error"])
+
+
+class AStoppedStepEndsStopped(unittest.TestCase):
+    """`0034`. A Stop before the seal ends the step `stopped`, with the name, no cost it
+    never saw, and no artifact. After the seal it is refused. A cancel nobody asked for is
+    the app going down, and writes no `end`."""
+
+    class Waits:
+        """Sends one chunk, then waits for a release that a Stop never gives it."""
+
+        def __init__(self, reply="# Spec: x\nStatus: accepted.\n"):
+            self.release = asyncio.Event()
+            self.reply = reply
+            self.steps = []
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.steps.append(kw.get("step"))
+            yield ("chunk", "thinking ")
+            await self.release.wait()
+            yield ("chunk", self.reply)
+            yield ("done", {"session_id": "s-1", "terminal_reason": "success",
+                            "cost": {"turns": 2, "cost_usd": 0.25}})
+
+    def _run(self, d, sessions, stage, artifact, act):
+        from coscc import steps
+
+        registry = steps.Registry()
+        running = registry.claim(d, UNIT, stage)
+        journal = Journal(d, d)
+        r = Runner(sessions=sessions, journal=journal)
+
+        async def go():
+            out = []
+
+            async def drive():
+                async for item in r.run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d, unit=UNIT,
+                    stage=stage, artifact=artifact, stages=STAGES, mode="manual",
+                    running=running,
+                ):
+                    out.append(item)
+
+            running.task = asyncio.create_task(drive())
+            while not out:
+                await asyncio.sleep(0)
+            await act(registry, running, sessions)
+            try:
+                await running.task
+            except asyncio.CancelledError:
+                out.append(("cancelled", None))
+            return out
+
+        return asyncio.run(go()), journal, running
+
+    @staticmethod
+    async def stop(registry, running, sessions):
+        registry.request_stop(running.workspace, running.unit, "Lan")
+        await running.handle.close()
+        running.task.cancel()
+
+    def _ends(self, journal):
+        return [r for r in journal.records() if r["kind"] == "end"]
+
+    def test_a_prose_step_stopped_midway_writes_nothing_and_says_who(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
+            sessions = self.Waits()
+            out, journal, running = self._run(d, sessions, "spec", "spec.md", self.stop)
+            self.assertIs(sessions.steps[0], running.handle)
+            kind, payload = out[-1]
+            self.assertEqual((kind, payload["outcome"]), ("done", "stopped"))
+            self.assertEqual(payload["stopped_by"], "Lan")
+            self.assertFalse((directory / "spec.md").exists())
+            [end] = self._ends(journal)
+            self.assertEqual(end["outcome"], "stopped")
+            self.assertEqual(end["stopped_by"], "Lan")
+            self.assertEqual(end["detail"], "stopped by Lan")
+            self.assertIsNone(end["artifact"])
+            self.assertTrue(end["cost_unknown"])
+            self.assertNotIn("cost_usd", end)
+            self.assertNotIn("turns", end)
+
+    def test_a_self_writing_step_stopped_midway_leaves_its_file_untouched(self):
+        with tempfile.TemporaryDirectory() as d:
+            before = b"# Impl: x\nStatus: draft.\nhalf of it\n"
+            directory = make_unit(
+                Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP",
+            )
+            (directory / "impl.md").write_bytes(before)
+            out, journal, _ = self._run(d, self.Waits(), "impl", "impl.md", self.stop)
+            self.assertEqual(out[-1][1]["outcome"], "stopped")
+            self.assertEqual((directory / "impl.md").read_bytes(), before)
+            [end] = self._ends(journal)
+            self.assertEqual(end["outcome"], "stopped")
+
+    def test_a_stop_after_the_seal_is_refused_and_the_step_is_done(self):
+        from coscc import steps
+
+        async def release_then_stop(registry, running, sessions):
+            sessions.release.set()
+            while not running.sealed:
+                await asyncio.sleep(0)
+            with self.assertRaises(steps.Finishing):
+                registry.request_stop(running.workspace, running.unit, "Lan")
+
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
+            out, journal, _ = self._run(d, self.Waits(), "spec", "spec.md", release_then_stop)
+            self.assertEqual(out[-1][1]["outcome"], "done")
+            self.assertTrue((directory / "spec.md").exists())
+            [end] = self._ends(journal)
+            self.assertEqual((end["outcome"], end["cost_usd"]), ("done", 0.25))
+
+    def test_a_stop_after_the_outcome_is_decided_is_refused_and_the_end_says_failed(self):
+        """Review round 1, F2: a Stop that lands while a failed step captures its attempt
+        used to be told "stopped" while the `end` said `failed`."""
+        from coscc import steps
+
+        registry_box = []
+        refused = []
+
+        class Fails(self.Waits):
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "thinking ")
+                await self.release.wait()
+                raise RuntimeError("the CLI died")
+
+        async def capture(cwd, session_id):
+            registry, running = registry_box[0]
+            try:
+                registry.request_stop(running.workspace, running.unit, "Lan")
+            except steps.Finishing as e:
+                refused.append(e)
+            return {}, None
+
+        async def release(registry, running, sessions):
+            registry_box.append((registry, running))
+            sessions.release.set()
+
+        with tempfile.TemporaryDirectory() as d, mock.patch("coscc.runner.snapshot", capture):
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            out, journal, running = self._run(d, Fails(), "spec", "spec.md", release)
+            self.assertEqual(len(refused), 1)
+            self.assertFalse(running.stop_requested)
+            self.assertEqual(out[-1][1]["outcome"], "failed")
+            self.assertNotIn("stopped_by", out[-1][1])
+            [end] = self._ends(journal)
+            self.assertEqual(end["outcome"], "failed")
+            self.assertNotIn("stopped_by", end)
+
+    def test_a_cancel_with_no_stop_behind_it_writes_no_end(self):
+        async def cancel(registry, running, sessions):
+            running.task.cancel()
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            out, journal, _ = self._run(d, self.Waits(), "spec", "spec.md", cancel)
+            self.assertEqual(out[-1], ("cancelled", None))
+            self.assertEqual(self._ends(journal), [])
+            self.assertEqual([r for r in journal.records() if r["kind"] == "attempt"], [])
