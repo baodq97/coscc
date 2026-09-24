@@ -415,6 +415,45 @@ class AStepRecordsTheBaseItRanOn(unittest.TestCase):
             self.assertIsNone(self._start_record(d)["base"])
 
 
+class ThePromptNamesTheFilesMainChanged(unittest.TestCase):
+    """`0042` plan step 4. `drift.describe` builds the text; this module only places it."""
+
+    def test_the_section_sits_after_the_base_and_before_the_intent(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            prompt, _ = build_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md",
+                base_note="This step ran on origin/main at abc1234, which may be stale: reason.",
+                drift_note="- `src/a.py`",
+            )
+            base = prompt.index("# The base this step runs on")
+            here = prompt.index("# The files main changed since the plan")
+            intent = prompt.index("# The intent this work is authorised by")
+            self.assertLess(base, here)
+            self.assertLess(here, intent)
+            self.assertLess(here, prompt.index("# Your task"))
+            self.assertIn("- `src/a.py`", prompt)
+
+    def test_an_empty_note_is_byte_for_byte_the_prompt_without_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+            args = (d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md")
+            self.assertEqual(build_prompt(*args, drift_note=""), build_prompt(*args))
+
+
+class AStepRecordsThePlanDrift(AStepRecordsTheBaseItRanOn):
+    """`0042` plan step 4. `plan_drift` is `service.py`'s; the record only carries it."""
+
+    def test_the_drift_handed_in_is_the_drift_recorded(self):
+        drift = {"plan_sha": "a" * 40, "main_sha": "b" * 40, "files": ["x.py"], "checked": True, "reason": ""}
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self._start_record(d, plan_drift=drift)["plan_drift"], drift)
+
+    def test_no_drift_handed_in_leaves_no_field(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertNotIn("plan_drift", self._start_record(d))
+
+
 class AReviewIsHandedTheCommitItReviews(unittest.TestCase):
     """`0020` review round 1, F1.
 

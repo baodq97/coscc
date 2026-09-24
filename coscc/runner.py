@@ -196,6 +196,7 @@ def build_prompt(
     base_note: str = "",
     last_attempt: str = "",
     integration_note: str = "",
+    drift_note: str = "",
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -243,6 +244,12 @@ def build_prompt(
     # have no tool to run.
     if base_note:
         parts.append(f"# The base this step runs on\n\n{base_note}")
+
+    # `0042`. Which files the plan names that `main` changed since the plan ran, or why
+    # that could not be checked. `drift.describe` built it; `""` adds nothing at all, so a
+    # plan nobody overtook reaches `impl` byte for byte as it did before.
+    if drift_note:
+        parts.append(f"# The files main changed since the plan\n\n{drift_note}")
 
     intent = _read(directory / "intent.md")
     if intent:
@@ -777,6 +784,8 @@ class Runner:
         base_note: str = "",
         last_attempt: str = "",
         integration_note: str = "",
+        plan_drift: dict[str, Any] | None = None,
+        drift_note: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -797,6 +806,10 @@ class Runner:
         neither reads git itself nor decides what it means, only carries it into the
         `start` record. `base_note` is `service.describe_base(base)`, already worked out,
         so `build_prompt` does not import `service` to ask the same question twice.
+
+        `plan_drift` is what `service.py` worked out with `coscc/drift.py` for an `impl`
+        step (`0042`); this module only carries it into the `start` record, and
+        `drift_note` into the prompt. `None` leaves the record without the field.
         """
         grant = grant_for(stage)
         directory = Path(directory)
@@ -829,6 +842,7 @@ class Runner:
             base_note=base_note,
             last_attempt=last_attempt,
             integration_note=integration_note,
+            drift_note=drift_note,
         )
 
         # `0037`: the same condition that decides whether a gate and a tool list are sent.
@@ -848,6 +862,7 @@ class Runner:
                 # board runs the installed copy, not this checkout. `""` is the SDK's
                 # empty one; a record written before `0037` has no field, read as `""`.
                 system_prompt="claude_code" if preset else "",
+                **({"plan_drift": plan_drift} if plan_drift is not None else {}),
             )
 
         denials = Denials()
