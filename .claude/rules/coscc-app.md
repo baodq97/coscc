@@ -202,7 +202,10 @@ no commands, one turn, no budget.
   the plan's label is `novel`: declared, forced by a file in `coscc/labels.py`
   `SECURITY_SURFACE`, missing (every plan written before `0033`), or escalated because an
   earlier `impl` of the unit stopped at `max_turns`. So a routine `impl` that runs out of
-  turns reruns on the dearer row with nobody pressing anything different. `max` is refused
+  turns reruns on the dearer row with nobody pressing anything different. Since `0062`
+  that rerun, and every `impl` labelled `novel` — a `missing` plan written before `0033`
+  included — also gets 250 turns / $16.0 instead of 120 / $8.0 (`policy.NOVEL_CEILINGS`,
+  shown on Settings as `impl:novel`), so one press can spend twice as much. `max` is refused
   from `models.json` and taken from an override, so anyone who reaches the port can set it.
   `COS_HOST=127.0.0.1` is the mitigation that exists.
 - **`spike` runs arbitrary code, and nothing is a sandbox.** Since `0039` a spec that marks
