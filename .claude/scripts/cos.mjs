@@ -343,16 +343,18 @@ export function parsePr(text) {
 
 // What `pr.md` puts on its pull request (`0055`): the title is the `# PR:` line, the body
 // is the rest of the file less that line and the header — the line holding the `Status:`
-// `parseStatus` reads, so "the header" means one thing everywhere. Blank lines left at the
-// top go too; every other line is kept byte for byte, `\r` included. The terminal and the
-// app both read this one definition, so the two cannot put different words up.
+// `parseStatus` reads, so "the header" means one thing everywhere. An empty `# PR:` line
+// gives no title and still leaves the body, rather than open it with an empty heading.
+// Blank lines left at the top go too; every other line is kept byte for byte, `\r`
+// included. The terminal and the app both read this one definition, so the two cannot
+// put different words up.
 export function prText(text) {
   const lines = text.split('\n')
   const titleAt = lines.findIndex((l) => /^# PR:(.*?)\r?$/.test(l))
   const title = titleAt === -1 ? null : lines[titleAt].match(/^# PR:(.*?)\r?$/)[1].trim() || null
   const m = STATUS_RE.exec(text)
   const statusAt = m ? text.slice(0, m.index).split('\n').length - 1 : -1
-  const kept = lines.filter((_, i) => i !== statusAt && !(title !== null && i === titleAt))
+  const kept = lines.filter((_, i) => i !== statusAt && i !== titleAt)
   while (kept.length && /^\s*$/.test(kept[0])) kept.shift()
   return { title, body: kept.join('\n'), url: parsePr(text)?.url ?? null }
 }

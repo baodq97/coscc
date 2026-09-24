@@ -1768,7 +1768,9 @@ test('0055 R1 (c): no # PR: line, or an empty one, is a null title', () => {
   const without = PR_MD.split('\n').slice(1).join('\n')
   assert.equal(prText(without).title, null)
   assert.ok(prText(without).body.startsWith('## Where'))
-  assert.equal(prText(PR_MD.replace('# PR: the pr body is taken from pr.md', '# PR:   ')).title, null)
+  const empty = prText(PR_MD.replace('# PR: the pr body is taken from pr.md', '# PR:   '))
+  assert.equal(empty.title, null)
+  assert.equal(empty.body, PR_MD.split('\n').slice(3).join('\n'), 'an empty # PR: line leaves the body too')
 })
 
 test('0055 R1 (d): the same input gives the same output', () => {
