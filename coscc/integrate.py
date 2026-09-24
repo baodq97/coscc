@@ -11,7 +11,12 @@ Two roads:
   the new head. No session, no quota (R4).
 - **agent** (`conflicting`, `red-after-integration`): Gebo, a session under the
   `integrate` grant in `coscc/policy.py`, which may push only with a lease bound to the
-  head it began at (R5, R6).
+  head it began at (R5, R6). Since `0052` also a `behind` unit whose `update-branch`
+  exited non-zero: the press agreed to a Gebo session when the mechanical road cannot go
+  (`.cos/0052_*/spec.md ## Answers, câu 1`).
+
+Since `0052` a press fetches `origin/main` first, so a board that counted against a stale
+ref no longer refuses a unit as `current`; the board read itself still does not fetch.
 
 The pure functions come first; the `gh` calls after them; the session last.
 """
@@ -94,6 +99,27 @@ def classify(
     return {"state": "current", "reason": ""}
 
 
+def origin_note(origin_sha: str, fetch: dict | None) -> str:
+    """`0052` R4: which `origin/main` a press counted against, and how it got there.
+
+    `fetch` is what `fetches.fetch` returned (`{outcome, attempts, age}`), or
+    `{"outcome": "failed", "detail": ...}`, or None when no fetch was tried.
+    """
+    ref = f"origin/main {origin_sha[:7] or 'unread'}"
+    if not fetch:
+        return ref
+    outcome = str(fetch.get("outcome") or "")
+    if outcome == "failed":
+        how = f"fetch failed: {fetch.get('detail') or 'git said nothing'}"
+    elif outcome == "joined":
+        how = "joined a running fetch"
+    elif outcome == "reused":
+        how = f"reused {fetch.get('age', 0)}s ago"
+    else:
+        how = outcome or "fetched"
+    return f"{ref} ({how})"
+
+
 def refusal(
     *,
     in_window: bool,
@@ -103,8 +129,13 @@ def refusal(
     local_head: str,
     pr_head: str,
     state: str,
+    origin: str = "",
 ) -> str:
-    """R12: the first condition that does not hold, in the spec's order, or `""`."""
+    """R12: the first condition that does not hold, in the spec's order, or `""`.
+
+    `origin` is `origin_note`'s sentence; a `current` unit is then said to be current
+    against it (`0052` R4). The sentence still begins `the unit is current`.
+    """
     if not in_window:
         return "this unit is not between pr and ship with an open pull request"
     if busy:
@@ -126,12 +157,17 @@ def refusal(
             f"({pr_head[:7] or 'none'})"
         )
     if state not in BUTTON_STATES:
+        if state == "current" and origin:
+            return f"the unit is current against {origin}, which has nothing to integrate"
         return f"the unit is {state}, which has nothing to integrate"
     return ""
 
 
-def warnings(rounds: list[dict], review_status: str, gebo: bool, grant_warning: str) -> list[str]:
-    """R13: what the page says before the button is pressed."""
+def warnings(
+    rounds: list[dict], review_status: str, gebo: bool, grant_warning: str, fallback: bool = False
+) -> list[str]:
+    """R13: what the page says before the button is pressed. `fallback`: the press goes the
+    mechanical road, and Gebo opens if GitHub refuses it (`0052`)."""
     out: list[str] = []
     # `0061` R11.1: the app cannot tell "behind but mergeable" (spike U1, U2), so the page
     # says when integrating a passed unit is worth another round, and leaves it to a person.
@@ -147,6 +183,11 @@ def warnings(rounds: list[dict], review_status: str, gebo: bool, grant_warning: 
         out.append(
             "review.md asks for changes. After integrating, cos.mjs next offers review, not "
             "impl, and that round counts toward COS_REVIEW_ROUNDS (spec C2)."
+        )
+    if fallback:
+        out.append(
+            "If GitHub refuses the rebase, the app opens Gebo, a paid agent session, to rebase "
+            "this branch itself — pressing Integrate agrees to that session."
         )
     if gebo and grant_warning:
         out.append(grant_warning)
@@ -247,8 +288,17 @@ def record(
     report: str = "",
     needs_person: list[str] | None = None,
     detail: str = "",
+    fetch: dict | None = None,
+    merge_state: str = "",
+    update_branch: dict | None = None,
 ) -> dict[str, Any]:
-    """R9: the one record every integration leaves, whatever happened."""
+    """R9: the one record every integration leaves, whatever happened.
+
+    `0052` R5: `fetch` is how the press got its `origin/main` and `merge_state` what GitHub
+    said of the pull request then — observed, never decided on. `update_branch` is the exit
+    code and words of a refused `gh pr update-branch` that sent the press to Gebo. All three
+    keys are always written; a record from before `0052` has none of them.
+    """
     if outcome not in OUTCOMES:
         raise ValueError(f"outcome must be one of {', '.join(OUTCOMES)}, got {outcome!r}")
     return {
@@ -266,7 +316,21 @@ def record(
         "report": report,
         "needs_person": list(needs_person or []),
         "detail": detail,
+        "fetch": _fetch_of(fetch),
+        "merge_state": merge_state,
+        "update_branch": (
+            {"code": update_branch.get("code"), "said": str(update_branch.get("said") or "")}
+            if update_branch else None
+        ),
     }
+
+
+def _fetch_of(fetch: dict | None) -> dict | None:
+    if not fetch:
+        return None
+    if fetch.get("outcome") == "failed":
+        return {"outcome": "failed", "detail": str(fetch.get("detail") or "")}
+    return {"outcome": fetch.get("outcome"), "age": fetch.get("age")}
 
 
 def outcome_of_session(head_before: str, head_now: str, reply: str) -> str:
@@ -305,8 +369,12 @@ def build_prompt(
     rel: dict[str, list[dict]],
     units_root: Path,
     own_artifacts: dict[str, str],
+    refused_update: dict | None = None,
 ) -> str:
     """Gebo's prompt: its rules, what is wrong, where to start, and whose intent to read.
+
+    `refused_update` (`0052`): the `{code, said}` of the app's own `update-branch`, when
+    that refusal is why this session was opened.
 
     The app does not rebase to find the conflicting files first (`plan.md` step 7): that
     would write to the tree before the session began, and R12 wants it clean.
@@ -318,6 +386,15 @@ def build_prompt(
     parts.append(
         f"The only push allowed: `git push --force-with-lease={branch}:{head_before} origin {branch}`."
     )
+    if refused_update is not None:
+        parts.append("\n# The mechanical rebase was refused\n")
+        parts.append(
+            f"The app ran `gh pr update-branch {pr} --rebase` first. It exited "
+            f"{refused_update.get('code')}, and gh said:\n\n"
+            f"    {refused_update.get('said') or '(nothing)'}\n\n"
+            "That may be a conflict that shows only when rebasing, or something else: a "
+            "login, the network, a permission. The app cannot tell which from the exit code."
+        )
     parts.append("\n# Units merged into main since the branch was cut, touching the same files\n")
     if rel.get("merged"):
         for m in rel["merged"]:
@@ -400,10 +477,26 @@ async def required_checks(tree: str, n: int) -> list[dict]:
     return [r for r in rows if isinstance(r, dict)]
 
 
-async def update_branch(tree: str, n: int) -> tuple[bool, str]:
-    """`gh pr update-branch <n> --rebase`. `(ok, what gh said)`; never raises on refusal."""
+async def update_branch(tree: str, n: int) -> tuple[int, str]:
+    """`gh pr update-branch <n> --rebase`. `(exit code, what gh said)`; never raises on
+    refusal. `0052`: the code goes into the record and Gebo's prompt."""
     code, out, err = await _gh(["pr", "update-branch", str(int(n)), "--rebase"], tree)
-    return code == 0, (out.strip() or err.strip())
+    return code, (out.strip() or err.strip())
+
+
+async def merge_state(tree: str, n: int) -> str:
+    """`0052` R5: GitHub's `mergeStateStatus` for one pull request, or `""`. Observed only —
+    nothing decides on it — so it never raises (`spike.md ## U1` did not measure it)."""
+    try:
+        code, out, _ = await _gh(["pr", "view", str(int(n)), "--json", "mergeStateStatus"], tree)
+    except IntegrateError:
+        return ""
+    if code != 0:
+        return ""
+    try:
+        return str(json.loads(out).get("mergeStateStatus") or "")
+    except (ValueError, AttributeError):
+        return ""
 
 
 async def pr_head(tree: str, n: int) -> str:

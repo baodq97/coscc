@@ -867,10 +867,10 @@ class Service:
         """R4. GitHub rebases, the local branch follows. No session."""
         base = dict(workspace=key, unit=unit, pr=pr, mode="mechanical", head_before=head_before, origin_sha=origin_sha)
         try:
-            ok, said = await integrate.update_branch(str(tree), pr)
+            code, said = await integrate.update_branch(str(tree), pr)
         except integrate.IntegrateError as e:
             return integrate.record(**base, head_after="", outcome="failed", detail=str(e))
-        if not ok:
+        if code != 0:
             return integrate.record(**base, head_after="", outcome="refused", detail=said or "gh refused")
         head_after = head_before
         for attempt in range(integrate.POLL_TRIES):
