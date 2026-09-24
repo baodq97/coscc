@@ -619,6 +619,19 @@ async def status_porcelain(path: Path, timeout: float = BRANCH_TIMEOUT) -> list[
     return out.splitlines()
 
 
+async def tree_state(path: Path, timeout: float = BRANCH_TIMEOUT) -> tuple[str, str]:
+    """`(HEAD, git status --porcelain)` — what `0039` R13 compares before and after a spike.
+
+    Read-only. A file `.gitignore` covers is not in `status`, so a write there is not seen.
+    """
+    _require_repo(path)
+    head = await _run(["git", "-C", str(path), "rev-parse", "HEAD"], timeout)
+    porcelain = await _run(
+        ["git", "-C", str(path), "status", "--porcelain"], timeout, strip=False
+    )
+    return head, porcelain
+
+
 # --- integrating a unit that fell behind (`0035`) ---------------------------------
 #
 # Every ref here is a full SHA or a unit branch that passed `_BRANCH_RE`; nothing a request
