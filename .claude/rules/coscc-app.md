@@ -233,6 +233,19 @@ no commands, one turn, no budget.
   out the timeout. Unmeasured. The counts use the `origin/main` of the last fetch; the
   read does not fetch.
 
+- **An `impl` prompt carries file names taken from other people's commits on `main`.**
+  Since `0042` `run_step` diffs the commit the unit's last `done` run of `plan` ran on
+  (its `start` record's `head`) against the tree's `origin/main`, keeps the paths the
+  plan's `## Files that change` names, and puts them in the prompt under *The files main
+  changed since the plan* — so a name somebody merged reaches a paid session verbatim. Only
+  names the plan already wrote can match, and landing one needs a merge to `main`. The
+  diff reads `origin/main` as the step's own preparation left it and does not fetch: an
+  `impl` re-run on a tree already on its branch measures against the last fetch, and
+  `plan_drift.main_sha` in the `start` record says which. Anything that fails — no `done`
+  run of `plan`, no section, a commit the tree lacks — is `checked: false` with a reason,
+  never an empty list, and never stops the step. A step started at a terminal gets none of
+  this.
+
 ## The proofs, and what each one costs
 
 | | |
@@ -256,6 +269,7 @@ no commands, one turn, no budget.
 | `verify_0025.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
 | `verify_0035.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` whose `pr update-branch` really rebases in a scratch clone. Needs `node`, `uv` and `git`; any missing is exit 2. Proves the mechanical road only: `--paid` (a real Gebo session) is not built and exits 2 |
 | `verify_0037.py` | plain: no session, no quota, no network; temporary data root, only the SDK client replaced. Claim (b) calls the SDK's private `SubprocessCLITransport._build_command`; if that cannot be called it is exit 2, not a pass. `--baseline` and `--measure` read `<COS_DATA_DIR>/cos.db` (`mode=ro`, never through `Data`) and `~/.claude/projects/*/<session>.jsonl`, and write only to `<COS_DATA_DIR>/measurements/`; too few sessions to compare is exit 2. `--paid` **spends real money**: six `claude -p` runs, three per branch. No `claude` on `PATH` is exit 2 |
+| `verify_0042.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. The session is a stand-in, so it cannot show that a real `impl` stops on a contradiction |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 
