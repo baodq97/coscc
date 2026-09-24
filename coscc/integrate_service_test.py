@@ -318,6 +318,50 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(self.service.sessions.prompts, [])
         self.assertEqual(self.records("start"), [])
 
+    def test_a_refused_update_branch_that_moved_the_head_opens_no_session(self):
+        """`0052` review F1: gh exits non-zero after GitHub took the command. The app takes
+        GitHub's head and the tree follows it; Gebo is not opened to race it."""
+        scratch = Path(self._tmp.name) / "github-side"
+
+        async def moved_then_refused():
+            subprocess.run(["git", "clone", "-q", "-b", BRANCH, str(self.remote), str(scratch)],
+                           check=True, capture_output=True)
+            commit(scratch, "rebased by GitHub\n", BRANCH)
+            return 1, "", "stand-in gh: the connection dropped"
+
+        with mock.patch.object(integrate, "_gh", self.mergeable_gh(moved_then_refused)):
+            rec = self.integrate_with(self._no_act)
+        moved = self.remote_head()
+        self.assertNotEqual(moved, self.head_before)
+        self.assertEqual((rec["mode"], rec["outcome"], rec["head_after"]), ("mechanical", "pushed", moved))
+        self.assertEqual(rec["update_branch"], {"code": 1, "said": "stand-in gh: the connection dropped"})
+        self.assertIn("no session was opened", rec["detail"])
+        self.assertEqual(git(self.tree, "rev-parse", "HEAD"), moved)
+        self.assertEqual(self.service.sessions.prompts, [])
+        self.assertEqual(self.records("start"), [])
+        self.assertEqual(len(self.records("integration")), 1)
+
+    def test_a_refused_update_branch_with_an_unread_head_opens_no_session(self):
+        """`0052` review F1: whether GitHub took the command cannot be ruled out, so no session."""
+        refusing = self.mergeable_gh(self._refused)
+
+        async def gh(argv, cwd):
+            if argv[:2] == ["pr", "view"] and "headRefOid" in argv:
+                return 1, "", "stand-in gh: not logged in"
+            return await refusing(argv, cwd)
+
+        with mock.patch.object(integrate, "_gh", gh):
+            rec = self.integrate_with(self._no_act)
+        self.assertEqual((rec["mode"], rec["outcome"]), ("mechanical", "failed"))
+        self.assertEqual(rec["update_branch"]["code"], 1)
+        self.assertIn("could not be read", rec["detail"])
+        self.assertIn("not logged in", rec["detail"])
+        self.assertEqual(self.service.sessions.prompts, [])
+        self.assertEqual(self.records("start"), [])
+
+    async def _refused(self):
+        return 1, "", "stand-in gh: refused"
+
     def test_a_refused_integration_leaves_no_entry(self):
         self.service._take(self.key, self.unit, "step", "spec").phase = "running"
         with self.assertRaises(Invalid):

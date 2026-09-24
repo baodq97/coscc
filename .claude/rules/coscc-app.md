@@ -307,7 +307,11 @@ no commands, one turn, no budget.
   of `update-branch` opens Gebo with gh's code and words in its prompt — a lapsed login, the
   network or a missing permission included, and that session will likely fail the same way
   (`.cos/0052_*/plan.md` Risk 1). A timeout, and a head GitHub has not moved yet, stay
-  `failed` with no session. Every press inside the window costs one fetch through the
+  `failed` with no session. So does a non-zero exit after which the pull request's head
+  has moved (taken as GitHub's rebase, `pushed`, and the tree follows it) or cannot be
+  read (`failed`): the head is read once before Gebo opens, not polled, so a rebase GitHub
+  finishes after that read still races the session: the lease refuses Gebo's push, and the
+  row still counts the moved head as Gebo's `pushed`. Every press inside the window costs one fetch through the
   `0048` coordinator (up to `FETCH_TIMEOUT` 20s, and one reused under 30s old) and one
   `gh pr view` for `mergeStateStatus` (up to 30s), both before the lock and the answer. The
   fetch moves `refs/remotes/origin/main` for every worktree of the workspace. `merge_state`

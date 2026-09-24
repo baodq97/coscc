@@ -897,10 +897,11 @@ class Service:
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         """R4. GitHub rebases, the local branch follows. No session.
 
-        `(record, None)`, or `(None, {code, said})` when `update-branch` exited non-zero —
-        the caller then opens Gebo (`0052`). A `gh` that could not run or did not answer
-        in time, and a head that has not moved yet, stay `failed`: there is no exit code
-        to go on, and GitHub may still be rebasing, which a Gebo session would race.
+        `(record, None)`, or `(None, {code, said})` when `update-branch` exited non-zero and
+        the pull request's head is still `head_before` — the caller then opens Gebo (`0052`).
+        A `gh` that could not run or did not answer in time, and a head that has not moved
+        yet, stay `failed`: there is no exit code to go on, and GitHub may still be
+        rebasing, which a Gebo session would race.
         """
         base = dict(workspace=key, unit=unit, pr=pr, mode="mechanical", head_before=head_before,
                     origin_sha=origin_sha, **seen)
@@ -909,17 +910,36 @@ class Service:
         except integrate.IntegrateError as e:
             return integrate.record(**base, head_after="", outcome="failed", detail=str(e)), None
         if code != 0:
-            return None, {"code": code, "said": said or "gh refused"}
-        head_after = head_before
-        for attempt in range(integrate.POLL_TRIES):
+            refused = {"code": code, "said": said or "gh refused"}
+            # `0052` review F1: a non-zero exit does not rule out that GitHub took the command.
+            # Gebo's lease would then refuse its push while the head read afterwards counted as
+            # Gebo's — so the head is read once, and a moved one opens no session.
             try:
                 head_after = await integrate.pr_head(str(tree), pr)
-            except integrate.IntegrateError:
-                head_after = head_before
-            if head_after and head_after != head_before:
-                break
-            if attempt + 1 < integrate.POLL_TRIES:
-                await asyncio.sleep(integrate.POLL_DELAY)
+                unread = "it came back empty"
+            except integrate.IntegrateError as e:
+                head_after, unread = "", str(e)
+            if head_after == head_before:
+                return None, refused
+            if not head_after:
+                return integrate.record(
+                    **base, head_after="", outcome="failed", update_branch=refused,
+                    detail=f"gh pr update-branch exited {code}, and the pull request's head could not be "
+                           f"read to rule out a rebase on GitHub's side, so no session was opened: {unread}",
+                ), None
+            base["update_branch"] = refused
+            said = f"gh pr update-branch exited {code}, but the pull request's head moved; no session was opened"
+        else:
+            head_after = head_before
+            for attempt in range(integrate.POLL_TRIES):
+                try:
+                    head_after = await integrate.pr_head(str(tree), pr)
+                except integrate.IntegrateError:
+                    head_after = head_before
+                if head_after and head_after != head_before:
+                    break
+                if attempt + 1 < integrate.POLL_TRIES:
+                    await asyncio.sleep(integrate.POLL_DELAY)
         if not head_after or head_after == head_before:
             return integrate.record(
                 **base, head_after="", outcome="failed",
