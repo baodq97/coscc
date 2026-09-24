@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -10,7 +10,7 @@ import {
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
-  parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking,
+  parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking, prText,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -1729,4 +1729,107 @@ test('0061 R7: a pass that leaves lows open costs no round', () => {
   const cr = [2, 3, 4].map((n) => round(n, 'changes-requested', [low('F1'), '- F2 [open] b.py:1 y']))
   assert.match(nextAction(asked(`${first}\n${cr.join('\n')}`)).action, /needs a person — review used 3 of 3 rounds/)
   assert.match(nextAction(asked(`${first}\n${cr.slice(0, 2).join('\n')}`)).action, /\(2 of 3 rounds used\)/)
+})
+
+// --- 0055: the title and body pr.md puts on its pull request -----------------------
+
+// The template of `.claude/skills/write-pr/SKILL.md ## Output`, filled in.
+const PR_MD = [
+  '# PR: the pr body is taken from pr.md',
+  'Intent: intent.md. Impl: impl.md. PR: https://github.com/o/r/pull/7. Author: a. Status: accepted.',
+  '',
+  '## Where',
+  '',
+  'https://github.com/o/r/pull/7, branch fix/x, checks pending.',
+  '',
+  '## Scope of the diff',
+  '',
+  '## What a reviewer should look at first',
+  '',
+].join('\n')
+
+test('0055 R1 (a): the template gives a body without the header or the title line', () => {
+  const t = prText(PR_MD)
+  assert.equal(t.title, 'the pr body is taken from pr.md')
+  assert.equal(t.url, 'https://github.com/o/r/pull/7')
+  assert.doesNotMatch(t.body, /Status:/)
+  assert.doesNotMatch(t.body, /PR: https:\/\//)
+  assert.doesNotMatch(t.body, /# PR:/)
+  assert.ok(t.body.startsWith('## Where\n'), t.body)
+  assert.equal(t.body, PR_MD.split('\n').slice(3).join('\n'))
+})
+
+test('0055 R1 (b): a later Status: in the body stays in the body', () => {
+  const text = `${PR_MD}Status: pending is what gh said.\n`
+  assert.match(prText(text).body, /Status: pending is what gh said\.\n$/)
+})
+
+test('0055 R1 (c): no # PR: line, or an empty one, is a null title', () => {
+  const without = PR_MD.split('\n').slice(1).join('\n')
+  assert.equal(prText(without).title, null)
+  assert.ok(prText(without).body.startsWith('## Where'))
+  assert.equal(prText(PR_MD.replace('# PR: the pr body is taken from pr.md', '# PR:   ')).title, null)
+})
+
+test('0055 R1 (d): the same input gives the same output', () => {
+  assert.deepEqual(prText(PR_MD), prText(PR_MD))
+})
+
+test('0055 R1 (e): a file with \\r\\n keeps \\r\\n on the lines it keeps', () => {
+  const t = prText(PR_MD.replace(/\n/g, '\r\n'))
+  assert.equal(t.title, 'the pr body is taken from pr.md')
+  assert.ok(t.body.startsWith('## Where\r\n'), JSON.stringify(t.body))
+  assert.equal(t.body, PR_MD.split('\n').slice(3).join('\r\n'))
+})
+
+test('0055: a header on the title line itself drops only that one line', () => {
+  assert.equal(prText('# PR: x Status: accepted.\n\nbody\n').body, 'body\n')
+})
+
+const prTree = (files) => {
+  const root = mkdtempSync(join(tmpdir(), 'cos-0055-'))
+  for (const [unitName, text] of Object.entries(files)) {
+    mkdirSync(join(root, '.cos', unitName), { recursive: true })
+    writeFileSync(join(root, '.cos', unitName, 'intent.md'), '# Intent: x\nAuthor: a. Type: fix. Status: accepted.\n')
+    if (text !== null) writeFileSync(join(root, '.cos', unitName, 'pr.md'), text)
+  }
+  return root
+}
+
+test('0055 R2: pr-text prints what prText reads, with the unit and its status', () => {
+  const root = prTree({ '0001_a': PR_MD })
+  const out = cli('--root', root, 'pr-text', '0001_a')
+  assert.equal(out.status, 0, out.stderr)
+  assert.deepEqual(JSON.parse(out.stdout), { unit: '0001_a', ...prText(PR_MD), status: 'accepted' })
+})
+
+test('0055 R2: no unit or no pr.md is 1; a missing or malformed name is 2', () => {
+  const root = prTree({ '0001_a': null })
+  const none = cli('--root', root, 'pr-text', '0002_b')
+  assert.equal(none.status, 1)
+  assert.match(none.stderr, /No such work unit/)
+  const nofile = cli('--root', root, 'pr-text', '0001_a')
+  assert.equal(nofile.status, 1)
+  assert.match(nofile.stderr, /0001_a has no pr\.md/)
+  assert.equal(cli('--root', root, 'pr-text').status, 2)
+  assert.equal(cli('--root', root, 'pr-text', '../0001_a').status, 2)
+})
+
+test('0055 R2: --repo and --reserve-from are refused by pr-text', () => {
+  const root = prTree({ '0001_a': PR_MD })
+  const repo = cli('--root', root, 'pr-text', '0001_a', '--repo', root)
+  assert.equal(repo.status, 2)
+  assert.match(repo.stderr, /--repo applies only to/)
+  assert.equal(cli('--root', root, '--reserve-from', root, 'pr-text', '0001_a').status, 2)
+})
+
+test('0055 R2: pr-text writes nothing and leaves status as it was', () => {
+  const root = prTree({ '0001_a': PR_MD, '0002_b': null })
+  const listing = () =>
+    readdirSync(join(root, '.cos'), { recursive: true })
+      .sort()
+      .map((p) => `${p} ${statSync(join(root, '.cos', p)).mtimeMs}`)
+  const before = [cli('--root', root, 'status', '--json').stdout, listing()]
+  assert.equal(cli('--root', root, 'pr-text', '0001_a').status, 0)
+  assert.deepEqual([cli('--root', root, 'status', '--json').stdout, listing()], before)
 })
