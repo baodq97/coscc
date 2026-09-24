@@ -1235,7 +1235,10 @@ class Service:
                     lookup = await integrate.pr_for_branch(work, tree.get("branch") or "")
                 else:
                     lookup = {"state": "unknown", "reason": "this workspace is not a git checkout"}
-                pr_note, pr_before = integrate.describe_pr_lookup(lookup), lookup.get("url", "")
+                # `None` when the lookup could not answer, so `_sync_pr` does not read that as
+                # "no pull request" (`0055` review F2); the `start` record still gets `""`.
+                pr_note = integrate.describe_pr_lookup(lookup)
+                pr_before = None if lookup.get("state") == "unknown" else lookup.get("url", "")
             runner = Runner(self.sessions, journal)
             # `0034` R11. The registry is what the page lists and what a Stop finds; the mark
             # taken above is what everything else asks. The same start time for both, and no
@@ -1604,7 +1607,8 @@ class Service:
         Called from `_drive` after a `pr` step that was not stopped, and from nowhere else
         (R4). The words are `cos.mjs pr-text`'s; `prsync` compares and writes. A `pr.md` that
         is not accepted or names no pull request is `skipped` with no `gh` call. One
-        `pr-sync` row says how it went, `existed` from the lookup before the step; a row
+        `pr-sync` row says how it went, `existed` from the lookup before the step -- `None`
+        when that lookup could not answer, never a guess; a row
         that cannot be written is dropped, as `_post_round` drops one. `pr.md` is never
         touched.
         """
@@ -1632,7 +1636,7 @@ class Service:
             "unit": unit,
             "stage": "pr",
             "pr": url,
-            "existed": bool(pr_before),
+            "existed": None if pr_before is None else bool(pr_before),
             "outcome": outcome,
         }
         if outcome in ("failed", "skipped"):

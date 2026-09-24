@@ -380,7 +380,8 @@ no commands, one turn, no budget.
   It overwrites whatever a person changed on GitHub since, and keeps the old text nowhere
   (`.cos/0055_*/spec.md` C1). A `pr.md` edited by hand to name another repository's pull
   request is written there. The trace is one `pr-sync` row in the run log per step, with
-  `existed` (the lookup before the step saw the pull request) and `outcome` `updated`,
+  `existed` (the lookup before the step saw the pull request; `null` when that lookup could
+  not answer — count those apart, not as `false`) and `outcome` `updated`,
   `already`, `failed` or `skipped`; no screen shows it. A `pr` step at a terminal leaves
   none.
 

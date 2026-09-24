@@ -2607,6 +2607,8 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
 
         async def __call__(self, argv, cwd, stdin=None):
             self.calls.append((list(argv), stdin))
+            if argv[:2] == ["pr", "list"] and self.fail == "list":
+                return 1, "", "error connecting to api.github.com"
             if argv[:2] == ["pr", "list"]:
                 rows = [{"url": "https://github.com/o/r/pull/7", "number": 7,
                          "mergeable": "MERGEABLE", "headRefOid": "a" * 40}] if self.listed else []
@@ -2677,6 +2679,16 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         self.assertEqual(len(gh.of("edit")), 1)
         self.assertEqual((gh.title, gh.body), (self.TITLE, self.BODY))
         self.assertEqual((row["outcome"], row["existed"]), ("updated", False))
+
+    def test_a_lookup_that_could_not_answer_is_existed_none_not_false(self):
+        # Review F2: a lookup that failed is not "no pull request".
+        gh = self.Gh(listed=True, fail="list")
+        done, [row], _ = self._run(self.ACCEPTED, gh)
+        self.assertEqual((row["outcome"], row["existed"]), ("updated", None))
+        self.assertIsNone(done["pr_sync"]["existed"])
+        [start] = [r for r in self.service._journal().records(self.service._journal_key(str(self.repo)), kind="start")
+                   if r.get("stage") == "pr"]
+        self.assertEqual(start["pr_before"], "")
 
     def test_already_there_is_not_written_again(self):
         gh = self.Gh(listed=True, title=self.TITLE, body=self.BODY)
