@@ -1,7 +1,22 @@
 #!/usr/bin/env python3
-"""Proof for `0061_a-review-round-is-spent-on-what-does-not-block`.
+"""Proof for `0061_a-review-round-is-spent-on-what-does-not-block`, spec R14 and R13.
 
-Not built yet: the plan's step 6 replaces this default mode with the proof of R14.
+Plain, it runs the `cos.mjs` at `git merge-base HEAD origin/main` beside the one in this
+checkout, over every unit in `.cos/` and every `--root` given (repeatable, e.g.
+`~/.cos/units/<slot>`), both with `--root` and no `--repo`, and requires them to agree on
+
+    next <unit>
+    gate <unit> <stage>        for every stage, stdout, stderr and exit
+    status --json              once `severity` is removed from every finding and
+                               `nonBlocking` from every unit -- the two differences allowed
+
+then runs `--measure` against a store it builds in a temporary directory, and requires the
+exit codes below. Copied from `scripts/verify_0039.py`, not imported: one proof script does
+not depend on another.
+
+    0  every claim held
+    1  at least one did not -- it is printed
+    2  no `node`, no `git`, or no merge-base with origin/main
 
 `--measure` (R13) reads every `<COS_DATA_DIR>/units/<slot>/.cos/` through
 `cos.mjs --root <slot> status --json` -- never its own parse of `review.md` -- and reports,
@@ -27,12 +42,15 @@ it. It writes `<COS_DATA_DIR>/measurements/0061-<timestamp>.json` and nothing el
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -198,14 +216,157 @@ def measure(root: Path) -> int:
     return code
 
 
+# ---------------------------------------------------------------------------
+# The proof (R14), and --measure on a store built here
+# ---------------------------------------------------------------------------
+
+
+def claim(ok: bool, text: str, detail: str = "") -> bool:
+    say(f"{'PASS' if ok else 'FAIL'}  {text}{': ' + detail if detail and not ok else ''}")
+    return ok
+
+
+def run(script: Path, root: Path, *args: str) -> tuple[int, str, str]:
+    r = subprocess.run(
+        ["node", str(script), "--root", str(root), *args],
+        capture_output=True, text=True, cwd=str(REPO),
+    )
+    return r.returncode, r.stdout, r.stderr
+
+
+def without_added(out: str) -> str:
+    """`status --json` with the two fields this unit adds taken out."""
+    try:
+        data = json.loads(out)
+    except ValueError:
+        return out
+    for unit in data.get("units") or []:
+        unit.pop("nonBlocking", None)
+        for r in rounds_of(unit):
+            for f in r.get("findings") or []:
+                f.pop("severity", None)
+    return json.dumps(data, indent=2, sort_keys=True)
+
+
+def unchanged(old: Path, roots: list[Path]) -> bool:
+    """R14: the old `cos.mjs` and this one answer every unit alike."""
+    compared = 0
+    units_seen = 0
+    differ: list[str] = []
+    for root in roots:
+        cos = root / ".cos"
+        if not cos.is_dir():
+            differ.append(f"{root} has no .cos/")
+            continue
+        a, b = run(old, root, "status", "--json"), run(COS, root, "status", "--json")
+        compared += 1
+        if (a[0], without_added(a[1]), a[2]) != (b[0], without_added(b[1]), b[2]):
+            differ.append(f"{root}: status --json")
+        try:
+            stages = [s["name"] for s in json.loads(b[1])["stages"]] + ["implement"]
+        except (ValueError, KeyError, TypeError):
+            differ.append(f"{root}: status --json names no stages")
+            continue
+        units = sorted(p.name for p in cos.iterdir() if p.is_dir())
+        units_seen += len(units)
+        for unit in units:
+            for call in [("next", unit)] + [("gate", unit, stage) for stage in stages]:
+                compared += 1
+                if run(old, root, *call) != run(COS, root, *call):
+                    differ.append(f"{root}: {' '.join(call)}")
+    for d in differ:
+        say(f"differs: {d}")
+    return claim(
+        not differ and units_seen > 0,
+        f"R14: gate, next and status --json unchanged but for severity and nonBlocking "
+        f"({compared} comparisons across {units_seen} units)",
+        f"{len(differ)} differ" if differ else "no unit was compared",
+    )
+
+
+REVIEW = "# Review: x\nPR: pr.md. Author: t. Status: accepted.\n\n{rounds}"
+ROUND = "## Round {n}\n\nReviewed: {sha}. Verdict: {verdict}.\n\n### Findings\n\n{findings}\n"
+SHIP = "# Ship: x\nReview: review.md. Author: t. Status: accepted.\n\n## What went out\n\n- `mergedAt`: {at}.\n"
+
+
+def fake_unit(cos: Path, name: str, at: str | None, wasted: bool = False) -> None:
+    unit = cos / name
+    unit.mkdir(parents=True)
+    (unit / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
+    first = "- F1 [open] a.py:1 — low — x" if wasted else "- F1 [open] a.py:1 — high — x"
+    rounds = [
+        ROUND.format(n=1, sha="a" * 40, verdict="changes-requested", findings=first),
+        ROUND.format(n=2, sha="b" * 40, verdict="pass", findings=f"- F1 [fixed {'b' * 40}] a.py:1 — high — x"),
+    ]
+    (unit / "review.md").write_text(REVIEW.format(rounds="\n".join(rounds)), encoding="utf-8")
+    if at is not None:
+        (unit / "ship.md").write_text(SHIP.format(at=at), encoding="utf-8")
+
+
+def measured(tmp: Path, name: str, after: int, wasted: bool = False, line: bool = True) -> int:
+    """Build a store under `tmp/name`, run `measure` on it quietly, return its exit code."""
+    root = tmp / name
+    cos = root / "units" / "slot" / ".cos"
+    cos.mkdir(parents=True)
+    fake_unit(cos, "0020_before", "2026-09-01T00:00:00Z")
+    fake_unit(cos, f"0061_{SLUG}", "2026-09-25T00:00:00Z" if line else None)
+    for i in range(after):
+        fake_unit(cos, f"{70 + i:04d}_after-{i}", f"2026-10-0{i + 1}T00:00:00Z", wasted=wasted and i == 0)
+    quiet = io.StringIO()
+    with contextlib.redirect_stdout(quiet):
+        code = measure(root)
+    written = list((root / "measurements").glob("0061-*.json"))
+    return code if len(written) == 1 else -1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--measure", action="store_true", help="measure the intent's outcome (R13)")
+    parser.add_argument("--root", action="append", default=[], help="another root to compare")
     args = parser.parse_args()
     if args.measure:
         return measure(data_root())
-    say("not built yet")
-    return EXIT_ENV
+
+    if not shutil.which("node") or not shutil.which("git"):
+        say("environment: node and git are both needed")
+        return EXIT_ENV
+    base = subprocess.run(
+        ["git", "merge-base", "HEAD", "origin/main"], capture_output=True, text=True, cwd=str(REPO)
+    )
+    if base.returncode != 0:
+        say(f"environment: no merge-base with origin/main: {base.stderr.strip()}")
+        return EXIT_ENV
+    sha = base.stdout.strip()
+    old_text = subprocess.run(
+        ["git", "show", f"{sha}:.claude/scripts/cos.mjs"], capture_output=True, text=True, cwd=str(REPO)
+    )
+    if old_text.returncode != 0:
+        say(f"environment: cannot read cos.mjs at {sha}: {old_text.stderr.strip()}")
+        return EXIT_ENV
+    say(f"base: {sha[:7]}")
+
+    results: list[bool] = []
+    with tempfile.TemporaryDirectory(prefix="verify_0061-") as tmp:
+        old = Path(tmp) / "cos.mjs"
+        old.write_text(old_text.stdout, encoding="utf-8")
+        roots = [REPO, *(Path(r).expanduser().resolve() for r in args.root)]
+        results.append(unchanged(old, roots))
+
+        t = Path(tmp)
+        for name, kwargs, want, text in [
+            ("five", {"after": 5}, EXIT_PASS, "5 units shipped after, no wasted round (a): exit 0"),
+            ("wasted", {"after": 5, "wasted": True}, EXIT_BROKEN,
+             "one of them spent a counted round on lows only: exit 1"),
+            ("four", {"after": 4}, EXIT_ENV, "4 units shipped after: exit 2"),
+            ("no-line", {"after": 5, "line": False}, EXIT_ENV, "this unit has no ship.md: exit 2"),
+        ]:
+            got = measured(t, name, **kwargs)
+            results.append(claim(got == want, f"R13 --measure: {text}", f"exit {got}"))
+
+    if all(results):
+        say(f"all {len(results)} claims held")
+        return EXIT_PASS
+    return EXIT_BROKEN
 
 
 if __name__ == "__main__":
