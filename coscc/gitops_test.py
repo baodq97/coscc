@@ -289,6 +289,16 @@ class FetchingTheTrunkFromARemote(unittest.TestCase):
         )
         self.assertEqual(got.stdout.strip(), "")
 
+    def test_a_clone_and_its_worktree_share_one_common_dir_and_another_clone_does_not(self):
+        # `0048` R1: the key fetches are coordinated on.
+        tree = Path(self._tmp.name) / "tree"
+        self._git(self.repo, "worktree", "add", "-q", "--detach", str(tree))
+        here = asyncio.run(gitops.common_dir(self.repo))
+        self.assertTrue(here.is_absolute())
+        self.assertEqual(here, (self.repo / ".git").resolve())
+        self.assertEqual(asyncio.run(gitops.common_dir(tree)), here)
+        self.assertNotEqual(asyncio.run(gitops.common_dir(self.seed)), here)
+
 
 class Worktrees(FetchingTheTrunkFromARemote):
     """`0017` plan step 2. The worktree commands, each with the refusal that bounds it."""

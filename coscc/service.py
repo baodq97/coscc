@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from coscc import board as board_reader
-from coscc import drift, gitops
+from coscc import drift, fetches, gitops
 from coscc import harness, integrate
 from coscc import prcomment
 from coscc import sessions as reader
@@ -1579,8 +1579,11 @@ class Service:
         except (GitError, BadUnit) as e:
             raise Invalid(f"Could not open {unit}'s worktree, so no branch was cut. {e}") from e
         repo = Path(tree["path"])
+        # `0048`: through the coordinator, so a step starting beside this does not race it
+        # for `refs/remotes/origin/main` — and a fetch under 30s old is reused here too
+        # (`spec.md ## Answers, câu 2`).
         try:
-            await gitops.fetch(repo, BRANCH_REMOTE, BRANCH_TRUNK)
+            await fetches.fetch(repo, BRANCH_REMOTE, BRANCH_TRUNK)
         except GitError as e:
             raise Invalid(
                 f"Could not update {BRANCH_TRUNK} from {BRANCH_REMOTE}, so no branch was cut. "

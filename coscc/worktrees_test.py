@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import coscc
-from coscc import units, worktrees
+from coscc import fetches, units, worktrees
 from coscc.gitops import GitError
 from coscc.units import BadUnit
 
@@ -178,7 +178,10 @@ class RefreshingTheBase(Repo):
     def test_the_tree_is_moved_to_the_fetched_tip_when_it_is_behind(self):
         new = self._advance_remote()
         got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        fetched = got.pop("fetch")
         self.assertEqual(got, {"ref": "origin/main", "sha": new[:7], "fresh": True, "reason": ""})
+        self.assertEqual((fetched["outcome"], fetched["attempts"]), ("fetched", 1))
+        self.assertLess(fetched["age"], fetches.REUSE_SECONDS)
         self.assertEqual(git(self.tree, "rev-parse", "HEAD"), new)
         # The workspace's own `main` never moves — only the tree does.
         self.assertEqual(git(self.repo, "rev-parse", "main"), self.main)
@@ -190,6 +193,8 @@ class RefreshingTheBase(Repo):
         self.assertFalse(got["fresh"])
         self.assertTrue(got["reason"])
         self.assertEqual(git(self.tree, "rev-parse", "HEAD"), before)
+        # `0048` R6: not retried — it is not a ref-lock race — and it says it failed.
+        self.assertEqual(got["fetch"], {"outcome": "failed", "attempts": 1, "age": None})
 
     def test_a_dirty_tree_is_left_alone(self):
         before = git(self.tree, "rev-parse", "HEAD")
@@ -211,7 +216,16 @@ class RefreshingTheBase(Repo):
         self.assertIn("ancestor", got["reason"])
         self.assertEqual(git(self.tree, "rev-parse", "HEAD"), local_head)
 
+    def _own_clock(self) -> list[float]:
+        """A coordinator of this test's own, on a clock the test moves by hand."""
+        now = [1000.0]
+        patcher = mock.patch.object(fetches, "shared", fetches.Fetches(clock=lambda: now[0]))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return now
+
     def test_the_prepare_record_is_dropped_only_when_the_tree_actually_moves(self):
+        now = self._own_clock()
         record = worktrees.prepare_record(self.tree)
         record.write_text(json.dumps({"ok": True}), encoding="utf-8")
         # Nothing new on the remote yet: the tree is already at the fetched tip.
@@ -220,13 +234,45 @@ class RefreshingTheBase(Repo):
         self.assertTrue(record.exists())
         self._advance_remote()
         record.write_text(json.dumps({"ok": True}), encoding="utf-8")
+        # `0048`: a second step under 30s later would reuse the first fetch
+        # (`spec.md ## Answers, câu 2`), so this one starts 30s later, as a separate press.
+        now[0] += fetches.REUSE_SECONDS
         got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
         self.assertTrue(got["fresh"])
+        self.assertEqual(got["fetch"]["outcome"], "fetched")
         self.assertFalse(record.exists())
+
+    def test_a_fetch_under_thirty_seconds_old_is_reused_and_the_tree_stays(self):
+        """`0048` spec C1, recorded as behaviour: a step alone, started under 30s after
+        another fetch of the same clone, does not fetch — and so does not see a commit
+        pushed in between."""
+        self._own_clock()
+        before = git(self.tree, "rev-parse", "HEAD")
+        asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        self._advance_remote()
+        got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        self.assertEqual(got["fetch"], {"outcome": "reused", "attempts": 0, "age": 0.0})
+        self.assertTrue(got["fresh"])
+        self.assertEqual(got["sha"], before[:7])
+        self.assertEqual(git(self.tree, "rev-parse", "HEAD"), before)
+
+    def test_a_fetch_reused_just_under_thirty_seconds_is_still_fresh(self):
+        """`0048` review round 1, F1: reused at 29.97s, the record must not say 30.0 and
+        call the same fetch stale that the coordinator just called young enough."""
+        now = self._own_clock()
+        asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        now[0] += 29.97
+        got = asyncio.run(worktrees.refresh_base(self.repo, "0001_a", self.data))
+        self.assertEqual(got["fetch"], {"outcome": "reused", "attempts": 0, "age": 29.9})
+        self.assertTrue(got["fresh"])
+        self.assertEqual(got["reason"], "")
 
     def test_no_worktree_to_refresh_is_reported_not_raised(self):
         got = asyncio.run(worktrees.refresh_base(self.repo, "0002_b", self.data))
-        self.assertEqual(got, {"ref": "origin/main", "sha": "", "fresh": False, "reason": "no worktree to refresh"})
+        self.assertEqual(got, {
+            "ref": "origin/main", "sha": "", "fresh": False, "reason": "no worktree to refresh",
+            "fetch": {"outcome": "failed", "attempts": 0, "age": None},
+        })
 
 
 class SwitchingOntoAnExistingBranch(Repo):
@@ -268,6 +314,23 @@ class SwitchingOntoAnExistingBranch(Repo):
         self.assertTrue(made["base"]["fresh"])
         self.assertEqual(made["base"]["behind"], 0)
         self.assertEqual(made["base"]["reason"], "")
+
+    def test_the_base_says_how_its_fetch_went(self):
+        # `0048` R6, on the path that opens a tree onto an existing branch.
+        made = asyncio.run(worktrees.ensure(self.repo, "0001_a", "fix/a", self.data))
+        fetched = made["base"]["fetch"]
+        self.assertEqual((fetched["outcome"], fetched["attempts"]), ("fetched", 1))
+        self.assertLess(fetched["age"], fetches.REUSE_SECONDS)
+
+    def test_a_fetch_older_than_thirty_seconds_is_not_fresh_and_says_so(self):
+        # `0048` R7. Only reachable through a slow fetch; the age is handed in here.
+        tree = worktrees.path(self.repo, "0001_a", self.data)
+        head = git(tree, "rev-parse", "HEAD")
+        old = {"outcome": "joined", "attempts": 1, "age": 30.0}
+        got = asyncio.run(worktrees._base_against_origin(tree, "fix/a", head, old))
+        self.assertEqual((got["behind"], got["fresh"]), (0, False))
+        self.assertIn("30.0s ago", got["reason"])
+        self.assertIs(got["fetch"], old)
 
 
 class Preparing(unittest.TestCase):
