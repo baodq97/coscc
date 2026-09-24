@@ -1107,6 +1107,8 @@ class Service:
         key = self._journal_key(cwd)
         mark = self._take(key, unit, "step", stage)
         handed = False
+        running: steps_mod.Running | None = None
+        rid: str | None = None
         try:
             try:
                 data = await board_reader.read(self._units_root(cwd))
@@ -1281,7 +1283,15 @@ class Service:
             handed = True
         finally:
             if not handed:
+                # `0050` review round 1, F1. Past `claim`, the listing and the `0051` entry
+                # are this frame's to return too, or `/api/board/steps` keeps a step that
+                # never started and the next request gets past the mark to `claim` again.
                 self._release(key, unit, mark)
+                if rid is not None:
+                    self._running.pop(rid, None)
+                if running is not None:
+                    self.steps.release(running)
+                    self.updater.job_ended()
         # `0034` R3/R4. Only the reader lives here. A reader that goes away -- a closed
         # tab, a dropped NDJSON client -- takes its queue with it and nothing else: the
         # step runs on to its own end in `_drive`. Stopping it is `stop_step`, and only that.

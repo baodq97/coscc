@@ -268,6 +268,22 @@ class TheMarkIsAlwaysReturned(_OneUnit):
                     pass
         self.assertEqual(self.service._active, {})
 
+    async def test_after_an_exception_between_the_listing_and_the_hand_over(self):
+        """Review round 1, F1: past `claim`, the listing and the `0051` entry go back too."""
+        def broken(base):
+            raise RuntimeError("stand-in: describing the base broke")
+
+        with mock.patch("coscc.service.describe_base", broken):
+            with self.assertRaises(RuntimeError):
+                async for _ in self.service.run_step(self.ws, self.unit, "spec"):
+                    pass
+        self.assertEqual(self.service._active, {})
+        self.assertEqual(self.service._running, {})
+        self.assertEqual(await self.listed(), [])
+        task = await self.one_running()
+        self.fake.release.set()
+        self.assertEqual((await task).status_code, 200)
+
     async def test_after_the_winner_ends_done_and_after_it_is_stopped(self):
         task = await self.one_running()
         stop = await self.client.post(
