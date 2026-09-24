@@ -349,6 +349,10 @@ const ROUND_META = /^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*(pass|changes-
 // (`answered`).
 const PERSON_LABELS = ['needs-person', 'claim-rejected', 'answered']
 const FINDING = /^- (F\d+)\s+\[([^\]]*)\]\s*(.*)$/
+// `0061` R1/R2: a finding's severity sits between two em dashes (U+2014) right after its
+// location, `path:line — low — text`. Anything else — prose, a hyphen, an en dash — reads
+// `null`, and `null` is never read as `low`.
+const SEVERITY = /^\S+\s+—\s+(high|medium|low)\s+—\s/i
 
 // `review.md` is a list of rounds, each `## Round N`, never rewritten once written: a
 // re-review appends a round. Each round opens with `Reviewed: <sha>. Verdict: pass|
@@ -400,11 +404,13 @@ export function parseReview(text) {
     const label = f[2].trim()
     const lower = label.toLowerCase()
     const fixed = label.match(/^fixed\s+([0-9a-f]{7,40})$/i)
+    const text = f[3].trim()
     r.findings.push({
       id: f[1],
       label: lower === 'open' ? 'open' : fixed ? 'fixed' : PERSON_LABELS.includes(lower) ? lower : 'unreadable',
       fixedBy: fixed ? fixed[1].toLowerCase() : null,
-      text: f[3].trim(),
+      text,
+      severity: text.match(SEVERITY)?.[1].toLowerCase() ?? null,
     })
   }
   return {
@@ -573,6 +579,9 @@ export function readUnit(dir, name) {
   // The one list the board's Questions tab shows a finding from (`0028`); empty unless the
   // last review round is a well-formed wait for a person. Derived here, never on the page.
   unit.personFindings = personFindings(unit) ?? []
+  // `0061` R10: what `ship.md` lists as left open on purpose, so the ship stage never
+  // applies the rule itself.
+  unit.nonBlocking = nonBlocking(unit)
 
   const stray = readdirSync(dir).filter((f) => !ARTIFACTS.includes(f))
   if (stray.length) unit.problems.push(`unexpected file(s): ${stray.join(', ')}`)
@@ -824,6 +833,34 @@ function roundsUsed(unit) {
 const personAnswers = (unit) => new Set(unit.artifacts['review.md']?.personAnswers ?? [])
 const needsPersonClaims = (unit) => unit.artifacts['impl.md']?.needsPerson ?? []
 
+// `0061` R3: the one place "does not block" is decided. A finding of the last round does not
+// block when it is `[open]`, reads `low`, and no earlier round rated the same id `high` or
+// `medium` — a severity that could not be read does not count as higher (R12). `demoted`
+// holds the `[open]` lows that last condition caught, each with the earliest round that
+// rated it higher and what it said, so the `ship` gate can name it (R5). Every other label,
+// and a severity that is `null`, blocks.
+function severityRule(unit) {
+  const rounds = reviewOf(unit)
+  const last = rounds.at(-1)
+  if (!last) return { nonBlocking: [], demoted: [] }
+  const higher = new Map()
+  for (const r of rounds.slice(0, -1)) {
+    for (const f of r.findings) {
+      if ((f.severity === 'high' || f.severity === 'medium') && !higher.has(f.id)) higher.set(f.id, { round: r.n, severity: f.severity })
+    }
+  }
+  const low = last.findings.filter((f) => f.label === 'open' && f.severity === 'low')
+  return {
+    nonBlocking: low.filter((f) => !higher.has(f.id)).map((f) => ({ id: f.id, text: f.text })),
+    demoted: low.filter((f) => higher.has(f.id)).map((f) => ({ id: f.id, ...higher.get(f.id) })),
+  }
+}
+
+// The findings of the last round that do not block, `[{ id, text }]`. The `ship` gate,
+// `next` and `status --json` all read this; none of them applies the rule again.
+export const nonBlocking = (unit) => severityRule(unit).nonBlocking
+const nonBlockingIds = (unit) => new Set(nonBlocking(unit).map((f) => f.id))
+
 // `0028` spec R6 (a)/(b): the findings the last round confirmed need a person, each with the
 // reason impl gave and whether a person has answered it — or `null` when the last round is
 // not a well-formed wait. Well-formed means: the header is `changes-requested`, the round's
@@ -838,7 +875,9 @@ function personFindings(unit) {
   if (!last || last.verdict !== 'needs-person') return null
   const answered = personAnswers(unit)
   if (!last.findings.some((f) => f.label === 'needs-person')) return null
-  const closed = (f) => f.label === 'fixed' || f.label === 'needs-person' || (f.label === 'answered' && answered.has(f.id))
+  // `0061` R8: a finding that does not block does not stop the wait either.
+  const low = nonBlockingIds(unit)
+  const closed = (f) => f.label === 'fixed' || f.label === 'needs-person' || (f.label === 'answered' && answered.has(f.id)) || low.has(f.id)
   if (!last.findings.every(closed)) return null
   const claims = needsPersonClaims(unit)
   return last.findings
@@ -859,7 +898,10 @@ function personFindings(unit) {
 function everyOpenClaimed(unit) {
   const last = lastRound(unit)
   if (!last || last.verdict !== 'changes-requested') return false
-  const open = last.findings.filter((f) => f.label === 'open')
+  // `0061` R8: only the findings that block need a claim. A round left with nothing but
+  // those that do not is still `false` — it should have passed, and goes back to impl.
+  const low = nonBlockingIds(unit)
+  const open = last.findings.filter((f) => f.label === 'open' && !low.has(f.id))
   if (!open.length) return false
   const judged = new Set(
     reviewOf(unit).flatMap((r) => r.findings.filter((f) => PERSON_LABELS.includes(f.label)).map((f) => f.id)),
@@ -978,7 +1020,13 @@ function shipNeeds(unit, probe, said = {}) {
   // `0028` spec R8: `[answered]` closes a finding only when `review.md ## Answers` holds a
   // block for that id. `[needs-person]` and `[claim-rejected]` never close one.
   const answered = personAnswers(unit)
-  const open = last.findings.filter((f) => f.label !== 'fixed' && !(f.label === 'answered' && answered.has(f.id)))
+  // `0061` R4: a finding that does not block is left open on purpose; `ship.md` lists it.
+  const { nonBlocking: low, demoted } = severityRule(unit)
+  const passes = new Set(low.map((f) => f.id))
+  const open = last.findings.filter((f) => f.label !== 'fixed' && !(f.label === 'answered' && answered.has(f.id)) && !passes.has(f.id))
+  for (const d of demoted) {
+    need.push(`${d.id} is low in review round ${last.n}, but review round ${d.round} rated it ${d.severity} — lowering a severity is not a fix: fix it on the branch, or keep it open`)
+  }
   if (open.length) {
     const named = (f) => (f.label === 'answered' ? `${f.id} [answered, no answer in review.md]` : `${f.id} [${f.label}]`)
     need.push(`review round ${last.n} still has findings not fixed: ${open.map(named).join(', ')}`)
