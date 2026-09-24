@@ -1391,7 +1391,11 @@ class StudioState(rx.State):
             self.mobile_open = self.command_open = False
         if moved_ws and not first:
             self.session_id, self.query, self.error = "", "", ""
-        self.unit_id, self.detail_tab = unit, tab
+        # While a workspace's board is read, `units` is still the last one's: a dialog open
+        # over it would show that list's unit, or "not a unit", under this workspace's name.
+        # So the unit opens once its own board is in (`0056` review round 1, F1).
+        reading = first or moved_ws
+        self.unit_id, self.detail_tab = ("", "overview") if reading else (unit, tab)
 
         # R16: one read, the one of the largest change.
         if first:
@@ -1413,6 +1417,7 @@ class StudioState(rx.State):
         elif (moved_unit and not unit) or (moved_screen and not moved_unit):
             self._load_update()
         self._read_cwd = cwd
+        self.unit_id, self.detail_tab = unit, tab
         # A unit is read after whatever the arrival read, which R16 does not list: a pasted
         # link or a reload at `/unit` would otherwise open a dialog with no timeline or
         # artifact (R4, R5). None of it calls `SERVICE.board` (R17).

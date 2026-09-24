@@ -933,6 +933,41 @@ class AnArrivalReadsOnce(unittest.TestCase):
         with fake.patches():
             self.assertEqual(asyncio.run(go()), 1)
 
+    def test_no_unit_is_open_while_another_workspace_s_board_is_read(self):
+        """`0056` review round 1, F1. Back from `/board?ws=b` to a unit of `a`: while `a`'s
+        board is read, `units` is still `b`'s, so no dialog may be open over it."""
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        fake = _Page()
+        token = "state-test-back-to-a-unit"
+        during: list[tuple[str, str]] = []
+        real = page.StudioState._load_board
+
+        async def spy(self):
+            during.append((self.cwd, self.unit_id))
+            return await real(self)
+
+        async def go():
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            async with processor:
+                await arrive("/unit?ws=a&id=0009_x", "s1")
+                await arrive("/board?ws=b", "s1")
+                await arrive("/unit?ws=a&id=0009_x", "s1")  # Back
+                studio = await _studio(manager, token)
+                after = (studio.cwd, studio.unit_id)
+                await arrive("/sessions?ws=a", "s9")
+                await asyncio.sleep(0.15)
+                return after
+
+        with fake.patches(), mock.patch.object(page.StudioState, "_load_board", spy):
+            after = asyncio.run(go())
+        self.assertEqual(during, [("/a", ""), ("/b", ""), ("/a", ""), ("/a", "")])
+        self.assertEqual(after, ("/a", "0009_x"))
+
     def test_a_link_to_another_workspace_s_unit_opens_it(self):
         seen = self._walk([("/board?ws=a", "s1"), ("/unit?ws=b&id=0009_x&tab=questions", "s1")])
         self.assertEqual((seen[1]["cwd"], seen[1]["unit"], seen[1]["tab"]),
