@@ -370,5 +370,55 @@ def _self_names(target: ast.expr) -> list[str]:
     return []
 
 
+class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
+    """`0047` plan step 7. The page shows `Service.board`'s `outcome_label` and decides
+    nothing; a refusal from `Service.record_outcome` reaches the page as its words."""
+
+    def test_the_fields_map_from_the_label(self):
+        from coscc.state import _outcome_fields
+
+        self.assertEqual(_outcome_fields(None), {})
+        got = _outcome_fields({
+            "kind": "missed", "text": "trượt", "color": "red", "counted": True,
+            "hint": "cân nhắc bỏ hoặc làm lại", "deadline": "2026-10-07", "by": "Linh",
+            "date": "2026-10-08", "measured_by": "agent", "source": "board", "reason": None,
+            "note": "ghi chú", "invalid": 2, "form": True,
+        })
+        self.assertEqual(got, {
+            "outcome_text": "trượt", "outcome_color": "red", "outcome_detail": "board — ghi chú",
+            "outcome_by": "Linh", "outcome_date": "2026-10-08", "outcome_measured_by": "agent",
+            "outcome_deadline": "2026-10-07", "outcome_hint": "cân nhắc bỏ hoặc làm lại",
+            "outcome_invalid": 2, "outcome_form": True,
+        })
+        self.assertEqual(_outcome_fields({"text": "không đo được", "reason": "no script"})["outcome_detail"],
+                         "no script")
+
+    def test_the_handler_shows_the_services_refusal_verbatim(self):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+        from coscc.service import Invalid
+
+        async def refuse(*args):
+            refuse.args = args
+            raise Invalid("đạt needs a source: where the figure it rests on came from")
+
+        async def never():
+            raise AssertionError("a refused outcome must not reload the board")
+
+        page = SimpleNamespace(
+            cwd="/w", unit_id="0001_x", outcome_result="đạt", outcome_measured_by="agent",
+            outcome_source="", outcome_reason="", outcome_note="", answer_by="Phong",
+            recording_outcome=False, notice="", _load_board=never,
+        )
+        with mock.patch.object(state, "SERVICE", SimpleNamespace(record_outcome=refuse)):
+            asyncio.run(state.StudioState.record_outcome.fn(page))
+        self.assertEqual(page.notice, "đạt needs a source: where the figure it rests on came from")
+        self.assertFalse(page.recording_outcome)
+        self.assertEqual(refuse.args, ("/w", "0001_x", "đạt", "agent", "", "", "", "Phong"))
+
+
 if __name__ == "__main__":
     unittest.main()

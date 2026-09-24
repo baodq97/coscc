@@ -117,17 +117,25 @@ const ANSWER_META = /^Answered by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\
 // Since `0028` a block may also be headed `### F<n>`: a person's answer to a review finding
 // the review confirmed as needing one (`[needs-person]`). It carries `id: 'F<n>'` and
 // `n: null`; a `Câu N` block carries `n` and `id: null`, so the two kinds never collide.
-export function parseAnswers(text) {
+//
+// Since `0047` a block may be headed `### Outcome` (`parseOutcome`). It ends the block above
+// it, so its lines never become part of an answer's text, and it is not an answer itself.
+function answerBlocks(text) {
   const lines = section(text, 'Answers')
   if (lines === null) return []
   const blocks = []
   for (const line of lines) {
-    const m = line.match(/^###\s+(?:Câu\s+(\d+)|(F\d+))\s*$/)
-    if (m) blocks.push({ n: m[1] !== undefined ? Number(m[1]) : null, id: m[2] ?? null, lines: [] })
+    const m = line.match(/^###\s+(?:Câu\s+(\d+)|(F\d+)|(Outcome))\s*$/)
+    if (m) blocks.push({ n: m[1] !== undefined ? Number(m[1]) : null, id: m[2] ?? null, outcome: m[3] !== undefined, lines: [] })
     else if (blocks.length) blocks[blocks.length - 1].lines.push(line)
   }
+  return blocks
+}
+
+export function parseAnswers(text) {
   const answers = []
-  for (const b of blocks) {
+  for (const b of answerBlocks(text)) {
+    if (b.outcome) continue
     const at = b.lines.findIndex((l) => l.trim() !== '')
     const meta = at === -1 ? null : b.lines[at].match(ANSWER_META)
     if (!meta) continue
@@ -153,6 +161,94 @@ export function answeredQuestions(text) {
     const a = latest.get(q.n) ?? null
     return { n: q.n, text: q.text, answered: a !== null, answer: a }
   })
+}
+
+// --- the outcome a unit was measured against, after it shipped ------------------
+
+// `0047`: the deadline of an intent's `## Proposed outcome` — the first ISO date written in
+// that section, and only if it is a real calendar date. `null` when there is none. The
+// first date is a guess at which one is the deadline; the board shows the one read, so a
+// person can see when the guess is wrong.
+export function parseDeadline(text) {
+  const lines = section(text, 'Proposed outcome')
+  if (lines === null) return null
+  for (const m of lines.join('\n').matchAll(/\b(\d{4}-\d{2}-\d{2})\b/g)) {
+    const d = new Date(`${m[1]}T00:00:00Z`)
+    if (!Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === m[1]) return m[1]
+  }
+  return null
+}
+
+const OUTCOME_RESULTS = { 'đạt': 'met', 'trượt': 'missed', 'không đo được': 'unmeasurable' }
+const OUTCOME_KEY = /^(Result|Measured by|Source|Reason):\s*(.*)$/
+
+// `0047`: the outcome blocks under an intent's `## Answers`, each headed `### Outcome`:
+//
+//   Answered by: <name>. Date: <YYYY-MM-DD>. Via: product.
+//
+//   Result: đạt | trượt | không đo được
+//   Measured by: agent | <a person's name>
+//   Source: <one line>
+//   Reason: <one line>
+//
+//   <an optional note>
+//
+// The key lines are read anywhere in the first paragraph after the header line; every other
+// line is the note. A block is valid with a well-formed header, a known result, a
+// `Measured by`, a `Source` when the result is met or missed and a `Reason` when it is
+// unmeasurable. Every other block is counted in `invalid` and read no further. No gate reads
+// any of this: it is information for the board, and a unit's stages are decided without it.
+export function parseOutcome(text) {
+  const blocks = []
+  let invalid = 0
+  for (const b of answerBlocks(text)) {
+    if (!b.outcome) continue
+    const at = b.lines.findIndex((l) => l.trim() !== '')
+    const meta = at === -1 ? null : b.lines[at].match(ANSWER_META)
+    if (!meta) { invalid++; continue }
+    const rest = b.lines.slice(at + 1)
+    let i = rest.findIndex((l) => l.trim() !== '')
+    if (i === -1) i = rest.length
+    const keys = {}
+    const note = []
+    for (; i < rest.length && rest[i].trim() !== ''; i++) {
+      const k = rest[i].trim().match(OUTCOME_KEY)
+      if (k) keys[k[1]] = k[2].trim()
+      else note.push(rest[i])
+    }
+    note.push(...rest.slice(i))
+    const result = OUTCOME_RESULTS[(keys.Result ?? '').normalize('NFC').toLowerCase()] ?? null
+    const measuredBy = keys['Measured by'] || null
+    const source = keys.Source || null
+    const reason = keys.Reason || null
+    const ok = result !== null && measuredBy !== null
+      && (result === 'unmeasurable' ? reason !== null : source !== null)
+    if (!ok) { invalid++; continue }
+    blocks.push({
+      result, by: meta[1].trim(), date: meta[2], via: meta[3], measuredBy, source, reason,
+      note: note.join('\n').trim() || null,
+    })
+  }
+  return { blocks, invalid }
+}
+
+// The unit-level view: the deadline, and the last valid outcome block — recording again
+// adds a block rather than editing one, as answering does. Every field but `deadline` and
+// `invalid` is `null` until a valid block exists.
+export function unitOutcome(text) {
+  const { blocks, invalid } = parseOutcome(text)
+  const last = blocks[blocks.length - 1] ?? null
+  return {
+    deadline: parseDeadline(text),
+    result: last?.result ?? null,
+    by: last?.by ?? null,
+    date: last?.date ?? null,
+    measuredBy: last?.measuredBy ?? null,
+    source: last?.source ?? null,
+    reason: last?.reason ?? null,
+    note: last?.note ?? null,
+    invalid,
+  }
 }
 
 // The unit-level view: every question in stage order, and how many are open in the
@@ -361,6 +457,9 @@ export function readUnit(dir, name) {
     // Derived, never typed — the `ship` gate reads the branch the review was of.
     unit.branch = unitBranch(name, intentText).branch ?? null
   }
+  // `0047`: read from the text already in hand, never another file. `nextAction` and
+  // `checkGate` do not read it — a finished unit stays finished whatever it says.
+  unit.outcome = intentText === null ? null : unitOutcome(intentText)
 
   return unit
 }

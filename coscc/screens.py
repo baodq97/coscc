@@ -488,6 +488,9 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
             rx.cond(unit.integration_state != "",
                     s.badge("main: " + unit.integration_state,
                             rx.cond(unit.integrate_button, "amber", "gray"))),
+            # `0047` R8. The label is the service's; the page only shows it.
+            rx.cond(unit.outcome_text != "",
+                    s.badge("outcome: " + unit.outcome_text, unit.outcome_color)),
             rx.spacer(),
             rx.center(rx.text(unit.owner, size="1", weight="medium"),
                       width="27px", height="27px", border_radius="50%",
@@ -1158,6 +1161,72 @@ def _integration_panel() -> rx.Component:
     )
 
 
+def _outcome_panel() -> rx.Component:
+    """`0047` R8. The outcome of the open unit against its intent's deadline, and on a
+    finished unit a form to record one. Hidden when the service gives no label."""
+    u = P.current_unit
+    return rx.cond(
+        u.outcome_text != "",
+        s.panel(
+            rx.hstack(
+                s.eyebrow("OUTCOME"),
+                rx.spacer(),
+                s.badge(u.outcome_text, u.outcome_color),
+                width="100%", align="center",
+            ),
+            rx.cond(u.outcome_deadline != "",
+                    s.text("Deadline read from intent.md: " + u.outcome_deadline,
+                           size="1", margin_top="8px")),
+            rx.cond(u.outcome_detail != "",
+                    s.text(u.outcome_detail, size="1", overflow_wrap="anywhere")),
+            rx.cond(u.outcome_by != "",
+                    s.text("Recorded by " + u.outcome_by + " on " + u.outcome_date
+                           + ", measured by " + u.outcome_measured_by, size="1")),
+            rx.cond(u.outcome_hint != "",
+                    s.text(u.outcome_hint, size="1", color=rx.color("red", 11))),
+            rx.cond(u.outcome_invalid > 0,
+                    s.text(u.outcome_invalid.to_string()
+                           + " ### Outcome block(s) in intent.md could not be read and were skipped.",
+                           size="1", color=rx.color("amber", 11))),
+            rx.cond(
+                u.outcome_form,
+                rx.vstack(
+                    s.text(
+                        "Appended to intent.md under ## Answers as ### Outcome; nothing above it "
+                        "changes, a later block replaces an earlier one, and no gate reads it. "
+                        "Neither name is checked: this app has no login.",
+                        size="1", line_height="1.7",
+                    ),
+                    rx.select(["đạt", "trượt", "không đo được"], value=P.outcome_result,
+                              on_change=P.set_outcome_result, size="1", id="outcome-result"),
+                    rx.input(placeholder="Source — where the figure came from",
+                             value=P.outcome_source, on_change=P.set_outcome_source,
+                             width="100%", id="outcome-source"),
+                    rx.input(placeholder="Reason — why it could not be measured",
+                             value=P.outcome_reason, on_change=P.set_outcome_reason,
+                             width="100%", id="outcome-reason"),
+                    rx.input(placeholder="Measured by — agent, or a person's name",
+                             value=P.outcome_measured_by, on_change=P.set_outcome_measured_by,
+                             width="100%", id="outcome-measured-by"),
+                    rx.input(placeholder="Your name", value=P.answer_by, on_change=P.set_answer_by,
+                             width="100%", id="outcome-recorded-by"),
+                    rx.text_area(placeholder="Note (optional)", value=P.outcome_note,
+                                 on_change=P.set_outcome_note, width="100%", id="outcome-note"),
+                    rx.button(
+                        rx.icon("flag", size=14), "Record outcome",
+                        on_click=P.record_outcome,
+                        loading=P.recording_outcome,
+                        disabled=P.recording_outcome,
+                        size="1", id="outcome-button",
+                    ),
+                    spacing="2", margin_top="8px", align="start", width="100%",
+                ),
+            ),
+            width="100%", id="outcome-panel",
+        ),
+    )
+
+
 def _round_row(r: rx.Var[Round]) -> rx.Component:
     """`0021` R7, R8. One review round: on the PR with its link, or not and a button."""
     return s.panel(
@@ -1362,6 +1431,7 @@ def _detail_dialog() -> rx.Component:
                                    "once that has changed."),
                         ),
                         _integration_panel(),
+                        _outcome_panel(),
                         rx.cond(
                             P.run_log != "",
                             s.panel(

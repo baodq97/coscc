@@ -234,6 +234,14 @@ no commands, one turn, no budget.
   intent, spec and plan of the units the app lists as related — a widening of the read
   boundary, and not a sandbox while it has `cat`. No login, `0.0.0.0` by default. Every
   attempt, refused ones included, is one `integration` row in the run log.
+- **`POST /api/units/outcome` writes the ground for keeping or dropping a unit, and has no
+  login.** Since `0047`. On a `finished` unit it appends a `### Outcome` block (`Result:`
+  `đạt` | `trượt` | `không đo được`, `Measured by:`, `Source:` or `Reason:`) under
+  `intent.md ## Answers`, and the board labels the unit from the last valid one. Anyone
+  who reaches the port can record `đạt` under any name, `0.0.0.0` by default; `Measured
+  by:` is a word they typed too, and `Source:` is checked against nothing. No gate reads
+  the block. The trace is the block in the file and an `outputs` row with `source =
+  outcome`. `COS_HOST=127.0.0.1` is the mitigation that exists.
 - **Every board read with a unit between `pr` and `ship` costs one `gh pr list`.** Since
   `0035`, up to 30s (chosen), plus a `gh pr checks` for a unit whose head is the one its
   last integration pushed. Offline, every such unit reads `unknown` and the board waits
@@ -277,6 +285,7 @@ no commands, one turn, no budget.
 | `verify_0035.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` whose `pr update-branch` really rebases in a scratch clone. Needs `node`, `uv` and `git`; any missing is exit 2. Proves the mechanical road only: `--paid` (a real Gebo session) is not built and exits 2 |
 | `verify_0037.py` | plain: no session, no quota, no network; temporary data root, only the SDK client replaced. Claim (b) calls the SDK's private `SubprocessCLITransport._build_command`; if that cannot be called it is exit 2, not a pass. `--baseline` and `--measure` read `<COS_DATA_DIR>/cos.db` (`mode=ro`, never through `Data`) and `~/.claude/projects/*/<session>.jsonl`, and write only to `<COS_DATA_DIR>/measurements/`; too few sessions to compare is exit 2. `--paid` **spends real money**: six `claude -p` runs, three per branch. No `claude` on `PATH` is exit 2 |
 | `verify_0042.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. The session is a stand-in, so it cannot show that a real `impl` stops on a contradiction |
+| `verify_0047.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2. Fixes the board's `today` at 2026-10-08 for C5 and C6; does not measure the intent's outcome, which is three real units on the real board that day |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 

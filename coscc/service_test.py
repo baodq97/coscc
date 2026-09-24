@@ -9,17 +9,19 @@ drift visible as a missing test rather than as a bug only one entry point has.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import shutil
 import subprocess
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
 from coscc import gitops, harness, units, worktrees
 from coscc.config import Config
-from coscc.service import Invalid, Service, describe_base, step_cwd
+from coscc.service import STAGE_FILES, Invalid, Service, describe_base, outcome_label, step_cwd
 from coscc.sessions import Live, Sessions
 
 REPO = str(Path(__file__).resolve().parent.parent)
@@ -1806,3 +1808,192 @@ class ShipRunsOutsideTheWorktree(unittest.TestCase):
     def test_every_other_stage_keeps_the_worktree(self):
         for stage in ("idea", "intent", "spec", "plan", "impl", "pr", "review"):
             self.assertEqual(step_cwd(stage, "/w/tree", Path("/store/0017_x")), "/w/tree")
+
+
+class TheOutcomeLabel(unittest.TestCase):
+    """`0047` R8. One pure decision, every branch, with a fixed `today`."""
+
+    TODAY = date(2026, 10, 8)
+
+    def label(self, deadline="2026-10-07", result=None, finished=False, **over):
+        outcome = {"deadline": deadline, "result": result, "by": None, "date": None,
+                   "measured_by": None, "source": None, "reason": None, "note": None,
+                   "invalid": 0, **over}
+        return outcome_label(outcome, self.TODAY, finished=finished)
+
+    def test_met_missed_and_unmeasurable_whatever_the_deadline(self):
+        for deadline in ("2026-10-07", "2026-10-31", None):
+            met, missed, unmeasurable = (
+                self.label(deadline, r) for r in ("met", "missed", "unmeasurable")
+            )
+            self.assertEqual((met["text"], met["color"], met["counted"], met["hint"]),
+                             ("đạt", "grass", True, ""))
+            self.assertEqual((missed["text"], missed["color"], missed["counted"], missed["hint"]),
+                             ("trượt", "red", True, "cân nhắc bỏ hoặc làm lại"))
+            self.assertEqual((unmeasurable["text"], unmeasurable["color"], unmeasurable["counted"]),
+                             ("không đo được", "amber", False))
+            self.assertEqual(met["deadline"], deadline)
+
+    def test_no_result_is_due_on_and_after_the_deadline_and_pending_before(self):
+        self.assertEqual(self.label("2026-10-07")["text"], "tới hạn — chưa đo")
+        self.assertEqual(self.label("2026-10-08")["text"], "tới hạn — chưa đo")
+        self.assertEqual(self.label("2026-10-08")["color"], "amber")
+        self.assertFalse(self.label("2026-10-08")["counted"])
+        pending = self.label("2026-10-31")
+        self.assertEqual((pending["text"], pending["color"], pending["counted"]),
+                         ("chưa tới hạn", "gray", False))
+
+    def test_no_deadline_and_no_result_is_no_label(self):
+        self.assertIsNone(self.label(None))
+        self.assertIsNone(outcome_label(None, self.TODAY))
+
+    def test_the_form_follows_finished_and_the_block_fields_are_carried(self):
+        got = self.label(result="met", finished=True, by="Linh", measured_by="agent",
+                         source="npm test", invalid=2)
+        self.assertTrue(got["form"])
+        self.assertFalse(self.label()["form"])
+        self.assertEqual((got["by"], got["measured_by"], got["source"], got["invalid"]),
+                         ("Linh", "agent", "npm test", 2))
+
+
+OUTCOME_INTENT = (
+    "# Intent: q\n"
+    "Author: t. Type: feat. Status: accepted.\n\n"
+    # A deadline already past on any day these tests run, so the board reads it as due.
+    "## Proposed outcome\n\nBy 2026-09-01, three of three.\n\n"
+    "## Open questions\n\n1. One?\n\n"
+    "## Answers\n\n### Câu 1\nAnswered by: Phong. Date: 2026-09-24. Via: product.\n\nCó.\n"
+)
+
+
+class RecordingAnOutcome(unittest.TestCase):
+    """`0047` R1–R4, R7, R9 through the one place logic lives."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.cwd = str(root / "work" / "proj")
+        Path(self.cwd).mkdir(parents=True)
+        self.data_dir = root / "data"
+        config = Config(workspaces=(self.cwd,), working_dir=str(root / "work"),
+                        data_dir=str(self.data_dir))
+        self.service = Service(config, Sessions(config))
+        made = create_sync(self.service, self.cwd, "a-problem", "x")
+        self.unit = made["unit"]
+        self.dir = Path(made["path"])
+        for stage in ("spec", "impl", "pr", "review", "ship"):
+            (self.dir / f"{stage}.md").write_text(f"# {stage}\nStatus: accepted.\n", encoding="utf-8")
+        (self.dir / "plan.md").write_text("# plan\nStatus: done.\n", encoding="utf-8")
+        self.intent = self.dir / "intent.md"
+        self.intent.write_text(OUTCOME_INTENT, encoding="utf-8")
+
+    def record(self, **over):
+        kw = {"result": "đạt", "measured_by": "agent", "source": "npm test, 12 pass",
+              "reason": "", "note": "", "recorded_by": "Phong", **over}
+        return asyncio.run(self.service.record_outcome(self.cwd, self.unit, **kw))
+
+    def board_unit(self):
+        [u] = asyncio.run(self.service.board(self.cwd))["units"]
+        return u
+
+    def refused(self, **over) -> str:
+        before = hashlib.sha256(self.intent.read_bytes()).hexdigest()
+        with self.assertRaises(Invalid) as e:
+            self.record(**over)
+        self.assertEqual(hashlib.sha256(self.intent.read_bytes()).hexdigest(), before)
+        self.assertTrue(str(e.exception))
+        return str(e.exception)
+
+    def test_a_block_is_appended_and_every_byte_before_it_stays(self):
+        before = self.intent.read_bytes()
+        got = self.record(note="Ghi chú.")
+        after = self.intent.read_bytes()
+        self.assertEqual(after[:len(before)], before)
+        tail = after[len(before):].decode("utf-8")
+        self.assertIn("\n### Outcome\nAnswered by: Phong. Date: ", tail)
+        self.assertIn("Result: đạt\nMeasured by: agent\nSource: npm test, 12 pass\n\nGhi chú.\n", tail)
+        self.assertNotIn("## Answers", tail, "the existing heading is reused")
+        self.assertEqual((got["result"], got["measured_by"], got["recorded_by"]), ("đạt", "agent", "Phong"))
+        self.assertLessEqual({p.name for p in self.dir.iterdir()}, {f"{s}.md" for s in STAGE_FILES})
+
+    def test_the_board_then_reads_it_and_the_last_block_is_in_force(self):
+        self.record()
+        u = self.board_unit()
+        self.assertEqual(u["outcome"]["result"], "met")
+        self.assertEqual(u["outcome_label"]["text"], "đạt")
+        self.assertTrue(u["outcome_label"]["form"])
+        self.record(result="trượt", measured_by="Linh", source="board, 2026-10-08")
+        u = self.board_unit()
+        self.assertEqual((u["outcome"]["result"], u["outcome"]["measured_by"]), ("missed", "Linh"))
+        self.assertEqual(u["outcome_label"]["hint"], "cân nhắc bỏ hoặc làm lại")
+        self.assertEqual(u["next"], "finished")
+        self.assertEqual((u["questions"][0]["answered"], u["open"]), (True, 0))
+
+    def test_unmeasurable_carries_its_reason_and_no_source_line(self):
+        self.record(result="không đo được", source="", reason="không có script")
+        text = self.intent.read_text(encoding="utf-8")
+        self.assertIn("Result: không đo được\nMeasured by: agent\nReason: không có script\n", text)
+        self.assertEqual(self.board_unit()["outcome"]["result"], "unmeasurable")
+
+    def test_every_refusal_writes_nothing(self):
+        self.assertIn("unknown", self.refused(result="unknown"))
+        self.assertIn("source", self.refused(source=""))
+        self.assertIn("source", self.refused(result="trượt", source=" "))
+        self.assertIn("reason", self.refused(result="không đo được", source="", reason=""))
+        self.refused(recorded_by="  ")
+        self.refused(recorded_by="A\nStatus: rejected")
+        self.refused(measured_by="")
+        self.refused(measured_by="agent\nResult: đạt")
+        self.refused(source="a\nb")
+        self.refused(reason="a\nb", result="không đo được")
+        self.refused(note="ok\n## Status: rejected")
+        self.refused(note="### Outcome")
+        self.refused(source="# x")
+        self.assertIn("no such work unit", asyncio.run(self._missing()))
+
+    async def _missing(self) -> str:
+        try:
+            await self.service.record_outcome(self.cwd, "0099_nothing", "đạt", "agent", "x", "", "", "P")
+        except Invalid as e:
+            return str(e)
+        return ""
+
+    def test_an_unfinished_unit_is_refused(self):
+        (self.dir / "plan.md").write_text("# plan\nStatus: accepted.\n", encoding="utf-8")
+        (self.dir / "ship.md").unlink()
+        self.assertIn("only on a finished unit", self.refused())
+        self.assertFalse(self.board_unit()["outcome_label"]["form"])
+
+    def test_a_section_after_answers_is_refused(self):
+        self.intent.write_text(OUTCOME_INTENT + "\n## Notes\n\nx\n", encoding="utf-8")
+        self.assertIn("section after its ## Answers", self.refused())
+
+    def test_an_intent_with_no_answers_gets_the_heading_once(self):
+        self.intent.write_text(OUTCOME_INTENT.split("## Answers")[0].rstrip("\n"), encoding="utf-8")
+        self.record()
+        self.record()
+        text = self.intent.read_text(encoding="utf-8")
+        self.assertEqual(text.count("## Answers"), 1)
+        self.assertEqual(text.count("### Outcome"), 2)
+        self.assertEqual(self.board_unit()["outcome"]["invalid"], 0)
+
+    def test_the_block_is_recorded_as_a_person_in_the_history(self):
+        from coscc.history import History
+
+        self.record()
+        rows = History(str(Path(self.cwd).parent), self.data_dir).outputs(
+            str(Path(self.cwd).resolve()), self.unit
+        )
+        mine = [r for r in rows if r["source"] == "outcome"]
+        self.assertEqual(len(mine), 1)
+        self.assertEqual((mine[0]["actor"], mine[0]["path"]), ("human:Phong", "intent.md"))
+
+    def test_r9_reading_an_overdue_board_writes_no_row_and_starts_nothing(self):
+        journal = self.service._journal()
+        key = self.service._journal_key(self.cwd)
+        before = len(journal.records(key))
+        self.assertEqual(self.board_unit()["outcome_label"]["kind"], "due")
+        self.board_unit()
+        self.assertEqual(len(journal.records(key)), before)
+        self.assertEqual(self.service.sessions_for(self.cwd)["sessions"], [])

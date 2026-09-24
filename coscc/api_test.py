@@ -569,6 +569,65 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 400)
 
 
+class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0047` R1, R7. The route appends one `### Outcome` block or writes nothing at all;
+    what it refuses is `Service.record_outcome`'s decision, tested there."""
+
+    async def asyncSetUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        (root / "work" / "proj").mkdir(parents=True)
+        self.cwd = str(root / "work" / "proj")
+        self.app = build(
+            Config(workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+        )
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+        made = (await self.client.post(
+            "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
+        )).json()
+        self.unit = made["unit"]
+        unit_dir = Path(made["path"])
+        for stage in ("spec", "impl", "pr", "review", "ship"):
+            (unit_dir / f"{stage}.md").write_text(f"# {stage}\nStatus: accepted.\n", encoding="utf-8")
+        (unit_dir / "plan.md").write_text("# plan\nStatus: done.\n", encoding="utf-8")
+        self.intent = unit_dir / "intent.md"
+        self.intent.write_text(QUESTIONS, encoding="utf-8")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    def body(self, **over):
+        return {
+            "cwd": self.cwd, "unit": self.unit, "result": "trượt", "measured_by": "agent",
+            "source": "board, 2026-10-08", "recorded_by": "Phong", **over,
+        }
+
+    async def test_a_valid_outcome_is_appended_and_the_board_shows_it(self):
+        before = self.intent.read_bytes()
+        got = await self.client.post("/api/units/outcome", json=self.body())
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual((got.json()["result"], got.json()["recorded_by"]), ("trượt", "Phong"))
+        after = self.intent.read_bytes()
+        self.assertTrue(after.startswith(before))
+        self.assertIn("### Outcome", after[len(before):].decode("utf-8"))
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        self.assertEqual(board["units"][0]["outcome"]["result"], "missed")
+        self.assertEqual(board["units"][0]["outcome_label"]["text"], "trượt")
+
+    async def test_a_refusal_is_a_400_and_writes_nothing(self):
+        before = self.intent.read_bytes()
+        got = await self.client.post("/api/units/outcome", json=self.body(source=""))
+        self.assertEqual(got.status_code, 400)
+        self.assertIn("source", got.json()["error"])
+        for bad in (b"nope", b"[1]"):
+            got = await self.client.post("/api/units/outcome", content=bad)
+            self.assertEqual(got.status_code, 400)
+        self.assertEqual(self.intent.read_bytes(), before)
+
+
 _ROUND_0028 = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
 REVIEW_CLAIMED = (
     "# Review: q\nAuthor: t. Status: changes-requested.\n"

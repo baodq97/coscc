@@ -9,7 +9,7 @@ import {
   parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit, STAGE_NAMES,
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
-  reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip,
+  reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -1244,4 +1244,100 @@ test('0033 R11: the plan\'s Impl: label opens and closes no gate, and moves no n
     assert.equal(other.gate, routine.gate)
     assert.deepEqual(other.next, routine.next)
   }
+})
+
+// --- 0047: the outcome a unit was measured against ---------------------------
+
+const OUTCOME_INTENT = [
+  '# Intent: x',
+  'Author: a. Type: feat. Status: accepted.',
+  '',
+  '## Proposed outcome',
+  '',
+  'By 2026-10-07, three of three. Compared against 2026-09-01.',
+  '',
+  '## Open questions',
+  '',
+  '1. First?',
+  '',
+].join('\n')
+
+const outcomeBlock = (lines, by = 'Linh', date = '2026-10-08') =>
+  `\n### Outcome\nAnswered by: ${by}. Date: ${date}. Via: product.\n\n${lines.join('\n')}\n`
+
+test('0047: the deadline is the first real date under Proposed outcome, or null', () => {
+  assert.equal(parseDeadline(OUTCOME_INTENT), '2026-10-07')
+  assert.equal(parseDeadline('## Proposed outcome\n\nOn 2026-02-30, then 2026-03-01.\n'), '2026-03-01')
+  assert.equal(parseDeadline('## Problem\n\n2026-10-07\n\n## Proposed outcome\n\nSoon.\n'), null)
+  assert.equal(parseDeadline('## Problem\n\n2026-10-07\n'), null)
+  assert.equal(parseDeadline(`## Proposed outcome\n\nSoon.\n\n## Answers\n${outcomeBlock(['Result: đạt'])}`), null)
+})
+
+test('0047: a valid block needs a known result, Measured by, and Source or Reason by result', () => {
+  const text = `${OUTCOME_INTENT}\n## Answers\n` + [
+    outcomeBlock(['Result: đạt', 'Measured by: agent', 'Source: npm test, 12 pass']),
+    outcomeBlock(['Result: trượt', 'Measured by: Linh']),
+    outcomeBlock(['Result: không đo được', 'Measured by: agent', 'Source: x']),
+    outcomeBlock(['Result: maybe', 'Measured by: agent', 'Source: x']),
+    outcomeBlock(['Result: đạt', 'Source: x']),
+    '\n### Outcome\nno header line\n\nResult: đạt\nMeasured by: agent\nSource: x\n',
+    outcomeBlock(['Source: board, 2026-10-08', 'Result: Trượt', 'a note line inside', 'Measured by: Linh']),
+    outcomeBlock(['Result: không đo được', 'Measured by: agent', 'Reason: no script', '', 'A longer note.']),
+  ].join('')
+  const { blocks, invalid } = parseOutcome(text)
+  assert.equal(invalid, 5)
+  assert.deepEqual(blocks.map((b) => b.result), ['met', 'missed', 'unmeasurable'])
+  assert.equal(blocks[1].source, 'board, 2026-10-08')
+  assert.equal(blocks[1].note, 'a note line inside')
+  assert.equal(blocks[2].reason, 'no script')
+  assert.equal(blocks[2].note, 'A longer note.')
+  const o = unitOutcome(text)
+  assert.equal(o.result, 'unmeasurable', 'the last valid block is the one in force')
+  assert.equal(o.deadline, '2026-10-07')
+  assert.equal(o.invalid, 5)
+  assert.equal(o.by, 'Linh')
+  assert.equal(o.measuredBy, 'agent')
+})
+
+test('0047: with no block, every field but deadline and invalid is null', () => {
+  assert.deepEqual(unitOutcome(OUTCOME_INTENT), {
+    deadline: '2026-10-07', result: null, by: null, date: null, measuredBy: null,
+    source: null, reason: null, note: null, invalid: 0,
+  })
+})
+
+test('0047 R6: an Outcome block ends the answer above it and is not an answer itself', () => {
+  const f = (id, text) => `\n### ${id}\nAnswered by: Linh. Date: 2026-09-23. Via: product.\n\n${text}\n`
+  const out = outcomeBlock(['Result: đạt', 'Measured by: agent', 'Source: x'])
+  const plain = `${OUTCOME_INTENT}\n## Answers\n${answerBlock(1, 'Linh', 'Yes.')}${f('F2', 'Fine.')}${f('F3', 'Also.')}`
+  const mixed = `${OUTCOME_INTENT}\n## Answers\n${answerBlock(1, 'Linh', 'Yes.')}${out}${f('F2', 'Fine.')}${out}${f('F3', 'Also.')}`
+  const after = parseAnswers(mixed)
+  assert.deepEqual(after, parseAnswers(plain))
+  assert.ok(!after.some((a) => a.text.includes('Result:')))
+  assert.deepEqual(after.map((a) => a.id ?? a.n), [1, 'F2', 'F3'])
+  // `### Outcome` between two F blocks: both still read, neither swallows it.
+  assert.equal(after.find((a) => a.id === 'F2').text, 'Fine.')
+})
+
+test('0047 R5: an outcome block changes nothing but outcome, for next and every gate', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cos-0047-'))
+  for (const f of ['idea.md', 'spec.md', 'impl.md', 'pr.md', 'review.md', 'ship.md']) {
+    writeFileSync(join(dir, f), f === 'pr.md' ? 'PR: https://github.com/o/r/pull/7. Status: accepted.\n' : 'Status: accepted.\n')
+  }
+  writeFileSync(join(dir, 'plan.md'), 'Status: done.\n')
+  writeFileSync(join(dir, 'intent.md'), OUTCOME_INTENT)
+  const view = () => {
+    const u = readUnit(dir, '0047_x')
+    const gates = STAGE_NAMES.map((s) => checkGate(u, s, { probe: greenProbe() }))
+    const { outcome, ...rest } = u
+    return { outcome, json: JSON.stringify({ rest, next: nextAction(u), gates }) }
+  }
+  const before = view()
+  assert.equal(before.outcome.result, null)
+  writeFileSync(join(dir, 'intent.md'), `${OUTCOME_INTENT}\n## Answers\n` +
+    outcomeBlock(['Result: đạt', 'Measured by: agent', 'Source: x']) + outcomeBlock(['Result: ?']))
+  const after = view()
+  assert.equal(after.outcome.result, 'met')
+  assert.equal(after.outcome.invalid, 1)
+  assert.equal(after.json, before.json)
 })

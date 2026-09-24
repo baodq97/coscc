@@ -213,6 +213,42 @@ class Unit:
     integrate_button: bool = False
     integration_warnings: list[str] = dataclasses.field(default_factory=list)
     integration_needs_person: list[str] = dataclasses.field(default_factory=list)
+    # `0047` R8. Copied from `Service.board`'s `outcome_label`; empty text means no label.
+    # `outcome_form` is the service's decision: the unit is finished.
+    outcome_text: str = ""
+    outcome_color: str = "gray"
+    outcome_detail: str = ""
+    outcome_by: str = ""
+    outcome_date: str = ""
+    outcome_measured_by: str = ""
+    outcome_deadline: str = ""
+    outcome_hint: str = ""
+    outcome_invalid: int = 0
+    outcome_form: bool = False
+
+
+def _outcome_fields(label: dict | None) -> dict:
+    """`Unit`'s outcome fields from the board's `outcome_label` dict, or all empty.
+
+    `outcome_detail` is the one line a result rests on: its source, or for `không đo được`
+    its reason, with the note after it when there is one."""
+    if not label:
+        return {}
+    detail = " — ".join(
+        str(x) for x in (label.get("source") or label.get("reason"), label.get("note")) if x
+    )
+    return {
+        "outcome_text": str(label.get("text") or ""),
+        "outcome_color": str(label.get("color") or "gray"),
+        "outcome_detail": detail,
+        "outcome_by": str(label.get("by") or ""),
+        "outcome_date": str(label.get("date") or ""),
+        "outcome_measured_by": str(label.get("measured_by") or ""),
+        "outcome_deadline": str(label.get("deadline") or ""),
+        "outcome_hint": str(label.get("hint") or ""),
+        "outcome_invalid": int(label.get("invalid") or 0),
+        "outcome_form": bool(label.get("form")),
+    }
 
 
 def _integration_fields(info: dict | None) -> dict:
@@ -542,6 +578,14 @@ class StudioState(rx.State):
     posting_round: int = 0
     # `0035`. True while an integration runs; locks the *Integrate* button.
     integrating: bool = False
+    # `0047`. The outcome form. The person recording is `answer_by`, so nobody types a name
+    # twice; `outcome_measured_by` starts as `agent`, the case with no script to run.
+    outcome_result: str = "đạt"
+    outcome_measured_by: str = "agent"
+    outcome_source: str = ""
+    outcome_reason: str = ""
+    outcome_note: str = ""
+    recording_outcome: bool = False
 
     # -- sessions
     conversations: list[Conversation] = []
@@ -848,6 +892,7 @@ class StudioState(rx.State):
                     pr_url=str((u.get("pr") or {}).get("url") or ""),
                     rounds=_rounds(u),
                     **_integration_fields(u.get("integration")),
+                    **_outcome_fields(u.get("outcome_label")),
                 )
             )
         self.units = units
@@ -1332,6 +1377,49 @@ class StudioState(rx.State):
         self.notice = (
             f"Answered {kind} {done['question']} of {done['artifact']} as "
             f"{done['answered_by']}. Nothing was started; the next step reads it when it runs."
+        )
+        await self._load_board()
+        self._load_artifact()
+
+    @rx.event
+    def set_outcome_result(self, value: str):
+        self.outcome_result = value
+
+    @rx.event
+    def set_outcome_measured_by(self, value: str):
+        self.outcome_measured_by = value
+
+    @rx.event
+    def set_outcome_source(self, value: str):
+        self.outcome_source = value
+
+    @rx.event
+    def set_outcome_reason(self, value: str):
+        self.outcome_reason = value
+
+    @rx.event
+    def set_outcome_note(self, value: str):
+        self.outcome_note = value
+
+    @rx.event
+    async def record_outcome(self):
+        """`0047`. Record the open unit's outcome. Every rule about whether it may be written
+        is `Service.record_outcome`'s; a refusal arrives here as its words, shown as they are."""
+        self.recording_outcome = True
+        try:
+            done = await SERVICE.record_outcome(
+                self.cwd, self.unit_id, self.outcome_result, self.outcome_measured_by,
+                self.outcome_source, self.outcome_reason, self.outcome_note, self.answer_by,
+            )
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        finally:
+            self.recording_outcome = False
+        self.outcome_source, self.outcome_reason, self.outcome_note = "", "", ""
+        self.notice = (
+            f"Recorded {done['result']} for {done['unit']} as {done['recorded_by']}, measured by "
+            f"{done['measured_by']}. Nothing was started, and no gate reads it."
         )
         await self._load_board()
         self._load_artifact()

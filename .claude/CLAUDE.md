@@ -145,6 +145,10 @@ a `review` gate that never opens.
   and the `ship` gate counts a finding that review then marks `[answered]` as closed only
   when that block exists. So a block anyone who reaches the port can write, followed by
   one agent's round, is part of what opens `ship`.
+  A third kind is no answer at all. Since `0047` a finished unit's outcome is recorded as a
+  `### Outcome` block under `intent.md ## Answers` (`POST /api/units/outcome`, or the
+  unit's *Outcome* panel): `cos.mjs` reads it into `outcome` for the board's label, and no
+  gate and no `next` reads it — a unit that is `done` stays done whatever it says.
 - **A review comment is not an approval, and no gate reads it.** Since `0021` the app posts
   each round of `review.md` to the unit's pull request as one ordinary review comment —
   never `gh pr review` — under this machine's `gh` login, verbatim, first line saying an
