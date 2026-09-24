@@ -2303,3 +2303,79 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
         config = Config(workspaces=(self.cwd,))
         service = Service(config, Sessions(config))
         self.assertEqual(service.running(self.cwd), {"running": {}, "unknown_end": {}})
+
+
+class APrStepIsHandedItsPullRequest(unittest.TestCase):
+    """`0041` R2, through `run_step`: one `gh pr list` in the unit's tree, before the
+    session starts, and its answer in both the prompt and the `start` record. The fixture
+    is `AUnitsBaseIsTheRemoteTrunk`'s, with a `gh` first on `PATH`."""
+
+    setUp = AUnitsBaseIsTheRemoteTrunk.setUp
+    _git = AUnitsBaseIsTheRemoteTrunk._git
+    _typed_unit = AUnitsBaseIsTheRemoteTrunk._typed_unit
+
+    class Replies:
+        """A `pr` session: keeps the prompt, writes `pr.md` itself."""
+
+        def __init__(self):
+            self.prompt = ""
+            self.directory: Path | None = None
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.prompt = text
+            (self.directory / "pr.md").write_text(
+                "# PR: a problem\nAuthor: t. Status: accepted.\nPR: https://x/pull/7\n",
+                encoding="utf-8",
+            )
+            yield ("chunk", "done")
+            yield ("done", {"session_id": "sess-41", "cost": {}})
+
+    def _run_pr(self, stdout: str, code: int = 0) -> tuple[str, dict, str]:
+        from coscc import board as board_reader
+        from coscc.integrate_test import fake_gh, on_path
+        from coscc.journal import Journal
+
+        unit = self._typed_unit()
+        self._git("branch", "fix/a-problem")
+        replies = self.Replies()
+        replies.directory = self.service._unit_dir(str(self.repo), unit)
+        self.service.sessions = replies
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, "open: pr may proceed"
+
+        async def go():
+            last = None
+            async for item in self.service.run_step(str(self.repo), unit, "pr"):
+                last = item
+            return last
+
+        bindir = self.root / "bin"
+        log = fake_gh(bindir, stdout, code)
+        with on_path(bindir), mock.patch.object(board_reader, "gate", open_gate):
+            _, done = asyncio.run(go())
+        j = Journal(self.config.working_dir, self.config.data_dir)
+        start = j.records(str(self.repo.resolve()), kind="start")[-1]
+        self.assertEqual(done["outcome"], "done", done)
+        return replies.prompt, start, log.read_text(encoding="utf-8")
+
+    def test_found(self):
+        rows = json.dumps([{"url": "https://github.com/o/r/pull/7", "number": 7,
+                            "mergeable": "CONFLICTING", "headRefOid": "a" * 40}])
+        prompt, start, argv = self._run_pr(rows)
+        self.assertIn("pr list --head fix/a-problem --state open", argv)
+        self.assertIn("# The pull request, already looked up", prompt)
+        self.assertIn("https://github.com/o/r/pull/7", prompt)
+        self.assertIn("*Integrate*", prompt)
+        self.assertEqual(start["pr_before"], "https://github.com/o/r/pull/7")
+
+    def test_none(self):
+        prompt, start, _ = self._run_pr("[]")
+        self.assertIn("no open pull request for the branch `fix/a-problem`", prompt)
+        self.assertEqual(start["pr_before"], "")
+
+    def test_unknown_still_runs_the_step(self):
+        prompt, start, _ = self._run_pr("", code=1)
+        self.assertIn("could not ask `gh`", prompt)
+        self.assertIn("no auth", prompt)
+        self.assertEqual(start["pr_before"], "")
