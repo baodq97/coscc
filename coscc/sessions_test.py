@@ -450,6 +450,26 @@ class _StartingClient(_CountingClient):
         self._transport = None
 
 
+class _SlowClient(_CountingClient):
+    """A client whose `disconnect` holds until released, and says if it was cut short."""
+
+    def __init__(self, options=None):
+        super().__init__(options)
+        self.messages = [_assistant("a", "sid-s"), _result("sid-s")]
+        self.closing = asyncio.Event()
+        self.release = asyncio.Event()
+        self.cancelled = False
+
+    async def disconnect(self):
+        self.disconnects += 1
+        self.closing.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
 class _Process:
     """Shaped like the process an SDK transport holds: `terminate`, `kill`, `returncode`
     and `wait`. `obeys` is whether SIGTERM ends it."""
@@ -689,6 +709,24 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
     async def _drain(self, h):
         async for _ in self.s.stream("/tmp", "hi", step=h):
             pass
+
+    async def test_a_stop_that_cancels_the_closing_still_removes_the_step(self):
+        """Review round 2, F4: `task.cancel()` landing on `stream`'s own close left the
+        handle in `_steps`, and `live_in` saying so until a restart."""
+        h = sessions.StepHandle()
+        client = _SlowClient()
+        with mock.patch("coscc.sessions.ClaudeSDKClient", lambda options=None: client):
+            task = asyncio.create_task(self._drain(h))
+            await client.closing.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual(self.s._steps, set())
+        self.assertEqual(self.s.live_in("/tmp"), [])
+        client.release.set()
+        await h.close()  # the closing the cancel did not reach
+        self.assertEqual(client.disconnects, 1)
+        self.assertFalse(client.cancelled)
 
 
     async def test_chat_still_keeps_its_client_for_resuming(self):

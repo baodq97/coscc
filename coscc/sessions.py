@@ -560,8 +560,12 @@ class Sessions:
                 async for item in inner:
                     yield item
         finally:
-            await step.close()
-            self._steps.discard(step)
+            try:
+                await step.close()
+            finally:
+                # A Stop's cancel can land on this very close (review round 2, F4); the
+                # closing goes on without us, and the handle must still leave the set.
+                self._steps.discard(step)
 
     async def _stream(
         self, cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
