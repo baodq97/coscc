@@ -930,9 +930,21 @@ const cell = (u, f) => {
   return CODE[status] ?? '?'
 }
 
+// `0035`: whether a unit sits between `pr` and `ship` — an accepted `pr.md` naming a pull
+// request, on a unit that is neither finished nor closed. The app's integration step runs
+// only there, and asks this rather than reading `pr.md` itself: this file is the one place
+// the loop is defined. It reads files alone; whether the pull request is still open is the
+// app's question to ask `gh`, not this one's.
+export function betweenPrAndShip(unit, limit = REVIEW_ROUNDS) {
+  if (statusOf(unit, 'pr.md') !== 'accepted') return false
+  if (!unit.artifacts['pr.md']?.pr) return false
+  const { why } = decide(unit, limit)
+  return why !== 'finished' && why !== 'rejected'
+}
+
 function cmdStatus(json, cosDir, limit) {
   const units = readAll(cosDir)
-  const rows = units.map((u) => ({ ...u, next: nextAction(u, limit) }))
+  const rows = units.map((u) => ({ ...u, next: nextAction(u, limit), betweenPrAndShip: betweenPrAndShip(u, limit) }))
 
   if (json) {
     // The stage list ships with the data so a reader never has to keep its own copy of it.

@@ -181,6 +181,10 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             # derived here: the Questions tab lists exactly these. An older `cos.mjs` sends
             # nothing, which reads as none.
             "person_findings": _person_findings_of(u),
+            # `0035`. Whether the unit sits between `pr` and `ship`, as `cos.mjs` decided it.
+            # Copied, never derived: the integration step reads this and not `pr.md`. An
+            # older `cos.mjs` sends nothing, which reads as outside the window.
+            "between_pr_and_ship": bool(u.get("betweenPrAndShip")),
             # `0028`. The ids `next` says a person is awaited on. Empty unless it said so.
             "waiting": [str(x) for x in ((u.get("next") or {}).get("waiting") or [])],
         }
