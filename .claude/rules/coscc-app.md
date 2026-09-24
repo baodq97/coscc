@@ -265,6 +265,13 @@ no commands, one turn, no budget.
   last integration pushed. Offline, every such unit reads `unknown` and the board waits
   out the timeout. Unmeasured. The counts use the `origin/main` of the last fetch; the
   read does not fetch.
+- **Every `pr` step costs one `gh pr list` before the session starts.** Since `0041`,
+  under this machine's `gh` login, up to 30s (`integrate.GH_TIMEOUT`, chosen, not
+  measured). Offline or logged out, the step still runs and its prompt says the lookup
+  failed. The `pr` grant refuses `git rebase`, `git merge`, `git pull`,
+  `gh pr update-branch` and a forced push (`--force`, `-f`, `--force-with-lease`,
+  `--force-if-includes`, a `+` refspec) by their words, as it refuses the merge; `node -e`
+  still walks past (`coscc/policy_test.py`, `IntegrationIsNotPrs`).
 
 - **An `impl` prompt carries file names taken from other people's commits on `main`.**
   Since `0042` `run_step` diffs the commit the unit's last `done` run of `plan` ran on
@@ -319,6 +326,7 @@ no commands, one turn, no budget.
 | `verify_0025.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
 | `verify_0035.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` whose `pr update-branch` really rebases in a scratch clone. Needs `node`, `uv` and `git`; any missing is exit 2. Proves the mechanical road only: `--paid` (a real Gebo session) is not built and exits 2 |
 | `verify_0037.py` | plain: no session, no quota, no network; temporary data root, only the SDK client replaced. Claim (b) calls the SDK's private `SubprocessCLITransport._build_command`; if that cannot be called it is exit 2, not a pass. `--baseline` and `--measure` read `<COS_DATA_DIR>/cos.db` (`mode=ro`, never through `Data`) and `~/.claude/projects/*/<session>.jsonl`, and write only to `<COS_DATA_DIR>/measurements/`; too few sessions to compare is exit 2. `--paid` **spends real money**: six `claude -p` runs, three per branch. No `claude` on `PATH` is exit 2 |
+| `verify_0041.py` | plain: no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `git` and `uv`; either missing is exit 2. `--measure` reads `<COS_DATA_DIR>/cos.db` (`mode=ro`) and the store's `pr.md` files, and writes only to `<COS_DATA_DIR>/measurements/`; fewer than five `pr` steps since `0041` is exit 2. `--paid` **spends real money, pushes to `main` of `COS_PROOF_REPO` and leaves two pull requests open there**: two real `pr` steps; unset is exit 2. Not run when it was written |
 | `verify_0042.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. The session is a stand-in, so it cannot show that a real `impl` stops on a contradiction |
 | `verify_0047.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2. Fixes the board's `today` at 2026-10-08 for C5 and C6; does not measure the intent's outcome, which is three real units on the real board that day |
 | `verify_0048.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Exit 2 also when `--baseline` reproduces no ref-lock race |
