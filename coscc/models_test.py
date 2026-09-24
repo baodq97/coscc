@@ -74,7 +74,7 @@ class TheFiveStepsOfR6(unittest.TestCase):
 class TheTable(unittest.TestCase):
     def test_chat_comes_after_the_stages_in_their_order(self):
         t = models.table(STAGES, {}, {}, {}, None, 1)
-        expected = ["idea", "intent", "spec", "plan", "impl", "impl:novel", "pr", "pr:novel",
+        expected = ["idea", "intent", "spec", "spike", "plan", "impl", "impl:novel", "pr", "pr:novel",
                     "review", "review:novel", "ship", "ship:novel", "chat"]
         self.assertEqual([r["name"] for r in t["rows"]], expected)
         self.assertTrue(all(r["agents"] == 1 for r in t["rows"]))
@@ -181,7 +181,7 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
         opus, sonnet = "claude-opus-5-5[1m]", "claude-sonnet-5[1m]"
         expected = {
             "idea": row(opus, "medium"), "intent": row(opus, "medium"),
-            "spec": row(opus, "high"), "plan": row(opus, "high"),
+            "spec": row(opus, "high"), "spike": row(opus, "high"), "plan": row(opus, "high"),
             "impl": row(sonnet, "medium"), "impl:novel": row(opus, "high"),
             "review": row(opus, "high"), "review:novel": row(opus, "xhigh"),
             "pr": row(sonnet, "low"), "ship": row(sonnet, "low"),
