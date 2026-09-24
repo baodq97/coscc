@@ -203,9 +203,10 @@ async def run(root: Path, fakebin: Path) -> None:
             refusals[label] = str(e)
 
     await refused("not in the window", other)
-    service._active.add((key, unit))
-    await refused("a step is running")
-    service._active.discard((key, unit))
+    mark = service._take(key, unit, "step", "review")
+    mark.phase = "running"
+    await refused("a review step is running")
+    service._release(key, unit, mark)
     (tree / "g.txt").write_text("dirty\n", encoding="utf-8")
     await refused("dirty worktree")
     git(tree, "checkout", "--", "g.txt")
@@ -219,7 +220,7 @@ async def run(root: Path, fakebin: Path) -> None:
     await refused("no button (unknown)")
     put(fail_list=None)
     wants = {
-        "not in the window": "not between pr and ship", "a step is running": "a step is running",
+        "not in the window": "not between pr and ship", "a review step is running": "a review step is running",
         "dirty worktree": "uncommitted", "not on the branch": "not on the unit's branch",
         "local head differs": "not the pull request's head", "no button (unknown)": "nothing to integrate",
     }
