@@ -81,7 +81,8 @@ class TheRefusals(unittest.TestCase):
     def test_a_running_step_is_refused_and_nothing_is_stopped(self):
         self.assertEqual(
             hold.refusal(unit_row(), "dropped", "r", "b", True),
-            "a step or an integration is running on 0001_x — stop it first (0034); nothing here stops it",
+            "a step or an integration is running on 0001_x — stop the step with its Stop button on the Board "
+            "(0034), or wait for the integration to end, then try again; a hold does not stop anything itself",
         )
         self.assertEqual(hold.refusal(unit_row(), "dropped", "r", "b", False), "")
 
@@ -264,7 +265,7 @@ class HoldThroughTheService(Repo):
         before = self.intent()
         with self.assertRaises(Invalid) as said:
             self.move("paused")
-        self.assertIn("stop it first (0034)", str(said.exception))
+        self.assertIn("its Stop button on the Board (0034)", str(said.exception))
         self.assertEqual(self.intent(), before)
         self.assertIn((self.key, self.unit), self.service._active)
         self.service._active.discard((self.key, self.unit))

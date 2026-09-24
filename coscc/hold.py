@@ -60,7 +60,13 @@ def refusal(found: dict[str, Any] | None, to: str, reason: str, by: str, active:
         if said:
             return said
     if active:
-        return f"a step or an integration is running on {found.get('name')} — stop it first (0034); nothing here stops it"
+        # R13, intent answer 5. The Board's Stop (`0034`) ends a step; an integration has no
+        # Stop and must be waited out. A hold never stops either itself.
+        return (
+            f"a step or an integration is running on {found.get('name')} — stop the step with its Stop "
+            "button on the Board (0034), or wait for the integration to end, then try again; "
+            "a hold does not stop anything itself"
+        )
     return ""
 
 
