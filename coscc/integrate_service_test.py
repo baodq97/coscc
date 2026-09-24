@@ -187,6 +187,24 @@ class GeboThroughTheService(unittest.TestCase):
         ends = [r for r in self.records("end") if r.get("stage") == "integrate"]
         self.assertEqual([e["outcome"] for e in ends], ["failed"])
 
+    def test_a_step_is_refused_while_the_unit_is_being_integrated(self):
+        """F1, one way: `run_step` asks `_active`, and does not clear Gebo's mark."""
+        said = {}
+
+        async def act(tree, gate):
+            try:
+                async for _ in self.service.run_step(self.cwd, self.unit, "review"):
+                    pass
+            except Invalid as e:
+                said["step"] = str(e)
+            said["still_marked"] = (self.key, self.unit) in self.service._active
+            return "[needs-person] stand-in"
+
+        self.integrate_with(act)
+        self.assertIn("being integrated", said.get("step", ""))
+        self.assertTrue(said["still_marked"])
+        self.assertNotIn((self.key, self.unit), self.service._active)
+
     def test_an_integration_is_refused_while_a_step_runs(self):
         """F1, the other way: the mark a step holds refuses Gebo, and opens no session."""
         self.service._active.add((self.key, self.unit))

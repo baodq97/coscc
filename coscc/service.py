@@ -64,6 +64,9 @@ STAGE_FILES = ("idea", "intent", "spec", "plan", "impl", "pr", "review", "ship")
 BRANCH_REMOTE = "origin"
 BRANCH_TRUNK = gitops.TRUNK
 
+# `0035` R12, the other way round: a step refused while the unit is being integrated.
+_BUSY = "{unit} is being integrated or has a step running; wait for it to finish"
+
 
 class Invalid(Exception):
     """A request this layer refuses, carrying a reason a caller can show verbatim."""
@@ -892,6 +895,10 @@ class Service:
         row = next((r for r in found["stages"] if r["stage"] == stage), None)
         if row is None:
             raise Invalid(f"no such stage: {stage} (use one of {', '.join(data['stages'])})")
+        # `0035` review round 1, F1. Before the worktree is opened or refreshed: an
+        # integration may be mid-rebase in it. Asked again where the mark is taken.
+        if (self._journal_key(cwd), unit) in self._active:
+            raise Invalid(_BUSY.format(unit=unit))
 
         # `.claude/CLAUDE.md` invariant 2: *"Ask `cos.mjs gate` before a stage and stop
         # when it exits non-zero."* Until 2026-09-23 this app did neither. It read the
@@ -969,8 +976,12 @@ class Service:
             since = integration_since_review(journal, key, unit)
             integration_note = integrate.describe_for_review(since) if since else ""
         runner = Runner(self.sessions, journal)
-        # `0035` R12: an integration refuses a unit with a step running. One process only.
+        # `0035` R12: an integration refuses a unit with a step running, and a step refuses
+        # one being integrated -- both ways, or the first to finish would clear the other's
+        # mark (review round 1, F1). No `await` between the check and the add. One process only.
         active_key = (key, unit)
+        if active_key in self._active:
+            raise Invalid(_BUSY.format(unit=unit))
         self._active.add(active_key)
         try:
             async for item in runner.run(
