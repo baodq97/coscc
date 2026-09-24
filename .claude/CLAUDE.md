@@ -42,7 +42,9 @@ solution stops making sense exactly when the directory still has to be findable.
 
 The app writes into an artifact a stage wrote in exactly one way: it appends a
 `## Answers` section, and blocks under it, to the end of the file. Nothing above that
-section is ever rewritten.
+section is ever rewritten. Since `0045` `intent.md`'s section also holds `### Paused`,
+`### Dropped` and `### Resumed` blocks — a person's hold on the unit, not an answer — and
+`cos.mjs` reads them: a held unit is offered no stage and every gate is closed on it.
 
 Run `cos.mjs status` for the stages, their order and what each one reads.
 `.claude/scripts/cos.mjs` is the one place the loop is defined; nothing may hold a second
@@ -186,6 +188,16 @@ a `review` gate that never opens.
   opens and closes no gate, and starts nothing. What it had already committed or pushed
   stays. No route has a login and the default bind is `0.0.0.0`, so anyone who can reach
   the port can stop anyone's step under any name.
+- **A hold is not an approval, and it starts nothing.** Since `0045` the board can pause,
+  drop or resume a unit (`POST /api/units/hold`), with one line of reason and a typed name.
+  It appends a block under `intent.md ## Answers` and a `hold` row to the run log; `cos.mjs`
+  then offers the unit no stage and closes every gate on it. Resuming runs nothing either.
+  Dropping also closes the unit's open pull request **with this machine's `gh` login** and
+  removes its worktree; the remote and local branches stay. The route has no login and the
+  default bind is `0.0.0.0`: anyone who reaches the port can pause every unit, or drop one
+  and close its pull request, under any name. A move is refused while a step or an
+  integration of that unit runs — but only one this process started; a chat, a terminal or
+  a second app is not seen.
 - **CI that decides more than one thing.** Since `0015` CI decides whether `review` may
   begin: the gate reads the pull request's required checks and stays closed on red,
   pending or none. Nothing else reads it. A green check also measures a different
