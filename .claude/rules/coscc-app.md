@@ -33,8 +33,19 @@ the page and forgetting to rebuild is possible at all.
 
 ## Shape
 
-One page at `/`, six screens: Overview, Workspaces, Board, Sessions, Activity & usage,
-Settings. Components in `screens.py`, state in `state.py`, logic behind `service.py`.
+One shell under seven static routes (since `0056`): `/` Overview, `/workspaces`, `/board`,
+`/sessions`, `/activity`, `/settings`, and `/unit` — the Board with a unit's dialog open,
+`?ws=<workspace name>&id=<unit>&tab=<tab>`. `coscc/place.py` reads and writes the address;
+`StudioState.arrive`, every route's `on_load`, is the only handler that sets `screen`,
+`cwd`, `unit_id` and `detail_tab` — a navigation button only returns `rx.redirect`. A new
+socket `session_id` is a new page and reads everything; a move inside the app reads only
+what changed. Reflex's `on_load_internal` supersedes, so a navigation cancels the older
+arrival and what it chained; `arrive` records a read only once it is done. The one thing
+a navigation does not cancel is the `cos.mjs next` ask `load_next` waits on: it runs in its
+own task (`_ASKING`), and the next arrival at that unit waits for it instead of asking again. A proof that
+drives the state in-process has no browser to follow a redirect: it arrives where the
+button would have sent it (`arrive_at` in `verify_0024`, `0051`, `stage_models`).
+Components in `screens.py`, state in `state.py`, logic behind `service.py`.
 **A handler that decides anything is a bug in `service.py`, not in the page.**
 
 `policy.py` is the grant table, keyed by stage; the mode is recorded but grants nothing
@@ -423,7 +434,7 @@ no commands, one turn, no budget.
 | `verify_0017.py` | no session, no quota, no network; temporary data root, bare-directory remote. `--this-repo` prepares a worktree of this checkout (`uv sync`, `npm ci`, a build: 20s measured 2026-09-23) and runs `npm test` twice. `--paid` **spends real money**: two real `impl` sessions on a clone of `COS_PROOF_REPO`; unset is exit 2 |
 | `verify_0019.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. The session and its transcript are stand-ins, so it cannot see a real budget stop's `terminal_reason` or a transcript read before it is flushed |
 | `verify_0021.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2 |
-| `verify_0024.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s own handlers through Reflex's event processor, in-process; no browser, so the compiled page is not exercised |
+| `verify_0024.py` | no session, no quota, no network; temporary data root, bare-directory remote (since `0056`: without one, every claim that opens a unit's tree on its branch failed from `0030` on) and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s own handlers through Reflex's event processor, in-process; no browser, so the compiled page is not exercised |
 | `verify_0025.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
 | `verify_0034.py` | plain: no session, no quota, no network; temporary data root, the session replaced, the app driven in-process over ASGI (the dropped NDJSON client is a raw `http.disconnect`). Needs `node`; missing is exit 2 |
 | `verify_0034.py --paid` | **spends real money**: three sessions through `Sessions.stream(step=...)` — two short `claude-haiku-4-5` ones, run to its end and closed after its first chunk, and one `claude-sonnet-5[1m]` stopped while it runs `sleep 47` through `Bash` (haiku holding `Bash` was refused with a long-context 400, measured 2026-09-24); counts the bundled `claude` processes under its own PID 10s later, the third from the Stop. No `/proc` is exit 2 |
@@ -435,6 +446,7 @@ no commands, one turn, no budget.
 | `verify_0047.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2. Fixes the board's `today` at 2026-10-08 for C5 and C6; does not measure the intent's outcome, which is three real units on the real board that day |
 | `verify_0048.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Exit 2 also when `--baseline` reproduces no ref-lock race |
 | `verify_0051.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` that refuses everything. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState` as `verify_0024` does, so the compiled page and its socket are not exercised; the ten steps go through `POST /api/board/run` on the in-process ASGI app, never through a second copy of the app, so the one-process limit is not measured |
+| `verify_0056.py` | browser, no session, no quota; needs `COS_PORT` free and a bundle built for it (`COS_HOST=127.0.0.1 COS_PORT=18756 uv run coscc-build`), temporary data root, two bare-directory remotes, a seeded session past the `0070` login. Measures (a) paste, (b) reload and (c) Back/Forward at nine addresses, and R8–R11, R14, R15, and — in place of R20, whose three proofs meet the login page — `/` opening Overview on a live socket. One width, 1440×900. `--url <base>` measures a running app with `COS_PROOF_PASSWORD`, needs two workspaces with a unit each, writes nothing and prints `SKIP` for R11 and R15; it has never been run against an install from `install.sh` |
 | `verify_0060.py` | plain: no session, no quota, no network; temporary directory with a fixture run log and fixture transcripts. Needs `git` (it loads `coscc/policy.py` from `01699b8` with `git show`) and `bash` (`type -t`); either missing, or that commit absent from a shallow clone, is exit 2. `--measure --since --until [--confirmed FILE]` reads `<COS_DATA_DIR>/cos.db` (`mode=ro`) and `COS_TRANSCRIPTS_DIR`, and writes only to `<COS_DATA_DIR>/measurements/`; no session in the window is exit 2. It does not import `coscc`. "Fake" depends on the `PATH` of the machine running it |
 | `verify_0061.py` | plain: no session, no quota, no network; temporary directory. Needs `node` and `git` (it loads `cos.mjs` from `git merge-base HEAD origin/main`) and `uv`; a missing one, or no merge-base, is exit 2. `--root <dir>` (repeatable) adds a store such as `~/.cos/units/<slot>` to the comparison. `--measure` reads every `<COS_DATA_DIR>/units/*/.cos/` through `cos.mjs status --json` and writes only to `<COS_DATA_DIR>/measurements/`; no merge line yet (this unit's `ship.md`) or fewer than 5 units shipped after it is exit 2. Kind (b) of the intent's wasted round is a person reading pull request history; it does not conclude it |
 | `verify_0068.py` | plain: no session, no quota, no network; temporary data root, a fake `uv` (a shell script whose "installed" `coscc` serves 200 on a port) and `verify_0034`'s stand-in session, app driven in-process over ASGI. Needs `node` and `git`; either missing is exit 2. `--restart` builds two wheels of `HEAD` with `scripts/build_wheel.sh --local` in temporary worktrees, installs one with the real `uv` into a temporary tool dir, plays systemd itself (restart 2 s after a non-zero exit) and drives chromium: **needs the network** for the trial install, port 18790 free, and takes a few minutes. It does not measure the intent's outcome — two real updates on an `install.sh` machine. Since `0070` the fake `coscc` plays the login door for the trial; `--restart`'s browser was not taught to log in and was not run |
@@ -445,7 +457,7 @@ no commands, one turn, no budget.
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.
 
-`verify_0003`, `verify_0006` and `verify_0071` open a real browser on `COS_PORT`. **In a
+`verify_0003`, `verify_0006`, `verify_0056` and `verify_0071` open a real browser on `COS_PORT`. **In a
 checkout** the bundle hardcodes its own address, so none can move to a spare port without a
 bundle built for it: stop the app first, or build for another port, and never run two of
 them at the same time. A wheel installed by `install.sh` behaves the other

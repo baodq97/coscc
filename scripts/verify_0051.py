@@ -125,6 +125,30 @@ class Page:
         await self.processor.enqueue(self.TOKEN, Event(name=name, payload=payload))
         await asyncio.sleep(settle)
 
+    async def arrive_at(self, href: str, sid: str = "verify", settle: float = 1.0) -> None:
+        """`0056`. What a browser sends on landing at `href`: every route's `on_load`,
+        `arrive`, with the address and the socket's id in `router_data`. A navigation button
+        only returns a redirect since `0056`, and no browser here follows it."""
+        from reflex.event import Event
+        from reflex.istate.manager.token import BaseStateToken
+        from reflex_base.constants import RouteVar
+        from reflex_base.utils.format import format_event_handler
+
+        async with self.manager.modify_state(
+            BaseStateToken(ident=self.TOKEN, cls=self.root_cls)
+        ) as root:
+            if not root.router_data:
+                # Else the processor rehydrates first, which needs a registered App.
+                root.router_data = {RouteVar.CLIENT_TOKEN: self.TOKEN}
+        path = href.partition("?")[0]
+        router_data = {RouteVar.PATH: path, RouteVar.ORIGIN: href, RouteVar.SESSION_ID: sid,
+                       RouteVar.CLIENT_TOKEN: self.TOKEN,
+                       RouteVar.HEADERS: {"origin": "http://verify"}}
+        name = format_event_handler(self.studio.event_handlers["arrive"])
+        await self.processor.enqueue(
+            self.TOKEN, Event(name=name, payload={}, router_data=router_data))
+        await asyncio.sleep(settle)
+
     async def read(self) -> dict:
         from reflex.istate.manager.token import BaseStateToken
 
@@ -179,9 +203,9 @@ async def run(root: Path, workspace: Path) -> bool:
     processor = BaseStateEventProcessor().configure(state_manager=manager)
     async with processor:
         page = Page(processor, manager, StudioState, State)
-        await page.fire("load", settle=2.0)
-        await page.fire("choose_workspace", settle=2.0, path=cwd)
-        await page.fire("navigate", screen="board")
+        # `0056`: the load, the choice of workspace and *Board* are one arrival at the
+        # address the last of them redirects to.
+        await page.arrive_at(f"/board?ws={workspace.name}", settle=2.0)
         got = await page.read()
         ok &= say(got["cwd"] == cwd and got["screen"] == "board" and set(busy) <= set(got["cards"]),
                   "the tab loaded, chose the workspace and shows the Board, through its own handlers",
@@ -274,7 +298,7 @@ async def run(root: Path, workspace: Path) -> bool:
         stop.set()
         await sampler
         # Leave the Board so the tab's loop ends before the processor is closed under it.
-        await page.fire("navigate", screen="overview", settle=RUNNING_POLL + 1)
+        await page.arrive_at(f"/?ws={workspace.name}", settle=RUNNING_POLL + 1)
     return bool(ok)
 
 

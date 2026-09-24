@@ -156,12 +156,44 @@ class Page:
         from reflex_base.utils.format import format_event_handler
 
         name = format_event_handler(self.studio.event_handlers[handler])
-        await self.processor.enqueue(self.TOKEN, Event(name=name, payload=payload))
+        return await self._drain(Event(name=name, payload=payload))
+
+    async def arrive_at(self, href: str, sid: str = "verify") -> bool:
+        """`0056`. What a browser sends when it lands on `href`: the route's `on_load`,
+        `arrive`, with the address and the socket's id in `router_data`. Since `0056` a
+        press of a navigation button only returns a redirect, and there is no browser here
+        to follow it, so the proof arrives where the button would have sent it."""
+        from reflex.event import Event
+        from reflex.istate.manager.token import BaseStateToken
+        from reflex_base.constants import RouteVar
+        from reflex_base.utils.format import format_event_handler
+
+        async with self.manager.modify_state(
+            BaseStateToken(ident=self.TOKEN, cls=self.root_cls)
+        ) as root:
+            if not root.router_data:
+                # Else the processor rehydrates first, which needs a registered App.
+                root.router_data = {RouteVar.CLIENT_TOKEN: self.TOKEN}
+        path = href.partition("?")[0]
+        router_data = {RouteVar.PATH: path, RouteVar.ORIGIN: href, RouteVar.SESSION_ID: sid,
+                       RouteVar.CLIENT_TOKEN: self.TOKEN,
+                       RouteVar.HEADERS: {"origin": "http://verify"}}
+        name = format_event_handler(self.studio.event_handlers["arrive"])
+        return await self._drain(Event(name=name, payload={}, router_data=router_data))
+
+    async def _drain(self, event) -> bool:
+        from coscc import state
+
+        await self.processor.enqueue(self.TOKEN, event)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.DRAIN
         while loop.time() < deadline:
             await asyncio.sleep(0.02)
-            if not self.processor._tasks and self.processor._queue.empty():
+            # Since `0056` a unit opens over the Board, so `poll_running` asks on until the
+            # page leaves it: that one task never ends here, and is not waited for. It is
+            # one per tab, and `_POLLING` holds the tab while it runs.
+            polling = 1 if self.TOKEN in state._POLLING else 0
+            if len(self.processor._tasks) <= polling and self.processor._queue.empty():
                 return True
         return False
 
@@ -229,7 +261,11 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
         """
         drained = True
         if how == "open":
-            drained = await page.fire("open_unit", unit=unit)
+            # `0056`: the card's redirect, followed. By way of the Board, as a person
+            # closes the dialog before opening a card again; arriving twice at the same
+            # unit reads nothing the second time.
+            drained = (await page.arrive_at(f"/board?ws={workspace.name}")
+                       and await page.arrive_at(f"/unit?ws={workspace.name}&id={unit}"))
         elif how == "ask":
             drained = await page.fire("load_next")
         got = await page.read()
@@ -280,8 +316,9 @@ async def loop_through(page: Page, root: Path, fakebin: Path, workspace: Path) -
     review = directory / "review.md"
     ci.write_text("pass")
 
-    # The page loads and a person picks the workspace, as on the Workspaces screen.
-    drained = await page.fire("load") and await page.fire("choose_workspace", path=cwd)
+    # The page loads and a person picks the workspace, as on the Workspaces screen. Since
+    # `0056` both are one arrival at the address the choice redirects to.
+    drained = await page.arrive_at(f"/board?ws={workspace.name}")
     got = await page.read()
     ok &= say(drained and got["cwd"] == cwd,
               "the page loaded and chose the temporary workspace through its own handlers",
@@ -446,8 +483,14 @@ def main() -> int:
         gh.chmod(0o755)
         workspace = root / "work" / "proj"
         workspace.mkdir(parents=True)
+        # Since `0030` opening a unit's tree onto its branch fetches `origin` first, and a
+        # fetch that fails leaves the page no tree to ask about (`0056` review round 1, F4).
+        remote = root / "remote.git"
+        git(root, "init", "-q", "--bare", "-b", "main", str(remote))
         git(workspace, "init", "-q", "-b", "main")
         git(workspace, "commit", "-q", "--allow-empty", "-m", "the only commit")
+        git(workspace, "remote", "add", "origin", str(remote))
+        git(workspace, "push", "-q", "-u", "origin", "main")
         git(workspace, "switch", "-q", "-c", f"fix/{SLUG}")
         # Before `coscc` is imported: `coscc/state.py` builds its `SERVICE` from the
         # environment at import, and that must open this directory, not `~/.cos`.

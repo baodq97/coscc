@@ -25,6 +25,7 @@ import sys
 import reflex as rx
 from reflex_base.event.context import EventContext
 
+from coscc import place
 from coscc.api import build
 from coscc.journal import COST_USD, TOKEN_FIELDS
 from coscc.service import Invalid, StaleCutList, describe_base
@@ -323,6 +324,33 @@ _POLLING: set[str] = set()
 # reconnect, so one miss is a flaky network as often as a closed tab. Chosen: 12 asks,
 # one minute at `RUNNING_POLL`; not measured.
 GONE_AFTER = 12
+
+
+# `0056` review round 1, F2. The `cos.mjs next` asks in flight, by (workspace, unit). The next
+# navigation cancels an arrival's `on_load` chain, and the `load_next` it chained with it; the
+# ask itself — `node`, the `gh` it calls, a `git worktree add` in `worktrees.ensure` — runs on
+# in a task of its own, awaited through `asyncio.shield`, so nothing is left running unread
+# and the next arrival at that unit waits for it instead of starting a second beside it.
+_ASKING: dict[tuple[str, str], asyncio.Task] = {}
+
+
+def _asking(ask, cwd: str, unit: str, join: bool) -> asyncio.Future:
+    """`ask(cwd, unit)` in a task no cancellation reaches: the one in flight when `join`."""
+    key = (cwd, unit)
+    task = _ASKING.get(key)
+    if not (join and task is not None and not task.done()
+            and task.get_loop() is asyncio.get_running_loop()):
+        task = asyncio.ensure_future(ask(cwd, unit))
+        _ASKING[key] = task
+
+        def done(t: asyncio.Task, key=key) -> None:
+            if _ASKING.get(key) is t:
+                del _ASKING[key]
+            if not t.cancelled():
+                t.exception()  # read, so an answer nobody waited for is not logged unhandled
+
+        task.add_done_callback(done)
+    return asyncio.shield(task)
 
 
 def _tab_gone(token: str) -> bool:
@@ -651,6 +679,16 @@ class StudioState(rx.State):
     """The whole page. No business state lives here — it is all read back from `Service`."""
 
     screen: str = "overview"
+    # `0056`. The socket `session_id` of the last full read; another one is a new page
+    # (`arrive`). Then the workspace and the unit last read, and the unit `load_next` last
+    # answered for. Each is set once its read is done. Backend only.
+    _loaded_sid: str = ""
+    _read_cwd: str = ""
+    _read_unit: str = ""
+    _asked: str = ""
+    # `0056` F2. Set by `arrive` for the `load_next` it chains, which then waits for an ask
+    # already in flight; *Ask again*, a step's end and a hold move ask afresh.
+    _ask_joins: bool = False
     loading: bool = False
     busy: bool = False
     error: str = ""
@@ -895,6 +933,27 @@ class StudioState(rx.State):
             if u.id == self.unit_id:
                 return u
         return Unit()
+
+    @rx.var
+    def ws_name(self) -> str:
+        """`0056` R8. What `ws=` carries: the workspace's name, never its path."""
+        return next((w.name for w in self.workspaces if w.id == self.cwd), "")
+
+    @rx.var
+    def unit_missing(self) -> bool:
+        """`0056` R9. An address named a unit this workspace's board does not list."""
+        return (self.unit_id != "" and not self.loading
+                and not any(u.id == self.unit_id for u in self.units))
+
+    @rx.var
+    def unit_dropped(self) -> bool:
+        """`0056` R11. The open unit is dropped, so the dialog offers nothing that writes."""
+        return any(u.id == self.unit_id and u.hold_state == "dropped" for u in self.units)
+
+    @rx.var
+    def board_href(self) -> str:
+        ws = next((w.name for w in self.workspaces if w.id == self.cwd), "")
+        return place.href(place.Place("board", ws))
 
     @rx.var
     def open_questions_here(self) -> list[Question]:
@@ -1269,10 +1328,8 @@ class StudioState(rx.State):
 
     # -- events --------------------------------------------------------------
 
-    @rx.event
-    async def load(self):
-        self.loading, self.error = True, ""
-        yield
+    def _load_base(self) -> None:
+        """The first half of what a page's first arrival reads: enough to pick a workspace."""
         try:
             self._load_settings()
             prefs = SERVICE.preferences()
@@ -1281,13 +1338,140 @@ class StudioState(rx.State):
             self._load_workspaces()
         except Invalid as e:
             self._fail(e)
-        yield
+
+    async def _load_rest(self) -> None:
         await self._load_models()
         await self._load_board()
         self._load_sessions()
         self._load_activity()
         self._load_update()
-        self.loading = False
+
+    def _load_unit(self, forget: bool = True) -> None:
+        """What opening a unit reads. Asked even of a unit the board does not list: the
+        board may predate it, and whether it exists is the service's to say (R9)."""
+        self.run_log = ""
+        if forget:
+            # `0071` R9: a message shown in the dialog is one made after it opened. Not on
+            # a page's first arrival, whose messages are about the load itself.
+            self.error, self.notice = "", ""
+        self._load_timeline()
+        self._load_artifact()
+
+    # -- where the page is (`0056`) ------------------------------------------
+    #
+    # The address is the one source of `screen`, `cwd`, `unit_id` and `detail_tab`: a
+    # button builds the address of where it goes and redirects there, and `arrive` — the
+    # `on_load` of every route — is the only handler that sets the four (`spec.md` R12).
+
+    def _address(self) -> tuple[str, str, str]:
+        """The one place `router` is read: the path, the query, and the socket's id."""
+        url = self.router.url
+        return url.path, url.query, self.router.session.session_id
+
+    def _name_of(self, cwd: str) -> str:
+        return next((w.name for w in self.workspaces if w.id == cwd), "")
+
+    @rx.event
+    async def arrive(self):
+        """`0056` R15, R16. Put the page where its address says, reading once.
+
+        A page's first arrival — a load, a reload, an address typed into the bar — is told
+        from a move inside the app by the socket's `session_id`: it is new on every such
+        load and the same across `rx.redirect`, Back and Forward (`spike.md ## U4`). The
+        token, and so this state, survives a reload, so an empty state cannot tell it.
+
+        Reflex's `on_load_internal` supersedes: a newer navigation cancels whatever of the
+        older one's chain is still running — this handler and what it chained. So what was
+        read is recorded only once the read is done (`_loaded_sid`, `_read_cwd`,
+        `_read_unit`, `_asked`), and an arrival cut short is read again by the next one.
+        """
+        path, query, sid = self._address()
+        want = place.read(path, query)
+        first = sid != self._loaded_sid
+        if first:
+            self.loading, self.error = True, ""
+            yield
+            self._load_base()
+
+        # Which workspace: the first one of that name (C6), else what `_load_workspaces`
+        # left, which keeps the current one while it is still listed (R8).
+        named = next((w.id for w in self.workspaces if want.ws and w.name == want.ws), "")
+        cwd = named or self.cwd
+        stray = bool(want.ws) and not named
+
+        screen, unit, tab = want.screen, want.unit, want.tab
+        if screen not in place.SCREENS and screen != "unit":
+            screen = "overview"
+        if screen == "unit" and not unit:
+            screen = "board"  # R10
+        if screen != "unit":
+            unit, tab = "", "overview"
+        elif tab not in place.TABS:
+            tab = "overview"
+        fixed = place.Place(screen, self._name_of(cwd), unit, tab)
+
+        moved_ws = cwd != self._read_cwd
+        moved_unit = unit != self._read_unit
+        moved_screen = ("board" if screen == "unit" else screen) != self.screen
+        self.cwd = cwd
+        self.screen = "board" if screen == "unit" else screen
+        if moved_ws or moved_unit or moved_screen:
+            # Not on an arrival that moved nothing — the one a corrected address causes
+            # may come after a person opened the menu (`verify_0071` at 390px).
+            self.mobile_open = self.command_open = False
+        if moved_ws and not first:
+            self.session_id, self.query, self.error = "", "", ""
+        # While a workspace's board is read, `units` is still the last one's: a dialog open
+        # over it would show that list's unit, or "not a unit", under this workspace's name.
+        # So the unit opens once its own board is in (`0056` review round 1, F1).
+        reading = first or moved_ws
+        self.unit_id, self.detail_tab = ("", "overview") if reading else (unit, tab)
+        if reading:
+            # `_load_board` empties `units` before its first await: a read cut short there
+            # must leave nothing recorded as read, or going back finds no move and an empty
+            # board (`0056` review round 2, F5).
+            self._read_cwd = self._read_unit = ""
+
+        # R16: one read, the one of the largest change.
+        if first:
+            yield
+            await self._load_rest()
+            self.loading = False
+            self._loaded_sid = sid
+        elif moved_ws:
+            # The last read answered for the workspace just left; a unit of the same name
+            # here must not show its session (`0051` review round 1, F1).
+            try:
+                self._running_read = SERVICE.running(cwd)
+            except Invalid:
+                self._running_read = {}
+            yield
+            await self._load_board()
+            self._load_sessions()
+            self._load_activity()
+        elif (moved_unit and not unit) or (moved_screen and not moved_unit):
+            self._load_update()
+        self._read_cwd = cwd
+        self.unit_id, self.detail_tab = unit, tab
+        # A unit is read after whatever the arrival read, which R16 does not list: a pasted
+        # link or a reload at `/unit` would otherwise open a dialog with no timeline or
+        # artifact (R4, R5). None of it calls `SERVICE.board` (R17).
+        if unit and (moved_unit or moved_ws or first):
+            self._load_unit(forget=not first)
+            self._asked = ""
+        self._read_unit = unit
+        if stray:
+            self.notice = "That workspace is not on the list."
+
+        # R7, R8, R10: an address the page had to correct is replaced, not added to. Last,
+        # and alone: the arrival it causes would cancel anything chained here, so that one
+        # chains it instead, and finds nothing else to read.
+        if place.href(fixed) != place.href(want):
+            yield rx.redirect(place.href(fixed), replace=True)
+            return
+        if unit and self._asked != unit:
+            self._ask_joins = True
+            yield StudioState.load_next
         # A reload that finds the tab already on the Board: nothing else would start the loop.
         yield StudioState.poll_running
 
@@ -1296,38 +1480,25 @@ class StudioState(rx.State):
         if screen not in SCREEN_TITLES:
             self.notice = "That screen does not exist."
             return
-        self.screen = screen
         self.mobile_open = False
         self.command_open = False
-        self._load_update()
-        return StudioState.poll_running
+        return rx.redirect(place.href(place.Place(screen, self._name_of(self.cwd))))
 
     @rx.event
-    async def choose_workspace(self, path: str):
+    def choose_workspace(self, path: str):
         if not any(w.id == path for w in self.workspaces):
             self.notice = "That workspace is not on the list."
             return
-        self.cwd = path
-        self.unit_id, self.session_id = "", ""
-        self.query, self.error = "", ""
-        # The last read answered for the workspace just left; a unit of the same name here
-        # must not show its session (`0051` review round 1, F1).
-        try:
-            self._running_read = SERVICE.running(path)
-        except Invalid:
-            self._running_read = {}
-        yield
-        await self._load_board()
-        self._load_sessions()
-        self._load_activity()
-        yield StudioState.poll_running
+        # R13: a unit belongs to the workspace it was opened in, so leaving it goes to Board.
+        screen = "board" if self.unit_id else self.screen
+        return rx.redirect(place.href(place.Place(screen, self._name_of(path))))
 
     @rx.event
-    async def open_workspace(self, path: str):
-        async for _ in self.choose_workspace(path):
-            yield
-        self.screen = "board"
-        yield StudioState.poll_running
+    def open_workspace(self, path: str):
+        if not any(w.id == path for w in self.workspaces):
+            self.notice = "That workspace is not on the list."
+            return
+        return rx.redirect(place.href(place.Place("board", self._name_of(path))))
 
     @rx.event(background=True)
     async def poll_running(self):
@@ -1573,14 +1744,8 @@ class StudioState(rx.State):
 
     @rx.event
     def open_unit(self, unit: str):
-        self.unit_id = unit
-        self.detail_tab = "overview"
-        self.run_log = ""
-        # `0071` R9: a message shown in the dialog is one made after it opened.
-        self.error, self.notice = "", ""
-        self._load_timeline()
-        self._load_artifact()
-        return StudioState.load_next
+        # `arrive` reads it (`_load_unit`); the dialog sits over the Board (R13, C9).
+        return rx.redirect(place.href(place.Place("unit", self._name_of(self.cwd), unit)))
 
     @rx.event(background=True)
     async def load_next(self):
@@ -1593,6 +1758,7 @@ class StudioState(rx.State):
         """
         async with self:
             unit, cwd = self.unit_id, self.cwd
+            join, self._ask_joins = self._ask_joins, False
             self.run_stage = ""
             self.run_waiting = []
             self.run_said = "Asking cos.mjs what comes next…"
@@ -1602,7 +1768,7 @@ class StudioState(rx.State):
             return
         waiting: list[str] = []
         try:
-            stage, said = _run_target(found := await SERVICE.next_step(cwd, unit))
+            stage, said = _run_target(found := await _asking(SERVICE.next_step, cwd, unit, join))
             waiting = _run_waiting(found)
         except Invalid as e:
             stage, said = "", str(e)
@@ -1611,18 +1777,21 @@ class StudioState(rx.State):
             if self.unit_id == unit and self.cwd == cwd:
                 self.run_stage, self.run_said = stage, said
                 self.run_waiting = waiting
+                self._asked = unit
 
     @rx.event
     def toggle_detail(self, value: bool):
         if not value:
-            self.unit_id = ""
+            return rx.redirect(place.href(place.Place("board", self._name_of(self.cwd))))
 
     @rx.event
     def set_detail_tab(self, value: str):
-        if value not in ("overview", "artifacts", "questions", "comments", "timeline"):
+        if value not in place.TABS:
             self.notice = "That tab does not exist."
             return
-        self.detail_tab = value
+        # R7: replaced, so Back from a unit goes to where the unit was opened from.
+        here = place.Place("unit", self._name_of(self.cwd), self.unit_id, value)
+        return rx.redirect(place.href(here), replace=True)
 
     @rx.event
     def edit_answer(self, key: str, value: str):

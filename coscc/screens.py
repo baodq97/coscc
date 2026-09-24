@@ -1320,16 +1320,22 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
             width="100%", align="center",
         ),
         rx.box(rx.markdown(q.text), width="100%", margin_top="8px"),
-        rx.text_area(
-            placeholder="Your answer.",
-            value=rx.cond(P.answer_target == q.key, P.answer_text, ""),
-            on_change=lambda v: P.edit_answer(q.key, v),
-            aria_label="Answer to " + q.key, width="100%", rows="3", margin_top="8px",
-        ),
-        rx.button(
-            rx.icon("send", size=14), "Send this answer",
-            on_click=P.answer_question(q.key), loading=P.answering_key == q.key,
-            size="1", margin_top="8px", id="answer-" + q.key,
+        # `0056` R11: a dropped unit is read, not answered.
+        rx.cond(
+            ~P.unit_dropped,
+            rx.fragment(
+                rx.text_area(
+                    placeholder="Your answer.",
+                    value=rx.cond(P.answer_target == q.key, P.answer_text, ""),
+                    on_change=lambda v: P.edit_answer(q.key, v),
+                    aria_label="Answer to " + q.key, width="100%", rows="3", margin_top="8px",
+                ),
+                rx.button(
+                    rx.icon("send", size=14), "Send this answer",
+                    on_click=P.answer_question(q.key), loading=P.answering_key == q.key,
+                    size="1", margin_top="8px", id="answer-" + q.key,
+                ),
+            ),
         ),
         width="100%",
     )
@@ -1556,12 +1562,15 @@ def _round_row(r: rx.Var[Round]) -> rx.Component:
             rx.vstack(
                 rx.cond(r.reason != "",
                         s.text("Last attempt: " + r.reason, size="1", overflow_wrap="anywhere")),
-                rx.button(
-                    rx.icon("send", size=14), "Post to PR",
-                    on_click=P.post_review_comment(r.number),
-                    loading=P.posting_round == r.number,
-                    disabled=P.posting_round != 0,
-                    size="1", id="post-round-" + r.number.to_string(),
+                rx.cond(
+                    ~P.unit_dropped,  # `0056` R11
+                    rx.button(
+                        rx.icon("send", size=14), "Post to PR",
+                        on_click=P.post_review_comment(r.number),
+                        loading=P.posting_round == r.number,
+                        disabled=P.posting_round != 0,
+                        size="1", id="post-round-" + r.number.to_string(),
+                    ),
                 ),
                 spacing="2", margin_top="8px", align="start",
             ),
@@ -1593,6 +1602,23 @@ def _comments_tab() -> rx.Component:
     )
 
 
+def _unit_not_found() -> rx.Component:
+    """`0056` R9. An address named a unit this workspace's board does not list: say so,
+    rather than draw an empty unit as if it were one."""
+    return rx.vstack(
+        rx.hstack(
+            rx.dialog.title("Not found", size="6", weight="medium"),
+            rx.spacer(),
+            rx.dialog.close(s.icon_button("x", "Close work detail")),
+            width="100%", align="center",
+        ),
+        rx.dialog.description(P.unit_id + " is not a unit of " + P.ws_name + ".", size="2"),
+        rx.link("Back to the board", href=P.board_href, size="2"),
+        rx.cond(P.board_note != "", s.text(P.board_note, size="1", overflow_wrap="anywhere")),
+        spacing="4", padding="28px", width="100%", align="start", id="unit-not-found",
+    )
+
+
 def _detail_dialog() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
@@ -1604,6 +1630,7 @@ def _detail_dialog() -> rx.Component:
                 padding=rx.cond((P.error != "") | (P.notice != ""), "12px 28px 12px", "0"),
                 id="detail-messages",
             ),
+            rx.cond(P.unit_missing, _unit_not_found(), rx.fragment(
             rx.box(
                 rx.hstack(
                     s.text(P.current_unit.id, size="1",
@@ -1619,6 +1646,16 @@ def _detail_dialog() -> rx.Component:
                                       color=s.MUTED, margin_top="12px"),
                 rx.flex(rx.foreach(P.current_unit.cells, _cell_chip),
                         gap="14px", wrap="wrap", margin_top="20px"),
+                rx.cond(
+                    P.unit_dropped,
+                    rx.callout(
+                        "Dropped: " + P.current_unit.hold_reason + " — "
+                        + P.current_unit.hold_by + ", " + P.current_unit.hold_date
+                        + ". Shown to be read; nothing here writes to it but the hold panel.",
+                        icon="circle-x", color_scheme="gray", variant="surface", size="1",
+                        margin_top="20px", id="unit-dropped",
+                    ),
+                ),
                 padding="28px",
             ),
             rx.tabs.root(
@@ -1667,8 +1704,9 @@ def _detail_dialog() -> rx.Component:
                                 justify="between", align="center", width="100%", spacing="3",
                             ),
                         ),
+                        # `0056` R11: nothing that writes, for a dropped unit.
                         rx.cond(
-                            P.next_stage != "",
+                            ~P.unit_dropped & (P.next_stage != ""),
                             rx.vstack(
                                 s.text("Running this starts a real Claude session in this "
                                        "workspace and spends account quota.",
@@ -1750,8 +1788,10 @@ def _detail_dialog() -> rx.Component:
                                    "says why. Nothing re-asks on its own: press Ask again "
                                    "once that has changed."),
                         ),
-                        _integration_panel(),
-                        _outcome_panel(),
+                        rx.cond(~P.unit_dropped, _integration_panel()),
+                        rx.cond(~P.unit_dropped, _outcome_panel()),
+                        # Kept for a dropped unit: its one move (`paused`, `cos.mjs`
+                        # `HOLD_MOVES`) is the board's way back (`spec.md ## Answers, câu 1`).
                         _hold_panel(),
                         rx.cond(
                             P.log_here,
@@ -1798,6 +1838,7 @@ def _detail_dialog() -> rx.Component:
                 ),
                 value=P.detail_tab, on_change=P.set_detail_tab, width="100%",
             ),
+            )),
             position="fixed", right="0", top="0", left="auto", bottom="0",
             transform="none", width="min(620px, 100vw)", max_width="100vw", height="100dvh",
             max_height="100dvh", border_radius="0", padding="0", overflow_y="auto",
@@ -1976,8 +2017,9 @@ def index() -> rx.Component:
         _detail_dialog(), _workspace_dialog(), _remove_dialog(),
         _command_dialog(), _mobile_dialog(),
         rx.script(_RECONNECT_JS),
+        # No `on_mount`: it runs again on every path change (`.cos/0056_*/spike.md ## U3`).
+        # The first read is `StudioState.arrive`, every route's `on_load`.
         id="studio-shell", data_density=P.density,
-        on_mount=P.load,
         background=s.CANVAS, color=s.INK, min_height="100dvh",
         style={"& button": {"cursor": "pointer"}, "& button:disabled": {"cursor": "not-allowed"}},
     )

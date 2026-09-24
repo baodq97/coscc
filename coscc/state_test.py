@@ -366,9 +366,75 @@ class TheRunButtonHoldsNoCopyOfTheLoop(unittest.TestCase):
                 self.assertIn("self.next_stage", ast.unparse(self.methods[name]))
 
     def test_opening_a_unit_and_ending_a_step_both_ask_again(self):
-        for name in ("open_unit", "run_step"):
+        # `0056`: a unit is opened by arriving at its address, so `arrive` is what asks.
+        for name, said in (("arrive", "yield StudioState.load_next"),
+                           ("run_step", "return StudioState.load_next")):
             with self.subTest(handler=name):
-                self.assertIn("return StudioState.load_next", ast.unparse(self.methods[name]))
+                self.assertIn(said, ast.unparse(self.methods[name]))
+
+
+class AnAskOutlivesItsWaiter(unittest.TestCase):
+    """`0056` review round 1, F2. A navigation cancels the `load_next` an arrival chained; the
+    `cos.mjs next` it was waiting on must not be cancelled with it — its `node` and `gh` would
+    run on unread — and the next waiter at that unit takes its answer."""
+
+    def test_a_cancelled_waiter_leaves_the_ask_to_finish_and_be_joined(self):
+        import asyncio
+
+        from coscc import state as page
+
+        calls, ended = [], []
+
+        async def go():
+            gate = asyncio.Event()
+
+            async def ask(cwd, unit):
+                calls.append(unit)
+                try:
+                    await gate.wait()
+                except asyncio.CancelledError:
+                    ended.append("cancelled")
+                    raise
+                ended.append("answered")
+                return {"stage": "review"}
+
+            first = asyncio.ensure_future(page._asking(ask, "/a", "0009_x", join=True))
+            await asyncio.sleep(0)
+            first.cancel()
+            await asyncio.sleep(0)
+            second = page._asking(ask, "/a", "0009_x", join=True)
+            gate.set()
+            answer = await second
+            await asyncio.sleep(0)
+            return first.cancelled(), answer, dict(page._ASKING)
+
+        cancelled, answer, left = asyncio.run(go())
+        self.assertTrue(cancelled)
+        self.assertEqual((calls, ended), (["0009_x"], ["answered"]))
+        self.assertEqual((answer, left), ({"stage": "review"}, {}))
+
+    def test_asking_afresh_does_not_join(self):
+        import asyncio
+
+        from coscc import state as page
+
+        calls = []
+
+        async def go():
+            gate = asyncio.Event()
+
+            async def ask(cwd, unit):
+                calls.append(unit)
+                await gate.wait()
+                return {}
+
+            one = page._asking(ask, "/a", "0009_x", join=True)
+            two = page._asking(ask, "/a", "0009_x", join=False)
+            gate.set()
+            await asyncio.gather(one, two)
+
+        asyncio.run(go())
+        self.assertEqual(calls, ["0009_x", "0009_x"])
 
 
 class RunTargetCopies(unittest.TestCase):
@@ -543,13 +609,6 @@ class OneLoopPerTab(unittest.TestCase):
         import asyncio
         from unittest import mock
 
-        from reflex.event import Event
-        from reflex.istate.manager.memory import StateManagerMemory
-        from reflex.istate.manager.token import BaseStateToken
-        from reflex.state import State
-        from reflex_base.event.processor import BaseStateEventProcessor
-        from reflex_base.utils.format import format_event_handler
-
         from coscc import state as page
 
         token = "state-test-one-loop"
@@ -560,24 +619,18 @@ class OneLoopPerTab(unittest.TestCase):
             return {"running": {}, "unknown_end": {}}
 
         async def go():
-            manager = StateManagerMemory()
-            processor = BaseStateEventProcessor().configure(state_manager=manager)
-            key = BaseStateToken(ident=token, cls=State)
-
-            async def fire(handler: str, **payload):
-                name = format_event_handler(page.StudioState.event_handlers[handler])
-                await processor.enqueue(token, Event(name=name, payload=payload))
-                await asyncio.sleep(0.05)
-
+            # `0056`: a press of *Board* is a redirect now, and what reaches the state is
+            # the arrival it causes — on the same socket, so no full read.
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
             async with processor:
-                async with manager.modify_state(key) as root:
-                    (await root.get_state(page.StudioState)).cwd = "/somewhere"
+                await _somewhere(manager, token)
                 for _ in range(3):
-                    await fire("navigate", screen="board")
+                    await arrive("/board?ws=somewhere", settle=0.05)
                 await asyncio.sleep(0.3)
                 alive = token in page._POLLING
                 asked = len(calls)
-                await fire("navigate", screen="sessions")
+                await arrive("/sessions?ws=somewhere", settle=0.05)
                 await asyncio.sleep(0.3)
                 return alive, asked, token in page._POLLING
 
@@ -602,11 +655,11 @@ class OneLoopPerTab(unittest.TestCase):
         gone = {"now": False}
 
         async def go():
-            manager, processor, fire = _processor(token)
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
             async with processor:
-                async with manager.modify_state(_key(token)) as root:
-                    (await root.get_state(page.StudioState)).cwd = "/somewhere"
-                await fire("navigate", screen="board")
+                await _somewhere(manager, token)
+                await arrive("/board?ws=somewhere", settle=0.05)
                 gone["now"] = True
                 await asyncio.sleep(0.08)  # one or two misses, under GONE_AFTER
                 gone["now"] = False
@@ -655,15 +708,19 @@ class ChangingWorkspaceForgetsTheOldRead(unittest.TestCase):
             return board
 
         async def go():
-            manager, processor, fire = _processor(token)
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
             async with processor:
                 async with manager.modify_state(_key(token)) as root:
                     studio = await root.get_state(page.StudioState)
-                    studio.workspaces = [page.Workspace(id="/a"), page.Workspace(id="/b")]
-                    studio.cwd = "/a"
-                    studio.screen = "sessions"  # no loop: only `choose_workspace` reads
+                    studio.workspaces = [page.Workspace(id="/a", name="a"),
+                                         page.Workspace(id="/b", name="b")]
+                    studio.cwd = studio._read_cwd = "/a"
+                    studio.screen = "sessions"  # no loop: only the change of workspace reads
                     studio._running_read = running_in["/a"]
-                await fire("choose_workspace", path="/b")
+                    studio._loaded_sid = "s1"
+                # `0056`: what `choose_workspace("/b")` redirects to, on the same socket.
+                await arrive("/sessions?ws=b", settle=0.05)
                 async with manager.modify_state(_key(token)) as root:
                     studio = await root.get_state(page.StudioState)
                     return [(u.id, len(u.live)) for u in studio.units]
@@ -707,6 +764,489 @@ def _processor(token: str):
         await asyncio.sleep(0.05)
 
     return manager, processor, fire
+
+
+def _arrival(manager, processor, token: str):
+    """`0056`. An `arrive` the way a route's `on_load` sends it: the address and the socket's
+    id in the event's `router_data`, the keys `self.router.url` and `.session` are built
+    from (`reflex/istate/data.py`, `URLData.from_router_data`, `SessionData`)."""
+    import asyncio
+
+    from reflex.event import Event
+    from reflex_base.constants import RouteVar
+    from reflex_base.utils.format import format_event_handler
+
+    from coscc import state as page
+
+    name = format_event_handler(page.StudioState.event_handlers["arrive"])
+
+    async def arrive(address: str, sid: str = "s1", settle: float = 0.15):
+        async with manager.modify_state(_key(token)) as root:
+            if not root.router_data:
+                # A state that never saw a route is rehydrated first, and rehydrating runs
+                # the app's `on_load` list — which needs a registered App this test lacks.
+                root.router_data = {RouteVar.CLIENT_TOKEN: token}
+        path = address.partition("?")[0]
+        router_data = {
+            RouteVar.PATH: path.rstrip("/") or "/",
+            RouteVar.ORIGIN: address,
+            RouteVar.SESSION_ID: sid,
+            RouteVar.CLIENT_TOKEN: token,
+            RouteVar.HEADERS: {"origin": "http://test"},
+        }
+        future = await processor.enqueue(
+            token, Event(name=name, payload={}, router_data=router_data))
+        await asyncio.sleep(settle)
+        return future
+
+    return arrive
+
+
+async def _somewhere(manager, token: str) -> None:
+    """One listed workspace, `/somewhere`, already read on socket `s1`."""
+    from coscc import state as page
+
+    async with manager.modify_state(_key(token)) as root:
+        studio = await root.get_state(page.StudioState)
+        studio.workspaces = [page.Workspace(id="/somewhere", name="somewhere")]
+        studio.cwd = studio._read_cwd = "/somewhere"
+        studio._loaded_sid = "s1"
+
+
+async def _studio(manager, token: str):
+    from coscc import state as page
+
+    async with manager.modify_state(_key(token)) as root:
+        return await root.get_state(page.StudioState)
+
+
+class _Page:
+    """`0056`. Every `SERVICE` call a first arrival makes, answered from memory and counted,
+    and every `rx.redirect` the handlers ask for, recorded."""
+
+    BOARD = {"stages": [], "recording": True, "units": [
+        {"name": "0009_x", "stages": [], "phase": "impl", "next": "", "blocked": True,
+         "problems": []},
+    ]}
+
+    def __init__(self):
+        from collections import Counter
+
+        self.calls = Counter()
+        self.redirects: list[tuple[str, bool]] = []
+
+    def patches(self):
+        import contextlib
+        from unittest import mock
+
+        from coscc import state as page
+
+        def counted(name, answer):
+            def call(*args, **kwargs):
+                self.calls[name] += 1
+                return answer
+            return call
+
+        def acounted(name, answer):
+            async def call(*args, **kwargs):
+                self.calls[name] += 1
+                return answer
+            return call
+
+        real = page.rx.redirect
+
+        def redirect(path, *args, **kwargs):
+            self.redirects.append((path, bool(kwargs.get("replace", False))))
+            return real(path, *args, **kwargs)
+
+        workspaces = {"working_dir": "/w", "workspaces": [
+            {"path": "/a", "name": "a", "label": "", "source": "store", "missing": False},
+            {"path": "/b", "name": "b", "label": "", "source": "store", "missing": False},
+        ]}
+        stack = contextlib.ExitStack()
+        for name, value in {
+            "settings": counted("settings", {"knobs": [], "grants": []}),
+            "preferences": counted("preferences", {}),
+            "workspaces": counted("workspaces", workspaces),
+            "stage_models": acounted("stage_models", {"rows": [], "problems": []}),
+            "branch_here": acounted("branch_here", {"branch": "main"}),
+            "board": acounted("board", self.BOARD),
+            "sessions_for": counted("sessions_for", {"sessions": []}),
+            "activity_and_usage": counted("activity_and_usage", {"events": [], "total": {}}),
+            "update_status": counted("update_status", {}),
+            "running": counted("running", {"running": {}, "unknown_end": {}}),
+            "running_steps": counted("running_steps", []),
+            "timeline": counted("timeline", {"runs": []}),
+            "artifact": counted("artifact", {"file": "impl.md", "exists": False, "text": ""}),
+            "next_step": mock.AsyncMock(side_effect=page.Invalid("not asked in this test")),
+        }.items():
+            stack.enter_context(mock.patch.object(page.SERVICE, name, value))
+        stack.enter_context(mock.patch.object(page.rx, "redirect", redirect))
+        stack.enter_context(mock.patch.object(page, "RUNNING_POLL", 0.05))
+        return stack
+
+
+class AnArrivalReadsOnce(unittest.TestCase):
+    """`0056` R15, R16, R17. Driven through Reflex's own event processor, as `verify_0024`
+    drives the page; `SERVICE.board` is counted per arrival."""
+
+    def _walk(self, steps):
+        import asyncio
+
+        fake = _Page()
+        token = "state-test-arrive"
+        seen = []
+
+        async def go():
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            async with processor:
+                for address, sid in steps:
+                    before = dict(fake.calls)
+                    await arrive(address, sid)
+                    studio = await _studio(manager, token)
+                    seen.append({
+                        "board": fake.calls["board"] - before.get("board", 0),
+                        "timeline": fake.calls["timeline"] - before.get("timeline", 0),
+                        "screen": studio.screen, "cwd": studio.cwd, "unit": studio.unit_id,
+                        "tab": studio.detail_tab, "notice": studio.notice,
+                        "redirects": list(fake.redirects),
+                    })
+                    fake.redirects.clear()
+                await arrive("/sessions?ws=a", "s9")  # leave the Board, so the loop ends
+                await asyncio.sleep(0.15)
+
+        with fake.patches():
+            asyncio.run(go())
+        return seen
+
+    def test_the_board_is_read_once_per_workspace_and_per_page(self):
+        seen = self._walk([
+            ("/board?ws=a", "s1"),
+            ("/unit?ws=a&id=0009_x", "s1"),
+            ("/unit?ws=a&id=0009_x&tab=timeline", "s1"),
+            ("/board?ws=a", "s1"),  # Back
+            ("/sessions?ws=a", "s1"),
+            ("/board?ws=b", "s1"),
+            ("/board/?ws=b", "s2"),  # reload, through the 307 to the slash
+        ])
+        # First: the address reached the handler. Were `router_data` ignored, every arrival
+        # would read as `/` and the rest of this test would pass on nothing.
+        self.assertEqual(seen[0]["screen"], "board")
+        self.assertEqual([s["board"] for s in seen], [1, 0, 0, 0, 0, 1, 1])
+        self.assertEqual([s["timeline"] for s in seen], [0, 1, 0, 0, 0, 0, 0])
+        self.assertEqual((seen[1]["screen"], seen[1]["unit"], seen[1]["tab"]),
+                         ("board", "0009_x", "overview"))
+        self.assertEqual(seen[2]["tab"], "timeline")
+        self.assertEqual((seen[3]["unit"], seen[4]["screen"]), ("", "sessions"))
+        self.assertEqual((seen[5]["cwd"], seen[6]["cwd"]), ("/b", "/b"))
+        self.assertEqual([s["redirects"] for s in seen], [[]] * 7)
+
+    def test_an_address_without_ws_is_replaced_by_one_with_it(self):
+        seen = self._walk([("/board", "s1"), ("/board?ws=a", "s1")])
+        self.assertEqual(seen[0]["redirects"], [("/board?ws=a", True)])
+        self.assertEqual((seen[0]["screen"], seen[0]["cwd"]), ("board", "/a"))
+        self.assertEqual(seen[1]["redirects"], [])
+        self.assertEqual(seen[1]["board"], 0)
+
+    def test_a_workspace_not_on_the_list_says_so_and_is_replaced(self):
+        seen = self._walk([("/board?ws=nope", "s1")])
+        self.assertEqual(seen[0]["notice"], "That workspace is not on the list.")
+        self.assertEqual(seen[0]["redirects"], [("/board?ws=a", True)])
+        self.assertEqual(seen[0]["cwd"], "/a")
+
+    def test_a_unit_address_without_an_id_is_the_board(self):
+        seen = self._walk([("/unit?ws=a", "s1")])
+        self.assertEqual(seen[0]["redirects"], [("/board?ws=a", True)])
+        self.assertEqual((seen[0]["screen"], seen[0]["unit"]), ("board", ""))
+
+    def test_a_bogus_tab_opens_overview_and_is_replaced(self):
+        seen = self._walk([("/unit?ws=a&id=0009_x&tab=bogus", "s1")])
+        self.assertEqual(seen[0]["tab"], "overview")
+        self.assertEqual(seen[0]["redirects"], [("/unit?ws=a&id=0009_x", True)])
+
+    def test_a_reload_at_a_unit_reads_the_unit_again(self):
+        seen = self._walk([("/unit?ws=a&id=0009_x", "s1"), ("/unit/?ws=a&id=0009_x", "s2")])
+        self.assertEqual([s["board"] for s in seen], [1, 1])
+        self.assertEqual([s["timeline"] for s in seen], [1, 1])
+
+    def test_an_arrival_cut_short_is_read_by_the_next(self):
+        """A newer navigation cancels an unfinished `on_load` chain (Reflex's
+        `on_load_internal` supersedes). Left as a cancelled change of workspace leaves it —
+        `cwd` moved, its board never read — the next arrival there reads it."""
+        import asyncio
+
+        from coscc import state as page
+
+        fake = _Page()
+        token = "state-test-cut-short"
+
+        async def go():
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            async with processor:
+                async with manager.modify_state(_key(token)) as root:
+                    studio = await root.get_state(page.StudioState)
+                    studio.workspaces = [page.Workspace(id="/a", name="a"),
+                                         page.Workspace(id="/b", name="b")]
+                    studio.cwd, studio._read_cwd, studio._loaded_sid = "/b", "/a", "s1"
+                    studio.screen = "board"
+                await arrive("/board?ws=b", "s1")
+                read = fake.calls["board"]
+                await arrive("/sessions?ws=b", "s1")
+                return read
+
+        with fake.patches():
+            self.assertEqual(asyncio.run(go()), 1)
+
+    def test_no_unit_is_open_while_another_workspace_s_board_is_read(self):
+        """`0056` review round 1, F1. Back from `/board?ws=b` to a unit of `a`: while `a`'s
+        board is read, `units` is still `b`'s, so no dialog may be open over it."""
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        fake = _Page()
+        token = "state-test-back-to-a-unit"
+        during: list[tuple[str, str]] = []
+        real = page.StudioState._load_board
+
+        async def spy(self):
+            during.append((self.cwd, self.unit_id))
+            return await real(self)
+
+        async def go():
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            async with processor:
+                await arrive("/unit?ws=a&id=0009_x", "s1")
+                await arrive("/board?ws=b", "s1")
+                await arrive("/unit?ws=a&id=0009_x", "s1")  # Back
+                studio = await _studio(manager, token)
+                after = (studio.cwd, studio.unit_id)
+                await arrive("/sessions?ws=a", "s9")
+                await asyncio.sleep(0.15)
+                return after
+
+        with fake.patches(), mock.patch.object(page.StudioState, "_load_board", spy):
+            after = asyncio.run(go())
+        self.assertEqual(during, [("/a", ""), ("/b", ""), ("/a", ""), ("/a", "")])
+        self.assertEqual(after, ("/a", "0009_x"))
+
+    def test_a_change_of_workspace_cancelled_mid_read_is_read_again_on_the_way_back(self):
+        """`0056` review round 2, F5. `_load_board` empties `units` before its first await;
+        cancelled there — a newer navigation supersedes it — and followed back to the
+        workspace last read, that workspace's board is read again, not left empty."""
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        def walk(start: str) -> tuple[list[str], int, str, bool]:
+            fake = _Page()
+            token = f"state-test-cancelled-{start}"
+            read: list[str] = []
+
+            async def board(cwd):
+                read.append(cwd)
+                if cwd == "/b":
+                    await asyncio.Event().wait()  # a `gh` that has not answered yet
+                return _Page.BOARD
+
+            async def go():
+                manager, processor, _ = _processor(token)
+                arrive = _arrival(manager, processor, token)
+                async with processor:
+                    await arrive(start, "s1")
+                    pending = await arrive("/board?ws=b", "s1")
+                    self.assertEqual(read[-1], "/b")  # the read of `b` is under way
+                    pending.cancel()  # what `_supersede_previous` does to it
+                    await asyncio.sleep(0.05)
+                    await arrive(start, "s1")  # Back
+                    studio = await _studio(manager, token)
+                    got = (list(read), len(studio.units), studio.unit_id, studio.unit_missing)
+                    await arrive("/sessions?ws=a", "s9")
+                    await asyncio.sleep(0.15)
+                    return got
+
+            with fake.patches(), mock.patch.object(page.SERVICE, "board", board):
+                return asyncio.run(go())
+
+        self.assertEqual(walk("/unit?ws=a&id=0009_x"), (["/a", "/b", "/a"], 1, "0009_x", False))
+        self.assertEqual(walk("/board?ws=a"), (["/a", "/b", "/a"], 1, "", False))
+
+    def test_a_tab_pressed_while_asking_waits_for_the_same_ask(self):
+        """`0056` review round 1, F2. Each arrival at an unanswered unit chains `load_next`;
+        the second waits for the ask the first began, rather than start one beside it."""
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        fake = _Page()
+        token = "state-test-ask-once"
+        asked = []
+
+        async def go():
+            gate = asyncio.Event()
+
+            async def next_step(cwd, unit):
+                asked.append((cwd, unit))
+                await gate.wait()
+                return {"stage": "impl", "action": "run impl", "blocked": False}
+
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            with mock.patch.object(page.SERVICE, "next_step", next_step):
+                async with processor:
+                    await arrive("/unit?ws=a&id=0009_x", "s1")
+                    await arrive("/unit?ws=a&id=0009_x&tab=timeline", "s1")
+                    gate.set()
+                    await asyncio.sleep(0.15)
+                    studio = await _studio(manager, token)
+                    got = (studio.run_stage, studio._asked, dict(page._ASKING))
+                    await arrive("/sessions?ws=a", "s9")
+                    await asyncio.sleep(0.15)
+                    return got
+
+        with fake.patches():
+            got = asyncio.run(go())
+        self.assertEqual(asked, [("/a", "0009_x")])
+        self.assertEqual(got, ("impl", "0009_x", {}))
+
+    def test_a_link_to_another_workspace_s_unit_opens_it(self):
+        seen = self._walk([("/board?ws=a", "s1"), ("/unit?ws=b&id=0009_x&tab=questions", "s1")])
+        self.assertEqual((seen[1]["cwd"], seen[1]["unit"], seen[1]["tab"]),
+                         ("/b", "0009_x", "questions"))
+        self.assertEqual((seen[1]["board"], seen[1]["timeline"]), (1, 1))
+
+
+class ANavigationIsOnlyARedirect(unittest.TestCase):
+    """`0056` R7, R12, R13. Each handler returns the address of where it goes, adding to the
+    history or replacing in it, and sets none of `screen`, `cwd`, `unit_id`, `detail_tab`."""
+
+    def test_each_handler(self):
+        import asyncio
+
+        fake = _Page()
+        token = "state-test-navigate"
+        got = {}
+
+        async def go():
+            manager, processor, fire = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            async with processor:
+                await arrive("/unit?ws=a&id=0009_x&tab=questions", "s1")
+                for handler, payload in [
+                    ("navigate", {"screen": "sessions"}),
+                    ("open_unit", {"unit": "0010_y"}),
+                    ("choose_workspace", {"path": "/b"}),
+                    ("open_workspace", {"path": "/b"}),
+                    ("toggle_detail", {"value": False}),
+                    ("set_detail_tab", {"value": "timeline"}),
+                ]:
+                    fake.redirects.clear()
+                    await fire(handler, **payload)
+                    studio = await _studio(manager, token)
+                    got[handler] = (
+                        list(fake.redirects),
+                        (studio.screen, studio.cwd, studio.unit_id, studio.detail_tab),
+                    )
+                await arrive("/sessions?ws=a", "s1")
+
+        with fake.patches():
+            asyncio.run(go())
+        unmoved = ("board", "/a", "0009_x", "questions")
+        self.assertEqual(got, {
+            "navigate": ([("/sessions?ws=a", False)], unmoved),
+            "open_unit": ([("/unit?ws=a&id=0010_y", False)], unmoved),
+            # From a unit, a change of workspace goes to that workspace's Board (R13).
+            "choose_workspace": ([("/board?ws=b", False)], unmoved),
+            "open_workspace": ([("/board?ws=b", False)], unmoved),
+            "toggle_detail": ([("/board?ws=a", False)], unmoved),
+            "set_detail_tab": ([("/unit?ws=a&id=0009_x&tab=timeline", True)], unmoved),
+        })
+
+
+class TheUnitDialogKnowsMissingAndDropped(unittest.TestCase):
+    """`0056` R9, R11: read from `units` and `hold_state`, no service call of their own."""
+
+    def test_the_three_vars(self):
+        import asyncio
+
+        from coscc import state as page
+
+        token = "state-test-missing"
+
+        async def go():
+            manager, _, _ = _processor(token)
+            out = []
+            async with manager.modify_state(_key(token)) as root:
+                studio = await root.get_state(page.StudioState)
+                studio.workspaces = [page.Workspace(id="/p", name="proj")]
+                studio.cwd = "/p"
+                studio.units = [page.Unit(id="0001_alpha"),
+                                page.Unit(id="0002_gone", hold_state="dropped")]
+                for unit, loading in [("", False), ("0001_alpha", False), ("0002_gone", False),
+                                      ("9999_nope", False), ("9999_nope", True)]:
+                    studio.unit_id, studio.loading = unit, loading
+                    out.append((studio.unit_missing, studio.unit_dropped))
+                out.append(studio.board_href)
+            return out
+
+        got = asyncio.run(go())
+        self.assertEqual(got, [(False, False), (False, False), (False, True),
+                               (True, False), (False, False), "/board?ws=proj"])
+
+
+class ADroppedUnitsDialogOffersNothingThatWrites(unittest.TestCase):
+    """`0056` R11, review round 1, F3. `verify_0056` sees the run block, Integrate and Outcome
+    absent for its dropped unit, but `cos.mjs` would hide them there anyway; this reads the
+    dialog itself: every control that writes sits in the true branch of a
+    `rx.cond(~P.unit_dropped, …)`, and the hold panel's does not."""
+
+    WRITES = {"set_mode", "run_step", "start_branch", "integrate", "record_outcome",
+              "edit_answer", "answer_question", "post_review_comment"}
+
+    def _handlers(self):
+        import re
+
+        from coscc import screens
+
+        found: dict[str, set[bool]] = {}
+
+        def walk(c, guarded):
+            for chain in (getattr(c, "event_triggers", None) or {}).values():
+                for name in re.findall(r"StudioState\.(\w+) at", str(chain)):
+                    found.setdefault(name, set()).add(guarded)
+            children = list(getattr(c, "children", None) or [])
+            cond = str(getattr(c, "cond", "")) if type(c).__name__ == "Cond" else ""
+            if "!(" in cond and "unit_dropped" in cond.partition("!(")[2].partition(")")[0]:
+                walk(children[0], True)
+                children = children[1:]
+            for child in children:
+                walk(child, guarded)
+
+        walk(screens._detail_dialog(), False)
+        return found
+
+    def test_every_control_that_writes_is_behind_not_dropped(self):
+        found = self._handlers()
+        self.assertEqual({n: found.get(n) for n in self.WRITES}, {n: {True} for n in self.WRITES})
+
+    def test_the_way_back_is_not(self):
+        self.assertEqual(self._handlers().get("set_hold"), {False})
+
+
+class TheRoutesAreTheNavigation(unittest.TestCase):
+    """`0056`: `coscc/place.py` may not import the state, so its screen list is a copy."""
+
+    def test_screens_match(self):
+        from coscc import place
+        from coscc.state import NAVIGATION
+
+        self.assertEqual(place.SCREENS, tuple(key for key, _, _ in NAVIGATION))
 
 
 def _self_names(target: ast.expr) -> list[str]:
@@ -937,11 +1477,13 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
 
         from coscc import state
 
+        # `0056`: what opening a unit reads is `_load_unit`, which `arrive` runs once the
+        # address names another unit.
         page = SimpleNamespace(
-            unit_id="0001_x", detail_tab="questions", run_log="x", error="e", notice="old",
-            _load_timeline=lambda: None, _load_artifact=lambda: None,
+            unit_id="0002_y", detail_tab="questions", run_log="x", error="e", notice="old",
+            units=[], _load_timeline=lambda: None, _load_artifact=lambda: None,
         )
-        state.StudioState.open_unit.fn(page, "0002_y")
+        state.StudioState._load_unit(page)
         self.assertEqual((page.unit_id, page.notice, page.error), ("0002_y", "", ""))
 
 
