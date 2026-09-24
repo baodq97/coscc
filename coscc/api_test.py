@@ -18,6 +18,18 @@ from coscc.api import build
 from coscc.config import Config
 
 
+def _tmp_config(test: unittest.TestCase) -> Config:
+    """`/tmp` as the one workspace, and a data root of the test's own.
+
+    `0076`: these fixtures used to leave `data_dir` unset, which is `~/.cos`, and
+    `/api/send` opened the real database on every `npm test`. Nothing caught it until a
+    step's environment named that database as one not to open.
+    """
+    tmp = tempfile.TemporaryDirectory()
+    test.addCleanup(tmp.cleanup)
+    return Config(workspaces=("/tmp",), data_dir=tmp.name)
+
+
 def _info(session_id="s1", cwd="/tmp"):
     return sdk.SDKSessionInfo(
         session_id=session_id, summary="s", last_modified=1, file_size=1,
@@ -35,7 +47,7 @@ class Surface(unittest.IsolatedAsyncioTestCase):
     """
 
     async def asyncSetUp(self):
-        self.app = build(Config(workspaces=("/tmp",)))
+        self.app = build(_tmp_config(self))
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
@@ -275,7 +287,7 @@ class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
     """Without a store: the write routes say why rather than crashing."""
 
     async def asyncSetUp(self):
-        self.app = build(Config(workspaces=("/tmp",)))
+        self.app = build(_tmp_config(self))
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
@@ -359,7 +371,7 @@ class ShutdownClosesSessions(unittest.IsolatedAsyncioTestCase):
         # Built outside the coroutine: IsolatedAsyncioTestCase runs the event loop in debug
         # mode, and constructing the app inside the task took long enough to trip asyncio's
         # slow-callback line. That is noise this unit exists to remove.
-        self.app = build(Config(workspaces=("/tmp",)))
+        self.app = build(_tmp_config(self))
         self.app.state.sessions.close_all = mock.AsyncMock()
 
     async def test_leaving_the_lifespan_closes_every_session(self):
@@ -386,7 +398,7 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
     """`0034`. The route decides nothing; it translates `Service.stop_step`."""
 
     async def asyncSetUp(self):
-        self.app = build(Config(workspaces=("/tmp",)))
+        self.app = build(_tmp_config(self))
         self.service = self.app.state.service
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"

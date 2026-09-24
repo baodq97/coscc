@@ -303,6 +303,25 @@ no commands, one turn, no budget.
   intent, spec and plan of the units the app lists as related — a widening of the read
   boundary, and not a sandbox while it has `cat`. Behind the password like every route. Every
   attempt, refused ones included, is one `integration` row in the run log.
+- **A session reads a scratch `COS_DATA_DIR`, and `cos.db` is a tripwire, not a lock.**
+  Since `0076` every session `Sessions` opens — each stage's step, Gebo, chat — gets
+  `COS_DATA_DIR` pointed at a fresh `/tmp/coscc-session-*` (`sessions.scratch_dir`), and it
+  and the commands `worktrees.prepare` runs carry `COSCC_PROTECTED_DB`, this app's `cos.db`
+  appended to whatever list the app itself was given; `Data.connect` raises `Protected`
+  before opening a listed file, reads included. What it does not stop: a branch cut before
+  `0076`, or one that edits the check, has only the scratch directory (spec C1); `python
+  -c`, `sqlite3` or anything opening `~/.cos/cos.db` by its literal path walks past both.
+  A board step's directory is removed after its CLI is closed. Gebo's and a chat's live
+  with their client in `Sessions._live` — Gebo streams with no `step` — and nothing in the
+  app closes one but `Sessions.close_all`, which the installed service runs only on an
+  update, and `cut_turn`, only on "áp dụng ngay": so every Gebo run and every new chat
+  adds one that stays until then. A SIGKILL of the app, or any restart without that
+  update, leaves every `/tmp/coscc-session-*` that exists at that moment behind for good,
+  and nothing sweeps them (spec C4, size unmeasured). Chat no longer falls back to `~/.cos`
+  (C6). `verify_0037/0041/0060/0061 --measure` run inside a step read an empty database and
+  exit 2: run them at a terminal. If the app itself is started with its own `cos.db` in
+  `COSCC_PROTECTED_DB`, every route that reads it is a `500` while `/api/health` says `ok`
+  — the incident this unit fixed, from the other side (`plan.md` Risk 2).
 - **`POST /api/units/outcome` writes the ground for keeping or dropping a unit.** Since
   `0047`. On a `finished` unit it appends a `### Outcome` block (`Result:`
   `đạt` | `trượt` | `không đo được`, `Measured by:`, `Source:` or `Reason:`) under
@@ -452,6 +471,7 @@ no commands, one turn, no budget.
 | `verify_0068.py` | plain: no session, no quota, no network; temporary data root, a fake `uv` (a shell script whose "installed" `coscc` serves 200 on a port) and `verify_0034`'s stand-in session, app driven in-process over ASGI. Needs `node` and `git`; either missing is exit 2. `--restart` builds two wheels of `HEAD` with `scripts/build_wheel.sh --local` in temporary worktrees, installs one with the real `uv` into a temporary tool dir, plays systemd itself (restart 2 s after a non-zero exit) and drives chromium: **needs the network** for the trial install, port 18790 free, and takes a few minutes. It does not measure the intent's outcome — two real updates on an `install.sh` machine. Since `0070` the fake `coscc` plays the login door for the trial; `--restart`'s browser was not taught to log in and was not run |
 | `verify_0070.py` | plain: no session, no quota, no network; temporary data root. Composes the real Reflex app in-process as `run.py` serves it, so it **needs `uv run coscc-build` first** (no bundle is exit 2). Sets a password through `/setup`, walks every registered route and counts the ones that answer without a session; also measures R8 on the real `/_event` socket. `--url` counts against a running service at `COS_URL` from this checkout's route list, sends no `POST /login`, and is exit 2 while that service has no password. `--browser` starts `coscc.run` on a temporary root and drives chromium through `/setup`, the board's `/_event`, *Đăng xuất* and back to `/login`, through `127.0.0.1` and through this machine's first non-loopback address, then removes the session under an open board and needs it on `/login` within 20 s: needs `COS_PORT` free, bound off loopback, and a bundle built for it (`COS_PORT=18791 uv run coscc-build`). A step the app starts inherits `__REFLEX_*` blank, and `run.py`'s `setdefault` keeps a blank mount flag — no page, `/` a 404 — so `--browser` drops them; `verify_0003`/`0006` do not |
 | `verify_0071.py` | browser, needs `COS_PORT` free and a bundle built for it; no session, no quota; temporary data root and a bare-directory remote. Writes a password hash and one session into that root before the app starts, so it passes the `0070` login without `/setup`, and drops blank `__REFLEX_*` as `verify_0070 --browser` does. Its `F<n>` unit carries a `pr.md` naming `github.com/o/r`; whether a board read asks `gh` about it, and so reaches the network, was not measured. Presses *Send this answer* in (a), (b), (c), double-clicks it on an `F<n>`, and presses a refused *Pause*, at 1280×900 and 390×844, and measures each message in view inside the dialog after scrolling it to the bottom. Does not measure the intent's outcome — a person's trial on the real board before 2026-10-08 |
+| `verify_0076.py` | plain: no session, no quota, no network; a temporary `HOME` whose `~/.cos` plays the running app, a child process standing in for a step with the environment `sessions.child_env` builds. Needs `httpx` and `coscc` importable; either missing is exit 2. `--suite` runs `npm test` in a session's environment with the `cos.db` `from_env` names protected, and reads that database (`mode=ro`) before and after: **run it at a terminal**, a step is not to read the real one. Does not measure the intent's outcome — a real `impl` step from the board on a branch that raises the schema, before 2026-10-31 |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name. Since `0070` it meets the login page and was not rewritten (C7) |
 

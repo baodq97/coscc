@@ -41,6 +41,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from coscc import config
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 from typing import Any, Iterator
@@ -224,6 +226,18 @@ class Incompatible(RuntimeError):
     """
 
 
+class Protected(RuntimeError):
+    """This database belongs to the app that started this process, which must not open it.
+
+    `.cos/0076_a-step-can-migrate-the-running-apps-database` R5. A step's code once
+    migrated the running app's `cos.db` to a schema the app could not read, and every page
+    answered `500` until somebody fixed the file by hand. The app now names its database
+    in `config.PROTECTED_DB_VAR` for every child, and this is raised before a connection
+    exists. It is a tripwire, not a lock: code that opens the file without `Data`, or a
+    branch cut before this check, walks past it (that unit's `spec.md` C1).
+    """
+
+
 class Busy(RuntimeError):
     """Something else held the database past the timeout.
 
@@ -283,7 +297,16 @@ class Data:
         four-writer test failed roughly one run in ten with `database is locked` raised out
         of the pragma itself. Changing the journal mode wants an exclusive lock, and a
         connection that has not yet been told how long to wait does not wait at all.
+
+        Before any of that, and before the directory is made, a database listed in
+        `config.PROTECTED_DB_VAR` is refused (`0076` R5). Asked on every call, reads
+        included: a step must not read the running app's data either.
         """
+        if self.db_path.resolve() in config.protected_databases():
+            raise Protected(
+                f"{self.db_path} belongs to the app that started this process; "
+                f"{config.PROTECTED_DB_VAR} lists it, so it is not opened here"
+            )
         self.ensure_dir()
         wait = BUSY_TIMEOUT if timeout is None else timeout
         conn = sqlite3.connect(self.db_path, timeout=wait, isolation_level=None)

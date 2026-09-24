@@ -35,6 +35,12 @@ WRITE_AND_EXEC_TOOLS = frozenset(
 
 _ENV_PREFIX = "COS_"
 
+# `.cos/0076_a-step-can-migrate-the-running-apps-database`. The `cos.db` files a child of
+# this app must not open, separated by `os.pathsep`. Deliberately not a `COS_*` name: those
+# describe this app and are blanked for every child (`coscc/sessions.py` `child_env`),
+# while this one is written *for* the child and read by `coscc/data.py` in it.
+PROTECTED_DB_VAR = "COSCC_PROTECTED_DB"
+
 
 def _flag(env: dict[str, str], name: str, default: bool) -> bool:
     raw = env.get(_ENV_PREFIX + name)
@@ -144,8 +150,35 @@ def _dir(env: dict[str, str], name: str) -> str | None:
     return raw or None
 
 
+def protected_databases(env: dict[str, str] | None = None) -> tuple[Path, ...]:
+    """The databases `PROTECTED_DB_VAR` names, each resolved. Unset or empty is none.
+
+    `0076` R5: `coscc/data.py` refuses to open any of these. Read on every call, not once,
+    so a test can set the variable around one `Data` and not the next.
+    """
+    e = os.environ if env is None else env
+    raw = e.get(PROTECTED_DB_VAR) or ""
+    return tuple(
+        Path(part).expanduser().resolve() for part in raw.split(os.pathsep) if part.strip()
+    )
+
+
+def protect(db_path: str | os.PathLike[str], env: dict[str, str] | None = None) -> str:
+    """The value of `PROTECTED_DB_VAR` for a child that must not open `db_path`.
+
+    `0076` R4: appended, never overwritten. An app running inside a step already carries
+    the outer app's database here, and a child of the inner one must not lose it.
+    """
+    e = os.environ if env is None else env
+    kept = [part for part in (e.get(PROTECTED_DB_VAR) or "").split(os.pathsep) if part.strip()]
+    mine = Path(db_path).expanduser().resolve()
+    if mine not in protected_databases(e):
+        kept.append(str(mine))
+    return os.pathsep.join(kept)
+
+
 def from_env(env: dict[str, str] | None = None) -> Config:
-    """Build the config. The only reader of the environment in this app.
+    """Build the config. This module is the only reader of the environment in this app.
 
     Knob 3 is reachable from here and from nowhere else, which is the whole mechanism
     behind "not settable over HTTP" (`spec.md` C2): a request has no path to this

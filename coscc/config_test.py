@@ -6,10 +6,13 @@ value that drifts because nobody was watching.
 """
 
 import dataclasses
+import os
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
-from coscc.config import Config, from_env
+from coscc.config import PROTECTED_DB_VAR, Config, from_env, protect, protected_databases
 from coscc.data import Data
 
 
@@ -207,6 +210,36 @@ class TheUpdaterSettings(unittest.TestCase):
             (c.invocation_id, c.config_home, c.uv_candidates, c.path_env, c.home),
             (None, "", (), "", ""),
         )
+
+
+class TheProtectedDatabases(unittest.TestCase):
+    """`0076` R4. Every test passes `env`; none reads the environment around it."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_unset_or_empty_is_none(self):
+        self.assertEqual(protected_databases({}), ())
+        self.assertEqual(protected_databases({PROTECTED_DB_VAR: ""}), ())
+
+    def test_two_entries_come_back_resolved(self):
+        a, b = self.tmp / "a" / "cos.db", self.tmp / "b" / "." / "cos.db"
+        got = protected_databases({PROTECTED_DB_VAR: f"{a}{os.pathsep}{b}"})
+        self.assertEqual(got, (a, self.tmp / "b" / "cos.db"))
+
+    def test_protecting_with_nothing_set_names_the_one_database(self):
+        db = self.tmp / "cos.db"
+        self.assertEqual(protect(db, {}), str(db.resolve()))
+
+    def test_protecting_appends_to_what_was_there(self):
+        outer, db = self.tmp / "outer.db", self.tmp / "cos.db"
+        got = protect(db, {PROTECTED_DB_VAR: str(outer)})
+        self.assertEqual(got, f"{outer}{os.pathsep}{db}")
+
+    def test_a_database_already_listed_is_not_listed_twice(self):
+        db = self.tmp / "cos.db"
+        self.assertEqual(protect(db, {PROTECTED_DB_VAR: str(db)}), str(db))
 
 
 if __name__ == "__main__":

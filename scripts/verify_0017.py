@@ -267,10 +267,18 @@ def this_repo_mode(base: Path) -> bool:
         # repaired `COS_PORT` for itself and so could not see the product break on it.
         from unittest import mock
         from coscc import sessions
+        from coscc.config import from_env
+        from coscc.data import Data
         parent = {**os.environ, "COS_HOST": "127.0.0.1", "COS_PORT": "8790"}
+        # Since `0076` a session's `COS_DATA_DIR` is a directory of its own.
+        scratch = base / "session-data"
+        scratch.mkdir()
         with mock.patch.dict(os.environ, parent, clear=True):
             env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-            env.update(sessions.child_env(str(tree), str(REPO)))
+            env.update(sessions.child_env(
+                str(tree), str(REPO), data_dir=str(scratch),
+                app_db=Data(from_env().data_dir).db_path,
+            ))
         codes = {}
         for label, where in (("worktree", tree), ("checkout", REPO)):
             e = env if label == "worktree" else {**os.environ, "COS_PORT": "8790"}

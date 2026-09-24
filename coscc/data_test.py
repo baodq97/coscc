@@ -10,6 +10,8 @@ serialise a read-modify-write rather than merely appearing to.
 from __future__ import annotations
 
 import ast
+import os
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -18,8 +20,10 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from coscc.data import SCHEMA_VERSION, Busy, Data, Incompatible
+from coscc.config import PROTECTED_DB_VAR
+from coscc.data import SCHEMA_VERSION, Busy, Data, Incompatible, Protected
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -430,6 +434,55 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
             "these build a data-root-taking class with one argument, so they write into "
             "the real ~/.cos:\n  " + "\n  ".join(offenders),
         )
+
+
+class TheRunningAppsDatabaseIsNotOpened(unittest.TestCase):
+    """`0076` R5 and R6. Each test sets or removes the variable itself, through
+    `mock.patch.dict`, so a suite run inside a step does not decide the answer."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _protecting(self, *paths: Path):
+        return mock.patch.dict(
+            os.environ, {PROTECTED_DB_VAR: os.pathsep.join(str(p) for p in paths)}
+        )
+
+    def test_a_listed_database_is_refused_before_anything_touches_it(self):
+        root = self.tmp / "app"
+        data = Data(root)
+
+        def write():
+            with data.write():
+                pass
+
+        with self._protecting(root / "cos.db"), mock.patch("coscc.data.sqlite3.connect") as opened:
+            for use in (data.version, write):
+                with self.assertRaises(Protected) as caught:
+                    use()
+                self.assertIn(str(root / "cos.db"), str(caught.exception))
+                self.assertIn(PROTECTED_DB_VAR, str(caught.exception))
+        opened.assert_not_called()
+        self.assertFalse(root.exists(), "the directory was made for a refused database")
+
+    def test_a_symlink_in_the_list_still_names_the_database(self):
+        real = self.tmp / "real"
+        real.mkdir()
+        (self.tmp / "link").symlink_to(real)
+        with self._protecting(self.tmp / "link" / "cos.db"):
+            with self.assertRaises(Protected):
+                Data(real).version()
+
+    def test_another_database_opens(self):
+        with self._protecting(self.tmp / "app" / "cos.db"):
+            self.assertEqual(Data(self.tmp / "mine").version(), SCHEMA_VERSION)
+
+    def test_with_nothing_listed_it_behaves_as_before(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop(PROTECTED_DB_VAR, None)
+            self.assertEqual(Data(self.tmp / "app").version(), SCHEMA_VERSION)
+
 
 if __name__ == "__main__":
     unittest.main()

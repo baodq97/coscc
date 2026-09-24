@@ -32,7 +32,7 @@ from typing import Any, Awaitable, Callable
 import asyncio
 
 import coscc
-from coscc import fetches, gitops, prcomment, units
+from coscc import config, fetches, gitops, prcomment, units
 from coscc.data import Data
 from coscc.frontend import WEB_WORKDIR_VAR
 from coscc.gitops import GitError
@@ -354,17 +354,25 @@ def clean_path(workspace: str | os.PathLike[str] | None) -> str:
     return os.pathsep.join(e for e in parts if _outside(e, roots))
 
 
-def prepare_env(tree: Path, workspace: str | os.PathLike[str] | None) -> dict[str, str]:
+def prepare_env(
+    tree: Path,
+    workspace: str | os.PathLike[str] | None,
+    data_dir: str | os.PathLike[str] | None = None,
+) -> dict[str, str]:
     """The environment a preparing command runs in. Built from nothing.
 
     `VIRTUAL_ENV` and `REFLEX_WEB_WORKDIR` point into the tree: `0014`'s lesson is that a
     build reading this process's `REFLEX_WEB_WORKDIR` compiles into the installed package.
 
+    `config.PROTECTED_DB_VAR` names this app's `cos.db` (`0076` R4): these commands are the
+    branch's own install scripts, and a `Data` in them refuses to open it. `data_dir` is
+    the app's data root, `None` meaning the default `~/.cos`.
+
     No `CLAUDE*`, `ANTHROPIC*`, `COS_*` or `__REFLEX_*` name reaches the command because
-    none of the five names below is one — not because anything filters. A sixth name added
-    here is the only way one could; `worktrees_test.py` asserts on the result with those
-    names set in this process. (Until the `0017` review, F5, a filter loop ran over these
-    five and could never remove anything.)
+    none of the six names below is one — not because anything filters. A seventh name
+    added here is the only way one could; `worktrees_test.py` asserts on the result with
+    those names set in this process. (Until the `0017` review, F5, a filter loop ran over
+    these five and could never remove anything.)
     """
     return {
         "PATH": clean_path(workspace),
@@ -372,6 +380,7 @@ def prepare_env(tree: Path, workspace: str | os.PathLike[str] | None) -> dict[st
         "LC_ALL": "C.UTF-8",
         "VIRTUAL_ENV": str(tree / ".venv"),
         WEB_WORKDIR_VAR: str(tree / ".web"),
+        config.PROTECTED_DB_VAR: config.protect(Data(data_dir).db_path),
     }
 
 
@@ -397,7 +406,10 @@ async def _run(argv: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, st
 
 
 async def prepare(
-    tree: Path, workspace: str | os.PathLike[str] | None = None, run: Run | None = None
+    tree: Path,
+    workspace: str | os.PathLike[str] | None = None,
+    run: Run | None = None,
+    data_dir: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     """Run `commands(tree)` in order, stop at the first that fails, and record the result.
 
@@ -411,7 +423,7 @@ async def prepare(
         "ok": True, "command": "", "exit_code": 0, "tail": "",
         "commands": [" ".join(c) for c in todo],
     }
-    env = prepare_env(tree, workspace)
+    env = prepare_env(tree, workspace, data_dir)
     for argv in todo:
         try:
             code, out = await run(argv, tree, env)

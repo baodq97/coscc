@@ -7,6 +7,7 @@ is run deliberately.
 
 import asyncio
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -17,16 +18,29 @@ import claude_agent_sdk as sdk
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from coscc import frontend, sessions
-from coscc.config import Config
+from coscc.config import PROTECTED_DB_VAR, Config
+from coscc.data import Data
 from coscc.sessions import (
     Live,
     Refused,
     Sessions,
-    _options,
     _text_of,
     history,
     list_for_directory,
 )
+
+
+def _options(*args, **kw):
+    """`sessions._options` with the `data_dir` every caller must give since `0076`."""
+    kw.setdefault("data_dir", tempfile.gettempdir())
+    return sessions._options(*args, **kw)
+
+
+def _child_env(cwd, workspace=None):
+    """`sessions.child_env` with the two arguments every caller must give since `0076`."""
+    return sessions.child_env(
+        cwd, workspace, data_dir=tempfile.gettempdir(), app_db=Data().db_path
+    )
 
 
 def _info(session_id="s1", cwd="/p", summary="sum", **kw):
@@ -359,6 +373,7 @@ class TheSessionIdIsToldBeforeTheStepIsOver(unittest.IsolatedAsyncioTestCase):
 
     async def _run(self, messages, session_id=None, adopt=None):
         s = Sessions(Config(workspaces=("/tmp",)))
+        self.addAsyncCleanup(s.close_all)  # a chat keeps its data root until closed (`0076`)
         if adopt:
             s.adopt(adopt)
         _FakeClient.messages = messages
@@ -413,6 +428,7 @@ class WhichChatTurnsAreAnswering(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         self.s = Sessions(Config(workspaces=("/tmp",)))
+        self.addAsyncCleanup(self.s.close_all)  # a chat keeps its data root until closed
         self.ended = 0
 
         def ended():
@@ -686,6 +702,7 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.s = Sessions(Config(workspaces=("/tmp",)))
+        self.addAsyncCleanup(self.s.close_all)  # a chat keeps its data root until closed
 
     async def test_a_step_that_finishes_is_closed_once_and_not_kept(self):
         h = sessions.StepHandle()
@@ -898,7 +915,7 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
     def child(self, cwd="/w"):
         """What the session process would actually see, composed the way the SDK does."""
         inherited = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        inherited.update(sessions.child_env(cwd))
+        inherited.update(_child_env(cwd))
         return inherited
 
     def test_the_web_workdir_the_child_reads_is_the_workspace_not_this_app(self):
@@ -908,11 +925,13 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
             )
 
     def test_no_setting_of_this_app_reaches_the_child_with_a_value(self):
+        """Every `COS_*` is blank but one: `COS_DATA_DIR` is the session's own (`0076`)."""
         with mock.patch.dict(os.environ, {"COS_DATA_DIR": "/d", "COS_PORT": "1"}):
             child = self.child()
             self.assertEqual(
-                [k for k, v in child.items() if k.startswith("COS_") and v], []
+                [k for k, v in child.items() if k.startswith("COS_") and v], ["COS_DATA_DIR"]
             )
+            self.assertEqual(child["COS_DATA_DIR"], tempfile.gettempdir())
 
     def test_the_settings_the_child_reads_still_load(self):
         """`0017` review F1: the child reads `COS_PORT=""`, and `config.from_env` must
@@ -934,7 +953,7 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
 
     def unit_child(self, cwd, workspace):
         inherited = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        inherited.update(sessions.child_env(cwd, workspace))
+        inherited.update(_child_env(cwd, workspace))
         return inherited
 
     def test_the_virtualenv_the_child_reads_is_the_worktrees(self):
@@ -954,3 +973,209 @@ class TheAppDoesNotHandItsOwnEnvironmentToASession(unittest.TestCase):
             child = self.unit_child("/wt", "/ws")
             self.assertEqual([k for k, v in child.items() if k.startswith("__REFLEX_") and v], [])
             self.assertEqual(child[frontend.WEB_WORKDIR_VAR], str(Path("/wt") / ".web"))
+
+
+class _EnvClient(_CountingClient):
+    """Records the environment each client was built with, and whether its data root
+    existed at that moment. `boom` makes the constructor itself raise, after recording."""
+
+    envs: list = []
+    boom = False
+
+    def __init__(self, options=None):
+        env = dict(options.env)
+        env["_existed"] = Path(env["COS_DATA_DIR"]).is_dir()
+        _EnvClient.envs.append(env)
+        if _EnvClient.boom:
+            raise RuntimeError("the client could not be built")
+        super().__init__(options)
+
+
+class EverySessionGetsADataRootOfItsOwn(unittest.IsolatedAsyncioTestCase):
+    """`0076` R1-R4, read off what the client was built with."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.app = self.tmp / "app"
+        self.s = Sessions(Config(workspaces=("/tmp",), data_dir=str(self.app)))
+        self.addAsyncCleanup(self.s.close_all)
+        _EnvClient.envs = []
+        _EnvClient.boom = False
+        _CountingClient.made = []
+        _CountingClient.hold = None
+        _CountingClient.fail = False
+        _CountingClient.messages = [_assistant("a", "sid-d"), _result("sid-d")]
+        patcher = mock.patch("coscc.sessions.ClaudeSDKClient", _EnvClient)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def _step(self, h=None):
+        return [i async for i in self.s.stream("/tmp", "hi", step=h or sessions.StepHandle())]
+
+    def _root(self, env):
+        return Path(env["COS_DATA_DIR"])
+
+    async def test_r1_an_absolute_existing_directory_apart_from_the_apps(self):
+        await self._step()
+        [env] = _EnvClient.envs
+        root = self._root(env)
+        self.assertTrue(env["COS_DATA_DIR"])
+        self.assertTrue(root.is_absolute())
+        self.assertTrue(env["_existed"])
+        app, mine = self.app.resolve(), root.resolve()
+        self.assertNotEqual(mine, app)
+        self.assertNotIn(app, mine.parents)
+        self.assertNotIn(mine, app.parents)
+
+    async def test_r2_two_steps_get_two_directories(self):
+        await self._step()
+        await self._step()
+        first, second = (self._root(e) for e in _EnvClient.envs)
+        self.assertNotEqual(first, second)
+
+    async def test_r3_gone_after_a_step_that_finishes(self):
+        await self._step()
+        self.assertFalse(self._root(_EnvClient.envs[0]).exists())
+
+    async def test_r3_gone_after_a_step_that_raises(self):
+        _CountingClient.fail = True
+        with self.assertRaises(RuntimeError):
+            await self._step()
+        self.assertFalse(self._root(_EnvClient.envs[0]).exists())
+
+    async def test_r3_gone_after_a_step_stopped_by_its_ceiling(self):
+        capped = sdk.ResultMessage(
+            subtype="error_max_budget_usd", duration_ms=1, duration_api_ms=1, is_error=True,
+            num_turns=9, session_id="sid-d", total_cost_usd=8.0,
+        )
+        _CountingClient.messages = [_assistant("a", "sid-d"), capped]
+        items = await self._step()
+        self.assertEqual(dict(items)["done"]["terminal_reason"], "error_max_budget_usd")
+        self.assertFalse(self._root(_EnvClient.envs[0]).exists())
+
+    async def test_r3_gone_after_a_step_is_stopped(self):
+        _CountingClient.hold = asyncio.Event()
+        h = sessions.StepHandle()
+        started = asyncio.Event()
+
+        async def run():
+            async for _ in self.s.stream("/tmp", "hi", step=h):
+                started.set()
+
+        task = asyncio.create_task(run())
+        await started.wait()
+        self.assertTrue(self._root(_EnvClient.envs[0]).is_dir())
+        await h.close()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertFalse(self._root(_EnvClient.envs[0]).exists())
+
+    async def test_r3_a_stop_that_cancels_the_close_waits_for_the_closing(self):
+        """Review round 1, F1: the directory went while the CLI the cancelled close was
+        still ending could open a `Data` and make it again."""
+        h = sessions.StepHandle()
+        client = _SlowClient()
+        with mock.patch("coscc.sessions.ClaudeSDKClient", lambda options=None: client):
+            task = asyncio.create_task(self._step(h))
+            await client.closing.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertTrue(h.scratch.is_dir(), "the CLI may still be running")
+        client.release.set()
+        await h.close()  # the closing the cancel did not reach
+        await asyncio.sleep(0)
+        self.assertFalse(h.scratch.exists())
+
+    async def test_r3_a_stop_during_a_failed_connect_waits_for_the_abandoning(self):
+        """Review round 2, F2: the same, when the cancel lands on the closing of a client
+        whose `connect` did not finish -- the handle had no client to wait on."""
+        h = sessions.StepHandle()
+        client = _SlowClient()
+        connecting = asyncio.Event()
+
+        async def connect():
+            connecting.set()
+            await asyncio.Event().wait()
+
+        client.connect = connect
+        with mock.patch("coscc.sessions.ClaudeSDKClient", lambda options=None: client):
+            task = asyncio.create_task(self._step(h))
+            await connecting.wait()
+            task.cancel()  # lands on `connect`: the step abandons the client
+            await client.closing.wait()
+            task.cancel()  # the Stop's, landing on the abandoning
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertTrue(h.scratch.is_dir(), "the CLI may still be running")
+        client.release.set()
+        await h._closing
+        await asyncio.sleep(0)
+        self.assertFalse(h.scratch.exists())
+
+    async def test_r3_gone_when_the_client_cannot_be_built(self):
+        _EnvClient.boom = True
+        with self.assertRaises(RuntimeError):
+            await self._step()
+        self.assertFalse(self._root(_EnvClient.envs[0]).exists())
+
+    async def test_a_chats_directory_lasts_until_the_chat_is_closed(self):
+        [_ async for _ in self.s.stream("/tmp", "hi")]
+        root = self._root(_EnvClient.envs[0])
+        self.assertTrue(root.is_dir())
+        [_ async for _ in self.s.stream("/tmp", "again", session_id="sid-d")]
+        self.assertEqual(len(_EnvClient.envs), 1, "the second turn reused the client")
+        self.assertTrue(root.is_dir())
+        await self.s.close("sid-d")
+        self.assertFalse(root.exists())
+
+    async def test_a_chat_whose_client_cannot_be_built_leaves_nothing(self):
+        _EnvClient.boom = True
+        with self.assertRaises(RuntimeError):
+            [_ async for _ in self.s.stream("/tmp", "hi")]
+        self.assertFalse(self._root(_EnvClient.envs[0]).exists())
+
+    async def test_r4_the_apps_database_is_protected_and_an_outer_one_kept(self):
+        with mock.patch.dict(os.environ, {PROTECTED_DB_VAR: "/outer/cos.db"}):
+            await self._step()
+        listed = _EnvClient.envs[0][PROTECTED_DB_VAR].split(os.pathsep)
+        self.assertEqual(listed, ["/outer/cos.db", str(self.app.resolve() / "cos.db")])
+
+
+class OnlyAScratchDirectoryIsEverRemoved(unittest.TestCase):
+    """`0076` plan Risk 1: `_drop` is an `rmtree`, so it must refuse anything else."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_a_directory_scratch_dir_made_is_removed(self):
+        made = sessions.scratch_dir(self.tmp / "app")
+        (made / "cos.db").write_text("x", encoding="utf-8")
+        sessions._drop(made)
+        self.assertFalse(made.exists())
+
+    def test_anything_else_is_left_alone(self):
+        plain = self.tmp / "keep"
+        plain.mkdir()
+        nested = self.tmp / f"{sessions.SCRATCH_PREFIX}nested"
+        nested.mkdir()
+        link = Path(tempfile.gettempdir()) / f"{sessions.SCRATCH_PREFIX}link-{os.getpid()}"
+        link.symlink_to(plain)
+        self.addCleanup(link.unlink)
+        for path in (plain, nested, link):
+            sessions._drop(path)
+        self.assertTrue(plain.is_dir())
+        self.assertTrue(nested.is_dir())
+        self.assertTrue(link.is_symlink())
+
+    def test_a_temp_dir_inside_the_apps_root_is_refused(self):
+        app = self.tmp / "app"
+        inside = app / "tmp"
+        inside.mkdir(parents=True)
+        with mock.patch.object(tempfile, "tempdir", str(inside)):
+            with self.assertRaises(Refused):
+                sessions.scratch_dir(app)
+        self.assertEqual(list(inside.iterdir()), [])

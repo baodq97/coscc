@@ -1152,7 +1152,7 @@ class Service:
             # ordinary reason, and the page has nothing better to offer than *try again*.
             prepared = worktrees.read_prepare(Path(work))
             if not (prepared or {}).get("ok"):
-                prepared = await worktrees.prepare(Path(work), cwd)
+                prepared = await worktrees.prepare(Path(work), cwd, data_dir=self.config.data_dir)
             if not prepared.get("ok"):
                 raise Invalid(worktrees.describe_failure(prepared))
 
@@ -2039,7 +2039,7 @@ class Service:
         # `impl` works with are the ones at the commit just cut from, not the local `main`.
         # A failure is returned, not raised — the branch is cut either way — and `run_step`
         # refuses `impl` until preparing succeeds (R6).
-        prepared = await worktrees.prepare(repo, cwd)
+        prepared = await worktrees.prepare(repo, cwd, data_dir=self.config.data_dir)
         return {
             "cwd": cwd,
             "unit": unit,
