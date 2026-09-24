@@ -26,7 +26,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from coscc.config import Config, from_env
-from coscc.service import Invalid, Service
+from coscc.service import Invalid, NotUpdatable, Service, StaleCutList, Updating
 from coscc.sessions import Refused, Sessions
 
 
@@ -396,6 +396,8 @@ def build(config: Config | None = None) -> FastAPI:
             # Pull the first item here so a refusal that happens before any output is still
             # a 400. An async generator does nothing until it is advanced.
             first = await stream.__anext__()
+        except Updating as e:
+            return _bad(str(e), 503)
         except Invalid as e:
             return _bad(str(e))
         except StopAsyncIteration:
@@ -462,6 +464,8 @@ def build(config: Config | None = None) -> FastAPI:
         stream = service.integrate(str(body.get("cwd", "")), str(body.get("unit", "")))
         try:
             first = await stream.__anext__()
+        except Updating as e:
+            return _bad(str(e), 503)
         except Invalid as e:
             return _bad(str(e))
         except StopAsyncIteration:
@@ -562,6 +566,8 @@ def build(config: Config | None = None) -> FastAPI:
         try:
             # Only what can be decided before any output. See the docstring above.
             service.check_send(cwd, text)
+        except Updating as e:
+            return _bad(str(e), 503)
         except Invalid as e:
             return _bad(str(e))
 
@@ -581,6 +587,74 @@ def build(config: Config | None = None) -> FastAPI:
                 yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
+
+    # -- `0068`: updating the app --------------------------------------------
+    #
+    # No login, like every route here, and `0.0.0.0` by default: anyone who reaches the
+    # port can apply an update, cut running work with "áp dụng ngay", cancel a wait or start
+    # a local build. What they cannot do is choose what gets installed. A body is read for
+    # `channel`, `mode`, `by` and `token` only; a URL, a path, a version or a ref in it is
+    # never read (R15), as `POST /api/workspaces` ignores a working folder sent to it.
+
+    def _refused(e: Invalid) -> JSONResponse:
+        if isinstance(e, StaleCutList):
+            return JSONResponse({"error": str(e), "cut_list": e.listing}, status_code=409)
+        if isinstance(e, NotUpdatable):
+            return _bad(str(e), 409)
+        if isinstance(e, Updating):
+            return _bad(str(e), 503)
+        return _bad(str(e))
+
+    async def _update_body(request: Request) -> dict[str, str] | None:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not isinstance(body, dict):
+            return None
+        return {k: str(body.get(k, "") or "") for k in ("channel", "mode", "by", "token")}
+
+    @api.get("/api/update")
+    async def get_update() -> Any:
+        """R1: what runs, and what the panel shows. R14's script reads `build_id` here."""
+        return service.update_status()
+
+    @api.get("/api/update/cut-list")
+    async def get_cut_list() -> Any:
+        try:
+            return service.update_cut_list()
+        except Invalid as e:
+            return _refused(e)
+
+    @api.post("/api/update/apply")
+    async def apply_update(request: Request) -> Any:
+        body = await _update_body(request)
+        if body is None:
+            return _bad("body must be a JSON object")
+        try:
+            return await service.update_apply(body["channel"], body["mode"], body["by"], body["token"])
+        except Invalid as e:
+            return _refused(e)
+
+    @api.post("/api/update/cancel")
+    async def cancel_update(request: Request) -> Any:
+        body = await _update_body(request)
+        if body is None:
+            return _bad("body must be a JSON object")
+        try:
+            return service.update_cancel(body["by"])
+        except Invalid as e:
+            return _refused(e)
+
+    @api.post("/api/update/build-local")
+    async def build_local(request: Request) -> Any:
+        body = await _update_body(request)
+        if body is None:
+            return _bad("body must be a JSON object")
+        try:
+            return service.update_build_local(body["by"])
+        except Invalid as e:
+            return _refused(e)
 
     # No route for `/` and no static mount. The page is built from Python components
     # (`spec.md` R8), and `/` has to fall through to Reflex's compiled-frontend mount —
