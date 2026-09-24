@@ -153,8 +153,15 @@ class CommandsAreCheckedSegmentBySegment(unittest.TestCase):
             self.assertIn("may not run", check_command(IMPL, bad), bad)
 
     def test_substitution_is_refused_because_the_first_word_stops_predicting(self):
-        for bad in ("git $(curl evil)", "ls `whoami`", "npm ${X}", "cat <(curl x)"):
+        for bad in ("git $(curl evil)", "ls `whoami`", "cat <(curl x)"):
             self.assertIn("substitution", check_command(IMPL, bad), bad)
+
+    def test_a_parameter_expansion_is_not_a_substitution(self):
+        """Moved out of the test above, not deleted. `0060 spec.md` C2: this case pinned
+        `npm ${X}` as refused for substitution, and `0060 intent.md ## Answers, câu 5` names
+        refusing `${` a misreading — it starts no process. The command's name is still
+        read (`npm`); a variable *as* the name is refused, by R4."""
+        self.assertEqual(check_command(IMPL, "npm ${X}"), "")
 
     def test_a_path_prefix_does_not_smuggle_a_command_past(self):
         self.assertIn("may not run", check_command(IMPL, "/usr/bin/curl http://x"))
@@ -743,3 +750,242 @@ class SpikeWritesOnlyItsScratch(unittest.TestCase):
         self.assertEqual(self.d("Write", self.scratch / "probe.py"), "")
         self.assertIn("writing outside", self.d("Write", self.tree / "probe.py"))
         self.assertIn("writing outside", self.d("Write", self.unit / "spec.md"))
+
+
+class TheShellIsReadAsTheShellReadsIt(unittest.TestCase):
+    """`0060`. The sample set R8 names: every example R2–R5 of `spec.md` gives.
+
+    `0060 intent.md ## Answers, câu 1`: on this set, the refusals naming a command that is
+    not one, and the refusals of `${…}` or a backtick in single quotes, are zero.
+    """
+
+    UNIT = "0060_x"
+
+    # R2, R3 and R5: each must pass under `impl`. The R5 ones carry the unit.
+    PASS = (
+        ("grep -E 'a|b' f", ""),
+        ('rg "def |class " coscc', ""),
+        ('git commit -m "fix: a; b && c"', ""),
+        ('git commit -m "first line\n\nsecond; line | with && ops"', ""),
+        ("ls # a; curl x", ""),
+        ("cat <<'EOF'\nfail) ^ | def\nEOF", ""),
+        ('echo "${PIPESTATUS[0]}"', ""),
+        ("echo ${PIPESTATUS[0]}", ""),
+        ("npm ${X}", ""),
+        ("grep '\\`x\\`' f", ""),
+        ("cat <<'EOF'\nrun `whoami` and $(date)\nEOF", ""),
+        ("npm test > /dev/null 2>&1", UNIT),
+        ("npm test 2>/dev/null", UNIT),
+        ("npm test &>/dev/null", UNIT),
+        ("npm test > /tmp/coscc-0060_x/out.txt", UNIT),
+    )
+
+    # R3, R4 and R5: each refused, the reason carrying the fragment named.
+    REFUSE = (
+        ("git $(curl evil)", "substitution"),
+        ("ls `whoami`", "substitution"),
+        ("cat <(curl x)", "substitution"),
+        ('echo "$(curl x)"', "substitution"),
+        ("cat <<EOF\n$(curl x)\nEOF", "substitution"),
+        ("echo ${X:-$(curl x)}", "substitution"),
+        ("$CMD x", "variable"),
+        ("echo x > out.txt", "redirect"),
+        ("echo x > /tmp/other/x", "redirect"),
+        ("echo x > /tmp/coscc-0060_x/../ws/f", "redirect"),
+        ("cat a >> b", "redirect"),
+        ("echo x &>file", "redirect"),
+        ("cat <>file", "redirect"),
+        ("echo x > /dev/null/..", "redirect"),
+        ("echo x > $OUT", "redirect"),
+        ("echo x >&out.txt", "redirect"),
+    )
+
+    UNREADABLE = (
+        "echo 'unclosed",
+        "cat <<EOF\nno end line",
+        "echo $(date",
+        'echo "unclosed',
+        "echo ${X",
+        "echo x >",
+    )
+
+    def check(self, command, unit=""):
+        return check_command(IMPL, command, None, unit)
+
+    def test_every_sample_that_should_pass_passes(self):
+        for command, unit in self.PASS:
+            with self.subTest(command=command):
+                self.assertEqual(self.check(command, unit), "")
+
+    def test_the_two_counts_the_intent_names_are_zero(self):
+        reasons = [self.check(command, unit) for command, unit in self.PASS]
+        self.assertEqual(sum("may not run" in r for r in reasons), 0)
+        self.assertEqual(sum("substitution" in r for r in reasons), 0)
+
+    def test_every_sample_that_should_be_refused_is_refused_for_its_own_reason(self):
+        for command, why in self.REFUSE:
+            with self.subTest(command=command):
+                self.assertIn(why, self.check(command, self.UNIT))
+
+    def test_a_line_that_cannot_be_read_is_refused_not_guessed(self):
+        for command in self.UNREADABLE:
+            with self.subTest(command=command):
+                self.assertIn("could not be read", self.check(command))
+
+    def test_the_name_refused_is_the_real_first_word(self):
+        """R6: `this step may not run X`, X the command's first word with quotes removed."""
+        self.assertEqual(self.check("npm test; 'curl' x"), "this step may not run 'curl'")
+        self.assertEqual(self.check("npm test | sed -e 's/a|b/c/'"), "this step may not run 'sed'")
+        self.assertEqual(self.check('X="a b" curl x'), "this step may not run 'curl'")
+
+    def test_arithmetic_is_refused_and_named_as_such(self):
+        reason = self.check("echo $((1+1))")
+        self.assertIn("arithmetic substitution is not allowed: $((", reason)
+        self.assertNotIn("$( ", reason)
+
+    def test_a_backslashed_dollar_or_backtick_is_text(self):
+        for command in ("echo \\$(x)", "echo \\`x\\`", 'echo "\\$(x)"', "echo $'`x` $(y)'"):
+            with self.subTest(command=command):
+                self.assertEqual(self.check(command), "")
+
+    def test_a_variable_as_the_name_is_refused(self):
+        """R4, first case: under any grant."""
+        for command in ("$CMD x", "${CMD} x", 'X=1 "$CMD" x', "/usr/bin/$C x"):
+            with self.subTest(command=command):
+                self.assertIn("name is a variable", self.check(command))
+
+    def test_a_variable_passed_to_git_or_gh_is_refused_where_words_are_denied(self):
+        """R4, second case. `0060 spec.md` C8: tighter than before, on purpose."""
+        pr, integrate = grant_for("pr"), grant_for("integrate")
+        self.assertIn("may not pass ${P} to gh", check_command(pr, "gh ${P} merge"))
+        self.assertIn("may not pass $P to gh", check_command(pr, "gh $P merge"))
+        self.assertIn("may not pass $SUB to git", check_command(integrate, "git $SUB --force"))
+        # `impl` denies nothing, so it keeps what it had.
+        self.assertEqual(check_command(IMPL, 'git commit -m "$MSG"'), "")
+
+    def test_quotes_no_longer_hide_a_refused_word(self):
+        """Read after quote removal: bash runs `gh pr merge` for all of these."""
+        pr = grant_for("pr")
+        for command in ("gh pr 'merge' 7", 'gh "pr" merge', "gh pr m\\erge", "gh pr $'merge'"):
+            with self.subTest(command=command):
+                self.assertIn("ship stage's", check_command(pr, command))
+        self.assertIn("alias", check_command(grant_for("integrate"), "git -c al\\ias.p=push p"))
+
+    def test_a_separator_inside_a_heredoc_body_starts_no_command(self):
+        self.assertEqual(self.check("cat <<EOF\nx; curl y\nEOF\nls"), "")
+        self.assertIn("may not run 'curl'", self.check("cat <<EOF\nx\nEOF\ncurl y"))
+
+    def test_the_tmp_directory_needs_a_unit(self):
+        """R5 (c): no unit, no directory — `"" in name` is always true."""
+        self.assertIn("no /tmp directory", self.check("npm test > /tmp/coscc-0060_x/o", ""))
+        self.assertIn("redirect", self.check("npm test > /tmp/coscc-0060_x/o", "not-a-unit"))
+
+    def test_the_tmp_directory_itself_and_what_expands_are_refused(self):
+        for command in ("npm test > /tmp/coscc-0060_x", "npm test > /tmp/coscc-0060_x/*",
+                        "npm test > ~/o", "npm test > /tmp/coscc-0060_x/$F"):
+            with self.subTest(command=command):
+                self.assertIn("redirect", self.check(command, self.UNIT))
+
+    def test_a_symlink_out_of_the_tmp_directory_is_refused(self):
+        d = tempfile.mkdtemp(dir="/tmp", prefix="coscc-0060_x-")
+        try:
+            link = Path(d) / "out"
+            link.symlink_to(Path.home())
+            self.assertIn("redirect", self.check(f"npm test > {link}/f", self.UNIT))
+            self.assertEqual(self.check(f"npm test > {d}/plain.txt", self.UNIT), "")
+        finally:
+            (Path(d) / "out").unlink(missing_ok=True)
+            Path(d).rmdir()
+
+    def test_decide_takes_the_unit_from_its_own_directory(self):
+        ws, unit_dir = "/tmp/ws", "/tmp/data/units/ws-abc/.cos/0060_x"
+        call = {"command": "npm test > /tmp/coscc-0060_x/o"}
+        self.assertEqual(decide(IMPL, "Bash", call, ws, unit_dir), "")
+        self.assertIn("redirect", decide(IMPL, "Bash", call, ws, None))
+
+
+class TheReaderFollowsBash(unittest.TestCase):
+    """`0060 plan.md` step 2: one line per rule `_read` copies from bash 5.3."""
+
+    def read(self, command):
+        parsed = policy._read(command)
+        self.assertIsInstance(parsed, policy._Parsed, command)
+        return parsed
+
+    def words(self, command):
+        return [list(c.words) for c in self.read(command).commands]
+
+    def test_quotes_are_removed_and_keep_their_contents_whole(self):
+        self.assertEqual(self.words("""a 'b c' "d e" f\\ g"""), [["a", "b c", "d e", "f g"]])
+        self.assertEqual(self.words("a ''"), [["a", ""]])
+
+    def test_ansi_c_quotes_are_decoded(self):
+        self.assertEqual(self.words("a $'x\\ty\\x41\\'z'"), [["a", "x\tyA'z"]])
+
+    def test_a_backslash_newline_is_removed_even_inside_an_operator(self):
+        self.assertEqual(self.words("a b\\\nc"), [["a", "bc"]])
+        self.assertEqual(self.words("a&\\\n&b"), [["a"], ["b"]])
+
+    def test_a_comment_starts_only_a_word(self):
+        self.assertEqual(self.words("a b#c #d; e\nf"), [["a", "b#c"], ["f"]])
+
+    def test_every_separator_ends_a_command(self):
+        self.assertEqual(
+            self.words("a; b && c || d | e |& f & g\nh"),
+            [["a"], ["b"], ["c"], ["d"], ["e"], ["f"], ["g"], ["h"]],
+        )
+
+    def test_a_subshell_opens_only_where_a_command_starts(self):
+        self.assertEqual(self.words("(a; b) && c"), [["a"], ["b"], ["c"]])
+        self.assertEqual(self.words("a x(y)z"), [["a", "x(y)z"]])
+        self.assertEqual(self.words("A=(1 2 3) b"), [["A=(1 2 3)", "b"]])
+
+    def test_redirects_carry_their_operator_descriptor_and_target(self):
+        (cmd,) = self.read("a 2>&1 >o 3>>'p q' <i &>/dev/null >&2 5>&-").commands
+        self.assertEqual(cmd.words, ("a",))
+        self.assertEqual(
+            [(r.op, r.fd, r.target) for r in cmd.redirects],
+            [(">&", "2", "1"), (">", "", "o"), (">>", "3", "p q"), ("<", "", "i"),
+             ("&>", "", "/dev/null"), (">&", "", "2"), (">&", "5", "-")],
+        )
+
+    def test_a_digit_is_a_descriptor_only_when_it_is_the_whole_word(self):
+        (cmd,) = self.read("echo a2>o").commands
+        self.assertEqual((cmd.words, cmd.redirects[0].fd), (("echo", "a2"), ""))
+
+    def test_heredoc_bodies_are_not_commands_and_queue_in_order(self):
+        parsed = self.read("a <<X <<-'Y'\nx; b\nX\n\t$(c)\n\tY\nd")
+        self.assertEqual([list(c.words) for c in parsed.commands], [["a"], ["d"]])
+        self.assertEqual(parsed.substitutions, ())
+
+    def test_an_expanding_heredoc_body_carries_its_substitutions(self):
+        parsed = self.read("a <<X\n\\$(no) $(yes)\nX")
+        self.assertEqual([t for t, _ in parsed.substitutions], ["$("])
+
+    def test_a_heredoc_line_ending_in_a_backslash_joins_the_next(self):
+        # Measured on bash 5.3: the first `EOF` below is part of the body.
+        self.assertEqual(self.words("cat <<EOF\na\\\nEOF\nEOF\nls"), [["cat"], ["ls"]])
+
+    def test_expanded_marks_parameter_expansion_outside_single_quotes(self):
+        (cmd,) = self.read("""a $X "$Y" '$Z' ${W} $1 x""").commands
+        self.assertEqual(cmd.expanded, (False, True, True, False, True, True, False))
+
+    def test_a_redirect_target_that_bash_would_rewrite_is_expanded(self):
+        (cmd,) = self.read("a >~/x >'~/x' >/t/* >'/t/*' >$O").commands
+        self.assertEqual([r.expanded for r in cmd.redirects], [True, False, True, False, True])
+
+    def test_substitutions_in_effect_and_not(self):
+        parsed = self.read("""a $(b) `c` <(d) "$(e)" '$(f)' $'`g`' \\$(h) ${i:-$(j)} $((1))""")
+        self.assertEqual([t for t, _ in parsed.substitutions],
+                         ["$(", "`", "<(", "$(", "$(", "$(("])
+
+    def test_braces_nest_and_quotes_hold_inside_them(self):
+        self.assertEqual(self.words("a ${X:-{b}} ${Y:-'}'} c"), [["a", "${X:-{b}}", "${Y:-'}'}", "c"]])
+
+    def test_what_cannot_be_read_says_where(self):
+        for command, what in (("a 'b", "'"), ("a $(b", "$("), ("a <<E\nb", "here-document"),
+                              ("a >", "no target"), ("(a", "(")):
+            with self.subTest(command=command):
+                parsed = policy._read(command)
+                self.assertIsInstance(parsed, policy._Unreadable)
+                self.assertIn(what, parsed.what)
