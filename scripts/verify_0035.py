@@ -4,7 +4,12 @@
 fake `gh` first on `PATH` that answers `pr list`, `pr view`, `pr checks` and
 `pr update-branch` — the last by really rebasing the branch in a scratch clone and pushing
 it to the bare remote, as GitHub would. Claims R1, R2, R4, R12, R9 and R10 each print
-`PASS` or `FAIL`.
+`PASS` or `FAIL`, and so does `0052`'s R6: a press on an `origin/main` the workspace has
+not fetched since `main` moved fetches first, then rebases.
+
+Since `0052` a refused `update-branch` opens Gebo. The app's `Sessions` is replaced by a
+stand-in at the start of `run` that replies `[needs-person] stand-in` and opens nothing, so
+the R9 claim that reaches Gebo still spends nothing.
 
 Exit 0 every claim passed; 1 one failed; 2 `node`, `uv` or `git` is missing.
 
@@ -46,7 +51,8 @@ if args[:2] == ["pr", "list"]:
     print(json.dumps([{{"number": {pr}, "headRefOid": head(), "headRefName": branch,
                        "mergeable": state.get("mergeable", "MERGEABLE")}}]))
 elif args[:2] == ["pr", "view"]:
-    print(json.dumps({{"state": "OPEN", "headRefOid": head(), "mergeable": state.get("mergeable")}}))
+    print(json.dumps({{"state": "OPEN", "headRefOid": head(), "mergeable": state.get("mergeable"),
+                       "mergeStateStatus": state.get("merge_state", "")}}))
 elif args[:2] == ["pr", "checks"]:
     print(json.dumps(state.get("checks", [])))
 elif args[:2] == ["pr", "update-branch"]:
@@ -65,6 +71,20 @@ else:
 '''
 
 RESULTS: list[tuple[str, bool, str]] = []
+
+
+class StandInSessions:
+    """`Sessions` as `integrate.run_gebo` uses it, opening nothing (`0052` plan Risk 2)."""
+
+    membership = None
+
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    async def stream(self, cwd, prompt, session_id, **kw):
+        self.prompts.append(prompt)
+        yield ("chunk", "[needs-person] stand-in")
+        yield ("done", {"session_id": "stand-in", "cost": {"cost_usd": 0.0, "turns": 1}})
 
 
 def claim(name: str, ok: bool, detail: str = "") -> None:
@@ -99,7 +119,7 @@ def cos(units_root: Path, *args: str) -> tuple[int, str]:
 
 
 async def run(root: Path, fakebin: Path) -> None:
-    from coscc import integrate
+    from coscc import fetches, integrate
     from coscc.api import build
     from coscc.config import Config
     from coscc.service import Invalid
@@ -116,6 +136,8 @@ async def run(root: Path, fakebin: Path) -> None:
     cwd = str(workspace)
     app = build(Config(workspaces=(cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")))
     service = app.state.service
+    # First, before any claim: no claim here may reach the real `Sessions`.
+    service.sessions = StandInSessions()
     made = await service.create_unit(cwd, SLUG, "verify_0035 fixture")
     unit, directory = made["unit"], Path(made["path"])
     units_root = service._units_root(cwd)
@@ -261,6 +283,26 @@ async def run(root: Path, fakebin: Path) -> None:
           and bool(behind.get("origin_sha")) and bool(unknown.get("reason")),
           f"{seen} behind={behind.get('behind')}")
 
+    # --- 0052 R6 ---------------------------------------------------------------
+    # A fresh coordinator, so the press cannot reuse an earlier fetch; then `main` moves on
+    # the remote and the workspace does not fetch.
+    fetches.shared = fetches.Fetches()
+    commit(seed, "j.txt", "main moves unseen\n", "main")
+    put(merge_state="BEHIND")
+    stale = await integration()
+    updates_before = len([c for c in calls() if c.startswith("pr update-branch")])
+    attempts += 1
+    stale_rec = await run_integrate()
+    updates = len([c for c in calls() if c.startswith("pr update-branch")]) - updates_before
+    put(merge_state=None)
+    claim("0052 R6: a press on a stale origin/main fetches, then rebases",
+          stale.get("state") == "current" and stale.get("button") is True
+          and stale_rec.get("outcome") == "pushed" and stale_rec.get("mode") == "mechanical"
+          and (stale_rec.get("fetch") or {}).get("outcome") == "fetched"
+          and stale_rec.get("merge_state") == "BEHIND" and updates == 1,
+          f"board {stale.get('state')}/{stale.get('button')} press {stale_rec.get('outcome')} "
+          f"{stale_rec.get('mode')} fetch={stale_rec.get('fetch')} updates={updates}")
+
     # --- R9 --------------------------------------------------------------------
     commit(seed, "i.txt", "main moves again\n", "main")
     git(workspace, "fetch", "-q", "origin")
@@ -272,11 +314,17 @@ async def run(root: Path, fakebin: Path) -> None:
     failed_rec = await run_integrate()
     put(update_noop=None)
     rows = records("integration")
-    outcomes = {r.get("outcome") for r in rows if r.get("mode") == "mechanical"}
-    claim("R9: one record per integration, and every mechanical outcome is recorded",
+    # `refused` now comes from R12's refusals: since `0052` a refused `update-branch` opens
+    # Gebo (here the stand-in) and ends `agent` carrying gh's exit code.
+    outcomes = {r.get("outcome") for r in rows}
+    claim("R9: one record per integration, and every outcome is recorded",
           len(rows) == attempts and {"pushed", "refused", "failed"} <= outcomes
-          and refused_rec.get("outcome") == "refused" and failed_rec.get("outcome") == "failed",
-          f"records={len(rows)} attempts={attempts} outcomes={outcomes}")
+          and refused_rec.get("mode") == "agent"
+          and (refused_rec.get("update_branch") or {}).get("code") == 1
+          and refused_rec.get("outcome") == "needs-person"
+          and failed_rec.get("outcome") == "failed",
+          f"records={len(rows)} attempts={attempts} outcomes={outcomes} "
+          f"refused={refused_rec.get('mode')}/{refused_rec.get('outcome')}/{refused_rec.get('update_branch')}")
 
 
 def main() -> int:
