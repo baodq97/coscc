@@ -44,13 +44,30 @@ leave the file behind:
    ```
 
    The push is listed because `gh pr create` cannot open a pull request for a branch the
-   remote has never seen, and in a non-interactive session it has no way to ask.
+   remote has never seen, and in a non-interactive session it has no way to ask. The title
+   and body this puts up are temporary — the first commit's subject, and a `pr.md` still
+   `draft` — and step 5 replaces both.
 3. **Record it at once.** As soon as you have the URL, put `PR: <url>` in the header and
    set `Status: accepted`.
 4. **Then read the checks, once.** `gh pr checks <number> --required`, without `--watch`.
    Write under `## Where` what it said — `pending`, `green` or `red` — exactly as it said
    it. Pending is not green, and a repository with no required checks never opens the
    `review` gate. Do not write that CI passed unless `gh pr checks` said so.
+5. **Put pr.md onto the pull request.** Its title is the `# PR:` line; its body is the
+   rest of `pr.md` less that line and the header line holding `Status:` — whether this
+   step opened the pull request or found it open, and whatever a person wrote there since
+   (`pr.md` is the source). In the app, the app does this itself after the step ends: do
+   not run `gh pr edit`. At a terminal it is the last thing the step does, and it is
+   exactly this:
+
+   ```
+   node .claude/scripts/cos.mjs pr-text <NNNN_slug> | node -e '
+   const t = JSON.parse(require("fs").readFileSync(0, "utf8"))
+   require("child_process").execFileSync("gh", ["pr", "edit", t.url, ...(t.title ? ["--title=" + t.title] : []), "--body-file", "-"], { input: t.body, stdio: ["pipe", "inherit", "inherit"] })'
+   ```
+
+   `cos.mjs pr-text` is the one place the title and body are cut out of `pr.md`; the app
+   reads the same command, so the terminal and the board put up the same words.
 
 **This stage stops at an open pull request.** It does not merge. The merge belongs to
 `ship`, and `ship`'s gate opens only after a review round passed with no finding open and
@@ -105,7 +122,8 @@ above, or when no pull request could be opened (invariant 5).
 ## Done when
 
 Someone can reach the pull request from this file alone, knows whether its checks were
-green, and knows, before opening it, which part of it deserves their attention.
+green, and knows, before opening it, which part of it deserves their attention. The title
+and description on the pull request are the ones `pr.md` gives (step 5).
 
 ## Next
 

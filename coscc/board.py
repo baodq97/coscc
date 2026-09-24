@@ -339,6 +339,37 @@ async def next_step(
     }
 
 
+async def pr_text(units_root: str | Path, unit: str, timeout: float = TIMEOUT) -> dict[str, Any]:
+    """Ask `cos.mjs pr-text` for the title and body `unit`'s `pr.md` puts on its pull request.
+
+    `0055`. The rule that cuts `pr.md` into a title and a body is `cos.mjs` `prText`, the
+    same one a person at a terminal pipes into `gh pr edit`, so the board and the terminal
+    put the same words up. Returns `{unit, title, body, url, status}` on exit 0, and
+    `{"error": <what cos.mjs said>, "code": n}` otherwise -- exit 1 is "no such unit" or
+    "no pr.md", an answer rather than a failure. Raises `Unavailable` as `read` does.
+    """
+    path = Path(units_root)
+    script = harness.script()
+    if not script.exists():
+        raise Unavailable(f"the harness script is missing: {script}")
+
+    try:
+        code, out_text, err_text = await _run([str(script), "--root", str(path), "pr-text", unit], timeout)
+    except (OSError, ValueError) as e:
+        raise Unavailable(
+            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
+        ) from e
+    except asyncio.TimeoutError:
+        raise Unavailable(f"reading pr.md timed out after {timeout:.0f}s") from None
+
+    if code != 0:
+        return {"error": (err_text or out_text).strip() or f"the harness script exited {code}", "code": code}
+    try:
+        return json.loads(out_text)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise Unavailable(f"the harness script did not return JSON: {e}") from e
+
+
 def _person_findings_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
     """`[{id, reason, answered}]` as `cos.mjs` `readUnit` put them in `personFindings`."""
     out = []

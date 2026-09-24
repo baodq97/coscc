@@ -2563,6 +2563,183 @@ class APrStepIsHandedItsPullRequest(unittest.TestCase):
         self.assertEqual(start["pr_before"], "")
 
 
+class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
+    """`0055` R3–R5, through `run_step`: after a `pr` step that was not stopped, the title
+    and body `cos.mjs pr-text` cut from `pr.md` are on the pull request, and one `pr-sync`
+    row says how. `APrStepIsHandedItsPullRequest`'s fixture, with `gh` in memory."""
+
+    setUp = AUnitsBaseIsTheRemoteTrunk.setUp
+    _git = AUnitsBaseIsTheRemoteTrunk._git
+    _typed_unit = AUnitsBaseIsTheRemoteTrunk._typed_unit
+
+    TITLE = "a problem, fixed"
+    BODY = "## Where\n\nhttps://github.com/o/r/pull/7, checks pending.\n"
+    ACCEPTED = f"# PR: {TITLE}\nIntent: intent.md. PR: https://github.com/o/r/pull/7. Author: t. Status: accepted.\n\n{BODY}"
+
+    class Replies:
+        """A session that writes `pr.md` itself; with `hold`, it then waits to be stopped."""
+
+        def __init__(self, text: str | None = None, hold: bool = False):
+            self.text, self.hold = text, hold
+            self.directory: Path | None = None
+            self.reply = "working"
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            step = kw.get("step")
+            try:
+                if self.text is not None:
+                    (self.directory / "pr.md").write_text(self.text, encoding="utf-8")
+                yield ("chunk", self.reply)
+                if self.hold:
+                    await asyncio.sleep(10)
+                yield ("done", {"session_id": "sess-55", "cost": {}})
+            finally:
+                if step is not None:
+                    await step.close()
+
+    class Gh:
+        """Both `integrate._gh` and `prcomment._gh`: one pull request, in memory."""
+
+        def __init__(self, listed: bool, title: str = "temporary", body: str = "temporary", fail=None, raise_=None):
+            self.listed, self.title, self.body = listed, title, body
+            self.fail, self.raise_ = fail, raise_
+            self.calls: list[tuple[list[str], str | None]] = []
+
+        async def __call__(self, argv, cwd, stdin=None):
+            self.calls.append((list(argv), stdin))
+            if argv[:2] == ["pr", "list"] and self.fail == "list":
+                return 1, "", "error connecting to api.github.com"
+            if argv[:2] == ["pr", "list"]:
+                rows = [{"url": "https://github.com/o/r/pull/7", "number": 7,
+                         "mergeable": "MERGEABLE", "headRefOid": "a" * 40}] if self.listed else []
+                return 0, json.dumps(rows), ""
+            if self.raise_ is not None:
+                raise self.raise_
+            if self.fail and argv[:2] == ["pr", self.fail]:
+                return 1, "", "HTTP 422: Validation Failed"
+            if argv[:2] == ["pr", "view"] and argv[-1] == "comments":
+                return 0, json.dumps({"comments": []}), ""
+            if argv[:2] == ["pr", "view"]:
+                return 0, json.dumps({"title": self.title, "body": self.body}), ""
+            if argv[:2] == ["pr", "edit"]:
+                self.title = next((a[len("--title="):] for a in argv if a.startswith("--title=")), self.title)
+                self.body = stdin
+                return 0, "https://github.com/o/r/pull/7\n", ""
+            return 0, "", ""
+
+        def of(self, sub: str, json_: str | None = None):
+            return [c for c in self.calls if c[0][:2] == ["pr", sub] and (json_ is None or c[0][-1] == json_)]
+
+    def _run(self, text, gh, stage="pr", hold=False, prepare=None):
+        from coscc import board as board_reader
+        from coscc import integrate, prcomment
+
+        unit = self._typed_unit()
+        self._git("branch", "fix/a-problem")
+        directory = self.service._unit_dir(str(self.repo), unit)
+        if prepare:
+            prepare(directory)
+        replies = self.Replies(text, hold)
+        replies.directory = directory
+        self.service.sessions = replies
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, f"open: {stage} may proceed"
+
+        async def go():
+            agen = self.service.run_step(str(self.repo), unit, stage)
+            out = [await agen.__anext__()]
+            if hold:
+                await self.service.stop_step(str(self.repo), unit, "Lan")
+            out += [i async for i in agen]
+            return out
+
+        with mock.patch.object(board_reader, "gate", open_gate), \
+                mock.patch.object(integrate, "_gh", gh), mock.patch.object(prcomment, "_gh", gh):
+            out = asyncio.run(go())
+        rows = self.service._journal().records(self.service._journal_key(str(self.repo)), unit, kind="pr-sync")
+        return out[-1][1], rows, directory
+
+    def test_a_pull_request_that_existed_gets_the_title_and_body(self):
+        gh = self.Gh(listed=True)
+        done, [row], _ = self._run(self.ACCEPTED, gh)
+        [(argv, stdin)] = gh.of("edit")
+        self.assertEqual(argv, ["pr", "edit", "https://github.com/o/r/pull/7", f"--title={self.TITLE}", "--body-file", "-"])
+        self.assertEqual(stdin, self.BODY)
+        self.assertEqual((gh.title, gh.body), (self.TITLE, self.BODY))
+        self.assertEqual((row["outcome"], row["existed"], row["pr"]), ("updated", True, "https://github.com/o/r/pull/7"))
+        self.assertNotIn("detail", row)
+        self.assertEqual(done["pr_sync"]["outcome"], "updated")
+
+    def test_a_pull_request_opened_by_the_step_gets_them_too(self):
+        # What `gh pr create --fill-first --body-file` left: the draft pr.md, whole.
+        draft = f"# PR: {self.TITLE}\nIntent: intent.md. Author: t. Status: draft.\n\n{self.BODY}"
+        gh = self.Gh(listed=False, title="first commit subject", body=draft)
+        done, [row], _ = self._run(self.ACCEPTED, gh)
+        self.assertEqual(len(gh.of("edit")), 1)
+        self.assertEqual((gh.title, gh.body), (self.TITLE, self.BODY))
+        self.assertEqual((row["outcome"], row["existed"]), ("updated", False))
+
+    def test_a_lookup_that_could_not_answer_is_existed_none_not_false(self):
+        # Review F2: a lookup that failed is not "no pull request".
+        gh = self.Gh(listed=True, fail="list")
+        done, [row], _ = self._run(self.ACCEPTED, gh)
+        self.assertEqual((row["outcome"], row["existed"]), ("updated", None))
+        self.assertIsNone(done["pr_sync"]["existed"])
+        [start] = [r for r in self.service._journal().records(self.service._journal_key(str(self.repo)), kind="start")
+                   if r.get("stage") == "pr"]
+        self.assertEqual(start["pr_before"], "")
+
+    def test_already_there_is_not_written_again(self):
+        gh = self.Gh(listed=True, title=self.TITLE, body=self.BODY)
+        done, [row], _ = self._run(self.ACCEPTED, gh)
+        self.assertEqual(gh.of("edit"), [])
+        self.assertEqual(row["outcome"], "already")
+
+    def test_a_stopped_step_calls_nothing_and_writes_no_row(self):
+        gh = self.Gh(listed=True)
+        done, rows, _ = self._run(self.ACCEPTED, gh, hold=True)
+        self.assertEqual(done["outcome"], "stopped")
+        self.assertEqual((gh.of("view"), gh.of("edit"), rows), ([], [], []))
+        self.assertNotIn("pr_sync", done)
+
+    def test_a_draft_or_a_missing_url_is_skipped_without_gh(self):
+        for text in (self.ACCEPTED.replace("Status: accepted", "Status: draft"),
+                     self.ACCEPTED.replace("PR: https://github.com/o/r/pull/7. ", "")):
+            with self.subTest(text=text.splitlines()[1]):
+                self.setUp()
+                gh = self.Gh(listed=True)
+                done, [row], _ = self._run(text, gh)
+                self.assertEqual((gh.of("view"), gh.of("edit")), ([], []))
+                self.assertEqual(row["outcome"], "skipped")
+                self.assertTrue(row["detail"])
+
+    def test_r4_impl_and_review_do_not_sync(self):
+        for stage in ("impl", "review"):
+            with self.subTest(stage=stage):
+                self.setUp()
+                gh = self.Gh(listed=True)
+                _, rows, _ = self._run(
+                    None, gh, stage=stage,
+                    prepare=lambda d: (d / "pr.md").write_text(self.ACCEPTED, encoding="utf-8"),
+                )
+                self.assertEqual((rows, gh.of("edit"), gh.of("view", "title,body")), ([], [], []))
+
+    def test_r5_a_refusal_leaves_the_step_done_and_pr_md_as_it_was(self):
+        gh = self.Gh(listed=True, fail="edit")
+        done, [row], directory = self._run(self.ACCEPTED, gh)
+        self.assertEqual(done["outcome"], "done")
+        self.assertEqual((row["outcome"], row["detail"]), ("failed", "HTTP 422: Validation Failed"))
+        self.assertEqual((directory / "pr.md").read_text(encoding="utf-8"), self.ACCEPTED)
+
+    def test_r5_a_timeout_is_failed_and_says_so(self):
+        gh = self.Gh(listed=True, raise_=asyncio.TimeoutError())
+        done, [row], _ = self._run(self.ACCEPTED, gh)
+        self.assertEqual(done["outcome"], "done")
+        self.assertEqual(row["outcome"], "failed")
+        self.assertIn("timed out", row["detail"])
+
+
 class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
     """`0068` R8, R10 and R11, at the `Service` seam."""
 

@@ -14,12 +14,13 @@ node .claude/scripts/cos.mjs gate <unit> <stage> [--repo <dir>]   # 0 open · 1 
 node .claude/scripts/cos.mjs next <unit> [--repo <dir>]           # JSON: the one stage to run now, or "" and why
 node .claude/scripts/cos.mjs new-path <slug>       # allocates the number, validates the slug
 node .claude/scripts/cos.mjs unit-branch <unit>    # the branch name this unit's Type implies
+node .claude/scripts/cos.mjs pr-text <unit>        # JSON: title and body pr.md puts on its pull request
 node .claude/scripts/cos.mjs check-branch [name]   # the branch you are on, or one you are considering
 node .claude/scripts/cos.mjs check-tag <tag>       # prints: release | prerelease
 node .claude/scripts/cos.mjs check-version         # the five places a version is declared
 ```
 
-The first five take `--root <dir>` and read another repository's `.cos/`. The last three
+The first six take `--root <dir>` and read another repository's `.cos/`. The last three
 refuse it: given a root, they would answer about here while naming somewhere else.
 `new-path` alone also takes `--reserve-from <dir>`, repeatable: numbers already used in
 that directory's `.cos/` count as taken, though nothing is written there. `gate` and `next`

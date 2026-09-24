@@ -232,6 +232,12 @@ class ThePrStepSaysWhatItWillReach(unittest.TestCase):
         self.assertTrue(grant_for("pr").opens_anything)
         self.assertEqual(grant_for("pr").warning, policy.PR_WARNING)
 
+    def test_0055_the_warning_says_the_app_rewrites_title_and_body(self):
+        self.assertIn(
+            "After the step, the app itself rewrites the pull request's title and body from pr.md under that login.",
+            policy.PR_WARNING,
+        )
+
     def test_its_ceilings_are_lower_than_impls(self):
         self.assertLess(self.PR.max_turns, IMPL.max_turns)
         self.assertLess(self.PR.max_budget_usd, IMPL.max_budget_usd)

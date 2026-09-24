@@ -59,8 +59,10 @@ const VALID = Object.fromEntries(STAGES.map((s) => [s.file, s.statuses]))
 // The status line is prose: "Intent: intent.md. Author: X. Status: draft." Take the first
 // `Status:` in the file and nothing else, so a later mention in the body cannot shadow it.
 // Hyphenated words are one status (`changes-requested`); a trailing hyphen is not part of it.
+const STATUS_RE = /\bStatus:\s*([A-Za-z]+(?:-[A-Za-z]+)*)/
+
 export function parseStatus(text) {
-  const m = text.match(/\bStatus:\s*([A-Za-z]+(?:-[A-Za-z]+)*)/)
+  const m = text.match(STATUS_RE)
   return m ? m[1].toLowerCase() : null
 }
 
@@ -337,6 +339,24 @@ export function unitQuestions(unit) {
 export function parsePr(text) {
   const m = text.match(/\bPR:\s*(\S+?\/pull\/(\d+))/)
   return m ? { url: m[1], number: Number(m[2]) } : null
+}
+
+// What `pr.md` puts on its pull request (`0055`): the title is the `# PR:` line, the body
+// is the rest of the file less that line and the header — the line holding the `Status:`
+// `parseStatus` reads, so "the header" means one thing everywhere. An empty `# PR:` line
+// gives no title and still leaves the body, rather than open it with an empty heading.
+// Blank lines left at the top go too; every other line is kept byte for byte, `\r`
+// included. The terminal and the app both read this one definition, so the two cannot
+// put different words up.
+export function prText(text) {
+  const lines = text.split('\n')
+  const titleAt = lines.findIndex((l) => /^# PR:(.*?)\r?$/.test(l))
+  const title = titleAt === -1 ? null : lines[titleAt].match(/^# PR:(.*?)\r?$/)[1].trim() || null
+  const m = STATUS_RE.exec(text)
+  const statusAt = m ? text.slice(0, m.index).split('\n').length - 1 : -1
+  const kept = lines.filter((_, i) => i !== statusAt && i !== titleAt)
+  while (kept.length && /^\s*$/.test(kept[0])) kept.shift()
+  return { title, body: kept.join('\n'), url: parsePr(text)?.url ?? null }
 }
 
 const ROUND_HEAD = /^## Round (\d+)\s*$/
@@ -1566,6 +1586,32 @@ function cmdUnitBranch(unitName, cosDir) {
   return 0
 }
 
+// Reads one file and prints; no git, no gh, no write. The name is checked before it is
+// joined, so `../` cannot walk out of the `.cos/` it was given.
+function cmdPrText(unitName, cosDir) {
+  if (!unitName) {
+    console.error('usage: cos.mjs pr-text <NNNN_slug>')
+    return 2
+  }
+  if (!UNIT_RE.test(unitName)) {
+    console.error(`Invalid unit name "${unitName}": expected NNNN_slug.`)
+    return 2
+  }
+  const dir = join(cosDir, unitName)
+  if (!existsSync(dir)) {
+    console.error(`No such work unit: ${unitName}`)
+    return 1
+  }
+  const file = join(dir, 'pr.md')
+  if (!existsSync(file)) {
+    console.error(`${unitName} has no pr.md`)
+    return 1
+  }
+  const text = readFileSync(file, 'utf8')
+  console.log(JSON.stringify({ unit: unitName, ...prText(text), status: parseStatus(text) }))
+  return 0
+}
+
 // The three commands above answer about this checkout, so `--root` is refused for them.
 const LOCAL_ONLY = new Set(['check-branch', 'check-tag', 'check-version'])
 
@@ -1645,6 +1691,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     next: () => cmdNext(rest[0], cosDir, repoDir, limit),
     'new-path': () => cmdNewPath(rest[0], cosDir, reserveFrom),
     'unit-branch': () => cmdUnitBranch(rest[0], cosDir),
+    'pr-text': () => cmdPrText(rest[0], cosDir),
     'check-branch': () => cmdCheckBranch(rest[0]),
     'check-tag': () => cmdCheckTag(rest[0]),
     'check-version': () => cmdCheckVersion(),
@@ -1653,7 +1700,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!run) {
     console.error('usage: cos.mjs [--root <dir>] <command>')
     console.error('  reading a .cos/ (these take --root):')
-    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit>')
+    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit> | pr-text <unit>')
     console.error('  describing this checkout (these do not):')
     console.error('    check-branch [name] | check-tag <tag> | check-version')
     process.exit(2)
