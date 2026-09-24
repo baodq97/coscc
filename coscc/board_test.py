@@ -569,3 +569,40 @@ class TheHoldIsCarriedFromTheScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
             [u] = run(board.read(tmp))["units"]
         self.assertEqual((u["hold"], u["hold_moves"]), (None, []))
+
+
+PR_MD = (
+    "# PR: a title\n"
+    "Intent: intent.md. Impl: impl.md. PR: https://github.com/o/r/pull/7. Author: a. Status: accepted.\n"
+    "\n## Where\n\nchecks pending.\n"
+)
+
+
+class ThePrTextIsCopiedFromTheScript(unittest.TestCase):
+    """`0055`. The title and body come from `cos.mjs` `prText`; this module cuts nothing."""
+
+    def test_a_unit_with_pr_md_gets_its_title_body_and_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            unit = Path(tmp) / ".cos" / "0001_a"
+            unit.mkdir(parents=True)
+            (unit / "pr.md").write_text(PR_MD, encoding="utf-8")
+            got = run(board.pr_text(tmp, "0001_a"))
+        self.assertEqual(got, {
+            "unit": "0001_a", "title": "a title", "body": "## Where\n\nchecks pending.\n",
+            "url": "https://github.com/o/r/pull/7", "status": "accepted",
+        })
+
+    def test_a_unit_without_pr_md_is_an_answer_with_code_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / ".cos" / "0001_a").mkdir(parents=True)
+            got = run(board.pr_text(tmp, "0001_a"))
+        self.assertEqual(got["code"], 1)
+        self.assertIn("has no pr.md", got["error"])
+
+    def test_no_node_is_unavailable(self):
+        async def no_node(argv, timeout):
+            raise FileNotFoundError("node")
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", no_node):
+            with self.assertRaises(Unavailable):
+                run(board.pr_text(tmp, "0001_a"))
