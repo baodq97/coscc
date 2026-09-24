@@ -79,6 +79,39 @@ class RefusalNamesTheFirstConditionMissing(unittest.TestCase):
     def test_the_order_is_the_specs(self):
         self.assertIn("not between", ig.refusal(**{**self.OK, "in_window": False, "busy": "0001_a is busy"}))
 
+    def test_current_says_what_it_was_compared_with(self):
+        """`0052` R4: the sentence names the ref and how it got there, and keeps its start."""
+        origin = ig.origin_note(MAIN, {"outcome": "fetched", "attempts": 1, "age": 0.4})
+        said = ig.refusal(**{**self.OK, "state": "current", "origin": origin})
+        self.assertEqual(
+            said, "the unit is current against origin/main ccccccc (fetched), which has nothing to integrate")
+        self.assertTrue(said.startswith("the unit is current"))
+
+    def test_without_an_origin_the_old_sentence_stands(self):
+        self.assertEqual(ig.refusal(**{**self.OK, "state": "current"}),
+                         "the unit is current, which has nothing to integrate")
+        # Only `current` carries the ref: `unknown` keeps its sentence.
+        self.assertEqual(ig.refusal(**{**self.OK, "state": "unknown", "origin": "origin/main x"}),
+                         "the unit is unknown, which has nothing to integrate")
+
+
+class OriginNote(unittest.TestCase):
+    """`0052` R4: the four ways a press got its `origin/main`."""
+
+    def test_each_outcome(self):
+        cases = [
+            ({"outcome": "fetched", "attempts": 1, "age": 0.2}, "origin/main ccccccc (fetched)"),
+            ({"outcome": "joined", "attempts": 1, "age": 1.5}, "origin/main ccccccc (joined a running fetch)"),
+            ({"outcome": "reused", "attempts": 0, "age": 12.3}, "origin/main ccccccc (reused 12.3s ago)"),
+            ({"outcome": "failed", "detail": "fatal: could not read"},
+             "origin/main ccccccc (fetch failed: fatal: could not read)"),
+            (None, "origin/main ccccccc"),
+        ]
+        for fetch, want in cases:
+            with self.subTest(fetch=fetch):
+                self.assertEqual(ig.origin_note(MAIN, fetch), want)
+        self.assertEqual(ig.origin_note("", None), "origin/main unread")
+
 
 class Warnings(unittest.TestCase):
     def test_each_line_only_when_true(self):
@@ -86,6 +119,14 @@ class Warnings(unittest.TestCase):
         self.assertIn("ship gate closes", ig.warnings([{"verdict": "pass"}], "accepted", False, "W")[0])
         self.assertIn("offers review", ig.warnings([{"verdict": "changes-requested"}], "changes-requested", False, "W")[0])
         self.assertEqual(ig.warnings([], "", True, "W"), ["W"])
+
+    def test_a_press_that_may_fall_to_gebo_says_so(self):
+        """`0052`: a `behind` or `current` press may open Gebo; the page says so, with the grant."""
+        said = ig.warnings([], "", True, "W", fallback=True)
+        self.assertEqual(len(said), 2)
+        self.assertIn("If GitHub refuses the rebase, the app opens Gebo, a paid agent session", said[0])
+        self.assertIn("pressing Integrate agrees to that session", said[0])
+        self.assertEqual(said[1], "W")
 
     def test_a_passed_unit_is_told_what_integrating_costs(self):
         # `0061` R11.1: the four things the warning must say.
@@ -155,6 +196,31 @@ class Record(unittest.TestCase):
             ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD,
                       head_after="", origin_sha=MAIN, outcome="ok")
 
+    def test_fetch_merge_state_and_update_branch(self):
+        """`0052` R5: the three keys are always there, and carry only what they name."""
+        rec = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
+                        head_after="", origin_sha=MAIN, outcome="refused")
+        self.assertEqual((rec["fetch"], rec["merge_state"], rec["update_branch"]), (None, "", None))
+        rec = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD, head_after="",
+                        origin_sha=MAIN, outcome="failed",
+                        fetch={"outcome": "fetched", "attempts": 1, "age": 0.3}, merge_state="BEHIND",
+                        update_branch={"code": 1, "said": "gh: refused"})
+        self.assertEqual(rec["fetch"], {"outcome": "fetched", "age": 0.3})
+        self.assertEqual(rec["merge_state"], "BEHIND")
+        self.assertEqual(rec["update_branch"], {"code": 1, "said": "gh: refused"})
+        rec = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD, head_after="",
+                        origin_sha=MAIN, outcome="refused", fetch={"outcome": "failed", "detail": "no remote"})
+        self.assertEqual(rec["fetch"], {"outcome": "failed", "detail": "no remote"})
+
+    def test_an_old_record_without_them_still_describes(self):
+        old = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
+                        head_after=NEW, origin_sha=MAIN, outcome="pushed")
+        for k in ("fetch", "merge_state", "update_branch"):
+            del old[k]
+        text = ig.describe_for_review(old)
+        self.assertIn("the app, mechanically", text)
+        self.assertIn(NEW, text)
+
     def test_the_review_section_says_whose_word_it_is(self):
         text = ig.describe_for_review({"mode": "mechanical", "head_after": NEW})
         self.assertIn("An integration since the last round", text)
@@ -172,6 +238,55 @@ class ThePrompt(unittest.TestCase):
         for want in ("RULES", f"--force-with-lease=feat/x:{HEAD}", MAIN, "0030_a", "no local commit",
                      "/u/0030_a/plan.md", "INTENT"):
             self.assertIn(want, text)
+        self.assertNotIn("The mechanical rebase was refused", text)
+
+    def test_a_refused_update_carries_its_code_and_words(self):
+        """`0052`: the exit code and gh's words reach Gebo, and so does what they cannot say."""
+        text = ig.build_prompt(skill="RULES", unit="0035_x", branch="feat/x", pr=7, state="behind",
+                               reason="r", head_before=HEAD, origin_sha=MAIN,
+                               rel={"merged": [], "open": []}, units_root=Path("/u"), own_artifacts={},
+                               refused_update={"code": 1, "said": "gh: merge conflict"})
+        for want in ("# The mechanical rebase was refused", "gh pr update-branch 7 --rebase",
+                     "exited 1", "gh: merge conflict", "a login, the network, a permission"):
+            self.assertIn(want, text)
+
+
+class MergeState(unittest.TestCase):
+    """`0052` R5: observed only, so every failure is `""` and nothing raises."""
+
+    def ask(self, gh):
+        with mock.patch.object(ig, "_gh", gh):
+            return asyncio.run(ig.merge_state("/t", 7))
+
+    def test_the_value(self):
+        seen = {}
+
+        async def gh(argv, cwd):
+            seen["argv"] = argv
+            return 0, json.dumps({"mergeStateStatus": "BEHIND"}), ""
+
+        self.assertEqual(self.ask(gh), "BEHIND")
+        self.assertEqual(seen["argv"], ["pr", "view", "7", "--json", "mergeStateStatus"])
+
+    def test_gh_failing_is_empty(self):
+        async def refused(argv, cwd):
+            return 1, "", "gh: unknown field mergeStateStatus"
+
+        async def timed_out(argv, cwd):
+            raise ig.IntegrateError("gh pr view did not answer within 30s")
+
+        self.assertEqual(self.ask(refused), "")
+        self.assertEqual(self.ask(timed_out), "")
+
+    def test_broken_json_is_empty(self):
+        async def gh(argv, cwd):
+            return 0, "not json", ""
+
+        async def a_list(argv, cwd):
+            return 0, "[]", ""
+
+        self.assertEqual(self.ask(gh), "")
+        self.assertEqual(self.ask(a_list), "")
 
 
 class TheReviewPromptCarriesTheIntegration(unittest.TestCase):

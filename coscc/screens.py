@@ -534,9 +534,11 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
             rx.cond(unit.open_questions > 0,
                     s.badge(unit.open_questions.to_string() + " waiting on you", "amber")),
             # `0035` R1. Only for a unit in the window; the button lives on the unit screen.
+            # `0052`: `current` has a button too, and still reads gray on the card.
             rx.cond(unit.integration_state != "",
                     s.badge("main: " + unit.integration_state,
-                            rx.cond(unit.integrate_button, "amber", "gray"))),
+                            rx.cond(unit.integrate_button & (unit.integration_state != "current"),
+                                    "amber", "gray"))),
             # `0047` R8. The label is the service's; the page only shows it.
             rx.cond(unit.outcome_text != "",
                     s.badge("outcome: " + unit.outcome_text, unit.outcome_color)),
@@ -1379,7 +1381,8 @@ def _integration_panel() -> rx.Component:
             rx.hstack(
                 s.eyebrow("INTEGRATION WITH MAIN"),
                 rx.spacer(),
-                s.badge(u.integration_state, rx.cond(u.integrate_button, "amber", "gray")),
+                s.badge(u.integration_state,
+                        rx.cond(u.integrate_button & (u.integration_state != "current"), "amber", "gray")),
                 width="100%", align="center",
             ),
             rx.cond(u.integration_behind != "",
@@ -1387,6 +1390,11 @@ def _integration_panel() -> rx.Component:
                            + u.integration_origin, size="1", margin_top="8px")),
             rx.cond(u.integration_reason != "",
                     s.text(u.integration_reason, size="1", overflow_wrap="anywhere")),
+            # `0052` R3: the board does not fetch, so `current` may be against a stale ref.
+            rx.cond(u.integration_state == "current",
+                    s.text("Counted against origin/main " + u.integration_origin
+                           + " as the last fetch left it. Integrate fetches first, then decides.",
+                           size="1", margin_top="8px")),
             rx.foreach(u.integration_needs_person,
                        lambda n: s.text("[needs-person] " + n, size="1", color=rx.color("red", 11))),
             rx.cond(
