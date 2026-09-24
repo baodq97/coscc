@@ -554,15 +554,23 @@ class Denials:
 CLAUDE_CODE_PRESET: dict[str, str] = {"type": "preset", "preset": "claude_code"}
 
 
-def permission_gate(grant: Grant, workspace: str, denials: Denials, unit_dir: str | None = None):
+def permission_gate(
+    grant: Grant,
+    workspace: str,
+    denials: Denials,
+    unit_dir: str | None = None,
+    read_also: tuple[str, ...] = (),
+    lease: tuple[str, str] | None = None,
+):
     """The callback the SDK asks before every tool call.
 
     This is the enforcement `spec.md` R10 asks for, and it is separate from the tool list
     on purpose: the list was measured, and it does not cover every source of capability.
+    `read_also` and `lease` (`0035`) are passed to `decide` unchanged.
     """
 
     async def can_use_tool(tool: str, tool_input: dict, context: Any):
-        reason = decide(grant, tool, tool_input or {}, workspace, unit_dir)
+        reason = decide(grant, tool, tool_input or {}, workspace, unit_dir, read_also, lease)
         if reason:
             denials.record(tool, reason)
             return sdk.PermissionResultDeny(message=reason)
