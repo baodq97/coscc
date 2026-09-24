@@ -829,7 +829,7 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
         self.assertIn("question 2 of intent.md", page.error)
         self.assertIn("question 1 of intent.md", page.error)
         self.assertEqual((page.answer_target, page.answer_text), ("intent.md#1", "yes"))
-        self.assertEqual(page.notice, "")
+        self.assertEqual(page.notice, "old notice")
         self.assertEqual(page.answering_key, "")
 
     def test_an_empty_box_names_the_button_pressed(self):
@@ -837,7 +837,18 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
         self.press(page, "review.md#F2", self.never())
         self.assertIn("finding F2 of review.md", page.error)
         self.assertIn("empty", page.error)
-        self.assertEqual(page.notice, "")
+        self.assertEqual(page.notice, "old notice")
+
+    def test_a_second_press_queued_behind_the_first_keeps_what_the_first_wrote(self):
+        """Review round 1, F1: a double click whose second press reaches the queue before
+        the loading state reaches the browser runs after the first, on an emptied box."""
+        page = self.page()
+        self.press(page, "intent.md#1", self.wrote())
+        self.press(page, "intent.md#1", self.never())
+        self.assertTrue(page.notice.startswith("Answered question 1 of intent.md as Phong."),
+                        page.notice)
+        self.assertIn("Nothing was sent", page.error)
+        self.assertEqual(page.answering_key, "")
 
     def test_a_refusal_is_shown_verbatim_and_the_text_is_kept(self):
         from coscc.service import Invalid

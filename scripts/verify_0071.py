@@ -12,8 +12,9 @@ units:
             in view in the dialog
     3  (c)  text in question 2's box, Send pressed on question 3: nothing is written, the
             text stays, and the reason names both questions, in view
-    4  F<n> a finding the last review round confirmed needs a person is answered into
-            `review.md`, and the dialog says so in view
+    4  F<n> a finding the last review round confirmed needs a person, its Send
+            double-clicked, is answered once into `review.md`, and the dialog still says
+            so in view once it settles (review round 1, F1)
     5  (R7) a refused Pause on the Overview tab is reported in view in the dialog
     6  (R8, R9) closed, the dialog's message is the page's; reopened, it is gone; Dismiss
             inside the dialog clears the page's copy too
@@ -232,9 +233,10 @@ def type_in(page, locator, text: str) -> None:
     page.wait_for_timeout(300)
 
 
-def press(page, key: str) -> None:
+def press(page, key: str, twice: bool = False) -> None:
     page.evaluate(TO_BOTTOM_JS)
-    page.locator(by_id(f"answer-{key}")).click()
+    button = page.locator(by_id(f"answer-{key}"))
+    button.dblclick() if twice else button.click()
 
 
 def wait_text(page, sel: str, *parts: str) -> str:
@@ -374,7 +376,12 @@ def one_width(browser, base, token, api, cwd, size) -> list[bool]:
         page.locator("#answer-by").fill("verify_0071")
         page.wait_for_timeout(300)
         type_in(page, box(page, "review.md#F2"), "Người quyết: chấp nhận.")
-        press(page, "review.md#F2")
+        # A double click (review round 1, F1): the second press may reach the queue before
+        # the button's loading state reaches the browser, and must not erase the first's
+        # notice. Read again after it settles, so a notice that only flashed does not pass.
+        press(page, "review.md#F2", twice=True)
+        wait_text(page, "#detail-notice", "Answered finding F2")
+        page.wait_for_timeout(SETTLE_MS)
         said = wait_text(page, "#detail-notice", "Answered finding F2")
         after = review.read_bytes()
         why = in_view(page, "#detail-notice")
@@ -382,7 +389,8 @@ def one_width(browser, base, token, api, cwd, size) -> list[bool]:
         results.append(say(
             "Answered finding F2 of review.md" in said and after.startswith(before)
             and tail.count("### F2") == 1 and not why,
-            f"4 [{w}] F<n> a finding is answered into review.md and the dialog says so in view",
+            f"4 [{w}] F<n> a double-clicked finding is answered once into review.md and the "
+            "dialog still says so in view",
             f"notice {said[:160]!r}; prefix kept {after.startswith(before)}; "
             f"appended {tail[:120]!r}; in view: {why or 'yes'}",
         ))

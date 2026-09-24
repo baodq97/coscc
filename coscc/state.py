@@ -1757,8 +1757,10 @@ class StudioState(rx.State):
         The `yield` after raising `answering_key` is what sends it to the browser, as in
         `post_review_comment`. There is no guard against a second press: Reflex queues it
         behind the first, by then the box is empty, and the first branch gives it a reason.
+        That branch leaves `notice` alone: the press it follows may be the one that wrote the
+        block, and its "Answered …" must survive the second press (review round 1, F1).
         """
-        self.notice, self.error = "", ""
+        self.error = ""
         if key != self.answer_target or not self.answer_text.strip():
             self.error = f"Nothing was sent: you pressed Send on {_key_label(key)}, but its box is empty."
             if self.answer_target and self.answer_text.strip():
@@ -1768,6 +1770,7 @@ class StudioState(rx.State):
                 )
             return
         artifact, _, number = key.rpartition("#")
+        self.notice = ""
         self.answering_key = key
         yield
         try:
