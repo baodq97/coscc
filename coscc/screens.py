@@ -30,6 +30,7 @@ from coscc.state import (
     LANE_COLOR,
     NAVIGATION,
     Cell,
+    IdeaCard,
     Event,
     GrantRow,
     Knob,
@@ -509,7 +510,31 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
     )
 
 
-def _lane(title: str, items, color: str) -> rx.Component:
+def _idea_card(idea: rx.Var[IdeaCard]) -> rx.Component:
+    """`0003_one-idea-is-trapped-inside-one-unit`. An idea with no unit yet. No click and no
+    run button: an idea has no stage, and opening a unit from it is `POST /api/units` with
+    `idea`, which this page does not offer."""
+    return rx.box(
+        rx.hstack(
+            s.text("ideas/" + idea.id + ".md", size="1", font_family="ui-monospace, monospace"),
+            rx.spacer(), width="100%",
+        ),
+        rx.text(idea.title, size="2", weight="medium", line_height="1.6", color=s.INK, margin_top="13px"),
+        s.text("Next: write-intent — open a unit from this idea", size="1", line_height="1.7", margin_top="7px"),
+        rx.hstack(
+            s.badge("idea", "gray"),
+            rx.cond(idea.status != "", s.badge(idea.status, "gray")),
+            rx.cond(idea.problems != "", s.badge("problem", "red")),
+            width="100%", align="center", margin_top="18px",
+        ),
+        data_testid="idea-card",
+        padding=rx.cond(P.density == "compact", "12px", "17px"),
+        background=s.CANVAS, border=f"1px dashed {s.LINE}", border_radius="11px", width="100%",
+    )
+
+
+def _lane(title: str, items, color: str, ideas=None) -> rx.Component:
+    empty = items.length() == 0 if ideas is None else (items.length() + ideas.length()) == 0
     return rx.vstack(
         rx.hstack(
             rx.box(width="7px", height="7px", border_radius="50%", background=rx.color(color, 9)),
@@ -517,8 +542,9 @@ def _lane(title: str, items, color: str) -> rx.Component:
             s.text(items.length().to_string(), size="1"),
             rx.spacer(), width="100%", align="center", padding="2px 4px 8px",
         ),
+        *([rx.foreach(ideas, _idea_card)] if ideas is not None else []),
         rx.foreach(items, _unit_card),
-        rx.cond(items.length() == 0,
+        rx.cond(empty,
                 rx.center(s.text("Nothing here", size="1", text_align="center"),
                           padding="26px 10px", border=f"1px dashed {s.LINE}",
                           border_radius="10px", width="100%")),
@@ -627,7 +653,8 @@ def _board() -> rx.Component:
                     P.board_view == "Board",
                     rx.grid(
                         *(
-                            _lane(name, units, LANE_COLOR[name])
+                            _lane(name, units, LANE_COLOR[name],
+                                  P.idea_cards if name == "Planned" else None)
                             for name, units in (
                                 ("Planned", P.planned),
                                 ("In progress", P.in_progress),

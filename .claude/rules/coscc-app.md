@@ -245,6 +245,15 @@ no commands, one turn, no budget.
   by:` is a word they typed too, and `Source:` is checked against nothing. No gate reads
   the block. The trace is the block in the file and an `outputs` row with `source =
   outcome`. `COS_HOST=127.0.0.1` is the mitigation that exists.
+- **`POST /api/units` with `idea` writes into a file many units read.** Since
+  `0003_one-idea-is-trapped-inside-one-unit` a brief becomes `.cos/ideas/NNNN_<slug>.md`,
+  and `idea` opens another unit from an existing one by appending to its `## Units`. The
+  idea's words go into that unit's paid `intent` prompt. No login, `0.0.0.0` by default:
+  anyone who reaches the port can attach a unit to any idea. The only trace is the line in
+  `## Units`; no run-log row records it. `COS_HOST=127.0.0.1` is the mitigation that
+  exists. An older `cos.mjs` reading the same store sees `ideas` as a misnamed unit and a
+  linked empty unit as `no intent.md` — unmeasured whether anyone runs two versions on one
+  store.
 - **Every board read with a unit between `pr` and `ship` costs one `gh pr list`.** Since
   `0035`, up to 30s (chosen), plus a `gh pr checks` for a unit whose head is the one its
   last integration pushed. Offline, every such unit reads `unknown` and the board waits
@@ -293,6 +302,7 @@ no commands, one turn, no budget.
 | `verify_0042.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. The session is a stand-in, so it cannot show that a real `impl` stops on a contradiction |
 | `verify_0047.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2. Fixes the board's `today` at 2026-10-08 for C5 and C6; does not measure the intent's outcome, which is three real units on the real board that day |
 | `verify_0048.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Exit 2 also when `--baseline` reproduces no ref-lock race |
+| `verify_one_idea_many_units.py` | no session, no quota, no network; temporary data root, bare-directory remote, one stand-in session. Needs `node`, `uv` and `git`, and a merge base with `origin/main` (claim C-a compares against `cos.mjs` there); any missing is exit 2. `--store <COS_DATA_DIR> --workspace <path>` reads a real store and writes nothing: the outcome's own measurement, exit 1 until two accepted intents name one idea |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 

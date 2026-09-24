@@ -13,16 +13,18 @@ node .claude/scripts/cos.mjs status [--json]       # where every unit stands
 node .claude/scripts/cos.mjs gate <unit> <stage> [--repo <dir>]   # 0 open · 1 blocked, with reasons · 2 misuse
 node .claude/scripts/cos.mjs next <unit> [--repo <dir>]           # JSON: the one stage to run now, or "" and why
 node .claude/scripts/cos.mjs new-path <slug>       # allocates the number, validates the slug
+node .claude/scripts/cos.mjs new-idea <slug>       # the same, for .cos/ideas/NNNN_<slug>.md
 node .claude/scripts/cos.mjs unit-branch <unit>    # the branch name this unit's Type implies
 node .claude/scripts/cos.mjs check-branch [name]   # the branch you are on, or one you are considering
 node .claude/scripts/cos.mjs check-tag <tag>       # prints: release | prerelease
 node .claude/scripts/cos.mjs check-version         # the five places a version is declared
 ```
 
-The first five take `--root <dir>` and read another repository's `.cos/`. The last three
+The first six take `--root <dir>` and read another repository's `.cos/`. The last three
 refuse it: given a root, they would answer about here while naming somewhere else.
-`new-path` alone also takes `--reserve-from <dir>`, repeatable: numbers already used in
-that directory's `.cos/` count as taken, though nothing is written there. `gate` and `next`
+`new-path` and `new-idea` alone also take `--reserve-from <dir>`, repeatable: numbers
+already used in that directory's `.cos/` (its `ideas/`, for `new-idea`) count as taken,
+though nothing is written there. `gate` and `next`
 take `--repo <dir>`: the git checkout whose branch and pull request the `review` and
 `ship` gates read. Without `--root` it is this checkout; with `--root` and no `--repo`,
 those two gates stay closed rather than read the wrong one, and `next` offers nothing
@@ -42,6 +44,16 @@ solution stops making sense exactly when the directory still has to be findable.
 The app writes into an artifact a stage wrote in exactly one way: it appends a
 `## Answers` section, and blocks under it, to the end of the file. Nothing above that
 section is ever rewritten.
+
+**An idea is not inside a unit.** Since `0003_one-idea-is-trapped-inside-one-unit`,
+`.cos/ideas/NNNN_<slug>.md` is one idea, numbered by `new-idea` on a sequence of its own,
+and several units may come from it. `readAll` does not read `ideas/` as a unit; `status`
+lists ideas beside the units. Each unit's `intent.md` names its one idea in its header,
+`Idea: ideas/NNNN_<slug>.md`. Before a unit has an intent, the link is a line under the
+idea's `## Units` — the app's second way of writing into a file under `.cos/`: it only
+appends, as with `## Answers`, and never rewrites above. Where the two records disagree,
+`status` reports it on both sides; no gate reads either. Units that hold an `idea.md` keep
+it; nothing was migrated.
 
 Run `cos.mjs status` for the stages, their order and what each one reads.
 `.claude/scripts/cos.mjs` is the one place the loop is defined; nothing may hold a second
@@ -172,6 +184,10 @@ a `review` gate that never opens.
   the route has no login: anyone who reaches the port can make this machine's `gh` login
   rebase a unit's pull request or open a paid session. It is not a stage and `cos.mjs`
   does not know it exists beyond the `betweenPrAndShip` field `status --json` carries.
+- **A guard on which unit an idea feeds.** Since `0003` `POST /api/units` with `idea`
+  lists a new unit under any idea that exists, and that idea's words then go into the new
+  unit's paid `intent` prompt. No login, `0.0.0.0` by default: anyone who reaches the port
+  can do it. The trace is a line in the idea's `## Units`; no run-log row records it.
 - **CI that decides more than one thing.** Since `0015` CI decides whether `review` may
   begin: the gate reads the pull request's required checks and stays closed on red,
   pending or none. Nothing else reads it. A green check also measures a different

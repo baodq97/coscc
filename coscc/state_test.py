@@ -69,6 +69,24 @@ class EveryVarAHandlerSetsIsDeclared(unittest.TestCase):
         )
 
 
+class AnIdeaWithNoUnitIsACard(unittest.TestCase):
+    """`0003_one-idea-is-trapped-inside-one-unit`, `intent.md ## Answers, câu 1`."""
+
+    def test_only_an_idea_with_no_unit_gets_a_card(self):
+        from coscc.state import IdeaCard, _idea_cards
+
+        data = {"ideas": [
+            {"name": "0001_alone", "status": "accepted", "units": [], "problems": []},
+            {"name": "0002_used", "status": "accepted", "units": ["0005_x"], "problems": []},
+        ]}
+        self.assertEqual(_idea_cards(data), [IdeaCard(id="0001_alone", title="Alone", status="accepted")])
+
+    def test_an_older_board_with_no_ideas_has_no_cards(self):
+        from coscc.state import _idea_cards
+
+        self.assertEqual(_idea_cards({"units": []}), [])
+
+
 class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
     """`0001_product-describes-a-state-it-is-not-in` R4/R5, from this store.
 

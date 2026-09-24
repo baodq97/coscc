@@ -178,6 +178,17 @@ class Round:
 
 
 @dataclasses.dataclass
+class IdeaCard:
+    """An idea no unit has come from yet (`0003_one-idea-is-trapped-inside-one-unit`,
+    `intent.md ## Answers, câu 1`). Shown, never run: an idea has no stage and no gate."""
+
+    id: str = ""
+    title: str = ""
+    status: str = ""
+    problems: str = ""
+
+
+@dataclasses.dataclass
 class Unit:
     id: str = ""
     title: str = ""
@@ -452,6 +463,20 @@ def _rounds(unit: dict) -> list[Round]:
     return out
 
 
+def _idea_cards(data: dict) -> list[IdeaCard]:
+    """One card per idea `cos.mjs` lists with no unit; an idea with units has none."""
+    return [
+        IdeaCard(
+            id=str(i.get("name") or ""),
+            title=_title_of(str(i.get("name") or "")),
+            status=str(i.get("status") or ""),
+            problems="; ".join(i.get("problems") or []),
+        )
+        for i in data.get("ideas") or []
+        if not i.get("units")
+    ]
+
+
 def _lane(unit: dict) -> str:
     """Which column a unit sits in.
 
@@ -521,6 +546,9 @@ class StudioState(rx.State):
     # -- board
     stages: list[str] = []
     units: list[Unit] = []
+    # Ideas with no unit yet, shown at the head of *Planned*. An idea that has a unit is
+    # seen through its units, so it gets no card of its own.
+    idea_cards: list[IdeaCard] = []
     board_note: str = ""
     # Set only when the board is empty (`0001_product-describes-a-state-it-is-not-in` R6):
     # the store the board read, the host repository, and how many units the host's own
@@ -812,6 +840,7 @@ class StudioState(rx.State):
 
     async def _load_board(self) -> None:
         self.units, self.stages, self.board_note = [], [], ""
+        self.idea_cards = []
         self.empty_store, self.empty_host, self.empty_host_units = "", "", 0
         self.branch = ""
         if not self.cwd:
@@ -896,6 +925,7 @@ class StudioState(rx.State):
                 )
             )
         self.units = units
+        self.idea_cards = _idea_cards(data)
 
     def _load_sessions(self) -> None:
         self.conversations, self.messages = [], []

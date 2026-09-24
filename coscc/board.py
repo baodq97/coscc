@@ -191,19 +191,53 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             # `cos.mjs` `unitOutcome` read them from `intent.md`. Copied, never derived here;
             # the label is the service's. An older `cos.mjs` sends nothing, which reads as None.
             "outcome": _outcome_of(u),
+            # `0003_one-idea-is-trapped-inside-one-unit`. The idea in authority for this
+            # unit (`source`) and the one its `intent.md` names (`idea`), as `cos.mjs`
+            # linked them. Copied, never re-linked here. An older `cos.mjs` sends neither.
+            "idea": str(u.get("source") or ""),
+            "idea_declared": str(u.get("idea") or ""),
         }
         for u in data.get("units") or []
+    ]
+    ideas = [
+        {
+            "name": str(i.get("name") or ""),
+            "file": str(i.get("file") or ""),
+            "status": i.get("status") or "",
+            "units": [str(n) for n in i.get("units") or []],
+            "problems": list(i.get("problems") or []),
+            "next": (i.get("next") or {}).get("action", ""),
+        }
+        for i in data.get("ideas") or []
     ]
 
     return {
         "workspace": str(path),
         "stages": [s["name"] for s in stages],
         "units": units,
+        "ideas": ideas,
         "count": len(units),
         # A workspace can be perfectly healthy and hold no units at all. Saying so is not
         # the same as failing to read it, and the page has to be able to tell them apart.
         "empty_because": None if units else _why_empty(path),
     }
+
+
+def idea_of(data: dict[str, Any], unit: dict[str, Any] | None, units_root: str | Path) -> dict[str, Any] | None:
+    """The idea a unit comes from, as the runner needs it: `{name, file, path}`, or None.
+
+    Only the name `cos.mjs` linked is used; nothing here looks through `ideas/` for itself
+    (`0003_one-idea-is-trapped-inside-one-unit` `spec.md` Design). The path is the store's
+    `.cos/` joined to the file `cos.mjs` reported, or to `ideas/<name>.md` when the idea
+    is named but missing — a read of it then finds nothing, and `cos.mjs` has already
+    reported the broken link.
+    """
+    name = str((unit or {}).get("idea") or "")
+    if not name:
+        return None
+    entry = next((i for i in data.get("ideas") or [] if i.get("name") == name), None)
+    file = (entry or {}).get("file") or f"ideas/{name}.md"
+    return {"name": name, "file": file, "path": str(Path(units_root) / ".cos" / file)}
 
 
 async def stages(timeout: float = TIMEOUT) -> list[str]:

@@ -82,6 +82,32 @@ def _read(path: Path) -> str:
         return ""
 
 
+def idea_field_refusal(body: str, file: str) -> str:
+    """Why an intent reply for a unit linked to `file` may not be written, or `""`.
+
+    `0003_one-idea-is-trapped-inside-one-unit` R11, and deliberately not a parser: `cos.mjs`
+    `parseIdea` reads the field and stays the judge. This only asks whether the header —
+    the lines above the first `## ` — carries exactly `Idea: <file>` and no other `Idea:`.
+    A test writes an accepted reply and asks `cos.mjs` about it, so the two cannot drift
+    apart unnoticed in the direction that lets a broken link through. The field must end
+    where `cos.mjs`'s `\\.md\\b` ends it: `Idea: ideas/x.md_old` or `.mdx` is no link there,
+    so it is none here either (`0003` review round 1, F1). Both patterns are `re.ASCII`,
+    because JS `\\b` counts only `[A-Za-z0-9_]`: without it `đIdea:` is no field here and
+    a second one to `cos.mjs` (`0003` review round 2, F2).
+    """
+    lines = body.splitlines()
+    end = next((i for i, ln in enumerate(lines) if ln.startswith("## ")), len(lines))
+    header = "\n".join(lines[:end])
+    fields = re.findall(r"\bIdea:", header, re.ASCII)
+    if len(fields) == 1 and re.search(rf"\bIdea: {re.escape(file)}(?!\w)", header, re.ASCII):
+        return ""
+    return (
+        f"intent.md must name the idea it comes from in its header — `Idea: {file}.` — "
+        f"and no other; the reply {'names none' if not fields else 'names another or several'}, "
+        "so it was not written"
+    )
+
+
 # The Answers section of an artifact, exactly as `coscc/service.py:900` and
 # `.claude/scripts/cos.mjs:194` read it: the byte range from the start of the first line
 # that is `## Answers` -- recognised with its own trailing whitespace stripped away -- to
@@ -197,6 +223,7 @@ def build_prompt(
     last_attempt: str = "",
     integration_note: str = "",
     drift_note: str = "",
+    idea: dict[str, Any] | None = None,
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -266,6 +293,20 @@ def build_prompt(
             included.append(name)
             parts.append(f"# The {earlier} it follows\n\n{text}")
             break
+
+    # `0003_one-idea-is-trapped-inside-one-unit` R10. A unit opened from an idea has no
+    # `idea.md`; its idea is the file `cos.mjs` linked it to, and the intent step reads it
+    # from there. A unit that still holds an `idea.md` took the branch above, unchanged.
+    if stage == "intent" and idea and "idea.md" not in included:
+        text = _read(Path(idea["path"])) if idea.get("path") else ""
+        if text:
+            included.append(idea["file"])
+            parts.append(
+                f"# The idea it follows\n\n{text}\n\n"
+                f"Put `Idea: {idea['file']}.` in the header of intent.md, on the same line as "
+                "`Type:` and `Status:`; the app refuses an intent.md that names another idea "
+                "or none."
+            )
 
     # `spec.md` R7. A prose stage re-run against an artifact that already carries
     # `## Answers` is one of `intent.md ## Affected users and systems`' "later stages" too:
@@ -793,6 +834,7 @@ class Runner:
         label_source: str | None = None,
         impl_run: int | None = None,
         end_fields: Any = None,
+        idea: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -822,12 +864,18 @@ class Runner:
         `plan_drift` is what `service.py` worked out with `coscc/drift.py` for an `impl`
         step (`0042`); this module only carries it into the `start` record, and
         `drift_note` into the prompt. `None` leaves the record without the field.
+
+        `idea` is `board.idea_of` for this unit — the idea `cos.mjs` linked it to — or None.
         """
         grant = grant_for(stage)
         directory = Path(directory)
         cwd = cwd or workspace
         if not directory.exists():
             raise RunError(f"no such work unit for {workspace}: {unit}")
+        # `0003_one-idea-is-trapped-inside-one-unit` R12. The idea of a linked unit already
+        # lives in one file; an `idea.md` here would be the second copy. Before any money.
+        if stage == "idea" and idea:
+            raise RunError(f"{unit} is opened from {idea['file']}; the idea lives there, not in an idea.md")
 
         if is_prose_stage(stage):
             # Belt and braces against a future edit to the table: a prose stage that
@@ -855,6 +903,7 @@ class Runner:
             last_attempt=last_attempt,
             integration_note=integration_note,
             drift_note=drift_note,
+            idea=idea,
         )
 
         # `0037`: the same condition that decides whether a gate and a tool list are sent.
@@ -969,6 +1018,10 @@ class Runner:
                         "the reply carries no `Status:` line above its own `## Answers`, "
                         "so the gate could not read it"
                     )
+                if stage == "intent" and idea:
+                    refused = idea_field_refusal(body, idea["file"])
+                    if refused:
+                        raise RunError(refused)
                 target = directory / artifact
                 try:
                     raw = target.read_bytes()

@@ -1297,6 +1297,54 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
         self.assertEqual(self.sessions.calls, 0)
 
 
+class AStepIsHandedTheIdeaItsUnitCameFrom(unittest.TestCase):
+    """`0003_one-idea-is-trapped-inside-one-unit` R10–R12, through `run_step`."""
+
+    class Probe:
+        def __init__(self, reply):
+            self.reply = reply
+            self.prompts = []
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.prompts.append(text)
+            yield ("chunk", self.reply)
+            yield ("done", {"session_id": "sess-i", "cost": {}})
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.repo = root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.probe = self.Probe("")
+        self.service = Service(
+            Config(workspaces=(str(self.repo),), working_dir=str(root / "work"), data_dir=str(root / "data")),
+            self.probe,
+        )
+        self.made = create_sync(self.service, str(self.repo), "a-problem", "BRIEF-WORDS-3c")
+
+    def _run(self, stage: str):
+        async def go():
+            return [i async for i in self.service.run_step(str(self.repo), self.made["unit"], stage)]
+
+        return asyncio.run(go())
+
+    def test_the_intent_step_reads_the_idea_and_writes_the_link(self):
+        field = f"Idea: ideas/{self.made['idea']}.md."
+        self.probe.reply = f"# Intent: a problem\nAuthor: t. Type: feat. {field} Status: accepted.\n\n## Problem\n\nx\n"
+        [*_, (kind, done)] = self._run("intent")
+        self.assertEqual(done["outcome"], "done", done.get("error"))
+        self.assertIn("BRIEF-WORDS-3c", self.probe.prompts[0])
+        self.assertIn(f"ideas/{self.made['idea']}.md", done["included"])
+        self.assertIn(field, (Path(self.made["path"]) / "intent.md").read_text(encoding="utf-8"))
+
+    def test_the_idea_stage_is_refused_on_a_unit_opened_from_an_idea(self):
+        with self.assertRaises(Invalid) as caught:
+            self._run("idea")
+        self.assertIn(f"ideas/{self.made['idea']}.md", str(caught.exception))
+        self.assertEqual(self.probe.prompts, [])
+
+
 class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
     """`0004_no-setting-says-which-model-runs-a-stage`. The setting chooses the model a
     step's session is created with, and nothing else."""

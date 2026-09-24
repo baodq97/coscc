@@ -1078,6 +1078,9 @@ class Service:
                 plan_drift=plan_drift,
                 drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
                 end_fields=end_fields,
+                # `0003_one-idea-is-trapped-inside-one-unit` R10–R12. Linked by `cos.mjs`,
+                # from the same board read as everything else here.
+                idea=board_reader.idea_of(data, found, self._units_root(cwd)),
                 **config,
             ):
                 if item[0] == "done":
@@ -1228,7 +1231,7 @@ class Service:
         """`0017` R8. One lock per workspace, held across numbering and making the tree."""
         return self._create_locks.setdefault(units.key(cwd), asyncio.Lock())
 
-    async def create_unit(self, cwd: str, slug: str, brief: str = "") -> dict[str, Any]:
+    async def create_unit(self, cwd: str, slug: str, brief: str = "", idea: str = "") -> dict[str, Any]:
         """`0014` R1. Start a work unit, in the product's store rather than the repository.
 
         The number and the slug grammar are `cos.mjs`'s, through `coscc/units.py`. Nothing
@@ -1238,6 +1241,10 @@ class Service:
         Since `0017` it also opens the unit's own worktree, detached at the workspace's
         `main`. A worktree that cannot be opened does not undo the unit: the result says
         why under `worktree.error`, and the next step that needs the tree tries again.
+
+        Since `0003_one-idea-is-trapped-inside-one-unit` a brief becomes an idea of its own
+        and `idea` opens another unit from one that exists (R8, R9); both under the same
+        lock, because both allocate numbers.
         """
         self._workspace_or_refuse(cwd)
         root = Path(cwd).expanduser().resolve()
@@ -1257,7 +1264,7 @@ class Service:
                     # started here cannot take a number already used there
                     # (`0001_product-describes-a-state-it-is-not-in` R10), and since `0017`
                     # so does every worktree's. Counting is `cos.mjs`'s.
-                    **units.create(cwd, slug, brief, self.config.data_dir, reserve_from=reserve),
+                    **units.create(cwd, slug, brief, self.config.data_dir, reserve_from=reserve, idea=idea),
                 }
             except (CannotCreate, BadUnit) as e:
                 raise Invalid(str(e)) from e

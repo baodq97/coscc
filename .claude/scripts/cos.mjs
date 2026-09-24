@@ -389,7 +389,30 @@ export function reviewRounds(env = process.env) {
   return Number(raw)
 }
 
-export function readUnit(dir, name) {
+// `Idea: ideas/NNNN_<slug>.md` in `intent.md`'s header — the lines above its first `## `
+// heading — names the one idea the unit comes from (`0003_one-idea-is-trapped-inside-one-unit`
+// R3). An `Idea:` in the body is prose, not the field. Absent is `{ idea: null }` and no
+// problem: every unit written before `0003` has none. Two fields, or one this grammar does
+// not read, is a problem and still no idea.
+const IDEA_FIELD = /\bIdea:\s*ideas\/(\S+?)\.md\b/g
+
+export function parseIdea(text) {
+  const lines = text.split(/\r?\n/)
+  const end = lines.findIndex((l) => l.startsWith('## '))
+  const header = (end === -1 ? lines : lines.slice(0, end)).join('\n')
+  const fields = header.match(/\bIdea:/g) ?? []
+  if (!fields.length) return { idea: null }
+  if (fields.length > 1) return { idea: null, problem: `intent.md names ${fields.length} ideas — an intent comes from exactly one` }
+  const found = [...header.matchAll(IDEA_FIELD)]
+  if (found.length !== 1 || !UNIT_RE.test(found[0][1])) {
+    return { idea: null, problem: 'intent.md has an Idea: field that is not "Idea: ideas/NNNN_<slug>.md"' }
+  }
+  return { idea: found[0][1] }
+}
+
+// `listedBy`: the ideas whose `## Units` names this unit. Only `readAll` knows it, because
+// only it reads `ideas/`; `gate` and `next` call this without it, and neither reads `phase`.
+export function readUnit(dir, name, { listedBy = [] } = {}) {
   const unit = { name, artifacts: {}, problems: [] }
   let intentText = null
   const match = name.match(UNIT_RE)
@@ -444,9 +467,16 @@ export function readUnit(dir, name) {
     const idea = unit.artifacts['idea.md']
     const ideaValid = idea && idea.status !== null && VALID['idea.md'].includes(idea.status)
     const later = STAGES.slice(STAGES.findIndex((s) => s.name === 'intent') + 1).some((s) => present(unit, s.file))
-    if (ideaValid && !later) unit.phase = 'pre-intent'
+    // `0003`: a unit an idea's `## Units` names was opened from that idea a moment ago,
+    // exactly as one holding a valid `idea.md` was — its directory is simply empty.
+    if ((ideaValid || listedBy.length >= 1) && !later) unit.phase = 'pre-intent'
     else unit.problems.push(`no intent.md — every unit opens with one`)
   } else {
+    // `0003` R3/R4. Attached only when present, so a unit with no field keeps the shape it
+    // had (R6). Reported, never gated.
+    const { idea, problem } = parseIdea(intentText)
+    if (idea) unit.idea = idea
+    if (problem) unit.problems.push(problem)
     // Same distinction `missing()` draws below: a header with no `Type:` is a different
     // repair from a header that declares one nothing accepts. Both are reported and
     // neither is blocked — `checkGate` does not read this.
@@ -470,11 +500,118 @@ export function readUnit(dir, name) {
 // user typed, so its `.claude/scripts/cos.mjs` is someone else's code; running it would
 // hand it everything this process has.
 export function readAll(cosDir = COS) {
-  if (!existsSync(cosDir)) return []
-  return readdirSync(cosDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => readUnit(join(cosDir, e.name), e.name))
+  return readStore(cosDir).units
+}
+
+// Units and ideas together, because each is read in the light of the other
+// (`0003_one-idea-is-trapped-inside-one-unit` R5, R7): an empty unit an idea lists is
+// pre-intent rather than broken, and an idea's `units` are the ones that point at it.
+//
+// Two records of one link, each with authority in one phase: an idea's `## Units` before
+// the unit has an intent, the intent's `Idea:` from then on (`spec.md` C2). A unit's
+// `source` is the one in authority; where the two disagree, both sides are told, and
+// neither is chosen silently. Nothing here closes a gate.
+export function readStore(cosDir = COS) {
+  if (!existsSync(cosDir)) return { units: [], ideas: [] }
+  const ideas = readIdeas(cosDir)
+  const listedBy = {}
+  for (const i of ideas) for (const u of i.listed) (listedBy[u] ??= []).push(i.name)
+
+  const units = readdirSync(cosDir, { withFileTypes: true })
+    // `ideas/` is not a unit (R6); `readIdeas` reads it.
+    .filter((e) => e.isDirectory() && e.name !== IDEAS_DIR)
+    .map((e) => readUnit(join(cosDir, e.name), e.name, { listedBy: listedBy[e.name] ?? [] }))
     .sort((a, b) => a.name.localeCompare(b.name))
+
+  const byIdea = Object.fromEntries(ideas.map((i) => [i.name, i]))
+  const unitNames = new Set(units.map((u) => u.name))
+  for (const u of units) {
+    const listing = listedBy[u.name] ?? []
+    if (listing.length > 1) {
+      const both = `listed by ${listing.map((n) => `ideas/${n}.md`).join(' and ')} — a unit comes from one idea`
+      u.problems.push(both)
+      for (const n of listing) byIdea[n].problems.push(`${u.name} is ${both}`)
+    }
+    if (u.idea) {
+      if (!byIdea[u.idea]) u.problems.push(`intent.md names ideas/${u.idea}.md, which does not exist`)
+      for (const n of listing.filter((n) => n !== u.idea)) {
+        const said = `intent.md names ideas/${u.idea}.md but ideas/${n}.md lists ${u.name}`
+        u.problems.push(said)
+        byIdea[n].problems.push(said)
+        byIdea[u.idea]?.problems.push(said)
+      }
+    }
+    const source = u.idea ?? (listing.length === 1 ? listing[0] : null)
+    if (source) {
+      u.source = source
+      byIdea[source]?.units.push(u.name)
+    }
+  }
+  for (const i of ideas) {
+    for (const n of i.listed.filter((n) => !unitNames.has(n))) i.problems.push(`## Units lists ${n}, which is not a unit here`)
+  }
+  return { units, ideas }
+}
+
+// --- ideas -------------------------------------------------------------------
+
+// `0003_one-idea-is-trapped-inside-one-unit`. An idea is one file, `.cos/ideas/NNNN_<slug>.md`,
+// outside every unit, so that several units can come from it without a copy of its words
+// in each. It is a source, not a stage: no gate reads it and `STAGES` does not list it.
+// Its numbers are a sequence of their own, and a name is always written `ideas/<name>.md`
+// so `0001` of an idea is never read as `0001` of a unit.
+const IDEAS_DIR = 'ideas'
+const IDEA_STATUSES = ['draft', 'accepted', 'rejected']
+
+export function readIdeas(cosDir = COS) {
+  const dir = join(cosDir, IDEAS_DIR)
+  if (!existsSync(dir)) return []
+  return readdirSync(dir, { withFileTypes: true })
+    .map((e) => {
+      const name = e.name.endsWith('.md') ? e.name.slice(0, -3) : e.name
+      const idea = { name, file: `${IDEAS_DIR}/${e.name}`, status: null, units: [], listed: [], problems: [] }
+      const match = name.match(UNIT_RE)
+      if (!e.isFile() || !e.name.endsWith('.md') || !match) {
+        idea.problems.push(`file name does not match NNNN_<slug>.md`)
+        return idea
+      }
+      idea.number = Number(match[1])
+      idea.slug = match[2]
+      const text = readFileSync(join(dir, e.name), 'utf8')
+      idea.status = parseStatus(text)
+      if (idea.status === null) idea.problems.push(`carries no Status line`)
+      else if (!IDEA_STATUSES.includes(idea.status)) {
+        idea.problems.push(`has status "${idea.status}", not one of ${IDEA_STATUSES.join(', ')}`)
+      }
+      idea.listed = parseIdeaUnits(text)
+      return idea
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+// Every line `- <name>` under every `## Units` heading, in order. The app only ever appends
+// that section (`coscc/units.py`), so a second one may follow `## Answers`; all are read.
+export function parseIdeaUnits(text) {
+  const listed = []
+  let inUnits = false
+  for (const line of text.split(/\r?\n/)) {
+    if (line.startsWith('## ')) {
+      inUnits = line.trimEnd() === '## Units'
+      continue
+    }
+    if (!inUnits) continue
+    const m = line.match(/^- (\S+)\s*$/)
+    if (m && !listed.includes(m[1])) listed.push(m[1])
+  }
+  return listed
+}
+
+// An idea's answer to "what next". It has no gate and no stage of its own, so the only
+// thing it can propose is the first unit (`intent.md ## Answers, câu 1`); once it has one,
+// it lists them and proposes nothing (`spec.md ## Answers, câu 3`).
+export function ideaNext(idea) {
+  if (!idea.units.length) return { blocked: true, action: 'write-intent — open a unit from this idea', stage: 'intent' }
+  return { blocked: false, action: `units: ${idea.units.join(', ')}`, stage: '' }
 }
 
 // --- deciding ----------------------------------------------------------------
@@ -1042,29 +1179,43 @@ export function betweenPrAndShip(unit, limit = REVIEW_ROUNDS) {
 }
 
 function cmdStatus(json, cosDir, limit) {
-  const units = readAll(cosDir)
+  const store = readStore(cosDir)
+  const units = store.units
   const rows = units.map((u) => ({ ...u, next: nextAction(u, limit), betweenPrAndShip: betweenPrAndShip(u, limit) }))
+  const ideas = store.ideas.map(({ listed, ...i }) => ({ ...i, next: ideaNext(i) }))
 
   if (json) {
     // The stage list ships with the data so a reader never has to keep its own copy of it.
-    console.log(JSON.stringify({ root: cosDir, stages: STAGES, units: rows }, null, 2))
+    console.log(JSON.stringify({ root: cosDir, stages: STAGES, units: rows, ideas }, null, 2))
     return 0
   }
 
-  if (!units.length) {
+  if (!units.length && !ideas.length) {
     console.log('No work units yet. `write-intent` opens one.')
     return 0
   }
 
-  console.log(`| Unit | ${STAGE_NAMES.join(' | ')} | Next action |`)
-  console.log(`|---|${STAGE_NAMES.map(() => '---').join('|')}|---|`)
-  for (const u of rows) {
-    const cells = STAGES.map((s) => cell(u, s.file)).join(' | ')
-    console.log(`| ${u.name} | ${cells} | ${u.next.action} |`)
+  if (units.length) {
+    console.log(`| Unit | ${STAGE_NAMES.join(' | ')} | Next action |`)
+    console.log(`|---|${STAGE_NAMES.map(() => '---').join('|')}|---|`)
+    for (const u of rows) {
+      const cells = STAGES.map((s) => cell(u, s.file)).join(' | ')
+      console.log(`| ${u.name} | ${cells} | ${u.next.action} |`)
+    }
+    console.log(`\nA accepted · d draft · c changes-requested · s skipped · D done · x rejected · ${dash} not started`)
   }
-  console.log(`\nA accepted · d draft · c changes-requested · s skipped · D done · x rejected · ${dash} not started`)
 
-  const problems = rows.flatMap((u) => u.problems.map((p) => `${u.name}: ${p}`))
+  // Printed only when there is an idea, so a store without `ideas/` prints what it always did.
+  if (ideas.length) {
+    console.log(`${units.length ? '\n' : ''}| Idea | status | Next action |`)
+    console.log('|---|---|---|')
+    for (const i of ideas) console.log(`| ${i.file} | ${i.status ?? dash} | ${i.next.action} |`)
+  }
+
+  const problems = [
+    ...rows.flatMap((u) => u.problems.map((p) => `${u.name}: ${p}`)),
+    ...ideas.flatMap((i) => i.problems.map((p) => `${i.file}: ${p}`)),
+  ]
   if (problems.length) {
     console.log('\nProblems (report these, do not infer past them):')
     for (const p of problems) console.log(`  - ${p}`)
@@ -1260,19 +1411,35 @@ const LOCAL_ONLY = new Set(['check-branch', 'check-tag', 'check-version'])
 // is, and a directory without one contributes nothing. The path printed stays relative to
 // the root, because the root is the only place anything is created.
 function cmdNewPath(slug, cosDir, reserveFrom = []) {
+  if (slugRefused('new-path', slug)) return 2
+  const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))].flatMap((d) => readAll(d))
+  console.log(`.cos/${nextNumber(taken)}_${slug}`)
+  return 0
+}
+
+// `0003_one-idea-is-trapped-inside-one-unit` R2. The same rules as `new-path`, on the ideas'
+// own sequence: the highest number in `.cos/ideas/` of the root and of each reserved
+// directory, plus one. A unit's number does not move it. Nothing is written.
+function cmdNewIdea(slug, cosDir, reserveFrom = []) {
+  if (slugRefused('new-idea', slug)) return 2
+  const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))].flatMap((d) => readIdeas(d))
+  console.log(`.cos/${IDEAS_DIR}/${nextNumber(taken)}_${slug}.md`)
+  return 0
+}
+
+// One wording for a refused slug, whichever sequence asked.
+function slugRefused(cmd, slug) {
   if (!slug) {
-    console.error('usage: cos.mjs new-path <slug>')
-    return 2
+    console.error(`usage: cos.mjs ${cmd} <slug>`)
+    return true
   }
   if (!SLUG_RE.test(slug)) {
     console.error(`Invalid slug "${slug}".`)
     console.error('  Lowercase letters, digits and single hyphens only; no underscore,')
     console.error('  because the underscore separates the number from the slug.')
-    return 2
+    return true
   }
-  const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))].flatMap((d) => readAll(d))
-  console.log(`.cos/${nextNumber(taken)}_${slug}`)
-  return 0
+  return false
 }
 
 // Only when run as a command. Importing this file for tests must not exit the process.
@@ -1328,6 +1495,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     gate: () => cmdGate(rest[0], rest[1], cosDir, repoDir, limit),
     next: () => cmdNext(rest[0], cosDir, repoDir, limit),
     'new-path': () => cmdNewPath(rest[0], cosDir, reserveFrom),
+    'new-idea': () => cmdNewIdea(rest[0], cosDir, reserveFrom),
     'unit-branch': () => cmdUnitBranch(rest[0], cosDir),
     'check-branch': () => cmdCheckBranch(rest[0]),
     'check-tag': () => cmdCheckTag(rest[0]),
@@ -1337,7 +1505,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!run) {
     console.error('usage: cos.mjs [--root <dir>] <command>')
     console.error('  reading a .cos/ (these take --root):')
-    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit>')
+    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea [--reserve-from <dir>]... <slug> | unit-branch <unit>')
     console.error('  describing this checkout (these do not):')
     console.error('    check-branch [name] | check-tag <tag> | check-version')
     process.exit(2)
@@ -1356,10 +1524,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
 
   // `--reserve-from` means "these numbers are taken too", which is a question only
-  // `new-path` asks. Anywhere else it would be silently ignored, and a flag that is
-  // accepted and ignored reads as a flag that worked.
-  if (reserveFrom.length && cmd !== 'new-path') {
-    console.error(`--reserve-from applies only to \`new-path\`, not to \`${cmd}\`.`)
+  // `new-path` and `new-idea` ask. Anywhere else it would be silently ignored, and a flag
+  // that is accepted and ignored reads as a flag that worked.
+  if (reserveFrom.length && cmd !== 'new-path' && cmd !== 'new-idea') {
+    console.error(`--reserve-from applies only to \`new-path\` and \`new-idea\`, not to \`${cmd}\`.`)
     process.exit(2)
   }
 
