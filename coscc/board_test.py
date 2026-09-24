@@ -494,3 +494,44 @@ class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
             self._unit(tmp, {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"})
             [u] = run(board.read(tmp))["units"]
         self.assertEqual((u["person_findings"], u["waiting"]), ([], []))
+
+
+OUTCOME_INTENT = (
+    "# I\nAuthor: t. Type: feat. Status: accepted.\n\n"
+    "## Proposed outcome\n\nBy 2026-10-07, three of three.\n\n"
+    "## Answers\n\n### Outcome\nAnswered by: Linh. Date: 2026-10-08. Via: product.\n\n"
+    "Result: trượt\nMeasured by: agent\nSource: board, 2026-10-08\n\n"
+    "### Outcome\nno header\n"
+)
+
+
+class TheOutcomeIsCopiedFromTheScript(unittest.TestCase):
+    """`0047`. The board forwards `cos.mjs` `unitOutcome`; it reads no block itself."""
+
+    def _read(self, files: dict[str, str]):
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_q"
+            unit.mkdir(parents=True)
+            for name, text in files.items():
+                (unit / name).write_text(text, encoding="utf-8")
+            [u] = run(board.read(d))["units"]
+        return u
+
+    def test_the_outcome_arrives_as_the_script_read_it(self):
+        u = self._read({"intent.md": OUTCOME_INTENT})
+        self.assertEqual(u["outcome"], {
+            "deadline": "2026-10-07", "result": "missed", "by": "Linh", "date": "2026-10-08",
+            "measured_by": "agent", "source": "board, 2026-10-08", "reason": None, "note": None,
+            "invalid": 1,
+        })
+
+    def test_a_unit_with_no_intent_has_none(self):
+        self.assertIsNone(self._read({"idea.md": "# Idea\nStatus: accepted.\n"})["outcome"])
+
+    def test_an_older_script_that_sends_no_outcome_reads_as_none(self):
+        async def fake_run(argv, timeout):
+            return 0, '{"stages": [], "units": [{"name": "0001_q", "artifacts": {}}]}', ""
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
+            [u] = run(board.read(d))["units"]
+        self.assertIsNone(u["outcome"])

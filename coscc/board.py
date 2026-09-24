@@ -187,6 +187,10 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             "between_pr_and_ship": bool(u.get("betweenPrAndShip")),
             # `0028`. The ids `next` says a person is awaited on. Empty unless it said so.
             "waiting": [str(x) for x in ((u.get("next") or {}).get("waiting") or [])],
+            # `0047`. The outcome deadline and the last valid `### Outcome` block, as
+            # `cos.mjs` `unitOutcome` read them from `intent.md`. Copied, never derived here;
+            # the label is the service's. An older `cos.mjs` sends nothing, which reads as None.
+            "outcome": _outcome_of(u),
         }
         for u in data.get("units") or []
     ]
@@ -338,6 +342,24 @@ def _person_findings_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
             "reason": str(p.get("reason") or ""),
             "answered": bool(p.get("answered")),
         })
+    return out
+
+
+_OUTCOME_FIELDS = (
+    ("deadline", "deadline"), ("result", "result"), ("by", "by"), ("date", "date"),
+    ("measured_by", "measuredBy"), ("source", "source"), ("reason", "reason"), ("note", "note"),
+)
+
+
+def _outcome_of(unit: dict[str, Any]) -> dict[str, Any] | None:
+    """`cos.mjs` `unitOutcome`, keys in this file's snake_case, or None when it sent none."""
+    o = unit.get("outcome")
+    if not isinstance(o, dict):
+        return None
+    out: dict[str, Any] = {
+        mine: (str(o[theirs]) if o.get(theirs) is not None else None) for mine, theirs in _OUTCOME_FIELDS
+    }
+    out["invalid"] = int(o.get("invalid") or 0)
     return out
 
 
