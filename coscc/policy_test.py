@@ -548,6 +548,15 @@ class GeboPushesOnlyWithTheLease(unittest.TestCase):
                 reason = self.run_(command)
                 self.assertIn(why, reason)
 
+    def test_a_push_in_anothers_arguments_is_not_a_push(self):
+        """`0035` review round 1, F3: `push` as a word, not as the subcommand."""
+        for command in ("git log --grep push", "git commit -m push", "git branch push-fix"):
+            with self.subTest(command=command):
+                self.assertEqual(self.run_(command), "")
+        for command in ("git --no-pager push origin feat/x", "git -c a=b push origin feat/x"):
+            with self.subTest(command=command):
+                self.assertIn("nothing between", self.run_(command))
+
     def test_no_lease_means_no_push(self):
         self.assertIn("no lease", self.run_(self.OK, lease=None))
 

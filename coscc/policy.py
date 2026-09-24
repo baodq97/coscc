@@ -420,11 +420,11 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
         if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in words):
             # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
             return "this step may not call the merge endpoint: merging is the ship stage's"
-        if base == "git" and grant.push_needs_lease and "push" in words:
+        raw = segment.split()[1:]
+        if base == "git" and grant.push_needs_lease and _may_be_push(raw):
             # `0035` R6. `push` must be the first word after `git`, so a `-C dir` or
             # `-c k=v` in front cannot hide what it pushes.
-            raw = segment.split()[1:]
-            if not raw or raw[0] != "push":
+            if raw[0] != "push":
                 return "a push must be spelled `git push …`, with nothing between"
             branch, head = lease if lease else ("", "")
             reason = check_push(raw[1:], branch, head)
@@ -438,6 +438,19 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
 # round 1, F1). Every other `-x` / `--x` / `--x=v` is dropped alone.
 _GH_VALUE_FLAGS = frozenset({"-R", "--repo", "--hostname"})
 _MERGE_ENDPOINT = re.compile(r"pulls/[^/\s]+/merge\b")
+
+
+def _may_be_push(raw: list[str]) -> bool:
+    """Whether `git <raw>` could be a push: a `push` with only options, or an option's
+    value, in front of it. `git log --grep push` is not one (`0035` review round 1, F3).
+
+    Leans towards yes: `git --no-pager log push` reads as one, since which of git's
+    options take a value is not known here.
+    """
+    if "push" not in raw:
+        return False
+    before = raw[: raw.index("push")]
+    return all(t.startswith("-") or (i and before[i - 1].startswith("-")) for i, t in enumerate(before))
 
 
 def _words(base: str, rest: list[str]) -> tuple[str, ...]:
