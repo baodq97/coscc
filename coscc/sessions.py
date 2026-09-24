@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 from contextlib import aclosing, suppress
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -476,6 +478,12 @@ class Sessions:
         # `_live`: a step is not resumed, so its client is closed when the step ends.
         self._steps: set[StepHandle] = set()
         self._lock = asyncio.Lock()
+        # `0068` R8. Chat turns answering now, by an id of their own so a new session with
+        # no id yet can still be named and cut. Each is `{id, session_id, workspace,
+        # started}` plus the task reading it. Board steps are never here: `_steps` has those.
+        self._turns: dict[str, dict[str, Any]] = {}
+        # Told when a turn ends, so the updater waiting on it need not guess by the clock.
+        self.on_turn_end: Any = None
 
     def created_here(self, session_id: str) -> bool:
         return session_id in self._created_here
@@ -502,6 +510,42 @@ class Sessions:
         # step ends. A finished one no longer blocks `pull` until the next restart.
         found += ["(running step)" for h in self._steps if _resolve(h.cwd) == target]
         return found
+
+    def _begin_turn(self, cwd: str, session_id: str | None) -> dict[str, Any]:
+        turn = {
+            "id": uuid.uuid4().hex,
+            "session_id": session_id or "",
+            "workspace": cwd,
+            "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "task": asyncio.current_task(),
+        }
+        self._turns[turn["id"]] = turn
+        return turn
+
+    def in_flight(self) -> list[dict[str, Any]]:
+        """`0068` R8. The chat turns answering now, oldest first. This process only."""
+        return [
+            {k: t[k] for k in ("id", "session_id", "workspace", "started")}
+            for t in sorted(self._turns.values(), key=lambda t: t["started"])
+        ]
+
+    async def cut_turn(self, turn_id: str) -> bool:
+        """`0068` R10. End one chat turn: its reader is cancelled and its client closed.
+
+        `False` when the turn had already ended. The reply stops where it was; nothing is
+        written for it, like a chat whose tab was closed.
+        """
+        turn = self._turns.pop(turn_id, None)
+        if turn is None:
+            return False
+        task = turn.get("task")
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+        if turn["session_id"]:
+            await self.close(turn["session_id"])
+        if self.on_turn_end is not None:
+            self.on_turn_end()
+        return True
 
     def adopt(self, session_id: str) -> None:
         """Record a session as this app's.
@@ -549,9 +593,17 @@ class Sessions:
             workspace, model, system_prompt, effort, step,
         )
         if step is None:
-            async with aclosing(inner):
-                async for item in inner:
-                    yield item
+            turn = self._begin_turn(cwd, session_id)
+            try:
+                async with aclosing(inner):
+                    async for item in inner:
+                        if item[0] == "session":
+                            turn["session_id"] = item[1]
+                        yield item
+            finally:
+                self._turns.pop(turn["id"], None)
+                if self.on_turn_end is not None:
+                    self.on_turn_end()
             return
         step.cwd = cwd
         self._steps.add(step)

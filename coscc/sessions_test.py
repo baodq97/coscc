@@ -408,6 +408,77 @@ class _CountingClient(_FakeClient):
         self.disconnects += 1
 
 
+class WhichChatTurnsAreAnswering(unittest.IsolatedAsyncioTestCase):
+    """`0068` R8. `in_flight` names each chat turn answering now; a board step never."""
+
+    def setUp(self):
+        self.s = Sessions(Config(workspaces=("/tmp",)))
+        self.ended = 0
+
+        def ended():
+            self.ended += 1
+
+        self.s.on_turn_end = ended
+        _CountingClient.made = []
+        _CountingClient.hold = asyncio.Event()
+        _CountingClient.fail = False
+        _CountingClient.messages = [_assistant("a", "sid-t"), _result("sid-t")]
+        patcher = mock.patch("coscc.sessions.ClaudeSDKClient", _CountingClient)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def _reader(self, **kw):
+        return [item async for item in self.s.stream("/tmp", "hi", **kw)]
+
+    async def _until_told(self):
+        for _ in range(100):
+            turns = self.s.in_flight()
+            if turns and turns[0]["session_id"]:
+                return turns
+            await asyncio.sleep(0.01)
+        self.fail("the turn never told its session id")
+
+    async def test_a_turn_is_listed_while_it_answers_and_gone_when_done(self):
+        task = asyncio.create_task(self._reader())
+        turns = await self._until_told()
+        self.assertEqual(len(turns), 1)
+        self.assertEqual((turns[0]["session_id"], turns[0]["workspace"]), ("sid-t", "/tmp"))
+        self.assertTrue(turns[0]["started"])
+        _CountingClient.hold.set()
+        await task
+        self.assertEqual((self.s.in_flight(), self.ended), ([], 1))
+
+    async def test_a_turn_that_raises_is_gone(self):
+        _CountingClient.fail = True
+        task = asyncio.create_task(self._reader())
+        await self._until_told()
+        _CountingClient.hold.set()
+        with self.assertRaises(RuntimeError):
+            await task
+        self.assertEqual(self.s.in_flight(), [])
+
+    async def test_a_cut_turn_is_gone_and_its_reader_ends(self):
+        task = asyncio.create_task(self._reader())
+        turns = await self._until_told()
+        self.assertTrue(await self.s.cut_turn(turns[0]["id"]))
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(self.s.in_flight(), [])
+        self.assertFalse(await self.s.cut_turn(turns[0]["id"]))
+
+    async def test_a_board_step_is_never_a_chat_turn(self):
+        seen = []
+        _CountingClient.hold = None
+
+        async def watch():
+            async for _ in self.s.stream("/tmp", "hi", step=sessions.StepHandle()):
+                seen.append(self.s.in_flight())
+
+        await watch()
+        self.assertTrue(seen)
+        self.assertTrue(all(turns == [] for turns in seen))
+
+
 class _Transport:
     def __init__(self):
         self.closes = 0
