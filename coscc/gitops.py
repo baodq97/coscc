@@ -200,6 +200,8 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
 #   behind (`0030_a-unit-branch-starts-from-a-stale-main` plan R1/R5). `merge-base
 #   --is-ancestor` and `rev-list --count` are the two reads that decide that and measure
 #   how far a branch is behind, neither writing anything.
+# - Since `0048`, `rev-parse --git-common-dir`, a read that writes nothing: it names the git
+#   dir a workspace and all its worktrees share, so fetches into it can be coordinated.
 #
 # The app may **not**: push, merge, commit, move `main` to another commit, or delete any
 # branch but that one. Those are a step's business — the `pr` grant carries `git`
@@ -266,6 +268,18 @@ async def fetch(
     return await _run(
         ["git", "-C", str(path), "fetch", "--no-tags", "--", remote, refspec], timeout
     )
+
+
+async def common_dir(path: Path, timeout: float = BRANCH_TIMEOUT) -> Path:
+    """The git dir `path` shares with every other worktree of its clone, absolute.
+
+    `0048` R1. Every worktree writes `refs/remotes/origin/main` into this one directory, so
+    it is what two fetches race on. git prints it relative to `path` from the main working
+    tree and absolute from a linked one; both come back absolute and resolved.
+    """
+    _require_repo(path)
+    out = await _run(["git", "-C", str(path), "rev-parse", "--git-common-dir"], timeout)
+    return (Path(path) / out.strip()).resolve()
 
 
 async def rev_parse(path: Path, ref: str, timeout: float = BRANCH_TIMEOUT) -> str:
