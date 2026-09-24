@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+import tempfile
 import uuid
 from contextlib import aclosing, suppress
 from dataclasses import dataclass, field
@@ -32,8 +34,10 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
+from coscc import config as cfg
 from coscc import frontend
 from coscc.config import Config
+from coscc.data import Data
 
 
 # The app's own environment must not reach a session, and it cannot be removed -- only
@@ -61,12 +65,22 @@ from coscc.config import Config
 # loses every entry under the workspace or the installed package (a workspace's
 # `.venv/bin` first on `PATH` runs the workspace's code, not the unit's), and every
 # `__REFLEX_*` this process set (`coscc/run.py:56,172`) is overridden with an empty value.
-def child_env(cwd: str, workspace: str | None = None) -> dict[str, str]:
+#
+# Since `0076` `COS_DATA_DIR` is not blanked but pointed at a directory of the session's
+# own. Blank read as unset, unset read as `~/.cos`, and a step's `npm test` migrated the
+# running app's `cos.db` to a schema the app could not read. `config.PROTECTED_DB_VAR`
+# names that database too, for the code that reaches `~/.cos` without reading the setting.
+def child_env(
+    cwd: str, workspace: str | None = None, *, data_dir: str, app_db: Path
+) -> dict[str, str]:
     """What to lay over the environment a session would otherwise inherit whole.
 
     Every name this app puts into its own environment appears here with a value that is
     safe for somebody else's repository, because leaving one out hands the child this
     app's own.
+
+    `data_dir` is the session's throwaway data root (`scratch_dir`) and `app_db` this
+    app's `cos.db`. Both are required, so no session environment can be built without them.
     """
     from coscc import worktrees  # here, not at the top: worktrees imports prcomment
 
@@ -80,7 +94,45 @@ def child_env(cwd: str, workspace: str | None = None) -> dict[str, str]:
     # `0017` review, F1), and to `cos.mjs` for `COS_REVIEW_ROUNDS`. `sessions_test.py`
     # loads the config from what the child reads.
     env.update({name: "" for name in os.environ if name.startswith(("COS_", "__REFLEX_"))})
+    env["COS_DATA_DIR"] = data_dir
+    env[cfg.PROTECTED_DB_VAR] = cfg.protect(app_db)
     return env
+
+
+# What every throwaway data root starts with. `_drop` removes nothing without it.
+SCRATCH_PREFIX = "coscc-session-"
+
+
+def scratch_dir(app_root: Path) -> Path:
+    """A new, empty data root for one session: `0700`, unguessable, in the OS temp dir.
+
+    `0076` R1 and R2. Refused, and removed again, if it landed inside `app_root` or holds
+    it -- a `TMPDIR` pointed into the data root would otherwise hand a step the app's own
+    directory under another name.
+    """
+    made = Path(tempfile.mkdtemp(prefix=SCRATCH_PREFIX)).resolve()
+    root = Path(app_root).resolve()
+    if made == root or root in made.parents or made in root.parents:
+        made.rmdir()
+        raise Refused(f"a session's data directory {made} would overlap the app's {root}")
+    return made
+
+
+def _drop(path: Path | None) -> None:
+    """Remove a directory `scratch_dir` made, and nothing else.
+
+    An `rmtree`, so it asks twice: the name carries `SCRATCH_PREFIX`, and it sits directly
+    in the OS temp dir, not through a symlink. Anything else is left alone, silently --
+    this runs in `finally` blocks, where raising would hide the step's own outcome.
+    """
+    if path is None:
+        return
+    p = Path(path)
+    if not p.name.startswith(SCRATCH_PREFIX) or p.is_symlink():
+        return
+    if p.resolve().parent != Path(tempfile.gettempdir()).resolve():
+        return
+    shutil.rmtree(p, ignore_errors=True)
 
 
 class Refused(Exception):
@@ -217,6 +269,9 @@ class Live:
     # What this session had cost as of the last turn. See `_cumulative` for why a running
     # total has to be kept here rather than read fresh each time.
     spent: dict[str, float] = field(default_factory=dict)
+    # `0076`. The chat's own `COS_DATA_DIR`. It lives as long as the client, across turns,
+    # and is removed when the session is closed.
+    scratch: Path | None = None
 
 
 # How long `_shut` lets the SDK close the CLI its own way before signalling the process
@@ -303,6 +358,9 @@ class StepHandle:
     client: Any = None
     closed: bool = False
     _closing: asyncio.Task | None = None
+    # `0076`. The step's own `COS_DATA_DIR`, set before the client is built and removed by
+    # `stream` once the client is closed, however the step ended.
+    scratch: Path | None = None
 
     async def close(self) -> None:
         self.closed = True
@@ -381,6 +439,8 @@ def _options(
     model: str | None = None,
     system_prompt: dict[str, str] | None = None,
     effort: str | None = None,
+    *,
+    data_dir: str,
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
@@ -403,11 +463,16 @@ def _options(
     carries Claude Code's own guidance on using those tools. It changes nothing else here:
     the tool list, the permission mode, `setting_sources` and the callback are what they
     would have been without it, and what a step may do is still decided by `can_use_tool`.
+
+    `data_dir` is the session's own data root (`0076`); the database it protects is the
+    one `config` names. Building a `Data` touches no disk.
     """
     options = ClaudeAgentOptions(
         cwd=cwd,
         # Laid over what the child would inherit. See `child_env` and what it cost twice.
-        env=child_env(cwd, workspace),
+        env=child_env(
+            cwd, workspace, data_dir=data_dir, app_db=Data(config.data_dir).db_path
+        ),
         # A board step brings its own list from `policy.Grant`; everything else gets the
         # app default, which is empty. `tools=[]` and `tools=None` mean different things to
         # the SDK, so the distinction is `is None`, not truthiness.
@@ -619,6 +684,8 @@ class Sessions:
                 # A Stop's cancel can land on this very close (review round 2, F4); the
                 # closing goes on without us, and the handle must still leave the set.
                 self._steps.discard(step)
+                # After the close, so the CLI is gone before its data root is (`0076` R3).
+                _drop(step.scratch)
 
     async def _stream(
         self, cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
@@ -635,125 +702,143 @@ class Sessions:
                 "resuming it is off until spec.md open question 3 is tested"
             )
 
-        async with self._lock:
-            live = self._live.get(session_id) if session_id and step is None else None
-            if live is None:
-                client = ClaudeSDKClient(
-                    options=_options(
-                        self.config, cwd, session_id, max_turns,
-                        can_use_tool=can_use_tool,
-                        tools=tools,
-                        max_budget_usd=max_budget_usd,
-                        workspace=workspace,
-                        model=model,
-                        system_prompt=system_prompt,
-                        effort=effort,
+        # `0076`. A chat's data root this call made and `_live` does not own yet: removed
+        # here if the call ends before the session is kept. A step's is `stream`'s to remove.
+        made: Path | None = None
+        try:
+            async with self._lock:
+                live = self._live.get(session_id) if session_id and step is None else None
+                if live is None:
+                    # Made before the client, so a client that fails to build or connect
+                    # still leaves it with an owner (`0076` R3).
+                    scratch = scratch_dir(Data(self.config.data_dir).root)
+                    if step is None:
+                        made = scratch
+                    else:
+                        step.scratch = scratch
+                    client = ClaudeSDKClient(
+                        options=_options(
+                            self.config, cwd, session_id, max_turns,
+                            can_use_tool=can_use_tool,
+                            tools=tools,
+                            max_budget_usd=max_budget_usd,
+                            workspace=workspace,
+                            model=model,
+                            system_prompt=system_prompt,
+                            effort=effort,
+                            data_dir=str(scratch),
+                        )
                     )
-                )
-                if step is None:
-                    await client.connect()
-                else:
-                    try:
+                    if step is None:
                         await client.connect()
-                    except BaseException:
-                        # A cancel or a failure while the CLI was starting. The handle
-                        # has no client yet, so nothing else will close what `connect`
-                        # got as far as spawning (`0034` review round 1, F1).
-                        await _abandon(client)
-                        raise
-                    # Only now: `disconnect` during `connect` closes nothing and drops the
-                    # transport, so a Stop before this point only marks the handle closed.
-                    step.client = client
-                live = Live(client=client, session_id=session_id or "", cwd=cwd)
-        if step is not None and step.closed:
-            raise Refused("the step was stopped before its prompt was sent")
+                    else:
+                        try:
+                            await client.connect()
+                        except BaseException:
+                            # A cancel or a failure while the CLI was starting. The handle
+                            # has no client yet, so nothing else will close what `connect`
+                            # got as far as spawning (`0034` review round 1, F1).
+                            await _abandon(client)
+                            raise
+                        # Only now: `disconnect` during `connect` closes nothing and drops the
+                        # transport, so a Stop before this point only marks the handle closed.
+                        step.client = client
+                    live = Live(
+                        client=client, session_id=session_id or "", cwd=cwd, scratch=made
+                    )
+            if step is not None and step.closed:
+                raise Refused("the step was stopped before its prompt was sent")
 
-        resolved = live.session_id
-        collected: list[str] = []
-        turn: dict[str, float] = {}
-        turns = 0
-        duration_ms = 0
-        terminal = ""
-        # Which model ids the SDK billed this session to: the keys of `model_usage`. This
-        # is the session's own record of the model it ran on, as opposed to the model the
-        # app asked for (`0004_no-setting-says-which-model-runs-a-stage`, outcome 4).
-        used: list[str] = []
-        # `0019` plan step 2. Yielded once, the first moment `resolved` has a value, so a
-        # caller that dies before `done` — the whole reason this unit exists — still has a
-        # session id to read a transcript excerpt back with. `Service.stream` (chat) drops
-        # this kind; `api.py` would otherwise turn it into a spurious `done` line in chat.
-        told_session = bool(resolved)
-        if told_session:
-            yield ("session", resolved)
-        await live.client.query(text)
-        async for message in live.client.receive_response():
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        collected.append(block.text)
-                        yield ("chunk", block.text)
-                    elif isinstance(block, (ToolUseBlock, ServerToolUseBlock)):
-                        # Said out loud so a caller assembling an artifact from the reply
-                        # can tell narration from the artifact. Text that arrives before a
-                        # tool call is a step thinking out loud on its way somewhere; it is
-                        # never the file. See `coscc/runner.py` for what is done with it.
-                        yield ("tool", getattr(block, "name", "") or "tool")
-                if message.session_id:
-                    resolved = message.session_id
-                if resolved and not told_session:
-                    told_session = True
-                    yield ("session", resolved)
-            elif isinstance(message, sdk.ResultMessage):
-                resolved = message.session_id or resolved
-                if resolved and not told_session:
-                    told_session = True
-                    yield ("session", resolved)
-                # The one message carrying what this cost. An earlier version read `session_id` off it
-                # and dropped the rest, so every turn the app ran was unaccounted for.
-                total = _cumulative(message)
-                used = sorted(str(k) for k in (getattr(message, "model_usage", None) or {}))
-                turn = {k: total[k] - live.spent.get(k, 0.0) for k in total}
-                live.spent = total
-                turns += int(getattr(message, "num_turns", 0) or 0)
-                duration_ms += int(getattr(message, "duration_ms", 0) or 0)
-                # Why the loop stopped. A turn that ran into its ceiling has to be
-                # distinguishable from one that finished, or the turn bound turns a bounded
-                # failure back into a silent one.
-                terminal = getattr(message, "terminal_reason", None) or (
-                    getattr(message, "subtype", "") or ""
+            resolved = live.session_id
+            collected: list[str] = []
+            turn: dict[str, float] = {}
+            turns = 0
+            duration_ms = 0
+            terminal = ""
+            # Which model ids the SDK billed this session to: the keys of `model_usage`. This
+            # is the session's own record of the model it ran on, as opposed to the model the
+            # app asked for (`0004_no-setting-says-which-model-runs-a-stage`, outcome 4).
+            used: list[str] = []
+            # `0019` plan step 2. Yielded once, the first moment `resolved` has a value, so a
+            # caller that dies before `done` — the whole reason this unit exists — still has a
+            # session id to read a transcript excerpt back with. `Service.stream` (chat) drops
+            # this kind; `api.py` would otherwise turn it into a spurious `done` line in chat.
+            told_session = bool(resolved)
+            if told_session:
+                yield ("session", resolved)
+            await live.client.query(text)
+            async for message in live.client.receive_response():
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            collected.append(block.text)
+                            yield ("chunk", block.text)
+                        elif isinstance(block, (ToolUseBlock, ServerToolUseBlock)):
+                            # Said out loud so a caller assembling an artifact from the reply
+                            # can tell narration from the artifact. Text that arrives before a
+                            # tool call is a step thinking out loud on its way somewhere; it is
+                            # never the file. See `coscc/runner.py` for what is done with it.
+                            yield ("tool", getattr(block, "name", "") or "tool")
+                    if message.session_id:
+                        resolved = message.session_id
+                    if resolved and not told_session:
+                        told_session = True
+                        yield ("session", resolved)
+                elif isinstance(message, sdk.ResultMessage):
+                    resolved = message.session_id or resolved
+                    if resolved and not told_session:
+                        told_session = True
+                        yield ("session", resolved)
+                    # The one message carrying what this cost. An earlier version read `session_id` off it
+                    # and dropped the rest, so every turn the app ran was unaccounted for.
+                    total = _cumulative(message)
+                    used = sorted(str(k) for k in (getattr(message, "model_usage", None) or {}))
+                    turn = {k: total[k] - live.spent.get(k, 0.0) for k in total}
+                    live.spent = total
+                    turns += int(getattr(message, "num_turns", 0) or 0)
+                    duration_ms += int(getattr(message, "duration_ms", 0) or 0)
+                    # Why the loop stopped. A turn that ran into its ceiling has to be
+                    # distinguishable from one that finished, or the turn bound turns a bounded
+                    # failure back into a silent one.
+                    terminal = getattr(message, "terminal_reason", None) or (
+                        getattr(message, "subtype", "") or ""
+                    )
+
+            if session_id and resolved != session_id:
+                # Never observed, but the failure C7 describes is silent, so it is checked
+                # rather than assumed.
+                await live.client.disconnect()
+                self._live.pop(session_id, None)
+                _drop(live.scratch)
+                raise Refused(
+                    f"resume returned {resolved} instead of {session_id} — "
+                    "this is the fork branch spec.md C7 warns about"
                 )
 
-        if session_id and resolved != session_id:
-            # Never observed, but the failure C7 describes is silent, so it is checked
-            # rather than assumed.
-            await live.client.disconnect()
-            self._live.pop(session_id, None)
-            raise Refused(
-                f"resume returned {resolved} instead of {session_id} — "
-                "this is the fork branch spec.md C7 warns about"
+            live.session_id = resolved
+            if step is None:
+                self._live[resolved] = live
+            self._created_here.add(resolved)
+            cost = {name: int(turn.get(name, 0.0)) for name in COST_FIELDS}
+            cost["turns"] = turns
+            cost["duration_ms"] = duration_ms
+            # Kept as a float and rounded rather than truncated: a turn can cost less than a
+            # cent, and `int()` would report every one of those as free.
+            cost["cost_usd"] = round(turn.get("cost_usd", 0.0), 6)
+            yield (
+                "done",
+                {
+                    "session_id": resolved,
+                    "text": "".join(collected),
+                    "cwd": cwd,
+                    "cost": cost,
+                    "terminal_reason": terminal,
+                    "models_used": used,
+                },
             )
-
-        live.session_id = resolved
-        if step is None:
-            self._live[resolved] = live
-        self._created_here.add(resolved)
-        cost = {name: int(turn.get(name, 0.0)) for name in COST_FIELDS}
-        cost["turns"] = turns
-        cost["duration_ms"] = duration_ms
-        # Kept as a float and rounded rather than truncated: a turn can cost less than a
-        # cent, and `int()` would report every one of those as free.
-        cost["cost_usd"] = round(turn.get("cost_usd", 0.0), 6)
-        yield (
-            "done",
-            {
-                "session_id": resolved,
-                "text": "".join(collected),
-                "cwd": cwd,
-                "cost": cost,
-                "terminal_reason": terminal,
-                "models_used": used,
-            },
-        )
+        finally:
+            if made is not None and (live is None or self._live.get(live.session_id) is not live):
+                _drop(made)
 
     async def send(self, cwd: str, text: str, session_id: str | None = None) -> dict[str, Any]:
         """`stream` collected into one result, for callers that do not want the pieces."""
@@ -766,7 +851,10 @@ class Sessions:
     async def close(self, session_id: str) -> None:
         live = self._live.pop(session_id, None)
         if live is not None:
-            await live.client.disconnect()
+            try:
+                await live.client.disconnect()
+            finally:
+                _drop(live.scratch)
 
     async def close_all(self) -> None:
         """Every client is a CLI process. The plan lists leaking them as a risk, so
@@ -777,3 +865,4 @@ class Sessions:
         for step in list(self._steps):
             await step.close()
             self._steps.discard(step)
+            _drop(step.scratch)

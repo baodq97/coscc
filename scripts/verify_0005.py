@@ -49,7 +49,8 @@ from coscc.api import build
 from coscc.config import from_env
 from coscc.journal import Journal
 from coscc.runner import build_prompt
-from coscc.sessions import _options  # the app's own construction path — see claim 5
+from coscc.sessions import _drop, _options, scratch_dir  # the app's own construction path — see claim 5
+from coscc.data import Data
 
 REPO = Path(__file__).resolve().parent.parent
 COS_MJS = REPO / ".claude" / "scripts" / "cos.mjs"
@@ -298,18 +299,21 @@ async def _init_tools(config, cwd: str) -> tuple[list[str], list[str]]:
     # `intent`, not `spec`: since `0020` `spec` reads, and this claim is about a session
     # whose grant is empty.
     grant = policy.grant_for("intent")
+    # Since `0076` every session has a data root of its own, as `Sessions` makes one.
+    scratch = scratch_dir(Data(config.data_dir).root)
     options = _options(
         config, cwd, None,
         max_turns=grant.max_turns,
         can_use_tool=None,
         tools=list(grant.tools) if grant.opens_anything else None,
         max_budget_usd=grant.max_budget_usd or None,
+        data_dir=str(scratch),
     )
     client = sdk.ClaudeSDKClient(options=options)
-    await client.connect()
     tools: list[str] = []
     servers: list[str] = []
     try:
+        await client.connect()
         await client.query("Reply with exactly: READY")
         async for message in client.receive_response():
             if isinstance(message, sdk.SystemMessage) and message.subtype == "init":
@@ -320,6 +324,7 @@ async def _init_tools(config, cwd: str) -> tuple[list[str], list[str]]:
                 ]
     finally:
         await client.disconnect()
+        _drop(scratch)
     return tools, servers
 
 

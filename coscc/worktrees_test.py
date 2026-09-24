@@ -16,6 +16,7 @@ from unittest import mock
 
 import coscc
 from coscc import fetches, units, worktrees
+from coscc.config import PROTECTED_DB_VAR
 from coscc.gitops import GitError
 from coscc.units import BadUnit
 
@@ -394,6 +395,31 @@ class Preparing(unittest.TestCase):
         self.assertEqual(env["REFLEX_WEB_WORKDIR"], str(self.tree / ".web"))
         self.assertEqual(env["PATH"], "/usr/bin")
         self.assertFalse([k for k in env if k.startswith(("CLAUDE", "ANTHROPIC", "COS_", "__REFLEX_"))])
+
+    def test_the_apps_database_is_named_as_protected(self):
+        """`0076` R4: appended to what this process was handed, never in its place."""
+        d = Path(self._tmp.name) / "data"
+        mine = str(d.resolve() / "cos.db")
+        with mock.patch.dict(os.environ):
+            os.environ.pop(PROTECTED_DB_VAR, None)
+            self.assertEqual(worktrees.prepare_env(self.tree, None, data_dir=d)[PROTECTED_DB_VAR], mine)
+        with mock.patch.dict(os.environ, {PROTECTED_DB_VAR: "/outer/cos.db"}):
+            got = worktrees.prepare_env(self.tree, None, data_dir=d)[PROTECTED_DB_VAR]
+        self.assertEqual(got, f"/outer/cos.db{os.pathsep}{mine}")
+
+    def test_prepare_hands_the_commands_the_apps_database(self):
+        (self.tree / "uv.lock").write_text("", encoding="utf-8")
+        d = Path(self._tmp.name) / "data"
+        seen = []
+
+        async def run(argv, cwd, env):
+            seen.append(env.get(PROTECTED_DB_VAR, ""))
+            return 0, ""
+
+        with mock.patch.dict(os.environ):
+            os.environ.pop(PROTECTED_DB_VAR, None)
+            asyncio.run(worktrees.prepare(self.tree, run=run, data_dir=d))
+        self.assertEqual(seen, [str(d.resolve() / "cos.db")])
 
 
 class Removing(Repo):
