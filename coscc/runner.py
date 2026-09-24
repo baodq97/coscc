@@ -471,14 +471,16 @@ def _header_status(text: str) -> str | None:
 REPLY_KEPT = 2000
 
 
-# `0019_a-failed-step-destroys-the-work-that-succeeded` plan step 3. Chosen as the
-# starting point `spec.md ## Answers, câu 2` names, and **not yet measured**: step 3 asked
-# for a run against the real transcripts of `0032`'s two exhausted `impl` attempts
-# (sessions `752523a2` and `1a2ae5a7`), via `scripts/measure_0019_excerpt.py`. That script
-# was not written and the two transcripts were not read in this pass — see `impl.md`,
-# `## What is still open`. 8000 stays because plan step 3 says exactly that: "Nếu không
-# tìm được transcript, giữ 8000 và ghi 'chưa đo được, vì …'." Not bumped past 40000
-# without measuring first (plan step 3, the second stop condition).
+# `0019_a-failed-step-destroys-the-work-that-succeeded` plan step 3. Chosen, and measured
+# to be too short. 8000 is the starting point `spec.md ## Answers, câu 2` names. Measured
+# 2026-09-24 with `scripts/measure_0019_excerpt.py` on `0032`'s two exhausted `impl`
+# transcripts, matching that unit's plan step 2 measurement commands (`measure_context.py
+# --json` / `--strict-mcp`, `check_command(grant_for`, `npm test … wc -c`, `claude
+# --help`, the `PermissionResultAllow` probe): the earliest such output started 87656
+# characters from the end in `752523a2` and 101788 in `1a2ae5a7`. 8000 kept none of them
+# in the first and only the last one (`--json --baseline`, 7868) in the second. Past plan step 3's
+# 40000 stop line, so whether to filter by command or raise this is the initiator's call
+# (plan.md step 3, the update of 2026-09-24); the number is left where the plan put it.
 ATTEMPT_EXCERPT = 8000
 
 

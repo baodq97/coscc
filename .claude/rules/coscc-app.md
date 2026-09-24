@@ -190,8 +190,9 @@ no commands, one turn, no budget.
 - **A failed step's transcript tail is stored in `cos.db` and put into the next prompt.**
   Since `0019` a stage that ends without `done` — a ceiling hit, an exception, a reply with
   no `Status:` line — has `Runner.run` capture the tree (`HEAD`, branch, the commits since
-  the trunk, `git status --porcelain`) and the last `runner.ATTEMPT_EXCERPT` (8000, chosen
-  and not measured — `.cos/0019_.../impl.md` says why) characters of what the session's own
+  the trunk, `git status --porcelain`) and the last `runner.ATTEMPT_EXCERPT` (8000, chosen;
+  measured 2026-09-24 as too short to hold `0032`'s own measurements, which sat 87656 and
+  101788 characters from the end — the unit's `impl.md` says why it was left) characters of what the session's own
   turns produced, and append it to the run log as one `kind: "attempt"` row, read back only
   by `journal.failed_attempts` and placed in the *next* run's prompt
   (`runner.describe_attempt`), never in an artifact. No route returns it — `/api/timeline`,
