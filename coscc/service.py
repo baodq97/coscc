@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from coscc import board as board_reader
-from coscc import gitops
+from coscc import drift, gitops
 from coscc import harness, integrate
 from coscc import prcomment
 from coscc import sessions as reader
@@ -975,6 +975,22 @@ class Service:
         if stage == "review":
             since = integration_since_review(journal, key, unit)
             integration_note = integrate.describe_for_review(since) if since else ""
+        # `0042`. Which files the plan names `main` changed since the plan ran, for `impl`
+        # only. Unlike `failed_attempts` above, nothing here may refuse the step (R8): a
+        # busy run log, an unreadable `plan.md` or a bug in `drift.py` is "could not check".
+        plan_drift: dict[str, Any] | None = None
+        if stage in ("impl", "implement"):
+            try:
+                plan_drift = await drift.compute(
+                    journal.records(key, unit),
+                    (directory / "plan.md").read_text(encoding="utf-8"),
+                    tree["path"] if tree else None,
+                )
+            except Exception as e:  # noqa: BLE001 — R8, recorded as the reason
+                plan_drift = {
+                    "plan_sha": None, "main_sha": None, "files": None,
+                    "checked": False, "reason": str(e) or type(e).__name__,
+                }
         runner = Runner(self.sessions, journal)
         # `0035` R12: an integration refuses a unit with a step running, and a step refuses
         # one being integrated -- both ways, or the first to finish would clear the other's
@@ -1001,6 +1017,8 @@ class Service:
                 base_note=describe_base(base),
                 last_attempt=describe_attempt(failed) if failed else "",
                 integration_note=integration_note,
+                plan_drift=plan_drift,
+                drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
             ):
                 if item[0] == "done":
                     item = ("done", {**item[1], "base": base})
