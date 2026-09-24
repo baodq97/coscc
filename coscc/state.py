@@ -1426,6 +1426,11 @@ class StudioState(rx.State):
         # So the unit opens once its own board is in (`0056` review round 1, F1).
         reading = first or moved_ws
         self.unit_id, self.detail_tab = ("", "overview") if reading else (unit, tab)
+        if reading:
+            # `_load_board` empties `units` before its first await: a read cut short there
+            # must leave nothing recorded as read, or going back finds no move and an empty
+            # board (`0056` review round 2, F5).
+            self._read_cwd = self._read_unit = ""
 
         # R16: one read, the one of the largest change.
         if first:

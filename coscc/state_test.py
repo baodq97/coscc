@@ -794,8 +794,10 @@ def _arrival(manager, processor, token: str):
             RouteVar.CLIENT_TOKEN: token,
             RouteVar.HEADERS: {"origin": "http://test"},
         }
-        await processor.enqueue(token, Event(name=name, payload={}, router_data=router_data))
+        future = await processor.enqueue(
+            token, Event(name=name, payload={}, router_data=router_data))
         await asyncio.sleep(settle)
+        return future
 
     return arrive
 
@@ -1031,6 +1033,48 @@ class AnArrivalReadsOnce(unittest.TestCase):
             after = asyncio.run(go())
         self.assertEqual(during, [("/a", ""), ("/b", ""), ("/a", ""), ("/a", "")])
         self.assertEqual(after, ("/a", "0009_x"))
+
+    def test_a_change_of_workspace_cancelled_mid_read_is_read_again_on_the_way_back(self):
+        """`0056` review round 2, F5. `_load_board` empties `units` before its first await;
+        cancelled there — a newer navigation supersedes it — and followed back to the
+        workspace last read, that workspace's board is read again, not left empty."""
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        def walk(start: str) -> tuple[list[str], int, str, bool]:
+            fake = _Page()
+            token = f"state-test-cancelled-{start}"
+            read: list[str] = []
+
+            async def board(cwd):
+                read.append(cwd)
+                if cwd == "/b":
+                    await asyncio.Event().wait()  # a `gh` that has not answered yet
+                return _Page.BOARD
+
+            async def go():
+                manager, processor, _ = _processor(token)
+                arrive = _arrival(manager, processor, token)
+                async with processor:
+                    await arrive(start, "s1")
+                    pending = await arrive("/board?ws=b", "s1")
+                    self.assertEqual(read[-1], "/b")  # the read of `b` is under way
+                    pending.cancel()  # what `_supersede_previous` does to it
+                    await asyncio.sleep(0.05)
+                    await arrive(start, "s1")  # Back
+                    studio = await _studio(manager, token)
+                    got = (list(read), len(studio.units), studio.unit_id, studio.unit_missing)
+                    await arrive("/sessions?ws=a", "s9")
+                    await asyncio.sleep(0.15)
+                    return got
+
+            with fake.patches(), mock.patch.object(page.SERVICE, "board", board):
+                return asyncio.run(go())
+
+        self.assertEqual(walk("/unit?ws=a&id=0009_x"), (["/a", "/b", "/a"], 1, "0009_x", False))
+        self.assertEqual(walk("/board?ws=a"), (["/a", "/b", "/a"], 1, "", False))
 
     def test_a_tab_pressed_while_asking_waits_for_the_same_ask(self):
         """`0056` review round 1, F2. Each arrival at an unanswered unit chains `load_next`;
