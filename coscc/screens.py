@@ -1651,7 +1651,7 @@ def _detail_dialog() -> rx.Component:
                     rx.callout(
                         "Dropped: " + P.current_unit.hold_reason + " — "
                         + P.current_unit.hold_by + ", " + P.current_unit.hold_date
-                        + ". Shown to be read; nothing here writes to it but Resume.",
+                        + ". Shown to be read; nothing here writes to it but the hold panel.",
                         icon="circle-x", color_scheme="gray", variant="surface", size="1",
                         margin_top="20px", id="unit-dropped",
                     ),
@@ -1790,8 +1790,8 @@ def _detail_dialog() -> rx.Component:
                         ),
                         rx.cond(~P.unit_dropped, _integration_panel()),
                         rx.cond(~P.unit_dropped, _outcome_panel()),
-                        # Kept for a dropped unit: its *Resume* is the board's one way back
-                        # (`spec.md ## Answers, câu 1`).
+                        # Kept for a dropped unit: its one move (`paused`, `cos.mjs`
+                        # `HOLD_MOVES`) is the board's way back (`spec.md ## Answers, câu 1`).
                         _hold_panel(),
                         rx.cond(
                             P.log_here,

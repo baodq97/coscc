@@ -653,8 +653,12 @@ class StudioState(rx.State):
 
     screen: str = "overview"
     # `0056`. The socket `session_id` of the last full read; another one is a new page
-    # (`arrive`). Backend only.
+    # (`arrive`). Then the workspace and the unit last read, and the unit `load_next` last
+    # answered for. Each is set once its read is done. Backend only.
     _loaded_sid: str = ""
+    _read_cwd: str = ""
+    _read_unit: str = ""
+    _asked: str = ""
     loading: bool = False
     busy: bool = False
     error: str = ""
@@ -1345,6 +1349,11 @@ class StudioState(rx.State):
         from a move inside the app by the socket's `session_id`: it is new on every such
         load and the same across `rx.redirect`, Back and Forward (`spike.md ## U4`). The
         token, and so this state, survives a reload, so an empty state cannot tell it.
+
+        Reflex's `on_load_internal` supersedes: a newer navigation cancels whatever of the
+        older one's chain is still running — this handler and what it chained. So what was
+        read is recorded only once the read is done (`_loaded_sid`, `_read_cwd`,
+        `_read_unit`, `_asked`), and an arrival cut short is read again by the next one.
         """
         path, query, sid = self._address()
         want = place.read(path, query)
@@ -1371,28 +1380,25 @@ class StudioState(rx.State):
             tab = "overview"
         fixed = place.Place(screen, self._name_of(cwd), unit, tab)
 
-        moved_ws = cwd != self.cwd
-        moved_unit = unit != self.unit_id
+        moved_ws = cwd != self._read_cwd
+        moved_unit = unit != self._read_unit
         moved_screen = ("board" if screen == "unit" else screen) != self.screen
         self.cwd = cwd
         self.screen = "board" if screen == "unit" else screen
-        self.mobile_open = self.command_open = False
+        if moved_ws or moved_unit or moved_screen:
+            # Not on an arrival that moved nothing — the one a corrected address causes
+            # may come after a person opened the menu (`verify_0071` at 390px).
+            self.mobile_open = self.command_open = False
         if moved_ws and not first:
             self.session_id, self.query, self.error = "", "", ""
         self.unit_id, self.detail_tab = unit, tab
-        if first:
-            self._loaded_sid = sid
-
-        # R7, R8, R10: an address the page had to correct is replaced, not added to.
-        # The arrival it causes reads the corrected address and finds nothing to move.
-        if place.href(fixed) != place.href(want):
-            yield rx.redirect(place.href(fixed), replace=True)
 
         # R16: one read, the one of the largest change.
         if first:
             yield
             await self._load_rest()
             self.loading = False
+            self._loaded_sid = sid
         elif moved_ws:
             # The last read answered for the workspace just left; a unit of the same name
             # here must not show its session (`0051` review round 1, F1).
@@ -1406,15 +1412,24 @@ class StudioState(rx.State):
             self._load_activity()
         elif (moved_unit and not unit) or (moved_screen and not moved_unit):
             self._load_update()
+        self._read_cwd = cwd
         # A unit is read after whatever the arrival read, which R16 does not list: a pasted
         # link or a reload at `/unit` would otherwise open a dialog with no timeline or
         # artifact (R4, R5). None of it calls `SERVICE.board` (R17).
-        read_unit = bool(unit) and (moved_unit or first)
-        if read_unit:
+        if unit and (moved_unit or moved_ws or first):
             self._load_unit(forget=not first)
+            self._asked = ""
+        self._read_unit = unit
         if stray:
             self.notice = "That workspace is not on the list."
-        if read_unit:
+
+        # R7, R8, R10: an address the page had to correct is replaced, not added to. Last,
+        # and alone: the arrival it causes would cancel anything chained here, so that one
+        # chains it instead, and finds nothing else to read.
+        if place.href(fixed) != place.href(want):
+            yield rx.redirect(place.href(fixed), replace=True)
+            return
+        if unit and self._asked != unit:
             yield StudioState.load_next
         # A reload that finds the tab already on the Board: nothing else would start the loop.
         yield StudioState.poll_running
@@ -1720,6 +1735,7 @@ class StudioState(rx.State):
             if self.unit_id == unit and self.cwd == cwd:
                 self.run_stage, self.run_said = stage, said
                 self.run_waiting = waiting
+                self._asked = unit
 
     @rx.event
     def toggle_detail(self, value: bool):

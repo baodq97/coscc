@@ -651,7 +651,7 @@ class ChangingWorkspaceForgetsTheOldRead(unittest.TestCase):
                     studio = await root.get_state(page.StudioState)
                     studio.workspaces = [page.Workspace(id="/a", name="a"),
                                          page.Workspace(id="/b", name="b")]
-                    studio.cwd = "/a"
+                    studio.cwd = studio._read_cwd = "/a"
                     studio.screen = "sessions"  # no loop: only the change of workspace reads
                     studio._running_read = running_in["/a"]
                     studio._loaded_sid = "s1"
@@ -743,7 +743,7 @@ async def _somewhere(manager, token: str) -> None:
     async with manager.modify_state(_key(token)) as root:
         studio = await root.get_state(page.StudioState)
         studio.workspaces = [page.Workspace(id="/somewhere", name="somewhere")]
-        studio.cwd = "/somewhere"
+        studio.cwd = studio._read_cwd = "/somewhere"
         studio._loaded_sid = "s1"
 
 
@@ -903,6 +903,35 @@ class AnArrivalReadsOnce(unittest.TestCase):
         seen = self._walk([("/unit?ws=a&id=0009_x", "s1"), ("/unit/?ws=a&id=0009_x", "s2")])
         self.assertEqual([s["board"] for s in seen], [1, 1])
         self.assertEqual([s["timeline"] for s in seen], [1, 1])
+
+    def test_an_arrival_cut_short_is_read_by_the_next(self):
+        """A newer navigation cancels an unfinished `on_load` chain (Reflex's
+        `on_load_internal` supersedes). Left as a cancelled change of workspace leaves it —
+        `cwd` moved, its board never read — the next arrival there reads it."""
+        import asyncio
+
+        from coscc import state as page
+
+        fake = _Page()
+        token = "state-test-cut-short"
+
+        async def go():
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            async with processor:
+                async with manager.modify_state(_key(token)) as root:
+                    studio = await root.get_state(page.StudioState)
+                    studio.workspaces = [page.Workspace(id="/a", name="a"),
+                                         page.Workspace(id="/b", name="b")]
+                    studio.cwd, studio._read_cwd, studio._loaded_sid = "/b", "/a", "s1"
+                    studio.screen = "board"
+                await arrive("/board?ws=b", "s1")
+                read = fake.calls["board"]
+                await arrive("/sessions?ws=b", "s1")
+                return read
+
+        with fake.patches():
+            self.assertEqual(asyncio.run(go()), 1)
 
     def test_a_link_to_another_workspace_s_unit_opens_it(self):
         seen = self._walk([("/board?ws=a", "s1"), ("/unit?ws=b&id=0009_x&tab=questions", "s1")])
