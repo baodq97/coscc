@@ -775,9 +775,12 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         ahead = self._advance_remote()
         done = self._run_step(unit)
         self.assertEqual(done["outcome"], "done")
+        fetched = done["base"].pop("fetch")
         self.assertEqual(
             done["base"], {"ref": "origin/main", "sha": ahead[:7], "fresh": True, "reason": ""}
         )
+        # `0048` R8: a step alone fetches once, exactly as before.
+        self.assertEqual((fetched["outcome"], fetched["attempts"]), ("fetched", 1))
         self.assertEqual(self._git("rev-parse", "main").strip(), local_before)
         self.assertEqual(self._tree_head(self._tree(unit)), ahead)
 

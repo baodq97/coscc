@@ -32,7 +32,7 @@ from typing import Any, Awaitable, Callable
 import asyncio
 
 import coscc
-from coscc import gitops, prcomment, units
+from coscc import fetches, gitops, prcomment, units
 from coscc.data import Data
 from coscc.frontend import WEB_WORKDIR_VAR
 from coscc.gitops import GitError
@@ -98,7 +98,7 @@ async def _branch_exists(root: Path, name: str) -> bool:
         return False
 
 
-async def _fetch_or_refuse(where_repo: Path, branch: str) -> None:
+async def _fetch_or_refuse(where_repo: Path, branch: str) -> dict[str, Any]:
     """Fetch `origin/main` in `where_repo`, refusing to go on when that fails.
 
     `0030` review round 1, F2. Neither of `ensure`'s two "open onto an existing branch"
@@ -110,9 +110,12 @@ async def _fetch_or_refuse(where_repo: Path, branch: str) -> None:
     thing both paths can check for without guessing. So both call this, and neither
     proceeds past it — whether or not the unit already had a (still detached) tree is not
     a reason for the two to disagree.
+
+    Since `0048` the fetch goes through `fetches`, and what it returns — `{outcome,
+    attempts, age}` — comes back for `_base_against_origin` to carry.
     """
     try:
-        await gitops.fetch(where_repo)
+        return await fetches.fetch(where_repo)
     except GitError as e:
         raise GitError(
             f"Could not update {gitops.TRUNK} from origin, so {branch} was not opened "
@@ -120,25 +123,44 @@ async def _fetch_or_refuse(where_repo: Path, branch: str) -> None:
         ) from e
 
 
-async def _base_against_origin(where_repo: Path, branch: str, branch_sha: str) -> dict[str, Any]:
-    """`{ref, sha, fresh, behind, reason}` for `branch_sha` against `origin/main`.
+async def _base_against_origin(
+    where_repo: Path, branch: str, branch_sha: str, fetched: dict[str, Any]
+) -> dict[str, Any]:
+    """`{ref, sha, fresh, behind, reason, fetch}` for `branch_sha` against `origin/main`.
 
     Never refuses and never rebases (`intent.md ## Answers, câu 3`): a branch behind is
     reported, not fixed — `gh pr update-branch --rebase` is what the `reason` points to.
+    `fetch` is what `_fetch_or_refuse` returned, and `fresh` also needs it to be younger
+    than `fetches.REUSE_SECONDS` (`0048` R7).
     """
     origin_ref = f"origin/{gitops.TRUNK}"
     origin_sha = await gitops.rev_parse(where_repo, f"refs/remotes/{origin_ref}")
     behind = await gitops.count_missing(where_repo, branch_sha, origin_sha)
+    if behind:
+        reason = (
+            f"{branch} is missing {behind} commit(s) from {origin_ref}; "
+            "see `gh pr update-branch --rebase`."
+        )
+    else:
+        reason = _stale(fetched)
     return {
         "ref": origin_ref,
         "sha": origin_sha[:7],
-        "fresh": behind == 0,
+        "fresh": not reason,
         "behind": behind,
-        "reason": "" if behind == 0 else (
-            f"{branch} is missing {behind} commit(s) from {origin_ref}; "
-            "see `gh pr update-branch --rebase`."
-        ),
+        "reason": reason,
+        "fetch": fetched,
     }
+
+
+def _stale(fetched: dict[str, Any]) -> str:
+    """Empty when the fetch behind a `sha` is young enough to call it fresh (`0048` R7)."""
+    if fetched["age"] < fetches.REUSE_SECONDS:
+        return ""
+    return (
+        f"the fetch of origin/{gitops.TRUNK} this reads began {fetched['age']}s ago, "
+        f"not under {fetches.REUSE_SECONDS:.0f}s, so it may not be the remote's tip"
+    )
 
 
 async def ensure(
@@ -174,11 +196,11 @@ async def ensure(
         # never touches the workspace — and only once it has either succeeded or found
         # nothing to move does `_step_aside` touch the workspace (F5).
         tree = Path(found["path"])
-        await _fetch_or_refuse(tree, branch)
+        fetched = await _fetch_or_refuse(tree, branch)
         switched = await _step_aside(root, branch)
         await gitops.switch_existing(tree, branch)
         branch_sha = await gitops.rev_parse(tree, "HEAD")
-        base = await _base_against_origin(tree, branch, branch_sha)
+        base = await _base_against_origin(tree, branch, branch_sha, fetched)
         return {
             "path": str(where), "branch": branch, "created": False, "switched": switched,
             "base": base,
@@ -191,11 +213,11 @@ async def ensure(
         # fetch runs in the workspace instead. `_fetch_or_refuse` is the same call either
         # way, which is the point (F2); it still runs before `_step_aside` touches the
         # workspace, for the same reason (F5).
-        await _fetch_or_refuse(root, branch)
+        fetched = await _fetch_or_refuse(root, branch)
         switched = await _step_aside(root, branch)
         await gitops.worktree_add(root, where, branch)
         branch_sha = await gitops.rev_parse(root, f"refs/heads/{branch}")
-        base = await _base_against_origin(root, branch, branch_sha)
+        base = await _base_against_origin(root, branch, branch_sha, fetched)
         found = await find(workspace, unit, data_dir) or {"branch": ""}
         return {
             "path": str(where), "branch": found["branch"], "created": True, "switched": switched,
@@ -245,35 +267,45 @@ async def refresh_base(
 
     When the tree is actually moved, the record `prepare()` left is deleted: it describes
     a tree at the commit it was prepared at, and that commit just changed (R6).
+
+    Since `0048` every answer also carries `fetch`, `{outcome, attempts, age}` from
+    `fetches` — `failed` with `age` None when there was no fetch to show — and `fresh`
+    also needs that fetch to be younger than `fetches.REUSE_SECONDS` (R6, R7).
     """
     ref = f"origin/{gitops.TRUNK}"
     found = await find(workspace, unit, data_dir)
     if found is None:
-        return {"ref": ref, "sha": "", "fresh": False, "reason": "no worktree to refresh"}
+        return {
+            "ref": ref, "sha": "", "fresh": False, "reason": "no worktree to refresh",
+            "fetch": {"outcome": "failed", "attempts": 0, "age": None},
+        }
     tree = Path(found["path"])
     try:
-        await gitops.fetch(tree)
-    except GitError as e:
-        return {"ref": ref, "sha": "", "fresh": False, "reason": str(e)}
+        fetched = await fetches.fetch(tree)
+    except fetches.FetchFailed as e:
+        return {
+            "ref": ref, "sha": "", "fresh": False, "reason": str(e),
+            "fetch": {"outcome": "failed", "attempts": e.attempts, "age": None},
+        }
     try:
         sha = await gitops.rev_parse(tree, f"refs/remotes/{ref}")
     except GitError as e:
-        return {"ref": ref, "sha": "", "fresh": False, "reason": str(e)}
+        return {"ref": ref, "sha": "", "fresh": False, "reason": str(e), "fetch": fetched}
     try:
         before = await gitops.rev_parse(tree, "HEAD")
     except GitError as e:
-        return {"ref": ref, "sha": sha[:7], "fresh": False, "reason": str(e)}
-    if before == sha:
-        return {"ref": ref, "sha": sha[:7], "fresh": True, "reason": ""}
-    try:
-        await gitops.advance_detached(tree, sha)
-    except GitError as e:
-        return {"ref": ref, "sha": sha[:7], "fresh": False, "reason": str(e)}
-    try:
-        prepare_record(tree).unlink()
-    except OSError:
-        pass
-    return {"ref": ref, "sha": sha[:7], "fresh": True, "reason": ""}
+        return {"ref": ref, "sha": sha[:7], "fresh": False, "reason": str(e), "fetch": fetched}
+    if before != sha:
+        try:
+            await gitops.advance_detached(tree, sha)
+        except GitError as e:
+            return {"ref": ref, "sha": sha[:7], "fresh": False, "reason": str(e), "fetch": fetched}
+        try:
+            prepare_record(tree).unlink()
+        except OSError:
+            pass
+    stale = _stale(fetched)
+    return {"ref": ref, "sha": sha[:7], "fresh": not stale, "reason": stale, "fetch": fetched}
 
 
 # --- preparing ---------------------------------------------------------------
