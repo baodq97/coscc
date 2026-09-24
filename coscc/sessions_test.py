@@ -5,6 +5,7 @@ suite stays free to run in a loop; what needs a real session is the proof comman
 is run deliberately.
 """
 
+import asyncio
 import os
 import tempfile
 import unittest
@@ -380,6 +381,127 @@ class TheSessionIdIsToldBeforeTheStepIsOver(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items[0], ("session", "sid-3"))
         self.assertEqual([k for k, _ in items].count("session"), 1)
         self.assertEqual(dict(items)["done"]["cost"]["turns"], 4)
+
+
+class _CountingClient(_FakeClient):
+    """Counts `disconnect`, and can hold `receive_response` open until released."""
+
+    made: list = []
+    hold = None  # an asyncio.Event to wait on after the first message, or None
+    fail = False
+
+    def __init__(self, options=None):
+        self.disconnects = 0
+        _CountingClient.made.append(self)
+
+    async def receive_response(self):
+        for i, m in enumerate(self.messages):
+            if i == 1 and self.hold is not None:
+                await self.hold.wait()
+            if i == 1 and self.fail:
+                raise RuntimeError("the CLI died")
+            yield m
+
+    async def disconnect(self):
+        self.disconnects += 1
+
+
+class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
+    """`0034`. A board step's client is closed however the step ends, exactly once, and
+    never kept in `_live` for resuming. Chat's clients still are."""
+
+    def setUp(self):
+        _CountingClient.made = []
+        _CountingClient.hold = None
+        _CountingClient.fail = False
+        _CountingClient.messages = [_assistant("a", "sid-s"), _result("sid-s")]
+        patcher = mock.patch("coscc.sessions.ClaudeSDKClient", _CountingClient)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.s = Sessions(Config(workspaces=("/tmp",)))
+
+    async def test_a_step_that_finishes_is_closed_once_and_not_kept(self):
+        h = sessions.StepHandle()
+        items = [i async for i in self.s.stream("/tmp", "hi", step=h)]
+        self.assertEqual(items[-1][0], "done")
+        [client] = _CountingClient.made
+        self.assertEqual(client.disconnects, 1)
+        self.assertEqual(self.s._live, {})
+        self.assertEqual(self.s._steps, set())
+        self.assertTrue(self.s.created_here("sid-s"))
+
+    async def test_a_step_that_raises_is_closed_once(self):
+        _CountingClient.fail = True
+        with self.assertRaises(RuntimeError):
+            async for _ in self.s.stream("/tmp", "hi", step=sessions.StepHandle()):
+                pass
+        [client] = _CountingClient.made
+        self.assertEqual(client.disconnects, 1)
+        self.assertEqual(self.s._live, {})
+
+    async def test_a_step_abandoned_by_its_reader_is_closed_once(self):
+        _CountingClient.hold = asyncio.Event()
+        agen = self.s.stream("/tmp", "hi", step=sessions.StepHandle())
+        async for kind, _ in agen:
+            if kind == "chunk":
+                break
+        await agen.aclose()
+        [client] = _CountingClient.made
+        self.assertEqual(client.disconnects, 1)
+        self.assertEqual(self.s._steps, set())
+
+    async def test_a_cancelled_step_is_closed_once(self):
+        _CountingClient.hold = asyncio.Event()
+        h = sessions.StepHandle()
+        started = asyncio.Event()
+
+        async def run():
+            async for kind, _ in self.s.stream("/tmp", "hi", step=h):
+                started.set()
+
+        task = asyncio.create_task(run())
+        await started.wait()
+        self.assertEqual(self.s.live_in("/tmp"), ["(running step)"])
+        await h.close()
+        await h.close()  # a second Stop is the same Stop
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        [client] = _CountingClient.made
+        self.assertEqual(client.disconnects, 1)
+        self.assertEqual(self.s.live_in("/tmp"), [])
+
+    async def test_a_handle_closed_before_connect_sends_no_prompt(self):
+        h = sessions.StepHandle()
+        await h.close()
+        with self.assertRaises(Refused):
+            async for _ in self.s.stream("/tmp", "hi", step=h):
+                pass
+        [client] = _CountingClient.made
+        self.assertEqual(client.disconnects, 1)
+
+    async def test_chat_still_keeps_its_client_for_resuming(self):
+        [_ async for _ in self.s.stream("/tmp", "hi")]
+        self.assertIn("sid-s", self.s._live)
+        self.assertEqual(_CountingClient.made[0].disconnects, 0)
+
+    async def test_close_all_closes_a_step_in_flight(self):
+        _CountingClient.hold = asyncio.Event()
+        started = asyncio.Event()
+
+        async def run():
+            async for kind, _ in self.s.stream("/tmp", "hi", step=sessions.StepHandle()):
+                started.set()
+
+        task = asyncio.create_task(run())
+        await started.wait()
+        await self.s.close_all()
+        self.assertEqual(_CountingClient.made[0].disconnects, 1)
+        self.assertEqual(self.s._steps, set())
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(_CountingClient.made[0].disconnects, 1)
 
 
 class WhichWorkspacesHaveSomeoneInThem(unittest.TestCase):

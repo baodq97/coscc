@@ -129,6 +129,20 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
             with self.assertRaises(BadRecord):
                 Journal(d, d).finished("w", "0009_x", "impl", "probably fine")
 
+    def test_a_stopped_run_says_who_stopped_it_and_claims_no_cost(self):
+        # `0034`: a person pressed Stop. The name rides on the record; a cost that never
+        # arrived is absent, not zero.
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "manual")
+            j.finished("w", "0009_x", "impl", "stopped", stopped_by="Lan", cost_unknown=True)
+            [end] = [r for r in j.records() if r["kind"] == "end"]
+            self.assertEqual(end["outcome"], "stopped")
+            self.assertEqual(end["stopped_by"], "Lan")
+            self.assertNotIn("cost_usd", end)
+            [row] = j.timeline("w", "0009_x")
+            self.assertEqual(row["outcome"], "stopped")
+
     def test_runs_are_ordered_oldest_first(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
