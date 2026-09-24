@@ -1280,6 +1280,9 @@ class Service:
                     **({"watch": work} if scratch is not None else {}),
                 ),
             ))
+            running.task.add_done_callback(
+                lambda _task: self._never_driven(running, mark, rid)
+            )
             handed = True
         finally:
             if not handed:
@@ -1305,6 +1308,23 @@ class Service:
                     return
         finally:
             running.listeners.discard(queue)
+
+    def _never_driven(self, running: steps_mod.Running, mark: steps_mod.Mark, rid: str) -> None:
+        """`0050` review round 2, F2. A task cancelled before its first turn -- a Stop queued
+        ahead of it, or "áp dụng ngay" -- never enters `_drive`, so its `finally` never runs.
+        That `finally` is the only thing that frees the mark once the step is handed over, so
+        a mark still held when the task is done means the body never ran: give back what it
+        would have, and tell the reader instead of leaving it waiting."""
+        if self._active.get((running.workspace, running.unit)) is not mark:
+            return
+        self._release(running.workspace, running.unit, mark)
+        self._running.pop(rid, None)
+        self.steps.release(running)
+        self.updater.job_ended()
+        for q in list(running.listeners):
+            q.put_nowait(("raise", Invalid(
+                f"{running.unit}'s {running.stage} step was cancelled before it began; nothing ran"
+            )))
 
     async def _drive(
         self, running: steps_mod.Running, mark: steps_mod.Mark, runner: Runner, cwd: str, unit: str, stage: str,

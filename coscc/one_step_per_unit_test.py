@@ -23,6 +23,7 @@ from coscc import board as board_reader
 from coscc import worktrees
 from coscc.api import build
 from coscc.config import Config
+from coscc.service import Invalid
 
 N = 10
 
@@ -280,6 +281,37 @@ class TheMarkIsAlwaysReturned(_OneUnit):
         self.assertEqual(self.service._active, {})
         self.assertEqual(self.service._running, {})
         self.assertEqual(await self.listed(), [])
+        task = await self.one_running()
+        self.fake.release.set()
+        self.assertEqual((await task).status_code, 200)
+
+    async def test_after_a_stop_that_cancels_the_step_before_it_began(self):
+        """Review round 2, F2: a Stop whose turn comes before `_drive`'s first one cancels a
+        task whose body never runs, so `_drive`'s `finally` cannot be what gives it back."""
+        real_create_task = asyncio.create_task
+        stops: list[asyncio.Task] = []
+
+        def stop_first(coro, **kw):
+            # The real Stop, queued ahead of `_drive`'s first turn: it finds the row `claim`
+            # just listed, closes a handle with no client yet, and cancels the task.
+            if getattr(coro, "__name__", "") == "_drive":
+                stops.append(real_create_task(self.service._stop_running(self.key, self.unit, "Proof person")))
+            return real_create_task(coro, **kw)
+
+        async def drain():
+            async for _ in self.service.run_step(self.ws, self.unit, "spec"):
+                pass
+
+        with mock.patch("asyncio.create_task", stop_first):
+            with self.assertRaises(Invalid) as said:
+                await asyncio.wait_for(drain(), 10)
+        self.assertEqual(len(stops), 1)
+        self.assertEqual((await stops[0])["stopped_by"], "Proof person")
+        self.assertIn("before it began", str(said.exception))
+        self.assertEqual(self.service._active, {})
+        self.assertEqual(self.service._running, {})
+        self.assertEqual(await self.listed(), [])
+        self.assertEqual(self.records("start"), [])
         task = await self.one_running()
         self.fake.release.set()
         self.assertEqual((await task).status_code, 200)
