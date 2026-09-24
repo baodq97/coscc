@@ -1590,6 +1590,78 @@ class ImplAndShipKeepTheirTaskByteForByte(unittest.TestCase):
             ))
 
 
+class PrHasItsOwnTask(unittest.TestCase):
+    """`0041` R1 and R2: `pr` is told where its file goes, where its shape is, the order
+    that writes it before anything waits, and when to stop."""
+
+    NOTE = "# The pull request, already looked up\n\nTHE-PR-NOTE https://x/pull/7"
+
+    def prompt(self, d, **kw):
+        directory = make_unit(Path(d), intent_md="Status: accepted.\nI", impl_md="Status: accepted.\nM")
+        prompt, included = build_prompt(d, directory, UNIT, "pr", STAGES, "pr.md", writes_own=True, **kw)
+        return prompt, included, directory
+
+    def test_a_to_d(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, _, directory = self.prompt(d)
+            task = prompt.split("\n\n---\n\n")[-1]
+            self.assertIn(f"`{directory / 'pr.md'}`", task)                       # (a)
+            self.assertIn("## Output", task)                                       # (b)
+            self.assertIn("read boundary refuses", task)
+            self.assertLess(task.index("gh pr create"), task.index("`Status: accepted`"))  # (c)
+            self.assertLess(task.index("`Status: accepted`"), task.index("gh pr checks"))
+            self.assertIn("never `--watch`", task)
+            self.assertIn("Do not rebase", task)                                  # (d)
+            self.assertIn("*Integrate*", task)
+            self.assertNotIn("Do the work this unit's plan authorises", prompt)
+
+    def test_the_lookup_is_placed_only_for_pr(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt, included, _ = self.prompt(d, pr_note=self.NOTE)
+            self.assertIn("THE-PR-NOTE", prompt)
+            self.assertIn("pull-request", included)
+            self.assertLess(prompt.index("THE-PR-NOTE"), prompt.index("# Your task"))
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
+            prompt, _ = build_prompt(d, directory, UNIT, "impl", STAGES, "impl.md",
+                                     writes_own=True, pr_note=self.NOTE)
+            self.assertNotIn("THE-PR-NOTE", prompt)
+
+    def run_stage(self, d, stage, journal, **kw):
+        class Probe:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **_):
+                (Path(d) / ".cos" / UNIT / f"{stage}.md").write_text(
+                    f"# {stage}: x\nStatus: accepted.\n", encoding="utf-8")
+                yield ("chunk", "done")
+                yield ("done", {"session_id": "s", "cost": {}})
+
+        directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
+        r = Runner(sessions=Probe(), journal=journal)
+
+        async def go():
+            return [ev async for ev in r.run(
+                workspace=d, directory=directory, journal_key=d, unit=UNIT, stage=stage,
+                artifact=f"{stage}.md", stages=STAGES, mode="manual", **kw,
+            )]
+
+        return asyncio.run(go())[-1][1]
+
+    def test_the_start_record_carries_pr_before_for_pr_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            journal = Journal(d, d)
+            self.run_stage(d, "pr", journal, pr_note=self.NOTE, pr_before="https://x/pull/7")
+            self.run_stage(d, "impl", journal, pr_before="https://x/pull/7")
+            by_stage = {s["stage"]: s for s in journal.records(d, kind="start")}
+            self.assertEqual(by_stage["pr"]["pr_before"], "https://x/pull/7")
+            self.assertNotIn("pr_before", by_stage["impl"])
+
+    def test_no_pull_request_before_is_the_empty_string(self):
+        with tempfile.TemporaryDirectory() as d:
+            journal = Journal(d, d)
+            self.run_stage(d, "pr", journal)
+            self.assertEqual(journal.records(d, kind="start")[-1]["pr_before"], "")
+
+
 class TheStepRunsOnTheModelItWasGiven(unittest.TestCase):
     """`0004_no-setting-says-which-model-runs-a-stage`. The runner does not choose a model;
     it passes on the one it was given and writes it into the run log."""

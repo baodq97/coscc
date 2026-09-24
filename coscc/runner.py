@@ -198,6 +198,7 @@ def build_prompt(
     integration_note: str = "",
     drift_note: str = "",
     worktree: str = "",
+    pr_note: str = "",
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -418,6 +419,12 @@ def build_prompt(
         included.append("integration")
         parts.append(integration_note.rstrip())
 
+    # `0041` R2. Only for `pr`; `service.run_step` looked the pull request up and
+    # `integrate.describe_pr_lookup` built the block, heading included.
+    if pr_note and stage == "pr":
+        included.append("pull-request")
+        parts.append(pr_note.rstrip())
+
     location = directory / artifact
     if writes_own and stage == "ship":
         # `ship` runs outside every checkout (`service.step_cwd`): inside the unit's
@@ -430,6 +437,33 @@ def build_prompt(
             "You are deliberately not inside a git checkout. Name the pull request by the "
             "URL in `pr.md`'s `PR:` field in every `gh` command; a bare number cannot be "
             "resolved from here.\n\n"
+            "That file must carry the `Status:` line the rules above describe. Prose in "
+            "Vietnamese; filenames and headings in English. Write it yourself with your "
+            "tools — do not paste it into your reply."
+        )
+    elif writes_own and stage == "pr":
+        # `0041` R1. `pr` shared `impl`'s sentence — "do the work this unit's plan
+        # authorises" — and on 2026-09-24 two runs of `0019`'s `pr` were reported to spend
+        # every turn without writing `pr.md`: one rebasing onto `main`, one searching the
+        # store for another unit's `pr.md` to copy (`0041` intent.md; not checked against
+        # the run log). This says where the file goes, where its
+        # shape is, the order that writes it before anything waits, and when to stop.
+        parts.append(
+            f"# Your task\n\n"
+            f"Open this unit's pull request from the repository at "
+            f"`{Path(workspace).expanduser().resolve()}`, then write `{location}` "
+            "recording it.\n\n"
+            "Its shape is `## Output` in the rules above. You do not need another unit's "
+            "`pr.md` as an example, and the read boundary refuses one.\n\n"
+            "In this order: find out whether the pull request already exists — the block "
+            "above says, or ask `gh pr view` once. If it does not, push the branch and "
+            "`gh pr create`. As soon as you have its URL, write `PR:` and "
+            "`Status: accepted` into pr.md. Only after that read `gh pr checks` — once, "
+            "never `--watch` — and record what it said.\n\n"
+            "If the branch conflicts with `main`, or a required check is red, write that "
+            "under `## Where` and stop. Do not rebase, merge, pull or change code: a "
+            "conflict is *Integrate*'s on the board, and a red check sends the unit back "
+            "to `impl`.\n\n"
             "That file must carry the `Status:` line the rules above describe. Prose in "
             "Vietnamese; filenames and headings in English. Write it yourself with your "
             "tools — do not paste it into your reply."
@@ -857,6 +891,8 @@ class Runner:
         impl_run: int | None = None,
         end_fields: Any = None,
         watch: str | None = None,
+        pr_note: str = "",
+        pr_before: str | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -892,6 +928,9 @@ class Runner:
         `HEAD` and `git status --porcelain` are read before the session and again after it,
         and a difference fails the step before any artifact is written (R13). Nothing is
         restored — the difference is reported, in `detail`, and left for a person.
+
+        `pr_note` and `pr_before` are `0041` R2's: the pull request `service.run_step`
+        looked up before a `pr` step, as a prompt block and as its URL (`""` for none).
         """
         grant = grant_for(stage)
         directory = Path(directory)
@@ -926,7 +965,12 @@ class Runner:
             integration_note=integration_note,
             drift_note=drift_note,
             worktree=watch or "",
+            pr_note=pr_note,
         )
+
+        # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
+        # the way `0037` picks by `system_prompt`. Only `pr` carries it.
+        pr_extra = {"pr_before": pr_before or ""} if stage == "pr" else {}
 
         # `0037`: the same condition that decides whether a gate and a tool list are sent.
         preset = CLAUDE_CODE_PRESET if grant.opens_anything else None
@@ -949,6 +993,7 @@ class Runner:
                 # empty one; a record written before `0037` has no field, read as `""`.
                 system_prompt="claude_code" if preset else "",
                 **({"plan_drift": plan_drift} if plan_drift is not None else {}),
+                **pr_extra,
             )
 
         denials = Denials()
