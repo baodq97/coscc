@@ -104,7 +104,52 @@ advance — cannot serve it under a stable name, and `uv tool upgrade` has nothi
 ask for. This is a real trap for anyone who already knows `uv`: the command runs, prints
 nothing alarming, and simply leaves the old version in place
 (`.cos/0011_no-install-path-on-a-clean-machine/spec.md:189-192`). The install line above is
-the only supported update path — running it again *is* the upgrade.
+the only supported update path from a terminal — running it again *is* the upgrade.
+
+### From the board
+
+Since `0068`, an install made by `install.sh` can also update itself from the Board's
+*Cập nhật* panel. The panel shows the version and commit running now and, per channel,
+whether a newer build is ready:
+
+- **release** — the app asks `https://api.github.com/repos/baodq97/coscc/releases/latest`
+  once at start and every six hours, downloads the new wheel and its `SHA256SUMS` into
+  `<COS_DATA_DIR>/updates/release/`, and shows it as ready only when the sha256 matches.
+  The source is fixed in the code; nothing in a request or the environment changes it.
+  `COS_UPDATE_CHECK=0` in the env file turns the asking and the downloading off.
+- **local** — set `COS_UPDATE_LOCAL_FROM=<workspace name>` in the env file and the panel
+  offers *Build từ origin/main*: it fetches that workspace, checks that `origin` is
+  `github.com/baodq97/coscc`, and runs `scripts/build_wheel.sh --local` from `origin/main`
+  in a throwaway worktree. That runs upstream `main`'s build scripts under your user.
+
+*Áp dụng* waits until no step, integration, chat turn or local build of this process is
+running, then applies. *Áp dụng ngay…* lists what it would stop first; integrations are
+never stopped, only waited for. Applying tries the new version beside the running one,
+then stops the app, installs the wheel offline, checks `coscc --version`, and exits with
+code 75 so `Restart=on-failure` brings it back. The page reloads itself when it answers
+again. Every step is written to `<COS_DATA_DIR>/updates/logs/<time>-update.log`.
+
+**What does not come back by itself.** If the new version passes its trial but fails to
+start for real, there is no board left to say so and nothing rolls it back: `systemctl
+--user status coscc` shows it restarting. The log of that update ends with the command to
+go back, which is:
+
+```sh
+systemctl --user stop coscc
+cp <COS_DATA_DIR>/updates/cos.db.bak <COS_DATA_DIR>/cos.db
+rm -f <COS_DATA_DIR>/cos.db-wal <COS_DATA_DIR>/cos.db-shm
+UV_OFFLINE=1 UV_TOOL_DIR=<tool dir> UV_TOOL_BIN_DIR=<bin dir> uv tool install --force <COS_DATA_DIR>/updates/current/<old wheel>
+systemctl --user start coscc
+```
+
+Copying the backup back loses whatever the new version wrote since it started; skipping it
+leaves a database the old version may answer with 500 on every route.
+
+**The board never rewrites the unit file or the env file.** A release that changes what
+`install.sh` generates reaches this machine only through the `curl … | sh` line above.
+
+**Anyone who reaches the port can press these buttons**, under any name — there is no login
+(see below). What they cannot choose is what gets installed.
 
 **Upgrading past the release that adds per-stage models changes which model runs.**
 `COS_MODEL` no longer decides the model of the eight stages: each now ships with a default

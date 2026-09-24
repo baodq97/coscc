@@ -30,7 +30,7 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
@@ -499,10 +499,6 @@ def finish(h: Handoff) -> int:
         "log": h.log, "finished_at": now(),
     })
     return EXIT_CODE
-
-
-def handoff_dict(h: Handoff) -> dict[str, Any]:
-    return asdict(h)
 
 
 def free_copy(src: Path, dst: Path) -> None:
