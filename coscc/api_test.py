@@ -1066,3 +1066,87 @@ class IntegratingOverHttp(PostingAReviewRoundOverHttp):
     test_two_presses_make_one_comment = None  # type: ignore[assignment]
     test_the_board_then_shows_the_round_on_the_pr = None  # type: ignore[assignment]
     test_bad_requests_are_400_and_reach_no_gh = None  # type: ignore[assignment]
+
+
+class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
+    """`0068` R2, R11 and R15 over HTTP."""
+
+    SHA = "0" * 40
+
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.app = build(Config(workspaces=(self.tmp.name,), data_dir=str(Path(self.tmp.name) / "d")))
+        self.service = self.app.state.service
+        self.updater = self.service.updater
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+        self.tmp.cleanup()
+
+    def as_a_service(self):
+        self.updater._me = {
+            "version": "0.12.0", "commit": self.SHA, "commit_label": self.SHA, "install": "package",
+            "shape": "service", "reason": "", "build_id": f"0.12.0+{self.SHA}", "uv": "/u/uv",
+            "tool_dir": "/t", "bin_dir": "/b",
+        }
+        self.updater.release = {"state": "ready", "version": "0.13.0"}
+
+    async def test_status_says_what_runs_and_why_there_is_no_button(self):
+        body = (await self.client.get("/api/update")).json()
+        self.assertEqual(body["shape"], "unavailable")
+        self.assertIn("cập nhật không khả dụng ở cách cài này", body["reason"])
+        self.assertTrue(body["version"])
+
+    async def test_every_post_is_409_where_updates_are_unavailable(self):
+        for path in ("/api/update/apply", "/api/update/cancel", "/api/update/build-local"):
+            with self.subTest(path=path):
+                r = await self.client.post(path, json={"channel": "release", "mode": "wait", "by": "an"})
+                self.assertEqual(r.status_code, 409)
+        self.assertEqual((await self.client.get("/api/update/cut-list")).status_code, 409)
+
+    async def test_a_source_in_the_body_is_never_read(self):
+        self.as_a_service()
+        seen = []
+
+        async def apply(channel, mode, by, token=""):
+            seen.append((channel, mode, by, token))
+            return {"state": "applying"}
+
+        self.updater.apply = apply
+        plain = {"channel": "release", "mode": "wait", "by": "an", "token": ""}
+        smuggled = {**plain, "url": "https://evil.example/x.whl", "path": "/tmp/x.whl",
+                    "version": "9.9.9", "ref": "evil", "wheel": "/tmp/x.whl"}
+        a = await self.client.post("/api/update/apply", json=plain)
+        b = await self.client.post("/api/update/apply", json=smuggled)
+        self.assertEqual((a.status_code, a.json()), (b.status_code, b.json()))
+        self.assertEqual(seen, [("release", "wait", "an", "")] * 2)
+
+    async def test_r11_is_503_on_run_integrate_send_and_build(self):
+        self.as_a_service()
+        self.updater.window = True
+        cwd = self.tmp.name
+        for path, body in (
+            ("/api/board/run", {"cwd": cwd, "unit": "0001_a", "stage": "impl"}),
+            ("/api/units/integrate", {"cwd": cwd, "unit": "0001_a"}),
+            ("/api/send", {"cwd": cwd, "text": "hi"}),
+            ("/api/update/build-local", {"by": "an"}),
+        ):
+            with self.subTest(path=path):
+                r = await self.client.post(path, json=body)
+                self.assertEqual(r.status_code, 503, r.text)
+                self.assertIn("đang cập nhật", r.json()["error"])
+
+    async def test_a_stale_cut_list_is_refused_with_the_fresh_one(self):
+        self.as_a_service()
+        self.service.steps.claim("/w", "0001_a", "impl")
+        r = await self.client.post("/api/update/apply", json={
+            "channel": "release", "mode": "now", "by": "an", "token": "old"})
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(len(r.json()["cut_list"]["items"]), 1)
+
+    def test_no_update_route_uses_a_path_reflex_reserves(self):
+        paths = [getattr(r, "path", "") for r in self.app.routes if "update" in getattr(r, "path", "")]
+        self.assertEqual(len(paths), 5)
+        for p in paths:
+            self.assertFalse(p.startswith(("/ping/", "/_event", "/_upload")), p)

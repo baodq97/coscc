@@ -78,6 +78,28 @@ class Config:
     port: int = 8790
     model: str | None = None
 
+    # `.cos/0068_updating-the-app-is-a-manual-reinstall`. `COS_UPDATE_CHECK=0` stops the
+    # release channel asking GitHub and downloading (R3); the local button still works.
+    update_check: bool = True
+    # The workspace whose `origin/main` the *Build local* button builds (R6). Unset means
+    # no button. Set in the env file, never by a request.
+    update_local_from: str | None = None
+    # The next five are read without the `COS_` prefix, because they are not this app's
+    # settings: they are what systemd and a login shell hand every process. `invocation_id`
+    # is systemd's `INVOCATION_ID`, the second of R2's six conditions.
+    invocation_id: str | None = None
+    # `${XDG_CONFIG_HOME:-$HOME/.config}`, where `install.sh` writes the unit file.
+    config_home: str = ""
+    # Where `uv` may be, in the order `scripts/install.sh:130-138` looks: every `PATH`
+    # entry, then `UV_INSTALL_DIR`, `XDG_BIN_HOME`, `~/.local/bin`, `~/.cargo/bin`. A
+    # service's `PATH` rarely has `~/.local/bin`.
+    uv_candidates: tuple[str, ...] = ()
+    # The environment the updater's own subprocesses get, built from these rather than
+    # inherited, so a trial run of the new version does not see `INVOCATION_ID` or a
+    # `COS_WORKING_DIR` (R12 step 2).
+    path_env: str = ""
+    home: str = ""
+
     def effective_tools(self) -> list[str]:
         """The tool list a session is actually created with.
 
@@ -155,4 +177,31 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         host=(e.get(_ENV_PREFIX + "HOST") or "").strip() or "0.0.0.0",
         port=int((e.get(_ENV_PREFIX + "PORT") or "").strip() or "8790"),
         model=e.get(_ENV_PREFIX + "MODEL") or None,
+        update_check=_flag(e, "UPDATE_CHECK", True),
+        update_local_from=_dir(e, "UPDATE_LOCAL_FROM"),
+        invocation_id=(e.get("INVOCATION_ID") or "").strip() or None,
+        config_home=_config_home(e),
+        uv_candidates=_uv_candidates(e),
+        path_env=e.get("PATH", ""),
+        home=e.get("HOME", ""),
     )
+
+
+def _config_home(e: dict[str, str]) -> str:
+    raw = (e.get("XDG_CONFIG_HOME") or "").strip()
+    if raw:
+        return raw
+    home = (e.get("HOME") or "").strip()
+    return str(Path(home) / ".config") if home else ""
+
+
+def _uv_candidates(e: dict[str, str]) -> tuple[str, ...]:
+    home = (e.get("HOME") or "").strip()
+    dirs = [p for p in (e.get("PATH") or "").split(os.pathsep) if p]
+    for name in ("UV_INSTALL_DIR", "XDG_BIN_HOME"):
+        raw = (e.get(name) or "").strip()
+        if raw:
+            dirs.append(raw)
+    if home:
+        dirs += [str(Path(home) / ".local" / "bin"), str(Path(home) / ".cargo" / "bin")]
+    return tuple(dirs)

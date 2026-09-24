@@ -30,7 +30,9 @@ own checkout.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import zipfile
 from pathlib import Path
 
@@ -132,17 +134,23 @@ def read_skill(*names: str) -> str:
 
 # --- what a runnable wheel must contain --------------------------------------
 #
-# `.github/workflows/release.yml:111-113` already wrote the reasoning for the frontend
-# half: without the copy step the wheel still builds, still installs, and is only missing
+# `scripts/build_wheel.sh`, beside its copy steps, already wrote the reasoning for the
+# frontend half: without the copy step the wheel still builds, still installs, and is only missing
 # something -- and nothing else in the workflow notices. That was true of the harness too,
 # for three releases. This function is that check generalised, and it lives here rather
 # than in YAML so the same answer is available to someone building a wheel by hand.
 
 # Reaching for `frontend._LAYOUT` rather than writing "build/client" again is deliberate.
-# `release.yml:75-81` records what that string means and why flattening it breaks the page;
+# `scripts/build_wheel.sh` records what that string means and why flattening it breaks the page;
 # a second copy of it here is the drift that comment exists to prevent.
 _WEB = frontend.PACKAGE_WEB.name
 _HARNESS = PACKAGE_HARNESS.name
+
+# The build stamp `scripts/build_wheel.sh` writes, and the only place an installed copy can
+# learn which commit it was built from (`.cos/0068_updating-the-app-is-a-manual-reinstall`
+# R1). `coscc/update.py` reads it under the same name.
+BUILD_STAMP = "_build.json"
+_FULL_SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def _posix(*parts: object) -> str:
@@ -161,7 +169,9 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     - no `cos.mjs`: the Board answers 400 (measured 2026-09-22 on `v0.2.2`);
     - no skills: a step runs without its rules;
     - no `states.json`: nothing can read or write a transition, because `coscc/states.py`
-      has no state set to validate one against (`0013`).
+      has no state set to validate one against (`0013`);
+    - no build stamp, or one without a 40-hex commit: the board cannot say which commit it
+      runs, and a later update cannot tell two builds of one version apart (`0068`).
 
     The last one is checked even though the file is **committed** rather than generated,
     which the other four are not. That is the point: `0012` cost a whole unit because a
@@ -205,6 +215,18 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     model_set = _posix(models.DEFAULT_PATH.name)
     if model_set not in names:
         out.append(f"no {model_set} — every stage would run on COS_MODEL, silently")
+    # `0068` R1: without it the board shows `commit không rõ` for a release it built itself.
+    stamp = _posix(BUILD_STAMP)
+    if stamp not in names:
+        out.append(f"no {stamp} — the board could not say which commit it runs")
+    else:
+        with zipfile.ZipFile(path) as archive:
+            try:
+                commit = json.loads(archive.read(stamp)).get("commit")
+            except (ValueError, AttributeError):
+                commit = None
+        if not isinstance(commit, str) or not _FULL_SHA.fullmatch(commit):
+            out.append(f"{stamp} carries no 40-hex commit — the board could not say which commit it runs")
 
     # The copy step takes two named directories, never `.claude/` whole. This is what says
     # so out loud: `.claude/settings.local.json` is a personal file (`.gitignore:19`) and a

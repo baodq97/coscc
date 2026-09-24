@@ -55,7 +55,7 @@ from coscc.runner import SESSIONS_PER_STEP, STATUS_RE, RunError, Runner, describ
 from coscc.sessions import Sessions
 from coscc.store import BadName, Store, require_name
 from coscc import steps as steps_mod
-from coscc import units, worktrees
+from coscc import units, updater as updater_mod, worktrees
 from coscc.units import BadUnit, CannotCreate
 
 # The eight stage names, in stage order. Taken from the stage list the board reports rather
@@ -78,6 +78,32 @@ UNKNOWN_END_FOR = timedelta(hours=24)
 
 class Invalid(Exception):
     """A request this layer refuses, carrying a reason a caller can show verbatim."""
+
+
+class Updating(Invalid):
+    """`0068` R11: refused because the app is in the seconds before it restarts. A 503."""
+
+
+class NotUpdatable(Invalid):
+    """`0068` R2: this install is not the shape an update can be applied to. A 409."""
+
+
+class StaleCutList(Invalid):
+    """`0068` R10: the list a person confirmed is not the list running now."""
+
+    def __init__(self, message: str, listing: dict[str, Any]):
+        super().__init__(message)
+        self.listing = listing
+
+
+def _as_invalid(e: updater_mod.Refused) -> Invalid:
+    if isinstance(e, updater_mod.Stale):
+        return StaleCutList(str(e), e.listing)
+    if isinstance(e, updater_mod.Updating):
+        return Updating(str(e))
+    if isinstance(e, updater_mod.NotHere):
+        return NotUpdatable(str(e))
+    return Invalid(str(e))
 
 
 def _younger_than(at: str, oldest: datetime) -> bool:
@@ -262,6 +288,9 @@ class Service:
         )
         # One question, asked in two places. See `Sessions.membership`.
         self.sessions.membership = self._is_member
+        # `0068`. Told of every step, integration and chat turn that ends (R9).
+        self.updater = updater_mod.Updater(self.config, self)
+        self.sessions.on_turn_end = self.updater.job_ended
 
     # -- workspaces ---------------------------------------------------------
 
@@ -725,6 +754,7 @@ class Service:
         and `red-after-integration` open Gebo (R5).
         """
         self._workspace_or_refuse(cwd)
+        self._refuse_while_updating()
         journal = self._journal()
         if journal is None:
             raise Invalid("no working folder is set, so an integration cannot be recorded — set COS_WORKING_DIR")
@@ -810,6 +840,7 @@ class Service:
         finally:
             self._active.discard((key, unit))
             self._running.pop(rid, None)
+            self.updater.job_ended()
 
     async def _integrate_mechanical(
         self, key: str, unit: str, pr: int, tree: Path, branch: str, head_before: str, origin_sha: str
@@ -1042,6 +1073,7 @@ class Service:
         than the one the page is showing.
         """
         self._workspace_or_refuse(cwd)
+        self._refuse_while_updating()
         journal = self._journal()
         if journal is None:
             raise Invalid(
@@ -1302,6 +1334,7 @@ class Service:
             if scratch is not None:
                 shutil.rmtree(scratch, ignore_errors=True)
             self.steps.release(running)
+            self.updater.job_ended()
 
     async def stop_step(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
         """Stop one running board step (`0034` R2, R5, R6). The route and the page's
@@ -1315,8 +1348,13 @@ class Service:
         name = (by or "").strip()
         if not name:
             raise Invalid("a name is required to stop a step")
+        return await self._stop_running(self._journal_key(cwd), unit, name)
+
+    async def _stop_running(self, key: str, unit: str, by: str) -> dict[str, Any]:
+        """The Stop itself, shared with `0068`'s "áp dụng ngay" so a step it cuts ends the
+        same way: an `end` record with `stopped` and `stopped_by`."""
         try:
-            running = self.steps.request_stop(self._journal_key(cwd), unit, name)
+            running = self.steps.request_stop(key, unit, by)
         except (steps_mod.NotRunning, steps_mod.Finishing) as e:
             raise Invalid(str(e)) from e
         await running.handle.close()
@@ -1328,6 +1366,77 @@ class Service:
         """The board steps running now in this workspace (`0034` R13). This process only."""
         self._workspace_or_refuse(cwd)
         return self.steps.listing(self._journal_key(cwd))
+
+    # -- updating the app (`0068`) -------------------------------------------
+    #
+    # Every decision is `Updater`'s; these translate its refusals into `Invalid`, as the
+    # rest of this file does, so a route maps one exception type.
+
+    def _refuse_while_updating(self) -> None:
+        try:
+            self.updater.refuse_while_updating()
+        except updater_mod.Refused as e:
+            raise _as_invalid(e) from e
+
+    def _update_jobs(self) -> list[dict[str, Any]]:
+        """R8. What this process is running now, besides the updater's own build."""
+        jobs: list[dict[str, Any]] = []
+        for r in self.steps.all():
+            jobs.append({
+                "kind": "step", "id": f"step:{r.workspace}:{r.unit}", "workspace": r.workspace,
+                "unit": r.unit, "stage": r.stage, "started": r.started_at,
+            })
+        for entry in self._running.values():
+            if entry["stage"] == "integrate":
+                jobs.append({
+                    "kind": "integration", "id": f"integration:{entry['workspace']}:{entry['unit']}",
+                    "workspace": entry["workspace"], "unit": entry["unit"], "stage": "integrate",
+                    "started": entry["started"],
+                })
+        for turn in self.sessions.in_flight():
+            jobs.append({"kind": "chat", "id": f"chat:{turn['id']}", "turn": turn["id"],
+                         "session_id": turn["session_id"], "workspace": turn["workspace"],
+                         "started": turn["started"]})
+        return jobs
+
+    async def _update_cut(self, job: dict[str, Any], by: str) -> bool:
+        """R10. A step through Stop's own road; a chat turn closed. Never an integration."""
+        if job["kind"] == "step":
+            try:
+                await self._stop_running(job["workspace"], job["unit"], by)
+            except Invalid:
+                return False  # already ended, or writing its artifact: it is waited for
+            return True
+        if job["kind"] == "chat":
+            return await self.sessions.cut_turn(job["turn"])
+        return False
+
+    def update_status(self) -> dict[str, Any]:
+        return self.updater.status()
+
+    def update_cut_list(self) -> dict[str, Any]:
+        try:
+            return self.updater.cut_list()
+        except updater_mod.Refused as e:
+            raise _as_invalid(e) from e
+
+    async def update_apply(self, channel: str, mode: str, by: str, token: str) -> dict[str, Any]:
+        try:
+            return await self.updater.apply(channel, mode, by, token)
+        except updater_mod.Refused as e:
+            raise _as_invalid(e) from e
+
+    def update_cancel(self, by: str) -> dict[str, Any]:
+        try:
+            return self.updater.cancel(by)
+        except updater_mod.Refused as e:
+            raise _as_invalid(e) from e
+
+    def update_build_local(self, by: str) -> dict[str, Any]:
+        try:
+            return self.updater.build_local(by)
+        except updater_mod.Refused as e:
+            raise _as_invalid(e) from e
 
     async def shutdown(self) -> None:
         """Cancel every step still running, and wait for them, 10 seconds at most.
@@ -2122,6 +2231,7 @@ class Service:
         after a caller has committed to streaming. A test in `web_test.py` holds the line.
         """
         self._workspace_or_refuse(cwd)
+        self._refuse_while_updating()
         if not text.strip():
             raise Invalid("text is required")
 

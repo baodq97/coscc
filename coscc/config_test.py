@@ -171,5 +171,43 @@ class TheDataDirectory(unittest.TestCase):
             c.data_dir = "/somewhere/else"  # type: ignore[misc]
 
 
+class TheUpdaterSettings(unittest.TestCase):
+    """`.cos/0068_updating-the-app-is-a-manual-reinstall` R2, R3 and R6."""
+
+    def test_checking_for_updates_is_on_unless_turned_off(self):
+        self.assertTrue(from_env({}).update_check)
+        self.assertTrue(from_env({"COS_UPDATE_CHECK": ""}).update_check)
+        self.assertTrue(from_env({"COS_UPDATE_CHECK": "1"}).update_check)
+        self.assertFalse(from_env({"COS_UPDATE_CHECK": "0"}).update_check)
+
+    def test_the_local_channel_is_unset_by_default(self):
+        self.assertIsNone(from_env({}).update_local_from)
+        self.assertEqual(from_env({"COS_UPDATE_LOCAL_FROM": " coscc "}).update_local_from, "coscc")
+
+    def test_uv_is_looked_for_where_install_sh_looks_and_in_that_order(self):
+        c = from_env({
+            "PATH": "/usr/bin:/bin", "HOME": "/h", "UV_INSTALL_DIR": "/uvi", "XDG_BIN_HOME": "/xb",
+        })
+        self.assertEqual(
+            c.uv_candidates,
+            ("/usr/bin", "/bin", "/uvi", "/xb", "/h/.local/bin", "/h/.cargo/bin"),
+        )
+
+    def test_systemd_and_the_config_home_are_read_without_the_prefix(self):
+        c = from_env({"INVOCATION_ID": "abc", "HOME": "/h"})
+        self.assertEqual((c.invocation_id, c.config_home, c.home), ("abc", "/h/.config", "/h"))
+        c = from_env({"XDG_CONFIG_HOME": "/cfg", "HOME": "/h"})
+        self.assertEqual((c.invocation_id, c.config_home), (None, "/cfg"))
+
+    def test_nothing_comes_from_anywhere_but_the_env_it_is_given(self):
+        # The source is the dict handed in: a test's `{}` sees none of the running
+        # process's `PATH`, `HOME` or `INVOCATION_ID`.
+        c = from_env({})
+        self.assertEqual(
+            (c.invocation_id, c.config_home, c.uv_candidates, c.path_env, c.home),
+            (None, "", (), "", ""),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

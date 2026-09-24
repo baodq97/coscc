@@ -202,6 +202,19 @@ a `review` gate that never opens.
   and close its pull request, under any name. A move is refused while a step or an
   integration of that unit runs — but only one this process started; a chat, a terminal or
   a second app is not seen.
+- **An update is not an approval, and anyone who reaches the port can press it.** Since
+  `0068` an install made by `install.sh` updates itself from the Board
+  (`POST /api/update/apply`, `/cancel`, `/build-local`). Applying can stop every running
+  step and chat turn of this process when the person chooses "áp dụng ngay", and restarts
+  the process; the local build runs upstream `main`'s build scripts under this user. No
+  route has a login and the default bind is `0.0.0.0`, so anyone who reaches the port can
+  do all of it under any name. The only constraint is what gets installed: a wheel from
+  `github.com/baodq97/coscc` checked against its release's `SHA256SUMS`, or one this
+  machine built from `origin/main`, and no request carries a URL, path, version or ref.
+  Nothing in the repository enforces that constraint beyond the app's own code: a
+  `SHA256SUMS` from the same release catches a torn file, not a compromised release, and
+  anyone who can write to `COS_DATA_DIR` can place a wheel and a manifest that agree. It
+  opens and closes no gate and starts no stage.
 - **CI that decides more than one thing.** Since `0015` CI decides whether `review` may
   begin: the gate reads the pull request's required checks and stays closed on red,
   pending or none. Nothing else reads it. A green check also measures a different

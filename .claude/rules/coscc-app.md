@@ -355,6 +355,24 @@ no commands, one turn, no budget.
   `end` for it. A step started at a terminal has no entry either. `COS_HOST=127.0.0.1` is
   the mitigation that exists.
 
+- **`POST /api/update/*` stops work, restarts the app and builds upstream code, with no
+  login.** Since `0068`. *Áp dụng ngay* stops every board step (through Stop's road, so
+  each gets an `end` with `stopped_by`) and cuts every chat turn of this process; *Áp
+  dụng* waits for them instead, and a person can keep it waiting forever by starting new
+  work. *Build từ origin/main* runs `scripts/build_wheel.sh` of the configured workspace's
+  upstream `main` under this user — `uv sync`, Reflex fetching Node/Bun, all of it. The
+  source of a release is a constant and a wheel is installed only after its sha256
+  matched, but that checksum comes from the same release (spec C5). After a trial run on
+  `127.0.0.1`, the app calls `Service.shutdown` and `Sessions.close_all` itself (the
+  lifespan never runs on the real stack, `spike.md ## U5`), stops uvicorn from inside,
+  installs offline in `main`, and exits 75: systemd logs it as a failure and `NRestarts`
+  grows, which `install.sh` reads as a crash loop at 2 (spec C7, unmeasured). A new
+  version that passes the trial and still fails to start is not rolled back by anything;
+  the update's log holds the command, and restoring `updates/cos.db.bak` loses what the new
+  version wrote (spec C1, C8). The trace is the `update` rows in the run log (workspace
+  `""`, `by` a typed name) and `<COS_DATA_DIR>/updates/logs/`. `COS_HOST=127.0.0.1` is the
+  mitigation that exists.
+
 ## The proofs, and what each one costs
 
 | | |
@@ -388,6 +406,7 @@ no commands, one turn, no budget.
 | `verify_0051.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` that refuses everything. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState` as `verify_0024` does, so the compiled page and its socket are not exercised; the ten steps go through `POST /api/board/run` on the in-process ASGI app, never through a second copy of the app, so the one-process limit is not measured |
 | `verify_0060.py` | plain: no session, no quota, no network; temporary directory with a fixture run log and fixture transcripts. Needs `git` (it loads `coscc/policy.py` from `01699b8` with `git show`) and `bash` (`type -t`); either missing, or that commit absent from a shallow clone, is exit 2. `--measure --since --until [--confirmed FILE]` reads `<COS_DATA_DIR>/cos.db` (`mode=ro`) and `COS_TRANSCRIPTS_DIR`, and writes only to `<COS_DATA_DIR>/measurements/`; no session in the window is exit 2. It does not import `coscc`. "Fake" depends on the `PATH` of the machine running it |
 | `verify_0061.py` | plain: no session, no quota, no network; temporary directory. Needs `node` and `git` (it loads `cos.mjs` from `git merge-base HEAD origin/main`) and `uv`; a missing one, or no merge-base, is exit 2. `--root <dir>` (repeatable) adds a store such as `~/.cos/units/<slot>` to the comparison. `--measure` reads every `<COS_DATA_DIR>/units/*/.cos/` through `cos.mjs status --json` and writes only to `<COS_DATA_DIR>/measurements/`; no merge line yet (this unit's `ship.md`) or fewer than 5 units shipped after it is exit 2. Kind (b) of the intent's wasted round is a person reading pull request history; it does not conclude it |
+| `verify_0068.py` | plain: no session, no quota, no network; temporary data root, a fake `uv` (a shell script whose "installed" `coscc` serves 200 on a port) and `verify_0034`'s stand-in session, app driven in-process over ASGI. Needs `node` and `git`; either missing is exit 2. `--restart` builds two wheels of `HEAD` with `scripts/build_wheel.sh --local` in temporary worktrees, installs one with the real `uv` into a temporary tool dir, plays systemd itself (restart 2 s after a non-zero exit) and drives chromium: **needs the network** for the trial install, port 18790 free, and takes a few minutes. It does not measure the intent's outcome — two real updates on an `install.sh` machine |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 

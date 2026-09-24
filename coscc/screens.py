@@ -653,9 +653,154 @@ def _running_steps() -> rx.Component:
     )
 
 
+_MONO = "ui-monospace, monospace"
+
+
+def _log_tail(text) -> rx.Component:
+    return rx.cond(
+        text != "",
+        rx.text(text, size="1", font_family=_MONO, white_space="pre-wrap",
+                background=rx.color("gray", 2), padding="8px", width="100%", margin_top="6px"),
+    )
+
+
+def _update_channel(label: str, channel: str, line, ready, extra: rx.Component | None = None) -> rx.Component:
+    return rx.hstack(
+        s.text(label, size="1", font_family=_MONO),
+        s.text(line, size="1"),
+        rx.spacer(),
+        *([extra] if extra is not None else []),
+        rx.button("Áp dụng", id=f"update-apply-{channel}", on_click=P.apply_update(channel),
+                  disabled=~ready | P.update_pending, size="1", variant="soft"),
+        rx.button("Áp dụng ngay…", id=f"update-now-{channel}", on_click=P.show_cut_list(channel),
+                  disabled=~ready, size="1", variant="soft", color_scheme="red"),
+        width="100%", align="center", spacing="3", margin_top="10px", flex_wrap="wrap",
+    )
+
+
+def _update_panel() -> rx.Component:
+    """`0068`. What runs, whether a newer build is ready, and one press to apply it.
+
+    Every string and every enabled button comes from `Service.update_status`. No login:
+    the name typed here is what the run log's `by` says, a claim and not an identity.
+    """
+    return s.panel(
+        s.eyebrow("CẬP NHẬT"),
+        rx.hstack(
+            s.text("Đang chạy " + P.upd_version, size="2"),
+            s.text(P.upd_commit, size="1", font_family=_MONO),
+            spacing="3", align="center", margin_top="8px", flex_wrap="wrap", id="update-running",
+        ),
+        rx.cond(
+            ~P.upd_available,
+            s.text(P.upd_reason, size="1", margin_top="6px", id="update-unavailable"),
+            rx.vstack(
+                s.text("Kiểm tra thành công gần nhất: "
+                       + rx.cond(P.upd_checked_at != "", P.upd_checked_at, "chưa có"), size="1"),
+                rx.input(placeholder="Tên của bạn, để áp dụng, huỷ chờ hoặc build", value=P.update_by,
+                         on_change=P.set_update_by, size="1", aria_label="Tên của bạn, để cập nhật",
+                         id="update-by"),
+                _update_channel("release", "release", P.upd_release, P.upd_release_ready),
+                _update_channel(
+                    "local", "local", P.upd_local, P.upd_local_ready,
+                    rx.button("Build từ origin/main", id="update-build-local", on_click=P.build_local,
+                              disabled=~P.upd_local_configured, size="1", variant="soft"),
+                ),
+                _log_tail(P.upd_local_tail),
+                rx.cond(
+                    P.update_pending,
+                    rx.box(
+                        s.text("sẽ áp dụng khi không còn việc chạy", size="2"),
+                        s.text(P.upd_pending_reason, size="1"),
+                        rx.foreach(P.upd_waiting, lambda w: s.text("đang chờ: " + w, size="1")),
+                        rx.button("Huỷ chờ", id="update-cancel", on_click=P.cancel_update,
+                                  size="1", variant="soft", margin_top="6px"),
+                        id="update-pending", margin_top="10px",
+                    ),
+                ),
+                rx.cond(
+                    P.cut_open,
+                    rx.box(
+                        s.text("Áp dụng ngay sẽ:", size="2"),
+                        rx.cond(P.cut_items.length() == 0, s.text("không cắt việc nào", size="1")),
+                        rx.foreach(P.cut_items, lambda i: s.text(i, size="1")),
+                        rx.hstack(
+                            rx.button("Xác nhận, áp dụng ngay", id="update-confirm-now",
+                                      on_click=P.confirm_apply_now, size="1", color_scheme="red"),
+                            rx.button("Thôi", on_click=P.close_cut_list, size="1", variant="soft"),
+                            spacing="2", margin_top="6px",
+                        ),
+                        id="update-cut-list", margin_top="10px",
+                    ),
+                ),
+                rx.cond(P.upd_error != "", rx.box(
+                    s.text("Lần áp dụng vừa rồi dừng lại: " + P.upd_error, size="1"),
+                    _log_tail(P.upd_error_tail), id="update-error", width="100%",
+                )),
+                rx.cond(P.upd_last != "", rx.box(
+                    s.text("Lần cập nhật trước: " + P.upd_last, size="1"),
+                    _log_tail(P.upd_last_tail), id="update-last", width="100%",
+                )),
+                width="100%", spacing="1", margin_top="6px", align="start",
+            ),
+        ),
+        id="update-panel", padding="16px",
+    )
+
+
+def _update_warning() -> rx.Component:
+    """R9: starting work while an update waits is allowed, and pushes the update back."""
+    return rx.cond(P.update_pending, s.text(P.update_warning, size="1", color=rx.color("amber", 11)))
+
+
+# R14. Asks `/api/update` every 5 s outside Reflex's socket, and reloads the page when the
+# build it answers for is not the one the page was loaded under. The overlay says
+# `đang khởi động lại` while nothing answers, and after 120 s says it could not reconnect.
+_RECONNECT_JS = """
+(function () {
+  if (window.__coscc_update_watch) return;
+  window.__coscc_update_watch = true;
+  var first = null, failing = null, log = "";
+  var box = document.createElement("div");
+  box.id = "update-reconnect";
+  box.setAttribute("role", "status");
+  box.style.cssText = "display:none;position:fixed;top:0;left:0;right:0;z-index:9999;" +
+    "padding:10px 16px;background:#7a4a00;color:#fff;font:14px system-ui,sans-serif";
+  function show(text) {
+    if (!box.parentNode && document.body) document.body.appendChild(box);
+    box.textContent = text;
+    box.style.display = "block";
+  }
+  function tick() {
+    fetch("/api/update", {cache: "no-store"}).then(function (r) {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    }).then(function (u) {
+      if (u.log) log = u.log;
+      if (first === null) { first = u.build_id; }
+      else if (u.build_id !== first) { window.location.reload(); return; }
+      failing = null;
+      box.style.display = "none";
+    }).catch(function () {
+      if (failing === null) failing = Date.now();
+      if (Date.now() - failing > 120000) {
+        show("không kết nối lại được. Log của lần cập nhật: " + (log || "(không rõ)") +
+             ". Lệnh quay về tay nằm trong log đó, và trong docs/install.md ## Update.");
+      } else {
+        show("đang khởi động lại…");
+      }
+    });
+  }
+  tick();
+  setInterval(tick, 5000);
+})();
+"""
+
+
 def _board() -> rx.Component:
     return rx.vstack(
         s.heading("Work board", "From an idea to something real. One clear step at a time."),
+        _update_panel(),
         rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
         _running_steps(),
         rx.flex(
@@ -820,6 +965,7 @@ def _sessions() -> rx.Component:
                                   disabled=~P.has_workspace | (P.prompt == "")),
                         width="100%", align="center", margin_top="12px", wrap="wrap",
                     ),
+                    _update_warning(),
                     border_top=f"1px solid {s.LINE}", padding_top="18px",
                 ),
                 padding=rx.breakpoints(initial="16px", md="24px"),
@@ -1537,6 +1683,7 @@ def _detail_dialog() -> rx.Component:
                                     disabled=P.running_here | ~P.recording,
                                     loading=P.running_here, width="100%",
                                 ),
+                                _update_warning(),
                                 # `0014` R8. The one control on this page that writes to
                                 # the repository's git. It is separate from Run and stays
                                 # separate: cutting a branch is a decision about where the
@@ -1795,6 +1942,7 @@ def index() -> rx.Component:
         ),
         _detail_dialog(), _workspace_dialog(), _remove_dialog(),
         _command_dialog(), _mobile_dialog(),
+        rx.script(_RECONNECT_JS),
         id="studio-shell", data_density=P.density,
         on_mount=P.load,
         background=s.CANVAS, color=s.INK, min_height="100dvh",
