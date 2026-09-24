@@ -483,8 +483,14 @@ def main() -> int:
         gh.chmod(0o755)
         workspace = root / "work" / "proj"
         workspace.mkdir(parents=True)
+        # Since `0030` opening a unit's tree onto its branch fetches `origin` first, and a
+        # fetch that fails leaves the page no tree to ask about (`0056` review round 1, F4).
+        remote = root / "remote.git"
+        git(root, "init", "-q", "--bare", "-b", "main", str(remote))
         git(workspace, "init", "-q", "-b", "main")
         git(workspace, "commit", "-q", "--allow-empty", "-m", "the only commit")
+        git(workspace, "remote", "add", "origin", str(remote))
+        git(workspace, "push", "-q", "-u", "origin", "main")
         git(workspace, "switch", "-q", "-c", f"fix/{SLUG}")
         # Before `coscc` is imported: `coscc/state.py` builds its `SERVICE` from the
         # environment at import, and that must open this directory, not `~/.cos`.
