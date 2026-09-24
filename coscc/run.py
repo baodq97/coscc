@@ -82,12 +82,19 @@ def main(argv: list[str] | None = None) -> None:
     # `0068` R12 step 7: the app keeps its own `Server`, because `uvicorn.run` does not
     # hand it out and the updater has to ask it to stop from inside. Measured in
     # `spike.md ## U5` part 1: `run()` returns 0.119 s after `should_exit` is set.
+    #
+    # `0070`: the target is the guarded app. `proxy_headers=False` because uvicorn's
+    # default trusts `X-Forwarded-For` from a loopback peer (`spike.md ## U3`), which lets
+    # any process on this machine choose the address the login limiter sees; with it off,
+    # `scope["client"]` is always the real peer (`spec.md ## Answers, câu 14`). The guard
+    # reads `X-Forwarded-Proto` from a loopback peer itself, for the cookie's `Secure`.
     server = uvicorn.Server(uvicorn.Config(
-        "coscc.coscc:app",
+        "coscc.coscc:served",
         factory=True,
         host=config.host,
         port=config.port,
         log_level="warning",
+        proxy_headers=False,
     ))
     update.SERVER.register(server)
     server.run()
@@ -127,13 +134,27 @@ def _answer_and_stop(args: list[str]) -> None:
     all; ignoring them became more expensive in the same unit that made `0.0.0.0` the
     default, because a mistyped flag would now quietly start a server reachable from the
     network instead of doing whatever was intended.
+
+    `reset-password` (`0070` R10) is the only way back from a forgotten master password,
+    and it is here on purpose rather than on a route: it needs a shell on this machine.
+    It clears the password and every session in the database the environment points at,
+    and says which file. It does not talk to a running process — the database is the only
+    channel, and the guard reads it on the next request.
     """
     if args in (["--version"], ["-V"]):
         print(f"coscc {installed_version()}")
         return
+    if args == ["reset-password"]:
+        from coscc.config import from_env
+        from coscc.data import Data
+
+        data = Data(from_env().data_dir)
+        data.auth_clear()
+        print(f"coscc: password and sessions removed from {data.db_path}")
+        return
     print(
         f"coscc: unrecognised argument {args[0]!r}\n"
-        "usage: coscc [--version]\n"
+        "usage: coscc [--version | reset-password]\n"
         "everything else is configuration, and it is read from the environment "
         "(COS_HOST, COS_PORT, COS_WORKING_DIR, ...) -- see docs/install.md",
         file=sys.stderr,
@@ -149,20 +170,19 @@ LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 def banner(config) -> list[str]:
     """What is printed at startup, as lines, so a test can read them.
 
-    The second line is a requirement rather than a courtesy -- `0011`'s `spec.md` R5. The
-    default bind address changed to `0.0.0.0` in that unit, and this app has no
-    authentication anywhere: `coscc/api.py` states the assumption it was built under, that
-    every caller is a local process holding this machine's own credentials. Nothing
-    enforces that assumption. So when the address is not loopback, the only thing standing
-    where a login would be is this sentence, and it has to be printed every time rather
-    than documented once.
+    The warning lines are a requirement rather than a courtesy -- `0011`'s `spec.md` R5,
+    rewritten by `0070` R12. The default bind address is `0.0.0.0`. Since `0070` a master
+    password stands in front of every route, but coscc serves plain HTTP: off loopback,
+    whoever can watch the network reads the password, the session cookie and the setup
+    token as they pass. That has to be printed every time rather than documented once.
     """
     lines = [f"coscc on http://{config.host}:{config.port}"]
     if config.host not in LOOPBACK:
         lines.append(
-            "  ⚠ reachable from any machine that can route to this port, and coscc has no "
-            "login — anyone who reaches it gets every screen, including the two controls "
-            "that spend real Claude quota."
+            "  ⚠ reachable from any machine that can route to this port: anyone who reaches "
+            "it gets the login page. Over plain HTTP the password, the session cookie and "
+            "the setup token cross the network readable — put coscc behind a TLS reverse "
+            "proxy or on a private network."
         )
         lines.append("  set COS_HOST=127.0.0.1 to bind this machine only.")
     lines.append(

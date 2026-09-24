@@ -20,24 +20,27 @@ class WhatStartupSays(unittest.TestCase):
         # the test that checks it stops meaning anything.
         self.assertEqual(Config().host, "0.0.0.0")
 
-    def test_binding_every_interface_says_there_is_no_login(self):
+    def test_binding_every_interface_says_plain_http_is_readable(self):
+        # `0070` R12: there is a login now, and what is left to say is the wire.
         lines = run.banner(Config(host="0.0.0.0", port=8790))
         text = "\n".join(lines)
-        self.assertIn("no login", text)
-        self.assertIn("quota", text)
+        self.assertIn("login page", text)
+        self.assertIn("readable", text)
         self.assertIn("COS_HOST=127.0.0.1", text)
+        self.assertNotIn("no login", text)
 
     def test_a_named_interface_gets_the_same_warning(self):
         # The check is "not loopback", not "is 0.0.0.0" -- someone binding one real
         # interface is exposed the same way and must be told the same thing.
         text = "\n".join(run.banner(Config(host="192.168.1.10", port=8790)))
-        self.assertIn("no login", text)
+        self.assertIn("readable", text)
+        self.assertIn("login page", text)
 
     def test_loopback_is_not_warned_about(self):
         for host in ("127.0.0.1", "localhost", "::1"):
             with self.subTest(host=host):
                 text = "\n".join(run.banner(Config(host=host, port=8790)))
-                self.assertNotIn("no login", text)
+                self.assertNotIn("readable", text)
 
     def test_the_address_is_always_the_first_line(self):
         first = run.banner(Config(host="0.0.0.0", port=9001))[0]
@@ -78,6 +81,38 @@ class TheVersionAnswer(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             run.main(["--verison"])
         self.assertEqual(caught.exception.code, 2)
+
+    def test_reset_password_takes_nothing_after_it(self):
+        with self.assertRaises(SystemExit) as caught:
+            run.main(["reset-password", "--now"])
+        self.assertEqual(caught.exception.code, 2)
+
+
+class ResetPassword(unittest.TestCase):
+    """`0070` R10: the way back from a forgotten password, at a shell on this machine."""
+
+    def test_reset_password_clears_and_names_the_database(self):
+        import contextlib
+        import io
+        import tempfile
+        from unittest import mock
+
+        from coscc.data import Data
+
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.auth_set_password("h", 1)
+            data.auth_session_add("s", 1, 10**10)
+            out = io.StringIO()
+            with mock.patch.dict("os.environ", {"COS_DATA_DIR": d}), \
+                    contextlib.redirect_stdout(out):
+                run.main(["reset-password"])
+            self.assertEqual(
+                out.getvalue().strip(),
+                f"coscc: password and sessions removed from {data.db_path}",
+            )
+            self.assertTrue(data.db_path.is_absolute())
+            self.assertEqual(data.auth_state("s"), (False, None))
 
 
 class TheServerIsHeld(unittest.TestCase):
@@ -120,6 +155,19 @@ class TheServerIsHeld(unittest.TestCase):
     def test_no_hand_off_means_main_just_returns(self):
         code, finished = self.main_with(lambda server: None)
         self.assertEqual((code, finished), (None, []))
+
+    def test_uvicorn_serves_the_guarded_app_and_trusts_no_proxy_header(self):
+        """`0070` step 4: the guard is the target, and `X-Forwarded-For` is never read."""
+        seen = []
+
+        def capture(server):
+            seen.append(server.config)
+
+        self.main_with(capture)
+        (args, kwargs), = seen
+        self.assertEqual(args, ("coscc.coscc:served",))
+        self.assertIs(kwargs["factory"], True)
+        self.assertIs(kwargs["proxy_headers"], False)
 
     def test_a_hand_off_installs_once_and_exits_75(self):
         from coscc import update
