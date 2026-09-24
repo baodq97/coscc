@@ -19,7 +19,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -121,6 +123,208 @@ async def run_paid() -> int:
     return EXIT_PASS if ok else EXIT_BROKEN
 
 
+# --- plain: no session, no quota, no network --------------------------------------------
+
+
+class _Client:
+    """Stands in for the SDK client a real step would hand its `StepHandle`."""
+
+    def __init__(self) -> None:
+        self.disconnects = 0
+
+    async def disconnect(self) -> None:
+        self.disconnects += 1
+
+
+class _Sessions:
+    """A session that sends one chunk, then waits for its unit to be released.
+
+    It does what `Sessions.stream(step=...)` does with a handle: gives it a client, and
+    closes it in `finally` however the step ends.
+    """
+
+    def __init__(self) -> None:
+        self.release: dict[str, asyncio.Event] = {}
+        self.handles: dict[str, object] = {}
+        self.units: list[str] = []
+
+    def gate(self, unit: str) -> asyncio.Event:
+        return self.release.setdefault(unit, asyncio.Event())
+
+    async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+        step = kw.get("step")
+        [unit] = [u for u in self.units if u in text]
+        if step is not None:
+            step.client = _Client()
+            self.handles[unit] = step
+        try:
+            yield ("chunk", "# Spec: a problem\n")
+            await asyncio.wait_for(self.gate(unit).wait(), 20)
+            yield ("chunk", "Author: proof. Status: accepted.\n")
+            yield ("done", {"session_id": f"s-{unit}", "terminal_reason": "success",
+                            "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.01}})
+        finally:
+            if step is not None:
+                await step.close()
+
+
+async def _run_dropped_after_first_chunk(app, cwd: str, unit: str) -> list[bytes]:
+    """POST /api/board/run over raw ASGI, and hang up after the first line.
+
+    `httpx.ASGITransport` reads the whole body before it returns, so it cannot hang up
+    early. This speaks ASGI itself, with an `http.disconnect` sent once a line arrived:
+    the message a server sends when the NDJSON client goes away. `spec_version` 2.3 is what
+    makes Starlette's `StreamingResponse` listen for it.
+    """
+    import json
+
+    body = json.dumps({"cwd": cwd, "unit": unit, "stage": "spec"}).encode()
+    got_line = asyncio.Event()
+    sent: list[bytes] = []
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if not delivered:
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await got_line.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.body" and message.get("body"):
+            sent.append(message["body"])
+            got_line.set()
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1", "method": "POST", "scheme": "http", "path": "/api/board/run",
+        "raw_path": b"/api/board/run", "query_string": b"", "root_path": "",
+        "headers": [(b"content-type", b"application/json"), (b"host", b"proof")],
+        "client": ("127.0.0.1", 1), "server": ("proof", 80),
+    }
+    await asyncio.wait_for(app(scope, receive, send), 20)
+    return sent
+
+
+async def run_plain(root: Path) -> bool:
+    import httpx
+
+    from coscc import board as board_reader
+    from coscc.api import build
+    from coscc.config import Config
+
+    workspace = root / "work" / "proj"
+    workspace.mkdir(parents=True)
+    config = Config(
+        workspaces=(str(workspace),), working_dir=str(root / "work"), data_dir=str(root / "data"),
+    )
+    app = build(config)
+    service = app.state.service
+    fake = _Sessions()
+    service.sessions = fake
+    ws = str(workspace)
+
+    made = []
+    for slug in ("runs-to-done", "is-stopped", "loses-its-reader"):
+        unit = await service.create_unit(ws, slug, "words for the proof")
+        (Path(unit["path"]) / "intent.md").write_text(
+            "# Intent: x\nAuthor: proof. Type: fix. Status: accepted.\n", encoding="utf-8"
+        )
+        made.append(unit)
+    u1, u2, u3 = (m["unit"] for m in made)
+    paths = {m["unit"]: Path(m["path"]) for m in made}
+    fake.units = [u1, u2, u3]
+    units_root = service._units_root(ws)
+    gate_before = await board_reader.gate(units_root, u2, "plan", repo=None)
+
+    ok = True
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://proof")
+
+    async def post_run(unit):
+        return await client.post("/api/board/run", json={"cwd": ws, "unit": unit, "stage": "spec"})
+
+    async def listed():
+        return {r["unit"] for r in (await client.get("/api/board/running", params={"cwd": ws})).json()}
+
+    async def until(predicate, what):
+        for _ in range(400):
+            if await predicate():
+                return True
+            await asyncio.sleep(0.01)
+        print(f"timed out waiting for {what}")
+        return False
+
+    run1 = asyncio.create_task(post_run(u1))
+    run2 = asyncio.create_task(post_run(u2))
+    both = await until(lambda: _has(listed(), {u1, u2}), "two steps listed")
+    ok &= say(both, "R12 two units' steps are running at the same moment")
+
+    again = await post_run(u1)
+    ok &= say(again.status_code == 400, "R11 a second run on a unit already running is a 400",
+              f"{again.status_code} {again.text[:200]}")
+
+    stop = await client.post("/api/board/stop", json={"cwd": ws, "unit": u2, "by": "Proof person"})
+    ok &= say(stop.status_code == 200 and stop.json().get("stopped_by") == "Proof person",
+              "R6 POST /api/board/stop stops the step", f"{stop.status_code} {stop.text[:200]}")
+    again_stop = await client.post("/api/board/stop", json={"cwd": ws, "unit": u2, "by": "Someone else"})
+    await run2
+    ok &= say(again_stop.status_code in (200, 400), "R5 a second Stop is not an error of the server",
+              f"{again_stop.status_code}")
+
+    dropped = asyncio.create_task(_run_dropped_after_first_chunk(app, ws, u3))
+    lines = await dropped
+    ok &= say(len(lines) >= 1, "R3 the NDJSON client of the third step hung up after its first line")
+    still = await listed()
+    ok &= say(u3 in still, "R3 the third step is still running after its reader went away",
+              f"listed {sorted(still)}")
+
+    fake.gate(u1).set()
+    fake.gate(u3).set()
+    first = await run1
+    ok &= say(first.status_code == 200, "the first step's stream ended", str(first.status_code))
+    await until(lambda: _empty(listed()), "the running list to empty")
+
+    ends = {u: [] for u in (u1, u2, u3)}
+    for r in service._journal().records():
+        if r["kind"] == "end" and r["unit"] in ends:
+            ends[r["unit"]].append(r)
+    for unit, label in ((u1, "U1 ran to its end"), (u3, "U3 lost its reader")):
+        written = (paths[unit] / "spec.md").exists()
+        outcomes = [e["outcome"] for e in ends[unit]]
+        ok &= say(written and outcomes == ["done"], f"{label}: spec.md written and one end, done",
+                  f"written={written} ends={outcomes}")
+    stopped = ends[u2]
+    ok &= say(
+        len(stopped) == 1 and stopped[0]["outcome"] == "stopped"
+        and stopped[0].get("stopped_by") == "Proof person",
+        "R5 R7 U2 has exactly one end: stopped, by the first name", f"{stopped}",
+    )
+    ok &= say(not (paths[u2] / "spec.md").exists(), "R7 U2 has no spec.md")
+    ok &= say(
+        bool(stopped) and "cost_usd" not in stopped[0] and "turns" not in stopped[0]
+        and stopped[0].get("cost_unknown") is True,
+        "R8 U2's end claims no cost it never saw", f"{stopped}",
+    )
+    gate_after = await board_reader.gate(units_root, u2, "plan", repo=None)
+    ok &= say(gate_before == gate_after, "R9 the stop opened and closed no gate",
+              f"{gate_before} -> {gate_after}")
+    closes = {u: getattr(h.client, "disconnects", None) for u, h in fake.handles.items()}
+    ok &= say(sorted(closes) == sorted([u1, u2, u3]) and set(closes.values()) == {1},
+              "R1 every step's client was closed exactly once", f"{closes}")
+    ok &= say((await listed()) == set(), "R13 the running list is empty at the end")
+    await client.aclose()
+    return ok
+
+
+async def _has(listing, want: set) -> bool:
+    return want <= await listing
+
+
+async def _empty(listing) -> bool:
+    return not await listing
+
+
 def main() -> int:
     if not Path(f"/proc/{os.getpid()}/task").is_dir():
         print("no /proc on this machine; the processes cannot be counted")
@@ -130,8 +334,12 @@ def main() -> int:
     args = parser.parse_args()
     if args.paid:
         return asyncio.run(run_paid())
-    print("the plain proof is not built yet")
-    return EXIT_ENV
+    if shutil.which("node") is None:
+        print("no `node` on PATH; cos.mjs cannot answer")
+        return EXIT_ENV
+    with tempfile.TemporaryDirectory(prefix="verify-0034-") as d:
+        print(f"temporary data root: {d}")
+        return EXIT_PASS if asyncio.run(run_plain(Path(d))) else EXIT_BROKEN
 
 
 if __name__ == "__main__":
