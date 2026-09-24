@@ -786,6 +786,13 @@ class Runner:
         integration_note: str = "",
         plan_drift: dict[str, Any] | None = None,
         drift_note: str = "",
+        effort: str | None = None,
+        effort_source: str = "",
+        label_declared: str | None = None,
+        label: str | None = None,
+        label_source: str | None = None,
+        impl_run: int | None = None,
+        end_fields: Any = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -800,6 +807,11 @@ class Runner:
         `model` is the one `coscc/models.py` resolved for this stage, and `model_source`
         says where it came from. Both go into the `start` record, which is where a reader
         checks what a step ran on. `None` leaves the session on `COS_MODEL`.
+
+        `0033`: `effort` and the three label fields go into `start` beside it, and so does
+        `impl_run` when the caller counted one. `end_fields`, an async callable returning a
+        dict, is awaited only for a `done` step and its fields added to `end` — `review`'s
+        finding counts. If it raises, the fields are left out and nothing else changes.
 
         `base` is what `coscc/worktrees.py` said about `cwd`'s freshness against
         `origin/main` before this call was made — `service.py` reads it, this module
@@ -855,6 +867,9 @@ class Runner:
                 granted=list(grant.tools), max_turns=grant.max_turns,
                 head=head,
                 model=model, model_source=model_source,
+                effort=effort, effort_source=effort_source,
+                label_declared=label_declared, label=label, label_source=label_source,
+                **({"impl_run": impl_run} if impl_run is not None else {}),
                 agents=SESSIONS_PER_STEP,
                 base=base,
                 # Which system prompt the step ran on, so a measurement can pick the steps
@@ -899,6 +914,7 @@ class Runner:
                 # The same reasoning: a stand-in with no `model` parameter keeps working
                 # for a step nobody resolved a model for.
                 **({"model": model} if model is not None else {}),
+                **({"effort": effort} if effort is not None else {}),
                 # And again: a tool-less step passes nothing, so it gets the session it
                 # always got, and a stand-in without the parameter keeps working for it.
                 **({"system_prompt": dict(preset)} if preset else {}),
@@ -1027,6 +1043,13 @@ class Runner:
                     # that follows. The attempt record is best-effort; the run log's own
                     # `end` row is the one thing this unit will not put at risk.
                     pass
+            extra: dict[str, Any] = {}
+            if self.journal is not None and outcome == "done" and end_fields is not None:
+                try:
+                    extra = dict(await end_fields())
+                except Exception:
+                    # The same rule as the attempt record: the `end` row never depends on it.
+                    extra = {}
             if self.journal is not None:
                 self.journal.finished(
                     journal_key, unit, stage, outcome,
@@ -1036,7 +1059,9 @@ class Runner:
                     denials=denials.count,
                     denied=denials.reasons or None,
                     models_used=models_used or None,
+                    terminal=terminal or None,
                     **cost,
+                    **extra,
                 )
             if pending is not None:
                 raise pending

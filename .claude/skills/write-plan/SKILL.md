@@ -34,7 +34,7 @@ One file, `.cos/NNNN_<slug>/plan.md`, in the directory the intent already occupi
 
 ````markdown
 # Plan: <title>
-Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: accepted.
+Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: accepted. Impl: routine | novel.
 
 ## Files that change
 
@@ -74,6 +74,10 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: a
     `spec.md ## Answers, câu N`. The words of an answer are a person's, not yours: quote
     them, and do not restate them as your own finding. The app only ever appends that
     section; never write into it yourself.
+11. `Impl:` is `novel` when the work is new logic rather than an existing pattern followed,
+    or when `## Files that change` names a file in `coscc/labels.py` `SECURITY_SURFACE`.
+    Otherwise `routine`. A missing label is run as `novel`. The label picks the model and
+    effort a later stage runs on in the coscc app; it opens and closes no gate.
 
 ## Done when
 

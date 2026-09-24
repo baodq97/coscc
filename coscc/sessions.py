@@ -270,6 +270,7 @@ def _options(
     workspace: str | None = None,
     model: str | None = None,
     system_prompt: dict[str, str] | None = None,
+    effort: str | None = None,
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
@@ -328,6 +329,10 @@ def _options(
         options.max_budget_usd = float(max_budget_usd)
     if system_prompt is not None:
         options.system_prompt = dict(system_prompt)
+    if effort is not None:
+        # `0033`: what `coscc/models.py` resolved for this stage and label. Unset, the
+        # SDK's own default applies, as it did before.
+        options.effort = effort
     return options
 
 
@@ -403,6 +408,7 @@ class Sessions:
         workspace: str | None = None,
         model: str | None = None,
         system_prompt: dict[str, str] | None = None,
+        effort: str | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -440,6 +446,7 @@ class Sessions:
                         workspace=workspace,
                         model=model,
                         system_prompt=system_prompt,
+                        effort=effort,
                     )
                 )
                 await client.connect()

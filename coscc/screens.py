@@ -24,6 +24,7 @@ from __future__ import annotations
 import reflex as rx
 from reflex.style import set_color_mode
 
+from coscc import models
 from coscc import studio as s
 from coscc.state import (
     LANE_COLOR,
@@ -873,6 +874,30 @@ def _model_row(row: rx.Var[ModelRow]) -> rx.Component:
             ),
             width="100%", align="center", margin_top="8px",
         ),
+        # `0033`: the effort, with its own source and its own override. Chat has none.
+        rx.cond(
+            row.has_effort,
+            rx.hstack(
+                s.text("effort", size="1"),
+                rx.spacer(),
+                s.text(row.effort, size="1", font_family="ui-monospace, monospace"),
+                s.badge(row.effort_source, rx.cond(row.effort_overridden, "amber", "gray")),
+                rx.select(
+                    list(models.EFFORTS),
+                    placeholder="set effort",
+                    value="",
+                    on_change=lambda v: P.save_effort(row.name, v),
+                    size="1",
+                    aria_label="Effort for " + row.name,
+                ),
+                rx.cond(
+                    row.effort_overridden,
+                    rx.button("Reset", on_click=P.reset_effort(row.name), size="1",
+                              variant="soft", loading=P.saving_model),
+                ),
+                width="100%", align="center", margin_top="8px", wrap="wrap",
+            ),
+        ),
         padding="12px 0", border_bottom=f"1px solid {s.LINE}", width="100%",
         data_testid="model-row",
     )
@@ -964,6 +989,13 @@ def _settings() -> rx.Component:
                    "override set here, else the default shipped with coscc, else "
                    "COS_MODEL. A change applies to the next session a step or a chat "
                    "starts. It opens no gate and starts nothing.", size="1"),
+            s.text("Effort is looked up the same way, with no COS_MODEL step: unset means "
+                   "the SDK's default. A :novel row is what a stage after plan runs on when "
+                   "the plan's label is novel — declared, forced by a file on the security "
+                   "surface, missing, or escalated after impl ran out of turns. max is taken "
+                   "only from an override set here.", size="1", margin_top="8px"),
+            s.text("Default là điểm xuất phát, sẽ chỉnh theo số đo, không phải kết luận.",
+                   size="1", margin_top="8px"),
             rx.callout("Anyone who can reach this port can change these — coscc has no "
                        "login. Every change is written to the run log with its old and "
                        "new value.", icon="triangle_alert", color_scheme="amber",

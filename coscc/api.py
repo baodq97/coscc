@@ -132,6 +132,24 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.post("/api/settings/efforts")
+    async def set_stage_effort(request: Request) -> Any:
+        """`0033`. `{name, effort}` sets one row's effort; `{name}` alone removes its override.
+
+        The same exposure as the model route: no login, and `max` is accepted only here.
+        The trace is a `setting` record in the run log.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        if not isinstance(body, dict):
+            return _bad("body must be a JSON object")
+        try:
+            return await service.set_stage_effort(body.get("name"), body.get("effort"))
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.post("/api/workspaces/{name}/pull")
     async def pull_workspace(name: str) -> Any:
         try:

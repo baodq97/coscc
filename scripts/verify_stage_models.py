@@ -152,7 +152,7 @@ async def free(root: Path, workspace: Path) -> bool:
     from reflex.state import State
     from reflex_base.event.processor import BaseStateEventProcessor
 
-    from coscc import harness
+    from coscc import harness, models
     from coscc.api import build
     from coscc.config import from_env
     from coscc.data import Data
@@ -182,12 +182,14 @@ async def free(root: Path, workspace: Path) -> bool:
     async def post(body: dict) -> int:
         return (await client.post("/api/settings/models", json=body)).status_code
 
-    # The unit the step runs on: intent, spec and plan accepted, so `impl` is next.
+    # The unit the step runs on: intent, spec and plan accepted, so `impl` is next. The plan
+    # says `routine`, so claim f is about the `impl` row; unlabelled, it would run on
+    # `impl:novel` (`0033` spec R5).
     made = await SERVICE.create_unit(cwd, SLUG, "verify_stage_models fixture")
     unit, directory = made["unit"], Path(made["path"])
     for name, body in {
         "intent.md": accepted("Intent", " Type: feat."),
-        "spec.md": accepted("Spec"), "plan.md": accepted("Plan"),
+        "spec.md": accepted("Spec"), "plan.md": accepted("Plan") + "Impl: routine.\n",
     }.items():
         (directory / name).write_text(body, encoding="utf-8")
     units_root = SERVICE._units_root(cwd)
@@ -210,8 +212,15 @@ async def free(root: Path, workspace: Path) -> bool:
     names = script_status_names()
     first = await table()
     got = [row["name"] for row in first.get("rows") or []]
-    ok &= say(first["status"] == 200 and len(got) == 9 and got[:8] == names and got[8] == "chat",
-              "a GET /api/settings/models lists the 8 stages cos.mjs names, in its order, then chat",
+    # `0033` R9: each stage after `plan` is followed by its `:novel` row.
+    after_plan = names[names.index("plan") + 1:] if "plan" in names else []
+    base = [n for n in got if not n.endswith(models.NOVEL_SUFFIX)]
+    novel = [n for n in got if n.endswith(models.NOVEL_SUFFIX)]
+    ok &= say(first["status"] == 200 and base[:-1] == names and base[-1] == "chat"
+              and novel == [n + models.NOVEL_SUFFIX for n in after_plan]
+              and all(got[got.index(n + models.NOVEL_SUFFIX) - 1] == n for n in after_plan),
+              "a GET /api/settings/models lists the 8 stages cos.mjs names, in its order, each "
+              "stage after plan followed by its :novel row, then chat",
               f"status={first['status']}, rows={got}, script={names}")
 
     # --- b (R2, R3, R4) ---------------------------------------------------------------
@@ -366,12 +375,14 @@ async def paid() -> int:
 
     defaults, problems = models.load_defaults()
     names = script_status_names()
-    if problems or set(defaults) != set(names):
+    # `0033`: each entry is `{"model", "effort"}`, and the `:novel` rows are not stages.
+    base = {k for k in defaults if not k.endswith(models.NOVEL_SUFFIX)}
+    if problems or base != set(names):
         print(f"models.json did not resolve cleanly: problems={problems}, "
               f"defaults={sorted(defaults)}, stages={sorted(names)}")
         return EXIT_ENV
 
-    ids = sorted(set(defaults.values()))
+    ids = sorted({e["model"] for e in defaults.values() if e.get("model")})
     ok = True
     passed_ids: set[str] = set()
     for model_id in ids:
@@ -437,7 +448,7 @@ async def paid() -> int:
         if matched:
             passed_ids.add(model_id)
 
-    n = sum(1 for stage in names if defaults.get(stage) in passed_ids)
+    n = sum(1 for stage in names if (defaults.get(stage) or {}).get("model") in passed_ids)
     ok &= n == len(names)
     print(f"paid {n}/{len(names)} stages resolve to a model reporting contextWindow 1000000")
     return EXIT_PASS if ok else EXIT_BROKEN

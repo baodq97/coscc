@@ -291,6 +291,11 @@ class ModelRow:
     model: str = ""
     source: str = ""
     overridden: bool = False
+    # `0033`: the effort beside the model, looked up on its own. `chat` has none.
+    effort: str = ""
+    effort_source: str = ""
+    effort_overridden: bool = False
+    has_effort: bool = True
 
 
 @dataclasses.dataclass
@@ -721,7 +726,13 @@ class StudioState(rx.State):
                 agents=int(r["agents"]),
                 model=str(r["model"] or "SDK default"),
                 source=str(r["source"]),
-                overridden=r["source"] == "override",
+                # A `:novel` row can show `override` inherited from its base row; only
+                # the service knows whether this row itself has one to reset.
+                overridden=bool(r.get("overridden", r["source"] == "override")),
+                effort=str(r.get("effort") or "SDK default"),
+                effort_source=str(r.get("effort_source") or "none"),
+                effort_overridden=bool(r.get("effort_overridden", r.get("effort_source") == "override")),
+                has_effort=str(r["name"]) != "chat",
             )
             for r in data.get("rows") or []
         ]
@@ -1093,6 +1104,31 @@ class StudioState(rx.State):
             f"{name} now runs on {model.strip()} from its next session."
             if model is not None
             else f"{name} is back on its default."
+        )
+
+    @rx.event
+    async def save_effort(self, name: str, effort: str):
+        """`0033`. Set one row's effort. Whether it may be set is `Service.set_stage_effort`'s call."""
+        await self._change_effort(name, effort)
+
+    @rx.event
+    async def reset_effort(self, name: str):
+        """Remove the effort override, so the row falls back to its default or the SDK's."""
+        await self._change_effort(name, None)
+
+    async def _change_effort(self, name: str, effort: str | None) -> None:
+        self.saving_model = True
+        try:
+            self._show_models(await SERVICE.set_stage_effort(name, effort))
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        finally:
+            self.saving_model = False
+        self.notice = (
+            f"{name} now runs at effort {effort} from its next session."
+            if effort is not None
+            else f"{name} effort is back on its default."
         )
 
     def _remember(self, key: str, value: str) -> None:

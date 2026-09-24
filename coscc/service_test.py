@@ -1363,6 +1363,33 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertEqual(len(seen), 2)
         self.assertEqual(seen[0], seen[1])
 
+    def test_a_spec_step_has_no_label_and_the_default_effort(self):
+        # `0033` R10: a stage before `plan` has no label; effort comes from R8's table.
+        self._run("spec")
+        start = self._start()
+        self.assertEqual((start["label_declared"], start["label"], start["label_source"]), (None, None, None))
+        self.assertEqual((start["effort"], start["effort_source"]), ("high", "default"))
+        self.assertNotIn("impl_run", start)
+
+    def test_an_effort_override_of_max_is_taken_and_logged(self):
+        # R7: `max` only through an override; R9: every change is a `setting` record.
+        asyncio.run(self.service.set_stage_effort("impl:novel", "max"))
+        asyncio.run(self.service.set_stage_effort("impl:novel", None))
+        records = self.service._journal().records("", kind="setting")
+        self.assertEqual(
+            [(r["name"], r["old"], r["new"]) for r in records],
+            [("effort:impl:novel", None, "max"), ("effort:impl:novel", "max", None)],
+        )
+        for name, effort in (("chat", "low"), ("plan:novel", "low"), ("impl", "turbo"), ("bogus", "low")):
+            with self.assertRaises(Invalid, msg=(name, effort)):
+                asyncio.run(self.service.set_stage_effort(name, effort))
+
+    def test_a_novel_row_takes_a_model_override(self):
+        asyncio.run(self.service.set_stage_model("review:novel", "m"))
+        rows = {r["name"]: r for r in asyncio.run(self.service.stage_models())["rows"]}
+        self.assertEqual((rows["review:novel"]["model"], rows["review:novel"]["source"]), ("m", "override"))
+        self.assertEqual(rows["review"]["source"], "default")
+
     def test_model_prefs_are_not_preferences(self):
         asyncio.run(self.service.set_stage_model("impl", "a"))
         self.assertNotIn("model:impl", self.service.preferences())
@@ -1391,6 +1418,83 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
     def test_settings_names_cos_model_as_the_fallback(self):
         self.assertIn("cos_model", self.service.settings())
         self.assertNotIn("model", self.service.settings())
+
+
+class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
+    """`0033` R3, R4, R10. The label is read after the gate and picks the configuration;
+    the gate is stubbed open, as the review tests below stub it."""
+
+    PLAN = (
+        "# Plan: a problem\nIntent: intent.md. Author: t. Status: accepted. Impl: routine.\n\n"
+        "## Files that change\n\n- {path}: a change.\n\n## Order of work\n\n1. Do it.\n"
+    )
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.service = Service(
+            Config(
+                workspaces=(str(self.repo),),
+                working_dir=str(self.root / "work"),
+                data_dir=str(self.root / "data"),
+            ),
+            self.Impl(self),
+        )
+        self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        self.dir = Path(self.made["path"])
+        self.seen: list[dict] = []
+        self.terminal = None
+
+    class Impl:
+        def __init__(self, test):
+            self.test = test
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.test.seen.append(kw)
+            (self.test.dir / "impl.md").write_text("# Impl: x\nStatus: accepted.\n", encoding="utf-8")
+            yield ("done", {"session_id": "sess-i", "cost": {}, "terminal_reason": self.test.terminal})
+
+    def _run(self):
+        from coscc import board as board_reader
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, "open: impl may proceed"
+
+        async def go():
+            return [i async for i in self.service.run_step(str(self.repo), self.made["unit"], "impl")]
+
+        with mock.patch.object(board_reader, "gate", open_gate):
+            return asyncio.run(go())
+
+    def _starts(self):
+        journal = self.service._journal()
+        return journal.records(self.service._journal_key(str(self.repo)), kind="start")
+
+    def test_a_plan_naming_the_security_surface_runs_as_novel(self):
+        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/policy.py`"), encoding="utf-8")
+        self._run()
+        start = self._starts()[-1]
+        self.assertEqual((start["label_declared"], start["label"], start["label_source"]),
+                         ("routine", "novel", "forced"))
+        self.assertEqual((start["model"], start["effort"]), ("claude-opus-5-5[1m]", "high"))
+        self.assertEqual(self.seen[-1].get("effort"), "high")
+        self.assertEqual(start["impl_run"], 1)
+
+    def test_a_routine_run_escalates_after_a_max_turns_stop_and_counts_its_runs(self):
+        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/board.py`"), encoding="utf-8")
+        self.terminal = "max_turns"
+        self._run()
+        self.terminal = None
+        self._run()
+        first, second = self._starts()[-2:]
+        self.assertEqual((first["label"], first["label_source"], first["model"], first["effort"]),
+                         ("routine", "declared", "claude-sonnet-5[1m]", "medium"))
+        self.assertEqual((second["label"], second["label_source"], second["model"]),
+                         ("novel", "escalated", "claude-opus-5-5[1m]"))
+        self.assertEqual((first["impl_run"], second["impl_run"]), (1, 2))
 
 
 class TheNextStageComesFromTheScript(unittest.TestCase):
@@ -1577,6 +1681,15 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertIn("round 2 of", body.splitlines()[0])
         self.assertIn("- F1 [fixed abcdef2] the first thing", body)
         self.assertEqual([(c["round"], c["state"]) for c in done["comments"]], [(2, "posted")])
+
+    def test_the_end_record_counts_the_findings_of_the_added_round(self):
+        # `0033` R10: round 2 has two findings, one of them still open.
+        from coscc.journal import Journal
+
+        self._run_review(FakeGh())
+        j = Journal(self.service.config.working_dir, self.service.config.data_dir)
+        end = j.records(str(self.repo.resolve()), kind="end")[-1]
+        self.assertEqual((end["outcome"], end["findings"], end["findings_open"]), ("done", 2, 1))
 
     # R6
     def test_a_failed_post_leaves_review_md_byte_for_byte_the_same(self):

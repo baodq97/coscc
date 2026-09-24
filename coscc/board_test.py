@@ -156,6 +156,15 @@ class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
             self.assertNotIn("## Round 2", u["rounds"][0]["text"])
             self.assertIn("- F1 [fixed abcdef2] the first thing", u["rounds"][1]["text"])
 
+    def test_each_round_carries_its_finding_counts(self):
+        # `0033` spec R10: counted off `parseReview`'s findings, not parsed again here.
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_q"
+            unit.mkdir(parents=True)
+            (unit / "review.md").write_text(REVIEW_TWO_ROUNDS, encoding="utf-8")
+            [u] = run(board.read(d))["units"]
+            self.assertEqual([(r["findings"], r["findings_open"]) for r in u["rounds"]], [(2, 2), (2, 1)])
+
     def test_the_script_and_the_runner_cut_rounds_at_the_same_place(self):
         """`0021` plan, Risk 8. `coscc/runner.py` `_rounds` is an older second reading of
         round edges; until it goes, the text posted and the text preserved must match."""

@@ -267,6 +267,22 @@ class OptionsCarryTheKnobs(unittest.TestCase):
             self.assertEqual(preset.permission_mode, bare.permission_mode)
             self.assertEqual(preset.max_turns, bare.max_turns)
 
+    # `0033`. Effort is chosen per stage and label; `_options` only carries it.
+
+    def test_the_installed_sdk_has_an_effort_field(self):
+        # spec.md C6: the field is known only from a file outside this repository, so the
+        # installed SDK is asked before anything is built on it.
+        import dataclasses
+
+        self.assertIn("effort", {f.name for f in dataclasses.fields(sdk.ClaudeAgentOptions)})
+
+    def test_an_effort_reaches_the_options(self):
+        self.assertEqual(_options(Config(), "/p", None, effort="high").effort, "high")
+
+    def test_no_effort_leaves_the_sdk_default(self):
+        default = sdk.ClaudeAgentOptions().effort
+        self.assertEqual(_options(Config(), "/p", None).effort, default)
+
 
 class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
     async def test_a_directory_outside_the_workspaces_is_refused(self):

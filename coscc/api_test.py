@@ -229,11 +229,30 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         return {row["name"]: row for row in r.json()["rows"]}
 
-    async def test_nine_rows_with_nothing_configured(self):
+    async def test_thirteen_rows_with_nothing_configured(self):
+        # `0033` R9: eight stages, a `:novel` row for each of the four after `plan`, chat.
         rows = await self.rows()
-        self.assertEqual(len(rows), 9)
+        self.assertEqual(len(rows), 13)
         self.assertEqual(list(rows)[-1], "chat")
         self.assertEqual(rows["impl"]["source"], "default")
+        self.assertEqual((rows["impl:novel"]["effort"], rows["impl:novel"]["effort_source"]), ("high", "default"))
+
+    async def test_effort_set_then_remove(self):
+        r = await self.client.post("/api/settings/efforts", json={"name": "impl:novel", "effort": "max"})
+        self.assertEqual(r.status_code, 200)
+        row = (await self.rows())["impl:novel"]
+        self.assertEqual((row["effort"], row["effort_source"]), ("max", "override"))
+        r = await self.client.post("/api/settings/efforts", json={"name": "impl:novel"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual((await self.rows())["impl:novel"]["effort_source"], "default")
+
+    async def test_bad_effort_requests_are_400(self):
+        for body in ({"name": "bogus", "effort": "low"}, {"name": "plan", "effort": "turbo"},
+                     {"effort": "low"}, {"name": "chat", "effort": "low"}, {"name": "plan:novel", "effort": "low"}):
+            r = await self.client.post("/api/settings/efforts", json=body)
+            self.assertEqual(r.status_code, 400, body)
+        r = await self.client.post("/api/settings/efforts", content=b"not json")
+        self.assertEqual(r.status_code, 400)
 
     async def test_set_then_remove(self):
         r = await self.client.post("/api/settings/models", json={"name": "impl", "model": "m"})

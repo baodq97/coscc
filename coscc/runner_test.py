@@ -1598,6 +1598,84 @@ class TheStepRunsOnTheModelItWasGiven(unittest.TestCase):
             probe, _, final = self.run_spec(d)
             self.assertEqual(final["outcome"], "done", final)
             self.assertNotIn("model", probe.kw)
+            self.assertNotIn("effort", probe.kw)
+
+
+class TheRunLogCarriesEffortLabelAndTerminal(unittest.TestCase):
+    """`0033` spec R10. The runner chooses none of it; it passes effort on and writes what
+    it was given into `start`, the SDK's `terminal_reason` into `end`."""
+
+    def run_spec(self, d, terminal=None, **kw):
+        class Probe:
+            def __init__(self):
+                self.kw = None
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                self.kw = kw
+                yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                yield ("done", {"session_id": "s-e", "cost": {}, "terminal_reason": terminal})
+
+        probe = Probe()
+        make_unit(Path(d), intent_md="Status: accepted.\nI")
+        journal = Journal(d, d)
+        r = Runner(sessions=probe, journal=journal)
+
+        async def go():
+            return [ev async for ev in r.run(
+                workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d,
+                unit=UNIT, stage="spec", artifact="spec.md", stages=STAGES,
+                mode="manual", **kw,
+            )]
+
+        _, final = asyncio.run(go())[-1]
+        return probe, journal, final
+
+    def test_start_carries_every_field(self):
+        with tempfile.TemporaryDirectory() as d:
+            probe, journal, final = self.run_spec(
+                d, effort="high", effort_source="default", label_declared="routine",
+                label="novel", label_source="escalated", impl_run=2,
+            )
+            self.assertEqual(final["outcome"], "done", final)
+            self.assertEqual(probe.kw.get("effort"), "high")
+            start = journal.records(d, kind="start")[-1]
+            got = {k: start.get(k) for k in
+                   ("effort", "effort_source", "label_declared", "label", "label_source", "impl_run")}
+            self.assertEqual(got, {"effort": "high", "effort_source": "default", "label_declared": "routine",
+                                   "label": "novel", "label_source": "escalated", "impl_run": 2})
+
+    def test_no_impl_run_is_not_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, journal, _ = self.run_spec(d)
+            start = journal.records(d, kind="start")[-1]
+            self.assertNotIn("impl_run", start)
+            self.assertIsNone(start["label"])
+
+    def test_end_carries_the_terminal_reason(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, journal, final = self.run_spec(d, terminal="max_turns")
+            self.assertEqual(final["outcome"], "exhausted", final)
+            self.assertEqual(journal.records(d, kind="end")[-1]["terminal"], "max_turns")
+
+    def test_end_fields_are_added_to_a_done_end(self):
+        async def fields():
+            return {"findings": 3, "findings_open": 1}
+
+        with tempfile.TemporaryDirectory() as d:
+            _, journal, _ = self.run_spec(d, end_fields=fields)
+            end = journal.records(d, kind="end")[-1]
+            self.assertEqual((end["findings"], end["findings_open"]), (3, 1))
+
+    def test_a_failing_callback_leaves_an_ordinary_end(self):
+        async def fields():
+            raise RuntimeError("the board could not be read")
+
+        with tempfile.TemporaryDirectory() as d:
+            _, journal, final = self.run_spec(d, end_fields=fields)
+            self.assertEqual(final["outcome"], "done", final)
+            end = journal.records(d, kind="end")[-1]
+            self.assertEqual(end["outcome"], "done")
+            self.assertNotIn("findings", end)
 
 
 class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
