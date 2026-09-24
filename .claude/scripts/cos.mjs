@@ -113,13 +113,17 @@ const ANSWER_META = /^Answered by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\
 // `### Câu N` block each. Answering again adds a block rather than editing one, so when a
 // number has several the last is the one in force. A block whose header line is missing or
 // malformed is not an answer: it is not counted, because nothing says who gave it.
+//
+// Since `0028` a block may also be headed `### F<n>`: a person's answer to a review finding
+// the review confirmed as needing one (`[needs-person]`). It carries `id: 'F<n>'` and
+// `n: null`; a `Câu N` block carries `n` and `id: null`, so the two kinds never collide.
 export function parseAnswers(text) {
   const lines = section(text, 'Answers')
   if (lines === null) return []
   const blocks = []
   for (const line of lines) {
-    const m = line.match(/^###\s+Câu\s+(\d+)\s*$/)
-    if (m) blocks.push({ n: Number(m[1]), lines: [] })
+    const m = line.match(/^###\s+(?:Câu\s+(\d+)|(F\d+))\s*$/)
+    if (m) blocks.push({ n: m[1] !== undefined ? Number(m[1]) : null, id: m[2] ?? null, lines: [] })
     else if (blocks.length) blocks[blocks.length - 1].lines.push(line)
   }
   const answers = []
@@ -129,6 +133,7 @@ export function parseAnswers(text) {
     if (!meta) continue
     answers.push({
       n: b.n,
+      id: b.id,
       by: meta[1].trim(),
       date: meta[2],
       via: meta[3],
@@ -143,7 +148,7 @@ export function answeredQuestions(text) {
   const questions = parseQuestions(text)
   if (questions === null) return null
   const latest = new Map()
-  for (const a of parseAnswers(text)) latest.set(a.n, a)
+  for (const a of parseAnswers(text)) if (a.n !== null) latest.set(a.n, a)
   return questions.map((q) => {
     const a = latest.get(q.n) ?? null
     return { n: q.n, text: q.text, answered: a !== null, answer: a }
@@ -178,7 +183,14 @@ export function parsePr(text) {
 }
 
 const ROUND_HEAD = /^## Round (\d+)\s*$/
-const ROUND_META = /^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*(pass|changes-requested)\.?\s*$/i
+// `needs-person` since `0028`: every finding left open is one the review confirmed a person
+// must act on. The header stays `changes-requested`; the unit is not finished.
+const ROUND_META = /^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*(pass|changes-requested|needs-person)\.?\s*$/i
+// The labels a finding may carry besides `open` and `fixed <sha>` (`0028`): the review
+// accepted impl's claim that a person must act (`needs-person`), rejected it
+// (`claim-rejected`), or closed the finding on a person's answer in `review.md ## Answers`
+// (`answered`).
+const PERSON_LABELS = ['needs-person', 'claim-rejected', 'answered']
 const FINDING = /^- (F\d+)\s+\[([^\]]*)\]\s*(.*)$/
 
 // `review.md` is a list of rounds, each `## Round N`, never rewritten once written: a
@@ -227,10 +239,11 @@ export function parseReview(text) {
     const f = line.match(FINDING)
     if (!f) continue
     const label = f[2].trim()
+    const lower = label.toLowerCase()
     const fixed = label.match(/^fixed\s+([0-9a-f]{7,40})$/i)
     r.findings.push({
       id: f[1],
-      label: label.toLowerCase() === 'open' ? 'open' : fixed ? 'fixed' : 'unreadable',
+      label: lower === 'open' ? 'open' : fixed ? 'fixed' : PERSON_LABELS.includes(lower) ? lower : 'unreadable',
       fixedBy: fixed ? fixed[1].toLowerCase() : null,
       text: f[3].trim(),
     })
@@ -240,6 +253,24 @@ export function parseReview(text) {
       n, reviewed, verdict, findings, text: lines.join('\n').trimEnd(),
     })),
   }
+}
+
+// `impl.md ## Needs a person` (`0028`): the findings impl says its stage cannot close, one
+// line each, `- F<n>: <reason>`. Only the id is acted on; the reason is carried for a person
+// to read and judged by nobody here. A line of any other shape is not a claim. Reading stops
+// at `## Answers`, as `parseReview` does. `[]` when the section is absent — every `impl.md`
+// written before `0028` — which leaves the loop exactly as it was.
+export function parseNeedsPerson(text) {
+  const lines = text.split(/\r?\n/)
+  const stop = lines.findIndex((l) => l.trimEnd() === '## Answers')
+  const own = section((stop === -1 ? lines : lines.slice(0, stop)).join('\n'), 'Needs a person')
+  if (own === null) return []
+  const claims = []
+  for (const line of own) {
+    const m = line.match(/^- (F\d+):\s*(\S.*)$/)
+    if (m) claims.push({ id: m[1], reason: m[2].trim() })
+  }
+  return claims
 }
 
 // How many review rounds may end in `changes-requested` before the loop stops and needs a
@@ -286,12 +317,20 @@ export function readUnit(dir, name) {
     // Attached, never reported as a problem: `review.md` files written before rounds
     // existed have none, and the closed units' output must not change (`0015` spec, R7).
     if (file === 'pr.md') unit.artifacts[file].pr = parsePr(text)
-    if (file === 'review.md') unit.artifacts[file].review = parseReview(text)
+    if (file === 'review.md') {
+      unit.artifacts[file].review = parseReview(text)
+      // `0028`: the findings a person answered, by id, from `review.md ## Answers`.
+      unit.artifacts[file].personAnswers = [...new Set(parseAnswers(text).filter((a) => a.id !== null).map((a) => a.id))]
+    }
+    if (file === 'impl.md') unit.artifacts[file].needsPerson = parseNeedsPerson(text)
     const questions = answeredQuestions(text)
     if (questions !== null) unit.artifacts[file].questions = questions
   }
 
   Object.assign(unit, unitQuestions(unit))
+  // The one list the board's Questions tab shows a finding from (`0028`); empty unless the
+  // last review round is a well-formed wait for a person. Derived here, never on the page.
+  unit.personFindings = personFindings(unit) ?? []
 
   const stray = readdirSync(dir).filter((f) => !ARTIFACTS.includes(f))
   if (stray.length) unit.problems.push(`unexpected file(s): ${stray.join(', ')}`)
@@ -384,6 +423,29 @@ function decide(unit, limit) {
     if (status === 'changes-requested') {
       const used = roundsUsed(unit)
       if (used >= limit) return { blocked: true, action: needsAPerson(used, limit), stage: '', why: 'needs-person' }
+      // `0028` (a) and (b): the last round is a well-formed wait for a person. Read off the
+      // files alone, so it needs no `--repo`. A round that merely says `needs-person` while
+      // something is still open, rejected or unreadable is not one, and falls through.
+      const person = personFindings(unit)
+      if (person) {
+        const waiting = person.filter((p) => !p.answered)
+        if (waiting.length) {
+          const told = waiting.map((p) => `${p.id}: ${p.reason ?? 'impl.md gives no reason'}`).join('; ')
+          return {
+            blocked: true,
+            action: `needs a person — ${told} — answer each on the Questions tab (POST /api/units/answer, review.md), then write-review`,
+            stage: '',
+            waiting: waiting.map((p) => p.id),
+            why: 'awaits-person',
+          }
+        }
+        return {
+          blocked: true,
+          action: `a person answered ${person.map((p) => p.id).join(', ')} in review.md — write-review again`,
+          stage: '',
+          why: 'person-answered',
+        }
+      }
       return {
         blocked: true,
         action: `fix the open findings of review round ${lastRound(unit)?.n ?? used} on the branch, then write-review again (${used} of ${limit} rounds used)`,
@@ -400,9 +462,58 @@ const lastRound = (unit) => reviewOf(unit).at(-1) ?? null
 
 // Rounds that ended asking for changes. A `changes-requested` header whose rounds carry no
 // readable verdict still counts as one, so a malformed round cannot buy another.
+//
+// A `needs-person` round is not counted (`0028` spec R5): it stopped for a person, it did
+// not ask impl for anything. So the floor of one is waived once any round reads
+// `needs-person` — otherwise a unit whose only round is that one would be charged for it.
 function roundsUsed(unit) {
-  const asked = reviewOf(unit).filter((r) => r.verdict === 'changes-requested').length
-  return Math.max(asked, statusOf(unit, 'review.md') === 'changes-requested' ? 1 : 0)
+  const rounds = reviewOf(unit)
+  const asked = rounds.filter((r) => r.verdict === 'changes-requested').length
+  const waived = rounds.some((r) => r.verdict === 'needs-person')
+  return Math.max(asked, statusOf(unit, 'review.md') === 'changes-requested' && !waived ? 1 : 0)
+}
+
+// The ids a person answered under `review.md ## Answers`. Units built in memory by a test
+// carry no such field, and read as having none.
+const personAnswers = (unit) => new Set(unit.artifacts['review.md']?.personAnswers ?? [])
+const needsPersonClaims = (unit) => unit.artifacts['impl.md']?.needsPerson ?? []
+
+// `0028` spec R6 (a)/(b): the findings the last round confirmed need a person, each with the
+// reason impl gave and whether a person has answered it — or `null` when the last round is
+// not a well-formed wait. Well-formed means: the header is `changes-requested`, the round's
+// verdict is `needs-person`, at least one finding is `[needs-person]`, and every other
+// finding is `[fixed <sha>]` or an `[answered]` a block in `review.md ## Answers` backs.
+// Anything else — an `[open]`, a `[claim-rejected]`, an unreadable label, an `[answered]`
+// with no answer — and the round is not a wait, so a verdict written wrong cannot open the
+// way to a person.
+function personFindings(unit) {
+  if (statusOf(unit, 'review.md') !== 'changes-requested') return null
+  const last = lastRound(unit)
+  if (!last || last.verdict !== 'needs-person') return null
+  const answered = personAnswers(unit)
+  if (!last.findings.some((f) => f.label === 'needs-person')) return null
+  const closed = (f) => f.label === 'fixed' || f.label === 'needs-person' || (f.label === 'answered' && answered.has(f.id))
+  if (!last.findings.every(closed)) return null
+  const claims = needsPersonClaims(unit)
+  return last.findings
+    .filter((f) => f.label === 'needs-person')
+    .map((f) => ({ id: f.id, reason: claims.find((c) => c.id === f.id)?.reason ?? null, answered: answered.has(f.id) }))
+}
+
+// `0028` spec R6 (c): the last round asked for changes, and every finding it left `[open]`
+// is one impl claims in `## Needs a person`. That claim is impl's word about its own work;
+// only a review may confirm it, so this sends the unit to review rather than to a person.
+function everyOpenClaimed(unit) {
+  const last = lastRound(unit)
+  if (!last || last.verdict !== 'changes-requested') return false
+  const open = last.findings.filter((f) => f.label === 'open')
+  if (!open.length) return false
+  const claimed = new Set(needsPersonClaims(unit).map((c) => c.id))
+  if (!open.every((f) => claimed.has(f.id))) return false
+  const answered = personAnswers(unit)
+  return !last.findings.some(
+    (f) => f.label === 'claim-rejected' || f.label === 'unreadable' || (f.label === 'answered' && !answered.has(f.id)),
+  )
 }
 
 // The first place the loop stops and waits for someone who is not an agent. A person
@@ -508,9 +619,13 @@ function shipNeeds(unit, probe, said = {}) {
   if (last.verdict !== 'pass') {
     need.push(`review round ${last.n} has verdict "${last.verdict ?? 'unreadable'}", not pass — its first line is Reviewed: <sha>. Verdict: pass.`)
   }
-  const open = last.findings.filter((f) => f.label !== 'fixed')
+  // `0028` spec R8: `[answered]` closes a finding only when `review.md ## Answers` holds a
+  // block for that id. `[needs-person]` and `[claim-rejected]` never close one.
+  const answered = personAnswers(unit)
+  const open = last.findings.filter((f) => f.label !== 'fixed' && !(f.label === 'answered' && answered.has(f.id)))
   if (open.length) {
-    need.push(`review round ${last.n} still has findings not fixed: ${open.map((f) => `${f.id} [${f.label}]`).join(', ')}`)
+    const named = (f) => (f.label === 'answered' ? `${f.id} [answered, no answer in review.md]` : `${f.id} [${f.label}]`)
+    need.push(`review round ${last.n} still has findings not fixed: ${open.map(named).join(', ')}`)
   }
   const inLast = new Set(last.findings.map((f) => f.id))
   const dropped = [...new Set(rounds.slice(0, -1).flatMap((r) => r.findings.map((f) => f.id)))].filter((id) => !inLast.has(id))
@@ -663,7 +778,18 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     return none(g.need.join('; '))
   }
 
+  // `0028` (a): a person is awaited. Files alone settle it, so no probe is asked.
+  if (why === 'awaits-person') return next
+  // `0028` (b): every finding awaiting a person has an answer; a review reads them.
+  if (why === 'person-answered') return onReview([next.action])
+
   if (why === 'changes-requested') {
+    // `0028` (c): every open finding is one impl claims needs a person. Only a review may
+    // confirm or reject that, so it goes to review — and before the "no fix reached the
+    // pull request" test below, which would otherwise send it straight back to impl.
+    if (everyOpenClaimed(unit)) {
+      return onReview([`every open finding of review round ${lastRound(unit).n} is claimed in impl.md ## Needs a person — review confirms or rejects each`])
+    }
     if (!probe) return none(`${next.action} — no repository given to tell which: pass --repo`)
     const pr = unit.artifacts['pr.md']?.pr ?? null
     if (!pr) return none(`${next.action} — pr.md names no pull request to read the branch from`)
@@ -840,8 +966,9 @@ function cmdNext(unitName, cosDir, repoDir, limit) {
     return 2
   }
   const probe = repoDir ? makeProbe(repoDir) : null
-  const { stage, action, blocked } = nextStep(readUnit(dir, unitName), { probe, limit })
-  console.log(JSON.stringify({ unit: unitName, stage, action, blocked }))
+  const { stage, action, blocked, waiting } = nextStep(readUnit(dir, unitName), { probe, limit })
+  // `waiting` only when a person is awaited (`0028`), so every other answer is unchanged.
+  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}) }))
   return 0
 }
 

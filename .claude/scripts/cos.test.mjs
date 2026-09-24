@@ -9,7 +9,7 @@ import {
   parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit, STAGE_NAMES,
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
-  reviewRounds, nextStep,
+  reviewRounds, nextStep, parseNeedsPerson,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -989,4 +989,183 @@ test('status --json carries next.stage for each unit', () => {
   const { root } = questionTree({ 'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n' })
   const out = cli('--root', root, 'status', '--json')
   assert.equal(JSON.parse(out.stdout).units[0].next.stage, 'spec')
+})
+
+// --- a finding impl cannot fix waits for a person (0028) ----------------------
+
+const NEEDS = '## Needs a person\n\n- F2: the grant holds no budget for --paid\n- F3: the grant holds no gh\n'
+const implText = (needs = NEEDS) => `# Impl: x\nIntent: intent.md. Plan: plan.md. Author: t. Status: accepted.\n\n## What was built\n\nx\n\n${needs}`
+const fBlock = (id, text = 'ran it') => `\n### ${id}\nAnswered by: Bao. Date: 2026-09-24. Via: product.\n\n${text}\n`
+const REVIEW_HEAD = '# Review: x\nPR: pr.md. Author: t. Status: changes-requested.\n\n'
+const ROUND1 = round(1, 'changes-requested', ['- F1 [open] a', '- F2 [open] b', '- F3 [open] c'])
+const ROUND2 = round(2, 'changes-requested', [`- F1 [fixed ${FIX}] a`, '- F2 [open] b', '- F3 [open] c'])
+const ROUND3 = (f3 = 'needs-person', extra = []) =>
+  round(3, 'needs-person', [`- F1 [fixed ${FIX}] a`, '- F2 [needs-person] b', `- F3 [${f3}] c`, ...extra])
+
+// The state of `0017` right after its review round 2, as files on disk (spec R10).
+function tree0028({ review, impl = implText() }) {
+  const { u } = questionTree({
+    'intent.md': '# I\nAuthor: t. Type: fix. Status: accepted.\n',
+    'spec.md': '# S\nStatus: accepted.\n',
+    'plan.md': '# P\nStatus: accepted.\n',
+    'impl.md': impl,
+    'pr.md': '# PR\nPR: https://github.com/o/r/pull/7. Status: accepted.\n',
+    'review.md': review,
+  })
+  return u
+}
+
+test('0028 R1: impl.md ## Needs a person reads well-formed lines, skips others, stops at Answers', () => {
+  const text = `${implText('## Needs a person\n\n- F2: no gh in this grant\n- F3 no colon\n-F4: no space\n- F5:   \n* F6: a star\n- F7: real money\n')}\n## Answers\n\n## Needs a person\n\n- F9: under answers\n`
+  assert.deepEqual(parseNeedsPerson(text), [{ id: 'F2', reason: 'no gh in this grant' }, { id: 'F7', reason: 'real money' }])
+  assert.deepEqual(parseNeedsPerson(implText('')), [])
+  assert.deepEqual(parseNeedsPerson('# Impl\nStatus: accepted.\n\n## Answers\n\n## Needs a person\n\n- F1: x\n'), [])
+})
+
+test('0028 R7: parseAnswers reads Câu N and F<n> blocks side by side, the last per id in force', () => {
+  const text = `${withAnswers(answerBlock(2, 'Bao', 'two'))}${fBlock('F2', 'first')}${fBlock('F2', 'second')}\n### F3\nno header\n`
+  const all = parseAnswers(text)
+  assert.deepEqual(all.map((a) => [a.n, a.id, a.text]), [[2, null, 'two'], [null, 'F2', 'first'], [null, 'F2', 'second']])
+  const { root } = questionTree({})
+  const dir = join(root, '.cos', '0001_q')
+  writeFileSync(join(dir, 'review.md'), `${REVIEW_HEAD}${ROUND1}\n## Answers\n${fBlock('F2', 'first')}${fBlock('F2', 'second')}\n### F3\nno header\n`)
+  assert.deepEqual(readUnit(dir, '0001_q').artifacts['review.md'].personAnswers, ['F2'])
+  // An F<n> block is never read as an answer to a numbered question.
+  const u = questionTree({ 'intent.md': `# I\nAuthor: t. Type: fix. Status: accepted.\n\n${withAnswers(fBlock('F1'))}` }).u
+  assert.equal(u.artifacts['intent.md'].questions.every((q) => !q.answered), true)
+})
+
+test('0028 R3/R4: the three new labels and the needs-person verdict are read; others stay unreadable', () => {
+  const r = parseReview(round(1, 'needs-person', ['- F1 [needs-person] a', '- F2 [Claim-Rejected] b', '- F3 [answered] c', '- F4 [waiting] d'])).rounds[0]
+  assert.equal(r.verdict, 'needs-person')
+  assert.deepEqual(r.findings.map((f) => f.label), ['needs-person', 'claim-rejected', 'answered', 'unreadable'])
+})
+
+test('0028 R5: a needs-person round is not counted toward the limit', () => {
+  const three = [1, 2, 3].map((n) => round(n, 'changes-requested', ['- F1 [open] x']))
+  const text = `${three.join('\n')}\n${round(4, 'needs-person', ['- F1 [needs-person] x'])}`
+  assert.match(nextAction(asked(text), 4).action, /needs a person — F1: impl\.md gives no reason/)
+  assert.match(nextAction(asked(three.join('\n')), 4).action, /3 of 4 rounds used/)
+  assert.match(nextAction(asked(text), 3).action, /needs a person — review used 3 of 3/)
+  // One needs-person round alone, limit 1: not the used-up path.
+  const one = nextAction(asked(round(1, 'needs-person', ['- F1 [needs-person] x'])), 1)
+  assert.doesNotMatch(one.action, /rounds and findings are still open/)
+  assert.deepEqual(one.waiting, ['F1'])
+})
+
+test('0028 R10 S0: every open finding claimed, no review has confirmed it: review, not impl', () => {
+  const n = nextStep(tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}` }), { probe: greenProbe() })
+  assert.equal(n.stage, 'review')
+  assert.match(n.action, /claimed in impl\.md ## Needs a person — review confirms or rejects each/)
+  assert.equal(n.waiting, undefined)
+})
+
+test('0028 R10 S1: the review confirmed both claims: nothing to run, a person is named', () => {
+  const u = tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3()}` })
+  const n = nextStep(u, { probe: greenProbe() })
+  assert.equal(n.stage, '')
+  assert.equal(n.blocked, true)
+  assert.match(n.action, /^needs a person — F2: the grant holds no budget for --paid; F3: the grant holds no gh — answer each on the Questions tab/)
+  assert.deepEqual(n.waiting, ['F2', 'F3'])
+  // Files alone settle it: no --repo needed.
+  assert.deepEqual(nextStep(u).waiting, ['F2', 'F3'])
+  assert.deepEqual(nextAction(u).waiting, ['F2', 'F3'])
+  assert.deepEqual(u.personFindings.map((p) => [p.id, p.answered]), [['F2', false], ['F3', false]])
+})
+
+test('0028 R10 S2: one answered, one not: still waiting, for the other', () => {
+  const u = tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3()}\n## Answers\n${fBlock('F2')}` })
+  const n = nextStep(u, { probe: greenProbe() })
+  assert.equal(n.stage, '')
+  assert.match(n.action, /^needs a person — F3: the grant holds no gh/)
+  assert.deepEqual(n.waiting, ['F3'])
+})
+
+test('0028 R10 S3: both answered: review reads the answers', () => {
+  const u = tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3()}\n## Answers\n${fBlock('F2')}${fBlock('F3')}` })
+  const n = nextStep(u, { probe: greenProbe() })
+  assert.equal(n.stage, 'review')
+  assert.match(n.action, /a person answered F2, F3 in review\.md/)
+  assert.equal(n.waiting, undefined)
+  assert.equal(checkGate(u, 'review', { probe: greenProbe() }).ok, true)
+})
+
+test('0028 R10 escape F4: one open finding impl did not claim sends the unit to impl', () => {
+  const r2 = round(2, 'changes-requested', [`- F1 [fixed ${FIX}] a`, '- F2 [open] b', '- F3 [open] c', '- F4 [open] d'])
+  assert.equal(nextStep(tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${r2}` }), { probe: greenProbe() }).stage, 'impl')
+})
+
+test('0028 R10 escape claim-rejected: a rejected claim sends the unit to impl', () => {
+  const u = tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3('claim-rejected')}` })
+  assert.equal(nextStep(u, { probe: greenProbe() }).stage, 'impl')
+  assert.deepEqual(u.personFindings, [])
+  // Rejected in a changes-requested round, with impl.md still claiming it: impl too (R6 d).
+  // Limit 4: that round is the third to ask for changes, and 3 of 3 is the old stop.
+  const r3cr = round(3, 'changes-requested', [`- F1 [fixed ${FIX}] a`, '- F2 [needs-person] b', '- F3 [claim-rejected] c'])
+  assert.equal(nextStep(tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${r3cr}` }), { probe: greenProbe(), limit: 4 }).stage, 'impl')
+})
+
+test('0028: a needs-person verdict written wrong falls back to the old path', () => {
+  const a = tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3('needs-person', ['- F4 [open] d'])}` })
+  assert.equal(nextStep(a, { probe: greenProbe() }).stage, 'impl')
+  assert.equal(nextStep(a, { probe: greenProbe() }).waiting, undefined)
+  const b = tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3('answered')}` })
+  assert.equal(nextStep(b, { probe: greenProbe() }).stage, 'impl')
+  assert.deepEqual(b.personFindings, [])
+})
+
+test('0028: an impl.md with no Needs a person section changes nothing', () => {
+  const u = tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}`, impl: implText('') })
+  const n = nextStep(u, { probe: greenProbe() })
+  assert.equal(n.stage, 'impl')
+  assert.match(n.action, /nothing outside \.cos\/0001_q\/ has reached #7/)
+})
+
+test('0028 R8: ship closes a finding marked answered only when review.md holds its answer', () => {
+  const pass = round(1, 'pass', [`- F1 [fixed ${FIX}] a`, '- F2 [answered] b'])
+  const withBlock = { ...reviewArt('accepted', pass), personAnswers: ['F2'] }
+  const g = checkGate(branched({ ...CHAIN, 'review.md': withBlock }), 'ship', { probe: greenProbe() })
+  assert.equal(g.ok, true, g.need.join('\n'))
+  const bare = checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', pass) }), 'ship', { probe: greenProbe() })
+  assert.equal(bare.ok, false)
+  assert.match(bare.need.join('\n'), /F2 \[answered, no answer in review\.md\]/)
+  for (const label of ['needs-person', 'claim-rejected']) {
+    const text = round(1, 'pass', [`- F2 [${label}] b`])
+    const shut = checkGate(branched({ ...CHAIN, 'review.md': { ...reviewArt('accepted', text), personAnswers: ['F2'] } }), 'ship', { probe: greenProbe() })
+    assert.equal(shut.ok, false)
+    assert.match(shut.need.join('\n'), new RegExp(`F2 \\[${label}\\]`))
+  }
+})
+
+test('0028: cos.mjs next prints waiting only when a person is awaited', () => {
+  const { root } = questionTree({
+    'intent.md': '# I\nAuthor: t. Type: fix. Status: accepted.\n',
+    'spec.md': 'Status: accepted.\n', 'plan.md': 'Status: accepted.\n', 'impl.md': implText(),
+    'pr.md': 'PR: https://github.com/o/r/pull/7. Status: accepted.\n',
+    'review.md': `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3()}\n## Answers\n${fBlock('F2')}`,
+  })
+  const out = JSON.parse(cli('--root', root, 'next', '0001_q').stdout)
+  assert.equal(out.stage, '')
+  assert.deepEqual(out.waiting, ['F3'])
+  const status = JSON.parse(cli('--root', root, 'status', '--json').stdout).units[0]
+  assert.deepEqual(status.next.waiting, ['F3'])
+  assert.deepEqual(status.personFindings, [
+    { id: 'F2', reason: 'the grant holds no budget for --paid', answered: true },
+    { id: 'F3', reason: 'the grant holds no gh', answered: false },
+  ])
+})
+
+test('0028: nextStep never offers a stage whose gate is closed, in any of the new states', () => {
+  const reviews = [
+    `${REVIEW_HEAD}${ROUND1}\n${ROUND2}`,
+    `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3()}`,
+    `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3()}\n## Answers\n${fBlock('F2')}${fBlock('F3')}`,
+  ]
+  for (const probe of [greenProbe(), greenProbe([{ name: 't', bucket: 'fail' }]), greenProbe([{ name: 't', bucket: 'pending' }])]) {
+    for (const review of reviews) {
+      const u = tree0028({ review })
+      const { stage } = nextStep(u, { probe })
+      if (stage) assert.equal(checkGate(u, stage, { probe }).ok, true, `${stage} offered with its gate closed`)
+    }
+  }
 })
