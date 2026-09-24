@@ -113,6 +113,10 @@ def refusal(
         return "the unit's worktree has uncommitted changes"
     if branch_ok is not True:
         return "the unit's worktree is not on the unit's branch"
+    if not pr_head:
+        # Nothing to compare the local head with: `gh` could not be read, so the state is
+        # `unknown` too. Said as that, not as a head mismatch against "none".
+        return f"the pull request's head could not be read, so the unit is {state or 'unknown'}: nothing to integrate"
     if not local_head or local_head != pr_head:
         return (
             f"the local head ({local_head[:7] or 'none'}) is not the pull request's head "
