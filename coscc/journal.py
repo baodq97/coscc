@@ -251,6 +251,7 @@ class Journal:
         unit: str | None = None,
         timeout: float | None = None,
         kind: str | None = None,
+        kinds: Iterable[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Every record for this working folder, oldest first, optionally narrowed.
 
@@ -276,6 +277,10 @@ class Journal:
         if kind is not None:
             sql += " AND kind = ?"
             args.append(kind)
+        if kinds is not None:
+            wanted = list(kinds)
+            sql += f" AND kind IN ({', '.join('?' for _ in wanted)})" if wanted else " AND 0"
+            args.extend(wanted)
         sql += " ORDER BY id"
 
         with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
@@ -325,6 +330,30 @@ class Journal:
         for item in self.records(workspace, timeout=timeout):
             by_unit.setdefault(str(item.get("unit") or ""), []).append(item)
         return {unit: _fold(items) for unit, items in by_unit.items()}
+
+    def open_starts(
+        self, workspace: str, timeout: float | None = None
+    ) -> dict[str, dict[str, Any]]:
+        """`0051`. Per unit, the runs with a `start` and no `end`, and the unit's last `start`.
+
+        `{unit: {"open": [row…], "last_start": at}}`, only for units with an open row. A
+        row is `_fold`'s, so this can never disagree with `timeline` about what is open.
+        Narrowed in SQL to the two kinds that decide it, like `modes`: the board asks this
+        every few seconds, and nothing else in the run log bears on the answer. Writes
+        nothing — a `start` nobody ended stays one (`0051 spec.md`, out of scope).
+        """
+        by_unit: dict[str, list[dict[str, Any]]] = {}
+        for item in self.records(workspace, timeout=timeout, kinds=("start", "end")):
+            by_unit.setdefault(str(item.get("unit") or ""), []).append(item)
+        out: dict[str, dict[str, Any]] = {}
+        for unit, items in by_unit.items():
+            open_rows = [r for r in _fold(items) if r.get("ended") is None]
+            if not open_rows:
+                continue
+            starts = [i.get("at") for i in items if i.get("kind") == "start"]
+            out[unit] = {"open": open_rows, "last_start": starts[-1] if starts else None}
+        return out
+
     def totals(self, workspace: str, unit: str, timeout: float | None = None) -> dict[str, Any]:
         """What one unit has cost, added up from its steps (`spec.md` R17).
 

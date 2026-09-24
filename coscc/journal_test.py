@@ -138,6 +138,54 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
             self.assertEqual([r["stage"] for r in j.timeline("w", "0009_x")], ["intent", "spec", "plan"])
 
 
+class OpenStartsAreTheRunsNobodyEnded(unittest.TestCase):
+    """`0051` plan step 2."""
+
+    def test_a_start_with_no_end_is_open(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            rec = j.started("w", "0009_x", "impl", "manual")
+            got = j.open_starts("w")
+            self.assertEqual(list(got), ["0009_x"])
+            [row] = got["0009_x"]["open"]
+            self.assertEqual(row["stage"], "impl")
+            self.assertEqual(row["started"], rec["at"])
+            self.assertEqual(got["0009_x"]["last_start"], rec["at"])
+
+    def test_a_start_with_its_end_is_not(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "manual")
+            j.finished("w", "0009_x", "impl", "done")
+            self.assertEqual(j.open_starts("w"), {})
+
+    def test_two_starts_one_end_leaves_the_other_open(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "plan", "manual", session_id="a")
+            j.started("w", "0009_x", "plan", "manual", session_id="b")
+            j.finished("w", "0009_x", "plan", "done")
+            [row] = j.open_starts("w")["0009_x"]["open"]
+            self.assertEqual(row["session_id"], "a")
+
+    def test_other_kinds_change_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "manual")
+            before = j.open_starts("w")
+            j.set_mode("w", "0009_x", "impl", "autonomous")
+            j.attempted("w", "0009_x", "impl", commits=[])
+            j.append({"kind": "integration", "workspace": "w", "unit": "0009_x", "stage": "impl"})
+            j.append({"kind": "mode", "workspace": "w", "unit": "0010_y", "stage": "spec", "mode": "manual"})
+            self.assertEqual(j.open_starts("w"), before)
+
+    def test_workspaces_do_not_mix(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "manual")
+            self.assertEqual(j.open_starts("v"), {})
+
+
 class AFailedStepLeavesARecord(unittest.TestCase):
     """`0019` plan step 4: `attempted`, `failed_attempts`, `last_runs`, and `reported`."""
 
