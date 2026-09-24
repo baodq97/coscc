@@ -405,7 +405,7 @@ class Guard:
         if kind == "websocket":
             await self._serve_socket(scope, receive, send, sha, touched_at)
             return
-        await self.inner(scope, receive, send)
+        await self.inner(scope, receive, _revalidate_pages(send))
 
     # -- refusal ----------------------------------------------------------------
 
@@ -606,7 +606,30 @@ def _with_header(send, header: tuple[bytes, bytes]):
     return wrapped
 
 
-_BUSY_TEXT = "Too many logins are being checked at once. Try again in a few seconds."
+def _revalidate_pages(send):
+    """A page let through is marked `no-cache`, so the browser asks the door again next time.
+
+    The static mount sends `index.html` with `Last-Modified` and no `Cache-Control`, and a
+    browser may reuse it by heuristic freshness — longer the older the build. Measured in
+    chromium (`scripts/verify_0070.py --browser`, `0070` review round 1, F2): after logging
+    out, `/` came back from the cache as the board, whose socket the door then refused, and
+    never reached `/login`. Assets keep their caching; their names carry a content hash.
+    """
+    async def wrapped(message: dict) -> None:
+        if message["type"] == "http.response.start":
+            headers = list(message.get("headers") or [])
+            names = {k.lower() for k, _ in headers}
+            html = any(
+                k.lower() == b"content-type" and v.lower().startswith(b"text/html")
+                for k, v in headers
+            )
+            if html and b"cache-control" not in names:
+                message = {**message, "headers": headers + [(b"cache-control", b"no-cache")]}
+        await send(message)
+    return wrapped
+
+
+_BUSY_TEXT ="Too many logins are being checked at once. Try again in a few seconds."
 
 
 def _locked(wait: float) -> str:

@@ -405,6 +405,14 @@ class Sessions(Door):
         self.clock.t = start + 7200 + auth.SESSION_TTL + 1
         self.assertTrue(refused(await self.call("GET", "/api/workspaces", cookie=cookie)))
 
+    async def test_a_page_let_through_must_be_revalidated_and_data_is_left_alone(self):
+        """`0070` review round 1 F2: a cached board after logout never reaches `/login`."""
+        cookie = (await self.set_password()).cookie()
+        page = await self.call("GET", "/docs", cookie=cookie)
+        self.assertEqual((page.status, page.header("cache-control")), (200, "no-cache"))
+        data = await self.call("GET", "/api/workspaces", cookie=cookie)
+        self.assertEqual((data.status, data.header("cache-control")), (200, None))
+
     async def test_logout_ends_the_session(self):
         """spec R7."""
         cookie = (await self.set_password()).cookie()
