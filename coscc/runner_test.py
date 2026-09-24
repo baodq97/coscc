@@ -1551,6 +1551,45 @@ class ShipIsNotToldItIsInARepository(unittest.TestCase):
             self.assertNotIn("URL in `pr.md`'s `PR:` field", prompt)
 
 
+class ImplAndShipKeepTheirTaskByteForByte(unittest.TestCase):
+    """`0041` plan step 1 / `spec.md` R1: `pr` gets its own *Your task*, and the two stages
+    that write their own artifact beside it keep theirs exactly as they were. Copied from
+    `coscc/runner.py` before `0041` touched it."""
+
+    def task(self, d, stage):
+        directory = make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+        prompt, _ = build_prompt(d, directory, UNIT, stage, STAGES, f"{stage}.md", writes_own=True)
+        return prompt.split("\n\n---\n\n")[-1], directory
+
+    def test_impl(self):
+        with tempfile.TemporaryDirectory() as d:
+            task, directory = self.task(d, "impl")
+            self.assertEqual(task, (
+                "# Your task\n\n"
+                f"Do the work this unit's plan authorises, in the repository at "
+                f"`{Path(d).expanduser().resolve()}`, then write `{directory / 'impl.md'}` "
+                "recording what you did.\n\n"
+                "That file must carry the `Status:` line the rules above describe. Prose in "
+                "Vietnamese; filenames and headings in English. Write it yourself with your "
+                "tools — do not paste it into your reply."
+            ))
+
+    def test_ship(self):
+        with tempfile.TemporaryDirectory() as d:
+            task, directory = self.task(d, "ship")
+            self.assertEqual(task, (
+                "# Your task\n\n"
+                f"Merge this unit's pull request, then write `{directory / 'ship.md'}` recording what went "
+                "out.\n\n"
+                "You are deliberately not inside a git checkout. Name the pull request by the "
+                "URL in `pr.md`'s `PR:` field in every `gh` command; a bare number cannot be "
+                "resolved from here.\n\n"
+                "That file must carry the `Status:` line the rules above describe. Prose in "
+                "Vietnamese; filenames and headings in English. Write it yourself with your "
+                "tools — do not paste it into your reply."
+            ))
+
+
 class TheStepRunsOnTheModelItWasGiven(unittest.TestCase):
     """`0004_no-setting-says-which-model-runs-a-stage`. The runner does not choose a model;
     it passes on the one it was given and writes it into the run log."""
