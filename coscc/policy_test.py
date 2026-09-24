@@ -653,6 +653,16 @@ class IntegrationIsNotPrs(unittest.TestCase):
     def test_the_merge_is_still_ships(self):
         self.assertIn("ship stage's", check_command(self.PR, "gh pr merge 7"))
 
+    def test_the_other_roads_to_the_same_words_are_refused(self):
+        # Review round 1, F1: an alias made during the step, or the endpoint behind
+        # `gh pr update-branch`, renamed what the prefixes above refuse.
+        for command in ("git -c alias.r=rebase r main", "git config alias.r rebase",
+                        "git -c alias.p=push p --force", "GIT_CONFIG_COUNT=1 git r main",
+                        "gh api -X PUT repos/o/r/pulls/7/update-branch",
+                        "gh api graphql -f query=mutation{updatePullRequestBranch(input:{})}"):
+            with self.subTest(command=command):
+                self.assertIn("Integrate", check_command(self.PR, command))
+
     def test_the_known_limit_c2(self):
         # Words, not capability: a program the grant may start can still rebase.
         self.assertEqual(check_command(self.PR, "node -e 'require(\"child_process\")'"), "")

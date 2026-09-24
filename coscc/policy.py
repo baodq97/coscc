@@ -480,9 +480,16 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
         if base == "gh" and grant.denied and any(_MERGE_ENDPOINT.search(t) for t in words):
             # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
             return "this step may not call the merge endpoint: merging is the ship stage's"
+        if base == "gh" and grant.push_no_force and any(_UPDATE_BRANCH_ENDPOINT.search(t) for t in segment.split()):
+            # `0041` review round 1, F1: `gh pr update-branch` by the API, REST or GraphQL.
+            return f"this step may not call the update-branch endpoint: {_INTEGRATION_IS_NOT_PRS}"
         raw = segment.split()[1:]
         if base == "git" and grant.push_needs_lease and _GIT_CONFIG_ROAD.search(whole):
             return "this step may not define a git alias, an include or GIT_CONFIG_*: it can rename `push` past the lease"
+        if base == "git" and grant.push_no_force and _GIT_CONFIG_ROAD.search(whole):
+            # `0041` review round 1, F1: `git -c alias.r=rebase r main`, or `git config
+            # alias.p push` and then `git p --force`, renames the refused words.
+            return f"this step may not define a git alias, an include or GIT_CONFIG_*: it can rename a refused command; {_INTEGRATION_IS_NOT_PRS}"
         if base == "git" and grant.push_needs_lease and _may_be_push(raw):
             # `0035` R6. `push` must be the first word after `git`, so a `-C dir` or
             # `-c k=v` in front cannot hide what it pushes.
@@ -522,6 +529,7 @@ _GH_VALUE_FLAGS = frozenset({"-R", "--repo", "--hostname"})
 # `git rebase main` (`0041` R3). Only the two git itself reads a separate value after.
 _GIT_VALUE_FLAGS = frozenset({"-C", "-c"})
 _MERGE_ENDPOINT = re.compile(r"pulls/[^/\s]+/merge\b")
+_UPDATE_BRANCH_ENDPOINT = re.compile(r"pulls/[^/\s]+/update-branch\b|updatePullRequestBranch")
 
 
 def _may_be_push(raw: list[str]) -> bool:
@@ -542,7 +550,7 @@ def _words(base: str, rest: list[str]) -> tuple[str, ...]:
 
     Still a reading of tokens, not of what the program will do: an alias defined before
     the step, or `node -e` spawning `gh`, is not seen. `.claude/CLAUDE.md` says so. The
-    `integrate` grant also refuses an alias made during the step (`_GIT_CONFIG_ROAD`).
+    `integrate` and `pr` grants also refuse an alias made during the step (`_GIT_CONFIG_ROAD`).
     """
     out = [base]
     skip = False

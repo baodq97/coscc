@@ -270,8 +270,11 @@ no commands, one turn, no budget.
   measured). Offline or logged out, the step still runs and its prompt says the lookup
   failed. The `pr` grant refuses `git rebase`, `git merge`, `git pull`,
   `gh pr update-branch` and a forced push (`--force`, `-f`, `--force-with-lease`,
-  `--force-if-includes`, a `+` refspec) by their words, as it refuses the merge; `node -e`
-  still walks past (`coscc/policy_test.py`, `IntegrationIsNotPrs`).
+  `--force-if-includes`, a `+` refspec) by their words. It also refuses a git alias,
+  include or `GIT_CONFIG_*` made during the step, and `gh api` naming the update-branch
+  endpoint (`pulls/<n>/update-branch`, `updatePullRequestBranch`). It does not refuse
+  `gh api` as a whole, as the `integrate` grant does. `node -e`, or an alias defined before
+  the step, still walks past (`coscc/policy_test.py`, `IntegrationIsNotPrs`).
 
 - **An `impl` prompt carries file names taken from other people's commits on `main`.**
   Since `0042` `run_step` diffs the commit the unit's last `done` run of `plan` ran on
