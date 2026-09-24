@@ -204,6 +204,31 @@ class Unit:
     # `0021`. The pull request `pr.md` names, and every review round with its comment state.
     pr_url: str = ""
     rounds: list[Round] = dataclasses.field(default_factory=list)
+    # `0035` R1/R3/R8/R13. Copied from `Service.board`'s `integration`; empty state means
+    # the unit is outside the window. `integrate_button` is the service's decision (R3).
+    integration_state: str = ""
+    integration_reason: str = ""
+    integration_behind: str = ""
+    integration_origin: str = ""
+    integrate_button: bool = False
+    integration_warnings: list[str] = dataclasses.field(default_factory=list)
+    integration_needs_person: list[str] = dataclasses.field(default_factory=list)
+
+
+def _integration_fields(info: dict | None) -> dict:
+    """`Unit`'s integration fields from the board's `integration` dict, or all empty."""
+    if not info:
+        return {}
+    behind = info.get("behind")
+    return {
+        "integration_state": str(info.get("state") or ""),
+        "integration_reason": str(info.get("reason") or ""),
+        "integration_behind": "" if behind is None else str(behind),
+        "integration_origin": str(info.get("origin_sha") or "")[:7],
+        "integrate_button": bool(info.get("button")),
+        "integration_warnings": [str(w) for w in info.get("warnings") or []],
+        "integration_needs_person": [str(n) for n in info.get("needs_person") or []],
+    }
 
 
 @dataclasses.dataclass
@@ -510,6 +535,8 @@ class StudioState(rx.State):
     answering: bool = False
     # `0021`. The round being posted, 0 while none is.
     posting_round: int = 0
+    # `0035`. True while an integration runs; locks the *Integrate* button.
+    integrating: bool = False
 
     # -- sessions
     conversations: list[Conversation] = []
@@ -809,6 +836,7 @@ class StudioState(rx.State):
                     questions=asked,
                     pr_url=str((u.get("pr") or {}).get("url") or ""),
                     rounds=_rounds(u),
+                    **_integration_fields(u.get("integration")),
                 )
             )
         self.units = units
@@ -1300,6 +1328,38 @@ class StudioState(rx.State):
                 f"Posted round {done['round']} to the PR as a comment. It is not an approval "
                 "and no gate reads it."
             )
+        await self._load_board()
+
+    @rx.event
+    async def integrate(self):
+        """`0035`. Integrate the open unit. Whether it may, and which road, is
+        `Service.integrate`'s decision; this only locks the button and says what happened.
+        The `yield` sends `integrating` to the browser, as `post_review_comment` does."""
+        if self.integrating:
+            return
+        self.integrating = True
+        yield
+        done: dict = {}
+        try:
+            async for kind, payload in SERVICE.integrate(self.cwd, self.unit_id):
+                if kind == "done":
+                    done = payload.get("integration") or {}
+        except Invalid as e:
+            self.notice = f"Not integrated: {e}"
+            return
+        finally:
+            self.integrating = False
+        outcome = done.get("outcome", "")
+        who = "the app" if done.get("mode") == "mechanical" else "an agent (Gebo)"
+        if outcome == "pushed":
+            self.notice = (
+                f"Integrated by {who}: the pull request is now at {str(done.get('head_after'))[:7]}. "
+                "The ship gate is closed until a new review round reviews that head."
+            )
+        elif outcome == "needs-person":
+            self.notice = "Gebo stopped: a person is needed. The contradictions are listed on the unit."
+        else:
+            self.notice = f"Integration {outcome or 'ended'}: {done.get('detail') or 'see Activity'}"
         await self._load_board()
 
     @rx.event

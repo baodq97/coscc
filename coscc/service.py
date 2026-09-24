@@ -27,6 +27,7 @@ from typing import Any, AsyncIterator
 
 from coscc import board as board_reader
 from coscc import gitops
+from coscc import harness, integrate
 from coscc import prcomment
 from coscc import sessions as reader
 from coscc.board import Unavailable
@@ -131,6 +132,22 @@ def describe_base(base: dict[str, Any] | None) -> str:
     return f"This step ran on {ref} at {sha}, which may be stale: {reason}"
 
 
+def integration_since_review(journal: Journal, key: str, unit: str) -> dict[str, Any] | None:
+    """`0035` R10: the latest `pushed` integration recorded after the last `review` step
+    that ended `done`, or None. Read by id order, which is the order the rows were written."""
+    try:
+        rows = journal.records(key, unit)
+    except Busy:
+        return None
+    found = None
+    for rec in rows:
+        if rec.get("kind") == "integration" and rec.get("outcome") == "pushed":
+            found = rec
+        elif rec.get("kind") == "end" and rec.get("stage") == "review" and rec.get("outcome") == "done":
+            found = None
+    return found
+
+
 @dataclass
 class Service:
     config: Config
@@ -146,6 +163,10 @@ class Service:
     _comment_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     # `0017` R8. Per workspace, created on first use.
     _create_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
+    # `0035` R12. `(journal key, unit)` for every step or integration running now, and one
+    # lock per workspace held across check-and-mark. One process only, like `pull`.
+    _active: set[tuple[str, str]] = field(default_factory=set, init=False, repr=False)
+    _integrate_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # No working folder means no store, and the app behaves as it did before one existed.
@@ -398,6 +419,7 @@ class Service:
             )
 
         await self._attach_worktrees(cwd, data["units"])
+        await self._attach_integration(cwd, data["units"], journal, key)
 
         data["recording"] = journal is not None
         data["read_only_because"] = (
@@ -454,6 +476,324 @@ class Service:
                 "branch": found.get("branch") or "",
                 "prepare": worktrees.read_prepare(where),
             }
+
+    # -- integration (`0035`) -------------------------------------------------
+
+    async def _attach_integration(
+        self, cwd: str, units_: list[dict[str, Any]], journal: Journal | None, key: str
+    ) -> None:
+        """R1/R2. Give every unit `integration: {...}` when it sits in the window, else None.
+
+        **Reads only.** One `gh pr list` for the workspace (up to `integrate.GH_TIMEOUT`),
+        `git` counts against the `origin/main` the last fetch brought — no fetch here — and
+        `gh pr checks` only for a unit whose head is the one its last integration pushed.
+        Nothing here writes a record, calls `update-branch` or opens a session.
+        """
+        for u in units_:
+            u["integration"] = None
+        window = [u for u in units_ if u.get("between_pr_and_ship") and u.get("pr")]
+        if not window:
+            return
+        root = Path(cwd).expanduser().resolve()
+        last = self._last_integrations(journal, key)
+        try:
+            prs: list[dict[str, Any]] | str = await integrate.open_prs(str(root))
+        except integrate.IntegrateError as e:
+            prs = str(e)
+        for u in window:
+            info = await self._integration_of(root, u, prs, last.get(u["name"]))
+            if info is not None:
+                u["integration"] = info
+
+    @staticmethod
+    def _last_integrations(journal: Journal | None, key: str) -> dict[str, dict[str, Any]]:
+        if journal is None:
+            return {}
+        try:
+            rows = journal.records(key, kind="integration")
+        except Busy:
+            return {}
+        return {str(r.get("unit")): r for r in rows}
+
+    async def _integration_of(
+        self, root: Path, u: dict[str, Any], prs: list[dict[str, Any]] | str,
+        last_record: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """One unit's state. None when its pull request is not among the open ones."""
+        number = (u.get("pr") or {}).get("number")
+        if isinstance(prs, str):
+            pr_row: dict[str, Any] | str = prs
+        else:
+            match = next((r for r in prs if r.get("number") == number), None)
+            if match is None:
+                return None
+            pr_row = match
+        origin_sha = ""
+        missing: int | str = 0
+        if isinstance(pr_row, dict):
+            try:
+                origin_sha = await gitops.rev_parse(root, "refs/remotes/origin/main")
+                head = str(pr_row.get("headRefOid") or "")
+                if not await gitops.has_commit(root, head):
+                    missing = f"the pull request's head {head[:7]} is not here: fetch, then ask again"
+                else:
+                    missing = await gitops.count_missing(root, head, origin_sha)
+            except GitError as e:
+                missing = str(e)
+        checks: list[dict[str, Any]] | str | None = None
+        if integrate.needs_checks(pr_row, last_record):
+            try:
+                checks = await integrate.required_checks(str(root), int(number))
+            except integrate.IntegrateError as e:
+                checks = str(e)
+        verdict = integrate.classify(pr_row, missing, origin_sha, last_record, checks)
+        state = verdict["state"]
+        review_status = next((r.get("status") or "" for r in u.get("stages") or [] if r.get("stage") == "review"), "")
+        gebo = state in integrate.GEBO_STATES
+        return {
+            "state": state,
+            "reason": verdict.get("reason", ""),
+            "behind": missing if isinstance(missing, int) else None,
+            "origin_sha": origin_sha,
+            "pr_head": pr_row.get("headRefOid", "") if isinstance(pr_row, dict) else "",
+            "mode": "agent" if gebo else ("mechanical" if state == "behind" else ""),
+            "button": state in integrate.BUTTON_STATES,
+            "needs_person": list((last_record or {}).get("needs_person") or [])
+            if (last_record or {}).get("outcome") == "needs-person" else [],
+            "warnings": integrate.warnings(
+                u.get("rounds") or [], review_status, gebo, grant_for("integrate").warning
+            ),
+        }
+
+    async def integrate(self, cwd: str, unit: str) -> AsyncIterator[tuple[str, Any]]:
+        """`0035`. Integrate one unit, on a person's request. Streams like `run_step`.
+
+        Refuses before anything changes (R12), and every refusal, push or failure leaves one
+        `integration` record (R9). `behind` goes the mechanical road (R4); `conflicting`
+        and `red-after-integration` open Gebo (R5).
+        """
+        self._workspace_or_refuse(cwd)
+        journal = self._journal()
+        if journal is None:
+            raise Invalid("no working folder is set, so an integration cannot be recorded — set COS_WORKING_DIR")
+        if not unit:
+            raise Invalid("name a work unit")
+        directory = self._unit_dir(cwd, unit)
+        try:
+            data = await board_reader.read(self._units_root(cwd))
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        found = next((u for u in data["units"] if u["name"] == unit), None)
+        if found is None:
+            raise Invalid(f"no such work unit in this workspace: {unit}")
+        key = self._journal_key(cwd)
+        root = Path(cwd).expanduser().resolve()
+        last = self._last_integrations(journal, key).get(unit)
+        info = None
+        if found.get("between_pr_and_ship") and found.get("pr"):
+            try:
+                prs: list[dict[str, Any]] | str = await integrate.open_prs(str(root))
+            except integrate.IntegrateError as e:
+                prs = str(e)
+            info = await self._integration_of(root, found, prs, last)
+        pr = (found.get("pr") or {}).get("number")
+        state = (info or {}).get("state", "")
+        pr_head = (info or {}).get("pr_head", "")
+        origin_sha = (info or {}).get("origin_sha", "")
+        try:
+            branch = units.branch_name(cwd, unit, self.config.data_dir)
+        except (CannotCreate, BadUnit):
+            branch = ""
+        tree_found = None
+        try:
+            tree_found = await worktrees.find(cwd, unit, self.config.data_dir)
+        except (GitError, BadUnit):
+            tree_found = None
+        tree = Path(tree_found["path"]) if tree_found else None
+
+        def write(rec: dict[str, Any]) -> dict[str, Any]:
+            try:
+                return journal.append(rec)
+            except (BadRecord, Busy):
+                return rec
+
+        lock = self._integrate_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            clean = on_branch = None
+            local_head = ""
+            if tree is not None:
+                try:
+                    clean = await gitops.is_clean(tree)
+                    on_branch = bool(branch) and (await gitops.current_branch(tree)) == branch
+                    local_head, _ = await gitops.head_and_branch(tree)
+                except GitError:
+                    clean = on_branch = None
+            reason = integrate.refusal(
+                in_window=info is not None, active=(key, unit) in self._active,
+                clean=clean, branch_ok=on_branch, local_head=local_head, pr_head=pr_head, state=state,
+            )
+            if reason:
+                write(integrate.record(
+                    workspace=key, unit=unit, pr=pr, mode=(info or {}).get("mode") or "mechanical",
+                    head_before=pr_head, head_after="", origin_sha=origin_sha, outcome="refused",
+                    detail=reason,
+                ))
+                raise Invalid(reason)
+            self._active.add((key, unit))
+        try:
+            assert tree is not None
+            if state == "behind":
+                rec = await self._integrate_mechanical(key, unit, int(pr), tree, branch, pr_head, origin_sha)
+                write(rec)
+                yield ("done", {"integration": rec})
+                return
+            async for item in self._integrate_gebo(
+                cwd, key, unit, directory, found, data, info, int(pr), tree, branch, pr_head, origin_sha,
+                journal, write,
+            ):
+                yield item
+        finally:
+            self._active.discard((key, unit))
+
+    async def _integrate_mechanical(
+        self, key: str, unit: str, pr: int, tree: Path, branch: str, head_before: str, origin_sha: str
+    ) -> dict[str, Any]:
+        """R4. GitHub rebases, the local branch follows. No session."""
+        base = dict(workspace=key, unit=unit, pr=pr, mode="mechanical", head_before=head_before, origin_sha=origin_sha)
+        try:
+            ok, said = await integrate.update_branch(str(tree), pr)
+        except integrate.IntegrateError as e:
+            return integrate.record(**base, head_after="", outcome="failed", detail=str(e))
+        if not ok:
+            return integrate.record(**base, head_after="", outcome="refused", detail=said or "gh refused")
+        head_after = head_before
+        for attempt in range(integrate.POLL_TRIES):
+            try:
+                head_after = await integrate.pr_head(str(tree), pr)
+            except integrate.IntegrateError:
+                head_after = head_before
+            if head_after and head_after != head_before:
+                break
+            if attempt + 1 < integrate.POLL_TRIES:
+                await asyncio.sleep(integrate.POLL_DELAY)
+        if not head_after or head_after == head_before:
+            return integrate.record(
+                **base, head_after="", outcome="failed",
+                detail="GitHub accepted the command but the head has not changed yet",
+            )
+        try:
+            await gitops.reset_branch_to(tree, branch, head_before, head_after)
+            detail = said
+        except GitError as e:
+            # The push happened on GitHub's side either way; the local tree is behind it.
+            detail = f"pushed on GitHub, but the local branch was not moved: {e}"
+        return integrate.record(**base, head_after=head_after, outcome="pushed", detail=detail)
+
+    async def _integrate_gebo(
+        self, cwd: str, key: str, unit: str, directory: Path, found: dict[str, Any],
+        data: dict[str, Any], info: dict[str, Any], pr: int, tree: Path, branch: str,
+        head_before: str, origin_sha: str, journal: Journal, write: Any,
+    ) -> AsyncIterator[tuple[str, Any]]:
+        """R5–R8. One Gebo session; the outcome is read from GitHub afterwards."""
+        root = Path(cwd).expanduser().resolve()
+        rel = await self._related(root, unit, data, head_before, origin_sha)
+        units_root = self._units_root(cwd)
+        own = {}
+        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
+            path = directory / name
+            if path.exists():
+                own[name] = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            skill = harness.read_skill("integrate")
+        except harness.MissingRules as e:
+            raise Invalid(f"the integrate skill could not be read: {e}") from e
+        prompt = integrate.build_prompt(
+            skill=skill, unit=unit, branch=branch, pr=pr, state=info["state"], reason=info.get("reason", ""),
+            head_before=head_before, origin_sha=origin_sha, rel=rel, units_root=units_root, own_artifacts=own,
+        )
+        grant = grant_for("integrate")
+        model, model_source = self._model_for("impl")
+        try:
+            journal.started(key, unit, "integrate", "manual", prompt_chars=len(prompt), granted=list(grant.tools),
+                            max_turns=grant.max_turns, head=head_before, model=model, model_source=model_source)
+        except (BadRecord, Busy):
+            pass
+        end: dict[str, Any] = {}
+        failure = ""
+        try:
+            async for kind, payload in integrate.run_gebo(
+                self.sessions, tree=str(tree), workspace=cwd, prompt=prompt, grant=grant,
+                read_also=integrate.read_paths(units_root, unit, rel), lease=(branch, head_before), model=model,
+            ):
+                if kind == "chunk":
+                    yield ("chunk", payload)
+                else:
+                    end = payload
+        except Exception as e:  # noqa: BLE001 — recorded, never swallowed silently
+            failure = f"the session failed: {e}"
+        details = [failure] if failure else []
+        try:
+            if await gitops.rebase_in_progress(tree):
+                await gitops.abort_rebase(tree)
+                details.append("the session left a rebase in progress; the app aborted it")
+        except GitError as e:
+            details.append(f"could not check for a stopped rebase: {e}")
+        try:
+            head_now = await integrate.pr_head(str(tree), pr)
+        except integrate.IntegrateError as e:
+            head_now = head_before
+            details.append(f"could not read the pull request's head afterwards: {e}")
+        reply = str(end.get("reply") or "")
+        outcome = integrate.outcome_of_session(head_before, head_now, reply)
+        try:
+            journal.finished(
+                key, unit, "integrate", "done" if outcome in ("pushed", "needs-person") else "failed",
+                session_id=end.get("session_id", ""), detail="; ".join(details) or None,
+                denials=end.get("denials", 0), denied=end.get("denied"),
+                models_used=end.get("models_used") or None, **(end.get("cost") or {}),
+            )
+        except (BadRecord, Busy):
+            pass
+        rec = write(integrate.record(
+            workspace=key, unit=unit, pr=pr, mode="agent", head_before=head_before, head_after=head_now,
+            origin_sha=origin_sha, outcome=outcome, related_=rel, report=reply,
+            needs_person=integrate.parse_needs_person(reply), detail="; ".join(details),
+        ))
+        yield ("done", {"integration": rec})
+
+    async def _related(
+        self, root: Path, unit: str, data: dict[str, Any], head: str, origin_sha: str
+    ) -> dict[str, list[dict[str, Any]]]:
+        """R7, from git. A failure leaves a list empty rather than stopping the step."""
+        try:
+            base = await gitops.merge_base_of(root, head, origin_sha)
+            mine = await gitops.files_between(root, base, head)
+            commits = []
+            for c in await gitops.commits_between(root, base, origin_sha):
+                commits.append({**c, "files": await gitops.files_of_commit(root, c["sha"])})
+        except GitError:
+            return {"merged": [], "open": []}
+        try:
+            prs = await integrate.open_prs(str(root))
+        except integrate.IntegrateError:
+            prs = []
+        heads = {r.get("number"): str(r.get("headRefOid") or "") for r in prs}
+        others = []
+        for u in data["units"]:
+            if u["name"] == unit or not u.get("between_pr_and_ship") or not u.get("pr"):
+                continue
+            other_head = heads.get(u["pr"].get("number"))
+            if other_head is None:
+                continue
+            files = None
+            try:
+                if await gitops.has_commit(root, other_head):
+                    their_base = await gitops.merge_base_of(root, other_head, origin_sha)
+                    files = await gitops.files_between(root, their_base, other_head)
+            except GitError:
+                files = None
+            others.append({"unit": u["name"], "files": files})
+        return integrate.related(commits, mine, data["units"], others, unit)
 
     async def _cleanup(self, cwd: str, unit: str) -> dict[str, Any]:
         """R10 after a `ship` step. Never raises; says what it did or why not."""
@@ -623,7 +963,15 @@ class Service:
             failed = journal.failed_attempts(key, unit, stage)
         except Busy as e:
             raise Invalid(str(e)) from e
+        # `0035` R10. The integration pushed since the last review round, for `review` only.
+        integration_note = ""
+        if stage == "review":
+            since = integration_since_review(journal, key, unit)
+            integration_note = integrate.describe_for_review(since) if since else ""
         runner = Runner(self.sessions, journal)
+        # `0035` R12: an integration refuses a unit with a step running. One process only.
+        active_key = (key, unit)
+        self._active.add(active_key)
         try:
             async for item in runner.run(
                 workspace=cwd,
@@ -641,6 +989,7 @@ class Service:
                 base=base,
                 base_note=describe_base(base),
                 last_attempt=describe_attempt(failed) if failed else "",
+                integration_note=integration_note,
             ):
                 if item[0] == "done":
                     item = ("done", {**item[1], "base": base})
@@ -659,6 +1008,8 @@ class Service:
                 yield item
         except RunError as e:
             raise Invalid(str(e)) from e
+        finally:
+            self._active.discard(active_key)
 
     async def _post_new_rounds(
         self, cwd: str, unit: str, before: set[Any]

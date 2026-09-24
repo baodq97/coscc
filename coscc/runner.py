@@ -195,6 +195,7 @@ def build_prompt(
     head: str = "",
     base_note: str = "",
     last_attempt: str = "",
+    integration_note: str = "",
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -364,6 +365,13 @@ def build_prompt(
     if last_attempt:
         included.append("last-attempt")
         parts.append(f"# The attempt before this one\n\n{last_attempt}")
+
+    # `0035` R10. Only for `review`, and only when `service.run_step` found an integration
+    # recorded after the last review round; it is built by `integrate.describe_for_review`
+    # and already opens with its own heading.
+    if integration_note and stage == "review":
+        included.append("integration")
+        parts.append(integration_note.rstrip())
 
     location = directory / artifact
     if writes_own and stage == "ship":
@@ -768,6 +776,7 @@ class Runner:
         base: dict[str, Any] | None = None,
         base_note: str = "",
         last_attempt: str = "",
+        integration_note: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -819,6 +828,7 @@ class Runner:
             head=head,
             base_note=base_note,
             last_attempt=last_attempt,
+            integration_note=integration_note,
         )
 
         # `0037`: the same condition that decides whether a gate and a tool list are sent.
