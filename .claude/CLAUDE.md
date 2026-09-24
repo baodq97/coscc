@@ -190,8 +190,9 @@ a `review` gate that never opens.
   (`POST /api/board/stop`). A stopped step ends `stopped` in the run log with
   `stopped_by`, a name the person typed rather than an identity; it writes no artifact,
   opens and closes no gate, and starts nothing. What it had already committed or pushed
-  stays. Whoever holds the password or a live session can stop anyone's step under any
-  name.
+  stays. A step stopped before its first turn ran nothing and leaves no line in the run
+  log at all. Whoever holds the password or a live session can stop anyone's step under
+  any name.
 - **A hold is not an approval, and it starts nothing.** Since `0045` the board can pause,
   drop or resume a unit (`POST /api/units/hold`), with one line of reason and a typed name.
   It appends a block under `intent.md ## Answers` and a `hold` row to the run log; `cos.mjs`

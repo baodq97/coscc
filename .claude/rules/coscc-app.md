@@ -336,7 +336,10 @@ no commands, one turn, no budget.
   app, and SIGKILL `KILL_AFTER` (3s, chosen) later — through the SDK's private
   `_transport._process`, so an SDK that renames it loses this silently; the step ends `stopped`, writes no artifact and records no
   transition, and whatever it already committed or pushed stays. `stopped_by` is a name
-  the person typed, not an identity, and the trace is that one `end` record. A step that
+  the person typed, not an identity, and the trace is that one `end` record. A Stop whose
+  cancel reaches the step's task before its first turn leaves no trace at all: the runner
+  never ran, so there is neither `start` nor `end`, and only the Stop's own reply names
+  `stopped_by` (`Service._never_driven`, since `0050`). A step that
   has begun writing its artifact refuses the stop. A step stopped before its session
   reported a cost records `cost_unknown` and no cost at all, so Activity reads it as free.
   Stopping a `pr` or `ship` midway can leave a pushed branch or a merged pull request with
@@ -421,7 +424,8 @@ no commands, one turn, no budget.
 
 - **`POST /api/update/*` stops work, restarts the app and builds upstream code, for whoever
   holds the password.** Since `0068`. *Áp dụng ngay* stops every board step (through Stop's road, so
-  each gets an `end` with `stopped_by`) and cuts every chat turn of this process; *Áp
+  each that had begun gets an `end` with `stopped_by`; one cut before its first turn gets
+  none) and cuts every chat turn of this process; *Áp
   dụng* waits for them instead, and a person can keep it waiting forever by starting new
   work. *Build từ origin/main* runs `scripts/build_wheel.sh` of the configured workspace's
   upstream `main` under this user — `uv sync`, Reflex fetching Node/Bun, all of it. The

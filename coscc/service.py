@@ -1393,8 +1393,9 @@ class Service:
         button both call this, and nothing else.
 
         `by` is a name the person typed, not an identity: the password names nobody. What it
-        leaves is an `end` record with `outcome: stopped` and `stopped_by`. It opens and
-        closes no gate, and starts nothing.
+        leaves is an `end` record with `outcome: stopped` and `stopped_by` -- or nothing at
+        all when the cancel lands before the step's first turn (`_never_driven`). It opens
+        and closes no gate, and starts nothing.
         """
         self._workspace_or_refuse(cwd)
         name = (by or "").strip()
@@ -1404,7 +1405,8 @@ class Service:
 
     async def _stop_running(self, key: str, unit: str, by: str) -> dict[str, Any]:
         """The Stop itself, shared with `0068`'s "áp dụng ngay" so a step it cuts ends the
-        same way: an `end` record with `stopped` and `stopped_by`."""
+        same way: an `end` record with `stopped` and `stopped_by`, or none for a step
+        cancelled before its first turn."""
         try:
             running = self.steps.request_stop(key, unit, by)
         except (steps_mod.NotRunning, steps_mod.Finishing) as e:
