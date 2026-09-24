@@ -373,6 +373,7 @@ class TheSessionIdIsToldBeforeTheStepIsOver(unittest.IsolatedAsyncioTestCase):
 
     async def _run(self, messages, session_id=None, adopt=None):
         s = Sessions(Config(workspaces=("/tmp",)))
+        self.addAsyncCleanup(s.close_all)  # a chat keeps its data root until closed (`0076`)
         if adopt:
             s.adopt(adopt)
         _FakeClient.messages = messages
@@ -427,6 +428,7 @@ class WhichChatTurnsAreAnswering(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         self.s = Sessions(Config(workspaces=("/tmp",)))
+        self.addAsyncCleanup(self.s.close_all)  # a chat keeps its data root until closed
         self.ended = 0
 
         def ended():
@@ -700,6 +702,7 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.s = Sessions(Config(workspaces=("/tmp",)))
+        self.addAsyncCleanup(self.s.close_all)  # a chat keeps its data root until closed
 
     async def test_a_step_that_finishes_is_closed_once_and_not_kept(self):
         h = sessions.StepHandle()
@@ -996,6 +999,7 @@ class EverySessionGetsADataRootOfItsOwn(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.app = self.tmp / "app"
         self.s = Sessions(Config(workspaces=("/tmp",), data_dir=str(self.app)))
+        self.addAsyncCleanup(self.s.close_all)
         _EnvClient.envs = []
         _EnvClient.boom = False
         _CountingClient.made = []
