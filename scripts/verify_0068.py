@@ -377,7 +377,6 @@ def run_restart(root: Path) -> int:
         if shutil.which(tool) is None:
             print(f"no `{tool}` on PATH")
             return EXIT_ENV
-    chromium = require_browser()
     from coscc import update
 
     env = {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"]}
@@ -424,7 +423,8 @@ def run_restart(root: Path) -> int:
     current = data / "updates" / "current"
     current.mkdir(parents=True)
     shutil.copy(wheels["vA"], current / wheels["vA"].name)
-    update.write_json(current / update.MANIFEST, {"version": "0.0.0+g" + commit[:7], "commit": commit,
+    va_version = wheels["vA"].name[len("coscc-"):-len("-py3-none-any.whl")]
+    update.write_json(current / update.MANIFEST, {"version": va_version, "commit": "",
                                                   "sha256": update.sha256_of(wheels["vA"]), "built_at": update.now()})
 
     exits: list[int] = []
@@ -448,8 +448,6 @@ def run_restart(root: Path) -> int:
     watcher.start()
     ok = True
     try:
-        from playwright.sync_api import sync_playwright  # noqa: F401
-
         import httpx
 
         for _ in range(120):
@@ -459,15 +457,17 @@ def run_restart(root: Path) -> int:
             except httpx.HTTPError:
                 pass
             time.sleep(1)
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(executable_path=chromium)
+        pw, browser = require_browser()
+        try:
             page = browser.new_page()
             page.goto(f"http://127.0.0.1:{port}/")
-            page.get_by_role("button", name="Board").first.click()
+            page.click("#nav-board")
             panel = page.locator("#update-panel")
             panel.wait_for(timeout=30000)
             text = panel.inner_text()
-            ok &= say("0.0.0+g" in text and commit in text and "ready" in text,
+            va_sha7 = va_version.split("+g", 1)[1]
+            shown_commit = any(w.startswith(va_sha7) and len(w) == 40 for w in text.split())
+            ok &= say(va_version in text and shown_commit and "ready " + vb_version in text,
                       "--restart the panel shows vA with its commit, and the local channel ready", text[:400])
             page.fill("#update-by", "Proof")
             page.click("#update-apply-local")
@@ -481,8 +481,15 @@ def run_restart(root: Path) -> int:
                 except Exception:  # noqa: BLE001 - the page is reloading
                     pass
                 time.sleep(2)
+            if vb_version not in seen:
+                try:
+                    seen += " | " + page.locator("#update-panel").inner_text(timeout=2000)
+                except Exception:  # noqa: BLE001
+                    pass
             ok &= say(vb_version in seen, "--restart without a manual reload the panel shows vB within 120 s", seen)
+        finally:
             browser.close()
+            pw.stop()
         last = update.read_json(data / "updates" / "last-reported.json") or {}
         ok &= say(75 in exits and last.get("result") == "applied",
                   "--restart the process exited 75 and last-reported.json says applied", f"{exits} {last}")
