@@ -261,6 +261,73 @@ class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
         await Sessions(Config()).close_all()
 
 
+class _FakeClient:
+    """A `ClaudeSDKClient` stand-in: replays a fixed message list, spends nothing."""
+
+    messages: list = []
+
+    def __init__(self, options=None):
+        pass
+
+    async def connect(self):
+        pass
+
+    async def query(self, text):
+        pass
+
+    async def receive_response(self):
+        for m in self.messages:
+            yield m
+
+    async def disconnect(self):
+        pass
+
+
+def _assistant(text, session_id):
+    return sdk.AssistantMessage(
+        content=[sdk.TextBlock(text=text)], model="m", session_id=session_id
+    )
+
+
+def _result(session_id, turns=3, cost=0.5):
+    return sdk.ResultMessage(
+        subtype="success", duration_ms=10, duration_api_ms=10, is_error=False,
+        num_turns=turns, session_id=session_id, total_cost_usd=cost,
+    )
+
+
+class TheSessionIdIsToldBeforeTheStepIsOver(unittest.IsolatedAsyncioTestCase):
+    """`0019` plan step 2: `("session", id)` once, as soon as it is known, and the
+    accounting of the `ResultMessage` is untouched by it."""
+
+    async def _run(self, messages, session_id=None, adopt=None):
+        s = Sessions(Config(workspaces=("/tmp",)))
+        if adopt:
+            s.adopt(adopt)
+        _FakeClient.messages = messages
+        with mock.patch("coscc.sessions.ClaudeSDKClient", _FakeClient):
+            return [item async for item in s.stream("/tmp", "hi", session_id=session_id)]
+
+    async def test_a_new_session_says_its_id_once_before_done(self):
+        items = await self._run([_assistant("a", "sid-1"), _assistant("b", "sid-1"), _result("sid-1")])
+        kinds = [k for k, _ in items]
+        self.assertEqual(kinds.count("session"), 1)
+        self.assertLess(kinds.index("session"), kinds.index("done"))
+        self.assertEqual(dict(items)["session"], "sid-1")
+
+    async def test_the_result_is_still_accounted_after_the_id_was_told(self):
+        items = await self._run([_assistant("a", "sid-2"), _result("sid-2", turns=7)])
+        done = dict(items)["done"]
+        self.assertEqual(done["cost"]["turns"], 7)
+        self.assertEqual(done["cost"]["cost_usd"], 0.5)
+
+    async def test_a_resumed_session_is_told_first_and_still_accounted(self):
+        items = await self._run([_result("sid-3", turns=4)], session_id="sid-3", adopt="sid-3")
+        self.assertEqual(items[0], ("session", "sid-3"))
+        self.assertEqual([k for k, _ in items].count("session"), 1)
+        self.assertEqual(dict(items)["done"]["cost"]["turns"], 4)
+
+
 class WhichWorkspacesHaveSomeoneInThem(unittest.TestCase):
     """R6. The question `pull` has to ask before it touches a workspace."""
 

@@ -465,11 +465,14 @@ class Sessions:
                         yield ("tool", getattr(block, "name", "") or "tool")
                 if message.session_id:
                     resolved = message.session_id
+                if resolved and not told_session:
+                    told_session = True
+                    yield ("session", resolved)
             elif isinstance(message, sdk.ResultMessage):
                 resolved = message.session_id or resolved
-            if resolved and not told_session:
-                told_session = True
-                yield ("session", resolved)
+                if resolved and not told_session:
+                    told_session = True
+                    yield ("session", resolved)
                 # The one message carrying what this cost. An earlier version read `session_id` off it
                 # and dropped the rest, so every turn the app ran was unaccounted for.
                 total = _cumulative(message)
