@@ -118,6 +118,25 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual({"transitions", "outputs"} - tables, set())
             self.assertEqual([row["name"] for row in kept], ["keep-me"])
 
+    def test_a_version_2_database_gains_the_login_tables_and_keeps_its_rows(self):
+        """`0070` step 2: 3 adds `auth` and `auth_sessions` the same way 2 added its two."""
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.set_pref("density", "compact")
+            with data.connect() as conn:
+                conn.execute("DROP TABLE auth")
+                conn.execute("DROP TABLE auth_sessions")
+                conn.execute("PRAGMA user_version=2")
+
+            self.assertEqual(data.version(), 3)
+            with data.connect() as conn:
+                tables = {
+                    row["name"]
+                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+            self.assertEqual({"auth", "auth_sessions"} - tables, set())
+            self.assertEqual(data.pref("density"), "compact")
+
     def test_opening_an_existing_database_writes_nothing(self):
         """The common path is one pragma read. A write on every open is a lock on every open."""
         with tempfile.TemporaryDirectory() as d:
@@ -299,6 +318,58 @@ class Preferences(unittest.TestCase):
             data.set_pref("model_x", "a")
             data.set_pref("model:x", "b")
             self.assertEqual(list(data.pref_rows("model:")), ["model:x"])
+
+
+class TheLoginStore(unittest.TestCase):
+    """`0070` step 2. What the guard in `coscc/auth.py` stands on."""
+
+    def test_prefs_never_see_the_password_hash(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.set_pref("density", "compact")
+            self.assertTrue(data.auth_set_password("$argon2id$not-a-real-hash", 1))
+            data.auth_session_add("a" * 64, 1, 100)
+            everything = repr(data.prefs()) + repr(data.pref_rows(""))
+            self.assertNotIn("argon2id", everything)
+            self.assertNotIn("a" * 64, everything)
+            self.assertEqual(data.prefs(), {"density": "compact"})
+
+    def test_a_second_password_is_refused_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            self.assertIsNone(data.auth_password_hash())
+            self.assertTrue(data.auth_set_password("first", 1))
+            self.assertFalse(data.auth_set_password("second", 2))
+            self.assertEqual(data.auth_password_hash(), "first")
+
+    def test_clearing_removes_the_password_and_every_session(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.auth_set_password("h", 1)
+            data.auth_session_add("s1", 1, 100)
+            data.auth_session_add("s2", 1, 100)
+            data.auth_clear()
+            self.assertEqual(data.auth_state("s1"), (False, None))
+            self.assertEqual(data.auth_state("s2"), (False, None))
+            self.assertIsNone(data.auth_password_hash())
+
+    def test_a_new_session_sweeps_the_expired_ones(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.auth_session_add("old", 1, 50)
+            data.auth_session_add("new", 60, 200)
+            self.assertIsNone(data.auth_state("old")[1])
+            self.assertEqual(data.auth_state("new")[1]["expires_at"], 200)
+
+    def test_touch_and_delete(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.auth_session_add("s", 1, 100)
+            data.auth_session_touch("s", 50, 150)
+            row = data.auth_state("s")[1]
+            self.assertEqual((row["last_used_at"], row["expires_at"]), (50, 150))
+            data.auth_session_delete("s")
+            self.assertIsNone(data.auth_state("s")[1])
 
 
 class NothingReachesTheRealHomeDirectory(unittest.TestCase):

@@ -53,7 +53,13 @@ from typing import Any, Iterator
 # unit: **a v0.2.3 or older build will not open a database this one has touched.** Rolling
 # the app back means rolling the database back with it, and `~/.cos/cos.db` is not
 # something a downgrade removes. `plan.md` Risk 3 records the decision.
-SCHEMA_VERSION = 2
+#
+# 3 added `auth` and `auth_sessions` for `.cos/0070_anyone-who-reaches-the-port-can-run-anything`.
+# The same refusal applies one version on: **a build from before `0070` answers `500` on a
+# database this one has touched** (that unit's `spec.md` C6), and since `0070` the login
+# guard reads the database on every request, so it is every page, not only the routes
+# that read data.
+SCHEMA_VERSION = 3
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -189,6 +195,24 @@ CREATE TABLE IF NOT EXISTS outputs (
     """CREATE INDEX IF NOT EXISTS outputs_scope ON outputs (root, workspace, unit, id)""",
     """CREATE UNIQUE INDEX IF NOT EXISTS outputs_once
     ON outputs (once_key) WHERE once_key <> ''""",
+    """-- `0070` R5: the master password, as an argon2id hash and nothing else. One row at
+-- most, which the CHECK makes a property of the table rather than of every writer. Not a
+-- `prefs` row: `prefs()` returns every row, and a Settings route that read widely would
+-- hand the hash out. Times here are epoch seconds, unlike the ISO text elsewhere, because
+-- every read of them is a comparison with "now".
+CREATE TABLE IF NOT EXISTS auth (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    password_hash TEXT NOT NULL,
+    set_at        INTEGER NOT NULL
+)""",
+    """-- `0070` R6: one row per live login. Only the SHA-256 of the cookie's value is kept, so
+-- a copy of this file is not a copy of anyone's session.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    token_sha256 TEXT PRIMARY KEY,
+    created_at   INTEGER NOT NULL,
+    last_used_at INTEGER NOT NULL,
+    expires_at   INTEGER NOT NULL
+)""",
 )
 
 
@@ -350,8 +374,8 @@ class Data:
             self._retry(lambda: self._create(conn), wait)
         # An equal number is the whole common path: one pragma read, and nothing else.
         # A lower number re-runs `_create`, and that is the whole migration mechanism:
-        # every statement in `_SCHEMA` is `IF NOT EXISTS`, so a v1 database meets the two
-        # tables 2 added and keeps every row it already had. This works for *adding*. A
+        # every statement in `_SCHEMA` is `IF NOT EXISTS`, so a v1 database meets the
+        # tables 2 and 3 added and keeps every row it already had. This works for *adding*. A
         # version that has to change or drop a column will need a real migration here, and
         # will not be able to reuse this path.
 
@@ -498,3 +522,71 @@ class Data:
             for row in rows
             if str(row["key"]).startswith(prefix)
         }
+
+    # -- the login (`0070`) -------------------------------------------------
+    #
+    # Only `coscc/auth.py` calls these. None of them reads `prefs`, and `prefs()` never
+    # reads these tables, so the hash has no road out through Settings.
+
+    def auth_password_hash(self) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT password_hash FROM auth WHERE id = 1").fetchone()
+        return None if row is None else str(row["password_hash"])
+
+    def auth_set_password(self, password_hash: str, now: int) -> bool:
+        """Store the first password. False when one is already there.
+
+        Checked and inserted under one `BEGIN IMMEDIATE`, so of two `POST /setup` racing
+        each other exactly one wins, and the loser is a refusal rather than an overwrite.
+        """
+        with self.write() as conn:
+            if conn.execute("SELECT 1 FROM auth WHERE id = 1").fetchone() is not None:
+                return False
+            conn.execute(
+                "INSERT INTO auth (id, password_hash, set_at) VALUES (1, ?, ?)",
+                (password_hash, int(now)),
+            )
+            return True
+
+    def auth_clear(self) -> None:
+        """`coscc reset-password`: the password and every session, in one transaction."""
+        with self.write() as conn:
+            conn.execute("DELETE FROM auth")
+            conn.execute("DELETE FROM auth_sessions")
+
+    def auth_session_add(self, token_sha256: str, now: int, expires_at: int) -> None:
+        """A new login. Sessions already past their expiry go in the same write."""
+        with self.write() as conn:
+            conn.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (int(now),))
+            conn.execute(
+                "INSERT OR REPLACE INTO auth_sessions "
+                "(token_sha256, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?)",
+                (token_sha256, int(now), int(now), int(expires_at)),
+            )
+
+    def auth_state(self, token_sha256: str) -> tuple[bool, sqlite3.Row | None]:
+        """Whether a password is set, and this session's row — one connection, one read.
+
+        The guard asks this on every request it decides, which is what lets `coscc
+        reset-password` take effect on the next request without a restart. The row is
+        returned whatever its expiry; judging it is the caller's.
+        """
+        with self.connect() as conn:
+            has_password = conn.execute("SELECT 1 FROM auth WHERE id = 1").fetchone() is not None
+            row = conn.execute(
+                "SELECT token_sha256, created_at, last_used_at, expires_at "
+                "FROM auth_sessions WHERE token_sha256 = ?",
+                (token_sha256,),
+            ).fetchone() if token_sha256 else None
+        return has_password, row
+
+    def auth_session_touch(self, token_sha256: str, now: int, expires_at: int) -> None:
+        with self.write() as conn:
+            conn.execute(
+                "UPDATE auth_sessions SET last_used_at = ?, expires_at = ? WHERE token_sha256 = ?",
+                (int(now), int(expires_at), token_sha256),
+            )
+
+    def auth_session_delete(self, token_sha256: str) -> None:
+        with self.write() as conn:
+            conn.execute("DELETE FROM auth_sessions WHERE token_sha256 = ?", (token_sha256,))
