@@ -10,6 +10,7 @@ import {
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
+  parseUnmeasured, parseSpike, SPIKE_ROUNDS,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -124,10 +125,10 @@ test('an unreadable artifact is distinguished from a missing one', () => {
   assert.match(nextAction(absent).action, /write-intent/)
 })
 
-// --- eight stages ------------------------------------------------------------
+// --- nine stages -------------------------------------------------------------
 
-test('every stage name opens a gate, and a ninth does not', () => {
-  assert.deepEqual(STAGE_NAMES, ['idea', 'intent', 'spec', 'plan', 'impl', 'pr', 'review', 'ship'])
+test('every stage name opens a gate, and a tenth does not', () => {
+  assert.deepEqual(STAGE_NAMES, ['idea', 'intent', 'spec', 'spike', 'plan', 'impl', 'pr', 'review', 'ship'])
   for (const name of STAGE_NAMES) {
     assert.doesNotMatch(checkGate(unit({}), name).need.join(' '), /unknown stage/, `${name} should be a known stage`)
   }
@@ -185,14 +186,14 @@ test('a rejection in a late stage closes the unit, same as an early one', () => 
   assert.match(r.action, /closed — impl rejected/)
 })
 
-test('the five new artifacts are read, not reported as unexpected files', () => {
+test('the six new artifacts are read, not reported as unexpected files', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cos-stages-'))
-  for (const f of ['idea.md', 'intent.md', 'spec.md', 'plan.md', 'impl.md', 'pr.md', 'review.md', 'ship.md']) {
+  for (const f of ['idea.md', 'intent.md', 'spec.md', 'spike.md', 'plan.md', 'impl.md', 'pr.md', 'review.md', 'ship.md']) {
     writeFileSync(join(dir, f), f === 'intent.md' ? 'Type: feat. Status: accepted.\n' : 'Status: accepted.\n')
   }
   const u = readUnit(dir, '0009_widened')
   assert.deepEqual(u.problems, [])
-  assert.equal(Object.keys(u.artifacts).length, 8)
+  assert.equal(Object.keys(u.artifacts).length, 9)
 
   writeFileSync(join(dir, 'notes.md'), 'x')
   assert.match(readUnit(dir, '0009_widened').problems[0], /unexpected file\(s\): notes\.md/)
@@ -1340,4 +1341,155 @@ test('0047 R5: an outcome block changes nothing but outcome, for next and every 
   assert.equal(after.outcome.result, 'met')
   assert.equal(after.outcome.invalid, 1)
   assert.equal(after.json, before.json)
+})
+
+// --- 0039: spike, only when the spec left a question unmeasured -----------------
+
+const specText = (concerns, status = 'accepted') =>
+  `# Spec: x\nIntent: intent.md. Author: t. Status: ${status}.\n\n## Requirements\n\n- [unmeasured] U9. prose, not a concern\n\n## Concerns\n\n${concerns}\n`
+const spikeText = (round, items) =>
+  `# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Round: ${round}. Status: accepted.\n\n` +
+  items.map(([id, verdict]) => `## ${id}\n\nVerdict: ${verdict}.\n\n\`\`\`\n$ node -e 1\nok\n\`\`\`\n`).join('\n')
+const INTENT_0039 = '# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n'
+const spikeUnit = (files) => readUnit(unitDir({ 'intent.md': INTENT_0039, ...files }), '0039_x')
+
+test('parseUnmeasured reads [unmeasured] U<n> items under ## Concerns only (R1)', () => {
+  assert.deepEqual(parseUnmeasured(specText('- **C1.** nothing unmeasured here.')), { ids: [], problems: [] })
+  assert.deepEqual(parseUnmeasured(specText('- [unmeasured] U1. does it exit?\n* [unmeasured] U2. how long?')).ids, ['U1', 'U2'])
+  assert.deepEqual(parseUnmeasured(specText('1. [unmeasured] U3 numbered')).ids, ['U3'])
+  // mid-sentence, indented, or outside `## Concerns`: prose
+  assert.deepEqual(parseUnmeasured(specText('- C1 says [unmeasured] U1 in passing.\n  - [unmeasured] U2 nested')).ids, [])
+  assert.deepEqual(parseUnmeasured('## Requirements\n\n- [unmeasured] U1. x\n').ids, [])
+})
+
+test('an [unmeasured] item with no id, or an id twice, is a problem that closes plan (R2)', () => {
+  const noId = parseUnmeasured(specText('- [unmeasured] does it exit?'))
+  assert.deepEqual(noId.ids, [])
+  assert.match(noId.problems[0], /carries no U<n>: "- \[unmeasured\] does it exit\?"/)
+  const twice = parseUnmeasured(specText('- [unmeasured] U1. a\n- [unmeasured] U1. b'))
+  assert.deepEqual(twice.problems, ['spec.md: U1 is marked [unmeasured] twice'])
+
+  const u = spikeUnit({ 'spec.md': specText('- [unmeasured] does it exit?') })
+  assert.match(u.problems.join(' '), /carries no U<n>/)
+  assert.match(checkGate(u, 'plan').need.join(' '), /carries no U<n>/)
+  assert.equal(nextAction(u).stage, '')
+  assert.match(nextAction(u).action, /^fix spec\.md — an \[unmeasured\] item carries no U<n>/)
+})
+
+test('parseSpike reads verdicts and blocks per U<n>, and stops at ## Answers (R6)', () => {
+  const text =
+    'Round: 2. Status: accepted.\n\n## U1\n\nVerdict: holds.\n\n```\n$ x\ny\n```\n\n' +
+    '## U2\n\nno verdict here\n\n```\nout\n```\n\n## U3\n\nVerdict: fails.\n\n```\n```\n\n' +
+    '## Answers\n\n## U4\n\nVerdict: holds.\n\n```\nz\n```\n'
+  assert.deepEqual(parseSpike(text), {
+    round: 2,
+    items: {
+      U1: { verdict: 'holds', hasBlock: true },
+      U2: { verdict: null, hasBlock: true },
+      U3: { verdict: 'fails', hasBlock: false },
+    },
+  })
+  assert.equal(parseSpike('## U1\nVerdict: holds.\n').round, null)
+})
+
+test('a unit with no [unmeasured] item walks the loop as if spike did not exist (R4)', () => {
+  const u = spikeUnit({ 'spec.md': specText('- **C1.** none'), 'plan.md': 'Status: accepted.\n' })
+  assert.ok(!('unmeasured' in u.artifacts['spec.md']))
+  assert.ok(!('citesSpike' in u.artifacts['plan.md']))
+  assert.equal(checkGate(u, 'impl').ok, true)
+  assert.match(nextAction(u).action, /write-impl/)
+  assert.deepEqual(checkGate(u, 'spike').need, ['spike is not required: spec.md has no [unmeasured] item'])
+})
+
+test('a skipped spec never needs a spike, even beside a stray spike.md (R5)', () => {
+  const u = spikeUnit({
+    'spec.md': specText('- [unmeasured] U1. x', 'skipped'),
+    'spike.md': spikeText(1, [['U1', 'fails']]),
+    'plan.md': 'Status: accepted.\n',
+  })
+  assert.equal(checkGate(u, 'impl').ok, true)
+  assert.match(nextAction(u).action, /write-impl/)
+})
+
+test('an unmeasured spec sends the unit to spike, and closes plan until every U<n> holds (R7)', () => {
+  const spec = specText('- [unmeasured] U1. a\n- [unmeasured] U2. b')
+  const none = spikeUnit({ 'spec.md': spec })
+  assert.deepEqual(none.artifacts['spec.md'].unmeasured.ids, ['U1', 'U2'])
+  assert.equal(nextAction(none).stage, 'spike')
+  assert.equal(checkGate(none, 'spike').ok, true)
+  assert.match(checkGate(none, 'plan').need.join('\n'), /spike\.md does not exist/)
+  assert.match(checkGate(none, 'plan').need.join('\n'), /U1: spike\.md is missing, not accepted/)
+
+  const noBlock = spikeUnit({ 'spec.md': spec, 'spike.md': spikeText(1, [['U1', 'holds']]) + '\n## U2\n\nVerdict: holds.\n' })
+  const need = checkGate(noBlock, 'plan').need
+  assert.equal(need.length, 1)
+  assert.match(need[0], /^U2: .* no fenced block/)
+  assert.equal(nextAction(noBlock).stage, 'spike')
+
+  const held = spikeUnit({ 'spec.md': spec, 'spike.md': spikeText(1, [['U1', 'holds'], ['U2', 'holds']]) })
+  assert.equal(checkGate(held, 'plan').ok, true)
+  assert.equal(nextAction(held).stage, 'plan')
+})
+
+test('spec → spike (U2 fails) → spec again → spike → plan (R8, the Design flow)', () => {
+  const first = spikeUnit({
+    'spec.md': specText('- [unmeasured] U1. a\n- [unmeasured] U2. b'),
+    'spike.md': spikeText(1, [['U1', 'holds'], ['U2', 'fails']]),
+  })
+  assert.equal(nextAction(first).stage, 'spec')
+  assert.match(nextAction(first).action, /U2 does not hold/)
+  assert.match(checkGate(first, 'plan').need.join(' '), /U2: spike\.md measured that it does not hold/)
+  assert.equal(checkGate(first, 'spec').ok, true)
+
+  const rewritten = spikeUnit({
+    'spec.md': specText('- [unmeasured] U1. a\n- [unmeasured] U3. c'),
+    'spike.md': spikeText(1, [['U1', 'holds'], ['U2', 'fails']]),
+  })
+  assert.equal(nextAction(rewritten).stage, 'spike')
+  assert.match(nextAction(rewritten).action, /does not measure U3/)
+
+  const measured = spikeUnit({
+    'spec.md': specText('- [unmeasured] U1. a\n- [unmeasured] U3. c'),
+    'spike.md': spikeText(2, [['U1', 'holds'], ['U3', 'holds']]),
+  })
+  assert.equal(nextAction(measured).stage, 'plan')
+  assert.equal(checkGate(measured, 'plan').ok, true)
+})
+
+test('fails ahead of missing: spec is rewritten before the spike is redone (R8)', () => {
+  const u = spikeUnit({
+    'spec.md': specText('- [unmeasured] U1. a\n- [unmeasured] U2. b'),
+    'spike.md': spikeText(1, [['U2', 'fails']]),
+  })
+  assert.equal(nextAction(u).stage, 'spec')
+})
+
+test(`a question still failing at round ${SPIKE_ROUNDS} needs a person`, () => {
+  const u = spikeUnit({
+    'spec.md': specText('- [unmeasured] U3. c'),
+    'spike.md': spikeText(SPIKE_ROUNDS, [['U3', 'fails']]),
+  })
+  const next = nextAction(u)
+  assert.equal(next.stage, '')
+  assert.equal(next.blocked, true)
+  assert.equal(next.action, `needs a person — spike round ${SPIKE_ROUNDS} of ${SPIKE_ROUNDS} found U3 does not hold`)
+})
+
+test('a spec rewritten without its questions still reads the spike beside it', () => {
+  const u = spikeUnit({ 'spec.md': specText('- none left'), 'spike.md': spikeText(1, [['U1', 'fails']]) })
+  // the old measurement is required to be accepted, but an id the spec dropped is not judged
+  assert.equal(nextAction(u).stage, 'plan')
+  assert.equal(checkGate(u, 'plan').ok, true)
+})
+
+test('with a spike required, impl opens only on a plan that cites spike.md (R9)', () => {
+  const files = {
+    'spec.md': specText('- [unmeasured] U1. a'),
+    'spike.md': spikeText(1, [['U1', 'holds']]),
+  }
+  const silent = spikeUnit({ ...files, 'plan.md': 'Status: accepted.\n\n1. build it\n' })
+  assert.equal(silent.artifacts['plan.md'].citesSpike, false)
+  assert.deepEqual(checkGate(silent, 'impl').need, ['plan.md does not cite spike.md — every step that rests on a U<n> cites spike.md ## U<n>'])
+  const cites = spikeUnit({ ...files, 'plan.md': 'Status: accepted.\n\n1. build it (spike.md ## U1)\n' })
+  assert.equal(checkGate(cites, 'impl').ok, true)
 })

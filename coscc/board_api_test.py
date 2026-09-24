@@ -17,7 +17,7 @@ from coscc.api import build
 from coscc.config import Config
 
 REPO = Path(__file__).resolve().parent.parent
-STAGES = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
+STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
 
 
 def seed_store(data_dir, workspace=REPO) -> Path:

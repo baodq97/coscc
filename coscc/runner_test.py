@@ -35,7 +35,7 @@ from coscc.runner import (
     with_answers,
 )
 
-STAGES = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
+STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
 UNIT = "0009_a-test-unit"
 
 

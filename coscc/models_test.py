@@ -11,7 +11,7 @@ from pathlib import Path
 from coscc import models
 
 REPO = Path(__file__).resolve().parent.parent
-STAGES = ["idea", "intent", "spec", "plan", "impl", "pr", "review", "ship"]
+STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
 
 
 def row(model=None, effort=None):

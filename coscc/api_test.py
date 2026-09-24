@@ -229,10 +229,10 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         return {row["name"]: row for row in r.json()["rows"]}
 
-    async def test_thirteen_rows_with_nothing_configured(self):
-        # `0033` R9: eight stages, a `:novel` row for each of the four after `plan`, chat.
+    async def test_fourteen_rows_with_nothing_configured(self):
+        # `0033` R9 and `0039`: nine stages, a `:novel` row for each of the four after `plan`, chat.
         rows = await self.rows()
-        self.assertEqual(len(rows), 13)
+        self.assertEqual(len(rows), 14)
         self.assertEqual(list(rows)[-1], "chat")
         self.assertEqual(rows["impl"]["source"], "default")
         self.assertEqual((rows["impl:novel"]["effort"], rows["impl:novel"]["effort_source"]), ("high", "default"))
