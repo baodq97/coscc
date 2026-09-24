@@ -23,7 +23,8 @@ not depend on another.
 for units numbered 15 and up (`0005`-`0008` are left out, `intent.md ## Answers, câu 2`):
 
     the mean review rounds per unit, all rounds and counted rounds, before and after
-    the wasted rounds of kind (a) after: a counted round whose open findings are all low
+    the wasted rounds of kind (a) after: a counted round whose every finding not closed
+      is `[open]`, low, and not rated higher by an earlier round
     how many units shipped after this one merged
     how many rounds carry a finding whose severity is not readable (spec C9)
 
@@ -117,17 +118,37 @@ def rounds_of(unit: dict) -> list[dict]:
 
 
 def count(unit: dict) -> dict:
+    """Kind (a) is a counted round whose every finding still open was low and did not block.
+
+    "Still open" is every finding not closed -- `[fixed <sha>]`, or `[answered]` with a block
+    in `review.md ## Answers` -- not only those labelled `[open]`: a `[claim-rejected]`, a
+    `[needs-person]`, an unreadable label, an unbacked `[answered]`, or a low an earlier round
+    rated higher (`cos.mjs` R3(c)) blocks, and a round that asked for it was not wasted
+    (`0061` review round 1, F1).
+    """
     rounds = rounds_of(unit)
-    counted = [r for r in rounds if r.get("verdict") == "changes-requested"]
+    answered = set(((unit.get("artifacts") or {}).get("review.md") or {}).get("personAnswers") or [])
+    higher: set[str] = set()
+    counted = 0
     wasted = 0
-    for r in counted:
-        still = [f for f in r.get("findings") or [] if f.get("label") == "open"]
-        if still and all(f.get("severity") == "low" for f in still):
-            wasted += 1
+    for r in rounds:
+        findings = r.get("findings") or []
+        if r.get("verdict") == "changes-requested":
+            counted += 1
+            still = [
+                f for f in findings
+                if not (f.get("label") == "fixed" or (f.get("label") == "answered" and f.get("id") in answered))
+            ]
+            if still and all(
+                f.get("label") == "open" and f.get("severity") == "low" and f.get("id") not in higher
+                for f in still
+            ):
+                wasted += 1
+        higher |= {f.get("id") for f in findings if f.get("severity") in ("high", "medium")}
     unrated = sum(
         1 for r in rounds if any(f.get("severity") is None for f in r.get("findings") or [])
     )
-    return {"rounds": len(rounds), "counted": len(counted), "wasted_a": wasted, "unrated_rounds": unrated}
+    return {"rounds": len(rounds), "counted": counted, "wasted_a": wasted, "unrated_rounds": unrated}
 
 
 def mean(values: list[int]) -> float | None:
@@ -289,29 +310,48 @@ ROUND = "## Round {n}\n\nReviewed: {sha}. Verdict: {verdict}.\n\n### Findings\n\
 SHIP = "# Ship: x\nReview: review.md. Author: t. Status: accepted.\n\n## What went out\n\n- `mergedAt`: {at}.\n"
 
 
-def fake_unit(cos: Path, name: str, at: str | None, wasted: bool = False) -> None:
+HIGH = ["- F1 [open] a.py:1 — high — x"]
+WASTED = ["- F1 [open] a.py:1 — low — x"]
+# Counted rounds that were right to ask: a low sits `[open]` beside a finding that still
+# blocks, in each of the shapes `count` must read as open (`0061` review round 1, F1). The
+# last one is a low that an earlier round rated high.
+BESIDE_A_LOW = [
+    ["- F1 [open] a.py:1 — low — x\n- F2 [claim-rejected] b.py:1 — high — y"],
+    ["- F1 [open] a.py:1 — low — x\n- F2 [needs-person] b.py:1 — high — y"],
+    ["- F1 [open] a.py:1 — low — x\n- F2 [later] b.py:1 — high — y"],
+    ["- F1 [open] a.py:1 — low — x\n- F2 [answered] b.py:1 — high — y"],
+    ["- F1 [open] a.py:1 — high — x", "- F1 [open] a.py:1 — low — x"],
+]
+
+
+def fake_unit(cos: Path, name: str, at: str | None, asked: list[str] = HIGH) -> None:
+    """A unit whose `asked` rounds each end `changes-requested` -- one string of finding
+    lines per round -- then a round that passes."""
     unit = cos / name
     unit.mkdir(parents=True)
     (unit / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
-    first = "- F1 [open] a.py:1 — low — x" if wasted else "- F1 [open] a.py:1 — high — x"
     rounds = [
-        ROUND.format(n=1, sha="a" * 40, verdict="changes-requested", findings=first),
-        ROUND.format(n=2, sha="b" * 40, verdict="pass", findings=f"- F1 [fixed {'b' * 40}] a.py:1 — high — x"),
+        ROUND.format(n=n, sha=f"{n:x}" * 40, verdict="changes-requested", findings=findings)
+        for n, findings in enumerate(asked, start=1)
     ]
+    rounds.append(ROUND.format(n=len(asked) + 1, sha="f" * 40, verdict="pass", findings=f"- F1 [fixed {'f' * 40}] a.py:1 — high — x"))
     (unit / "review.md").write_text(REVIEW.format(rounds="\n".join(rounds)), encoding="utf-8")
     if at is not None:
         (unit / "ship.md").write_text(SHIP.format(at=at), encoding="utf-8")
 
 
-def measured(tmp: Path, name: str, after: int, wasted: bool = False, line: bool = True) -> int:
-    """Build a store under `tmp/name`, run `measure` on it quietly, return its exit code."""
+def measured(tmp: Path, name: str, after: int, asked: list[list[str]] | None = None, line: bool = True) -> int:
+    """Build a store under `tmp/name`, run `measure` on it quietly, return its exit code.
+    `asked[i]`, when given, is the rounds of the i-th unit shipped after; the rest get `HIGH`."""
     root = tmp / name
     cos = root / "units" / "slot" / ".cos"
     cos.mkdir(parents=True)
     fake_unit(cos, "0020_before", "2026-09-01T00:00:00Z")
     fake_unit(cos, f"0061_{SLUG}", "2026-09-25T00:00:00Z" if line else None)
+    asked = asked or []
     for i in range(after):
-        fake_unit(cos, f"{70 + i:04d}_after-{i}", f"2026-10-0{i + 1}T00:00:00Z", wasted=wasted and i == 0)
+        rounds = asked[i] if i < len(asked) else HIGH
+        fake_unit(cos, f"{70 + i:04d}_after-{i}", f"2026-10-0{i + 1}T00:00:00Z", rounds)
     quiet = io.StringIO()
     with contextlib.redirect_stdout(quiet):
         code = measure(root)
@@ -355,8 +395,10 @@ def main() -> int:
         t = Path(tmp)
         for name, kwargs, want, text in [
             ("five", {"after": 5}, EXIT_PASS, "5 units shipped after, no wasted round (a): exit 0"),
-            ("wasted", {"after": 5, "wasted": True}, EXIT_BROKEN,
+            ("wasted", {"after": 5, "asked": [WASTED]}, EXIT_BROKEN,
              "one of them spent a counted round on lows only: exit 1"),
+            ("beside", {"after": 5, "asked": BESIDE_A_LOW}, EXIT_PASS,
+             "a low open beside a finding still blocking is not a wasted round: exit 0"),
             ("four", {"after": 4}, EXIT_ENV, "4 units shipped after: exit 2"),
             ("no-line", {"after": 5, "line": False}, EXIT_ENV, "this unit has no ship.md: exit 2"),
         ]:
