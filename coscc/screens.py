@@ -990,9 +990,12 @@ def _settings() -> rx.Component:
 
 
 def _cell_chip(cell: rx.Var[Cell]) -> rx.Component:
+    # `0019_a-failed-step-destroys-the-work-that-succeeded` plan step 7. `cell.label` is
+    # `cell.status` except when the artifact is absent and the last run of this stage
+    # failed, in which case it names that run instead of the bare word "not started".
     return rx.vstack(
         s.text(cell.stage, size="1"),
-        s.badge(cell.status, cell.color),
+        s.badge(cell.label, cell.color),
         spacing="1", align="center", min_width="0",
     )
 

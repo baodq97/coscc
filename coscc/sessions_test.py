@@ -112,6 +112,76 @@ class HistoryComesFromTheSessionStore(unittest.TestCase):
             self.assertEqual(len(history("s1", "/p")), 1)
 
 
+def _raw_msg(type_, content, uuid="u", parent_tool_use_id=None, parent_agent_id=None):
+    return sdk.SessionMessage(
+        type=type_,
+        uuid=uuid,
+        session_id="s1",
+        message={"role": type_, "content": content},
+        parent_tool_use_id=parent_tool_use_id,
+        parent_agent_id=parent_agent_id,
+    )
+
+
+class TranscriptExcerptIsWhatTheSessionDid(unittest.TestCase):
+    """`0019` plan step 2: `transcript_excerpt` never the prompt, always the result."""
+
+    def test_a_tool_results_text_is_in_the_excerpt(self):
+        msgs = [
+            _raw_msg("user", "do the thing", "u1"),  # the prompt: must not appear
+            _raw_msg("assistant", [{"type": "text", "text": "on it"}], "u2"),
+            _raw_msg(
+                "user",
+                [{"type": "tool_result", "content": [{"type": "text", "text": "ran ok"}]}],
+                "u3",
+            ),
+        ]
+        with mock.patch.object(sdk, "get_session_messages", return_value=msgs):
+            excerpt, total = sessions.transcript_excerpt("s1", "/p", 8000)
+        self.assertIn("ran ok", excerpt)
+        self.assertIn("on it", excerpt)
+        self.assertNotIn("do the thing", excerpt)
+        self.assertEqual(total, len(excerpt))
+
+    def test_a_bare_string_tool_result_is_kept(self):
+        msgs = [_raw_msg("user", [{"type": "tool_result", "content": "plain string"}], "u1")]
+        with mock.patch.object(sdk, "get_session_messages", return_value=msgs):
+            excerpt, _ = sessions.transcript_excerpt("s1", "/p", 8000)
+        self.assertIn("plain string", excerpt)
+
+    def test_subagent_traffic_is_excluded(self):
+        msgs = [
+            _raw_msg("assistant", [{"type": "text", "text": "outer"}], "u1"),
+            _raw_msg(
+                "assistant", [{"type": "text", "text": "inner"}], "u2", parent_tool_use_id="t1"
+            ),
+        ]
+        with mock.patch.object(sdk, "get_session_messages", return_value=msgs):
+            excerpt, _ = sessions.transcript_excerpt("s1", "/p", 8000)
+        self.assertNotIn("inner", excerpt)
+
+    def test_the_excerpt_is_a_suffix_of_the_full_transcript_and_total_chars_is_exact(self):
+        msgs = [
+            _raw_msg("assistant", [{"type": "text", "text": "a" * 50}], "u1"),
+            _raw_msg(
+                "user",
+                [{"type": "tool_result", "content": [{"type": "text", "text": "b" * 50}]}],
+                "u2",
+            ),
+        ]
+        with mock.patch.object(sdk, "get_session_messages", return_value=msgs):
+            full, total = sessions.transcript_excerpt("s1", "/p", 10 ** 9)
+            excerpt, total_again = sessions.transcript_excerpt("s1", "/p", 20)
+        self.assertTrue(full.endswith(excerpt))
+        self.assertEqual(len(excerpt), 20)
+        self.assertEqual(total, len(full))
+        self.assertEqual(total_again, total)
+
+    def test_an_empty_session_id_is_refused(self):
+        with self.assertRaises(ValueError):
+            sessions.transcript_excerpt("", "/p", 8000)
+
+
 class OptionsCarryTheKnobs(unittest.TestCase):
     def test_resume_never_forks(self):
         # spec.md C7. The fork branch returns a new id, everything keeps working, and R3
@@ -189,6 +259,73 @@ class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
 
     async def test_closing_nothing_is_not_an_error(self):
         await Sessions(Config()).close_all()
+
+
+class _FakeClient:
+    """A `ClaudeSDKClient` stand-in: replays a fixed message list, spends nothing."""
+
+    messages: list = []
+
+    def __init__(self, options=None):
+        pass
+
+    async def connect(self):
+        pass
+
+    async def query(self, text):
+        pass
+
+    async def receive_response(self):
+        for m in self.messages:
+            yield m
+
+    async def disconnect(self):
+        pass
+
+
+def _assistant(text, session_id):
+    return sdk.AssistantMessage(
+        content=[sdk.TextBlock(text=text)], model="m", session_id=session_id
+    )
+
+
+def _result(session_id, turns=3, cost=0.5):
+    return sdk.ResultMessage(
+        subtype="success", duration_ms=10, duration_api_ms=10, is_error=False,
+        num_turns=turns, session_id=session_id, total_cost_usd=cost,
+    )
+
+
+class TheSessionIdIsToldBeforeTheStepIsOver(unittest.IsolatedAsyncioTestCase):
+    """`0019` plan step 2: `("session", id)` once, as soon as it is known, and the
+    accounting of the `ResultMessage` is untouched by it."""
+
+    async def _run(self, messages, session_id=None, adopt=None):
+        s = Sessions(Config(workspaces=("/tmp",)))
+        if adopt:
+            s.adopt(adopt)
+        _FakeClient.messages = messages
+        with mock.patch("coscc.sessions.ClaudeSDKClient", _FakeClient):
+            return [item async for item in s.stream("/tmp", "hi", session_id=session_id)]
+
+    async def test_a_new_session_says_its_id_once_before_done(self):
+        items = await self._run([_assistant("a", "sid-1"), _assistant("b", "sid-1"), _result("sid-1")])
+        kinds = [k for k, _ in items]
+        self.assertEqual(kinds.count("session"), 1)
+        self.assertLess(kinds.index("session"), kinds.index("done"))
+        self.assertEqual(dict(items)["session"], "sid-1")
+
+    async def test_the_result_is_still_accounted_after_the_id_was_told(self):
+        items = await self._run([_assistant("a", "sid-2"), _result("sid-2", turns=7)])
+        done = dict(items)["done"]
+        self.assertEqual(done["cost"]["turns"], 7)
+        self.assertEqual(done["cost"]["cost_usd"], 0.5)
+
+    async def test_a_resumed_session_is_told_first_and_still_accounted(self):
+        items = await self._run([_result("sid-3", turns=4)], session_id="sid-3", adopt="sid-3")
+        self.assertEqual(items[0], ("session", "sid-3"))
+        self.assertEqual([k for k, _ in items].count("session"), 1)
+        self.assertEqual(dict(items)["done"]["cost"]["turns"], 4)
 
 
 class WhichWorkspacesHaveSomeoneInThem(unittest.TestCase):

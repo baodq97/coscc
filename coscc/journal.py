@@ -232,6 +232,17 @@ class Journal:
             {"kind": "end", "workspace": workspace, "unit": unit, "stage": stage, "outcome": outcome, **extra}
         )
 
+    def attempted(self, workspace: str, unit: str, stage: str, **extra: Any) -> dict[str, Any]:
+        """`0019`. What a stopped step left behind, written just before its `end` record.
+
+        Never read for a stage's status — `board.py` still reads only `Status:` in the
+        artifact (`.claude/CLAUDE.md` invariant). This is only ever read back by
+        `failed_attempts`, to build the next run's prompt.
+        """
+        return self.append(
+            {"kind": "attempt", "workspace": workspace, "unit": unit, "stage": stage, **extra}
+        )
+
     # -- reading ------------------------------------------------------------
 
     def records(
@@ -330,6 +341,55 @@ class Journal:
             add_cost(total, bucket)
         return {"per_stage": per_stage, "total": total}
 
+    def failed_attempts(
+        self, workspace: str, unit: str, stage: str, timeout: float | None = None
+    ) -> dict[str, Any] | None:
+        """What the runs of `stage` before this one left behind, or `None` when there is
+        nothing to tell — no run yet, or the most recent one is `done` (`0019` plan step 4).
+        """
+        seq = [
+            r
+            for r in self.records(workspace, unit, timeout=timeout)
+            if str(r.get("stage") or "") == stage and r.get("kind") in ("end", "attempt")
+        ]
+        end_positions = [i for i, r in enumerate(seq) if r.get("kind") == "end"]
+        if not end_positions:
+            return None
+        last = end_positions[-1]
+        if seq[last].get("outcome") == "done":
+            return None
+
+        attempt = None
+        for i in range(last - 1, -1, -1):
+            # Only the attempt written by *this* run: an earlier run's `end` ends the
+            # search, so a run whose capture failed is described as having none, rather
+            # than with the tree of a run before it.
+            if seq[i].get("kind") == "end":
+                break
+            if seq[i].get("kind") == "attempt":
+                attempt = seq[i]
+                break
+
+        def _brief(rec: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "at": rec.get("at"),
+                "outcome": rec.get("outcome"),
+                "turns": rec.get("turns"),
+                "cost_usd": rec.get("cost_usd"),
+            }
+
+        earlier: list[dict[str, Any]] = []
+        for i in range(last - 1, -1, -1):
+            r = seq[i]
+            if r.get("kind") != "end":
+                continue
+            if r.get("outcome") == "done":
+                break
+            earlier.append(_brief(r))
+        earlier.reverse()
+
+        return {"attempt": attempt, "latest": _brief(seq[last]), "earlier": earlier}
+
 
 def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Records in order, folded into one row per run. Shared by `timeline`/`timelines`."""
@@ -380,6 +440,11 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             cost = zero_cost()
             add_cost(cost, item)
             row["cost"] = cost
+            # `0019`. Whether this `end` actually carried a cost, as opposed to one
+            # `add_cost` filled in as zero because the session died before reporting any.
+            # Without this a step that failed before its first billed turn reads on the
+            # board as a run that cost nothing, rather than one nobody measured.
+            row["reported"] = "cost_usd" in item
     return rows
 
 
@@ -388,4 +453,27 @@ def totals_of(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     out = zero_cost()
     for row in rows:
         add_cost(out, row.get("cost") or {})
+    return out
+
+
+def last_runs(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """`0019`. For each stage, its most recently *ended* timeline row, keyed by stage.
+
+    A run still in progress (`ended` unset) is skipped: it is not a "last run" yet, it is
+    the current one. `rows` is `timeline`/`timelines`'s output, oldest first, so the last
+    assignment to a stage in iteration order is the most recent one.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if row.get("ended") is None:
+            continue
+        stage = str(row.get("stage") or "")
+        cost = row.get("cost") or {}
+        reported = row.get("reported", True)
+        out[stage] = {
+            "outcome": row.get("outcome"),
+            "ended": row.get("ended"),
+            "turns": cost.get("turns") if reported else None,
+            "cost_usd": cost.get("cost_usd") if reported else None,
+        }
     return out

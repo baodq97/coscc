@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc.journal import BadRecord, Busy, Journal
+from coscc.journal import BadRecord, Busy, Journal, last_runs
 
 WRITERS = 4
 PER_WRITER = 5
@@ -136,6 +136,108 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
                 j.started("w", "0009_x", stage, "manual")
                 j.finished("w", "0009_x", stage, "done")
             self.assertEqual([r["stage"] for r in j.timeline("w", "0009_x")], ["intent", "spec", "plan"])
+
+
+class AFailedStepLeavesARecord(unittest.TestCase):
+    """`0019` plan step 4: `attempted`, `failed_attempts`, `last_runs`, and `reported`."""
+
+    def test_an_end_with_no_cost_reads_as_null_not_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "failed")  # died before any cost was billed
+            [row] = j.timeline("w", "0009_x")
+            self.assertFalse(row["reported"])
+            self.assertEqual(row["cost"]["cost_usd"], 0.0)  # zero_cost() still fills this in
+
+            j.started("w", "0009_x", "spec", "autonomous")
+            j.finished("w", "0009_x", "spec", "done", turns=3, cost_usd=1.5)
+            [row2] = j.timeline("w", "0009_x", timeout=None)[1:]
+            self.assertTrue(row2["reported"])
+
+    def test_fail_fail_fail_done_reads_as_no_open_attempt(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            for _ in range(3):
+                j.started("w", "0009_x", "impl", "autonomous")
+                j.finished("w", "0009_x", "impl", "exhausted", turns=121, cost_usd=6.88)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "done", artifact="impl.md")
+            self.assertIsNone(j.failed_attempts("w", "0009_x", "impl"))
+
+    def test_no_run_at_all_reads_as_no_open_attempt(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            self.assertIsNone(j.failed_attempts("w", "0009_x", "impl"))
+
+    def test_done_then_two_fails_gives_one_latest_and_one_earlier(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "done", artifact="impl.md")
+
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.attempted("w", "0009_x", "impl", head="aaa", turns=121, cost_usd=6.88)
+            j.finished("w", "0009_x", "impl", "exhausted", turns=121, cost_usd=6.88)
+
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.attempted("w", "0009_x", "impl", head="bbb", turns=60, cost_usd=4.91)
+            j.finished("w", "0009_x", "impl", "exhausted", turns=60, cost_usd=4.91)
+
+            found = j.failed_attempts("w", "0009_x", "impl")
+            self.assertIsNotNone(found)
+            self.assertEqual(found["attempt"]["head"], "bbb")
+            self.assertEqual(found["latest"]["turns"], 60)
+            self.assertEqual(len(found["earlier"]), 1)
+            self.assertEqual(found["earlier"][0]["turns"], 121)
+
+    def test_a_dead_end_with_no_cost_carries_nulls_not_zeros(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.attempted("w", "0009_x", "impl", head="ccc")
+            j.finished("w", "0009_x", "impl", "failed")  # no cost reported at all
+            found = j.failed_attempts("w", "0009_x", "impl")
+            self.assertIsNone(found["latest"]["turns"])
+            self.assertIsNone(found["latest"]["cost_usd"])
+
+    def test_a_run_whose_capture_failed_is_not_described_by_an_older_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.attempted("w", "0009_x", "impl", head="old")
+            j.finished("w", "0009_x", "impl", "exhausted", turns=121, cost_usd=6.88)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "failed")  # no attempt row: capture failed
+            found = j.failed_attempts("w", "0009_x", "impl")
+            self.assertIsNone(found["attempt"])
+            self.assertEqual(len(found["earlier"]), 1)
+
+    def test_timeline_with_no_attempt_row_still_has_no_kind_attempt(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "exhausted", turns=5, cost_usd=0.1)
+            self.assertEqual([r["kind"] for r in j.records("w", "0009_x")], ["start", "end"])
+
+
+class LastRunsIsAPureFold(unittest.TestCase):
+    def test_a_stage_with_no_end_is_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            self.assertEqual(last_runs(j.timeline("w", "0009_x")), {})
+
+    def test_the_most_recent_ended_row_wins(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "exhausted", turns=121, cost_usd=6.88)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "done", artifact="impl.md", turns=23, cost_usd=0.66)
+            got = last_runs(j.timeline("w", "0009_x"))["impl"]
+            self.assertEqual(got["outcome"], "done")
+            self.assertEqual(got["turns"], 23)
 
 
 class TotalsAreAddedNotStored(unittest.TestCase):

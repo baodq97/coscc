@@ -151,6 +151,56 @@ def exists(session_id: str, directory: str | None = None) -> bool:
     return sdk.get_session_info(session_id, directory=directory) is not None
 
 
+def _tool_result_text(content: Any) -> str:
+    """The text of a `tool_result` block only — never the tool call that produced it.
+
+    `0019` plan step 2: an excerpt is what a session *did*, not what it was asked to do,
+    so a `ToolUseBlock`'s own input is skipped here the same way `history` skips it.
+    """
+    if isinstance(content, str):
+        return content
+    parts = []
+    for block in content or []:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type") == "text":
+            parts.append(str(block.get("text", "")))
+    return "".join(parts)
+
+
+def transcript_excerpt(
+    session_id: str, directory: str | None, limit: int
+) -> tuple[str, int]:
+    """The last `limit` characters of what a session *did*, and the full length.
+
+    `0019` plan step 2. Assembled from the assistant's own text and the results tool
+    calls came back with — never the prompt that started the turn, which is not
+    something the session did. Subagent traffic is excluded, as `history` excludes it.
+    """
+    if not session_id:
+        raise ValueError("transcript_excerpt needs a session id")
+    messages = sdk.get_session_messages(session_id, directory=directory)
+    pieces: list[str] = []
+    for m in messages:
+        if m.parent_tool_use_id or m.parent_agent_id:
+            continue
+        content = (m.message or {}).get("content")
+        if m.type == "assistant":
+            text = _text_of(content)
+        elif m.type == "user":
+            found = []
+            for block in content or []:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    found.append(_tool_result_text(block.get("content")))
+            text = "\n".join(p for p in found if p)
+        else:
+            continue
+        if text.strip():
+            pieces.append(text)
+    full = "\n".join(pieces)
+    return full[-limit:], len(full)
+
+
 # ---------------------------------------------------------------------------
 # Session layer
 # ---------------------------------------------------------------------------
@@ -393,6 +443,13 @@ class Sessions:
         # is the session's own record of the model it ran on, as opposed to the model the
         # app asked for (`0004_no-setting-says-which-model-runs-a-stage`, outcome 4).
         used: list[str] = []
+        # `0019` plan step 2. Yielded once, the first moment `resolved` has a value, so a
+        # caller that dies before `done` — the whole reason this unit exists — still has a
+        # session id to read a transcript excerpt back with. `Service.stream` (chat) drops
+        # this kind; `api.py` would otherwise turn it into a spurious `done` line in chat.
+        told_session = bool(resolved)
+        if told_session:
+            yield ("session", resolved)
         await live.client.query(text)
         async for message in live.client.receive_response():
             if isinstance(message, AssistantMessage):
@@ -408,8 +465,14 @@ class Sessions:
                         yield ("tool", getattr(block, "name", "") or "tool")
                 if message.session_id:
                     resolved = message.session_id
+                if resolved and not told_session:
+                    told_session = True
+                    yield ("session", resolved)
             elif isinstance(message, sdk.ResultMessage):
                 resolved = message.session_id or resolved
+                if resolved and not told_session:
+                    told_session = True
+                    yield ("session", resolved)
                 # The one message carrying what this cost. An earlier version read `session_id` off it
                 # and dropped the rest, so every turn the app ran was unaccounted for.
                 total = _cumulative(message)

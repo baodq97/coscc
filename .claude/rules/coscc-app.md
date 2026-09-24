@@ -187,6 +187,20 @@ no commands, one turn, no budget.
   `COS_HOST=127.0.0.1` is the mitigation that exists.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
+- **A failed step's transcript tail is stored in `cos.db` and put into the next prompt.**
+  Since `0019` a stage that ends without `done` — a ceiling hit, an exception, a reply with
+  no `Status:` line — has `Runner.run` capture the tree (`HEAD`, branch, the commits since
+  the trunk, `git status --porcelain`) and the last `runner.ATTEMPT_EXCERPT` (8000, chosen;
+  measured 2026-09-24 as too short to hold `0032`'s own measurements, which sat 87656 and
+  101788 characters from the end — the unit's `impl.md` says why it was left) characters of what the session's own
+  turns produced, and append it to the run log as one `kind: "attempt"` row, read back only
+  by `journal.failed_attempts` and placed in the *next* run's prompt
+  (`runner.describe_attempt`), never in an artifact. No route returns it — `/api/timeline`,
+  `Service.board`, `.activity`, `.usage` and `.activity_and_usage` all project a fixed set
+  of fields that does not include it — but it still sits in `cos.db` under the data root,
+  and a tool's own output can carry a token or a local path. Capturing is best-effort:
+  `Runner.run`'s `finally` swallows every exception around it, so a step's outcome and its
+  `end` record never depend on the capture succeeding.
 
 ## The proofs, and what each one costs
 
@@ -205,6 +219,7 @@ no commands, one turn, no budget.
 | `verify_0014.py` | **spends real money and merges a real pull request.** Needs `COS_PROOF_REPO`, a throwaway repo; unset is exit 2. Five sessions — measured $3.28 and 11m49s end to end, 2026-09-22. `--dry` stops before the first paid step |
 | `verify_0016.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
 | `verify_0017.py` | no session, no quota, no network; temporary data root, bare-directory remote. `--this-repo` prepares a worktree of this checkout (`uv sync`, `npm ci`, a build: 20s measured 2026-09-23) and runs `npm test` twice. `--paid` **spends real money**: two real `impl` sessions on a clone of `COS_PROOF_REPO`; unset is exit 2 |
+| `verify_0019.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. The session and its transcript are stand-ins, so it cannot see a real budget stop's `terminal_reason` or a transcript read before it is flushed |
 | `verify_0021.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2 |
 | `verify_0024.py` | no session, no quota, no network; temporary data root and a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s own handlers through Reflex's event processor, in-process; no browser, so the compiled page is not exercised |
 | `verify_0025.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2 |
