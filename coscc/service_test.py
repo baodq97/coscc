@@ -871,6 +871,117 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         self.assertIn("boom", said)
 
 
+class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
+    """`0042` plan step 5, end to end on real git: `plan` runs, another unit merges, `impl`
+    starts. The fixture is `AUnitsBaseIsTheRemoteTrunk`'s, borrowed rather than inherited
+    so its tests do not run twice. The expected list is `git diff --name-only` run by
+    subprocess — the intent's own check — never something this test worked out.
+    """
+
+    HEADING = "# The files main changed since the plan"
+
+    class Replies:
+        def __init__(self):
+            self.reply = ""
+            self.prompts: list[str] = []
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.prompts.append(text)
+            yield ("chunk", self.reply)
+            yield ("done", {"session_id": "sess-42", "cost": {"output_tokens": 3}})
+
+    setUp = AUnitsBaseIsTheRemoteTrunk.setUp
+    _git = AUnitsBaseIsTheRemoteTrunk._git
+    _advance_remote = AUnitsBaseIsTheRemoteTrunk._advance_remote
+    _typed_unit = AUnitsBaseIsTheRemoteTrunk._typed_unit
+    _tree = AUnitsBaseIsTheRemoteTrunk._tree
+    _run_step = AUnitsBaseIsTheRemoteTrunk._run_step
+
+    PLAN = (
+        "# Plan: a problem\nIntent: intent.md. Author: t. Status: accepted.\n\n"
+        "## Files that change\n\n| `a.py` | x |\n| `b.py:3-4` | y |\n\n## Order of work\n\n1. x\n"
+    )
+
+    def _unit_with_spec(self) -> tuple[str, Path]:
+        unit = self._typed_unit()
+        directory = units.unit_dir(str(self.repo), unit, str(self.root / "data"))
+        (directory / "spec.md").write_text(
+            "# Spec: a problem\nAuthor: t. Status: accepted.\n", encoding="utf-8"
+        )
+        return unit, directory
+
+    def _planned(self) -> str:
+        unit, _ = self._unit_with_spec()
+        self.service.sessions.reply = self.PLAN
+        self.assertEqual(self._run_step(unit, "plan")["outcome"], "done")
+        return unit
+
+    def _impl(self, unit: str) -> tuple[str, dict]:
+        self.service.sessions.reply = "working"
+        self._run_step(unit, "impl")
+        return self.service.sessions.prompts[-1], self._start(unit, "impl")
+
+    def _start(self, unit: str, stage: str) -> dict:
+        records = self.service._journal().records(self.service._journal_key(str(self.repo)), unit, kind="start")
+        return [r for r in records if r["stage"] == stage][-1]
+
+    def _tree_git(self, unit: str, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(self._tree(unit)), *args], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    def test_r4a_the_prompt_names_the_changed_files_the_plan_names(self):
+        unit = self._planned()
+        self._advance_remote("a.py", "changed\n")
+        self._advance_remote("lib_a.py", "outside, and a suffix trap\n")
+        prompt, start = self._impl(unit)
+        drift = start["plan_drift"]
+        main = self._tree_git(unit, "rev-parse", "refs/remotes/origin/main")
+        diff = self._tree_git(unit, "diff", f"{drift['plan_sha']}..{main}", "--name-only").splitlines()
+        self.assertEqual(drift["files"], [d for d in diff if d in ("a.py", "b.py")])
+        self.assertEqual(drift["files"], ["a.py"])
+        self.assertEqual(drift["main_sha"], main)
+        self.assertEqual(drift["plan_sha"], self._start(unit, "plan")["head"])
+        self.assertTrue(drift["checked"])
+        self.assertIn(self.HEADING, prompt)
+        self.assertIn("-- a.py`", prompt)
+        self.assertNotIn("lib_a.py", prompt)
+        self.assertNotIn("-- b.py", prompt)
+        self.assertEqual(start["agents"], 1)
+
+    def test_r4b_nothing_the_plan_names_changed_adds_nothing(self):
+        unit = self._planned()
+        self._advance_remote("other.txt", "outside\n")
+        prompt, start = self._impl(unit)
+        self.assertEqual(start["plan_drift"]["files"], [])
+        self.assertTrue(start["plan_drift"]["checked"])
+        self.assertNotIn(self.HEADING, prompt)
+
+    def test_r4c_a_plan_no_run_wrote_cannot_be_checked(self):
+        unit, directory = self._unit_with_spec()
+        (directory / "plan.md").write_text(self.PLAN, encoding="utf-8")
+        prompt, start = self._impl(unit)
+        self.assertFalse(start["plan_drift"]["checked"])
+        self.assertIsNone(start["plan_drift"]["files"])
+        self.assertIn(self.HEADING, prompt)
+        self.assertIn("could not check", prompt)
+
+    def test_r8_a_computation_that_raises_does_not_stop_the_step(self):
+        unit = self._planned()
+        with mock.patch("coscc.drift.compute", side_effect=RuntimeError("boom")):
+            prompt, start = self._impl(unit)
+        self.assertFalse(start["plan_drift"]["checked"])
+        self.assertEqual(start["plan_drift"]["reason"], "boom")
+        self.assertIn("could not check", prompt)
+
+    def test_another_stage_carries_no_plan_drift(self):
+        unit, _ = self._unit_with_spec()
+        self.service.sessions.reply = "# Spec: a problem\nAuthor: t. Status: accepted.\n"
+        self._run_step(unit, "spec")
+        self.assertNotIn("plan_drift", self._start(unit, "spec"))
+        self.assertNotIn(self.HEADING, self.service.sessions.prompts[-1])
+
+
 class AStepRecordsTheTransitionItCaused(unittest.TestCase):
     """`0014` R6. The first writer into `0013`'s log that is not the git import.
 

@@ -615,6 +615,28 @@ class ReadingAFailedAttemptsTree(unittest.TestCase):
             with self.assertRaises(GitError, msg=bad):
                 asyncio.run(gitops.log_range(self.repo, bad, self.base))
 
+    def test_diff_names_matches_git_diff_name_only(self):
+        (self.repo / "a.txt").write_text("one changed\n", encoding="utf-8")
+        (self.repo / "b.txt").write_text("two\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "second")
+        head = self._git("rev-parse", "HEAD").strip()
+        want = self._git("diff", f"{self.base}..{head}", "--name-only").splitlines()
+        got = asyncio.run(gitops.diff_names(self.repo, self.base, head))
+        self.assertEqual(got, want)
+        self.assertEqual(got, ["a.txt", "b.txt"])
+
+    def test_diff_names_refuses_a_short_sha_before_git_runs(self):
+        with mock.patch.object(gitops, "_run") as run:
+            for bad in (self.base[:7], "HEAD", ""):
+                with self.assertRaises(GitError, msg=bad):
+                    asyncio.run(gitops.diff_names(self.repo, bad, self.base))
+            run.assert_not_called()
+
+    def test_diff_names_on_a_commit_the_repository_lacks_is_an_error(self):
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.diff_names(self.repo, "0" * 40, self.base))
+
     def test_status_porcelain_keeps_the_leading_space(self):
         (self.repo / "a.txt").write_text("one changed\n", encoding="utf-8")
         want = self._git("status", "--porcelain")

@@ -41,6 +41,23 @@ loop wait for a person, and a rejected one comes back here. Listing a finding th
 could have fixed is using the section to get past the review — do not. Fix everything you
 can first; claim only what is left.
 
+## When main changed the plan's files
+
+A step started from the coscc board may carry a section *The files main changed since the
+plan*. It lists the files named in the plan's `## Files that change` that `main` has changed
+since the commit the plan was written on, each with the `git diff` command that shows how.
+
+- The line numbers the plan cites in those files may no longer point where they did. Read
+  the diff before relying on one.
+- If what was merged contradicts what the plan sets out to do, stop before editing that
+  file. Record the contradiction under `## What is still open`, set `Status: draft`, and do
+  not edit `plan.md`.
+- If nothing contradicts it, carry on, and record what you adjusted under
+  `## Where the plan was departed from`.
+
+When the section says the app could not check, nothing is known either way: read the plan's
+citations against the tree as it is.
+
 ## Output
 
 One file, `impl.md`, in the unit's directory.
