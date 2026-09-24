@@ -105,7 +105,8 @@ no commands, one turn, no budget.
 - **The read boundary is not a sandbox.** Since `0020` `Read`, `Glob` and `Grep` are held
   to the unit's worktree and its own folder in the store, for every grant. It binds only
   the stages without `Bash`: `impl`, `pr` and `ship` still have `cat` and `head`, and
-  `check_command` reads no paths. A `Glob` pattern is checked only up to its first
+  `check_command` reads only the target of a redirect that writes (since `0060`), never
+  the paths `cat` or `head` are given. A `Glob` pattern is checked only up to its first
   wildcard. `ship` runs in the store's unit folder, so it can no longer `Read` the
   worktree. `coscc/policy_test.py`, `TheReadBoundaryIsNotASandbox`, pins the gaps. A
   worktree's `.git` is a file pointing outside both roots, so no read-only stage can read
@@ -219,6 +220,16 @@ no commands, one turn, no budget.
   is collected or the next spike clears it. The `spec ↔ spike` loop stops for a person at
   `Round: 2` (`cos.mjs` `SPIKE_ROUNDS`), and `Round:` is the agent's own word: a spike
   that writes `Round: 1` every time loops until the money runs out.
+- **A redirect may write under `/tmp`, outside the write boundary.** Since `0060`
+  `check_command` reads a line as bash does and lets a redirect write to `/dev/null`, to
+  another descriptor, or below `/tmp/<a directory whose name carries the unit's
+  NNNN_slug>/` — for `impl`, `pr` and `ship`, whose `decide` gets a `unit_dir`. `spike`
+  and `integrate` get none, so they have `/dev/null` and descriptors only. That write is
+  outside the boundary `decide` holds the write tools to. The target is resolved,
+  symlinks included, when `decide` runs, not when bash opens it, so a directory swapped
+  for a symlink in between is not seen. Nothing creates or removes that directory, and
+  `/tmp` is shared: anyone on the machine can make one carrying a unit's name first. The
+  rest is still words, not capability — `python -c` writes anywhere, as before.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
 - **A failed step's transcript tail is stored in `cos.db` and put into the next prompt.**
@@ -372,6 +383,7 @@ no commands, one turn, no budget.
 | `verify_0047.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2. Fixes the board's `today` at 2026-10-08 for C5 and C6; does not measure the intent's outcome, which is three real units on the real board that day |
 | `verify_0048.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Exit 2 also when `--baseline` reproduces no ref-lock race |
 | `verify_0051.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` that refuses everything. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState` as `verify_0024` does, so the compiled page and its socket are not exercised; the ten steps go through `POST /api/board/run` on the in-process ASGI app, never through a second copy of the app, so the one-process limit is not measured |
+| `verify_0060.py` | plain: no session, no quota, no network; temporary directory with a fixture run log and fixture transcripts. Needs `git` (it loads `coscc/policy.py` from `01699b8` with `git show`) and `bash` (`type -t`); either missing, or that commit absent from a shallow clone, is exit 2. `--measure --since --until [--confirmed FILE]` reads `<COS_DATA_DIR>/cos.db` (`mode=ro`) and `COS_TRANSCRIPTS_DIR`, and writes only to `<COS_DATA_DIR>/measurements/`; no session in the window is exit 2. It does not import `coscc`. "Fake" depends on the `PATH` of the machine running it |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 

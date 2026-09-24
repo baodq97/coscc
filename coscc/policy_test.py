@@ -445,7 +445,8 @@ class TheReadBoundaryIsNotASandbox(unittest.TestCase):
     """`0020` plan, Risk 3, pinned as passing tests so nobody reads the boundary as a guarantee.
 
     `impl`, `pr` and `ship` keep `cat` and `head` in their commands, and `check_command`
-    reads no paths, so a shell read walks past the `Read` check. Only `spec`, `plan` and
+    reads no path but a writing redirect's target (`0060`), so a shell read walks past the
+    `Read` check. Only `spec`, `plan` and
     `review`, which hold no `Bash`, are actually held by it.
     """
 
