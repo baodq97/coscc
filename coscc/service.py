@@ -151,6 +151,56 @@ def integration_since_review(journal: Journal, key: str, unit: str) -> dict[str,
     return found
 
 
+# `0047`. The three results a `### Outcome` block may carry, as a person types them, and the
+# word `cos.mjs` `parseOutcome` reads each one as.
+OUTCOME_RESULTS = {"đạt": "met", "trượt": "missed", "không đo được": "unmeasurable"}
+# `0047` spec, Answers, câu 5: a line for the board to show on a missed outcome, no action.
+MISSED_HINT = "cân nhắc bỏ hoặc làm lại"
+
+
+def outcome_label(outcome: dict[str, Any] | None, today: date, finished: bool = False) -> dict[str, Any] | None:
+    """`0047` R8. What the board shows for one unit's outcome, or None for no label.
+
+    `outcome` is what `board._outcome_of` copied from `cos.mjs`; nothing here reads a block.
+    `today` is a parameter so the deadline branch is testable without a clock. `counted` is
+    whether the unit has a result in the sense of the intent's outcome: `không đo được` is
+    shown on its own but is not one (`0047` intent, Answers, câu 3). `form` is whether the
+    board offers to record one — only on a finished unit, the one `record_outcome` accepts.
+    """
+    if not outcome:
+        return None
+    deadline = outcome.get("deadline")
+    result = outcome.get("result")
+    if result == "met":
+        kind, text, color, counted = "met", "đạt", "grass", True
+    elif result == "missed":
+        kind, text, color, counted = "missed", "trượt", "red", True
+    elif result == "unmeasurable":
+        kind, text, color, counted = "unmeasurable", "không đo được", "amber", False
+    elif not deadline:
+        return None
+    elif date.fromisoformat(deadline) <= today:
+        kind, text, color, counted = "due", "tới hạn — chưa đo", "amber", False
+    else:
+        kind, text, color, counted = "pending", "chưa tới hạn", "gray", False
+    return {
+        "kind": kind,
+        "text": text,
+        "color": color,
+        "counted": counted,
+        "hint": MISSED_HINT if kind == "missed" else "",
+        "deadline": deadline,
+        "by": outcome.get("by"),
+        "date": outcome.get("date"),
+        "measured_by": outcome.get("measured_by"),
+        "source": outcome.get("source"),
+        "reason": outcome.get("reason"),
+        "note": outcome.get("note"),
+        "invalid": int(outcome.get("invalid") or 0),
+        "form": bool(finished),
+    }
+
+
 @dataclass
 class Service:
     config: Config
@@ -419,6 +469,11 @@ class Service:
                 row["last_run"] = unit_last_runs.get(row["stage"])
             unit["cost"] = (
                 totals_of(timelines.get(unit["name"], [])) if journal is not None else {}
+            )
+            # `0047` R8, R9. A label and nothing else: a deadline passing writes no row and
+            # starts no step.
+            unit["outcome_label"] = outcome_label(
+                unit.get("outcome"), date.today(), finished=unit.get("next") == "finished"
             )
 
         await self._attach_worktrees(cwd, data["units"])
@@ -1372,6 +1427,129 @@ class Service:
             "artifact": artifact,
             "question": number,
             "answered_by": name,
+            "date": today,
+        }
+
+    async def record_outcome(
+        self,
+        cwd: str,
+        unit: str,
+        result: str,
+        measured_by: str,
+        source: str = "",
+        reason: str = "",
+        note: str = "",
+        recorded_by: str = "",
+    ) -> dict[str, Any]:
+        """`0047` R1–R4, R7. Record whether a finished unit met its intent's outcome.
+
+        Built on `answer()`: the same lock, the same one board read, the same refusal when a
+        section follows `## Answers`, and the same `"a"` open, so every byte above the block
+        stays the byte the stage left there. The block is `### Outcome` under `intent.md`'s
+        `## Answers`; whether it is valid and which one is in force is `cos.mjs`'s reading.
+
+        Not an approval, and it starts nothing: no gate reads the block, and a finished unit
+        stays finished. `recorded_by` and `measured_by` are names somebody typed; no route
+        has a login, so both are claims. `source` is not checked against anything.
+        """
+        self._workspace_or_refuse(cwd)
+        name = str(recorded_by or "").strip()
+        measurer = str(measured_by or "").strip()
+        word = str(result or "").strip()
+        src = str(source or "").strip()
+        why = str(reason or "").strip()
+        text = str(note or "").strip("\n")
+        async with self._answer_lock:
+            try:
+                data = await board_reader.read(self._units_root(cwd))
+            except Unavailable as e:
+                raise Invalid(str(e)) from e
+
+            found = next((u for u in data["units"] if u["name"] == unit), None)
+            if found is None:
+                raise Invalid(f"no such work unit in this workspace: {unit}")
+            nxt = str(found.get("next") or "")
+            if nxt != "finished":
+                raise Invalid(f"{unit} is {nxt or 'not finished'}; an outcome is recorded only on a finished unit")
+            if word not in OUTCOME_RESULTS:
+                raise Invalid(f"the result is one of {', '.join(OUTCOME_RESULTS)}, got {word!r}")
+            kind = OUTCOME_RESULTS[word]
+            if not name or "\n" in name or "\r" in name:
+                raise Invalid("say who is recording, on one line")
+            if not measurer or "\n" in measurer or "\r" in measurer:
+                raise Invalid("say who measured it — agent, or a person's name — on one line")
+            if "\n" in src or "\r" in src:
+                raise Invalid("the source is one line")
+            if "\n" in why or "\r" in why:
+                raise Invalid("the reason is one line")
+            if kind != "unmeasurable" and not src:
+                raise Invalid(f"{word} needs a source: where the figure it rests on came from")
+            if kind == "unmeasurable" and not why:
+                raise Invalid(f"{word} needs a reason: why it could not be measured")
+            # The same refusal as `answer()`, and for the same reason: a heading would end
+            # this block early or open another, and `cos.mjs` would read it wrongly.
+            if any(line.lstrip().startswith("#") for line in [src, why, *text.splitlines()]):
+                raise Invalid("no line of an outcome may start with #")
+
+            path = self._unit_dir(cwd, unit) / "intent.md"
+            try:
+                existing = path.read_text(encoding="utf-8")
+            except OSError as e:
+                raise Invalid(f"could not read intent.md: {e}") from e
+            lines = existing.splitlines()
+            heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
+            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1:]):
+                raise Invalid(
+                    "intent.md has a section after its ## Answers, so a block appended at "
+                    "the end would not be read as an outcome"
+                )
+
+            today = date.today().isoformat()
+            block = ""
+            if existing and not existing.endswith("\n"):
+                block += "\n"
+            if heading is None:
+                block += "\n## Answers\n"
+            block += (
+                "\n### Outcome\n"
+                f"Answered by: {name}. Date: {today}. Via: product.\n\n"
+                f"Result: {word}\n"
+                f"Measured by: {measurer}\n"
+            )
+            if src:
+                block += f"Source: {src}\n"
+            if why:
+                block += f"Reason: {why}\n"
+            if text.strip():
+                block += f"\n{text}\n"
+            try:
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(block)
+            except OSError as e:
+                raise Invalid(f"could not write intent.md: {e}") from e
+
+        # As in `answer()`: the store has no git, so the provenance is a row in `outputs`,
+        # and a failure to write it never fails a block already on disk.
+        history = self._history()
+        if history is not None:
+            try:
+                history.add_output(
+                    self._journal_key(cwd),
+                    unit,
+                    "intent",
+                    "deliverable",
+                    "intent.md",
+                    actor=f"human:{name}",
+                    source="outcome",
+                )
+            except (OSError, BadTransition, Busy):
+                pass
+
+        return {
+            "unit": unit,
+            "result": word,
+            "measured_by": measurer,
+            "recorded_by": name,
             "date": today,
         }
 
