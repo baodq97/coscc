@@ -166,27 +166,95 @@ class TheHostUnitCount(Fixture):
 
 
 class TheBriefBecomesTheIdea(Fixture):
-    """`plan.md` `## OQ1, settled before planning`."""
+    """`plan.md` `## OQ1, settled before planning`, and since
+    `0003_one-idea-is-trapped-inside-one-unit` an idea of its own rather than an `idea.md`
+    inside the unit (R1, R8). Rewritten there, not removed (`spec.md` C4)."""
 
-    def test_it_is_written_as_idea_md_with_a_status_the_loop_accepts(self):
+    def _idea_file(self, made) -> Path:
+        return units.cos_dir(WS, self.data) / "ideas" / f"{made['idea']}.md"
+
+    def test_it_is_written_as_an_idea_file_with_a_status_the_loop_accepts(self):
         made = units.create(WS, "a-problem", "Nút Run không nói gì khi hỏng.", self.data)
-        text = (Path(made["path"]) / "idea.md").read_text(encoding="utf-8")
+        self.assertEqual(made["idea"], "0001_a-problem")
+        text = self._idea_file(made).read_text(encoding="utf-8")
         self.assertIn("Nút Run không nói gì khi hỏng.", text)
         self.assertIn("Status: accepted.", text)
+        self.assertTrue(text.endswith(f"## Units\n\n- {made['unit']}\n"), text)
+        self.assertFalse((Path(made["path"]) / "idea.md").exists())
 
-    def test_the_loop_reads_it_back_as_an_accepted_idea(self):
-        # The only check that matters: `cos.mjs` has to agree it is a readable artifact,
-        # because a file it calls broken blocks the unit rather than helping it.
+    def test_the_loop_reads_it_back_as_an_accepted_idea_and_a_pre_intent_unit(self):
+        # The only check that matters: `cos.mjs` has to agree, because a file it calls
+        # broken blocks the unit rather than helping it. Read from `status --json`: the
+        # text table's `idea` column is `—` for a unit with no `idea.md`.
+        import json
+
         made = units.create(WS, "a-problem", "some words", self.data)
-        printed = units._cos(units.root(WS, self.data), "status")
-        self.assertIn(made["unit"], printed)
-        row = next(line for line in printed.splitlines() if made["unit"] in line)
-        self.assertEqual(row.split("|")[2].strip(), "A", row)
+        data = json.loads(units._cos(units.root(WS, self.data), "status", "--json"))
+        [idea] = data["ideas"]
+        [unit] = data["units"]
+        self.assertEqual((idea["name"], idea["status"], idea["units"], idea["problems"]),
+                         (made["idea"], "accepted", [made["unit"]], []))
+        self.assertEqual((unit["phase"], unit["problems"], unit["source"]), ("pre-intent", [], made["idea"]))
 
     def test_no_brief_writes_no_file_rather_than_an_empty_one(self):
         made = units.create(WS, "a-problem", "   ", self.data)
         self.assertFalse((Path(made["path"]) / "idea.md").exists())
         self.assertFalse(made["brief"])
+        self.assertEqual(made["idea"], "")
+        self.assertFalse((units.cos_dir(WS, self.data) / "ideas").exists())
+
+
+class OneIdeaOpensSeveralUnits(Fixture):
+    """`0003_one-idea-is-trapped-inside-one-unit` R1, R9."""
+
+    def test_a_second_unit_is_opened_from_the_idea_and_listed_under_it(self):
+        first = units.create(WS, "first-half", "một quan sát", self.data)
+        second = units.create(WS, "second-half", "", self.data, idea=first["idea"])
+        self.assertEqual(second["idea"], first["idea"])
+        text = (units.cos_dir(WS, self.data) / "ideas" / f"{first['idea']}.md").read_text(encoding="utf-8")
+        self.assertTrue(text.endswith(f"- {first['unit']}\n- {second['unit']}\n"), text)
+        self.assertEqual(text.count("## Units"), 1)
+
+    def test_a_brief_and_an_idea_together_are_refused(self):
+        first = units.create(WS, "a", "words", self.data)
+        with self.assertRaises(BadUnit):
+            units.create(WS, "b", "more words", self.data, idea=first["idea"])
+        self.assertEqual(len([p for p in units.cos_dir(WS, self.data).iterdir() if p.name != "ideas"]), 1)
+
+    def test_an_idea_that_does_not_exist_is_refused_before_anything_is_made(self):
+        for bad in ("0009_nothing", "../0001_a", "x"):
+            with self.subTest(bad), self.assertRaises(CannotCreate):
+                units.create(WS, "b", "", self.data, idea=bad)
+        self.assertEqual(list(units.cos_dir(WS, self.data).iterdir()), [])
+
+    def test_appending_after_an_answers_section_opens_a_new_units_section(self):
+        first = units.create(WS, "a", "words", self.data)
+        path = units.cos_dir(WS, self.data) / "ideas" / f"{first['idea']}.md"
+        before = path.read_text(encoding="utf-8") + "\n## Answers\n\n### Câu 1\n\nx\n"
+        path.write_text(before, encoding="utf-8")
+        second = units.create(WS, "b", "", self.data, idea=first["idea"])
+        after = path.read_text(encoding="utf-8")
+        self.assertTrue(after.startswith(before))
+        self.assertEqual(after[len(before):], f"\n## Units\n\n- {second['unit']}\n")
+
+    def test_the_brief_lives_in_one_file_only(self):
+        mark = "MARK-ONE-FILE-7d"
+        first = units.create(WS, "a", f"words {mark}", self.data)
+        units.create(WS, "b", "", self.data, idea=first["idea"])
+        carrying = [
+            p for p in units.cos_dir(WS, self.data).rglob("*")
+            if p.is_file() and mark in p.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(len(carrying), 1, carrying)
+
+    def test_a_failed_write_leaves_no_unit_directory(self):
+        from unittest import mock
+
+        first = units.create(WS, "a", "words", self.data)
+        with mock.patch.object(units, "_append_unit", side_effect=OSError("disk full")):
+            with self.assertRaises(CannotCreate):
+                units.create(WS, "b", "", self.data, idea=first["idea"])
+        self.assertEqual(sorted(p.name for p in units.cos_dir(WS, self.data).iterdir()), [first["unit"], "ideas"])
 
 
 class TheBranchNameComesFromTheIntent(Fixture):
