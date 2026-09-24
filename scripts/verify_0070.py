@@ -21,9 +21,23 @@ service with no password yet is exit 2: the intent's outcome is about an app tha
 `POST /login` and `POST /setup` are not sent there — an empty password would count as a
 failure against this address and could lock its owner out.
 
+**`--browser`** is the one mode that opens chromium (`0070` review round 1, F2). It starts
+the app the way a person does, `python -m coscc.run`, on a temporary data root, at the
+address the checkout's bundle was built for — which must be free and bound off loopback:
+
+    COS_PORT=18791 uv run coscc-build && COS_PORT=18791 uv run python scripts/verify_0070.py --browser
+
+It reads the setup token off the app's stderr, and then, twice — once through
+`127.0.0.1`, once through this machine's first non-loopback address, each in a fresh
+browser context — walks what a person walks: `/` sends it to `/setup` (the first time) or
+`/login`; the form lets it in; the board renders and its `/_event` socket opens and
+receives; *Đăng xuất* lands on `/login`; `/` sends it to `/login` again. On the first pass it
+also backdates the session two hours and opens one more `/_event` socket from the page, with
+no HTTP request in between, to see whether the browser keeps the cookie the `101` renews.
+
 Exit 0 every claim held, 1 a request was not refused, 2 the environment could not answer
-(no bundle, no `COS_URL`, no password on the service). No session, no quota, no network
-beyond `COS_URL`.
+(no bundle, no `COS_URL`, no password on the service, no chromium, the port taken, no
+non-loopback address). No session, no quota, no network beyond `COS_URL` and this machine.
 """
 
 from __future__ import annotations
@@ -393,10 +407,228 @@ def over_url(base: str) -> int:
     return EXIT_PASS if leaks == 0 else EXIT_BROKEN
 
 
+# -- a real browser -------------------------------------------------------------------------
+
+PAGE_TIMEOUT_MS = 30_000  # chosen: a cold page with a socket to open
+
+
+def _off_loopback() -> str | None:
+    """The address this machine would send from; no packet leaves (UDP connect sends none)."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(("10.255.255.255", 1))
+            address = s.getsockname()[0]
+        except OSError:
+            return None
+    return None if address.startswith("127.") else address
+
+
+class Served:
+    """`python -m coscc.run` on a temporary root, with its stderr read for the setup token."""
+
+    def __init__(self, config, root: Path):
+        self.config, self.root = config, root
+        self.lines: list[str] = []
+        self.proc = None
+
+    def start(self) -> "Served":
+        import subprocess
+        import threading
+        import time
+
+        import httpx
+
+        # Reflex's internal variables dropped: a step the app starts inherits them blank, and
+        # `run.py`'s `setdefault` keeps a blank mount flag — no page mounted, `/` a 404.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("__REFLEX")}
+        env.update({"COS_DATA_DIR": str(self.root), "COS_WORKING_DIR": str(self.root),
+                    "COS_WORKSPACES": ""})
+        self.proc = subprocess.Popen(
+            [sys.executable, "-m", "coscc.run"], cwd=REPO, env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+        )
+        threading.Thread(target=lambda: self.lines.extend(self.proc.stderr), daemon=True).start()
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            if self.proc.poll() is not None:
+                print("the app exited before serving:\n" + "".join(self.lines[-20:]))
+                raise SystemExit(EXIT_ENV)
+            try:
+                if httpx.get(f"http://127.0.0.1:{self.config.port}/api/health",
+                             timeout=2).status_code == 200:
+                    return self
+            except httpx.HTTPError:
+                time.sleep(0.3)
+        raise SystemExit(EXIT_ENV)
+
+    def token(self) -> str | None:
+        from coscc import auth
+
+        found = [m.group(1) for line in list(self.lines)
+                 if (m := auth.SETUP_LINE.match(line.rstrip("\n")))]
+        return found[-1] if found else None
+
+    def stop(self) -> None:
+        from scripts.proof_harness import wait_closed
+
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            self.proc.wait(timeout=15)
+        wait_closed("127.0.0.1", self.config.port)
+
+
+def _path(url: str) -> str:
+    from urllib.parse import urlsplit
+
+    return urlsplit(url).path
+
+
+def _walk_in(browser, base: str, served: Served, first: bool, root: Path) -> bool:
+    """One person, one address: in, the board live, out, and kept out."""
+    import time
+
+    from coscc import auth
+
+    where = f"[{base}]"
+    context = browser.new_context()
+    page = context.new_page()
+    page.set_default_timeout(PAGE_TIMEOUT_MS)
+    sockets: list = []
+    received: list = []
+    requests: list = []
+
+    def on_socket(ws):
+        if "/_event" in ws.url:
+            sockets.append(ws)
+            ws.on("framereceived", lambda payload: received.append(ws.url))
+
+    page.on("websocket", on_socket)
+    page.on("request", lambda r: requests.append(r.url))
+    try:
+        page.goto(base + "/")
+        landing = _path(page.url)
+        ok = say(landing == ("/setup" if first else "/login"),
+                 f"{where} / without a session lands on {'/setup' if first else '/login'}", landing)
+        if first:
+            token = served.token()
+            ok &= say(bool(token), f"{where} R4 the setup token is on the app's stderr")
+            page.fill("#token", token or "")
+            page.fill("#password", PASSWORD)
+            page.fill("#password_confirm", PASSWORD)
+        else:
+            warned = page.locator("#plain-http").count() == 1
+            ok &= say(warned == (not base.startswith("http://127.")),
+                      f"{where} the plain-HTTP line shows only off loopback", str(warned))
+            page.fill("#password", PASSWORD)
+        with page.expect_navigation():
+            page.click("button[type=submit]")
+        ok &= say(_path(page.url) == "/", f"{where} the form lets the person in", page.url)
+
+        try:
+            page.wait_for_selector("#logout")
+        except Exception:
+            return say(False, f"{where} the board renders with its Đăng xuất button",
+                       page.inner_text("body")[:200])
+        deadline = time.monotonic() + PAGE_TIMEOUT_MS / 1000
+        while time.monotonic() < deadline and not received:
+            page.wait_for_timeout(200)
+        live = bool(sockets) and bool(received) and not sockets[0].is_closed()
+        ok &= say(live, f"{where} the board renders and its /_event socket opens and receives",
+                  f"sockets={[s.url for s in sockets]} frames={len(received)}")
+
+        if first:
+            ok &= _renewed_on_101(page, context, root, requests)
+
+        with page.expect_navigation():
+            page.click("#logout")
+        ok &= say(_path(page.url) == "/login", f"{where} R7 Đăng xuất lands on /login", page.url)
+        page.goto(base + "/")
+        ok &= say(_path(page.url) == "/login", f"{where} R7 after logging out, / is /login again",
+                  page.url)
+        left = [c for c in context.cookies() if c["name"] == auth.COOKIE and c["value"]]
+        ok &= say(not left, f"{where} R7 the browser holds no session cookie after logging out",
+                  repr(left))
+        return ok
+    finally:
+        context.close()
+
+
+def _renewed_on_101(page, context, root: Path, requests: list) -> bool:
+    """F1 in a browser: a handshake after an hour renews the cookie through the `101`."""
+    import time
+
+    from coscc import auth
+    from coscc.data import Data
+
+    def cookie():
+        return next(c for c in context.cookies() if c["name"] == auth.COOKIE)
+
+    before = cookie()
+    now = int(time.time())
+    # Backdated two hours, as if the last request were then: the next use must touch.
+    Data(root).auth_session_touch(auth._sha(before["value"]), now - 7200,
+                                  now - 7200 + auth.SESSION_TTL)
+    page.wait_for_timeout(2000)
+    mark = len(requests)
+    opened = page.evaluate(
+        """() => new Promise(done => {
+            const ws = new WebSocket(location.origin.replace('http', 'ws')
+                + '/_event/?EIO=4&transport=websocket');
+            ws.onopen = () => { ws.close(); done(true); };
+            ws.onerror = () => done(false);
+        })"""
+    )
+    between = [u for u in requests[mark:] if not u.startswith("ws")]
+    after = cookie()
+    row = Data(root).auth_state(auth._sha(after["value"]))[1]
+    ok = say(opened, "F1 a /_event handshake with a two-hour-old session opens")
+    ok &= say(not between, "F1 no HTTP request ran beside it", repr(between))
+    ok &= say(row is not None and row["expires_at"] >= now + auth.SESSION_TTL,
+              "F1 the handshake pushed the session's expiry forward", repr(row and dict(row)))
+    ok &= say(after["expires"] >= before["expires"] + 1,
+              "F1 the browser kept the cookie the 101 renewed",
+              f"before={before['expires']} after={after['expires']}")
+    return ok
+
+
+def in_browser() -> int:
+    from coscc.config import from_env
+    from scripts.proof_harness import require_browser, require_build, require_free_port
+
+    config = from_env()
+    if config.host in ("127.0.0.1", "::1", "localhost"):
+        print("--browser needs the app bound off loopback; unset COS_HOST")
+        return EXIT_ENV
+    address = _off_loopback()
+    if address is None:
+        print("this machine has no non-loopback address to open the page through")
+        return EXIT_ENV
+    require_build(config)
+    require_free_port(config)
+    root = Path(tempfile.mkdtemp(prefix="verify-0070-browser-"))
+    print(f"temporary data root: {root}")
+    playwright, browser = require_browser()
+    served = Served(config, root).start()
+    try:
+        ok = _walk_in(browser, f"http://127.0.0.1:{config.port}", served, True, root)
+        ok &= _walk_in(browser, f"http://{address}:{config.port}", served, False, root)
+    finally:
+        browser.close()
+        playwright.stop()
+        served.stop()
+    return EXIT_PASS if ok else EXIT_BROKEN
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", action="store_true", help="count against the service at COS_URL")
+    parser.add_argument("--browser", action="store_true",
+                        help="walk setup, the board, logout in chromium, on and off loopback")
     args = parser.parse_args()
+    if args.browser:
+        return in_browser()
     if args.url:
         url = os.environ.get("COS_URL", "")
         if not url:
