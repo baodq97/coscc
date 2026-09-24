@@ -372,6 +372,17 @@ no commands, one turn, no budget.
   endpoint (`pulls/<n>/update-branch`, `updatePullRequestBranch`). It does not refuse
   `gh api` as a whole, as the `integrate` grant does. `node -e`, or an alias defined before
   the step, still walks past (`coscc/policy_test.py`, `IntegrationIsNotPrs`).
+- **Every `pr` step that is not stopped rewrites its pull request's title and body under
+  this machine's `gh` login.** Since `0055`. After the step, `_sync_pr` reads `cos.mjs
+  pr-text` and, when `pr.md` is `accepted` and names a pull request URL, runs `gh pr view`
+  and — unless both already match — `gh pr edit` on the pull request `pr.md` names, holding
+  the `done` row up to 60s (two calls, `prcomment.TIMEOUT` 30s each, chosen, not measured).
+  It overwrites whatever a person changed on GitHub since, and keeps the old text nowhere
+  (`.cos/0055_*/spec.md` C1). A `pr.md` edited by hand to name another repository's pull
+  request is written there. The trace is one `pr-sync` row in the run log per step, with
+  `existed` (the lookup before the step saw the pull request) and `outcome` `updated`,
+  `already`, `failed` or `skipped`; no screen shows it. A `pr` step at a terminal leaves
+  none.
 
 - **`POST /api/units/hold` closes a pull request under this machine's `gh` login.** Since
   `0045`. `to: "dropped"` appends `### Dropped` under `intent.md ## Answers`, then runs
@@ -477,6 +488,7 @@ no commands, one turn, no budget.
 | `verify_0047.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2. Fixes the board's `today` at 2026-10-08 for C5 and C6; does not measure the intent's outcome, which is three real units on the real board that day |
 | `verify_0048.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Exit 2 also when `--baseline` reproduces no ref-lock race |
 | `verify_0051.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` that refuses everything. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState` as `verify_0024` does, so the compiled page and its socket are not exercised; the ten steps go through `POST /api/board/run` on the in-process ASGI app, never through a second copy of the app, so the one-process limit is not measured |
+| `verify_0055.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` that keeps one pull request's title and body and logs every argv and stdin. Needs `node`, `uv`, `git` and a merge-base with `origin/main` (C7 runs the `cos.mjs` there); any missing is exit 2. C8 runs the terminal line of `write-pr/SKILL.md` step 5 with `bash -c`. Does not measure the intent's outcome — a trial on the real board before 2026-10-15 |
 | `verify_0056.py` | browser, no session, no quota; needs `COS_PORT` free and a bundle built for it (`COS_HOST=127.0.0.1 COS_PORT=18756 uv run coscc-build`), temporary data root, two bare-directory remotes, a seeded session past the `0070` login. Measures (a) paste, (b) reload and (c) Back/Forward at nine addresses, and R8–R11, R14, R15, and — in place of R20, whose three proofs meet the login page — `/` opening Overview on a live socket. One width, 1440×900. `--url <base>` measures a running app with `COS_PROOF_PASSWORD`, needs two workspaces with a unit each, writes nothing and prints `SKIP` for R11 and R15; it has never been run against an install from `install.sh` |
 | `verify_0060.py` | plain: no session, no quota, no network; temporary directory with a fixture run log and fixture transcripts. Needs `git` (it loads `coscc/policy.py` from `01699b8` with `git show`) and `bash` (`type -t`); either missing, or that commit absent from a shallow clone, is exit 2. `--measure --since --until [--confirmed FILE]` reads `<COS_DATA_DIR>/cos.db` (`mode=ro`) and `COS_TRANSCRIPTS_DIR`, and writes only to `<COS_DATA_DIR>/measurements/`; no session in the window is exit 2. It does not import `coscc`. "Fake" depends on the `PATH` of the machine running it |
 | `verify_0061.py` | plain: no session, no quota, no network; temporary directory. Needs `node` and `git` (it loads `cos.mjs` from `git merge-base HEAD origin/main`) and `uv`; a missing one, or no merge-base, is exit 2. `--root <dir>` (repeatable) adds a store such as `~/.cos/units/<slot>` to the comparison. `--measure` reads every `<COS_DATA_DIR>/units/*/.cos/` through `cos.mjs status --json` and writes only to `<COS_DATA_DIR>/measurements/`; no merge line yet (this unit's `ship.md`) or fewer than 5 units shipped after it is exit 2. Kind (b) of the intent's wasted round is a person reading pull request history; it does not conclude it |
