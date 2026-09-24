@@ -21,6 +21,8 @@ _AGENTS: dict[str, tuple[str, str]] = {
     "review": ("ᛏ", "Tiwaz"),
     "ship": ("ᛟ", "Othala"),
     "integrate": ("ᚷ", "Gebo"),
+    # `0039` named its stage's agent in `.claude/CLAUDE.md`, after this table was chosen.
+    "spike": ("ᛈ", "Perthro"),
 }
 
 # `Service.run_step` takes both names for the one stage.

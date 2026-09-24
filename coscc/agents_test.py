@@ -23,6 +23,9 @@ class TheTableIsTheOneTheSpecChose(unittest.TestCase):
         for stage, (glyph, name) in expected.items():
             self.assertEqual(agent_for(stage), {"glyph": glyph, "name": name}, stage)
 
+    def test_spike_is_perthro_as_0039_named_it(self):
+        self.assertEqual(agent_for("spike"), {"glyph": "ᛈ", "name": "Perthro"})
+
     def test_implement_is_impl(self):
         self.assertEqual(agent_for("implement"), agent_for("impl"))
         self.assertEqual(agent_for("implement"), {"glyph": "ᚢ", "name": "Uruz"})
