@@ -132,10 +132,15 @@ def refusal(
 def warnings(rounds: list[dict], review_status: str, gebo: bool, grant_warning: str) -> list[str]:
     """R13: what the page says before the button is pressed."""
     out: list[str] = []
+    # `0061` R11.1: the app cannot tell "behind but mergeable" (spike U1, U2), so the page
+    # says when integrating a passed unit is worth another round, and leaves it to a person.
     if rounds and str(rounds[-1].get("verdict") or "") == "pass":
         out.append(
             "The last review round passed. Integrating rewrites the reviewed commit: the ship "
-            "gate closes and another review round is needed."
+            "gate closes and another review round is needed — it does not count toward "
+            "COS_REVIEW_ROUNDS, but it is another paid session. Run ship first. Integrate "
+            "only when GitHub reports a conflict or refuses the merge because the branch is "
+            "behind main."
         )
     if review_status == "changes-requested":
         out.append(

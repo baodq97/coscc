@@ -88,7 +88,11 @@ The order per unit, and the reason it cannot be reordered:
    `COS_REVIEW_ROUNDS` such rounds the gate says `needs a person`. A round whose every
    remaining finding the review confirmed needs a person ends `Verdict: needs-person`,
    does not count toward that limit, and `next` offers nothing until each is answered.
-   A pass is `accepted`.
+   A pass is `accepted`. Since `0061` each finding carries `high`, `medium` or `low`, and
+   an `[open]` `low` does not block: a round whose remaining findings are all `low` passes,
+   `ship` merges with them open, and `ship.md` lists them. The severity is an agent's
+   word — one that rated a real problem `low` from the first round lets it merge, and
+   only a person reading the pull request would see it.
 8. `ship`: only once `cos.mjs gate <unit> ship` exits 0, `gh pr merge --squash --delete-branch`
    with `--match-head-commit` set to the head the gate names. Every push resets the required checks — including the commit recording the pass — so
    the merge may first be refused with `2 of 2 required status checks are expected`: wait.

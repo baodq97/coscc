@@ -28,6 +28,12 @@ stage runs again on the same branch. Fix what the review or CI named, commit, an
 this stage. Then record in `impl.md` which commit fixed which finding. The step after is
 `write-review` once CI is green — not `write-pr`, which already ran.
 
+**A finding rated `low`.** Since `0061` a review rates each finding `high`, `medium` or
+`low`, and an `[open]` `low` does not block (`write-review`, *Severity, and what blocks*).
+Fix every finding that blocks. Fix a `low` too when you can — the next round marks it
+`[fixed <sha>]` — but nothing requires it: `cos.mjs next` does not wait for one, and it
+does not need claiming. Never list a `low` under `## Needs a person`.
+
 **A finding this stage cannot close.** Some findings cannot be fixed with this stage's
 grant: a proof that spends real money, a command the grant does not hold (`gh`, a login),
 a measurement only a person can take. List each one under `## Needs a person`, one line

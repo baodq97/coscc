@@ -10,7 +10,7 @@ import {
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
-  parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES,
+  parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -1634,4 +1634,99 @@ test('0045 R1: every unit in this repository reads unheld and answers as it did'
     const { hold, holdMoves, ...bare } = read
     assert.deepEqual(nextAction(read), nextAction(bare), u)
   }
+})
+
+// --- a finding that does not block (0061) --------------------------------------
+
+const low = (id, label = 'open', what = 'x') => `- ${id} [${label}] a.py:3 — low — ${what}`
+const rated = (id, severity, label = 'open') => `- ${id} [${label}] a.py:3 — ${severity} — x`
+
+test('0061 R2: severity is read only between two em dashes right after the location', () => {
+  const r = parseReview(round(1, 'changes-requested', [
+    '- F1 [open] a.py:3 — Mức thấp — x', '- F2 [open] a.py:3 - low - x', '- F3 [open] a.py:3 – low – x',
+    '- F4 [open] a.py:3 — HIGH — x', '- F5 [open] a.py:3 — medium — x', `- F6 [fixed ${FIX}] a.py:3 — low — x`,
+    '- F7 [open] no location — low', '- F8 [open] a.py:3 x — low — y',
+  ])).rounds[0]
+  assert.deepEqual(r.findings.map((f) => [f.id, f.severity]), [
+    ['F1', null], ['F2', null], ['F3', null], ['F4', 'high'], ['F5', 'medium'], ['F6', 'low'], ['F7', null], ['F8', null],
+  ])
+})
+
+test('0061 R3: an open low does not block, unless an earlier round rated the id higher', () => {
+  const one = asked(round(1, 'pass', [low('F1'), rated('F2', 'medium'), '- F3 [open] a.py:3 x']))
+  assert.deepEqual(nonBlocking(one), [{ id: 'F1', text: 'a.py:3 — low — x' }])
+  const lowered = asked(`${round(1, 'changes-requested', [rated('F1', 'high')])}\n${round(2, 'pass', [low('F1')])}`)
+  assert.deepEqual(nonBlocking(lowered), [])
+  // A severity nobody could read is not a higher one: 0003's old rounds (R12).
+  const prose = asked(`${round(1, 'changes-requested', ['- F1 [open] a.py:3 — Mức thấp — x'])}\n${round(2, 'pass', [low('F1')])}`)
+  assert.deepEqual(nonBlocking(prose).map((f) => f.id), ['F1'])
+  // Only `[open]` is ever let through, whatever the severity says.
+  for (const label of ['needs-person', 'claim-rejected', 'answered', 'maybe']) {
+    assert.deepEqual(nonBlocking(asked(round(1, 'needs-person', [low('F1', label)]))), [], label)
+  }
+  assert.deepEqual(nonBlocking(unit(CHAIN)), [])
+})
+
+test('0061 R10: status --json carries nonBlocking for each unit and severity for each finding', () => {
+  const { root } = questionTree({
+    'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n',
+    'review.md': `# Review\nStatus: accepted.\n\n${round(1, 'pass', [low('F1'), `- F2 [fixed ${FIX}] b.py:1 — high — y`])}`,
+  })
+  const out = cli('--root', root, 'status', '--json')
+  assert.equal(out.status, 0, out.stderr)
+  const got = JSON.parse(out.stdout).units[0]
+  assert.deepEqual(got.nonBlocking, [{ id: 'F1', text: 'a.py:3 — low — x' }])
+  assert.deepEqual(got.artifacts['review.md'].review.rounds[0].findings.map((f) => f.severity), ['low', 'high'])
+  const none = questionTree({ 'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n' })
+  assert.deepEqual(none.u.nonBlocking, [])
+})
+
+test('0061 R4: ship lets an open low through, and nothing else', () => {
+  const ship = (findings) => checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass', findings)) }), 'ship', { probe: greenProbe() })
+  assert.equal(ship([low('F1')]).ok, true)
+  const medium = ship([rated('F1', 'medium')])
+  assert.equal(medium.ok, false)
+  assert.match(medium.need.join('\n'), /F1 \[open\]/)
+  const unrated = ship(['- F1 [open] a.py:3 x'])
+  assert.equal(unrated.ok, false)
+  assert.match(unrated.need.join('\n'), /F1 \[open\]/)
+})
+
+test('0061 R5: a severity lowered between rounds closes ship and says so', () => {
+  const text = `${round(1, 'changes-requested', [rated('F1', 'high')])}\n${round(2, 'pass', [low('F1')])}`
+  const g = checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', text) }), 'ship', { probe: greenProbe() })
+  assert.equal(g.ok, false)
+  assert.ok(g.need.includes('F1 is low in review round 2, but review round 1 rated it high — lowering a severity is not a fix: fix it on the branch, or keep it open'), g.need.join('\n'))
+})
+
+test('0061 R12: three counted rounds of prose severities, then a pass of lows: ship opens at the default limit', () => {
+  const cr = [1, 2, 3].map((n) => round(n, 'changes-requested', ['- F1 [open] a.py:3 — Mức thấp — biên regex', '- F2 [open] a.py:9 — Mức thấp — y']))
+  const text = `${cr.join('\n')}\n${round(4, 'pass', [low('F1'), low('F2')])}`
+  const g = checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', text) }), 'ship', { probe: greenProbe(), limit: REVIEW_ROUNDS })
+  assert.equal(g.ok, true, g.need.join('\n'))
+})
+
+test('0061 R8: a needs-person round beside an open low is still a wait for a person', () => {
+  const u = tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3('needs-person', [low('F4')])}` })
+  const n = nextAction(u)
+  assert.deepEqual(n.waiting, ['F2', 'F3'])
+  assert.match(n.action, /^needs a person — F2: the grant holds no budget for --paid; F3: the grant holds no gh/)
+  assert.deepEqual(u.personFindings.map((p) => p.id), ['F2', 'F3'])
+  assert.deepEqual(u.nonBlocking.map((f) => f.id), ['F4'])
+})
+
+test('0061 R8: every blocking finding claimed, one low unclaimed: review, not impl', () => {
+  const r2 = round(2, 'changes-requested', [`- F1 [fixed ${FIX}] a`, '- F2 [open] b', '- F3 [open] c', low('F4')])
+  assert.equal(nextStep(tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${r2}` }), { probe: greenProbe() }).stage, 'review')
+  // Nothing but lows left in a changes-requested round is not a claim: back to impl.
+  const onlyLow = round(1, 'changes-requested', [low('F1')])
+  const impl = implText('## Needs a person\n\n- F1: the grant holds no gh\n')
+  assert.equal(nextStep(tree0028({ review: `${REVIEW_HEAD}${onlyLow}`, impl }), { probe: greenProbe() }).stage, 'impl')
+})
+
+test('0061 R7: a pass that leaves lows open costs no round', () => {
+  const first = round(1, 'pass', [low('F1')])
+  const cr = [2, 3, 4].map((n) => round(n, 'changes-requested', [low('F1'), '- F2 [open] b.py:1 y']))
+  assert.match(nextAction(asked(`${first}\n${cr.join('\n')}`)).action, /needs a person — review used 3 of 3 rounds/)
+  assert.match(nextAction(asked(`${first}\n${cr.slice(0, 2).join('\n')}`)).action, /\(2 of 3 rounds used\)/)
 })
