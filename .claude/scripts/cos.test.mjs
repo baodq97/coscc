@@ -10,7 +10,7 @@ import {
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
-  readAll,
+  readAll, parseIdea, parseIdeaUnits,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -1406,4 +1406,80 @@ test('0003 R6: the text table of a store with no idea is unchanged, and an idea 
   const withIdea = cli('--root', ideaRoot(units, { '0001_x.md': IDEA() }), 'status').stdout
   assert.ok(withIdea.startsWith(plain.trimEnd()), 'the unit table comes first, as it was')
   assert.match(withIdea, /\| ideas\/0001_x\.md \| accepted \| write-intent — open a unit from this idea \|/)
+})
+
+const INTENT = (field = '') => `# Intent: a\nAuthor: t. Type: feat.${field ? ` ${field}` : ''} Status: accepted.\n\n## Problem\n\nx\n`
+
+test('0003 R3: the Idea field is read from the header only', () => {
+  assert.deepEqual(parseIdea(INTENT('Idea: ideas/0002_x.md.')), { idea: '0002_x' })
+  assert.deepEqual(parseIdea(INTENT()), { idea: null })
+  assert.deepEqual(parseIdea(`${INTENT()}\nIdea: ideas/0002_x.md is where this came from.\n`), { idea: null })
+  const u = readUnit(unitDir({ 'intent.md': INTENT() }), '0015_x')
+  assert.equal(u.idea ?? null, null)
+  assert.ok(!('idea' in u), 'no key at all, so an older unit keeps its shape')
+  assert.deepEqual(u.problems, [])
+  assert.equal(readUnit(unitDir({ 'intent.md': INTENT('Idea: ideas/0002_x.md.') }), '0015_x').idea, '0002_x')
+})
+
+test('0003 R4: two Idea fields, or one out of grammar, are reported', () => {
+  const two = readUnit(unitDir({ 'intent.md': INTENT('Idea: ideas/0002_x.md. Idea: ideas/0003_y.md.') }), '0015_x')
+  assert.equal(two.idea ?? null, null)
+  assert.match(two.problems.join('\n'), /names 2 ideas/)
+  const bad = readUnit(unitDir({ 'intent.md': INTENT('Idea: 0002_x.') }), '0015_x')
+  assert.match(bad.problems.join('\n'), /not "Idea: ideas\/NNNN_<slug>\.md"/)
+})
+
+test('0003 R4: an Idea naming a missing file is reported, and no gate changes for it', () => {
+  const plan = 'Status: accepted.\n'
+  const broken = ideaRoot({ '0001_a': { 'intent.md': INTENT('Idea: ideas/0009_gone.md.'), 'spec.md': plan } })
+  const fine = ideaRoot({ '0001_a': { 'intent.md': INTENT(), 'spec.md': plan } })
+  const [b] = readAll(join(broken, '.cos'))
+  const [f] = readAll(join(fine, '.cos'))
+  assert.deepEqual(b.problems, ['intent.md names ideas/0009_gone.md, which does not exist'])
+  for (const stage of ['spec', 'plan', 'impl']) assert.deepEqual(checkGate(b, stage), checkGate(f, stage))
+  assert.deepEqual(nextAction(b), nextAction(f))
+})
+
+test('0003 R7: an empty unit an idea lists is pre-intent; one nobody lists is still reported', () => {
+  const root = ideaRoot({ '0001_a': {}, '0002_b': {} }, { '0001_x.md': IDEA(['0001_a']) })
+  const { units, ideas } = statusJson(root)
+  const [a, b] = units
+  assert.equal(a.phase, 'pre-intent')
+  assert.deepEqual(a.problems, [])
+  assert.equal(a.source, '0001_x')
+  assert.equal(a.next.stage, 'intent')
+  assert.deepEqual(b.problems, ['no intent.md — every unit opens with one'])
+  assert.ok(!('source' in b))
+  assert.deepEqual(ideas[0].units, ['0001_a'])
+  assert.deepEqual(ideas[0].next, { blocked: false, action: 'units: 0001_a', stage: '' })
+})
+
+test('0003 R7: an Idea field that disagrees with ## Units is reported on both sides', () => {
+  const root = ideaRoot(
+    { '0001_a': { 'intent.md': INTENT('Idea: ideas/0002_y.md.') } },
+    { '0001_x.md': IDEA(['0001_a']), '0002_y.md': IDEA() },
+  )
+  const { units: [a], ideas: [x, y] } = statusJson(root)
+  const said = 'intent.md names ideas/0002_y.md but ideas/0001_x.md lists 0001_a'
+  assert.deepEqual(a.problems, [said])
+  assert.deepEqual(x.problems, [said])
+  assert.deepEqual(y.problems, [said])
+  // The intent is in authority once it exists.
+  assert.equal(a.source, '0002_y')
+  assert.deepEqual([x.units, y.units], [[], ['0001_a']])
+})
+
+test('0003 R7: a unit two ideas list, and an idea listing no such unit, are reported', () => {
+  const root = ideaRoot({ '0001_a': {} }, { '0001_x.md': IDEA(['0001_a', '0009_gone']), '0002_y.md': IDEA(['0001_a']) })
+  const { units: [a], ideas: [x, y] } = statusJson(root)
+  assert.match(a.problems.join('\n'), /listed by ideas\/0001_x\.md and ideas\/0002_y\.md/)
+  assert.ok(!('source' in a))
+  assert.match(x.problems.join('\n'), /0001_a is listed by/)
+  assert.match(x.problems.join('\n'), /## Units lists 0009_gone, which is not a unit here/)
+  assert.match(y.problems.join('\n'), /0001_a is listed by/)
+})
+
+test('0003 R7: ## Units is read wherever it sits, after ## Answers included', () => {
+  const text = `${IDEA(['0001_a'])}\n## Answers\n\n### Câu 1\n- not a unit\n\n## Units\n\n- 0002_b\n`
+  assert.deepEqual(parseIdeaUnits(text), ['0001_a', '0002_b'])
 })

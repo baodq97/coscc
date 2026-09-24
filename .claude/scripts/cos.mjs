@@ -389,7 +389,30 @@ export function reviewRounds(env = process.env) {
   return Number(raw)
 }
 
-export function readUnit(dir, name) {
+// `Idea: ideas/NNNN_<slug>.md` in `intent.md`'s header — the lines above its first `## `
+// heading — names the one idea the unit comes from (`0003_one-idea-is-trapped-inside-one-unit`
+// R3). An `Idea:` in the body is prose, not the field. Absent is `{ idea: null }` and no
+// problem: every unit written before `0003` has none. Two fields, or one this grammar does
+// not read, is a problem and still no idea.
+const IDEA_FIELD = /\bIdea:\s*ideas\/(\S+?)\.md\b/g
+
+export function parseIdea(text) {
+  const lines = text.split(/\r?\n/)
+  const end = lines.findIndex((l) => l.startsWith('## '))
+  const header = (end === -1 ? lines : lines.slice(0, end)).join('\n')
+  const fields = header.match(/\bIdea:/g) ?? []
+  if (!fields.length) return { idea: null }
+  if (fields.length > 1) return { idea: null, problem: `intent.md names ${fields.length} ideas — an intent comes from exactly one` }
+  const found = [...header.matchAll(IDEA_FIELD)]
+  if (found.length !== 1 || !UNIT_RE.test(found[0][1])) {
+    return { idea: null, problem: 'intent.md has an Idea: field that is not "Idea: ideas/NNNN_<slug>.md"' }
+  }
+  return { idea: found[0][1] }
+}
+
+// `listedBy`: the ideas whose `## Units` names this unit. Only `readAll` knows it, because
+// only it reads `ideas/`; `gate` and `next` call this without it, and neither reads `phase`.
+export function readUnit(dir, name, { listedBy = [] } = {}) {
   const unit = { name, artifacts: {}, problems: [] }
   let intentText = null
   const match = name.match(UNIT_RE)
@@ -444,9 +467,16 @@ export function readUnit(dir, name) {
     const idea = unit.artifacts['idea.md']
     const ideaValid = idea && idea.status !== null && VALID['idea.md'].includes(idea.status)
     const later = STAGES.slice(STAGES.findIndex((s) => s.name === 'intent') + 1).some((s) => present(unit, s.file))
-    if (ideaValid && !later) unit.phase = 'pre-intent'
+    // `0003`: a unit an idea's `## Units` names was opened from that idea a moment ago,
+    // exactly as one holding a valid `idea.md` was — its directory is simply empty.
+    if ((ideaValid || listedBy.length >= 1) && !later) unit.phase = 'pre-intent'
     else unit.problems.push(`no intent.md — every unit opens with one`)
   } else {
+    // `0003` R3/R4. Attached only when present, so a unit with no field keeps the shape it
+    // had (R6). Reported, never gated.
+    const { idea, problem } = parseIdea(intentText)
+    if (idea) unit.idea = idea
+    if (problem) unit.problems.push(problem)
     // Same distinction `missing()` draws below: a header with no `Type:` is a different
     // repair from a header that declares one nothing accepts. Both are reported and
     // neither is blocked — `checkGate` does not read this.
@@ -470,13 +500,57 @@ export function readUnit(dir, name) {
 // user typed, so its `.claude/scripts/cos.mjs` is someone else's code; running it would
 // hand it everything this process has.
 export function readAll(cosDir = COS) {
-  if (!existsSync(cosDir)) return []
-  return readdirSync(cosDir, { withFileTypes: true })
-    // `ideas/` is not a unit (`0003_one-idea-is-trapped-inside-one-unit` R6); `readIdeas`
-    // reads it.
+  return readStore(cosDir).units
+}
+
+// Units and ideas together, because each is read in the light of the other
+// (`0003_one-idea-is-trapped-inside-one-unit` R5, R7): an empty unit an idea lists is
+// pre-intent rather than broken, and an idea's `units` are the ones that point at it.
+//
+// Two records of one link, each with authority in one phase: an idea's `## Units` before
+// the unit has an intent, the intent's `Idea:` from then on (`spec.md` C2). A unit's
+// `source` is the one in authority; where the two disagree, both sides are told, and
+// neither is chosen silently. Nothing here closes a gate.
+export function readStore(cosDir = COS) {
+  if (!existsSync(cosDir)) return { units: [], ideas: [] }
+  const ideas = readIdeas(cosDir)
+  const listedBy = {}
+  for (const i of ideas) for (const u of i.listed) (listedBy[u] ??= []).push(i.name)
+
+  const units = readdirSync(cosDir, { withFileTypes: true })
+    // `ideas/` is not a unit (R6); `readIdeas` reads it.
     .filter((e) => e.isDirectory() && e.name !== IDEAS_DIR)
-    .map((e) => readUnit(join(cosDir, e.name), e.name))
+    .map((e) => readUnit(join(cosDir, e.name), e.name, { listedBy: listedBy[e.name] ?? [] }))
     .sort((a, b) => a.name.localeCompare(b.name))
+
+  const byIdea = Object.fromEntries(ideas.map((i) => [i.name, i]))
+  const unitNames = new Set(units.map((u) => u.name))
+  for (const u of units) {
+    const listing = listedBy[u.name] ?? []
+    if (listing.length > 1) {
+      const both = `listed by ${listing.map((n) => `ideas/${n}.md`).join(' and ')} — a unit comes from one idea`
+      u.problems.push(both)
+      for (const n of listing) byIdea[n].problems.push(`${u.name} is ${both}`)
+    }
+    if (u.idea) {
+      if (!byIdea[u.idea]) u.problems.push(`intent.md names ideas/${u.idea}.md, which does not exist`)
+      for (const n of listing.filter((n) => n !== u.idea)) {
+        const said = `intent.md names ideas/${u.idea}.md but ideas/${n}.md lists ${u.name}`
+        u.problems.push(said)
+        byIdea[n].problems.push(said)
+        byIdea[u.idea]?.problems.push(said)
+      }
+    }
+    const source = u.idea ?? (listing.length === 1 ? listing[0] : null)
+    if (source) {
+      u.source = source
+      byIdea[source]?.units.push(u.name)
+    }
+  }
+  for (const i of ideas) {
+    for (const n of i.listed.filter((n) => !unitNames.has(n))) i.problems.push(`## Units lists ${n}, which is not a unit here`)
+  }
+  return { units, ideas }
 }
 
 // --- ideas -------------------------------------------------------------------
@@ -1105,9 +1179,10 @@ export function betweenPrAndShip(unit, limit = REVIEW_ROUNDS) {
 }
 
 function cmdStatus(json, cosDir, limit) {
-  const units = readAll(cosDir)
+  const store = readStore(cosDir)
+  const units = store.units
   const rows = units.map((u) => ({ ...u, next: nextAction(u, limit), betweenPrAndShip: betweenPrAndShip(u, limit) }))
-  const ideas = readIdeas(cosDir).map(({ listed, ...i }) => ({ ...i, next: ideaNext(i) }))
+  const ideas = store.ideas.map(({ listed, ...i }) => ({ ...i, next: ideaNext(i) }))
 
   if (json) {
     // The stage list ships with the data so a reader never has to keep its own copy of it.
