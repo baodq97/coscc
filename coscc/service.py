@@ -750,18 +750,23 @@ class Service:
         state = verdict["state"]
         review_status = next((r.get("status") or "" for r in u.get("stages") or [] if r.get("stage") == "review"), "")
         gebo = state in integrate.GEBO_STATES
+        # `0052`: a `current` unit also has the button, since the count may be against a
+        # stale `origin/main` and only a press fetches (R3). Both mechanical states may fall
+        # to Gebo when GitHub refuses the rebase (spec, answer 1), and the page says so.
+        fallback = state in ("current", "behind")
         return {
             "state": state,
             "reason": verdict.get("reason", ""),
             "behind": missing if isinstance(missing, int) else None,
             "origin_sha": origin_sha,
             "pr_head": pr_row.get("headRefOid", "") if isinstance(pr_row, dict) else "",
-            "mode": "agent" if gebo else ("mechanical" if state == "behind" else ""),
-            "button": state in integrate.BUTTON_STATES,
+            "mode": "agent" if gebo else ("mechanical" if fallback else ""),
+            "button": state in integrate.BUTTON_STATES or state == "current",
             "needs_person": list((last_record or {}).get("needs_person") or [])
             if (last_record or {}).get("outcome") == "needs-person" else [],
             "warnings": integrate.warnings(
-                u.get("rounds") or [], review_status, gebo, grant_for("integrate").warning
+                u.get("rounds") or [], review_status, gebo or fallback, grant_for("integrate").warning,
+                fallback=fallback,
             ),
         }
 
@@ -771,6 +776,12 @@ class Service:
         Refuses before anything changes (R12), and every refusal, push or failure leaves one
         `integration` record (R9). `behind` goes the mechanical road (R4); `conflicting`
         and `red-after-integration` open Gebo (R5).
+
+        `0052`: a press inside the window fetches `origin/main` first, through the `0048`
+        coordinator and before the lock, so the count is against the trunk as it is now; a
+        failed fetch goes on with the ref it has and says so. It also reads GitHub's
+        `mergeStateStatus`, only to record it. A mechanical road whose `update-branch`
+        exits non-zero opens Gebo with that code and gh's words.
         """
         self._workspace_or_refuse(cwd)
         self._refuse_while_updating()
@@ -791,13 +802,24 @@ class Service:
         root = Path(cwd).expanduser().resolve()
         last = self._last_integrations(journal, key).get(unit)
         info = None
+        pr = (found.get("pr") or {}).get("number")
+        # Spread into every record this press writes (`0052` R5).
+        seen: dict[str, Any] = {"fetch": None, "merge_state": ""}
         if found.get("between_pr_and_ship") and found.get("pr"):
+            try:
+                seen["fetch"] = await fetches.fetch(root, BRANCH_REMOTE, BRANCH_TRUNK)
+            except GitError as e:
+                seen["fetch"] = {"outcome": "failed", "detail": str(e)}
             try:
                 prs: list[dict[str, Any]] | str = await integrate.open_prs(str(root))
             except integrate.IntegrateError as e:
                 prs = str(e)
             info = await self._integration_of(root, found, prs, last)
-        pr = (found.get("pr") or {}).get("number")
+            if info is not None and seen["fetch"]["outcome"] == "failed":
+                note = integrate.origin_note(info["origin_sha"], seen["fetch"])
+                info["reason"] = f"{info['reason']}; {note}" if info.get("reason") else note
+            if pr is not None:
+                seen["merge_state"] = await integrate.merge_state(str(root), int(pr))
         state = (info or {}).get("state", "")
         pr_head = (info or {}).get("pr_head", "")
         origin_sha = (info or {}).get("origin_sha", "")
@@ -832,12 +854,13 @@ class Service:
             reason = integrate.refusal(
                 in_window=info is not None, busy=self._busy(key, unit),
                 clean=clean, branch_ok=on_branch, local_head=local_head, pr_head=pr_head, state=state,
+                origin=integrate.origin_note(origin_sha, seen["fetch"]),
             )
             if reason:
                 write(integrate.record(
                     workspace=key, unit=unit, pr=pr, mode=(info or {}).get("mode") or "mechanical",
                     head_before=pr_head, head_after="", origin_sha=origin_sha, outcome="refused",
-                    detail=reason,
+                    detail=reason, **seen,
                 ))
                 raise Invalid(reason)
             mark = self._take(key, unit, "integrate")
@@ -846,14 +869,21 @@ class Service:
             rid = self._mark_running(key, unit, "integrate", "rebase" if state == "behind" else "gebo")
         try:
             assert tree is not None
+            refused_update = None
             if state == "behind":
-                rec = await self._integrate_mechanical(key, unit, int(pr), tree, branch, pr_head, origin_sha)
-                write(rec)
-                yield ("done", {"integration": rec})
-                return
+                rec, refused_update = await self._integrate_mechanical(
+                    key, unit, int(pr), tree, branch, pr_head, origin_sha, seen,
+                )
+                if rec is not None:
+                    write(rec)
+                    yield ("done", {"integration": rec})
+                    return
+                # `0052`, spec answer 1: GitHub refused the rebase, and the press agreed to
+                # Gebo for that. The board shows Gebo from here on, not a rebase.
+                self._running[rid]["kind"] = "gebo"
             async for item in self._integrate_gebo(
                 cwd, key, unit, directory, found, data, info, int(pr), tree, branch, pr_head, origin_sha,
-                journal, write,
+                journal, write, seen, refused_update,
             ):
                 yield item
         finally:
@@ -862,16 +892,24 @@ class Service:
             self.updater.job_ended()
 
     async def _integrate_mechanical(
-        self, key: str, unit: str, pr: int, tree: Path, branch: str, head_before: str, origin_sha: str
-    ) -> dict[str, Any]:
-        """R4. GitHub rebases, the local branch follows. No session."""
-        base = dict(workspace=key, unit=unit, pr=pr, mode="mechanical", head_before=head_before, origin_sha=origin_sha)
+        self, key: str, unit: str, pr: int, tree: Path, branch: str, head_before: str, origin_sha: str,
+        seen: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """R4. GitHub rebases, the local branch follows. No session.
+
+        `(record, None)`, or `(None, {code, said})` when `update-branch` exited non-zero —
+        the caller then opens Gebo (`0052`). A `gh` that could not run or did not answer
+        in time, and a head that has not moved yet, stay `failed`: there is no exit code
+        to go on, and GitHub may still be rebasing, which a Gebo session would race.
+        """
+        base = dict(workspace=key, unit=unit, pr=pr, mode="mechanical", head_before=head_before,
+                    origin_sha=origin_sha, **seen)
         try:
             code, said = await integrate.update_branch(str(tree), pr)
         except integrate.IntegrateError as e:
-            return integrate.record(**base, head_after="", outcome="failed", detail=str(e))
+            return integrate.record(**base, head_after="", outcome="failed", detail=str(e)), None
         if code != 0:
-            return integrate.record(**base, head_after="", outcome="refused", detail=said or "gh refused")
+            return None, {"code": code, "said": said or "gh refused"}
         head_after = head_before
         for attempt in range(integrate.POLL_TRIES):
             try:
@@ -886,21 +924,26 @@ class Service:
             return integrate.record(
                 **base, head_after="", outcome="failed",
                 detail="GitHub accepted the command but the head has not changed yet",
-            )
+            ), None
         try:
             await gitops.reset_branch_to(tree, branch, head_before, head_after)
             detail = said
         except GitError as e:
             # The push happened on GitHub's side either way; the local tree is behind it.
             detail = f"pushed on GitHub, but the local branch was not moved: {e}"
-        return integrate.record(**base, head_after=head_after, outcome="pushed", detail=detail)
+        return integrate.record(**base, head_after=head_after, outcome="pushed", detail=detail), None
 
     async def _integrate_gebo(
         self, cwd: str, key: str, unit: str, directory: Path, found: dict[str, Any],
         data: dict[str, Any], info: dict[str, Any], pr: int, tree: Path, branch: str,
         head_before: str, origin_sha: str, journal: Journal, write: Any,
+        seen: dict[str, Any], refused_update: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
-        """R5–R8. One Gebo session; the outcome is read from GitHub afterwards."""
+        """R5–R8. One Gebo session; the outcome is read from GitHub afterwards.
+
+        `refused_update`: the `update-branch` refusal that opened it (`0052`), carried into
+        the prompt and the press's one record.
+        """
         root = Path(cwd).expanduser().resolve()
         rel = await self._related(root, unit, data, head_before, origin_sha)
         units_root = self._units_root(cwd)
@@ -916,6 +959,7 @@ class Service:
         prompt = integrate.build_prompt(
             skill=skill, unit=unit, branch=branch, pr=pr, state=info["state"], reason=info.get("reason", ""),
             head_before=head_before, origin_sha=origin_sha, rel=rel, units_root=units_root, own_artifacts=own,
+            refused_update=refused_update,
         )
         grant = grant_for("integrate")
         model, model_source = self._model_for("impl")
@@ -964,6 +1008,7 @@ class Service:
             workspace=key, unit=unit, pr=pr, mode="agent", head_before=head_before, head_after=head_now,
             origin_sha=origin_sha, outcome=outcome, related_=rel, report=reply,
             needs_person=integrate.parse_needs_person(reply), detail="; ".join(details),
+            update_branch=refused_update, **seen,
         ))
         yield ("done", {"integration": rec})
 

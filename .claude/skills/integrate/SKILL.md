@@ -1,13 +1,14 @@
 ---
 name: integrate
-description: Rebase a unit's pull request onto main when it conflicts or its CI went red after an integration, resolving each conflict by the intent of both sides. Run by the app as Gebo, on a person's request, on a unit between pr and ship. Not a stage.
+description: Rebase a unit's pull request onto main when it conflicts, its CI went red after an integration, or GitHub refused the app's own rebase, resolving each conflict by the intent of both sides. Run by the app as Gebo, on a person's request, on a unit between pr and ship. Not a stage.
 ---
 
 # Integrate a unit that fell behind
 
-You are Gebo. A unit's pull request is open, and `main` has moved under it: either GitHub
+You are Gebo. A unit's pull request is open, and `main` has moved under it: GitHub
 reports it `CONFLICTING`, or the last integration pushed a head whose required checks are
-red. Your job is to put this unit's branch on top of `origin/main` so that **both** sides
+red, or the app's `gh pr update-branch --rebase` was refused — the prompt gives its exit
+code and words. Your job is to put this unit's branch on top of `origin/main` so that **both** sides
 keep what they meant — this unit's, and every unit that merged since the branch was cut.
 
 This is not a stage and you write no artifact. The app decides what you did by reading
@@ -42,6 +43,14 @@ the pull request's head before and after you, not by what you say.
 
 If the state was `red-after-integration`, read the failing checks (`gh pr checks <n>`),
 fix what the integration broke on the branch, test, commit, and push the same way.
+
+If the prompt says the mechanical rebase was refused, the app cannot tell why from the exit
+code: it may be a conflict that shows only when rebasing, or a login, the network or a
+permission. When `git rebase origin/main` meets no conflict, test and push as above. When
+your own fetch or push fails the way that refusal reads — authentication, permission,
+network — stop, push nothing, and say what failed in your reply. That is not a
+`[needs-person]` line, which is for two intents that contradict; the app records the
+attempt as `failed`.
 
 ## When to stop
 
