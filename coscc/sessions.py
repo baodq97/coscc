@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from contextlib import aclosing
+from contextlib import aclosing, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -217,9 +217,69 @@ class Live:
     spent: dict[str, float] = field(default_factory=dict)
 
 
-# How long `StepHandle.close` waits on the SDK's own `disconnect`. Chosen, not measured:
-# half of the 10 seconds `0034`'s intent gives a step's process to be gone.
+# How long `_shut` lets the SDK close the CLI its own way before signalling the process
+# itself. Chosen, not measured: with `KILL_AFTER` it stays under the 10 seconds `0034`'s
+# intent gives a step's process to be gone.
 DISCONNECT_TIMEOUT = 5.0
+
+# How long `_shut` waits after its SIGTERM before SIGKILL. Chosen, not measured.
+KILL_AFTER = 3.0
+
+# Closings in flight. asyncio keeps only a weak reference to a task, and a closing must
+# outlive the task that began it when that one is cancelled.
+_CLOSING: set[asyncio.Task] = set()
+
+
+def _begin(coro: Any) -> asyncio.Task:
+    task = asyncio.ensure_future(coro)
+    _CLOSING.add(task)
+    task.add_done_callback(_CLOSING.discard)
+    return task
+
+
+async def _shut(client: Any, transport: Any, reached: bool) -> None:
+    """Close a client, and see that the CLI it spawned is gone.
+
+    `0034` review round 2, F3. The SDK's own close waits 5s for the CLI to exit on stdin
+    EOF before it sends SIGTERM, then SIGKILL -- but a raw asyncio cancel skips that
+    escalation (its own docstring says so), and an `asyncio.wait_for` around it is one. So
+    the SDK's close runs as its own task, shielded: nothing here cancels it. Past
+    `DISCONNECT_TIMEOUT` the process is signalled from here, and the SDK's close, still
+    waiting on it, then finishes. `_process` is the SDK transport's private name, read
+    with `getattr` like `_transport` and `_query`; a stand-in without it is not signalled.
+
+    `reached` is whether `connect` got as far as the control protocol. Without it the SDK's
+    `disconnect` closes nothing and only drops the transport (review round 1, F1), so the
+    transport is closed here.
+    """
+    process = getattr(transport, "_process", None)
+
+    async def sdk() -> None:
+        try:
+            await client.disconnect()
+        except Exception:  # noqa: BLE001 - closing is best-effort; the step's end must not wait on it
+            pass
+        if transport is not None and not reached:
+            try:
+                await transport.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    closing = _begin(sdk())
+    try:
+        await asyncio.wait_for(asyncio.shield(closing), DISCONNECT_TIMEOUT)
+    except TimeoutError:
+        pass
+    process = process or getattr(transport, "_process", None)
+    if process is None or process.returncode is not None:
+        return
+    with suppress(ProcessLookupError):
+        process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), KILL_AFTER)
+    except Exception:  # noqa: BLE001 - a timeout, or anything else: SIGKILL either way
+        with suppress(ProcessLookupError):
+            process.kill()
 
 
 @dataclass(eq=False)  # identity, not value: handles live in a set
@@ -233,45 +293,35 @@ class StepHandle:
 
     `close` may be called before the client exists -- `client` is set only once `connect`
     has returned; `stream` then closes the client the moment it connects and never sends
-    the prompt.
+    the prompt. Every later call waits on the one closing the first began, and cancelling
+    a caller does not cancel that closing (review round 2, F3 and F4).
     """
 
     cwd: str = ""
     client: Any = None
     closed: bool = False
-    _disconnected: bool = False
+    _closing: asyncio.Task | None = None
 
     async def close(self) -> None:
         self.closed = True
-        if self.client is None or self._disconnected:
+        if self.client is None:
             return
-        self._disconnected = True
-        try:
-            await asyncio.wait_for(self.client.disconnect(), DISCONNECT_TIMEOUT)
-        except Exception:  # noqa: BLE001 - closing is best-effort; the step's end must not wait on it
-            pass
+        if self._closing is None:
+            transport = getattr(self.client, "_transport", None)
+            self._closing = _begin(_shut(self.client, transport, reached=True))
+        await asyncio.shield(self._closing)
 
 
 async def _abandon(client: Any) -> None:
     """Close a client whose `connect` did not finish.
 
-    The SDK's `disconnect` closes only a client that got as far as its control protocol;
-    one stopped inside the transport's own `connect` may already have spawned the CLI, and
-    `disconnect` would drop that transport without closing it. So the transport is taken
-    first and closed here when `disconnect` could not reach it. `_transport` and `_query`
-    are the SDK's private names; `getattr` keeps a client without them (a stand-in) working.
+    One stopped inside the transport's own `connect` may already have spawned the CLI,
+    and the SDK's `disconnect` would drop that transport without closing it, so `_shut`
+    closes the transport itself. Both are read before anything is closed.
     """
     transport = getattr(client, "_transport", None)
     reached = getattr(client, "_query", None) is not None
-    try:
-        await asyncio.wait_for(client.disconnect(), DISCONNECT_TIMEOUT)
-    except Exception:  # noqa: BLE001 - best-effort, as in `StepHandle.close`
-        pass
-    if transport is not None and not reached:
-        try:
-            await asyncio.wait_for(transport.close(), DISCONNECT_TIMEOUT)
-        except Exception:  # noqa: BLE001
-            pass
+    await asyncio.shield(_begin(_shut(client, transport, reached)))
 
 
 # What one turn cost, in the shape `journal.COST_FIELDS` adds up.

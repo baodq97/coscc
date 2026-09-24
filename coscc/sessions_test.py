@@ -7,12 +7,14 @@ is run deliberately.
 
 import asyncio
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import claude_agent_sdk as sdk
+from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from coscc import frontend, sessions
 from coscc.config import Config
@@ -448,6 +450,135 @@ class _StartingClient(_CountingClient):
         self._transport = None
 
 
+class _Process:
+    """Shaped like the process an SDK transport holds: `terminate`, `kill`, `returncode`
+    and `wait`. `obeys` is whether SIGTERM ends it."""
+
+    def __init__(self, obeys=True):
+        self.obeys = obeys
+        self.returncode = None
+        self.signals = []
+        self._gone = asyncio.Event()
+
+    def terminate(self):
+        self.signals.append("TERM")
+        if self.obeys:
+            self._exit(-15)
+
+    def kill(self):
+        self.signals.append("KILL")
+        self._exit(-9)
+
+    def _exit(self, code):
+        self.returncode = code
+        self._gone.set()
+
+    async def wait(self):
+        await self._gone.wait()
+        return self.returncode
+
+
+class _StubbornClient(_CountingClient):
+    """Shaped like the SDK's close around a CLI that does not exit on stdin EOF: its
+    `disconnect` waits on the process for as long as it takes."""
+
+    def __init__(self, process):
+        super().__init__()
+        self._transport = mock.Mock(_process=process)
+        self._query = object()
+        self.finished = False
+        self.cancelled = False
+
+    async def disconnect(self):
+        self.disconnects += 1
+        try:
+            await self._transport._process.wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        self.finished = True
+
+
+class ACliThatOutlastsTheSdksCloseIsStillEnded(unittest.IsolatedAsyncioTestCase):
+    """`0034` review round 2, F3. The app's own timeout used to cancel the SDK's close
+    before its SIGTERM/SIGKILL, so a CLI that ignored stdin EOF was never signalled."""
+
+    def setUp(self):
+        for name, value in (("DISCONNECT_TIMEOUT", 0.05), ("KILL_AFTER", 0.05)):
+            patcher = mock.patch.object(sessions, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def test_it_is_terminated_and_the_sdks_close_is_not_cut_short(self):
+        process = _Process(obeys=True)
+        client = _StubbornClient(process)
+        h = sessions.StepHandle(client=client)
+        await h.close()
+        self.assertEqual(process.signals, ["TERM"])
+        await asyncio.sleep(0)
+        self.assertTrue(client.finished)
+        self.assertFalse(client.cancelled)
+
+    async def test_one_that_ignores_sigterm_is_killed(self):
+        process = _Process(obeys=False)
+        h = sessions.StepHandle(client=_StubbornClient(process))
+        await h.close()
+        self.assertEqual(process.signals, ["TERM", "KILL"])
+        self.assertEqual(process.returncode, -9)
+
+    async def test_one_that_exits_in_time_is_not_signalled(self):
+        process = _Process()
+        process._exit(0)
+        h = sessions.StepHandle(client=_StubbornClient(process))
+        await h.close()
+        self.assertEqual(process.signals, [])
+
+    async def test_cancelling_the_caller_does_not_cancel_the_closing(self):
+        process = _Process(obeys=False)
+        client = _StubbornClient(process)
+        h = sessions.StepHandle(client=client)
+        caller = asyncio.create_task(h.close())
+        await asyncio.sleep(0.01)
+        caller.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await caller
+        await h.close()
+        self.assertEqual(process.signals, ["TERM", "KILL"])
+        self.assertFalse(client.cancelled)
+
+    async def test_the_installed_sdks_transport_is_ended(self):
+        """The SDK's real transport and a real process that ignores both stdin EOF and
+        SIGTERM: this is what reads `_transport` and `_process` against the installed SDK."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = Path(tmp) / "claude"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import signal, time\n"
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                "time.sleep(60)\n"
+            )
+            cli.chmod(0o755)
+            transport = SubprocessCLITransport(
+                prompt="", options=sdk.ClaudeAgentOptions(cli_path=str(cli), cwd=tmp)
+            )
+            with mock.patch.dict(os.environ, {"CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"}):
+                await transport.connect()
+            process = transport._process
+            self.assertIsNone(process.returncode)
+
+            class Client:
+                _transport = transport
+                _query = object()
+
+                async def disconnect(self):
+                    await self._transport.close()
+
+            await asyncio.sleep(0.2)  # let the script install its handler
+            await sessions.StepHandle(client=Client()).close()
+            await asyncio.wait_for(process.wait(), 2)
+            self.assertEqual(process.returncode, -9)
+
+
 class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
     """`0034`. A board step's client is closed however the step ends, exactly once, and
     never kept in `_live` for resuming. Chat's clients still are."""
@@ -558,6 +689,7 @@ class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
     async def _drain(self, h):
         async for _ in self.s.stream("/tmp", "hi", step=h):
             pass
+
 
     async def test_chat_still_keeps_its_client_for_resuming(self):
         [_ async for _ in self.s.stream("/tmp", "hi")]
