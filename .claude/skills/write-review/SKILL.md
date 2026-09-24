@@ -49,8 +49,8 @@ rewritten or removed.
 **Severity, and what blocks.** Since `0061` every finding carries `high`, `medium` or
 `low` between two em dashes (`—`, U+2014) right after its location:
 `- F2 [open] path/to/file.py:40 — low — what`. `cos.mjs` reads only that token. A hyphen,
-an en dash, a word in another language or no token at all reads as no severity, and no
-severity blocks. The line is the originator's (`0061` intent, Answers, Câu 1): `low` means
+an en dash, a word in another language or no token at all reads as no severity, and a
+finding with no severity blocks. The line is the originator's (`0061` intent, Answers, Câu 1): `low` means
 nothing a user sees behaves wrongly, nothing touches security, and no data is lost;
 anything else is `medium` or above.
 
