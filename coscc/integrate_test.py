@@ -327,6 +327,7 @@ class ThePullRequestBlock(unittest.TestCase):
         self.assertIn("https://x/pull/7", text)
         self.assertIn("Do not run `gh pr create` again", text)
         self.assertNotIn("Integrate", text)
+        self.assertIn(ig.PR_SYNC_NOTE, text)
 
     def test_conflicting_says_stop_and_names_integrate(self):
         text = ig.describe_pr_lookup({"state": "found", "url": "u", "number": 7,
@@ -334,9 +335,18 @@ class ThePullRequestBlock(unittest.TestCase):
         self.assertIn("Do not rebase", text)
         self.assertIn("*Integrate*", text)
         self.assertIn("`Status: accepted`", text)
+        self.assertIn(ig.PR_SYNC_NOTE, text)
 
     def test_none_names_the_branch(self):
-        self.assertIn("`fix/x`", ig.describe_pr_lookup({"state": "none", "branch": "fix/x"}))
+        text = ig.describe_pr_lookup({"state": "none", "branch": "fix/x"})
+        self.assertIn("`fix/x`", text)
+        self.assertIn(ig.PR_SYNC_NOTE, text)
+
+    def test_0055_the_sync_note_says_the_app_does_it(self):
+        self.assertIn("the app puts pr.md's title and body onto the pull request", ig.PR_SYNC_NOTE)
+        self.assertIn("do not run `gh pr edit`", ig.PR_SYNC_NOTE)
+        # R7 names `found` and `none`; `unknown` is left as it was.
+        self.assertNotIn(ig.PR_SYNC_NOTE, ig.describe_pr_lookup({"state": "unknown", "reason": "x"}))
 
     def test_unknown_says_why_and_asks_once(self):
         text = ig.describe_pr_lookup({"state": "unknown", "reason": "gh: no auth"})

@@ -123,7 +123,8 @@ PR_COMMANDS = (
 # same shape of hazard the zero-tool default is about, opened deliberately this time.
 PR_WARNING = (
     "This step runs `git` and `gh` with the GitHub login already on this machine. "
-    "That reaches every repository that account can reach, not just this workspace."
+    "That reaches every repository that account can reach, not just this workspace. "
+    "After the step, the app itself rewrites the pull request's title and body from pr.md under that login."
 )
 
 # `0015`: the pull request `pr` opens is merged by `ship`, after a review that passed, and

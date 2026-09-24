@@ -454,6 +454,14 @@ async def pr_for_branch(tree: str, branch: str) -> dict:
     }
 
 
+# `0055` R7. Said in the two branches where the step ends with a pull request to put
+# pr.md onto; `coscc/service.py` `_sync_pr` is what does it.
+PR_SYNC_NOTE = (
+    "After this step ends, the app puts pr.md's title and body onto the pull request "
+    "itself; do not run `gh pr edit`."
+)
+
+
 def describe_pr_lookup(rec: dict) -> str:
     """The prompt block `pr_for_branch`'s answer becomes. Pure."""
     heading = "# The pull request, already looked up\n\n"
@@ -466,7 +474,7 @@ def describe_pr_lookup(rec: dict) -> str:
             f"Number {rec.get('number')}, mergeable `{rec.get('mergeable') or 'UNKNOWN'}`, "
             f"head `{rec.get('head')}`. Use this URL for `PR:` in pr.md. Do not run "
             "`gh pr create` again: a second pull request for one branch is not what this "
-            "step is for."
+            "step is for.\n\n" + PR_SYNC_NOTE
         )
         if rec.get("mergeable") == "CONFLICTING":
             text += (
@@ -479,7 +487,8 @@ def describe_pr_lookup(rec: dict) -> str:
     if state == "none":
         return heading + (
             f"The app asked `gh` before this step started. There is no open pull request "
-            f"for the branch `{rec.get('branch')}`. Open one, as the rules above say."
+            f"for the branch `{rec.get('branch')}`. Open one, as the rules above say.\n\n"
+            + PR_SYNC_NOTE
         )
     return heading + (
         f"The app could not ask `gh` before this step started: {rec.get('reason') or 'no reason given'}. "
