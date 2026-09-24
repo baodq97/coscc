@@ -177,6 +177,18 @@ INTEGRATE_DENIED = MERGE_IS_SHIPS + (
 # assignments included, so a commit message naming one is refused too, with this reason.
 _GIT_CONFIG_ROAD = re.compile(r"(?:^|[\s='\"])(?:alias|include|includeif)\.|\bGIT_CONFIG", re.IGNORECASE)
 
+# `0039`: ᛈ Perthro, the spike step. `impl`'s commands without `git`: `git -C <worktree>
+# commit` is the shortest road for throwaway code into the unit's branch (`spec.md ##
+# Answers, câu 2`). Everything else is kept, because measuring means running things.
+SPIKE_COMMANDS = tuple(c for c in IMPL_COMMANDS if c != "git")
+
+SPIKE_WARNING = (
+    "This step runs arbitrary code (`python`, `node`, `npm`, `uv`) under this process's "
+    "user, in a throwaway directory the app deletes afterwards. Nothing is a sandbox: a "
+    "write outside that directory is caught only inside the unit's worktree, where it "
+    "fails the step, and is not undone. Anywhere else, `~` included, it is not seen."
+)
+
 # Only stages that appear here get anything. The rest — `idea`, `intent`, and any
 # stage invented later — falls through to `Grant()`. Keyed by stage alone since `0020`:
 # the mode a step is started in is recorded, and grants nothing.
@@ -251,6 +263,20 @@ GRANTS: dict[str, Grant] = {
         tools=READ_TOOLS,
         max_turns=40,
         max_budget_usd=4.0,
+    ),
+    # `0039`. The first grant that both holds commands and has the app write its artifact
+    # from the reply. `beyond_reading` guards only `PROSE_STAGES`, which this is not, so
+    # `policy_test` pins `git` out of `commands` instead (`spec.md` C2). Writing is held to
+    # the session's `cwd`, a throwaway directory `service.run_step` makes and removes; the
+    # worktree and the unit are read through `read_also`. Ceilings chosen, not measured:
+    # the same as `spec` and `plan` (`intent.md ## Answers, câu 4`).
+    "spike": Grant(
+        tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
+        commands=SPIKE_COMMANDS,
+        max_turns=40,
+        max_budget_usd=4.0,
+        app_writes_artifact=True,
+        warning=SPIKE_WARNING,
     ),
     "pr": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,

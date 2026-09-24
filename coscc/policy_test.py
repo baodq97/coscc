@@ -93,7 +93,8 @@ class OneGrantPerStage(unittest.TestCase):
                           warning=policy.SHIP_WARNING),
         }
         # `integrate` since `0035`: not a stage, and pinned in `GeboPushesOnlyWithTheLease`.
-        self.assertEqual(set(policy.GRANTS), set(expected) | {"spec", "integrate"})
+        # `spike` since `0039`: pinned in `SpikeWritesOnlyItsScratch`.
+        self.assertEqual(set(policy.GRANTS), set(expected) | {"spec", "integrate", "spike"})
         for stage, grant in expected.items():
             self.assertEqual(grant_for(stage), grant, stage)
 
@@ -648,3 +649,46 @@ class GeboReadsAnExplicitList(unittest.TestCase):
 
     def test_the_worktree_is_written(self):
         self.assertEqual(self.d("Write", self.tree / "a.py"), "")
+
+
+class SpikeWritesOnlyItsScratch(unittest.TestCase):
+    """`0039` R10, R11: `spike` runs code, writes only its throwaway `cwd`, and never `git`."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.scratch = base / "spikes" / "slot" / "0039_x"
+        self.tree = base / "worktrees" / "slot" / "0039_x"
+        self.unit = base / "units" / "slot" / ".cos" / "0039_x"
+        for d in (self.scratch, self.tree, self.unit):
+            d.mkdir(parents=True)
+        self.G = grant_for("spike")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def d(self, tool, path):
+        also = (str(self.tree), str(self.unit))
+        return decide(self.G, tool, {"file_path": str(path)}, str(self.scratch), None, read_also=also)
+
+    def test_the_grant_is_the_one_the_spec_names(self):
+        self.assertEqual(self.G.tools, READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS)
+        self.assertEqual((self.G.max_turns, self.G.max_budget_usd), (40, 4.0))
+        self.assertTrue(self.G.app_writes_artifact)
+        self.assertIn("arbitrary code", self.G.warning)
+        self.assertNotIn("spike", policy.PROSE_STAGES)
+
+    def test_git_is_not_among_its_commands(self):
+        # C2: `beyond_reading` does not guard this grant, so this line does.
+        self.assertNotIn("git", self.G.commands)
+        self.assertIn("this step may not run 'git'", check_command(self.G, "git -C /tmp commit -m x"))
+        self.assertEqual(check_command(self.G, "python -c 'print(1)'"), "")
+
+    def test_it_reads_the_worktree_and_the_unit(self):
+        self.assertEqual(self.d("Read", self.tree / "coscc" / "policy.py"), "")
+        self.assertEqual(self.d("Read", self.unit / "spec.md"), "")
+
+    def test_it_writes_its_scratch_and_nothing_it_reads(self):
+        self.assertEqual(self.d("Write", self.scratch / "probe.py"), "")
+        self.assertIn("writing outside", self.d("Write", self.tree / "probe.py"))
+        self.assertIn("writing outside", self.d("Write", self.unit / "spec.md"))
