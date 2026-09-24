@@ -31,7 +31,7 @@ from coscc import board as board_reader
 from coscc import drift, fetches, gitops
 from coscc import harness, integrate
 from coscc import hold as hold_rules
-from coscc import prcomment
+from coscc import prcomment, prsync
 from coscc import sessions as reader
 from coscc.board import Unavailable
 from coscc.config import Config
@@ -1363,6 +1363,13 @@ class Service:
                             "done",
                             {**item[1], "comments": await self._post_new_rounds(cwd, unit, rounds_before)},
                         )
+                    if stage == "pr" and item[1].get("outcome") != "stopped":
+                        # `0055` R3. After `pr.md` is on disk, like the rounds above; a
+                        # stopped step posts nothing (`0034` R9, `spec.md ## Answers, câu 2`).
+                        item = (
+                            "done",
+                            {**item[1], "pr_sync": await self._sync_pr(cwd, unit, kwargs.get("pr_before"))},
+                        )
                     told_done = True
                 tell(item)
         except RunError as e:
@@ -1590,6 +1597,53 @@ class Service:
             except (Busy, BadRecord, OSError):
                 pass
         return {"unit": unit, "round": n, "pr": pr_url, **result.as_dict()}
+
+    async def _sync_pr(self, cwd: str, unit: str, pr_before: str | None) -> dict[str, Any]:
+        """`0055` R3, R5. Put `pr.md`'s title and body onto its pull request. Never raises.
+
+        Called from `_drive` after a `pr` step that was not stopped, and from nowhere else
+        (R4). The words are `cos.mjs pr-text`'s; `prsync` compares and writes. A `pr.md` that
+        is not accepted or names no pull request is `skipped` with no `gh` call. One
+        `pr-sync` row says how it went, `existed` from the lookup before the step; a row
+        that cannot be written is dropped, as `_post_round` drops one. `pr.md` is never
+        touched.
+        """
+        url, outcome, detail = "", "failed", ""
+        try:
+            text = await board_reader.pr_text(self._units_root(cwd), unit)
+            url = str(text.get("url") or "")
+            if "error" in text:
+                outcome, detail = "skipped", str(text["error"])
+            elif text.get("status") != "accepted":
+                outcome, detail = "skipped", f"pr.md is {text.get('status') or 'without a status'}, not accepted"
+            elif not url or not prcomment.PR_URL_RE.match(url):
+                outcome, detail = "skipped", f"pr.md names no pull request URL: {url!r}"
+            else:
+                result = await prsync.sync(
+                    url, text.get("title"), str(text.get("body") or ""),
+                    str(Path(cwd).expanduser().resolve()),
+                )
+                outcome, detail = result.state, result.reason
+        except Unavailable as e:
+            detail = str(e)
+        except Exception as e:  # noqa: BLE001 — R5: the step is done whatever this does
+            detail = str(e) or type(e).__name__
+        record: dict[str, Any] = {
+            "unit": unit,
+            "stage": "pr",
+            "pr": url,
+            "existed": bool(pr_before),
+            "outcome": outcome,
+        }
+        if outcome in ("failed", "skipped"):
+            record["detail"] = detail
+        journal = self._journal()
+        if journal is not None:
+            try:
+                journal.append({"kind": "pr-sync", "workspace": self._journal_key(cwd), **record})
+            except (Busy, BadRecord, OSError):
+                pass
+        return record
 
     def _record_transition(
         self, cwd: str, unit: str, artifact: str, directory: Path, done: dict[str, Any]
