@@ -1001,7 +1001,13 @@ def _check_simple(grant: Grant, simple: _Simple, lease: tuple[str, str] | None) 
     while k < len(all_words) - 1 and _ASSIGNMENT.match(all_words[k]):
         k += 1
     word = all_words[k]
-    if simple.expanded[k] and not _ASSIGNMENT.match(word):
+    if _ASSIGNMENT.match(word):
+        # Still refused, as before `0060` — but by what it is. Named by the last `/` of its
+        # value it read `this step may not run 'coscc-fb0599d12eeb'` for `S=/home/…/coscc-
+        # fb0599d12eeb`, a name that is no command at all (R6).
+        name = _ASSIGNMENT.match(word).group(0)
+        return f"a command that only assigns ({name}…) is not allowed: this step runs only the commands it names"
+    if simple.expanded[k]:
         # `0060` R4: what runs is whatever the variable holds, which this reader cannot know.
         return f"the command's name is a variable ({word}): this step runs only names it can read"
     base = word.rsplit("/", 1)[-1]

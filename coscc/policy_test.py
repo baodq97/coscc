@@ -838,6 +838,14 @@ class TheShellIsReadAsTheShellReadsIt(unittest.TestCase):
         self.assertEqual(self.check("npm test | sed -e 's/a|b/c/'"), "this step may not run 'sed'")
         self.assertEqual(self.check('X="a b" curl x'), "this step may not run 'curl'")
 
+    def test_an_assignment_alone_is_refused_by_what_it_is(self):
+        """Measured on 2026-09-23..24's refusals: `S=/home/…/coscc-fb0599d12eeb; node …` was
+        refused as `may not run 'coscc-fb0599d12eeb'` before `0060`, and still was with the
+        new reader, since the name came from the value's last `/`."""
+        reason = self.check("S=/home/bd/.cos/units/coscc-fb0599d12eeb; node x $S")
+        self.assertIn("only assigns (S=", reason)
+        self.assertNotIn("may not run", reason)
+
     def test_arithmetic_is_refused_and_named_as_such(self):
         reason = self.check("echo $((1+1))")
         self.assertIn("arithmetic substitution is not allowed: $((", reason)
