@@ -43,8 +43,11 @@ from scripts.proof_harness import EXIT_BROKEN, EXIT_ENV, EXIT_PASS, REPO, say  #
 SHA = "0123456789abcdef" * 2 + "01234567"
 
 # A `uv` for plain mode: `tool install --force <wheel>` writes a `coscc` into
-# `$UV_TOOL_BIN_DIR` that prints the wheel's version for `--version` and otherwise serves
-# 200 on every path until SIGTERM. A wheel named `*broken*` fails to install.
+# `$UV_TOOL_BIN_DIR` that prints the wheel's version for `--version`, exits 0 for
+# `reset-password`, and otherwise plays the `0070` door until SIGTERM: it prints the setup
+# token `fake` to stderr, answers `/api/health` 200, any other GET 401 without the cookie
+# and 200 with it, and `POST /setup` carrying that token 303 with the cookie. A wheel named
+# `*broken*` fails to install.
 FAKE_UV = """#!/bin/sh
 printf '%s\\n' "$*" >> "${UV_CALLS:-/dev/null}"
 wheel="$4"
@@ -56,9 +59,22 @@ cat > "$UV_TOOL_BIN_DIR/coscc" <<EOF
 import http.server, os, sys
 if sys.argv[1:] == ["--version"]:
     print("coscc $v"); sys.exit(0)
+if sys.argv[1:] == ["reset-password"]:
+    print("coscc: password and sessions removed"); sys.exit(0)
+sys.stderr.write("coscc setup token: fake\\n"); sys.stderr.flush()
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200); self.end_headers(); self.wfile.write(b"{}")
+        if self.path == "/api/health" or "coscc_session=t" in (self.headers.get("Cookie") or ""):
+            self.send_response(200); self.end_headers(); self.wfile.write(b"{}")
+        else:
+            self.send_response(401); self.end_headers()
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+        if self.path == "/setup" and "token=fake&" in body:
+            self.send_response(303); self.send_header("Location", "/")
+            self.send_header("Set-Cookie", "coscc_session=t; Path=/"); self.end_headers()
+        else:
+            self.send_response(400); self.end_headers()
     def log_message(self, *a): pass
 http.server.HTTPServer(("127.0.0.1", int(os.environ["COS_PORT"])), H).serve_forever()
 EOF

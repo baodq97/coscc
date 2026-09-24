@@ -540,6 +540,68 @@ class TheLocalChannel(_Base):
             u.build_local("an")
 
 
+class TheTrialLogsIn(unittest.IsolatedAsyncioTestCase):
+    """`0070` step 6: the trial goes through the login guard the way a person does.
+
+    A real `auth.Guard` around a tiny app that answers 200, served by a real
+    `uvicorn.Server` on a free loopback port in a thread, on a temporary data root.
+    """
+
+    async def asyncSetUp(self):
+        import threading
+
+        import uvicorn
+
+        from coscc import auth
+        from coscc.data import Data
+
+        async def ok(scope, receive, send):
+            if scope["type"] != "http":
+                return
+            await send({"type": "http.response.start", "status": 200,
+                        "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.err = io.StringIO()
+        guard = auth.Guard(ok, Data(self.tmp.name), err=self.err)
+        self.token = auth.SETUP_LINE.match(self.err.getvalue().splitlines()[0]).group(1)
+        self.port = updater._free_port()
+        self.server = uvicorn.Server(uvicorn.Config(
+            guard, host="127.0.0.1", port=self.port, log_level="warning", lifespan="off",
+        ))
+        self.thread = threading.Thread(target=self.server.run, daemon=True)
+        self.thread.start()
+
+    async def asyncTearDown(self):
+        self.server.should_exit = True
+        self.thread.join(10)
+        self.tmp.cleanup()
+
+    async def test_the_right_token_logs_in_and_serves(self):
+        self.assertEqual(await updater._healthy(self.port, 10, lambda: self.token), "")
+
+    async def test_a_wrong_token_fails_at_setup(self):
+        failed = await updater._healthy(self.port, 2, lambda: "not-the-token")
+        self.assertEqual(failed, "POST /setup")
+
+    async def test_no_token_printed_fails_by_name(self):
+        self.assertEqual(await updater._healthy(self.port, 2, lambda: None), "setup token")
+
+    async def test_the_token_never_reaches_the_log(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "update.log"
+            reader = asyncio.StreamReader()
+            reader.feed_data(b"booting\ncoscc setup token: s3cret-value\n  open /setup\n")
+            reader.feed_eof()
+            token: list[str] = []
+            await updater._copy_output(reader, log, token)
+            text = log.read_text()
+        self.assertEqual(token, ["s3cret-value"])
+        self.assertNotIn("s3cret-value", text)
+        self.assertIn("coscc setup token: <redacted>", text)
+
+
 class ItIsNotAnApproval(unittest.TestCase):
     def test_r16_no_gate_no_next_no_step(self):
         source = Path(updater.__file__).read_text(encoding="utf-8") + Path(update.__file__).read_text(encoding="utf-8")
