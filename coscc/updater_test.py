@@ -204,6 +204,18 @@ class ApplyNowCutsWhatItListed(_Base):
         self.assertEqual(caught.exception.listing["token"], second["token"])
         self.assertEqual(self.service.cut, [])
 
+    async def test_another_stage_on_the_same_unit_is_another_list(self):
+        # Review round 1, F2: the step id names only the unit, so the stage and start count.
+        self.service.jobs = [STEP]
+        u = self.make()
+        shown = u.cut_list()
+        self.service.jobs = [{**STEP, "stage": "review", "started": "t2"}]
+        with self.assertRaises(updater.Stale):
+            await u.apply("release", "now", "an", shown["token"])
+        self.assertEqual(self.service.cut, [])
+        self.service.jobs = [{**STEP, "started": "t2"}]
+        self.assertNotEqual(u.cut_list()["token"], shown["token"])
+
     async def test_steps_and_chats_are_cut_and_integrations_waited_for(self):
         self.service.jobs = [STEP, CHAT, INTEGRATION]
         u = self.make()

@@ -384,7 +384,11 @@ class Updater:
             {**j, "action": "sẽ chờ" if j["kind"] == "integration" else "sẽ bị dừng"}
             for j in self.jobs()
         ]
-        token = hashlib.sha256(json.dumps(sorted(j["id"] for j in items)).encode()).hexdigest()[:16]
+        # A step's id names only its unit: the stage and the start time make another run
+        # of that unit another list (review round 1, F2).
+        token = hashlib.sha256(json.dumps(sorted(
+            [j["id"], j.get("stage", ""), j.get("started", "")] for j in items
+        )).encode()).hexdigest()[:16]
         return {"items": items, "token": token}
 
     def job_ended(self) -> None:
