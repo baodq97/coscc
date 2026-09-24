@@ -9,12 +9,14 @@ tool nobody granted is refused whatever declared it — which is the shape that 
 from __future__ import annotations
 
 import inspect
+import math
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from coscc import policy
-from coscc.policy import READ_TOOLS, Grant, check_command, decide, grant_for
+from coscc.policy import READ_TOOLS, Grant, check_command, decide, grant_for, grant_for_step
 
 IMPL = grant_for("impl")
 
@@ -998,3 +1000,75 @@ class TheReaderFollowsBash(unittest.TestCase):
                 parsed = policy._read(command)
                 self.assertIsInstance(parsed, policy._Unreadable)
                 self.assertIn(what, parsed.what)
+
+
+class TheLabelDecidesImplsCeilings(unittest.TestCase):
+    """`0062`: a `novel` impl gets its own ceilings, and nothing else changes with them."""
+
+    LABELS = ("routine", "novel", None, "", "NOVEL", "weird")
+
+    def test_a_novel_impl_gets_the_novel_ceilings(self):
+        """R1."""
+        novel = grant_for_step("impl", "novel")
+        self.assertEqual((novel.max_turns, novel.max_budget_usd), (250, 16.0))
+
+    def test_a_routine_or_unlabelled_impl_is_unchanged(self):
+        """R2: the grant `0020` R6 pins, written out again."""
+        rw = READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS
+        written = Grant(tools=rw, commands=policy.IMPL_COMMANDS, max_turns=120,
+                        max_budget_usd=8.0, app_writes_artifact=False)
+        for label in ("routine", None):
+            with self.subTest(label=label):
+                self.assertEqual(grant_for_step("impl", label), grant_for("impl"))
+                self.assertEqual(grant_for_step("impl", label), written)
+
+    def test_novel_differs_from_routine_in_the_ceilings_alone(self):
+        """R3: no tool, command or refusal comes with the higher ceilings."""
+        routine, novel = grant_for_step("impl", "routine"), grant_for_step("impl", "novel")
+        self.assertNotEqual(novel, routine)
+        self.assertEqual(
+            replace(novel, max_turns=routine.max_turns, max_budget_usd=routine.max_budget_usd),
+            routine,
+        )
+
+    def test_the_stages_after_impl_read_the_label_and_keep_their_grant(self):
+        """R4."""
+        for stage in ("pr", "review", "ship"):
+            for label in ("routine", "novel", None):
+                with self.subTest(stage=stage, label=label):
+                    self.assertEqual(grant_for_step(stage, label), grant_for(stage))
+
+    def test_a_stage_with_no_novel_ceilings_keeps_its_grant(self):
+        """R5, for the stages that carry no label and one invented tomorrow."""
+        for stage in ("integrate", "spec", "plan", "spike", "idea", "intent",
+                      "a-stage-invented-tomorrow"):
+            with self.subTest(stage=stage):
+                self.assertEqual(grant_for_step(stage, "novel"), grant_for(stage))
+
+    def test_every_grant_that_opens_anything_keeps_both_ceilings(self):
+        """R6: no label on any stage takes a ceiling away."""
+        for stage in set(policy.GRANTS) | {"idea", "intent", "a-stage-invented-tomorrow"}:
+            for label in self.LABELS:
+                grant = grant_for_step(stage, label)
+                if not grant.opens_anything:
+                    continue
+                with self.subTest(stage=stage, label=label):
+                    self.assertIsInstance(grant.max_turns, int)
+                    self.assertGreaterEqual(grant.max_turns, 1)
+                    self.assertTrue(math.isfinite(grant.max_budget_usd))
+                    self.assertGreater(grant.max_budget_usd, 0)
+
+    def test_only_the_exact_label_counts(self):
+        """R8: a label spelled any other way is not `novel`."""
+        for label in ("", "NOVEL", "Novel", "novel ", "weird"):
+            with self.subTest(label=label):
+                self.assertEqual(grant_for_step("impl", label), grant_for("impl"))
+
+    def test_the_budget_does_not_stop_a_step_the_turns_would_allow(self):
+        """`spike.md ## U1`: $0.0568, the dearest turn over all 60 `impl` runs measured.
+
+        The margin is thin, and 181–250 turns were never measured (spec C2); this pins
+        only that the budget is not lower than the turns at the worst rate seen.
+        """
+        novel = grant_for_step("impl", "novel")
+        self.assertGreater(novel.max_budget_usd, novel.max_turns * 0.0568)

@@ -1789,6 +1789,51 @@ class TheRunLogCarriesEffortLabelAndTerminal(unittest.TestCase):
             self.assertNotIn("findings", end)
 
 
+class AnImplRunsUnderTheCeilingsOfItsLabel(unittest.TestCase):
+    """`0062` R1 and R7: `Runner.run` asks for the grant with the label it was given, and
+    the ceilings the session receives are the ones the `start` record names."""
+
+    def run_impl(self, d, **kw):
+        class Probe:
+            def __init__(self):
+                self.max_turns = self.budget = None
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                self.max_turns, self.budget = max_turns, kw.get("max_budget_usd")
+                (directory / "impl.md").write_text("# Impl\nStatus: accepted.\n",
+                                                   encoding="utf-8")
+                yield ("done", {"session_id": "s-impl", "cost": {}})
+
+        probe = Probe()
+        directory = make_unit(Path(d), intent_md="Status: accepted.\nI",
+                              plan_md="Status: accepted.\nP")
+        journal = Journal(d, d)
+        r = Runner(sessions=probe, journal=journal)
+
+        async def go():
+            return [ev async for ev in r.run(
+                workspace=d, directory=directory, journal_key=d, unit=UNIT,
+                stage="impl", artifact="impl.md", stages=STAGES, mode="autonomous", **kw,
+            )]
+
+        asyncio.run(go())
+        return probe, journal.records(d, kind="start")[-1]
+
+    def test_novel_gets_the_novel_ceilings_whatever_made_it_novel(self):
+        for source in ("declared", "forced", "missing", "escalated"):
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as d:
+                probe, start = self.run_impl(d, label="novel", label_source=source)
+                self.assertEqual((probe.max_turns, probe.budget), (250, 16.0))
+                self.assertEqual(start["max_turns"], probe.max_turns)
+
+    def test_routine_and_no_label_keep_impls_ceilings(self):
+        for label in ("routine", None):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as d:
+                probe, start = self.run_impl(d, label=label)
+                self.assertEqual((probe.max_turns, probe.budget), (120, 8.0))
+                self.assertEqual(start["max_turns"], probe.max_turns)
+
+
 class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
     """`0037_board-sessions-run-without-claude-codes-system-prompt`.
 

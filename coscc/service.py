@@ -49,7 +49,7 @@ from coscc.journal import (
     totals_of,
     zero_cost,
 )
-from coscc.policy import GRANTS, PROSE_STAGES, grant_for
+from coscc.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, grant_for, grant_for_step
 from coscc import labels, models
 from coscc.runner import SESSIONS_PER_STEP, STATUS_RE, RunError, Runner, describe_attempt
 from coscc.sessions import Sessions
@@ -2478,10 +2478,12 @@ class Service:
                 },
             ],
             # The board's own grants, from `policy.py` rather than from the config. They
-            # are separate on purpose, and the screen has to show that they are.
+            # are separate on purpose, and the screen has to show that they are. `0062`
+            # R9: a stage with its own `novel` ceilings shows them as `<stage>:novel`,
+            # right after its own row.
             "grants": [
                 {
-                    "stage": stage,
+                    "stage": name,
                     "tools": ", ".join(grant.tools) or "none",
                     "commands": ", ".join(grant.commands) or "none",
                     "max_turns": grant.max_turns,
@@ -2489,7 +2491,12 @@ class Service:
                     "app_writes_artifact": grant.app_writes_artifact,
                     "warning": grant.warning,
                 }
-                for stage, grant in sorted(GRANTS.items())
+                for stage, own in sorted(GRANTS.items())
+                for name, grant in (
+                    [(stage, own)]
+                    + ([(f"{stage}:{labels.NOVEL}", grant_for_step(stage, labels.NOVEL))]
+                       if stage in NOVEL_CEILINGS else [])
+                )
             ],
             "prose_stages": list(PROSE_STAGES),
         }

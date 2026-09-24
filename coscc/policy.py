@@ -26,7 +26,9 @@ and `can_use_tool` is where that happens.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+
+from coscc.labels import NOVEL
 
 # Stages whose artifact is prose. The app writes these from the text the session returns,
 # so the session itself needs no ability to write at all — see `plan.md` Risk 1 for why the
@@ -341,6 +343,20 @@ GRANTS: dict[str, Grant] = {
     ),
 }
 
+# `0062`. The ceilings a step gets when its plan's label is `novel` (`coscc/labels.py`),
+# as `(max_turns, max_budget_usd)`; everything else about the grant stays the stage's own.
+# A stage not named here runs the same grant whatever its label.
+#
+# 250 is chosen, not measured (`0062` spec C1): `intent.md ## Answers, câu 1` — "Đề xuất
+# novel: max_turns 250, ngân sách tương ứng ×2 impl thường" — read as 2 × $8.0 (spec C5).
+# `spike.md ## U1` measured the dearest turn at $0.0419 across the `novel` runs (250 turns
+# → $10.48) and $0.0568 across all 60 `impl` runs (→ $14.21), so $16 leaves a thin margin,
+# and nothing between 181 and 250 turns has ever been measured. A `novel` impl that stops
+# on the budget instead is not escalated and not counted by the intent's outcome.
+NOVEL_CEILINGS: dict[str, tuple[int, float]] = {
+    "impl": (250, 16.0),
+}
+
 
 def beyond_reading(grant: Grant) -> tuple[str, ...]:
     """What a grant carries that a prose stage may not — which is anything beyond reading.
@@ -364,6 +380,19 @@ def grant_for(stage: str) -> Grant:
     No mode: `0020` `spec.md` `## Answers`, answer 1 — the tools go with the stage's task.
     """
     return GRANTS.get(stage, Grant())
+
+
+def grant_for_step(stage: str, label: str | None) -> Grant:
+    """The grant for one step run under a plan's effective label.
+
+    Only the exact `novel` label, on a stage `NOVEL_CEILINGS` names, changes anything, and
+    only the two ceilings: the tools, commands and refusals are `grant_for(stage)`'s.
+    """
+    grant = grant_for(stage)
+    if label == NOVEL and stage in NOVEL_CEILINGS:
+        turns, budget = NOVEL_CEILINGS[stage]
+        return replace(grant, max_turns=turns, max_budget_usd=budget)
+    return grant
 
 
 def is_prose_stage(stage: str) -> bool:

@@ -1598,6 +1598,19 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertIn("cos_model", self.service.settings())
         self.assertNotIn("model", self.service.settings())
 
+    def test_settings_shows_the_novel_impl_ceilings_after_impl(self):
+        """`0062` R9."""
+        rows = self.service.settings()["grants"]
+        stages = [r["stage"] for r in rows]
+        impl, novel = rows[stages.index("impl")], rows[stages.index("impl:novel")]
+        self.assertEqual(stages.index("impl:novel"), stages.index("impl") + 1)
+        self.assertEqual((novel["max_turns"], novel["max_budget_usd"]), (250, 16.0))
+        self.assertEqual((impl["max_turns"], impl["max_budget_usd"]), (120, 8.0))
+        for field in ("tools", "commands", "warning"):
+            self.assertEqual(novel[field], impl[field], field)
+        for stage in ("pr:novel", "review:novel", "ship:novel"):
+            self.assertNotIn(stage, stages)
+
 
 class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
     """`0033` R3, R4, R10. The label is read after the gate and picks the configuration;
@@ -1632,7 +1645,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
             self.test = test
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            self.test.seen.append(kw)
+            self.test.seen.append({**kw, "max_turns": max_turns})
             (self.test.dir / "impl.md").write_text("# Impl: x\nStatus: accepted.\n", encoding="utf-8")
             yield ("done", {"session_id": "sess-i", "cost": {}, "terminal_reason": self.test.terminal})
 
@@ -1662,6 +1675,16 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.assertEqual(self.seen[-1].get("effort"), "high")
         self.assertEqual(start["impl_run"], 1)
 
+    def test_a_novel_impl_gets_the_novel_ceilings(self):
+        """`0062` R1 and R7, down the board's whole road."""
+        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/policy.py`"), encoding="utf-8")
+        self._run()
+        start = self._starts()[-1]
+        self.assertEqual((start["label"], start["label_source"]), ("novel", "forced"))
+        self.assertEqual((self.seen[-1]["max_turns"], self.seen[-1].get("max_budget_usd")),
+                         (250, 16.0))
+        self.assertEqual(start["max_turns"], 250)
+
     def test_a_routine_run_escalates_after_a_max_turns_stop_and_counts_its_runs(self):
         (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/board.py`"), encoding="utf-8")
         self.terminal = "max_turns"
@@ -1674,6 +1697,9 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.assertEqual((second["label"], second["label_source"], second["model"]),
                          ("novel", "escalated", "claude-opus-5-5[1m]"))
         self.assertEqual((first["impl_run"], second["impl_run"]), (1, 2))
+        # `0062`: the rerun also gets the ceilings it was escalated for.
+        ceilings = [(kw["max_turns"], kw.get("max_budget_usd")) for kw in self.seen[-2:]]
+        self.assertEqual(ceilings, [(120, 8.0), (250, 16.0)])
 
 
 class TheNextStageComesFromTheScript(unittest.TestCase):

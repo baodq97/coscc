@@ -30,7 +30,7 @@ import claude_agent_sdk as sdk
 from coscc import gitops, harness, steps
 from coscc import sessions as sessions_mod
 from coscc.journal import Journal
-from coscc.policy import Grant, beyond_reading, decide, grant_for, is_prose_stage
+from coscc.policy import Grant, beyond_reading, decide, grant_for_step, is_prose_stage
 from coscc.sessions import Refused, Sessions
 
 # An artifact has to carry one of these on its first line, or the gate cannot read it and
@@ -945,7 +945,7 @@ class Runner:
         leaves no artifact behind it and a sealed one cannot be stopped halfway.
         A cancellation nobody asked for is the app shutting down, and writes no `end`.
         """
-        grant = grant_for(stage)
+        grant = grant_for_step(stage, label)
         directory = Path(directory)
         cwd = cwd or workspace
         if not directory.exists():

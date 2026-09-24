@@ -385,6 +385,11 @@ async def claim_7(http, cwd: str) -> Claim:
         max_budget_usd=0.5,
         app_writes_artifact=False,
     )
+    # This plan has no `Impl:` line, so its label is `missing` and the step runs `novel`;
+    # since `0062` that replaces both ceilings with `NOVEL_CEILINGS["impl"]`. Lower that too,
+    # or the one turn above is overwritten by 250.
+    original_novel = policy.NOVEL_CEILINGS.get("impl")
+    policy.NOVEL_CEILINGS["impl"] = (1, 0.5)
     try:
         done = await asyncio.wait_for(
             _run_step(http, cwd, CEILING_UNIT, "impl", "autonomous"), timeout=600
@@ -397,6 +402,10 @@ async def claim_7(http, cwd: str) -> Claim:
             policy.GRANTS.pop("impl", None)
         else:
             policy.GRANTS["impl"] = original
+        if original_novel is None:
+            policy.NOVEL_CEILINGS.pop("impl", None)
+        else:
+            policy.NOVEL_CEILINGS["impl"] = original_novel
 
     if "refused" in done:
         c.check("the step ran", False, done["refused"])
