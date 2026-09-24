@@ -304,6 +304,21 @@ class TheSequence(_Base):
         self.assertEqual(update.verified_wheel(self.root / "current")["version"], "0.12.0")
         self.assertEqual(update.take_handoff().current_version, "0.12.0")
 
+    async def test_a_local_builds_leftovers_in_current_do_not_block_a_release(self):
+        # Review round 2, F4: a local build applied from the board, then `install.sh` at a
+        # terminal brought 0.12.0; `current/` still holds the local wheel and its manifest.
+        current = self.root / "current"
+        _wheel(current, "0.11.0+gabcdef0", body=b"local", sums=False)
+        update.write_json(current / update.MANIFEST, {"version": "0.11.0+gabcdef0", "commit": "c" * 40,
+                                                      "sha256": hashlib.sha256(b"local").hexdigest()})
+        _wheel(self.root / "release", "0.13.0")
+        u = self.make_real()
+        u._opener = _serving(_running_release())
+        await self.run_apply(u)
+        self.assertIsNone(u.error)
+        self.assertEqual(u._current_matches()["version"], "0.12.0")
+        self.assertFalse((current / update.MANIFEST).exists())
+
     async def test_a_local_build_with_no_current_is_not_offered(self):
         # Review round 1, F1: a local build has no release to fetch itself back from.
         self.me["version"] = "0.12.0+gabcdef0"

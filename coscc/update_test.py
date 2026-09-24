@@ -237,6 +237,23 @@ class CheckedDownloads(unittest.TestCase):
         self.assertEqual(got["state"], "error")
         self.assertEqual(list(self.dir.iterdir()), [])
 
+    def test_a_local_builds_manifest_goes_with_its_wheel(self):
+        # Review round 2, F4: a local build promoted into `current/`, then a release fetched over it.
+        self.dir.mkdir()
+        old = self.dir / "coscc-0.12.0+gabcdef0-py3-none-any.whl"
+        old.write_bytes(b"local")
+        update.write_json(self.dir / update.MANIFEST, {"version": "0.12.0+gabcdef0", "commit": "c" * 40,
+                                                       "sha256": hashlib.sha256(b"local").hexdigest()})
+        update.fetch_into(self.dir, self.cand, self.opener())
+        self.assertFalse((self.dir / update.MANIFEST).exists())
+        self.assertEqual(update.verified_wheel(self.dir)["version"], "0.13.0")
+
+    def test_a_manifest_for_another_wheel_is_not_read(self):
+        update.fetch_into(self.dir, self.cand, self.opener())
+        update.write_json(self.dir / update.MANIFEST, {"version": "0.12.0+gabcdef0", "commit": "c" * 40,
+                                                       "sha256": hashlib.sha256(b"local").hexdigest()})
+        self.assertEqual(update.verified_wheel(self.dir)["version"], "0.13.0")
+
 
 FAKE_UV = """#!/bin/sh
 # A stand-in for `uv tool install --force <wheel>`: records how it was called, then

@@ -320,6 +320,9 @@ def fetch_into(
     for old in channel_dir.glob("*.whl"):
         if old.name != name:
             _unlink(old)
+    # A local build promoted into `current/` left its manifest; it now describes a wheel
+    # that is gone, and `verified_wheel` reads a manifest before `SHA256SUMS`.
+    _unlink(channel_dir / MANIFEST)
     return {"state": "ready", "wheel": str(channel_dir / name), "version": cand["version"], "sha256": got}
 
 
@@ -341,7 +344,10 @@ def verified_wheel(directory: Path) -> dict[str, Any] | None:
     if len(wheels) != 1:
         return None
     wheel = wheels[0]
+    m = re.fullmatch(r"coscc-(.+)-py3-none-any\.whl", wheel.name)
     manifest = read_json(directory / MANIFEST)
+    if manifest is not None and not (m and manifest.get("version") == m.group(1)):
+        manifest = None  # it describes some other wheel, not this one
     if manifest is not None:
         want = manifest.get("sha256")
         version = manifest.get("version")
@@ -355,7 +361,6 @@ def verified_wheel(directory: Path) -> dict[str, Any] | None:
     if not isinstance(want, str) or sha256_of(wheel) != want:
         return None
     if not isinstance(version, str):
-        m = re.fullmatch(r"coscc-(.+)-py3-none-any\.whl", wheel.name)
         version = m.group(1) if m else ""
     return {"wheel": str(wheel), "version": version, "commit": commit or "", "sha256": want}
 
