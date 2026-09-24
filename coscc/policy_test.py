@@ -572,9 +572,45 @@ class GeboPushesOnlyWithTheLease(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.run_(command), "")
 
+    def test_roads_past_the_lease_that_the_grant_holds_are_refused(self):
+        """`0035` review round 2, F4: moving the branch without saying `git push`."""
+        cases = {
+            "gh api -X PATCH repos/o/r/git/refs/heads/feat/x -f sha=abc -F force=true": "no lease",
+            "gh -R o/r api graphql -f query=x": "no lease",
+            "gh repo sync o/r --branch feat/x --force": "no lease",
+            "gh extension install o/gh-x": "extension",
+            "git send-pack origin +HEAD:refs/heads/feat/x": "without the lease",
+            "git http-push origin feat/x": "without the lease",
+            "git -c alias.p=push p --force origin feat/x": "alias",
+            "git -c Alias.p=push p --force origin feat/x": "alias",
+            "git config alias.p push": "alias",
+            "git config --global alias.p push": "alias",
+            "git -c include.path=x p": "alias",
+            "git --config-env=alias.p=V p": "alias",
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p": "alias",
+        }
+        for command, why in cases.items():
+            with self.subTest(command=command):
+                self.assertIn(why, self.run_(command))
+
+    def test_reading_the_pull_request_stays_open(self):
+        for command in ("gh pr view 7 --json headRefOid", "gh pr checks 7", "git config user.name",
+                        "GIT_EDITOR=true git rebase --continue"):
+            with self.subTest(command=command):
+                self.assertEqual(self.run_(command), "")
+
     def test_the_known_limit_c6(self):
-        """`0035` spec C6: tokens, not what runs. `node -e` may spawn `git push --force`."""
-        self.assertEqual(self.run_("node -e 'require(\"child_process\")'"), "")
+        """`0035` spec C6: tokens, not what runs. A program the grant may start can spawn
+        `git push --force` itself — `node -e`, `python -c`, or a script the step wrote and
+        then ran through `npm test`."""
+        for command in ("node -e 'require(\"child_process\")'", "python -c 'import subprocess'",
+                        "python3 push.py", "npm test"):
+            with self.subTest(command=command):
+                self.assertEqual(self.run_(command), "")
+
+    def test_the_new_refusals_are_geboes_alone(self):
+        self.assertEqual(check_command(grant_for("pr"), "gh api repos/o/r/pulls/7"), "")
+        self.assertEqual(check_command(grant_for("impl"), "git config alias.st status"), "")
 
     def test_other_grants_push_as_before(self):
         self.assertEqual(check_command(grant_for("pr"), "git push origin feat/x"), "")

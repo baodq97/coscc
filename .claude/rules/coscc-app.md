@@ -216,8 +216,14 @@ no commands, one turn, no budget.
   unit's local branch with `reset --keep`; on a `conflicting` or `red-after-integration`
   unit it opens Gebo, a paid session (ceilings 120 turns / $8, chosen, not measured) whose
   grant allows exactly one push: `--force-with-lease=<branch>:<head at start>` to the
-  unit's own branch. The grant reads tokens, so `node -e` spawning `git push --force`
-  still walks past (`coscc/policy_test.py`, `test_the_known_limit_c6`). Gebo may read the
+  unit's own branch. The roads to the branch the grant's own commands hold are refused by
+  their words: `gh api` (it reaches `git/refs` with `force=true`), `gh repo sync`,
+  `gh extension`, `git send-pack`, `git http-push`, and an alias, include or
+  `GIT_CONFIG_*` made during the step. The grant still reads tokens, so any program it may
+  start can push past the lease itself — `node -e`, `python -c`, or a script the step
+  wrote and then runs through `npm test` — and so can an alias already in a git config
+  before the step (`coscc/policy_test.py`, `test_the_known_limit_c6`). What stops a force
+  on `main` is the GitHub ruleset, not this grant. Gebo may read the
   intent, spec and plan of the units the app lists as related — a widening of the read
   boundary, and not a sandbox while it has `cat`. No login, `0.0.0.0` by default. Every
   attempt, refused ones included, is one `integration` row in the run log.

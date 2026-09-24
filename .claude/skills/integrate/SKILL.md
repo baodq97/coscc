@@ -20,7 +20,10 @@ the pull request's head before and after you, not by what you say.
   them.
 - Push exactly one way, which the prompt spells out:
   `git push --force-with-lease=<branch>:<head at start> origin <branch>`.
-  Any other push is refused.
+  Any other push is refused, and so is every other road to the branch: `gh api`,
+  `gh repo sync`, `git send-pack`, and a git alias or include made during the step. Read
+  the pull request with `gh pr view` and `gh pr checks`. When the push is refused, stop
+  and report it; do not look for another way to move the branch.
 - Read this unit's artifacts, and `intent.md`, `spec.md` and `plan.md` of the units the
   prompt lists. Nothing else of any other unit. Never change another unit's branch, files
   or pull request.

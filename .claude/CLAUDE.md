@@ -159,8 +159,10 @@ a `review` gate that never opens.
   *Integrate* button (`POST /api/units/integrate`) rebases it: the app itself through
   `gh pr update-branch --rebase` when GitHub reports no conflict, or Gebo — an agent
   session under the `integrate` grant, rules in `.claude/skills/integrate/SKILL.md` — when
-  it conflicts or CI went red after an integration. Gebo pushes only with a lease bound
-  to the head it began at, and stops with `[needs-person]` rather than drop one side. How
+  it conflicts or CI went red after an integration. Gebo's grant allows one push, with a
+  lease bound to the head it began at, and refuses the other roads its own commands hold
+  (`gh api`, `git send-pack`, an alias made during the step) — but, like every grant here,
+  it reads words: `node -e` or `python -c` pushing by itself still walks past. Gebo stops with `[needs-person]` rather than drop one side. How
   a conflict was resolved is the app's or an agent's word; the next review round is the
   only thing that reads it. No board read, timer or finished step presses the button, and
   the route has no login: anyone who reaches the port can make this machine's `gh` login

@@ -161,7 +161,21 @@ INTEGRATE_DENIED = MERGE_IS_SHIPS + (
     (("git", "merge"), "integration is by rebase, never by merge"),
     (("git", "pull"), "integration is by rebase, never by merge"),
     (("gh", "pr", "update-branch"), "the head the push is leased to would move under it"),
+    # `0035` review round 2, F4: roads to the branch that are not `git push` and so never
+    # meet the lease. `gh api` reaches `git/refs` with `force=true`; the pull request and
+    # its checks are read with `gh pr view` and `gh pr checks`, which stay open.
+    (("gh", "api"), "it can move the branch on GitHub with no lease; read with `gh pr view` or `gh pr checks`"),
+    (("gh", "repo", "sync"), "it can force the branch on GitHub with no lease"),
+    (("gh", "extension"), "an extension is a command this grant cannot read"),
+    (("git", "send-pack"), "it pushes without the lease; push only with `git push --force-with-lease`"),
+    (("git", "http-push"), "it pushes without the lease; push only with `git push --force-with-lease`"),
 )
+
+# `0035` review round 2, F4: an alias or an included config file made during the step
+# renames `push` into a word `_may_be_push` never sees — `git -c alias.p=push p`, `git
+# config alias.p push`, or the same through `GIT_CONFIG_*`. Matched on the whole segment,
+# assignments included, so a commit message naming one is refused too, with this reason.
+_GIT_CONFIG_ROAD = re.compile(r"(?:^|[\s='\"])(?:alias|include|includeif)\.|\bGIT_CONFIG", re.IGNORECASE)
 
 # Only stages that appear here get anything. The rest — `idea`, `intent`, and any
 # stage invented later — falls through to `Grant()`. Keyed by stage alone since `0020`:
@@ -405,6 +419,7 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
         # in `decide` never sees it. The step has `Write` and `Edit` for making files.
         return "redirecting into a file is not allowed — use the write tools"
     for segment in _segments(text):
+        whole = segment
         word = segment.split()[0] if segment.split() else ""
         # `VAR=x cmd` puts the assignment first; step over any of them.
         while "=" in word and not word.startswith("-") and len(segment.split()) > 1:
@@ -421,6 +436,8 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
             # `gh api -X PUT repos/o/r/pulls/7/merge` is the same merge by another road.
             return "this step may not call the merge endpoint: merging is the ship stage's"
         raw = segment.split()[1:]
+        if base == "git" and grant.push_needs_lease and _GIT_CONFIG_ROAD.search(whole):
+            return "this step may not define a git alias, an include or GIT_CONFIG_*: it can rename `push` past the lease"
         if base == "git" and grant.push_needs_lease and _may_be_push(raw):
             # `0035` R6. `push` must be the first word after `git`, so a `-C dir` or
             # `-c k=v` in front cannot hide what it pushes.
@@ -457,7 +474,8 @@ def _words(base: str, rest: list[str]) -> tuple[str, ...]:
     """The command and its positional words, flags removed — what a deny prefix is matched on.
 
     Still a reading of tokens, not of what the program will do: an alias defined before
-    the step, or `node -e` spawning `gh`, is not seen. `.claude/CLAUDE.md` says so.
+    the step, or `node -e` spawning `gh`, is not seen. `.claude/CLAUDE.md` says so. The
+    `integrate` grant also refuses an alias made during the step (`_GIT_CONFIG_ROAD`).
     """
     out = [base]
     skip = False
