@@ -32,7 +32,8 @@ from typing import Any, AsyncIterator
 from coscc.harness import child_env
 
 STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown")
-# R3: the three states that carry a button.
+# R3: the three states with something to integrate. Since `0052` `current` carries a button
+# too, and a press on it is refused unless the fetch it begins with finds it behind.
 BUTTON_STATES = ("behind", "conflicting", "red-after-integration")
 GEBO_STATES = ("conflicting", "red-after-integration")
 OUTCOMES = ("pushed", "needs-person", "refused", "failed")
