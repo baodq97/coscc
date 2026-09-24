@@ -195,7 +195,7 @@ no commands, one turn, no budget.
   `setting` record in the run log (workspace `""`, with `old` and `new` — it shows on no
   workspace's Activity) and the `override` badge on Settings. A model id is not checked
   when saved; a wrong one fails the stage's next step with the CLI's error. A person who
-  had `COS_MODEL` set before this lost it for all eight stages: it now answers only chat.
+  had `COS_MODEL` set before this lost it for every stage: it now answers only chat.
   Since `0033` every row also has an effort (`effort:<name>`, `POST /api/settings/efforts`,
   the same `setting` trace), and each stage after `plan` has a `<stage>:novel` row used when
   the plan's label is `novel`: declared, forced by a file in `coscc/labels.py`
@@ -204,6 +204,21 @@ no commands, one turn, no budget.
   turns reruns on the dearer row with nobody pressing anything different. `max` is refused
   from `models.json` and taken from an override, so anyone who reaches the port can set it.
   `COS_HOST=127.0.0.1` is the mitigation that exists.
+- **`spike` runs arbitrary code, and nothing is a sandbox.** Since `0039` a spec that marks
+  a concern `[unmeasured] U<n>` sends its unit to a `spike` step holding `Bash` with
+  `python`, `node`, `npm` and `uv` (`impl`'s commands without `git`,
+  `policy.SPIKE_COMMANDS`), run under this process's user. Its `cwd` is
+  `<COS_DATA_DIR>/spikes/<slot>/<unit>`, emptied before the step and removed after it
+  (`service.run_step`); the write tools are held to that directory, and the worktree and
+  the unit are read only. `check_command` is not a sandbox: `python -c` writes anywhere the
+  user can, `~/.ssh` and other units' stores included, and none of that is seen. What is
+  seen is the worktree: its `HEAD` and `git status --porcelain` are read before and after
+  (`gitops.tree_state`), and a difference fails the step with no `spike.md` and the files
+  named in the run log — detected, not undone, and a write to a path `.gitignore` covers is
+  not in `status`. A client that drops the stream leaves the scratch until the generator
+  is collected or the next spike clears it. The `spec ↔ spike` loop stops for a person at
+  `Round: 2` (`cos.mjs` `SPIKE_ROUNDS`), and `Round:` is the agent's own word: a spike
+  that writes `Round: 1` every time loops until the money runs out.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
 - **A failed step's transcript tail is stored in `cos.db` and put into the next prompt.**
