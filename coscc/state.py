@@ -311,6 +311,12 @@ RUNNING_POLL = 5
 # for across a restart, and the Board would never ask again.
 _POLLING: set[str] = set()
 
+# `0051` review round 1, F2. How many asks in a row must find the tab's token unmapped
+# before its loop ends. Reflex unmaps a token on every socket drop and maps it again on
+# reconnect, so one miss is a flaky network as often as a closed tab. Chosen: 12 asks,
+# one minute at `RUNNING_POLL`; not measured.
+GONE_AFTER = 12
+
 
 def _tab_gone(token: str) -> bool:
     """Whether the tab behind `token` has no socket open to this process any more.
@@ -1181,7 +1187,8 @@ class StudioState(rx.State):
 
         The one source for every card's `live`, whichever tab, route or process started
         the step (R8). One loop per tab: a second start while one lives returns at once.
-        The loop ends when the tab leaves the Board, has no workspace, or is closed.
+        The loop ends when the tab leaves the Board, has no workspace, or has had no socket
+        for `GONE_AFTER` asks in a row.
         """
         # The token the event came with: the one the socket server maps to this tab.
         # `router.session.client_token` is empty when no browser hydrated the state.
@@ -1189,8 +1196,12 @@ class StudioState(rx.State):
         if token in _POLLING:
             return
         _POLLING.add(token)
+        missed = 0
         try:
-            while not _tab_gone(token):
+            while True:
+                missed = missed + 1 if _tab_gone(token) else 0
+                if missed >= GONE_AFTER:
+                    return
                 async with self:
                     if self.screen != "board" or not self.cwd:
                         return

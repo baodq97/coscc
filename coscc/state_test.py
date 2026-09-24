@@ -483,6 +483,71 @@ class OneLoopPerTab(unittest.TestCase):
         self.assertGreaterEqual(asked, 2)
         self.assertFalse(still)
 
+    def test_a_socket_drop_does_not_end_the_loop_a_closed_tab_does(self):
+        """Review round 1, F2: Reflex unmaps a token on every drop and maps it back on
+        reconnect, so one miss must not end the loop; `GONE_AFTER` misses in a row do."""
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        token = "state-test-drop"
+        gone = {"now": False}
+
+        async def go():
+            manager, processor, fire = _processor(token)
+            async with processor:
+                async with manager.modify_state(_key(token)) as root:
+                    (await root.get_state(page.StudioState)).cwd = "/somewhere"
+                await fire("navigate", screen="board")
+                gone["now"] = True
+                await asyncio.sleep(0.08)  # one or two misses, under GONE_AFTER
+                gone["now"] = False
+                await asyncio.sleep(0.3)
+                after_drop = token in page._POLLING
+                gone["now"] = True
+                await asyncio.sleep(0.5)
+                return after_drop, token in page._POLLING
+
+        with (
+            mock.patch.object(page, "RUNNING_POLL", 0.05),
+            mock.patch.object(page, "GONE_AFTER", 4),
+            mock.patch.object(page, "_tab_gone", lambda t: gone["now"]),
+            mock.patch.object(page.SERVICE, "running", lambda cwd: {"running": {}, "unknown_end": {}}),
+        ):
+            after_drop, after_close = asyncio.run(go())
+        self.assertTrue(after_drop)
+        self.assertFalse(after_close)
+
+
+def _key(token: str):
+    from reflex.istate.manager.token import BaseStateToken
+    from reflex.state import State
+
+    return BaseStateToken(ident=token, cls=State)
+
+
+def _processor(token: str):
+    """Reflex's own event processor over a memory state manager, and a `fire` for it."""
+    import asyncio
+
+    from reflex.event import Event
+    from reflex.istate.manager.memory import StateManagerMemory
+    from reflex_base.event.processor import BaseStateEventProcessor
+    from reflex_base.utils.format import format_event_handler
+
+    from coscc import state as page
+
+    manager = StateManagerMemory()
+    processor = BaseStateEventProcessor().configure(state_manager=manager)
+
+    async def fire(handler: str, **payload):
+        name = format_event_handler(page.StudioState.event_handlers[handler])
+        await processor.enqueue(token, Event(name=name, payload=payload))
+        await asyncio.sleep(0.05)
+
+    return manager, processor, fire
+
 
 def _self_names(target: ast.expr) -> list[str]:
     """Every `self.X` being assigned by one target, tuple unpacking included."""
