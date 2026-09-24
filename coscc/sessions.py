@@ -269,6 +269,7 @@ def _options(
     max_budget_usd: float | None = None,
     workspace: str | None = None,
     model: str | None = None,
+    system_prompt: dict[str, str] | None = None,
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
@@ -284,6 +285,13 @@ def _options(
 
     `model` is what `coscc/models.py` resolved for this stage or for chat. `None` means
     nobody resolved one, and `COS_MODEL` applies as it always did.
+
+    `system_prompt` is `None` unless a caller asks (`0037`). Left unset, the SDK hands the
+    CLI an empty system prompt, which is what every chat turn and every tool-less step
+    still gets. A board step with tools passes `runner.CLAUDE_CODE_PRESET`, so the session
+    carries Claude Code's own guidance on using those tools. It changes nothing else here:
+    the tool list, the permission mode, `setting_sources` and the callback are what they
+    would have been without it, and what a step may do is still decided by `can_use_tool`.
     """
     options = ClaudeAgentOptions(
         cwd=cwd,
@@ -318,6 +326,8 @@ def _options(
         options.can_use_tool = can_use_tool
     if max_budget_usd:
         options.max_budget_usd = float(max_budget_usd)
+    if system_prompt is not None:
+        options.system_prompt = dict(system_prompt)
     return options
 
 
@@ -392,6 +402,7 @@ class Sessions:
         max_budget_usd: float | None = None,
         workspace: str | None = None,
         model: str | None = None,
+        system_prompt: dict[str, str] | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -428,6 +439,7 @@ class Sessions:
                         max_budget_usd=max_budget_usd,
                         workspace=workspace,
                         model=model,
+                        system_prompt=system_prompt,
                     )
                 )
                 await client.connect()
