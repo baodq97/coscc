@@ -205,6 +205,47 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertTrue(said["still_marked"])
         self.assertNotIn((self.key, self.unit), self.service._active)
 
+    def test_gebo_is_running_under_its_name_while_it_works_and_not_after(self):
+        """`0051` plan step 3, the Gebo road."""
+        seen = {}
+
+        async def act(tree, gate):
+            seen["running"] = self.service.running(self.cwd)["running"]
+            return "[needs-person] stand-in"
+
+        self.integrate_with(act)
+        [row] = seen["running"][self.unit]
+        self.assertEqual((row["kind"], row["stage"]), ("gebo", "integrate"))
+        self.assertEqual(row["agent"], {"glyph": "ᚷ", "name": "Gebo"})
+        self.assertEqual(self.service._running, {})
+
+    def test_a_mechanical_rebase_is_rebasing_with_no_agent_and_not_after(self):
+        """`0051` plan step 3, the mechanical road: `behind` with no conflict."""
+        seen = {}
+        conflicting = self._gh
+
+        async def gh(argv, cwd):
+            if argv[:2] == ["pr", "list"]:
+                code, out, err = await conflicting(argv, cwd)
+                return code, out.replace("CONFLICTING", "MERGEABLE"), err
+            if argv[:2] == ["pr", "update-branch"]:
+                seen["running"] = self.service.running(self.cwd)["running"]
+                return 1, "", "stand-in gh: refused"
+            return await conflicting(argv, cwd)
+
+        with mock.patch.object(integrate, "_gh", gh):
+            rec = self.integrate_with(self._no_act)
+        self.assertEqual(rec["mode"], "mechanical")
+        [row] = seen["running"][self.unit]
+        self.assertEqual((row["kind"], row["agent"]), ("rebase", None))
+        self.assertEqual(self.service._running, {})
+
+    def test_a_refused_integration_leaves_no_entry(self):
+        self.service._active.add((self.key, self.unit))
+        with self.assertRaises(Invalid):
+            self.integrate_with(self._no_act)
+        self.assertEqual(self.service._running, {})
+
     def test_an_integration_is_refused_while_a_step_runs(self):
         """F1, the other way: the mark a step holds refuses Gebo, and opens no session."""
         self.service._active.add((self.key, self.unit))

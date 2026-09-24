@@ -18,9 +18,12 @@ differently depending on which door you came through.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import sys
 
 import reflex as rx
+from reflex_base.event.context import EventContext
 
 from coscc.api import build
 from coscc.journal import COST_USD, TOKEN_FIELDS
@@ -225,6 +228,9 @@ class Unit:
     outcome_hint: str = ""
     outcome_invalid: int = 0
     outcome_form: bool = False
+    # `0051`. What is running on this unit now, or ended unseen: one line each, copied from
+    # `Service.running` by `_activities`. Never from `StudioState.running` (R8).
+    live: list[Activity] = dataclasses.field(default_factory=list)
 
 
 def _outcome_fields(label: dict | None) -> dict:
@@ -249,6 +255,81 @@ def _outcome_fields(label: dict | None) -> dict:
         "outcome_invalid": int(label.get("invalid") or 0),
         "outcome_form": bool(label.get("form")),
     }
+
+
+@dataclasses.dataclass
+class Activity:
+    """`0051`. One line on a card: a session running on the unit, or one that ended unseen.
+
+    Every field is copied from `Service.running`; the page chooses only the words.
+    """
+
+    # `running`, `rebasing` or `ended, unknown`.
+    label: str = ""
+    # `ᚢ Uruz`, or empty for a mechanical rebase and for `ended, unknown`.
+    agent: str = ""
+    stage: str = ""
+    started: str = ""
+    # Empty when unknown, never `0` (R5): today they are always unknown while a step runs.
+    turns: str = ""
+    cost: str = ""
+    # `step`, `gebo`, `rebase` or `unknown`.
+    kind: str = ""
+
+
+def _activities(unit: str, read: dict) -> list[Activity]:
+    """`0051` R3, R6. `Service.running`'s answer for one unit, as the lines its card shows."""
+    out: list[Activity] = []
+    for row in (read.get("running") or {}).get(unit) or []:
+        agent = row.get("agent") or {}
+        turns, cost = row.get("turns"), row.get("cost_usd")
+        out.append(Activity(
+            label="rebasing" if row.get("kind") == "rebase" else "running",
+            agent=f"{agent['glyph']} {agent['name']}" if agent else "",
+            stage=str(row.get("stage") or ""),
+            started=str(row.get("started") or ""),
+            turns="" if turns is None else str(turns),
+            cost="" if cost is None else f"${float(cost):.2f}",
+            kind=str(row.get("kind") or ""),
+        ))
+    for row in (read.get("unknown_end") or {}).get(unit) or []:
+        out.append(Activity(
+            label="ended, unknown",
+            stage=str(row.get("stage") or ""),
+            started=str(row.get("started") or ""),
+            kind="unknown",
+        ))
+    return out
+
+
+# `0051` R3. Seconds between two asks of `Service.running` while the Board is shown. Chosen,
+# half of the 10s the intent accepted, not measured.
+RUNNING_POLL = 5
+
+# `0051`. The tabs (client tokens) with a `poll_running` loop alive in this process. Kept in
+# the process rather than in the page's state: a state var would outlive the loop it stands
+# for across a restart, and the Board would never ask again.
+_POLLING: set[str] = set()
+
+# `0051` review round 1, F2. How many asks in a row must find the tab's token unmapped
+# before its loop ends. Reflex unmaps a token on every socket drop and maps it again on
+# reconnect, so one miss is a flaky network as often as a closed tab. Chosen: 12 asks,
+# one minute at `RUNNING_POLL`; not measured.
+GONE_AFTER = 12
+
+
+def _tab_gone(token: str) -> bool:
+    """Whether the tab behind `token` has no socket open to this process any more.
+
+    Without this a loop started by a tab that was then closed would ask every
+    `RUNNING_POLL` seconds until the app stopped. Where no socket server exists at all —
+    in-process, as the proofs drive the state — nobody can be gone.
+    """
+    app_module = sys.modules.get("coscc.coscc")
+    namespace = getattr(getattr(app_module, "app", None), "event_namespace", None)
+    if namespace is None or not token:
+        return False
+    return token not in namespace.token_to_sid
 
 
 def _integration_fields(info: dict | None) -> dict:
@@ -529,6 +610,9 @@ class StudioState(rx.State):
     empty_host: str = ""
     empty_host_units: int = 0
     recording: bool = False
+    # `0051`. `Service.running`'s latest answer, kept so a board read that rebuilds every
+    # card can put `live` back on at once instead of waiting for the next ask. Backend only.
+    _running_read: dict = {}
     query: str = ""
     focus: str = "All work"
     board_view: str = "Board"
@@ -893,9 +977,18 @@ class StudioState(rx.State):
                     rounds=_rounds(u),
                     **_integration_fields(u.get("integration")),
                     **_outcome_fields(u.get("outcome_label")),
+                    live=_activities(u["name"], self._running_read),
                 )
             )
         self.units = units
+
+    def _apply_running(self, read: dict) -> None:
+        """`0051` R3. Put one `Service.running` answer on every card. Decides nothing."""
+        self._running_read = read
+        for unit in self.units:
+            unit.live = _activities(unit.id, read)
+        # Reflex sends a list whose items were changed in place only if the list is set.
+        self.units = list(self.units)
 
     def _load_sessions(self) -> None:
         self.conversations, self.messages = [], []
@@ -1054,6 +1147,8 @@ class StudioState(rx.State):
         self._load_sessions()
         self._load_activity()
         self.loading = False
+        # A reload that finds the tab already on the Board: nothing else would start the loop.
+        yield StudioState.poll_running
 
     @rx.event
     def navigate(self, screen: str):
@@ -1063,6 +1158,7 @@ class StudioState(rx.State):
         self.screen = screen
         self.mobile_open = False
         self.command_open = False
+        return StudioState.poll_running
 
     @rx.event
     async def choose_workspace(self, path: str):
@@ -1072,16 +1168,57 @@ class StudioState(rx.State):
         self.cwd = path
         self.unit_id, self.session_id = "", ""
         self.query, self.error = "", ""
+        # The last read answered for the workspace just left; a unit of the same name here
+        # must not show its session (`0051` review round 1, F1).
+        try:
+            self._running_read = SERVICE.running(path)
+        except Invalid:
+            self._running_read = {}
         yield
         await self._load_board()
         self._load_sessions()
         self._load_activity()
+        yield StudioState.poll_running
 
     @rx.event
     async def open_workspace(self, path: str):
         async for _ in self.choose_workspace(path):
             yield
         self.screen = "board"
+        yield StudioState.poll_running
+
+    @rx.event(background=True)
+    async def poll_running(self):
+        """`0051` R3. Ask `Service.running` every `RUNNING_POLL` seconds while the Board shows.
+
+        The one source for every card's `live`, whichever tab, route or process started
+        the step (R8). One loop per tab: a second start while one lives returns at once.
+        The loop ends when the tab leaves the Board, has no workspace, or has had no socket
+        for `GONE_AFTER` asks in a row.
+        """
+        # The token the event came with: the one the socket server maps to this tab.
+        # `router.session.client_token` is empty when no browser hydrated the state.
+        token = EventContext.get().token
+        if token in _POLLING:
+            return
+        _POLLING.add(token)
+        missed = 0
+        try:
+            while True:
+                missed = missed + 1 if _tab_gone(token) else 0
+                if missed >= GONE_AFTER:
+                    return
+                async with self:
+                    if self.screen != "board" or not self.cwd:
+                        return
+                    try:
+                        read = SERVICE.running(self.cwd)
+                    except Invalid:
+                        read = {}
+                    self._apply_running(read)
+                await asyncio.sleep(RUNNING_POLL)
+        finally:
+            _POLLING.discard(token)
 
     @rx.event
     def search_workspaces(self, value: str):

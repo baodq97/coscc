@@ -281,6 +281,20 @@ no commands, one turn, no budget.
   run of `plan`, no section, a commit the tree lacks — is `checked: false` with a reason,
   never an empty list, and never stops the step. A step started at a terminal gets none of
   this.
+- **`GET /api/board/running` tells anyone who reaches the port which units have a paid
+  session open, and since when.** Since `0051` every card on the Board shows the step or
+  integration running on it (stage, agent name, start time), or `ended, unknown` for a
+  `start` in the run log with no `end`. No login, `0.0.0.0` by default, and it is near
+  real time: each tab on the Board asks every 5s (`RUNNING_POLL`, chosen, not measured),
+  reading the run log's `start` and `end` rows each time — the cost of that on a large
+  run log, and against `busy_timeout` with ten sessions appending, is unmeasured; a busy
+  read comes back as a `note`, not an error. What is running is kept in one process's
+  memory (`Service._running`), like `_active` and `pull`: a step another copy of the app
+  runs on the same working folder shows here as `ended, unknown` while it is still going,
+  and a person may read that as dead and press run again. An `ended, unknown` row stops
+  showing when the unit's next `start` is written or after 24 hours; nothing writes an
+  `end` for it. A step started at a terminal has no entry either. `COS_HOST=127.0.0.1` is
+  the mitigation that exists.
 
 ## The proofs, and what each one costs
 
@@ -308,6 +322,7 @@ no commands, one turn, no budget.
 | `verify_0042.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. The session is a stand-in, so it cannot show that a real `impl` stops on a contradiction |
 | `verify_0047.py` | no session, no quota, no network; temporary data root. Needs `node` and `uv`; either missing is exit 2. Fixes the board's `today` at 2026-10-08 for C5 and C6; does not measure the intent's outcome, which is three real units on the real board that day |
 | `verify_0048.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Exit 2 also when `--baseline` reproduces no ref-lock race |
+| `verify_0051.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` that refuses everything. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState` as `verify_0024` does, so the compiled page and its socket are not exercised; the ten steps go through `POST /api/board/run` on the in-process ASGI app, never through a second copy of the app, so the one-process limit is not measured |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
 

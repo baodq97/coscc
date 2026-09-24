@@ -305,6 +305,19 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.get("/api/board/running")
+    async def get_board_running(request: Request) -> Any:
+        """`0051` R2. What has an agent working in one workspace now, and what ended unseen.
+
+        Cheap enough to ask every few seconds: memory and the run log, no `git` or `gh`.
+        No login, like every route here: whoever reaches the port sees which units have a
+        paid session open, and since when.
+        """
+        try:
+            return service.running(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.get("/api/units/next")
     async def get_next(request: Request) -> Any:
         """`0024`. The one stage the run button may offer for a unit, as `cos.mjs next`

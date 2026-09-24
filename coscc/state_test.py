@@ -361,6 +361,247 @@ class CellLabelNamesAFailureTheArtifactCannot(unittest.TestCase):
         self.assertEqual(color, "grass")
 
 
+class ACardShowsWhatServiceRunningSaid(unittest.TestCase):
+    """`0051` plan step 6: `_activities` copies, and only `poll_running` feeds it."""
+
+    READ = {
+        "running": {
+            "0009_x": [{"kind": "step", "stage": "impl", "agent": {"glyph": "ᚢ", "name": "Uruz"},
+                        "started": "2026-09-24T01:00:00+00:00", "turns": None, "cost_usd": None}],
+            "0010_y": [{"kind": "gebo", "stage": "integrate", "agent": {"glyph": "ᚷ", "name": "Gebo"},
+                        "started": "2026-09-24T02:00:00+00:00", "turns": 3, "cost_usd": 0.25}],
+            "0011_z": [{"kind": "rebase", "stage": "integrate", "agent": None,
+                        "started": "2026-09-24T03:00:00+00:00", "turns": None, "cost_usd": None}],
+        },
+        "unknown_end": {"0012_w": [{"stage": "plan", "started": "2026-09-24T00:00:00+00:00"}]},
+    }
+
+    def test_a_step(self):
+        from coscc.state import _activities
+
+        [a] = _activities("0009_x", self.READ)
+        self.assertEqual((a.label, a.agent, a.stage, a.started), ("running", "ᚢ Uruz", "impl", "2026-09-24T01:00:00+00:00"))
+
+    def test_unknown_turns_and_cost_are_empty_not_zero(self):
+        from coscc.state import _activities
+
+        [a] = _activities("0009_x", self.READ)
+        self.assertEqual((a.turns, a.cost), ("", ""))
+
+    def test_gebo_with_turns_and_cost(self):
+        from coscc.state import _activities
+
+        [a] = _activities("0010_y", self.READ)
+        self.assertEqual((a.label, a.agent, a.turns, a.cost), ("running", "ᚷ Gebo", "3", "$0.25"))
+
+    def test_a_rebase_has_no_agent(self):
+        from coscc.state import _activities
+
+        [a] = _activities("0011_z", self.READ)
+        self.assertEqual((a.label, a.agent, a.kind), ("rebasing", "", "rebase"))
+
+    def test_ended_unknown(self):
+        from coscc.state import _activities
+
+        [a] = _activities("0012_w", self.READ)
+        self.assertEqual((a.label, a.agent, a.stage, a.kind), ("ended, unknown", "", "plan", "unknown"))
+
+    def test_a_unit_with_nothing_and_an_empty_read_have_no_lines(self):
+        from coscc.state import _activities
+
+        self.assertEqual(_activities("0099_q", self.READ), [])
+        self.assertEqual(_activities("0009_x", {}), [])
+
+    def test_building_live_never_reads_the_tab_running_var(self):
+        """R8: `running` is this tab's own press; it must not be a second source."""
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+        state = _state_class(tree)
+        methods = {n.name: n for n in state.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        for fn in (functions["_activities"], methods["_apply_running"], methods["poll_running"]):
+            with self.subTest(fn=fn.name):
+                self.assertNotIn("self.running", ast.unparse(fn))
+        self.assertIn("SERVICE.running", ast.unparse(methods["poll_running"]))
+        decorators = [ast.unparse(d) for d in methods["poll_running"].decorator_list]
+        self.assertIn("rx.event(background=True)", decorators)
+
+
+class OneLoopPerTab(unittest.TestCase):
+    """`0051` plan Risk 2: three presses of *Board* leave one loop, and leaving ends it.
+
+    Driven through Reflex's own event processor, as `scripts/verify_0024.py` does.
+    """
+
+    def test_three_navigations_one_loop(self):
+        import asyncio
+        from unittest import mock
+
+        from reflex.event import Event
+        from reflex.istate.manager.memory import StateManagerMemory
+        from reflex.istate.manager.token import BaseStateToken
+        from reflex.state import State
+        from reflex_base.event.processor import BaseStateEventProcessor
+        from reflex_base.utils.format import format_event_handler
+
+        from coscc import state as page
+
+        token = "state-test-one-loop"
+        calls: list[str] = []
+
+        def running(cwd):
+            calls.append(cwd)
+            return {"running": {}, "unknown_end": {}}
+
+        async def go():
+            manager = StateManagerMemory()
+            processor = BaseStateEventProcessor().configure(state_manager=manager)
+            key = BaseStateToken(ident=token, cls=State)
+
+            async def fire(handler: str, **payload):
+                name = format_event_handler(page.StudioState.event_handlers[handler])
+                await processor.enqueue(token, Event(name=name, payload=payload))
+                await asyncio.sleep(0.05)
+
+            async with processor:
+                async with manager.modify_state(key) as root:
+                    (await root.get_state(page.StudioState)).cwd = "/somewhere"
+                for _ in range(3):
+                    await fire("navigate", screen="board")
+                await asyncio.sleep(0.3)
+                alive = token in page._POLLING
+                asked = len(calls)
+                await fire("navigate", screen="sessions")
+                await asyncio.sleep(0.3)
+                return alive, asked, token in page._POLLING
+
+        with mock.patch.object(page, "RUNNING_POLL", 0.1), mock.patch.object(page.SERVICE, "running", running):
+            alive, asked, still = asyncio.run(go())
+        self.assertTrue(alive)
+        # One loop, asking every 0.1s over roughly 0.45s: about five asks. Three loops
+        # would have asked about three times as often.
+        self.assertLessEqual(asked, 8)
+        self.assertGreaterEqual(asked, 2)
+        self.assertFalse(still)
+
+    def test_a_socket_drop_does_not_end_the_loop_a_closed_tab_does(self):
+        """Review round 1, F2: Reflex unmaps a token on every drop and maps it back on
+        reconnect, so one miss must not end the loop; `GONE_AFTER` misses in a row do."""
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        token = "state-test-drop"
+        gone = {"now": False}
+
+        async def go():
+            manager, processor, fire = _processor(token)
+            async with processor:
+                async with manager.modify_state(_key(token)) as root:
+                    (await root.get_state(page.StudioState)).cwd = "/somewhere"
+                await fire("navigate", screen="board")
+                gone["now"] = True
+                await asyncio.sleep(0.08)  # one or two misses, under GONE_AFTER
+                gone["now"] = False
+                await asyncio.sleep(0.3)
+                after_drop = token in page._POLLING
+                gone["now"] = True
+                await asyncio.sleep(0.5)
+                return after_drop, token in page._POLLING
+
+        with (
+            mock.patch.object(page, "RUNNING_POLL", 0.05),
+            mock.patch.object(page, "GONE_AFTER", 4),
+            mock.patch.object(page, "_tab_gone", lambda t: gone["now"]),
+            mock.patch.object(page.SERVICE, "running", lambda cwd: {"running": {}, "unknown_end": {}}),
+        ):
+            after_drop, after_close = asyncio.run(go())
+        self.assertTrue(after_drop)
+        self.assertFalse(after_close)
+
+
+class ChangingWorkspaceForgetsTheOldRead(unittest.TestCase):
+    """Review round 1, F1: a unit named as one running in the workspace just left must not
+    show that session in the one chosen, not even until the loop's next ask."""
+
+    def test_same_unit_name_in_another_workspace_shows_nothing(self):
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        token = "state-test-switch"
+        running_in = {"/a": {"running": {"0009_x": [{"kind": "step", "stage": "impl",
+                                                     "agent": {"glyph": "ᚢ", "name": "Uruz"},
+                                                     "started": "2026-09-24T01:00:00+00:00",
+                                                     "turns": None, "cost_usd": None}]},
+                             "unknown_end": {}},
+                      "/b": {"running": {}, "unknown_end": {}}}
+        board = {"stages": [], "recording": True, "units": [
+            {"name": "0009_x", "stages": [], "phase": "impl", "next": "", "blocked": True, "problems": []},
+        ]}
+
+        async def branch_here(cwd):
+            return {"branch": "main"}
+
+        async def read_board(cwd):
+            return board
+
+        async def go():
+            manager, processor, fire = _processor(token)
+            async with processor:
+                async with manager.modify_state(_key(token)) as root:
+                    studio = await root.get_state(page.StudioState)
+                    studio.workspaces = [page.Workspace(id="/a"), page.Workspace(id="/b")]
+                    studio.cwd = "/a"
+                    studio.screen = "sessions"  # no loop: only `choose_workspace` reads
+                    studio._running_read = running_in["/a"]
+                await fire("choose_workspace", path="/b")
+                async with manager.modify_state(_key(token)) as root:
+                    studio = await root.get_state(page.StudioState)
+                    return [(u.id, len(u.live)) for u in studio.units]
+
+        with (
+            mock.patch.object(page.SERVICE, "running", lambda cwd: running_in[cwd]),
+            mock.patch.object(page.SERVICE, "branch_here", branch_here),
+            mock.patch.object(page.SERVICE, "board", read_board),
+            mock.patch.object(page.SERVICE, "sessions_for", lambda cwd, limit: {"sessions": []}),
+            mock.patch.object(page.SERVICE, "activity_and_usage",
+                              mock.Mock(side_effect=page.Invalid("not here"))),
+        ):
+            cards = asyncio.run(go())
+        self.assertEqual(cards, [("0009_x", 0)])
+
+
+def _key(token: str):
+    from reflex.istate.manager.token import BaseStateToken
+    from reflex.state import State
+
+    return BaseStateToken(ident=token, cls=State)
+
+
+def _processor(token: str):
+    """Reflex's own event processor over a memory state manager, and a `fire` for it."""
+    import asyncio
+
+    from reflex.event import Event
+    from reflex.istate.manager.memory import StateManagerMemory
+    from reflex_base.event.processor import BaseStateEventProcessor
+    from reflex_base.utils.format import format_event_handler
+
+    from coscc import state as page
+
+    manager = StateManagerMemory()
+    processor = BaseStateEventProcessor().configure(state_manager=manager)
+
+    async def fire(handler: str, **payload):
+        name = format_event_handler(page.StudioState.event_handlers[handler])
+        await processor.enqueue(token, Event(name=name, payload=payload))
+        await asyncio.sleep(0.05)
+
+    return manager, processor, fire
+
+
 def _self_names(target: ast.expr) -> list[str]:
     """Every `self.X` being assigned by one target, tuple unpacking included."""
     if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):

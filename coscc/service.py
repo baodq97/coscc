@@ -20,11 +20,13 @@ import os
 import re
 import shutil
 import tempfile
+import uuid
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from coscc import agents
 from coscc import board as board_reader
 from coscc import drift, fetches, gitops
 from coscc import harness, integrate
@@ -32,7 +34,7 @@ from coscc import prcomment
 from coscc import sessions as reader
 from coscc.board import Unavailable
 from coscc.config import Config
-from coscc.data import Data
+from coscc.data import Data, now as _now
 from coscc.gitops import GitError
 from coscc.history import UNKNOWN, BadTransition, History, settled_edits
 from coscc.journal import (
@@ -67,9 +69,24 @@ BRANCH_TRUNK = gitops.TRUNK
 # `0035` R12, the other way round: a step refused while the unit is being integrated.
 _BUSY = "{unit} is being integrated or has a step running; wait for it to finish"
 
+# `0051` spec, answer 4: an `ended, unknown` row stops being shown this long after it began,
+# unless a later `start` of the same unit retired it first.
+UNKNOWN_END_FOR = timedelta(hours=24)
+
 
 class Invalid(Exception):
     """A request this layer refuses, carrying a reason a caller can show verbatim."""
+
+
+def _younger_than(at: str, oldest: datetime) -> bool:
+    """Whether a run-log `at` is after `oldest`. One that will not parse is not shown."""
+    try:
+        when = datetime.fromisoformat(at)
+    except (TypeError, ValueError):
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when > oldest
 
 
 def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, Any]]) -> None:
@@ -225,6 +242,10 @@ class Service:
     # lock per workspace held across check-and-mark. One process only, like `pull`.
     _active: set[tuple[str, str]] = field(default_factory=set, init=False, repr=False)
     _integrate_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
+    # `0051` R1. What is running now, for the board to show: one entry per step or
+    # integration, keyed by an id that never leaves this process. Added and removed beside
+    # `_active`, read only by `running`. Display only: `_active` still does the refusing.
+    _running: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # No working folder means no store, and the app behaves as it did before one existed.
@@ -501,6 +522,69 @@ class Service:
             }
         return data
 
+    def _mark_running(self, key: str, unit: str, stage: str, kind: str) -> str:
+        """`0051` R1. Put one entry in `_running` and return its id, for the `finally` to pop.
+
+        `started` is stamped by the same clock `Journal.append` uses, so it reads like an
+        `at`. `turns` and `cost_usd` stay `None` while the session runs (R5).
+        """
+        rid = uuid.uuid4().hex
+        self._running[rid] = {
+            "workspace": key, "unit": unit, "stage": stage, "started": _now(),
+            "kind": kind, "turns": None, "cost_usd": None,
+        }
+        return rid
+
+    def running(self, cwd: str) -> dict[str, Any]:
+        """`0051` R2. What has an agent working in this workspace now, and what ended unseen.
+
+        `running` is `_running` for this workspace, one element per entry, by unit.
+        `unknown_end` is every `start` the run log holds without an `end` that no entry
+        accounts for (R6): the unit has nothing running here, no later `start` of the unit
+        retired it, and it is younger than `UNKNOWN_END_FOR` (spec, answer 4). Matched by
+        unit, not by session: `_active` allows one per unit per process, so a unit with an
+        entry has no other `start` open in this process — only one another process wrote,
+        and that one is shown as ended (spec C2, answer 3).
+
+        Reads memory and the run log, nothing else: no `git`, no `gh`, no `cos.mjs`, and
+        writes nothing. A busy run log is a `note`, not a refusal — the board asks this
+        every few seconds, and a lock someone else holds must not break the board.
+        """
+        self._workspace_or_refuse(cwd)
+        key = self._journal_key(cwd)
+        running: dict[str, list[dict[str, Any]]] = {}
+        for entry in self._running.values():
+            if entry["workspace"] != key:
+                continue
+            kind = entry["kind"]
+            agent = None if kind == "rebase" else agents.agent_for(entry["stage"])
+            running.setdefault(entry["unit"], []).append({
+                "kind": kind, "stage": entry["stage"], "agent": agent,
+                "started": entry["started"], "turns": entry["turns"], "cost_usd": entry["cost_usd"],
+            })
+        out: dict[str, Any] = {"running": running, "unknown_end": {}}
+        journal = self._journal()
+        if journal is None:
+            return out
+        try:
+            opened = journal.open_starts(key)
+        except Busy as e:
+            out["note"] = str(e)
+            return out
+        oldest = datetime.now(timezone.utc) - UNKNOWN_END_FOR
+        for unit, found in opened.items():
+            if unit in running:
+                continue
+            rows = [
+                {"stage": r["stage"], "started": r["started"]}
+                for r in found["open"]
+                if r.get("started") and r["started"] == found["last_start"]
+                and _younger_than(r["started"], oldest)
+            ]
+            if rows:
+                out["unknown_end"][unit] = rows
+        return out
+
     async def _attach_worktrees(self, cwd: str, units_: list[dict[str, Any]]) -> None:
         """`0017`. Give every unit `worktree: {path, branch, prepare}`, or `None`.
 
@@ -703,6 +787,9 @@ class Service:
                 ))
                 raise Invalid(reason)
             self._active.add((key, unit))
+            # `0051` spec, answer 1: Gebo shows as running under its agent name; a mechanical
+            # rebase has no agent and shows as rebasing. The same condition as below.
+            rid = self._mark_running(key, unit, "integrate", "rebase" if state == "behind" else "gebo")
         try:
             assert tree is not None
             if state == "behind":
@@ -717,6 +804,7 @@ class Service:
                 yield item
         finally:
             self._active.discard((key, unit))
+            self._running.pop(rid, None)
 
     async def _integrate_mechanical(
         self, key: str, unit: str, pr: int, tree: Path, branch: str, head_before: str, origin_sha: str
@@ -1072,6 +1160,7 @@ class Service:
         # after it however it ends. A client that drops the stream runs the `finally` only
         # when the generator is closed or collected; the next spike clears it either way.
         scratch = units.spike_dir(cwd, unit, self.config.data_dir) if stage == "spike" else None
+        rid = self._mark_running(key, unit, stage, "step")
         try:
             if scratch is not None:
                 shutil.rmtree(scratch, ignore_errors=True)
@@ -1117,6 +1206,7 @@ class Service:
             raise Invalid(str(e)) from e
         finally:
             self._active.discard(active_key)
+            self._running.pop(rid, None)
             if scratch is not None:
                 shutil.rmtree(scratch, ignore_errors=True)
 
