@@ -97,8 +97,11 @@ def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, 
             )
 
 
-def step_cwd(stage: str, work: str, directory: Path) -> str:
-    """Where a step's session runs. The unit's worktree, except for `ship`.
+def step_cwd(stage: str, work: str, directory: Path, spike_dir: str | None = None) -> str:
+    """Where a step's session runs. The unit's worktree, except for `ship` and `spike`.
+
+    `spike` (`0039` R11) runs in `spike_dir`, a throwaway directory under the data root:
+    its probe code must never land in the worktree whose branch it would then ride.
 
     `ship` runs `gh pr merge --squash --delete-branch`, and inside a worktree that command
     fails after it has already merged. Measured 2026-09-23 on `baodq97/coscc-proof` with gh
@@ -116,6 +119,8 @@ def step_cwd(stage: str, work: str, directory: Path) -> str:
 
     The gates still read `work`: only the session moves.
     """
+    if stage == "spike" and spike_dir:
+        return spike_dir
     return str(directory) if stage == "ship" else work
 
 
@@ -975,6 +980,10 @@ class Service:
             except (GitError, BadUnit) as e:
                 raise Invalid(f"{unit} has no worktree and one could not be opened: {e}") from e
         work = tree["path"] if tree else cwd
+        # `0039` R13. A spike is watched through the worktree's `HEAD` and `git status`;
+        # with no git there is nothing to watch, so it does not run at all.
+        if stage == "spike" and tree is None:
+            raise Invalid("spike needs a git worktree to watch, and this workspace is not a git repository")
         # `0030_a-unit-branch-starts-from-a-stale-main` R1/R4/R5. A tree already on its
         # branch carries whatever `_worktree` read when it was opened onto it (or nothing,
         # when it was already there before this call); a tree still detached is refreshed
@@ -1059,7 +1068,14 @@ class Service:
         if active_key in self._active:
             raise Invalid(_BUSY.format(unit=unit))
         self._active.add(active_key)
+        # `0039` R12: emptied before the step, whatever an earlier one left, and removed
+        # after it however it ends. A client that drops the stream runs the `finally` only
+        # when the generator is closed or collected; the next spike clears it either way.
+        scratch = units.spike_dir(cwd, unit, self.config.data_dir) if stage == "spike" else None
         try:
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
+                scratch.mkdir(parents=True)
             async for item in runner.run(
                 workspace=cwd,
                 directory=directory,
@@ -1070,7 +1086,7 @@ class Service:
                 stages=list(data["stages"]),
                 mode=mode,
                 gate_said=said,
-                cwd=step_cwd(stage, work, directory),
+                cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None),
                 base=base,
                 base_note=describe_base(base),
                 last_attempt=describe_attempt(failed) if failed else "",
@@ -1079,6 +1095,8 @@ class Service:
                 drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
                 end_fields=end_fields,
                 **config,
+                # Only named for a spike, so a stand-in `run` without it keeps working.
+                **({"watch": work} if scratch is not None else {}),
             ):
                 if item[0] == "done":
                     item = ("done", {**item[1], "base": base})
@@ -1099,6 +1117,8 @@ class Service:
             raise Invalid(str(e)) from e
         finally:
             self._active.discard(active_key)
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
 
     async def _post_new_rounds(
         self, cwd: str, unit: str, before: set[Any]

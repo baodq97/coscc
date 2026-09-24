@@ -1833,6 +1833,9 @@ class ShipRunsOutsideTheWorktree(unittest.TestCase):
         for stage in ("idea", "intent", "spec", "plan", "impl", "pr", "review"):
             self.assertEqual(step_cwd(stage, "/w/tree", Path("/store/0017_x")), "/w/tree")
 
+    def test_spike_runs_in_its_scratch(self):
+        self.assertEqual(step_cwd("spike", "/w/tree", Path("/store/x"), "/data/spikes/s/x"), "/data/spikes/s/x")
+
 
 class TheOutcomeLabel(unittest.TestCase):
     """`0047` R8. One pure decision, every branch, with a fixed `today`."""
@@ -2021,3 +2024,101 @@ class RecordingAnOutcome(unittest.TestCase):
         self.board_unit()
         self.assertEqual(len(journal.records(key)), before)
         self.assertEqual(self.service.sessions_for(self.cwd)["sessions"], [])
+
+
+class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
+    """`0039` R11, R12: the scratch is emptied before the step and gone after it."""
+
+    class Probe:
+        def __init__(self, fail: bool = False):
+            self.fail = fail
+            self.seen: list[tuple[str, list[str], str | None]] = []
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.seen.append((cwd, sorted(p.name for p in Path(cwd).iterdir()), kw.get("workspace")))
+            (Path(cwd) / "probe.py").write_text("print(1)\n", encoding="utf-8")
+            if self.fail:
+                raise RuntimeError("the session broke")
+            yield ("chunk", "# Spike: x\nSpec: spec.md. Round: 1. Status: accepted.\n\n"
+                            "## U1\n\nVerdict: holds.\n\n```\n$ x\n1\n```\n")
+            yield ("done", {"session_id": "sess-spike", "cost": {}})
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.tree = self.root / "tree"
+        self.tree.mkdir()
+        for where in (self.repo, self.tree):
+            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=where, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid",
+                 "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "first"],
+                cwd=where, check=True,
+            )
+
+    def _service(self, probe) -> Service:
+        service = Service(
+            Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
+                   data_dir=str(self.root / "data")),
+            probe,
+        )
+        made = create_sync(service, str(self.repo), "a-problem", "some words")
+        d = Path(made["path"])
+        (d / "intent.md").write_text("# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
+        (d / "spec.md").write_text(
+            "# Spec: x\nIntent: intent.md. Author: t. Status: accepted.\n\n## Concerns\n\n"
+            "- [unmeasured] U1. does it exit?\n", encoding="utf-8",
+        )
+        self.unit = made["unit"]
+        self.scratch = units.spike_dir(str(self.repo), self.unit, str(self.root / "data"))
+        return service
+
+    def _run(self, service):
+        tree = {"path": str(self.tree), "branch": "feat/a-problem", "base": None}
+
+        async def go():
+            with mock.patch.object(Service, "_worktree", mock.AsyncMock(return_value=tree)):
+                return [i async for i in service.run_step(str(self.repo), self.unit, "spike")]
+
+        return asyncio.run(go())
+
+    def test_the_scratch_is_used_and_then_gone(self):
+        probe = self.Probe()
+        service = self._service(probe)
+        out = self._run(service)
+        self.assertEqual(out[-1][1]["outcome"], "done", out[-1])
+        self.assertEqual(probe.seen, [(str(self.scratch), [], str(self.repo))])
+        self.assertFalse(self.scratch.exists())
+        self.assertTrue((Path(service._unit_dir(str(self.repo), self.unit)) / "spike.md").exists())
+
+    def test_the_scratch_is_gone_when_the_session_fails(self):
+        probe = self.Probe(fail=True)
+        service = self._service(probe)
+        out = self._run(service)
+        self.assertEqual(out[-1][1]["outcome"], "failed")
+        self.assertFalse(self.scratch.exists())
+
+    def test_a_scratch_left_behind_is_emptied_before_the_step(self):
+        probe = self.Probe()
+        service = self._service(probe)
+        self.scratch.mkdir(parents=True)
+        (self.scratch / "stale.txt").write_text("old", encoding="utf-8")
+        self._run(service)
+        self.assertEqual(probe.seen[0][1], [])
+        self.assertFalse(self.scratch.exists())
+
+    def test_a_workspace_with_no_git_is_refused(self):
+        probe = self.Probe()
+        service = self._service(probe)
+        shutil.rmtree(self.repo / ".git")
+
+        async def go():
+            return [i async for i in service.run_step(str(self.repo), self.unit, "spike")]
+
+        with self.assertRaises(Invalid) as caught:
+            asyncio.run(go())
+        self.assertIn("spike needs a git worktree", str(caught.exception))
+        self.assertEqual(probe.seen, [])

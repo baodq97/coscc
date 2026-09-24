@@ -105,6 +105,17 @@ def root(workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | N
     return Data(data_dir).root / UNITS_DIR / slot(workspace)
 
 
+def spike_dir(
+    workspace: str | os.PathLike[str], unit: str, data_dir: str | os.PathLike[str] | None = None
+) -> Path:
+    """`0039` R11. The throwaway directory a `spike` step runs in, outside every checkout.
+
+    Under the data root, beside `units/` and never inside it, so a probe's files cannot be
+    read as a unit's artifacts. `coscc/service.py` makes it and removes it around the step.
+    """
+    return Data(data_dir).root / "spikes" / slot(workspace) / unit
+
+
 def cos_dir(workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None) -> Path:
     return root(workspace, data_dir) / COS_DIR
 
