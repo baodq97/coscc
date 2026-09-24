@@ -402,13 +402,17 @@ export function parseUnmeasured(text) {
 
 // `0039` R6: `spike.md` holds one `## U<n>` per question, each with `Verdict: holds.` or
 // `Verdict: fails.` and at least one fenced block — the command run and what it printed.
-// `round` is the header's `Round: N`, which `write-spike` sets; `null` when absent. Reading
-// stops at `## Answers`, as `parseReview` does.
+// `round` is the header's `Round: N`, which `write-spike` sets; `null` when absent. Only the
+// header line — the one carrying `Status:` before the first `## ` — is read for it: a
+// `Round:` inside a fenced block is a command's output, not the round. Reading stops at
+// `## Answers`, as `parseReview` does.
 export function parseSpike(text) {
   const lines = text.split(/\r?\n/)
   const stop = lines.findIndex((l) => l.trimEnd() === '## Answers')
   const own = stop === -1 ? lines : lines.slice(0, stop)
-  const round = own.join('\n').match(/\bRound:\s*(\d+)/)
+  const first = own.findIndex((l) => l.startsWith('## '))
+  const header = (first === -1 ? own : own.slice(0, first)).find((l) => /\bStatus:/.test(l))
+  const round = header?.match(/\bRound:\s*(\d+)/)
   const items = {}
   let at = null
   let fence = null

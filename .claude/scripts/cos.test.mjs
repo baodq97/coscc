@@ -1392,6 +1392,15 @@ test('parseSpike reads verdicts and blocks per U<n>, and stops at ## Answers (R6
   assert.equal(parseSpike('## U1\nVerdict: holds.\n').round, null)
 })
 
+test('parseSpike reads Round: from the header line only, never from a fenced block', () => {
+  const text =
+    '# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Status: accepted.\n\n' +
+    '## U1\n\nVerdict: fails.\n\n```\n$ cat notes\nRound: 3\n```\n'
+  assert.equal(parseSpike(text).round, null)
+  const u = spikeUnit({ 'spec.md': specText('- [unmeasured] U1. a'), 'spike.md': text })
+  assert.equal(nextAction(u).stage, 'spec')
+})
+
 test('a unit with no [unmeasured] item walks the loop as if spike did not exist (R4)', () => {
   const u = spikeUnit({ 'spec.md': specText('- **C1.** none'), 'plan.md': 'Status: accepted.\n' })
   assert.ok(!('unmeasured' in u.artifacts['spec.md']))
