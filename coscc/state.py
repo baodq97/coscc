@@ -326,6 +326,33 @@ _POLLING: set[str] = set()
 GONE_AFTER = 12
 
 
+# `0056` review round 1, F2. The `cos.mjs next` asks in flight, by (workspace, unit). The next
+# navigation cancels an arrival's `on_load` chain, and the `load_next` it chained with it; the
+# ask itself — `node`, the `gh` it calls, a `git worktree add` in `worktrees.ensure` — runs on
+# in a task of its own, awaited through `asyncio.shield`, so nothing is left running unread
+# and the next arrival at that unit waits for it instead of starting a second beside it.
+_ASKING: dict[tuple[str, str], asyncio.Task] = {}
+
+
+def _asking(ask, cwd: str, unit: str, join: bool) -> asyncio.Future:
+    """`ask(cwd, unit)` in a task no cancellation reaches: the one in flight when `join`."""
+    key = (cwd, unit)
+    task = _ASKING.get(key)
+    if not (join and task is not None and not task.done()
+            and task.get_loop() is asyncio.get_running_loop()):
+        task = asyncio.ensure_future(ask(cwd, unit))
+        _ASKING[key] = task
+
+        def done(t: asyncio.Task, key=key) -> None:
+            if _ASKING.get(key) is t:
+                del _ASKING[key]
+            if not t.cancelled():
+                t.exception()  # read, so an answer nobody waited for is not logged unhandled
+
+        task.add_done_callback(done)
+    return asyncio.shield(task)
+
+
 def _tab_gone(token: str) -> bool:
     """Whether the tab behind `token` has no socket open to this process any more.
 
@@ -659,6 +686,9 @@ class StudioState(rx.State):
     _read_cwd: str = ""
     _read_unit: str = ""
     _asked: str = ""
+    # `0056` F2. Set by `arrive` for the `load_next` it chains, which then waits for an ask
+    # already in flight; *Ask again*, a step's end and a hold move ask afresh.
+    _ask_joins: bool = False
     loading: bool = False
     busy: bool = False
     error: str = ""
@@ -1435,6 +1465,7 @@ class StudioState(rx.State):
             yield rx.redirect(place.href(fixed), replace=True)
             return
         if unit and self._asked != unit:
+            self._ask_joins = True
             yield StudioState.load_next
         # A reload that finds the tab already on the Board: nothing else would start the loop.
         yield StudioState.poll_running
@@ -1722,6 +1753,7 @@ class StudioState(rx.State):
         """
         async with self:
             unit, cwd = self.unit_id, self.cwd
+            join, self._ask_joins = self._ask_joins, False
             self.run_stage = ""
             self.run_waiting = []
             self.run_said = "Asking cos.mjs what comes next…"
@@ -1731,7 +1763,7 @@ class StudioState(rx.State):
             return
         waiting: list[str] = []
         try:
-            stage, said = _run_target(found := await SERVICE.next_step(cwd, unit))
+            stage, said = _run_target(found := await _asking(SERVICE.next_step, cwd, unit, join))
             waiting = _run_waiting(found)
         except Invalid as e:
             stage, said = "", str(e)

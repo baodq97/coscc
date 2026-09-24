@@ -373,6 +373,70 @@ class TheRunButtonHoldsNoCopyOfTheLoop(unittest.TestCase):
                 self.assertIn(said, ast.unparse(self.methods[name]))
 
 
+class AnAskOutlivesItsWaiter(unittest.TestCase):
+    """`0056` review round 1, F2. A navigation cancels the `load_next` an arrival chained; the
+    `cos.mjs next` it was waiting on must not be cancelled with it — its `node` and `gh` would
+    run on unread — and the next waiter at that unit takes its answer."""
+
+    def test_a_cancelled_waiter_leaves_the_ask_to_finish_and_be_joined(self):
+        import asyncio
+
+        from coscc import state as page
+
+        calls, ended = [], []
+
+        async def go():
+            gate = asyncio.Event()
+
+            async def ask(cwd, unit):
+                calls.append(unit)
+                try:
+                    await gate.wait()
+                except asyncio.CancelledError:
+                    ended.append("cancelled")
+                    raise
+                ended.append("answered")
+                return {"stage": "review"}
+
+            first = asyncio.ensure_future(page._asking(ask, "/a", "0009_x", join=True))
+            await asyncio.sleep(0)
+            first.cancel()
+            await asyncio.sleep(0)
+            second = page._asking(ask, "/a", "0009_x", join=True)
+            gate.set()
+            answer = await second
+            await asyncio.sleep(0)
+            return first.cancelled(), answer, dict(page._ASKING)
+
+        cancelled, answer, left = asyncio.run(go())
+        self.assertTrue(cancelled)
+        self.assertEqual((calls, ended), (["0009_x"], ["answered"]))
+        self.assertEqual((answer, left), ({"stage": "review"}, {}))
+
+    def test_asking_afresh_does_not_join(self):
+        import asyncio
+
+        from coscc import state as page
+
+        calls = []
+
+        async def go():
+            gate = asyncio.Event()
+
+            async def ask(cwd, unit):
+                calls.append(unit)
+                await gate.wait()
+                return {}
+
+            one = page._asking(ask, "/a", "0009_x", join=True)
+            two = page._asking(ask, "/a", "0009_x", join=False)
+            gate.set()
+            await asyncio.gather(one, two)
+
+        asyncio.run(go())
+        self.assertEqual(calls, ["0009_x", "0009_x"])
+
+
 class RunTargetCopies(unittest.TestCase):
     def test_it_copies_stage_and_action_and_nothing_else(self):
         from coscc.state import _run_target
@@ -967,6 +1031,45 @@ class AnArrivalReadsOnce(unittest.TestCase):
             after = asyncio.run(go())
         self.assertEqual(during, [("/a", ""), ("/b", ""), ("/a", ""), ("/a", "")])
         self.assertEqual(after, ("/a", "0009_x"))
+
+    def test_a_tab_pressed_while_asking_waits_for_the_same_ask(self):
+        """`0056` review round 1, F2. Each arrival at an unanswered unit chains `load_next`;
+        the second waits for the ask the first began, rather than start one beside it."""
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        fake = _Page()
+        token = "state-test-ask-once"
+        asked = []
+
+        async def go():
+            gate = asyncio.Event()
+
+            async def next_step(cwd, unit):
+                asked.append((cwd, unit))
+                await gate.wait()
+                return {"stage": "impl", "action": "run impl", "blocked": False}
+
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            with mock.patch.object(page.SERVICE, "next_step", next_step):
+                async with processor:
+                    await arrive("/unit?ws=a&id=0009_x", "s1")
+                    await arrive("/unit?ws=a&id=0009_x&tab=timeline", "s1")
+                    gate.set()
+                    await asyncio.sleep(0.15)
+                    studio = await _studio(manager, token)
+                    got = (studio.run_stage, studio._asked, dict(page._ASKING))
+                    await arrive("/sessions?ws=a", "s9")
+                    await asyncio.sleep(0.15)
+                    return got
+
+        with fake.patches():
+            got = asyncio.run(go())
+        self.assertEqual(asked, [("/a", "0009_x")])
+        self.assertEqual(got, ("impl", "0009_x", {}))
 
     def test_a_link_to_another_workspace_s_unit_opens_it(self):
         seen = self._walk([("/board?ws=a", "s1"), ("/unit?ws=b&id=0009_x&tab=questions", "s1")])

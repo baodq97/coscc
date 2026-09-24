@@ -40,7 +40,9 @@ One shell under seven static routes (since `0056`): `/` Overview, `/workspaces`,
 `cwd`, `unit_id` and `detail_tab` — a navigation button only returns `rx.redirect`. A new
 socket `session_id` is a new page and reads everything; a move inside the app reads only
 what changed. Reflex's `on_load_internal` supersedes, so a navigation cancels the older
-arrival and what it chained; `arrive` records a read only once it is done. A proof that
+arrival and what it chained; `arrive` records a read only once it is done. The one thing
+a navigation does not cancel is the `cos.mjs next` ask `load_next` waits on: it runs in its
+own task (`_ASKING`), and the next arrival at that unit waits for it instead of asking again. A proof that
 drives the state in-process has no browser to follow a redirect: it arrives where the
 button would have sent it (`arrive_at` in `verify_0024`, `0051`, `stage_models`).
 Components in `screens.py`, state in `state.py`, logic behind `service.py`.
