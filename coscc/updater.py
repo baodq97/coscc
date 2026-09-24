@@ -22,21 +22,24 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import http.client
 import json
 import os
 import re
+import secrets
 import shutil
 import signal
 import socket
 import sqlite3
 import subprocess
 import threading
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from coscc import fetches, frontend, harness, update
+from coscc import auth, fetches, frontend, harness, update
 from coscc.data import Data
 
 CHECK_EVERY = 6 * 60 * 60
@@ -44,6 +47,8 @@ CHECK_TAG_TIMEOUT = 10
 TRIAL_INSTALL_TIMEOUT = 300  # chosen by the plan; the spec sets none
 TRIAL_HEALTHY_WITHIN = 60
 TRIAL_STOP_GRACE = 5
+# Chosen. The longest line of the trial's output read whole; Reflex draws progress bars.
+OUTPUT_LINE_LIMIT = 1 << 20
 BUILD_TIMEOUT = 15 * 60
 LOG_TAIL = 40
 HTTP_TIMEOUT = 30
@@ -589,6 +594,7 @@ class Updater:
         tmp = self.root / "tmp" / f"trial-{_stamp()}"
         tools, bin_dir, data = tmp / "tools", tmp / "bin", tmp / "data"
         proc = None
+        copier = None
         try:
             data.mkdir(parents=True)
             code = await self._run(
@@ -602,16 +608,26 @@ class Updater:
             if code != 0 or f"coscc {target['version']}" not in seen:
                 return f"bản thử không trả lời --version là {target['version']}"
             await asyncio.to_thread(backup_db, self.db, data / "cos.db")
+            # `0070` step 6. The copy of the database carries this machine's password; the
+            # trial clears it on the copy — never on `cos.db` — so it can set its own and
+            # log in the way a person would.
+            code = await self._run(
+                [str(bin_dir / "coscc"), "reset-password"], log, 30, COS_DATA_DIR=str(data)
+            )
+            if code != 0:
+                return "bản thử không chạy được coscc reset-password trên bản sao cos.db"
             port = _free_port()
-            with open(log, "a", encoding="utf-8") as out:
-                proc = await asyncio.create_subprocess_exec(
-                    str(bin_dir / "coscc"), stdout=out, stderr=subprocess.STDOUT,
-                    env=self.env(COS_HOST="127.0.0.1", COS_PORT=str(port), COS_DATA_DIR=str(data),
-                                 COS_UPDATE_CHECK="0"),
-                    start_new_session=True,
-                )
-            if not await _healthy(port, TRIAL_HEALTHY_WITHIN):
-                return f"bản thử không trả 200 trên /api/health, /api/workspaces và / trong {TRIAL_HEALTHY_WITHIN}s"
+            proc = await asyncio.create_subprocess_exec(
+                str(bin_dir / "coscc"), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                env=self.env(COS_HOST="127.0.0.1", COS_PORT=str(port), COS_DATA_DIR=str(data),
+                             COS_UPDATE_CHECK="0"),
+                start_new_session=True, limit=OUTPUT_LINE_LIMIT,
+            )
+            token: list[str] = []
+            copier = asyncio.ensure_future(_copy_output(proc.stdout, log, token))
+            failed = await _healthy(port, TRIAL_HEALTHY_WITHIN, lambda: token[-1] if token else None)
+            if failed:
+                return f"bản thử trượt ở bước {failed} trong {TRIAL_HEALTHY_WITHIN}s"
             return ""
         finally:
             if proc is not None and proc.returncode is None:
@@ -621,6 +637,11 @@ class Updater:
                 except asyncio.TimeoutError:
                     proc.kill()
                     await proc.wait()
+            if copier is not None:
+                try:
+                    await asyncio.wait_for(copier, TRIAL_STOP_GRACE)
+                except (asyncio.TimeoutError, Exception):  # noqa: BLE001 - the log is best-effort
+                    copier.cancel()
             await asyncio.to_thread(shutil.rmtree, tmp, True)
 
     async def _run(self, cmd: list[str], log: Path, timeout: float, cwd: Path | None = None, **env: str) -> int:
@@ -757,23 +778,98 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _answers(url: str) -> bool:
+async def _copy_output(stream, log: Path, token: list[str]) -> None:
+    """The trial's output, line by line, into the update's log — minus the setup token.
+
+    `0070` R4: the token lives in memory and in the process's own log, never in a file
+    this app writes. The line is kept, redacted, so the log still shows it was printed.
+    """
+    with open(log, "a", encoding="utf-8") as out:
+        while True:
+            try:
+                line = await stream.readline()
+            except ValueError:
+                # Longer than `OUTPUT_LINE_LIMIT`: take what is buffered and go on.
+                line = await stream.read(OUTPUT_LINE_LIMIT)
+            if not line:
+                return
+            text = line.decode(errors="replace").rstrip("\n")
+            found = auth.SETUP_LINE.match(text)
+            if found:
+                token.append(found.group(1))
+                text = "coscc setup token: <redacted>"
+            out.write(text + "\n")
+            out.flush()
+
+
+def _request(port: int, method: str, path: str, body: bytes | None = None,
+             headers: dict[str, str] | None = None) -> tuple[int, Any]:
+    """One request to the trial, redirects not followed. `(0, None)` when nothing answered."""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
-        with urllib.request.urlopen(url, timeout=5) as r:  # noqa: S310 - loopback only
-            return r.status == 200
+        conn.request(method, path, body=body, headers=headers or {})
+        reply = conn.getresponse()
+        reply.read()
+        return reply.status, reply.headers
     except Exception:  # noqa: BLE001
-        return False
+        return 0, None
+    finally:
+        conn.close()
 
 
-async def _healthy(port: int, within: float) -> bool:
-    base = f"http://127.0.0.1:{port}"
+async def _healthy(port: int, within: float, token: Callable[[], str | None]) -> str:
+    """`""` when the trial logged in like a person and served; else the step that failed.
+
+    Since `0070` a build that answers `/api/health` but breaks the login would lock the
+    owner out of an app with no board left to go back to, so the trial goes through the
+    door: health, a refusal without a cookie, `POST /setup` with the token it printed and
+    a password nobody keeps, then `/api/workspaces` and `/` with the cookie that gave.
+    The password and the cookie live in this call only. `POST /setup` is sent once: a
+    second would be refused, the password being set.
+    """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + within
+    held = {"cookie": ""}
+    failed = "/api/health"
     while loop.time() < deadline:
-        checks = await asyncio.gather(*(
-            asyncio.to_thread(_answers, base + path) for path in ("/api/health", "/api/workspaces", "/")
-        ))
-        if all(checks):
-            return True
+        failed = await _trial_step(port, token, held)
+        if not failed:
+            return ""
+        if failed == "POST /setup":
+            return failed
         await asyncio.sleep(1)
-    return False
+    return failed
+
+
+async def _trial_step(port: int, token: Callable[[], str | None], held: dict[str, str]) -> str:
+    def call(*args, **kw):
+        return asyncio.to_thread(_request, port, *args, **kw)
+
+    status, _ = await call("GET", "/api/health")
+    if status != 200:
+        return "/api/health"
+    if not held["cookie"]:
+        given = token()
+        if not given:
+            return "setup token"
+        status, _ = await call("GET", "/api/workspaces")
+        if status != 401:
+            return "/api/workspaces không cookie (không phải 401)"
+        password = secrets.token_urlsafe(24)
+        form = urllib.parse.urlencode(
+            {"token": given, "password": password, "password_confirm": password}
+        ).encode()
+        status, headers = await call(
+            "POST", "/setup", body=form,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        set_cookie = (headers.get("Set-Cookie") if headers is not None else None) or ""
+        value = set_cookie.split(";")[0].partition("=")[2]
+        if status != 303 or not value:
+            return "POST /setup"
+        held["cookie"] = value
+    for path in ("/api/workspaces", "/"):
+        status, _ = await call("GET", path, headers={"Cookie": f"{auth.COOKIE}={held['cookie']}"})
+        if status != 200:
+            return f"{path} có cookie"
+    return ""

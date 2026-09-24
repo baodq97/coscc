@@ -149,15 +149,15 @@ a `review` gate that never opens.
   *Questions* tab, or `POST /api/units/answer`. It appends a block under `## Answers` and
   a row to the run log, and that is all — no gate reads it and no stage runs because of it;
   the next stage finds it in its prompt when somebody presses the button. `Answered by:`
-  is a name the person typed, not an identity. No route has a login and the default bind
-  is `0.0.0.0`, so anyone who can reach the port can answer under any name, and the next
-  stage will read it as a person's decision.
+  is a name the person typed, not an identity. Since `0070` there is one master password
+  and it names nobody: whoever holds it or a live session cookie can answer under any
+  name, and the next stage will read it as a person's decision.
   One kind of answer is read by more than a prompt. Since `0028` a finding the last review
   round marked `[needs-person]` is answered as `F<n>` into `review.md`, as a `### F<n>`
   block: `cos.mjs next` reads it to offer `review` again once every such finding has one,
   and the `ship` gate counts a finding that review then marks `[answered]` as closed only
-  when that block exists. So a block anyone who reaches the port can write, followed by
-  one agent's round, is part of what opens `ship`.
+  when that block exists. So a block anyone holding the password or a session can write,
+  followed by one agent's round, is part of what opens `ship`.
   A third kind is no answer at all. Since `0047` a finished unit's outcome is recorded as a
   `### Outcome` block under `intent.md ## Answers` (`POST /api/units/outcome`, or the
   unit's *Outcome* panel): `cos.mjs` reads it into `outcome` for the board's label, and no
@@ -169,8 +169,8 @@ a `review` gate that never opens.
   the repository": the pull request is where the team reads. A round the board ran is
   posted when it is written; a round written at a terminal reaches the pull request only
   when someone presses *Post to PR* on the board, or calls `POST /api/units/review-comment`.
-  That route has no login either, so anyone who can reach the port can make this
-  machine's login post a round. Neither gate changes its answer because of a comment.
+  Whoever holds the password or a live session can make this machine's login post a
+  round through that route. Neither gate changes its answer because of a comment.
 - **An integration is not an approval, and nothing starts one.** Since `0035` the board
   shows whether a unit between `pr` and `ship` has fallen behind `main`, and an
   *Integrate* button (`POST /api/units/integrate`) rebases it: the app itself through
@@ -182,39 +182,48 @@ a `review` gate that never opens.
   it reads words: `node -e` or `python -c` pushing by itself still walks past. Gebo stops with `[needs-person]` rather than drop one side. How
   a conflict was resolved is the app's or an agent's word; the next review round is the
   only thing that reads it. No board read, timer or finished step presses the button, and
-  the route has no login: anyone who reaches the port can make this machine's `gh` login
-  rebase a unit's pull request or open a paid session. It is not a stage and `cos.mjs`
+  whoever holds the password or a live session can make this machine's `gh` login rebase a
+  unit's pull request or open a paid session. It is not a stage and `cos.mjs`
   does not know it exists beyond the `betweenPrAndShip` field `status --json` carries.
-- **Stopping a step is not an approval, and anyone who reaches the port can do it.** Since
+- **Stopping a step is not an approval, and anyone holding the password can do it.** Since
   `0034` the board lists the steps running in a workspace, each with a *Stop* button
   (`POST /api/board/stop`). A stopped step ends `stopped` in the run log with
   `stopped_by`, a name the person typed rather than an identity; it writes no artifact,
   opens and closes no gate, and starts nothing. What it had already committed or pushed
-  stays. No route has a login and the default bind is `0.0.0.0`, so anyone who can reach
-  the port can stop anyone's step under any name.
+  stays. Whoever holds the password or a live session can stop anyone's step under any
+  name.
 - **A hold is not an approval, and it starts nothing.** Since `0045` the board can pause,
   drop or resume a unit (`POST /api/units/hold`), with one line of reason and a typed name.
   It appends a block under `intent.md ## Answers` and a `hold` row to the run log; `cos.mjs`
   then offers the unit no stage and closes every gate on it. Resuming runs nothing either.
   Dropping also closes the unit's open pull request **with this machine's `gh` login** and
-  removes its worktree; the remote and local branches stay. The route has no login and the
-  default bind is `0.0.0.0`: anyone who reaches the port can pause every unit, or drop one
-  and close its pull request, under any name. A move is refused while a step or an
+  removes its worktree; the remote and local branches stay. Whoever holds the password or
+  a live session can pause every unit, or drop one and close its pull request, under any
+  name. A move is refused while a step or an
   integration of that unit runs — but only one this process started; a chat, a terminal or
   a second app is not seen.
-- **An update is not an approval, and anyone who reaches the port can press it.** Since
+- **An update is not an approval, and anyone holding the password can press it.** Since
   `0068` an install made by `install.sh` updates itself from the Board
   (`POST /api/update/apply`, `/cancel`, `/build-local`). Applying can stop every running
   step and chat turn of this process when the person chooses "áp dụng ngay", and restarts
-  the process; the local build runs upstream `main`'s build scripts under this user. No
-  route has a login and the default bind is `0.0.0.0`, so anyone who reaches the port can
-  do all of it under any name. The only constraint is what gets installed: a wheel from
+  the process; the local build runs upstream `main`'s build scripts under this user.
+  Whoever holds the password or a live session can do all of it under any name. The only constraint is what gets installed: a wheel from
   `github.com/baodq97/coscc` checked against its release's `SHA256SUMS`, or one this
   machine built from `origin/main`, and no request carries a URL, path, version or ref.
   Nothing in the repository enforces that constraint beyond the app's own code: a
   `SHA256SUMS` from the same release catches a torn file, not a compromised release, and
   anyone who can write to `COS_DATA_DIR` can place a wheel and a manifest that agree. It
   opens and closes no gate and starts no stage.
+- **A login that knows who you are.** Since `0070` every route — the page, its socket,
+  `/api`, the static files, paths that do not exist — is refused without a live session;
+  only `/api/health`, `/login`, and `/setup` until a password is set, answer.
+  `coscc/auth.py` is that door, and it is one master password for one user: it proves
+  someone holds the password, not who they are, so every typed name above is still only a
+  word. The default bind is still `0.0.0.0` and the app serves plain HTTP, so off loopback
+  the password, the cookie and the setup token cross the network readable until someone
+  puts TLS in front. The setup token sits in the service's journal, readable by the `adm`
+  and `systemd-journal` groups until the password is set. `coscc reset-password`, at a
+  shell on the machine, is the only way back from a forgotten password.
 - **CI that decides more than one thing.** Since `0015` CI decides whether `review` may
   begin: the gate reads the pull request's required checks and stays closed on red,
   pending or none. Nothing else reads it. A green check also measures a different

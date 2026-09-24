@@ -123,14 +123,24 @@ def _sidebar() -> rx.Component:
                 rx.cond(
                     P.loopback_only,
                     "Loopback, and chat sessions with no tools by default.",
-                    "Anyone who can reach this port can use this app. There is no login. "
-                    "Chat sessions still have no tools by default.",
+                    "Anyone who can reach this port gets the login page; whoever holds the "
+                    "password or a live session can do everything here. Chat sessions still "
+                    "have no tools by default.",
                 ),
                 size="1", margin_top="8px"),
             rx.button("What this can do", rx.icon("arrow-up-right", size=14),
                       on_click=P.navigate("settings"), variant="ghost", size="1", margin_top="12px"),
             padding="14px", background=rx.color("grass", 2),
         ),
+        # `0070` R7. A same-origin `fetch`, not a `<form>`: how Reflex renders a form's
+        # `action` was not measured, and a `fetch` to this origin carries the cookie and a
+        # matching `Origin`. The guard ends the session whatever the page does next.
+        rx.button("Đăng xuất", rx.icon("log-out", size=14), id="logout",
+                  on_click=rx.call_script(
+                      "fetch('/logout',{method:'POST',credentials:'same-origin'})"
+                      ".finally(()=>{window.location.href='/login'})"
+                  ),
+                  variant="ghost", size="1", margin_top="10px"),
         rx.hstack(
             s.mark("ME", "gray", "32px"),
             rx.vstack(rx.text("Personal workspace", size="1", weight="medium"),
@@ -681,8 +691,9 @@ def _update_channel(label: str, channel: str, line, ready, extra: rx.Component |
 def _update_panel() -> rx.Component:
     """`0068`. What runs, whether a newer build is ready, and one press to apply it.
 
-    Every string and every enabled button comes from `Service.update_status`. No login:
-    the name typed here is what the run log's `by` says, a claim and not an identity.
+    Every string and every enabled button comes from `Service.update_status`. The name
+    typed here is what the run log's `by` says, a claim and not an identity: one password
+    stands in front of the page (`0070`), and it names nobody.
     """
     return s.panel(
         s.eyebrow("CẬP NHẬT"),
@@ -756,6 +767,8 @@ def _update_warning() -> rx.Component:
 # R14. Asks `/api/update` every 5 s outside Reflex's socket, and reloads the page when the
 # build it answers for is not the one the page was loaded under. The overlay says
 # `đang khởi động lại` while nothing answers, and after 120 s says it could not reconnect.
+# A `401` is not a restart: the session ended (expiry, logout elsewhere, `reset-password`),
+# so the page goes to `/login` rather than point at a rollback (`0070` review F3).
 _RECONNECT_JS = """
 (function () {
   if (window.__coscc_update_watch) return;
@@ -773,9 +786,11 @@ _RECONNECT_JS = """
   }
   function tick() {
     fetch("/api/update", {cache: "no-store"}).then(function (r) {
+      if (r.status === 401) { window.location.replace("/login"); return null; }
       if (!r.ok) throw new Error(String(r.status));
       return r.json();
     }).then(function (u) {
+      if (u === null) return;
       if (u.log) log = u.log;
       if (first === null) { first = u.build_id; }
       else if (u.build_id !== first) { window.location.reload(); return; }
@@ -1168,9 +1183,10 @@ def _settings() -> rx.Component:
                               rx.cond(
                                   P.loopback_only,
                                   "Loopback only.",
-                                  "Reachable from any machine that can route here, and "
-                                  "coscc has no login. Set COS_HOST=127.0.0.1 to bind "
-                                  "this machine only.",
+                                  "Reachable from any machine that can route here; the "
+                                  "master password stands in front, and over plain HTTP "
+                                  "it crosses the network readable. Set "
+                                  "COS_HOST=127.0.0.1 to bind this machine only.",
                               ),
                               s.text(P.host_port, size="1",
                                      font_family="ui-monospace, monospace")),
@@ -1214,9 +1230,9 @@ def _settings() -> rx.Component:
                    "only from an override set here.", size="1", margin_top="8px"),
             s.text("Default là điểm xuất phát, sẽ chỉnh theo số đo, không phải kết luận.",
                    size="1", margin_top="8px"),
-            rx.callout("Anyone who can reach this port can change these — coscc has no "
-                       "login. Every change is written to the run log with its old and "
-                       "new value.", icon="triangle_alert", color_scheme="amber",
+            rx.callout("Anyone holding the password or a live session can change these. "
+                       "Every change is written to the run log with its old and new "
+                       "value.", icon="triangle_alert", color_scheme="amber",
                        variant="surface", size="1", margin_top="12px"),
             rx.foreach(P.model_problems,
                        lambda p: rx.callout(p, icon="circle_alert", color_scheme="red",
@@ -1318,8 +1334,9 @@ def _questions_tab() -> rx.Component:
             "Answer an item under ## Open questions. The answer is appended to the end of "
             "the artifact under ## Answers, with the name you type here; nothing above it "
             "changes. This is not an approval and it starts no step — the next step reads "
-            "it when someone runs it. The name is not checked: this app has no login, so "
-            "anyone who reaches this port can type one. A row named finding F<n> is a review "
+            "it when someone runs it. The name is not checked: one password stands in front "
+            "of this app and it names nobody, so whoever holds it or a live session can type "
+            "any name. A row named finding F<n> is a review "
             "finding the last review round confirmed needs a person; its answer goes into "
             "review.md, and unlike a question's it is read: cos.mjs offers review again "
             "once every such finding has one, and the ship gate counts a finding the review "
@@ -1409,7 +1426,7 @@ def _outcome_panel() -> rx.Component:
                     s.text(
                         "Appended to intent.md under ## Answers as ### Outcome; nothing above it "
                         "changes, a later block replaces an earlier one, and no gate reads it. "
-                        "Neither name is checked: this app has no login.",
+                        "Neither name is checked: the password names nobody.",
                         size="1", line_height="1.7",
                     ),
                     rx.select(["đạt", "trượt", "không đo được"], value=P.outcome_result,
@@ -1553,8 +1570,8 @@ def _comments_tab() -> rx.Component:
             "posted under this machine's gh login and marked as written by an agent "
             "session. It is not an approval, and no gate reads it. A round the board ran "
             "is posted when it is written; a round written at a terminal waits here until "
-            "someone presses Post to PR. The text goes up verbatim. This app has no login, "
-            "so anyone who reaches this port can press the button.",
+            "someone presses Post to PR. The text goes up verbatim. Whoever holds the "
+            "password or a live session can press the button.",
             size="1", line_height="1.8",
         ),
         rx.cond(P.current_unit.pr_url != "",

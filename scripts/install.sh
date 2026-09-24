@@ -324,9 +324,12 @@ while [ "$waited" -lt 90 ]; do
       if [ -n "$lan" ]; then
         echo "install.sh: http://$lan:$served_port/   (from another machine)"
       fi
-      echo "install.sh: bound to 0.0.0.0 -- reachable on every interface of this host, and"
-      echo "install.sh: this app has no authentication. See docs/install.md before exposing it."
+      echo "install.sh: bound to 0.0.0.0 -- anyone who reaches this port sees the login page, and"
+      echo "install.sh: over plain HTTP the password crosses the network readable. See docs/install.md."
     fi
+    # `0070`: the first visit sets the master password with a token only this machine's
+    # log shows. Said on every bind, because loopback installs need it too.
+    echo "install.sh: first visit asks for a setup token: journalctl --user -u coscc | grep 'setup token'"
     exit 0
   fi
   # `is-active` alone almost never catches a crash loop. The unit above carries

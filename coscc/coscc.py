@@ -1,9 +1,9 @@
 """The app: one page, one ASGI app, one port.
 
-It was "one loopback port" until `0011` made `0.0.0.0` the default, which is worth knowing
-here because `coscc/api.py` states the assumption this file composes: that every caller is
-a local process holding this machine's own credentials. Nothing enforces it, and since
-`0011` nothing makes it true either.
+It was "one loopback port" until `0011` made `0.0.0.0` the default. Since `0070` what
+uvicorn serves is `served()` below: this app behind `coscc/auth.py`, so every request —
+the page, its socket and `/api` alike — needs the master password or a live session
+first.
 
 This file once held a second page — the one the earlier units built — and
 a prototype sat beside it at `/prototype`. `spec.md` R19 replaced both with
@@ -31,3 +31,16 @@ from coscc.state import API
 # `App(theme=...)` and removes it at 1.0. The global style still belongs here.
 app = rx.App(api_transformer=API, style=ui.GLOBAL_STYLE)
 app.add_page(screens.index, title="CoS Studio")
+
+
+def served():
+    """What uvicorn serves: the composed app, behind the login guard (`0070`).
+
+    It wraps what `app()` returns rather than joining `api_transformer`, because that is
+    the one position `.cos/0070_*/spike.md ## U1` measured to see every scope — CORS
+    preflight included, which Reflex's own middleware answers before any transformer.
+    """
+    from coscc.auth import Guard
+    from coscc.data import Data
+
+    return Guard(app(), Data(API.state.config.data_dir))

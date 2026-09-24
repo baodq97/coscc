@@ -327,7 +327,7 @@ class Loopback(unittest.TestCase):
     this test existed so the posture could not drift back by accident. `0011` changed it
     on purpose: the app now ships to a VM that people reach from elsewhere, and the
     originator decided that after being shown that this file's own module docstring
-    describes an app with no authentication of any kind.
+    described an app that asked nobody for a password — true until `0070`.
 
     So the guarantee this class protects is no longer "loopback". It is that a person is
     *told*, every single start, and `coscc/run_test.py` is where that is checked.

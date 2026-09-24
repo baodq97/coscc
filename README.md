@@ -51,10 +51,13 @@ uv run coscc-build                              # compile the page
 COS_WORKING_DIR=~/projects uv run coscc         # then http://0.0.0.0:8790
 ```
 
-**It binds every interface by default, and this app has no authentication on any route** —
-anyone who can reach the port can use all of it, including the two controls that spend real
-quota. That was `0.0.0.0` by decision on 2026-09-22, not by accident; `COS_HOST=127.0.0.1`
-puts it back on loopback, and the startup banner says which one you are running. Its chat
+**It binds every interface by default, and one master password stands in front of every
+route** — the first visit sets it with a token printed to the service's log, and whoever
+holds it, or a live session, can use all of it, including the two controls that spend real
+quota. Over plain HTTP the password crosses the network readable; `docs/install.md`
+`## Logging in` says what to put in front. `0.0.0.0` was a decision on 2026-09-22, not an
+accident; `COS_HOST=127.0.0.1` puts it back on loopback, and the startup banner says which
+one you are running. Its chat
 sessions have **no tools** by default. The app keeps
 its own state — the workspace list, the run log, interface preferences — in one SQLite
 database under `COS_DATA_DIR`, which defaults to `~/.cos`. Workspaces themselves stay

@@ -17,13 +17,15 @@ catch. Anything a script, a test or a refusal already enforces is left to that s
 uv sync                                     # after a fresh clone
 uv run coscc-build                          # build the page; never `reflex export`
 COS_WORKING_DIR=~/projects uv run coscc     # then http://127.0.0.1:8790
+uv run coscc reset-password                 # forgot the master password: clears it and every session
 ```
 
 **Start it with `coscc`, not `reflex run`.** Reflex's dev mode serves the page from a vite
 server binding every interface, and 0.9.11 has no setting for its host — measured
 2026-09-21, `ss -ltn` showed `*:3000`. `coscc` mounts the compiled frontend into the API's
-own ASGI app and binds one port. Since `0011` that port is on `0.0.0.0` by default and
-the app has no authentication — `COS_HOST=127.0.0.1` is the loopback posture `0001` built.
+own ASGI app and binds one port. Since `0011` that port is on `0.0.0.0` by default; since
+`0070` a master password stands in front of all of it (`coscc/auth.py`) —
+`COS_HOST=127.0.0.1` is the loopback posture `0001` built.
 
 `npm test` never builds. `verify_0001` and `verify_0002` drive the ASGI app in-process, so
 the test command needs no JavaScript toolchain — that is deliberate, and it is why editing
@@ -54,8 +56,8 @@ no commands, one turn, no budget.
   reaches.
 - **`/api/timeline` returns what a failed paid step replied.** Since `0014` a step whose
   reply could not be used keeps the last 2000 characters of it (`coscc/runner.py:150`), and
-  that text reaches the board as `detail`. No route has a login and the default bind is
-  `0.0.0.0`.
+  that text reaches the board as `detail`, for whoever holds the password or a live
+  session.
 - **The `pr` and `ship` grants reach further than this
   repository.** Their capability comes from this machine's `gh` login, so they reach every
   repository that login reaches. The page shows a warning string before the button is
@@ -124,13 +126,36 @@ no commands, one turn, no budget.
   `active`. Measured 2026-09-22 when a checkout's `npm test` upgraded `~/.cos/cos.db` to
   schema 2 under an installed `v0.2.3`. Health checks do not see this; `curl /api/workspaces`
   does. The way out is to match the app to the database or delete the database — a downgrade
-  does not remove it.
+  does not remove it. Since `0070` `SCHEMA_VERSION` is 3 and the login guard reads the
+  database on every request, so a pre-`0070` build meeting it fails every page, not only the
+  routes that read data.
+- **`coscc/auth.py` is the only door, and it opens on one password.** Since `0070` uvicorn
+  serves `coscc.coscc:served`, the composed app wrapped by `auth.Guard` — the one position
+  `.cos/0070_*/spike.md ## U1` measured to see every scope, CORS preflight included; moving
+  the guard into `api_transformer` lets Reflex answer `OPTIONS` without it. `auth.EXEMPT` is
+  the whole list of what answers without a session (`/api/health`, `/login`, and `/setup`
+  while no password is stored); anything else, a route added later included, is refused,
+  and `coscc/auth_test.py` plus `scripts/verify_0070.py` count that. Things no test sees:
+  `proxy_headers=False` in `coscc/run.py`, so behind a proxy every client shares one
+  failure count and a stranger can lock the owner out for up to an hour (spec C2); a
+  state-changing request or websocket handshake whose `Origin` does not match `Host` is
+  `403`, so a proxy that rewrites `Host` breaks the page (C3); `HASH_CONCURRENCY` = 2
+  argon2 hashes at once (about 64 MiB each, `spike.md ## U2`), a third waits `HASH_WAIT`
+  = 5 s and gets `429` — many addresses trying at once can refuse the owner too. The
+  failure count and the setup token live in memory: a restart clears the one and mints the
+  other. A setup token sits in the journal until the password is set. The guard opens a
+  SQLite connection per request (unmeasured cost); a `Busy` there is a `500`, still a
+  refusal. A page it lets through goes out `Cache-Control: no-cache`: without it chromium
+  reused a cached `index.html` after logout, a board whose socket the guard refused, and
+  never reached `/login`. `verify_0070.py --browser` is the one proof that opens chromium
+  behind the guard, on loopback and off it — not behind a proxy, and not on the installed
+  service.
 - **`POST /api/units/answer` writes a stranger's words into a paid prompt.** Since `0016`
   it appends an answer under a typed name to an artifact, and the next stage embeds that
-  file. No login, `0.0.0.0` by default: anyone on the network can put text there that a
-  stage will read as a person's decision. The only trace is the file and an `outputs` row
-  with `actor = human:<name>` — watch for a name nobody recognises. `COS_HOST=127.0.0.1`
-  is the mitigation that exists. Since `0028` it also takes `question: "F<n>"` with
+  file. Whoever holds the password or a live session can put text there, under any name,
+  that a stage will read as a person's decision. The only trace is the file and an
+  `outputs` row with `actor = human:<name>` — watch for a name nobody recognises.
+  The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it. Since `0028` it also takes `question: "F<n>"` with
   `artifact: "review.md"` for a finding `cos.mjs` lists in `personFindings`, and that block
   does more than reach a prompt: `next` offers `review` once every such finding has one,
   and the `ship` gate counts a finding the review then marks `[answered]` as closed only
@@ -139,8 +164,8 @@ no commands, one turn, no budget.
 - **`POST /api/units/review-comment` writes to GitHub under this machine's `gh` login.**
   Since `0021` it posts a round of `review.md` to the unit's pull request, verbatim and
   unfiltered: a finding that quotes a token or a local path goes up with it, and a public
-  repository's pull request is public. No login, `0.0.0.0` by default, so anyone who
-  reaches the port can press it. The body is only ever the round's own text, and the
+  repository's pull request is public. Whoever holds the password or a live session can
+  press it. The body is only ever the round's own text, and the
   marker on its last line stops a second copy. The trace is a `pr-comment` row in Activity
   and the comment itself. `run_step` also posts on its own after writing a review round,
   which can hold the `done` row up to 60s on a slow network (two `gh` calls, 30s each).
@@ -188,10 +213,11 @@ no commands, one turn, no budget.
   fails, `ensure` raises, and `next_step` swallows it into a plain `None`: the read still
   answers, but with no worktree and no reason shown for why the run button has nothing to
   offer.
-- **`POST /api/settings/models` decides what every step spends, and has no login.** Since
+- **`POST /api/settings/models` decides what every step spends, for whoever holds the
+  password.** Since
   the store's `0004_no-setting-says-which-model-runs-a-stage` each stage, and chat, runs
   on the model Settings names: an override in the `prefs` table (`model:<name>`), else
-  `coscc/models.json`, else `COS_MODEL`. Anyone who reaches the port can move `review` to
+  `coscc/models.json`, else `COS_MODEL`. Anyone holding the password can move `review` to
   a weak model or every stage to a dear one, `0.0.0.0` by default. The trace is a
   `setting` record in the run log (workspace `""`, with `old` and `new` — it shows on no
   workspace's Activity) and the `override` badge on Settings. A model id is not checked
@@ -206,8 +232,8 @@ no commands, one turn, no budget.
   that rerun, and every `impl` labelled `novel` — a `missing` plan written before `0033`
   included — also gets 250 turns / $16.0 instead of 120 / $8.0 (`policy.NOVEL_CEILINGS`,
   shown on Settings as `impl:novel`), so one press can spend twice as much. `max` is refused
-  from `models.json` and taken from an override, so anyone who reaches the port can set it.
-  `COS_HOST=127.0.0.1` is the mitigation that exists.
+  from `models.json` and taken from an override, so anyone holding the password can set it.
+  The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
 - **`spike` runs arbitrary code, and nothing is a sandbox.** Since `0039` a spec that marks
   a concern `[unmeasured] U<n>` sends its unit to a `spike` step holding `Bash` with
   `python`, `node`, `npm` and `uv` (`impl`'s commands without `git`,
@@ -264,17 +290,17 @@ no commands, one turn, no budget.
   before the step (`coscc/policy_test.py`, `test_the_known_limit_c6`). What stops a force
   on `main` is the GitHub ruleset, not this grant. Gebo may read the
   intent, spec and plan of the units the app lists as related — a widening of the read
-  boundary, and not a sandbox while it has `cat`. No login, `0.0.0.0` by default. Every
+  boundary, and not a sandbox while it has `cat`. Behind the password like every route. Every
   attempt, refused ones included, is one `integration` row in the run log.
-- **`POST /api/units/outcome` writes the ground for keeping or dropping a unit, and has no
-  login.** Since `0047`. On a `finished` unit it appends a `### Outcome` block (`Result:`
+- **`POST /api/units/outcome` writes the ground for keeping or dropping a unit.** Since
+  `0047`. On a `finished` unit it appends a `### Outcome` block (`Result:`
   `đạt` | `trượt` | `không đo được`, `Measured by:`, `Source:` or `Reason:`) under
   `intent.md ## Answers`, and the board labels the unit from the last valid one. Anyone
-  who reaches the port can record `đạt` under any name, `0.0.0.0` by default; `Measured
+  holding the password can record `đạt` under any name; `Measured
   by:` is a word they typed too, and `Source:` is checked against nothing. No gate reads
   the block. The trace is the block in the file and an `outputs` row with `source =
-  outcome`. `COS_HOST=127.0.0.1` is the mitigation that exists.
-- **`POST /api/board/stop` ends anyone's step, under any name, and has no login.** Since
+  outcome`. The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
+- **`POST /api/board/stop` ends anyone's step, under any name.** Since
   `0034`. It closes the step's CLI client and cancels the step's task; a CLI still running
   `sessions.DISCONNECT_TIMEOUT` (5s, chosen) after the close began gets SIGTERM from the
   app, and SIGKILL `KILL_AFTER` (3s, chosen) later — through the SDK's private
@@ -284,7 +310,8 @@ no commands, one turn, no budget.
   has begun writing its artifact refuses the stop. A step stopped before its session
   reported a cost records `cost_unknown` and no cost at all, so Activity reads it as free.
   Stopping a `pr` or `ship` midway can leave a pushed branch or a merged pull request with
-  no `pr.md` or an unremoved worktree. `0.0.0.0` by default.
+  no `pr.md` or an unremoved worktree. Whoever holds the password or a live session can
+  press it.
 - **Units run their steps at the same time.** Since `0034` each board step is its own
   task, one per unit (a second is refused before it spends anything) and any number of
   units at once; a reader that goes away no longer ends the step, and every step's CLI
@@ -318,8 +345,8 @@ no commands, one turn, no budget.
   dropped` is refused, so the person closes the pull request or removes the tree by hand;
   the route's reply and the `hold` row on Activity say which. `paused` and `→ active` run
   no `git` and no `gh`. The block is read by `cos.mjs`: no stage is offered and every gate
-  is closed, so anyone who reaches the port — no login, `0.0.0.0` by default — can stop
-  every unit under a name they chose. The block also reaches every later stage's prompt as
+  is closed, so anyone holding the password or a live session can stop every unit under a
+  name they chose. The block also reaches every later stage's prompt as
   part of `intent.md`. An older `cos.mjs` reads the reason as the tail of the answer above
   it and offers the next stage again: downgrading past `0045` with held units is unsafe.
   `next_step` now asks `cos.mjs next` once more, files only, before opening a worktree
@@ -340,10 +367,10 @@ no commands, one turn, no budget.
   run of `plan`, no section, a commit the tree lacks — is `checked: false` with a reason,
   never an empty list, and never stops the step. A step started at a terminal gets none of
   this.
-- **`GET /api/board/running` tells anyone who reaches the port which units have a paid
+- **`GET /api/board/running` tells anyone holding the password which units have a paid
   session open, and since when.** Since `0051` every card on the Board shows the step or
   integration running on it (stage, agent name, start time), or `ended, unknown` for a
-  `start` in the run log with no `end`. No login, `0.0.0.0` by default, and it is near
+  `start` in the run log with no `end`. It is near
   real time: each tab on the Board asks every 5s (`RUNNING_POLL`, chosen, not measured),
   reading the run log's `start` and `end` rows each time — the cost of that on a large
   run log, and against `busy_timeout` with ten sessions appending, is unmeasured; a busy
@@ -352,11 +379,10 @@ no commands, one turn, no budget.
   runs on the same working folder shows here as `ended, unknown` while it is still going,
   and a person may read that as dead and press run again. An `ended, unknown` row stops
   showing when the unit's next `start` is written or after 24 hours; nothing writes an
-  `end` for it. A step started at a terminal has no entry either. `COS_HOST=127.0.0.1` is
-  the mitigation that exists.
+  `end` for it. A step started at a terminal has no entry either. The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
 
-- **`POST /api/update/*` stops work, restarts the app and builds upstream code, with no
-  login.** Since `0068`. *Áp dụng ngay* stops every board step (through Stop's road, so
+- **`POST /api/update/*` stops work, restarts the app and builds upstream code, for whoever
+  holds the password.** Since `0068`. *Áp dụng ngay* stops every board step (through Stop's road, so
   each gets an `end` with `stopped_by`) and cuts every chat turn of this process; *Áp
   dụng* waits for them instead, and a person can keep it waiting forever by starting new
   work. *Build từ origin/main* runs `scripts/build_wheel.sh` of the configured workspace's
@@ -370,8 +396,13 @@ no commands, one turn, no budget.
   version that passes the trial and still fails to start is not rolled back by anything;
   the update's log holds the command, and restoring `updates/cos.db.bak` loses what the new
   version wrote (spec C1, C8). The trace is the `update` rows in the run log (workspace
-  `""`, `by` a typed name) and `<COS_DATA_DIR>/updates/logs/`. `COS_HOST=127.0.0.1` is the
-  mitigation that exists.
+  `""`, `by` a typed name) and `<COS_DATA_DIR>/updates/logs/`. The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
+  Since `0070` the trial clears the password on its copy of `cos.db` with `coscc
+  reset-password`, reads the setup token off the trial's output (written to the update's
+  log as `<redacted>`), sets a throwaway password through `POST /setup` and needs `200`
+  from `/api/workspaces` and `/` with that cookie. The updater of a release before `0070`
+  asks `/api/workspaces` for `200` without a cookie, so the first update from the board
+  past `0070` always fails its trial: that release is installed with `curl … | sh`.
 
 ## The proofs, and what each one costs
 
@@ -379,12 +410,12 @@ no commands, one turn, no budget.
 |---|---|
 | `verify_0001.py` | creates real sessions |
 | `verify_0002.py` | clones, creates sessions |
-| `verify_0003.py` | browser, needs `COS_PORT` free; no session, no quota |
+| `verify_0003.py` | browser, needs `COS_PORT` free; no session, no quota. Since `0070` the page it opens is the login page: not rewritten, so it fails until something logs it in (`.cos/0070_*/spec.md` C7) |
 | `verify_0004.py` | 4 processes at once, creates a session |
 | `verify_0005.py` | **pushes a branch and opens a PR.** Needs `COS_PROOF_REPO`; unset is exit 2 with claims 2, 3, 4, 6 skipped. Eight sessions, one with a $5 ceiling |
-| `verify_0006.py` | browser, needs `COS_PORT` free; sends one short prompt |
+| `verify_0006.py` | browser, needs `COS_PORT` free; sends one short prompt. Since `0070` it meets the login page and was not rewritten (C7) |
 | `verify_0011.py` | **needs another machine.** `COS_PROOF_TARGET`, an SSH destination it reboots twice; unset is exit 2 |
-| `verify_0012.py` | measures the **installed** copy, not this checkout. Needs `node`, a running service at `COS_URL` and one workspace; no session, no quota |
+| `verify_0012.py` | measures the **installed** copy, not this checkout. Needs `node`, a running service at `COS_URL` and one workspace; no session, no quota. Since `0070` the service answers it `401`: not rewritten (C7) |
 | `verify_0013.py` | reads git history into a **temporary** data root, never `~/.cos`. No session, no quota, no network. Run it plain and it is exit 1 by design — `--import` is what fills the log and makes it exit 0 |
 
 | `verify_0014.py` | **spends real money and merges a real pull request.** Needs `COS_PROOF_REPO`, a throwaway repo; unset is exit 2. Five sessions — measured $3.28 and 11m49s end to end, 2026-09-22. `--dry` stops before the first paid step |
@@ -406,9 +437,10 @@ no commands, one turn, no budget.
 | `verify_0051.py` | no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh` first on `PATH` that refuses everything. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState` as `verify_0024` does, so the compiled page and its socket are not exercised; the ten steps go through `POST /api/board/run` on the in-process ASGI app, never through a second copy of the app, so the one-process limit is not measured |
 | `verify_0060.py` | plain: no session, no quota, no network; temporary directory with a fixture run log and fixture transcripts. Needs `git` (it loads `coscc/policy.py` from `01699b8` with `git show`) and `bash` (`type -t`); either missing, or that commit absent from a shallow clone, is exit 2. `--measure --since --until [--confirmed FILE]` reads `<COS_DATA_DIR>/cos.db` (`mode=ro`) and `COS_TRANSCRIPTS_DIR`, and writes only to `<COS_DATA_DIR>/measurements/`; no session in the window is exit 2. It does not import `coscc`. "Fake" depends on the `PATH` of the machine running it |
 | `verify_0061.py` | plain: no session, no quota, no network; temporary directory. Needs `node` and `git` (it loads `cos.mjs` from `git merge-base HEAD origin/main`) and `uv`; a missing one, or no merge-base, is exit 2. `--root <dir>` (repeatable) adds a store such as `~/.cos/units/<slot>` to the comparison. `--measure` reads every `<COS_DATA_DIR>/units/*/.cos/` through `cos.mjs status --json` and writes only to `<COS_DATA_DIR>/measurements/`; no merge line yet (this unit's `ship.md`) or fewer than 5 units shipped after it is exit 2. Kind (b) of the intent's wasted round is a person reading pull request history; it does not conclude it |
-| `verify_0068.py` | plain: no session, no quota, no network; temporary data root, a fake `uv` (a shell script whose "installed" `coscc` serves 200 on a port) and `verify_0034`'s stand-in session, app driven in-process over ASGI. Needs `node` and `git`; either missing is exit 2. `--restart` builds two wheels of `HEAD` with `scripts/build_wheel.sh --local` in temporary worktrees, installs one with the real `uv` into a temporary tool dir, plays systemd itself (restart 2 s after a non-zero exit) and drives chromium: **needs the network** for the trial install, port 18790 free, and takes a few minutes. It does not measure the intent's outcome — two real updates on an `install.sh` machine |
+| `verify_0068.py` | plain: no session, no quota, no network; temporary data root, a fake `uv` (a shell script whose "installed" `coscc` serves 200 on a port) and `verify_0034`'s stand-in session, app driven in-process over ASGI. Needs `node` and `git`; either missing is exit 2. `--restart` builds two wheels of `HEAD` with `scripts/build_wheel.sh --local` in temporary worktrees, installs one with the real `uv` into a temporary tool dir, plays systemd itself (restart 2 s after a non-zero exit) and drives chromium: **needs the network** for the trial install, port 18790 free, and takes a few minutes. It does not measure the intent's outcome — two real updates on an `install.sh` machine. Since `0070` the fake `coscc` plays the login door for the trial; `--restart`'s browser was not taught to log in and was not run |
+| `verify_0070.py` | plain: no session, no quota, no network; temporary data root. Composes the real Reflex app in-process as `run.py` serves it, so it **needs `uv run coscc-build` first** (no bundle is exit 2). Sets a password through `/setup`, walks every registered route and counts the ones that answer without a session; also measures R8 on the real `/_event` socket. `--url` counts against a running service at `COS_URL` from this checkout's route list, sends no `POST /login`, and is exit 2 while that service has no password. `--browser` starts `coscc.run` on a temporary root and drives chromium through `/setup`, the board's `/_event`, *Đăng xuất* and back to `/login`, through `127.0.0.1` and through this machine's first non-loopback address, then removes the session under an open board and needs it on `/login` within 20 s: needs `COS_PORT` free, bound off loopback, and a bundle built for it (`COS_PORT=18791 uv run coscc-build`). A step the app starts inherits `__REFLEX_*` blank, and `run.py`'s `setdefault` keeps a blank mount flag — no page, `/` a 404 — so `--browser` drops them; `verify_0003`/`0006` do not |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
-| `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name |
+| `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name. Since `0070` it meets the login page and was not rewritten (C7) |
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.
 

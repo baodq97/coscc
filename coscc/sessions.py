@@ -425,8 +425,9 @@ def _options(
         # Measured 2026-09-23 on claude-agent-sdk 0.2.158: a session with `tools=[]` --
         # no way to read a file -- was sent `@/tmp/canary.txt` and repeated the word
         # inside it. With this set it saw only the path. That mattered from `0016` on,
-        # because `POST /api/units/answer` takes free text from anyone who can reach the
-        # port, no login, bound to `0.0.0.0`, and puts it verbatim into the next stage's
+        # because `POST /api/units/answer` takes free text -- from anyone who could reach
+        # the port until `0070`, from anyone holding the password or a session since -- and
+        # puts it verbatim into the next stage's
         # prompt. An answer reading `@~/.ssh/id_rsa` would have put the key there.
         verbatim_prompts=True,
     )
