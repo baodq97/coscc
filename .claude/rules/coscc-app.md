@@ -349,7 +349,11 @@ no commands, one turn, no budget.
   already running; the rest of two steps' `git` in one workspace — `switch main` among it —
   can still collide on a lock, and nothing here serialises it (unmeasured). The list
   of running steps is in memory: a restart forgets it, and a step cut off by a restart has
-  no `end` record.
+  no `end` record. Since `0050` a unit is held from before `run_step`'s first board read:
+  a second request for any stage of it is refused before it runs `cos.mjs`, `git` or `gh`,
+  with a reason naming the stage, the phase (`preparing` or `running`) and when it began
+  (`steps.describe`). Still one process only: a second copy of the app, a chat or a
+  terminal is not seen.
 - **Every board read with a unit between `pr` and `ship` costs one `gh pr list`.** Since
   `0035`, up to 30s (chosen), plus a `gh pr checks` for a unit whose head is the one its
   last integration pushed. Offline, every such unit reads `unknown` and the board waits
@@ -380,7 +384,11 @@ no commands, one turn, no budget.
   part of `intent.md`. An older `cos.mjs` reads the reason as the tail of the answer above
   it and offers the next stage again: downgrading past `0045` with held units is unsafe.
   `next_step` now asks `cos.mjs next` once more, files only, before opening a worktree
-  (unmeasured).
+  (unmeasured). Since `0050` a move — and *Integrate* — is also refused while a step of
+  the unit is still being prepared: the gate, the fetch (up to `FETCH_TIMEOUT` = 20s),
+  `impl`'s `prepare` and `pr`'s `gh pr list`, a stretch whose length is unmeasured. A step
+  in that phase is not on `/api/board/steps` and has no *Stop*, so the only thing to do is
+  wait; the refusal says so and says since when.
 
 - **An `impl` prompt carries file names taken from other people's commits on `main`.**
   Since `0042` `run_step` diffs the commit the unit's last `done` run of `plan` ran on
