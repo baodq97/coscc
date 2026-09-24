@@ -187,6 +187,19 @@ no commands, one turn, no budget.
   `COS_HOST=127.0.0.1` is the mitigation that exists.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
   still see past each other for sessions. `.cos/0004_silent-concurrent-loss/spec.md` C2.
+- **A failed step's transcript tail is stored in `cos.db` and put into the next prompt.**
+  Since `0019` a stage that ends without `done` — a ceiling hit, an exception, a reply with
+  no `Status:` line — has `Runner.run` capture the tree (`HEAD`, branch, the commits since
+  the trunk, `git status --porcelain`) and the last `runner.ATTEMPT_EXCERPT` (8000, chosen
+  and not measured — `.cos/0019_.../impl.md` says why) characters of what the session's own
+  turns produced, and append it to the run log as one `kind: "attempt"` row, read back only
+  by `journal.failed_attempts` and placed in the *next* run's prompt
+  (`runner.describe_attempt`), never in an artifact. No route returns it — `/api/timeline`,
+  `Service.board`, `.activity`, `.usage` and `.activity_and_usage` all project a fixed set
+  of fields that does not include it — but it still sits in `cos.db` under the data root,
+  and a tool's own output can carry a token or a local path. Capturing is best-effort:
+  `Runner.run`'s `finally` swallows every exception around it, so a step's outcome and its
+  `end` record never depend on the capture succeeding.
 
 ## The proofs, and what each one costs
 

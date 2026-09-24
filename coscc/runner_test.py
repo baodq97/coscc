@@ -11,21 +11,26 @@ what is worth testing cheaply; a real run belongs to `scripts/verify_0005.py`.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from coscc import harness, policy
+from coscc import gitops, harness, policy
 from coscc.journal import Journal
 from coscc.policy import decide, grant_for
 from coscc.runner import (
+    ATTEMPT_EXCERPT,
     RunError,
     Runner,
     answers_section,
     build_prompt,
     check_reply,
+    describe_attempt,
     merge_review,
     skill_for,
+    snapshot,
     strip_answers,
     with_answers,
 )
@@ -1554,3 +1559,216 @@ class TheStepRunsOnTheModelItWasGiven(unittest.TestCase):
             probe, _, final = self.run_spec(d)
             self.assertEqual(final["outcome"], "done", final)
             self.assertNotIn("model", probe.kw)
+
+
+def _git_repo(root: Path) -> Path:
+    repo = root / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    (repo / "a.txt").write_text("x\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid",
+         "-c", "commit.gpgsign=false", "add", "-A"], cwd=repo, check=True,
+    )
+    subprocess.run(
+        ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid",
+         "-c", "commit.gpgsign=false", "commit", "-q", "-m", "first"], cwd=repo, check=True,
+    )
+    return repo
+
+
+class AFailedStepLeavesASnapshot(unittest.TestCase):
+    # 0019_a-failed-step-destroys-the-work-that-succeeded plan step 5.
+
+    def test_max_turns_leaves_an_attempt_before_end_with_matching_cost(self):
+        class HitCeiling:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("session", "s-ceiling")
+                yield ("chunk", "still working")
+                yield (
+                    "done",
+                    {
+                        "session_id": "s-ceiling",
+                        "cost": {"turns": 121, "cost_usd": 6.88},
+                        "terminal_reason": "max_turns",
+                    },
+                )
+
+        with tempfile.TemporaryDirectory() as d:
+            repo = _git_repo(Path(d))
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            r = Runner(sessions=HitCeiling(), journal=journal)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d,
+                    unit=UNIT, stage="impl", artifact="impl.md", stages=STAGES,
+                    mode="manual", cwd=str(repo),
+                )]
+
+            items = asyncio.run(go())
+            self.assertEqual(items[-1][1]["outcome"], "exhausted")
+
+            kinds = [r["kind"] for r in journal.records(d, UNIT)]
+            self.assertEqual(kinds, ["start", "attempt", "end"])
+            [attempt] = journal.records(d, UNIT, kind="attempt")
+            [end] = journal.records(d, UNIT, kind="end")
+            self.assertEqual(attempt["turns"], end["turns"])
+            self.assertEqual(attempt["cost_usd"], end["cost_usd"])
+            self.assertEqual(attempt["turns"], 121)
+            self.assertEqual(attempt["session_id"], "s-ceiling")
+            self.assertEqual(attempt["branch"], "main")
+            self.assertIsNone(attempt.get("snapshot_errors"))
+
+    def test_an_exception_after_the_session_event_keeps_the_session_id_with_null_cost(self):
+        class DiesMidStream:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("session", "s-dead")
+                raise RuntimeError("verify_0019: the stream broke")
+
+        with tempfile.TemporaryDirectory() as d:
+            repo = _git_repo(Path(d))
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            r = Runner(sessions=DiesMidStream(), journal=journal)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d,
+                    unit=UNIT, stage="impl", artifact="impl.md", stages=STAGES,
+                    mode="manual", cwd=str(repo),
+                )]
+
+            items = asyncio.run(go())
+            self.assertEqual(items[-1][1]["outcome"], "failed")
+            [attempt] = journal.records(d, UNIT, kind="attempt")
+            self.assertEqual(attempt["session_id"], "s-dead")
+            self.assertIsNone(attempt["turns"])
+            self.assertIsNone(attempt["cost_usd"])
+            self.assertEqual(attempt["error"]["type"], "RuntimeError")
+
+    def test_a_git_failure_leaves_the_outcome_and_end_record_unchanged(self):
+        # spec.md R3.
+
+        class HitCeiling:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("done", {
+                    "session_id": "s-r3", "cost": {"turns": 5, "cost_usd": 0.1},
+                    "terminal_reason": "max_turns",
+                })
+
+        with tempfile.TemporaryDirectory() as d:
+            repo = _git_repo(Path(d))
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            r = Runner(sessions=HitCeiling(), journal=journal)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d,
+                    unit=UNIT, stage="impl", artifact="impl.md", stages=STAGES,
+                    mode="manual", cwd=str(repo),
+                )]
+
+            with mock.patch.object(
+                gitops, "log_range", side_effect=gitops.GitError("boom")
+            ):
+                items = asyncio.run(go())
+            self.assertEqual(items[-1][1]["outcome"], "exhausted")
+            [end] = journal.records(d, UNIT, kind="end")
+            self.assertEqual(end["outcome"], "exhausted")
+            self.assertEqual(end["turns"], 5)
+            [attempt] = journal.records(d, UNIT, kind="attempt")
+            self.assertIsNone(attempt["commits"])
+            self.assertIn("commits: boom", attempt["snapshot_errors"][0])
+
+    def test_a_done_step_writes_no_attempt_record(self):
+        class Replies:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                yield ("done", {"session_id": "s-ok", "cost": {"turns": 1, "cost_usd": 0.01}})
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            r = Runner(sessions=Replies(), journal=journal)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d,
+                    unit=UNIT, stage="spec", artifact="spec.md", stages=STAGES,
+                    mode="manual",
+                )]
+
+            asyncio.run(go())
+            self.assertEqual(journal.records(d, UNIT, kind="attempt"), [])
+
+    def test_last_attempt_is_recorded_in_the_start_record_when_given(self):
+        class Replies:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                self.seen_prompt = text
+                yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+                yield ("done", {"session_id": "s-ok", "cost": {}})
+
+        probe = Replies()
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            r = Runner(sessions=probe, journal=journal)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d,
+                    unit=UNIT, stage="spec", artifact="spec.md", stages=STAGES,
+                    mode="manual", last_attempt="PREVIOUS-ATTEMPT-TEXT",
+                )]
+
+            asyncio.run(go())
+            self.assertIn("PREVIOUS-ATTEMPT-TEXT", probe.seen_prompt)
+            [start] = journal.records(d, UNIT, kind="start")
+            self.assertIn("last-attempt", start["included"])
+
+    def test_snapshot_on_a_non_git_directory_names_the_reason_and_still_tries_the_excerpt(self):
+        with tempfile.TemporaryDirectory() as d:
+            fields, pending = asyncio.run(snapshot(d, ""))
+        self.assertIsNone(pending)
+        self.assertIsNone(fields["head"])
+        self.assertIn(f"git: {d} is not a git checkout", fields["snapshot_errors"])
+        self.assertIn("excerpt: no session id", fields["snapshot_errors"][-1])
+
+
+class DescribeAttemptRendersTheRecord(unittest.TestCase):
+    def test_a_full_attempt_names_outcome_turns_and_commits(self):
+        found = {
+            "attempt": {
+                "outcome": "exhausted", "terminal": "max_turns", "error": None,
+                "turns": 121, "cost_usd": 6.88, "session_id": "s-1",
+                "head": "a" * 40, "branch": "fix/x", "base": "b" * 40,
+                "base_ref": "refs/heads/main",
+                "commits": [{"sha": "c" * 40, "subject": "did a thing"}],
+                "status": [" M a.txt"], "excerpt": "hello", "excerpt_total_chars": 5,
+                "snapshot_errors": None,
+            },
+            "latest": {"at": "t0", "outcome": "exhausted", "turns": 121, "cost_usd": 6.88},
+            "earlier": [{"at": "t-1", "outcome": "exhausted", "turns": 60, "cost_usd": 4.91}],
+        }
+        text = describe_attempt(found)
+        self.assertIn("Outcome: exhausted", text)
+        self.assertIn("Terminal reason: max_turns", text)
+        self.assertIn("121", text)
+        self.assertIn("6.88", text)
+        self.assertIn("did a thing", text)
+        self.assertIn(" M a.txt", text)
+        self.assertIn("hello", text)
+        self.assertIn("60 turns", text)
+
+    def test_a_missing_attempt_falls_back_to_the_end_record(self):
+        found = {
+            "attempt": None,
+            "latest": {"at": "t0", "outcome": "failed", "turns": None, "cost_usd": None},
+            "earlier": [],
+        }
+        text = describe_attempt(found)
+        self.assertIn("No snapshot record was captured", text)
+        self.assertIn("unknown — the session returned no result", text)

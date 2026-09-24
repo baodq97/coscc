@@ -9,6 +9,7 @@ drift visible as a missing test rather than as a bug only one entry point has.
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import subprocess
 import tempfile
@@ -955,6 +956,114 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.assertNotEqual(payload["outcome"], "done")
         found = self.service.unit_history(str(self.repo), self.made["unit"])
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
+
+
+class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
+    """`0019_a-failed-step-destroys-the-work-that-succeeded` plan step 6, `spec.md` R5-R7."""
+
+    class Empty:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("session", "sess-fail")
+            yield ("done", {"session_id": "sess-fail", "cost": {"turns": 3, "cost_usd": 0.02}})
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        config = Config(
+            workspaces=(str(self.repo),),
+            working_dir=str(self.root / "work"),
+            data_dir=str(self.root / "data"),
+        )
+        self.config = config
+        self.service = Service(config, self.Empty())
+        self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        (Path(self.made["path"]) / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        )
+
+    def _run(self, stage: str) -> None:
+        async def go():
+            async for _ in self.service.run_step(str(self.repo), self.made["unit"], stage):
+                pass
+
+        asyncio.run(go())
+
+    def test_the_next_run_of_the_same_stage_sees_the_failed_attempt(self):
+        self._run("spec")  # Empty: no Status line -> RunError -> outcome "failed"
+
+        class Probe:
+            def __init__(self):
+                self.seen = ""
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                self.seen = text
+                yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
+                yield ("done", {"session_id": "sess-ok", "cost": {}})
+
+        probe = Probe()
+        self.service.sessions = probe
+        self._run("spec")
+        self.assertIn("# The attempt before this one", probe.seen)
+        self.assertIn("sess-fail", probe.seen)
+
+    def test_a_run_after_done_carries_no_attempt_section(self):
+        class Replies:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
+                yield ("done", {"session_id": "sess-1", "cost": {}})
+
+        self.service.sessions = Replies()
+        self._run("spec")
+
+        class Probe:
+            def __init__(self):
+                self.seen = ""
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                self.seen = text
+                yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
+                yield ("done", {"session_id": "sess-2", "cost": {}})
+
+        probe = Probe()
+        self.service.sessions = probe
+        self._run("spec")
+        self.assertNotIn("# The attempt before this one", probe.seen)
+
+    def test_board_distinguishes_a_failed_stage_from_a_never_run_one(self):
+        self._run("spec")
+        board = asyncio.run(self.service.board(str(self.repo)))
+        [unit] = [u for u in board["units"] if u["name"] == self.made["unit"]]
+        rows = {r["stage"]: r for r in unit["stages"]}
+        self.assertIsNotNone(rows["spec"]["last_run"])
+        self.assertNotEqual(rows["spec"]["last_run"]["outcome"], "done")
+        self.assertIsNone(rows["plan"]["last_run"])
+
+    def test_the_excerpt_never_reaches_a_route(self):
+        # R7. The transcript is faked via the runner's own read function, so this does
+        # not depend on a real session store.
+        with mock.patch(
+            "coscc.runner.sessions_mod.transcript_excerpt",
+            return_value=("CANARY-0019-EXCERPT", 999),
+        ):
+            self._run("spec")
+
+        unit = self.made["unit"]
+        board = asyncio.run(self.service.board(str(self.repo)))
+        timeline = self.service.timeline(str(self.repo), unit)
+        activity = self.service.activity(str(self.repo))
+        usage = self.service.usage(str(self.repo))
+        combo = self.service.activity_and_usage(str(self.repo))
+        for payload in (board, timeline, activity, usage, combo):
+            self.assertNotIn("CANARY-0019-EXCERPT", json.dumps(payload))
+        # And the attempt record itself does carry it — otherwise this test would pass
+        # for the wrong reason.
+        [attempt] = self.service._journal().records(
+            self.service._journal_key(str(self.repo)), unit, kind="attempt"
+        )
+        self.assertEqual(attempt["excerpt"], "CANARY-0019-EXCERPT")
 
 
 class AStepTheGateClosesNeverStarts(unittest.TestCase):

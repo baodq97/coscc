@@ -275,6 +275,47 @@ class RunTargetCopies(unittest.TestCase):
         self.assertEqual(_run_target({"action": "then write-review again"})[0], "")
 
 
+class CellLabelNamesAFailureTheArtifactCannot(unittest.TestCase):
+    """`0019_a-failed-step-destroys-the-work-that-succeeded` plan step 7, `spec.md` R5."""
+
+    def test_a_failed_run_with_cost_is_named_and_coloured_amber(self):
+        from coscc.state import _cell_label
+
+        row = {
+            "status": "not started",
+            "last_run": {"outcome": "exhausted", "turns": 121, "cost_usd": 6.88},
+        }
+        label, color = _cell_label(row)
+        self.assertEqual(label, "not started · exhausted · 121 turns · $6.88")
+        self.assertEqual(color, "amber")
+
+    def test_a_failed_run_with_no_cost_says_unknown_rather_than_zero(self):
+        from coscc.state import _cell_label
+
+        row = {"status": "not started", "last_run": {"outcome": "failed", "turns": None, "cost_usd": None}}
+        label, color = _cell_label(row)
+        self.assertEqual(label, "not started · failed · turns and cost unknown")
+        self.assertEqual(color, "amber")
+
+    def test_a_stage_never_run_keeps_the_bare_status(self):
+        from coscc.state import _cell_label
+
+        label, color = _cell_label({"status": "not started", "last_run": None})
+        self.assertEqual(label, "not started")
+        self.assertEqual(color, "gray")
+
+    def test_a_stage_with_an_artifact_ignores_last_run_entirely(self):
+        from coscc.state import _cell_label
+
+        row = {
+            "status": "accepted",
+            "last_run": {"outcome": "exhausted", "turns": 5, "cost_usd": 0.1},
+        }
+        label, color = _cell_label(row)
+        self.assertEqual(label, "accepted")
+        self.assertEqual(color, "grass")
+
+
 def _self_names(target: ast.expr) -> list[str]:
     """Every `self.X` being assigned by one target, tuple unpacking included."""
     if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):

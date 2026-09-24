@@ -100,7 +100,9 @@ def child_env() -> dict[str, str]:
     return env
 
 
-async def _run(argv: list[str], timeout: float, cwd: str | None = None) -> str:
+async def _run(
+    argv: list[str], timeout: float, cwd: str | None = None, strip: bool = True
+) -> str:
     proc = await asyncio.create_subprocess_exec(
         *argv,
         cwd=cwd,
@@ -115,7 +117,8 @@ async def _run(argv: list[str], timeout: float, cwd: str | None = None) -> str:
         proc.kill()
         await proc.wait()
         raise GitError(f"git timed out after {timeout:.0f}s: {' '.join(argv[:2])}")
-    text = (out or b"").decode(errors="replace").strip()
+    text = (out or b"").decode(errors="replace")
+    text = text.strip() if strip else text[:-1] if text.endswith("\n") else text
     if proc.returncode != 0:
         raise GitError(text or f"git exited {proc.returncode}")
     return text
@@ -526,3 +529,63 @@ async def delete_merged_branch(
         return False
     await _run(["git", "-C", str(root), "branch", "-D", "--", name], timeout)
     return True
+
+
+# --- reading a failed attempt's tree (`0019`) -----------------------------------
+#
+# Read-only, all four. `0019_a-failed-step-destroys-the-work-that-succeeded`
+# `plan.md` step 1: what a stopped step left behind, in a shape that can be checked
+# character for character against `git log` and `git status` run by hand later.
+
+
+async def head_and_branch(path: Path, timeout: float = BRANCH_TIMEOUT) -> tuple[str, str]:
+    """The full HEAD SHA and the branch name, `"detached"` when there is none."""
+    _require_repo(path)
+    head = await _run(["git", "-C", str(path), "rev-parse", "HEAD"], timeout)
+    branch = await _run(["git", "-C", str(path), "branch", "--show-current"], timeout)
+    return head, (branch or "detached")
+
+
+async def merge_base(path: Path, timeout: float = BRANCH_TIMEOUT) -> tuple[str, str]:
+    """`merge-base HEAD` against the trunk, falling back when `origin/main` is absent.
+
+    The ref is one of exactly two, fixed here — never a caller's choice — so a
+    branch's own base cannot be pointed anywhere else.
+    """
+    _require_repo(path)
+    ref = "refs/remotes/origin/main"
+    try:
+        await _run(["git", "-C", str(path), "rev-parse", "--verify", "--quiet", ref], timeout)
+    except GitError:
+        ref = "refs/heads/main"
+    sha = await _run(["git", "-C", str(path), "merge-base", "HEAD", ref], timeout)
+    return sha, ref
+
+
+async def log_range(
+    path: Path, base: str, head: str, timeout: float = BRANCH_TIMEOUT
+) -> list[dict[str, str]]:
+    """`git log base..head`, one dict per commit, oldest-first order `git log` gives."""
+    _require_repo(path)
+    for sha in (base, head):
+        if not _SHA_RE.fullmatch(sha or ""):
+            raise GitError(f"a full commit SHA is required, not {sha!r}")
+    out = await _run(
+        ["git", "-C", str(path), "log", "--format=%H %s", f"{base}..{head}"], timeout
+    )
+    commits: list[dict[str, str]] = []
+    for line in out.splitlines():
+        sha_part, _, subject = line.partition(" ")
+        commits.append({"sha": sha_part, "subject": subject})
+    return commits
+
+
+async def status_porcelain(path: Path, timeout: float = BRANCH_TIMEOUT) -> list[str]:
+    """`git status --porcelain`, each line verbatim — the leading space of a line like
+    `" M a.txt"` matters, so this is one of the two callers that ask `_run` not to strip.
+    """
+    _require_repo(path)
+    out = await _run(
+        ["git", "-C", str(path), "status", "--porcelain"], timeout, strip=False
+    )
+    return out.splitlines()

@@ -20,6 +20,7 @@ that answers where those skills are, and a step whose rules it cannot find does 
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -27,6 +28,7 @@ from typing import Any, AsyncIterator
 import claude_agent_sdk as sdk
 
 from coscc import gitops, harness
+from coscc import sessions as sessions_mod
 from coscc.journal import Journal
 from coscc.policy import Grant, beyond_reading, decide, grant_for, is_prose_stage
 from coscc.sessions import Refused, Sessions
@@ -192,6 +194,7 @@ def build_prompt(
     gate_said: str = "",
     head: str = "",
     base_note: str = "",
+    last_attempt: str = "",
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -354,6 +357,14 @@ def build_prompt(
             "`### What was not reviewed`; the `ship` gate will stay closed, which is right."
         )
 
+    # `0019` plan step 5 / `spec.md` R6. Only when the last run of this unit and stage did
+    # not end `done` — `service.run_step` is the one place that decides that and builds
+    # this string (`journal.failed_attempts` + `describe_attempt`); this function only
+    # places it, the same way it places `base_note`.
+    if last_attempt:
+        included.append("last-attempt")
+        parts.append(f"# The attempt before this one\n\n{last_attempt}")
+
     location = directory / artifact
     if writes_own and stage == "ship":
         # `ship` runs outside every checkout (`service.step_cwd`): inside the unit's
@@ -460,6 +471,17 @@ def _header_status(text: str) -> str | None:
 REPLY_KEPT = 2000
 
 
+# `0019_a-failed-step-destroys-the-work-that-succeeded` plan step 3. Chosen as the
+# starting point `spec.md ## Answers, câu 2` names, and **not yet measured**: step 3 asked
+# for a run against the real transcripts of `0032`'s two exhausted `impl` attempts
+# (sessions `752523a2` and `1a2ae5a7`), via `scripts/measure_0019_excerpt.py`. That script
+# was not written and the two transcripts were not read in this pass — see `impl.md`,
+# `## What is still open`. 8000 stays because plan step 3 says exactly that: "Nếu không
+# tìm được transcript, giữ 8000 và ghi 'chưa đo được, vì …'." Not bumped past 40000
+# without measuring first (plan step 3, the second stop condition).
+ATTEMPT_EXCERPT = 8000
+
+
 def _with_reply(reason: str, collected: str) -> str:
     """The reason a step failed, with the reply that caused it when there is one."""
     body = (collected or "").strip()
@@ -538,6 +560,155 @@ def permission_gate(grant: Grant, workspace: str, denials: Denials, unit_dir: st
     return can_use_tool
 
 
+async def snapshot(cwd: str, session_id: str) -> tuple[dict[str, Any], BaseException | None]:
+    """What a stopped step left behind: git state and a transcript excerpt, read-only.
+
+    `0019_a-failed-step-destroys-the-work-that-succeeded` plan step 5 / `spec.md` R1
+    d-g, R2, R3. Every field is attempted independently so one failing costs only that
+    field, recorded under `snapshot_errors` rather than raised. Returns `(fields,
+    pending)`: `pending` is a `CancelledError` this was interrupted by, for the caller to
+    re-raise once it has written what it has (`spec.md` C8) — a step killed mid-snapshot
+    must not look like one that was never captured at all.
+    """
+    fields: dict[str, Any] = {
+        "head": None, "branch": None, "base": None, "base_ref": None,
+        "commits": None, "status": None, "excerpt": None, "excerpt_total_chars": None,
+    }
+    errors: list[str] = []
+    path = Path(cwd)
+
+    if not (path / ".git").exists():
+        errors.append(f"git: {cwd} is not a git checkout")
+    else:
+        try:
+            fields["head"], fields["branch"] = await gitops.head_and_branch(path)
+        except asyncio.CancelledError:
+            errors.append("head/branch: cancelled while reading")
+            fields["snapshot_errors"] = errors
+            return fields, asyncio.CancelledError("head/branch")
+        except (gitops.GitError, OSError) as e:
+            errors.append(f"head/branch: {e}")
+
+        try:
+            fields["base"], fields["base_ref"] = await gitops.merge_base(path)
+        except asyncio.CancelledError:
+            errors.append("base: cancelled while reading")
+            fields["snapshot_errors"] = errors
+            return fields, asyncio.CancelledError("base")
+        except (gitops.GitError, OSError) as e:
+            errors.append(f"base: {e}")
+
+        if fields["base"] and fields["head"]:
+            try:
+                fields["commits"] = await gitops.log_range(path, fields["base"], fields["head"])
+            except asyncio.CancelledError:
+                errors.append("commits: cancelled while reading")
+                fields["snapshot_errors"] = errors
+                return fields, asyncio.CancelledError("commits")
+            except (gitops.GitError, OSError, ValueError) as e:
+                errors.append(f"commits: {e}")
+
+        try:
+            fields["status"] = await gitops.status_porcelain(path)
+        except asyncio.CancelledError:
+            errors.append("status: cancelled while reading")
+            fields["snapshot_errors"] = errors
+            return fields, asyncio.CancelledError("status")
+        except (gitops.GitError, OSError) as e:
+            errors.append(f"status: {e}")
+
+    try:
+        if session_id:
+            excerpt, total = await asyncio.to_thread(
+                sessions_mod.transcript_excerpt, session_id, cwd, ATTEMPT_EXCERPT
+            )
+            fields["excerpt"], fields["excerpt_total_chars"] = excerpt, total
+        else:
+            errors.append("excerpt: no session id was resolved before the step stopped")
+    except asyncio.CancelledError:
+        errors.append("excerpt: cancelled while reading")
+        fields["snapshot_errors"] = errors
+        return fields, asyncio.CancelledError("excerpt")
+    except (ValueError, OSError) as e:
+        errors.append(f"excerpt: {e}")
+
+    if errors:
+        fields["snapshot_errors"] = errors
+    return fields, None
+
+
+def _fmt_num(value: Any, suffix: str = "") -> str:
+    return f"{value}{suffix}" if value is not None else "unknown — the session returned no result"
+
+
+def describe_attempt(found: dict[str, Any]) -> str:
+    """The `# The attempt before this one` section, in English (instructions to the model).
+
+    `found` is `Journal.failed_attempts`'s return value: `0019` plan step 5.
+    """
+    attempt = found.get("attempt")
+    latest = found.get("latest") or {}
+    earlier = found.get("earlier") or []
+
+    lines: list[str] = [
+        "This is the state of the tree and the session at the moment the previous "
+        "attempt at this stage stopped. The tree may have changed since then.",
+        "",
+    ]
+
+    if attempt is None:
+        lines.append(
+            "No snapshot record was captured for that attempt (the capture itself may "
+            "have failed, or ran before this app could take one). What is known comes "
+            "only from the run log's own end-of-run record:"
+        )
+        lines.append(f"Outcome: {latest.get('outcome')}")
+        lines.append(f"Turns: {_fmt_num(latest.get('turns'))}")
+        lines.append(f"Cost: {_fmt_num(latest.get('cost_usd'), ' USD')}")
+    else:
+        lines.append(f"Outcome: {attempt.get('outcome')}")
+        lines.append(f"Terminal reason: {attempt.get('terminal') or '(none)'}")
+        err = attempt.get("error")
+        lines.append(f"Error: {err['type']}: {err['message']}" if err else "Error: (none)")
+        lines.append(f"Turns: {_fmt_num(attempt.get('turns'))}")
+        lines.append(f"Cost: {_fmt_num(attempt.get('cost_usd'), ' USD')}")
+        lines.append(f"Session: {attempt.get('session_id') or '(none resolved)'}")
+        if attempt.get("head"):
+            lines.append(
+                f"Head: {attempt['head']} on {attempt.get('branch') or '(unknown branch)'}"
+            )
+        if attempt.get("base"):
+            lines.append(
+                f"Base: {attempt['base']} ({attempt.get('base_ref') or '(unknown ref)'})"
+            )
+        for c in attempt.get("commits") or []:
+            lines.append(f"{c['sha']} {c['subject']}")
+        for s in attempt.get("status") or []:
+            lines.append(s)
+        errs = attempt.get("snapshot_errors") or []
+        if errs:
+            lines.append("Could not read: " + "; ".join(errs))
+        excerpt = attempt.get("excerpt")
+        if excerpt:
+            total = attempt.get("excerpt_total_chars") or len(excerpt)
+            lines.append(
+                f"--- excerpt: last {len(excerpt)} of {total} characters, verbatim ---"
+            )
+            lines.append(excerpt)
+            lines.append("--- end of excerpt ---")
+
+    if earlier:
+        lines.append("")
+        lines.append("Earlier attempts before that one, oldest first:")
+        for e in earlier:
+            lines.append(
+                f"at {e.get('at')}: {e.get('outcome')}, "
+                f"{_fmt_num(e.get('turns'), ' turns')}, cost {_fmt_num(e.get('cost_usd'), ' USD')}"
+            )
+
+    return "\n".join(lines)
+
+
 async def _head_of(cwd: str) -> str:
     """The commit a step ran on, for its `start` record — `""` when there is none to name.
 
@@ -577,6 +748,7 @@ class Runner:
         model_source: str = "",
         base: dict[str, Any] | None = None,
         base_note: str = "",
+        last_attempt: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -627,6 +799,7 @@ class Runner:
             gate_said=gate_said,
             head=head,
             base_note=base_note,
+            last_attempt=last_attempt,
         )
 
         if self.journal is not None:
@@ -649,6 +822,9 @@ class Runner:
         models_used: list[str] = []
         outcome = "failed"
         detail = ""
+        # `0019` plan step 5 / `spec.md` R1 a. Set only in an `except` branch, so a step
+        # that finished (even one that merely hit its ceiling) carries no error here.
+        error: dict[str, str] | None = None
         try:
             async for kind, payload in self.sessions.stream(
                 cwd,
@@ -675,6 +851,11 @@ class Runner:
                 if kind == "chunk":
                     collected += payload
                     yield ("chunk", payload)
+                elif kind == "session":
+                    # `0019` plan step 5. The one place this app learns a session id
+                    # before the step is over. Not forwarded — see the `else` branch's own
+                    # note on why only `chunk` may cross this boundary as itself.
+                    session_id = str(payload)
                 elif kind == "tool":
                     # Everything said before a tool call was said on the way to using it.
                     # For a stage whose artifact the app writes, that text is narration and
@@ -741,6 +922,9 @@ class Runner:
                     raise RunError(f"{artifact} carries no `Status:` line")
             outcome = "done"
         except (RunError, Refused) as e:
+            # `spec.md` R1 a: "the step did not write impl.md" is a real reason to stop,
+            # so it goes into the attempt record's `error` exactly like any other one.
+            error = {"type": type(e).__name__, "message": str(e)}
             detail = str(e)
             # What the session said, kept. Until `0014` a prose step that produced an
             # unusable reply threw it away: the money was spent, the artifact was not
@@ -755,6 +939,7 @@ class Runner:
             if _hit_ceiling(terminal):
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal} — {detail}"
         except Exception as e:  # surfaced as data; the process keeps serving
+            error = {"type": type(e).__name__, "message": str(e)}
             detail = _with_reply(f"{type(e).__name__}: {e}", collected)
             if _hit_ceiling(terminal):
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
@@ -764,6 +949,29 @@ class Runner:
                 # would hide that the work may be half finished.
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         finally:
+            # `0019` plan step 5 / `spec.md` R1-R3. A stopped step's tree and transcript
+            # are captured *before* `end` is written, and only for a run that is not
+            # `done` — a step that wrote its artifact needs no attempt record, and R2
+            # forbids this from touching anything a `done` run left behind.
+            pending: BaseException | None = None
+            if self.journal is not None and outcome != "done":
+                try:
+                    fields, pending = await snapshot(cwd, session_id)
+                    self.journal.attempted(
+                        journal_key, unit, stage,
+                        outcome=outcome,
+                        terminal=terminal or None,
+                        error=error,
+                        turns=cost.get("turns"),
+                        cost_usd=cost.get("cost_usd"),
+                        session_id=session_id or None,
+                        **fields,
+                    )
+                except Exception:
+                    # R3: a failure here must not change the outcome or the `end` record
+                    # that follows. The attempt record is best-effort; the run log's own
+                    # `end` row is the one thing this unit will not put at risk.
+                    pass
             if self.journal is not None:
                 self.journal.finished(
                     journal_key, unit, stage, outcome,
@@ -775,6 +983,8 @@ class Runner:
                     models_used=models_used or None,
                     **cost,
                 )
+            if pending is not None:
+                raise pending
 
         yield (
             "done",

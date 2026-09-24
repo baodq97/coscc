@@ -54,6 +54,24 @@ STATUS_COLOR = {
     "not started": "gray",
 }
 
+def _cell_label(row: dict) -> tuple[str, str]:
+    """The chip text and colour for one stage row (`0019` plan step 7, `spec.md` R5).
+
+    `row` is one entry of `Service.board`'s `stages` list. Only the "no artifact, last run
+    failed" case departs from the ordinary `status`/`STATUS_COLOR` pair — everything else
+    is unchanged, so a stage with an artifact never shows a stale failure again.
+    """
+    status = row.get("status") or ""
+    last_run = row.get("last_run")
+    if status == "not started" and last_run and last_run.get("outcome") != "done":
+        turns, cost = last_run.get("turns"), last_run.get("cost_usd")
+        outcome = last_run.get("outcome")
+        if turns is None or cost is None:
+            return f"not started · {outcome} · turns and cost unknown", "amber"
+        return f"not started · {outcome} · {turns} turns · ${cost:.2f}", "amber"
+    return status, STATUS_COLOR.get(status, "gray")
+
+
 LANE_COLOR = {
     "Planned": "gray",
     "In progress": "iris",
@@ -110,6 +128,11 @@ class Cell:
 
     stage: str = ""
     status: str = ""
+    # `0019` plan step 7 / `spec.md` R5. What the chip actually shows. Equal to `status`
+    # except when the artifact is absent and the last run of this stage failed — then it
+    # names the failure instead of the bare word "not started". `status` itself keeps
+    # meaning only what the artifact says (C6); this is a second, cosmetic field.
+    label: str = ""
     mode: str = "manual"
     color: str = "gray"
     started: bool = False
@@ -711,20 +734,21 @@ class StudioState(rx.State):
 
         units: list[Unit] = []
         for u in data["units"]:
-            cells = [
-                Cell(
+            cells = []
+            for row in u["stages"]:
+                label, color = _cell_label(row)
+                cells.append(Cell(
                     stage=row["stage"],
                     status=row["status"],
+                    label=label,
                     mode=row["mode"],
-                    color=STATUS_COLOR.get(row["status"], "gray"),
+                    color=color,
                     started=row["status"] != "not started",
                     optional=bool(row.get("optional")),
                     grants=", ".join(row.get("grants") or []) or "no tools",
                     warning=row.get("warning") or "",
                     opens_tools=bool(row.get("grants")),
-                )
-                for row in u["stages"]
-            ]
+                ))
             started = len([c for c in cells if c.started])
             lane = _lane(u)
             stage = _current_stage(u, self.stages)
@@ -828,6 +852,9 @@ class StudioState(rx.State):
             "mode": ("sliders-horizontal", "blue"),
             "start": ("zap", "iris"),
             "end": ("circle-check", "grass"),
+            # `0019` plan step 7. What a stopped step left behind, captured just before
+            # `end` — its own row, distinct from the `end` row that follows it.
+            "attempt": ("camera", "amber"),
         }
         events: list[Event] = []
         for row in feed["events"]:
@@ -838,6 +865,7 @@ class StudioState(rx.State):
                 "mode": f"{row['stage']} set to {row['mode']}",
                 "start": f"{row['stage']} started ({row['mode']})",
                 "end": f"{row['stage']} {row['outcome']}",
+                "attempt": f"{row['stage']} stopped — what it left was recorded",
             }.get(row["kind"], row["kind"])
             detail = f"{row['unit']}"
             if row["denials"]:

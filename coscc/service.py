@@ -40,12 +40,13 @@ from coscc.journal import (
     Busy,
     Journal,
     add_cost,
+    last_runs,
     totals_of,
     zero_cost,
 )
 from coscc.policy import GRANTS, PROSE_STAGES, grant_for
 from coscc import models
-from coscc.runner import SESSIONS_PER_STEP, STATUS_RE, RunError, Runner
+from coscc.runner import SESSIONS_PER_STEP, STATUS_RE, RunError, Runner, describe_attempt
 from coscc.sessions import Sessions
 from coscc.store import BadName, Store, require_name
 from coscc import units, worktrees
@@ -376,6 +377,7 @@ class Service:
         _attach_comment_state(data["units"], comments)
 
         for unit in data["units"]:
+            unit_last_runs = last_runs(timelines.get(unit["name"], []))
             for row in unit["stages"]:
                 # `manual` is the default because starting work is a decision someone has
                 # to make, not one an unset value should make for them.
@@ -386,6 +388,10 @@ class Service:
                 # a step will be allowed to do has to be readable before it is started.
                 row["grants"] = list(grant.tools)
                 row["warning"] = grant.warning
+                # `0019` plan step 6 / `spec.md` R5. From the same `timelines` read above —
+                # no second scan of the run log. `status` (and the lanes) stays read from
+                # the artifact alone (C6); this is a second, separate field.
+                row["last_run"] = unit_last_runs.get(row["stage"])
             unit["cost"] = (
                 totals_of(timelines.get(unit["name"], [])) if journal is not None else {}
             )
@@ -603,6 +609,13 @@ class Service:
         # `0004_no-setting-says-which-model-runs-a-stage`. Resolved after the gate, so a
         # refused step reads nothing more. `stage` was checked against the board above.
         model, model_source = self._model_for(stage)
+        # `0019` plan step 6 / `spec.md` R6. Read after the gate, before any money is
+        # spent — the same place `model` is resolved. `Runner` does not read the run log
+        # itself; `build_prompt` only places what it is handed, the same as `base_note`.
+        try:
+            found = journal.failed_attempts(key, unit, stage)
+        except Busy as e:
+            raise Invalid(str(e)) from e
         runner = Runner(self.sessions, journal)
         try:
             async for item in runner.run(
@@ -620,6 +633,7 @@ class Service:
                 model_source=model_source,
                 base=base,
                 base_note=describe_base(base),
+                last_attempt=describe_attempt(found) if found else "",
             ):
                 if item[0] == "done":
                     item = ("done", {**item[1], "base": base})
@@ -1200,6 +1214,11 @@ class Service:
         async for item in self.sessions.stream(
             cwd, text, session_id, **({"model": model} if model is not None else {})
         ):
+            if item[0] == "session":
+                # `0019` plan step 2, risk 2. `api.py` treats every kind but `chunk` as
+                # the terminal `done` row; forwarding this to chat would turn it into a
+                # spurious one, mid-reply.
+                continue
             if item[0] == "done":
                 # Chat wrote nothing to the run log before this. Now one record per turn
                 # says which model it asked for — the model a *new* client is created with.

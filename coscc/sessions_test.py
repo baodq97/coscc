@@ -112,6 +112,76 @@ class HistoryComesFromTheSessionStore(unittest.TestCase):
             self.assertEqual(len(history("s1", "/p")), 1)
 
 
+def _raw_msg(type_, content, uuid="u", parent_tool_use_id=None, parent_agent_id=None):
+    return sdk.SessionMessage(
+        type=type_,
+        uuid=uuid,
+        session_id="s1",
+        message={"role": type_, "content": content},
+        parent_tool_use_id=parent_tool_use_id,
+        parent_agent_id=parent_agent_id,
+    )
+
+
+class TranscriptExcerptIsWhatTheSessionDid(unittest.TestCase):
+    """`0019` plan step 2: `transcript_excerpt` never the prompt, always the result."""
+
+    def test_a_tool_results_text_is_in_the_excerpt(self):
+        msgs = [
+            _raw_msg("user", "do the thing", "u1"),  # the prompt: must not appear
+            _raw_msg("assistant", [{"type": "text", "text": "on it"}], "u2"),
+            _raw_msg(
+                "user",
+                [{"type": "tool_result", "content": [{"type": "text", "text": "ran ok"}]}],
+                "u3",
+            ),
+        ]
+        with mock.patch.object(sdk, "get_session_messages", return_value=msgs):
+            excerpt, total = sessions.transcript_excerpt("s1", "/p", 8000)
+        self.assertIn("ran ok", excerpt)
+        self.assertIn("on it", excerpt)
+        self.assertNotIn("do the thing", excerpt)
+        self.assertEqual(total, len(excerpt))
+
+    def test_a_bare_string_tool_result_is_kept(self):
+        msgs = [_raw_msg("user", [{"type": "tool_result", "content": "plain string"}], "u1")]
+        with mock.patch.object(sdk, "get_session_messages", return_value=msgs):
+            excerpt, _ = sessions.transcript_excerpt("s1", "/p", 8000)
+        self.assertIn("plain string", excerpt)
+
+    def test_subagent_traffic_is_excluded(self):
+        msgs = [
+            _raw_msg("assistant", [{"type": "text", "text": "outer"}], "u1"),
+            _raw_msg(
+                "assistant", [{"type": "text", "text": "inner"}], "u2", parent_tool_use_id="t1"
+            ),
+        ]
+        with mock.patch.object(sdk, "get_session_messages", return_value=msgs):
+            excerpt, _ = sessions.transcript_excerpt("s1", "/p", 8000)
+        self.assertNotIn("inner", excerpt)
+
+    def test_the_excerpt_is_a_suffix_of_the_full_transcript_and_total_chars_is_exact(self):
+        msgs = [
+            _raw_msg("assistant", [{"type": "text", "text": "a" * 50}], "u1"),
+            _raw_msg(
+                "user",
+                [{"type": "tool_result", "content": [{"type": "text", "text": "b" * 50}]}],
+                "u2",
+            ),
+        ]
+        with mock.patch.object(sdk, "get_session_messages", return_value=msgs):
+            full, total = sessions.transcript_excerpt("s1", "/p", 10 ** 9)
+            excerpt, total_again = sessions.transcript_excerpt("s1", "/p", 20)
+        self.assertTrue(full.endswith(excerpt))
+        self.assertEqual(len(excerpt), 20)
+        self.assertEqual(total, len(full))
+        self.assertEqual(total_again, total)
+
+    def test_an_empty_session_id_is_refused(self):
+        with self.assertRaises(ValueError):
+            sessions.transcript_excerpt("", "/p", 8000)
+
+
 class OptionsCarryTheKnobs(unittest.TestCase):
     def test_resume_never_forks(self):
         # spec.md C7. The fork branch returns a new id, everything keeps working, and R3

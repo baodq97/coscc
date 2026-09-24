@@ -531,3 +531,108 @@ class AdvancingADetachedWorktree(unittest.TestCase):
         for bad in ("main", "HEAD", self.main[:7], ""):
             with self.assertRaises(GitError, msg=bad):
                 asyncio.run(gitops.advance_detached(self.tree, bad))
+
+
+class ReadingAFailedAttemptsTree(unittest.TestCase):
+    """`0019` plan step 1: the four read-only functions `snapshot` builds on.
+
+    Everything here reads a temporary repository, never writes to one — these are the
+    functions a stopped step's record is built from, so what they report has to match
+    `git log`/`git status` run by hand, byte for byte.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.repo = Path(self._tmp.name) / "repo"
+        self.repo.mkdir()
+        self._git("init", "-q", "-b", "main")
+        (self.repo / "a.txt").write_text("one\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "first")
+        self.base = self._git("rev-parse", "HEAD").strip()
+
+    def _git(self, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "user.name=T",
+             "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
+            capture_output=True, text=True, check=True,
+        ).stdout
+
+    def test_head_and_branch_names_the_branch(self):
+        self._git("switch", "-q", "-c", "fix/a-problem")
+        (self.repo / "b.txt").write_text("two\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "second")
+        head = self._git("rev-parse", "HEAD").strip()
+        got_head, branch = asyncio.run(gitops.head_and_branch(self.repo))
+        self.assertEqual(got_head, head)
+        self.assertEqual(branch, "fix/a-problem")
+
+    def test_head_and_branch_reports_detached_on_a_detached_tree(self):
+        self._git("switch", "-q", "--detach", "HEAD")
+        _, branch = asyncio.run(gitops.head_and_branch(self.repo))
+        self.assertEqual(branch, "detached")
+
+    def test_merge_base_falls_back_to_local_main_without_an_origin(self):
+        self._git("switch", "-q", "-c", "fix/a-problem")
+        (self.repo / "b.txt").write_text("two\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "second")
+        sha, ref = asyncio.run(gitops.merge_base(self.repo))
+        self.assertEqual(sha, self.base)
+        self.assertEqual(ref, "refs/heads/main")
+
+    def test_merge_base_prefers_origin_main_when_it_exists(self):
+        remote = Path(self._tmp.name) / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+        self._git("remote", "add", "origin", str(remote))
+        self._git("push", "-q", "origin", "main")
+        self._git("switch", "-q", "-c", "fix/a-problem")
+        (self.repo / "b.txt").write_text("two\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "second")
+        sha, ref = asyncio.run(gitops.merge_base(self.repo))
+        self.assertEqual(sha, self.base)
+        self.assertEqual(ref, "refs/remotes/origin/main")
+
+    def test_log_range_matches_git_log_order_and_split(self):
+        self._git("switch", "-q", "-c", "fix/a-problem")
+        (self.repo / "b.txt").write_text("two\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "second commit")
+        (self.repo / "c.txt").write_text("three\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "third commit")
+        head = self._git("rev-parse", "HEAD").strip()
+        want = self._git("log", "--format=%H %s", f"{self.base}..{head}")
+        commits = asyncio.run(gitops.log_range(self.repo, self.base, head))
+        got = "\n".join(f"{c['sha']} {c['subject']}" for c in commits)
+        self.assertEqual(got, want.strip())
+
+    def test_log_range_refuses_anything_that_is_not_a_full_sha(self):
+        for bad in ("main", "HEAD", self.base[:7], ""):
+            with self.assertRaises(GitError, msg=bad):
+                asyncio.run(gitops.log_range(self.repo, bad, self.base))
+
+    def test_status_porcelain_keeps_the_leading_space(self):
+        (self.repo / "a.txt").write_text("one changed\n", encoding="utf-8")
+        want = self._git("status", "--porcelain")
+        lines = asyncio.run(gitops.status_porcelain(self.repo))
+        self.assertEqual("\n".join(lines) + ("\n" if lines else ""), want)
+        self.assertTrue(lines[0].startswith(" M"), lines[0])
+
+    def test_status_porcelain_is_empty_on_a_clean_tree(self):
+        self.assertEqual(asyncio.run(gitops.status_porcelain(self.repo)), [])
+
+    def test_a_directory_that_is_not_a_repository_is_refused_by_all_four(self):
+        not_repo = Path(self._tmp.name) / "not-a-repo"
+        not_repo.mkdir()
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.head_and_branch(not_repo))
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.merge_base(not_repo))
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.log_range(not_repo, self.base, self.base))
+        with self.assertRaises(GitError):
+            asyncio.run(gitops.status_porcelain(not_repo))
