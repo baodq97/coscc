@@ -314,6 +314,11 @@ class Guard:
             parts.append("Secure")
         return (b"set-cookie", "; ".join(parts).encode())
 
+    async def _touch(self, sha: str, now: float) -> None:
+        await asyncio.to_thread(
+            self.data.auth_session_touch, sha, int(now), int(now) + SESSION_TTL
+        )
+
     async def _new_session(self, scope: dict) -> tuple[bytes, bytes]:
         token = secrets.token_urlsafe(32)
         now = int(self.clock())
@@ -389,16 +394,16 @@ class Guard:
             await self._refuse(scope, receive, send, method, has_password)
             return
 
-        if kind == "websocket":
-            await self._serve_socket(scope, receive, send, sha)
-            return
-
         if now - row["last_used_at"] >= TOUCH_EVERY:
-            await asyncio.to_thread(
-                self.data.auth_session_touch, sha, int(now), int(now) + SESSION_TTL
-            )
+            await self._touch(sha, now)
             cookie = self._cookie_header(scope, _cookie(scope), SESSION_TTL)
-            await self.inner(scope, receive, _with_header(send, cookie))
+            send = _with_header(send, cookie)
+            touched_at = now
+        else:
+            touched_at = row["last_used_at"]
+
+        if kind == "websocket":
+            await self._serve_socket(scope, receive, send, sha, touched_at)
             return
         await self.inner(scope, receive, send)
 
@@ -517,28 +522,41 @@ class Guard:
 
     # -- a socket that got through --------------------------------------------------
 
-    async def _serve_socket(self, scope, receive, send, sha: str) -> None:
+    async def _serve_socket(self, scope, receive, send, sha: str, touched_at: float) -> None:
         """spec R8: an open socket closes within `WS_RECHECK` of its session ending.
 
         A watcher asks the database again every `WS_RECHECK` seconds. When the session is
         gone, the next `receive` the page's socket handler awaits — raced against the
         watcher — sends `websocket.close` (1008) to the browser and hands the app a
         `websocket.disconnect`, so no page handler runs on that socket again.
+
+        Use through the socket counts as use (`intent.md ## Answers, câu 4`): the board
+        sends every event over `/_event`, so a tab worked in for a month may make no HTTP
+        request at all. When a message arrived since the last touch and that touch is
+        `TOUCH_EVERY` old, the watcher pushes the expiry forward as an HTTP request would
+        (`0070` review round 1, F1). It cannot refresh the browser's cookie — only a
+        response can — so that happens at the next handshake or page load.
         """
         gone = asyncio.Event()
         closed = False
+        used = False
 
         async def watch() -> None:
+            nonlocal used, touched_at
             while True:
                 await asyncio.sleep(WS_RECHECK)
                 try:
                     has_password, row = await self._state(sha)
+                    now = self.clock()
+                    if not self._live(has_password, row, now):
+                        gone.set()
+                        return
+                    if used and now - touched_at >= TOUCH_EVERY:
+                        await self._touch(sha, now)
+                        touched_at, used = now, False
                 except Exception:
                     # A busy database is not a logout; ask again next time.
                     continue
-                if not self._live(has_password, row, self.clock()):
-                    gone.set()
-                    return
 
         async def kick() -> dict:
             nonlocal closed
@@ -551,6 +569,7 @@ class Guard:
             return {"type": "websocket.disconnect", "code": 1008}
 
         async def guarded_receive() -> dict:
+            nonlocal used
             if gone.is_set():
                 return await kick()
             real = asyncio.ensure_future(receive())
@@ -558,7 +577,10 @@ class Guard:
             done, _ = await asyncio.wait({real, ended}, return_when=asyncio.FIRST_COMPLETED)
             if real in done:
                 ended.cancel()
-                return real.result()
+                message = real.result()
+                if message["type"] == "websocket.receive":
+                    used = True
+                return message
             real.cancel()
             return await kick()
 
@@ -575,8 +597,10 @@ class Guard:
 
 
 def _with_header(send, header: tuple[bytes, bytes]):
+    # A websocket's refreshed cookie rides its `101`: ASGI's `websocket.accept` carries
+    # headers, and uvicorn's wsproto adds them to the handshake reply.
     async def wrapped(message: dict) -> None:
-        if message["type"] == "http.response.start":
+        if message["type"] in ("http.response.start", "websocket.accept"):
             message = {**message, "headers": list(message.get("headers") or []) + [header]}
         await send(message)
     return wrapped
