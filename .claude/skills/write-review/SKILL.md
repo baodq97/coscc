@@ -59,10 +59,17 @@ decide, and label it:
 - `[answered]` — a person answered it: `review.md ## Answers` holds a `### F<k>` block, and
   what it says settles the finding. Only use this when that block exists; the `ship` gate
   refuses an `[answered]` with no block behind it. If the answer does not settle it, keep
-  the finding `[open]` or `[needs-person]` and say what is still missing.
+  the finding `[open]` and say what is still missing: the unit goes back to `impl`, not to
+  another review. If what is missing is something a person must do again, do not keep it
+  `[open]`: close it `[answered]` and raise a new finding with a new id for the rest
+  (rule 7), which `impl` may then claim.
 
 A claim no round has judged does not stop the loop: `cos.mjs next` sends a unit whose open
-findings are all claimed to this stage, not to a person. Then:
+findings are all claimed, and claimed for the first time, to this stage, not to a person.
+So never leave a claim you are judging `[open]`: give it one of the three labels above. A
+finding any round has already labelled `[needs-person]`, `[claim-rejected]` or `[answered]`
+counts as judged, and if a later round leaves it `[open]`, `next` sends it to `impl` even
+while `impl.md` still claims it. Then:
 
 6. If every finding not closed is `[needs-person]`: `Verdict: needs-person`, header
    `Status: changes-requested`. `cos.mjs next` then offers no stage and names the findings a

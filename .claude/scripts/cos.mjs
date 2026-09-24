@@ -195,9 +195,11 @@ const FINDING = /^- (F\d+)\s+\[([^\]]*)\]\s*(.*)$/
 
 // `review.md` is a list of rounds, each `## Round N`, never rewritten once written: a
 // re-review appends a round. Each round opens with `Reviewed: <sha>. Verdict: pass|
-// changes-requested.` and lists its findings under `### Findings`, one per line, each
-// labelled `[open]` or `[fixed <sha>]`. A label that is neither is `unreadable`, which the
-// `ship` gate treats as not fixed. Reading stops at `## Answers`, the app's section.
+// changes-requested|needs-person.` (`ROUND_META`) and lists its findings under
+// `### Findings`, one per line, each labelled `[open]`, `[fixed <sha>]`, or one of
+// `PERSON_LABELS` (`[needs-person]`, `[claim-rejected]`, `[answered]`, since `0028`). Any
+// other label is `unreadable`, which the `ship` gate treats as not closed. Reading stops
+// at `## Answers`, the app's section.
 // Each round also carries `text`: its lines verbatim, from `## Round N` up to the next
 // `## ` heading, trailing blank space trimmed. It is what the app posts to the pull
 // request, so the app never has to find a round's edges itself.
@@ -501,14 +503,24 @@ function personFindings(unit) {
 }
 
 // `0028` spec R6 (c): the last round asked for changes, and every finding it left `[open]`
-// is one impl claims in `## Needs a person`. That claim is impl's word about its own work;
-// only a review may confirm it, so this sends the unit to review rather than to a person.
+// is one impl claims in `## Needs a person` that no round has judged yet. That claim is
+// impl's word about its own work; only a review may confirm it, so this sends the unit to
+// review rather than to a person.
+//
+// A claim is judged once any round has labelled its finding `needs-person`,
+// `claim-rejected` or `answered`. A judged finding a later round left `[open]` — a
+// person's answer that did not settle it — goes back to impl like any other open finding:
+// sending it to review again would show that round the same files and spend a round on
+// nothing (`0028` review round 1, F1).
 function everyOpenClaimed(unit) {
   const last = lastRound(unit)
   if (!last || last.verdict !== 'changes-requested') return false
   const open = last.findings.filter((f) => f.label === 'open')
   if (!open.length) return false
-  const claimed = new Set(needsPersonClaims(unit).map((c) => c.id))
+  const judged = new Set(
+    reviewOf(unit).flatMap((r) => r.findings.filter((f) => PERSON_LABELS.includes(f.label)).map((f) => f.id)),
+  )
+  const claimed = new Set(needsPersonClaims(unit).map((c) => c.id).filter((id) => !judged.has(id)))
   if (!open.every((f) => claimed.has(f.id))) return false
   const answered = personAnswers(unit)
   return !last.findings.some(

@@ -1105,6 +1105,20 @@ test('0028 R10 escape claim-rejected: a rejected claim sends the unit to impl', 
   assert.equal(nextStep(tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${r3cr}` }), { probe: greenProbe(), limit: 4 }).stage, 'impl')
 })
 
+test('0028 answered but not settled: a finding a round kept [open] after its answer goes to impl, not review again', () => {
+  // Round 3 confirmed both; a person answered both; round 4 closed F2 on its answer and kept
+  // F3 open. impl.md still claims F2 and F3 from before round 3: no impl has run since.
+  const r4 = round(4, 'changes-requested', [`- F1 [fixed ${FIX}] a`, '- F2 [answered] b', '- F3 [open] c'])
+  const review = `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3()}\n${r4}\n## Answers\n${fBlock('F2')}${fBlock('F3')}`
+  const n = nextStep(tree0028({ review }), { probe: greenProbe(), limit: 4 })
+  assert.equal(n.stage, 'impl')
+  assert.doesNotMatch(n.action, /claimed in impl\.md ## Needs a person/)
+  // The same holds for a claim a round rejected and a later round only kept [open].
+  const r4b = round(4, 'changes-requested', [`- F1 [fixed ${FIX}] a`, '- F2 [needs-person] b', '- F3 [open] c'])
+  const r3cr = round(3, 'changes-requested', [`- F1 [fixed ${FIX}] a`, '- F2 [open] b', '- F3 [claim-rejected] c'])
+  assert.equal(nextStep(tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${r3cr}\n${r4b}` }), { probe: greenProbe(), limit: 5 }).stage, 'impl')
+})
+
 test('0028: a needs-person verdict written wrong falls back to the old path', () => {
   const a = tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3('needs-person', ['- F4 [open] d'])}` })
   assert.equal(nextStep(a, { probe: greenProbe() }).stage, 'impl')
