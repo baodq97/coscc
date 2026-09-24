@@ -311,9 +311,13 @@ no commands, one turn, no budget.
   before opening a listed file, reads included. What it does not stop: a branch cut before
   `0076`, or one that edits the check, has only the scratch directory (spec C1); `python
   -c`, `sqlite3` or anything opening `~/.cos/cos.db` by its literal path walks past both.
-  A step's directory is removed after its CLI is closed, a chat's when the chat is closed;
-  a SIGKILL of the app, or a restart mid-step, leaves `/tmp/coscc-session-*` behind, and
-  nothing sweeps them (spec C4, size unmeasured). Chat no longer falls back to `~/.cos`
+  A board step's directory is removed after its CLI is closed. Gebo's and a chat's live
+  with their client in `Sessions._live` — Gebo streams with no `step` — and nothing in the
+  app closes one but `Sessions.close_all`, which the installed service runs only on an
+  update, and `cut_turn`, only on "áp dụng ngay": so every Gebo run and every new chat
+  adds one that stays until then. A SIGKILL of the app, or any restart without that
+  update, leaves every `/tmp/coscc-session-*` that exists at that moment behind for good,
+  and nothing sweeps them (spec C4, size unmeasured). Chat no longer falls back to `~/.cos`
   (C6). `verify_0037/0041/0060/0061 --measure` run inside a step read an empty database and
   exit 2: run them at a terminal. If the app itself is started with its own `cos.db` in
   `COSCC_PROTECTED_DB`, every route that reads it is a `500` while `/api/health` says `ok`
