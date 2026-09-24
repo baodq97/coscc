@@ -27,7 +27,7 @@ from reflex_base.event.context import EventContext
 
 from coscc.api import build
 from coscc.journal import COST_USD, TOKEN_FIELDS
-from coscc.service import Invalid, describe_base
+from coscc.service import Invalid, StaleCutList, describe_base
 
 API = build()
 SERVICE = API.state.service
@@ -498,6 +498,29 @@ def _tokens(cost: dict) -> tuple[int, str]:
     return total, (f"{total:,}" if total else "—")
 
 
+def _job_line(job: dict) -> str:
+    """`0068` R10: one running job, as the confirmation lists it."""
+    kind = job.get("kind", "")
+    if kind == "chat":
+        what = f"chat {job.get('session_id') or '(phiên mới)'} in {job.get('workspace', '')}"
+    elif kind == "build":
+        what = "build local"
+    else:
+        what = f"{kind} {job.get('unit', '')} {job.get('stage', '')}"
+    return f"{what}, since {job.get('started', '')}"
+
+
+def _channel_line(channel: dict) -> str:
+    """`0068`: one channel's state as the panel says it."""
+    state = str(channel.get("state") or "")
+    parts = [state]
+    if channel.get("version"):
+        parts.append(str(channel["version"]))
+    if channel.get("reason"):
+        parts.append(f"— {channel['reason']}")
+    return " ".join(parts)
+
+
 def _usd(cost: dict) -> str:
     usd = float(cost.get(COST_USD) or 0.0)
     if not usd:
@@ -687,6 +710,37 @@ class StudioState(rx.State):
     log_unit: str = ""
     # A name typed to stop a step. Like `answer_by`, never stored as a preference.
     stop_by: str = ""
+
+    # -- `0068`: the *Cập nhật* panel. Every field is copied from `Service.update_status`,
+    # re-read on load, on every screen change and on every `poll_running` ask; the page
+    # decides nothing about an update. `update_pending` is what Run and Send warn on (R9).
+    upd_version: str = ""
+    upd_commit: str = ""
+    upd_available: bool = False
+    upd_reason: str = ""
+    upd_state: str = ""
+    upd_waiting: list[str] = []
+    upd_pending_reason: str = ""
+    upd_release: str = ""
+    upd_release_ready: bool = False
+    upd_local: str = ""
+    upd_local_ready: bool = False
+    upd_local_configured: bool = False
+    upd_local_tail: str = ""
+    upd_checked_at: str = ""
+    upd_error: str = ""
+    upd_error_tail: str = ""
+    upd_last: str = ""
+    upd_last_tail: str = ""
+    update_pending: bool = False
+    update_warning: str = ""
+    # A name typed to apply, cancel or build. Never stored, like `stop_by`.
+    update_by: str = ""
+    # R10's confirmation: what "áp dụng ngay" would cut, and the token of that list.
+    cut_open: bool = False
+    cut_channel: str = ""
+    cut_items: list[str] = []
+    cut_token: str = ""
     # `0024`. The stage `cos.mjs next` names for the open unit, and what it said. Set only
     # by `load_next`, from `_run_target`; `next_stage` reads it and nothing computes it.
     run_stage: str = ""
@@ -1222,6 +1276,7 @@ class StudioState(rx.State):
         await self._load_board()
         self._load_sessions()
         self._load_activity()
+        self._load_update()
         self.loading = False
         # A reload that finds the tab already on the Board: nothing else would start the loop.
         yield StudioState.poll_running
@@ -1234,6 +1289,7 @@ class StudioState(rx.State):
         self.screen = screen
         self.mobile_open = False
         self.command_open = False
+        self._load_update()
         return StudioState.poll_running
 
     @rx.event
@@ -1292,6 +1348,7 @@ class StudioState(rx.State):
                     except Invalid:
                         read = {}
                     self._apply_running(read)
+                    self._load_update()
                 await asyncio.sleep(RUNNING_POLL)
         finally:
             _POLLING.discard(token)
@@ -1584,6 +1641,101 @@ class StudioState(rx.State):
             self._fail(e)
         finally:
             self._load_running()
+
+    # -- `0068`: updating the app. Every rule is `Updater`'s, behind `Service`; a refusal
+    # arrives here as its words.
+
+    def _load_update(self) -> None:
+        u = SERVICE.update_status()
+        self.upd_version = str(u.get("version") or "")
+        self.upd_commit = str(u.get("commit_label") or "")
+        self.upd_available = u.get("shape") == "service"
+        self.upd_reason = str(u.get("reason") or "")
+        self.upd_state = str(u.get("state") or "")
+        pending = u.get("pending") or {}
+        self.upd_waiting = [_job_line(j) for j in pending.get("waiting") or []]
+        self.upd_pending_reason = str(pending.get("reason") or "")
+        self.update_pending = self.upd_state == "pending"
+        self.update_warning = str(u.get("warning") or "")
+        release, local = u.get("release") or {}, u.get("local") or {}
+        self.upd_release = _channel_line(release)
+        self.upd_release_ready = release.get("state") == "ready"
+        self.upd_local = _channel_line(local)
+        self.upd_local_ready = local.get("state") == "ready"
+        self.upd_local_configured = bool(local) and local.get("state") != "unconfigured"
+        self.upd_local_tail = str(local.get("log_tail") or "")
+        self.upd_checked_at = str(u.get("checked_at") or "")
+        error = u.get("error") or {}
+        self.upd_error = str(error.get("message") or "")
+        self.upd_error_tail = str(error.get("log_tail") or "")
+        last = u.get("last") or {}
+        self.upd_last = (
+            f"{last.get('result')}: {last.get('from')} → {last.get('to')} (log: {last.get('log')})"
+            if last else ""
+        )
+        self.upd_last_tail = str(last.get("log_tail") or "")
+
+    @rx.event
+    def set_update_by(self, value: str):
+        self.update_by = value
+
+    @rx.event
+    async def apply_update(self, channel: str):
+        """R7: apply, or wait for what is running (R9)."""
+        try:
+            await SERVICE.update_apply(channel, "wait", self.update_by, "")
+        except Invalid as e:
+            self._fail(e)
+        self._load_update()
+
+    @rx.event
+    def show_cut_list(self, channel: str):
+        """R10: what "áp dụng ngay" would cut, shown before anything is cut."""
+        try:
+            listing = SERVICE.update_cut_list()
+        except Invalid as e:
+            self._fail(e)
+            return
+        self._show_cut(channel, listing)
+
+    def _show_cut(self, channel: str, listing: dict) -> None:
+        self.cut_channel = channel
+        self.cut_items = [f"{i['action']}: {_job_line(i)}" for i in listing.get("items") or []]
+        self.cut_token = str(listing.get("token") or "")
+        self.cut_open = True
+
+    @rx.event
+    def close_cut_list(self):
+        self.cut_open = False
+
+    @rx.event
+    async def confirm_apply_now(self):
+        try:
+            await SERVICE.update_apply(self.cut_channel, "now", self.update_by, self.cut_token)
+            self.cut_open = False
+        except StaleCutList as e:
+            # The list changed since it was shown: show the new one, cut nothing.
+            self.notice = str(e)
+            self._show_cut(self.cut_channel, e.listing)
+        except Invalid as e:
+            self._fail(e)
+        self._load_update()
+
+    @rx.event
+    def cancel_update(self):
+        try:
+            SERVICE.update_cancel(self.update_by)
+        except Invalid as e:
+            self._fail(e)
+        self._load_update()
+
+    @rx.event
+    def build_local(self):
+        try:
+            SERVICE.update_build_local(self.update_by)
+        except Invalid as e:
+            self._fail(e)
+        self._load_update()
 
     @rx.event
     async def answer_question(self, key: str):
