@@ -1089,6 +1089,32 @@ class EverySessionGetsADataRootOfItsOwn(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
         self.assertFalse(h.scratch.exists())
 
+    async def test_r3_a_stop_during_a_failed_connect_waits_for_the_abandoning(self):
+        """Review round 2, F2: the same, when the cancel lands on the closing of a client
+        whose `connect` did not finish -- the handle had no client to wait on."""
+        h = sessions.StepHandle()
+        client = _SlowClient()
+        connecting = asyncio.Event()
+
+        async def connect():
+            connecting.set()
+            await asyncio.Event().wait()
+
+        client.connect = connect
+        with mock.patch("coscc.sessions.ClaudeSDKClient", lambda options=None: client):
+            task = asyncio.create_task(self._step(h))
+            await connecting.wait()
+            task.cancel()  # lands on `connect`: the step abandons the client
+            await client.closing.wait()
+            task.cancel()  # the Stop's, landing on the abandoning
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertTrue(h.scratch.is_dir(), "the CLI may still be running")
+        client.release.set()
+        await h._closing
+        await asyncio.sleep(0)
+        self.assertFalse(h.scratch.exists())
+
     async def test_r3_gone_when_the_client_cannot_be_built(self):
         _EnvClient.boom = True
         with self.assertRaises(RuntimeError):

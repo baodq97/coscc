@@ -377,7 +377,8 @@ class StepHandle:
         A Stop's cancel can land on the close itself: the closing goes on without its
         caller, and the CLI may live `DISCONNECT_TIMEOUT + KILL_AFTER` longer. A `Data` it
         opened in that time would make the directory again with nobody left to remove it
-        (`0076` review round 1, F1), so the removal waits for that closing.
+        (`0076` review round 1, F1), so the removal waits for that closing -- or for the
+        one `_stream` began when `connect` failed (round 2, F2).
         """
         scratch = self.scratch
         if self._closing is not None and not self._closing.done():
@@ -386,16 +387,19 @@ class StepHandle:
             _drop(scratch)
 
 
-async def _abandon(client: Any) -> None:
-    """Close a client whose `connect` did not finish.
+def _abandon(client: Any) -> asyncio.Task:
+    """Begin closing a client whose `connect` did not finish, and return the closing.
 
     One stopped inside the transport's own `connect` may already have spawned the CLI,
     and the SDK's `disconnect` would drop that transport without closing it, so `_shut`
     closes the transport itself. Both are read before anything is closed.
+
+    The caller keeps the task on its handle as `_closing`, so a Stop's cancel landing on
+    this closing still leaves the step's data root until it ends (`0076` review round 2, F2).
     """
     transport = getattr(client, "_transport", None)
     reached = getattr(client, "_query", None) is not None
-    await asyncio.shield(_begin(_shut(client, transport, reached)))
+    return _begin(_shut(client, transport, reached))
 
 
 # What one turn cost, in the shape `journal.COST_FIELDS` adds up.
@@ -752,7 +756,8 @@ class Sessions:
                             # A cancel or a failure while the CLI was starting. The handle
                             # has no client yet, so nothing else will close what `connect`
                             # got as far as spawning (`0034` review round 1, F1).
-                            await _abandon(client)
+                            step._closing = _abandon(client)
+                            await asyncio.shield(step._closing)
                             raise
                         # Only now: `disconnect` during `connect` closes nothing and drops the
                         # transport, so a Stop before this point only marks the handle closed.
