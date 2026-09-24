@@ -176,6 +176,13 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             # neither, which reads as no pull request and no rounds.
             "pr": _pr_of(u),
             "rounds": _rounds_of(u),
+            # `0028`. The findings the last review round confirmed need a person, each
+            # `{id, reason, answered}`, as `cos.mjs` `readUnit` decided them. Copied, never
+            # derived here: the Questions tab lists exactly these. An older `cos.mjs` sends
+            # nothing, which reads as none.
+            "person_findings": _person_findings_of(u),
+            # `0028`. The ids `next` says a person is awaited on. Empty unless it said so.
+            "waiting": [str(x) for x in ((u.get("next") or {}).get("waiting") or [])],
         }
         for u in data.get("units") or []
     ]
@@ -311,7 +318,24 @@ async def next_step(
         "stage": str(data.get("stage") or ""),
         "action": str(data.get("action") or ""),
         "blocked": bool(data.get("blocked")),
+        # `0028`. Present only when a person is awaited; its absence reads as none.
+        "waiting": [str(x) for x in data.get("waiting") or []],
     }
+
+
+def _person_findings_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
+    """`[{id, reason, answered}]` as `cos.mjs` `readUnit` put them in `personFindings`."""
+    out = []
+    for p in unit.get("personFindings") or []:
+        if not isinstance(p, dict) or not p.get("id"):
+            continue
+        out.append({
+            "id": str(p["id"]),
+            "reason": str(p.get("reason") or ""),
+            "answered": bool(p.get("answered")),
+        })
+    return out
+
 
 def _pr_of(unit: dict[str, Any]) -> dict[str, Any] | None:
     """`{url, number}` from `pr.md`'s `PR:` line as `cos.mjs` `parsePr` read it, or None."""

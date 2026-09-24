@@ -1335,6 +1335,23 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
         self.assertEqual(seen["next"], seen["gate"])
         self.assertEqual(seen["next"][1], str(self.repo))
 
+    def test_waiting_is_copied_and_absent_reads_as_none(self):
+        """`0028`. The findings a person is awaited on reach the page as `cos.mjs` named them."""
+        from coscc import board as board_reader
+
+        answers = [
+            {"unit": "u", "stage": "", "action": "needs a person — F3: x", "blocked": True, "waiting": ["F3"]},
+            {"unit": "u", "stage": "review", "action": "a", "blocked": True},
+        ]
+
+        async def fake_next(units_root, unit, repo=None, **kw):
+            return answers.pop(0)
+
+        with mock.patch.object(board_reader, "next_step", fake_next):
+            first, second = self._next(), self._next()
+        self.assertEqual((first["stage"], first["waiting"]), ("", ["F3"]))
+        self.assertEqual(second["waiting"], [])
+
 
 REVIEW_ONE = (
     "# Review: a problem\nAuthor: t. Status: changes-requested.\n\n"

@@ -170,6 +170,11 @@ def build(config: Config | None = None) -> FastAPI:
         writes nothing else. **No route here has a login and the default bind is
         `0.0.0.0`**, so anyone who reaches the port can put words into an artifact under a
         name they chose, and the next stage reads them as a person's decision.
+
+        Since `0028` `question` may also be `"F<n>"` with `artifact` `review.md`: a finding
+        the last review round confirmed needs a person. That appends `### F<n>`, and it does
+        more than a numbered answer does — `cos.mjs next` reads it to offer `review` again,
+        and the `ship` gate reads it to count an `[answered]` finding as closed.
         """
         try:
             body = await request.json()

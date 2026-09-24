@@ -431,3 +431,57 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(Unavailable):
                 run(board.next_step(tmp, "0009_not-here"))
+
+
+# `0028`. A review round that confirmed two findings need a person, one of them answered.
+_ROUND = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
+AWAITING_PERSON = {
+    "intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n",
+    "spec.md": "Status: accepted.\n", "plan.md": "Status: accepted.\n",
+    "impl.md": "# Impl\nStatus: accepted.\n\n## Needs a person\n\n- F2: no budget for --paid\n- F3: no gh\n",
+    "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
+    "review.md": "# R\nStatus: changes-requested.\n"
+    + _ROUND.format(n=1, v="changes-requested", f="- F2 [open] b\n- F3 [open] c")
+    + _ROUND.format(n=2, v="needs-person", f="- F2 [needs-person] b\n- F3 [needs-person] c")
+    + "\n## Answers\n\n### F2\nAnswered by: P. Date: 2026-09-24. Via: product.\n\nran it\n",
+}
+
+
+class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
+    """`0028` R9. `waiting` and `personFindings` are `cos.mjs`'s, copied and nothing more."""
+
+    _unit = TheNextStageIsAskedNotWorkedOut._unit
+    _script_says = TheNextStageIsAskedNotWorkedOut._script_says
+
+    def test_next_step_copies_waiting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            name = self._unit(tmp, AWAITING_PERSON)
+            script = self._script_says(tmp, name)
+            got = run(board.next_step(tmp, name))
+        self.assertEqual(script["waiting"], ["F3"])
+        self.assertEqual(got["waiting"], ["F3"])
+        self.assertEqual(got["stage"], "")
+
+    def test_no_waiting_in_the_script_reads_as_none(self):
+        async def fake_run(argv, timeout):
+            return 0, '{"unit": "u", "stage": "impl", "action": "a", "blocked": true}', ""
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
+            got = run(board.next_step(tmp, "0001_x"))
+        self.assertEqual(got["waiting"], [])
+
+    def test_read_copies_person_findings_and_waiting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._unit(tmp, AWAITING_PERSON)
+            [u] = run(board.read(tmp))["units"]
+        self.assertEqual(u["person_findings"], [
+            {"id": "F2", "reason": "no budget for --paid", "answered": True},
+            {"id": "F3", "reason": "no gh", "answered": False},
+        ])
+        self.assertEqual(u["waiting"], ["F3"])
+
+    def test_a_unit_without_them_reads_as_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._unit(tmp, {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"})
+            [u] = run(board.read(tmp))["units"]
+        self.assertEqual((u["person_findings"], u["waiting"]), ([], []))

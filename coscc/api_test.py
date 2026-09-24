@@ -550,6 +550,78 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 400)
 
 
+_ROUND_0028 = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
+REVIEW_CLAIMED = (
+    "# Review: q\nAuthor: t. Status: changes-requested.\n"
+    + _ROUND_0028.format(n=1, v="changes-requested", f="- F2 [open] b\n- F3 [open] c")
+)
+REVIEW_CONFIRMED = REVIEW_CLAIMED + _ROUND_0028.format(
+    n=2, v="needs-person", f="- F2 [needs-person] b\n- F3 [needs-person] c"
+)
+
+
+class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
+    """`0028` R7, plan step 8. A finding the last review round confirmed needs a person is
+    answered by its id into `review.md`; nothing else may be answered that way. Inherits the
+    `0016` class's setup and helpers, so the `0016` tests also run once more on this unit —
+    they answer `intent.md`, which this fixture leaves as it was."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        for name, text in {
+            "spec.md": "Status: accepted.\n",
+            "plan.md": "Status: accepted.\n",
+            "impl.md": "# Impl\nStatus: accepted.\n\n## Needs a person\n\n- F2: no budget\n- F3: no gh\n",
+            "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
+            "review.md": REVIEW_CONFIRMED,
+        }.items():
+            (self.dir / name).write_text(text, encoding="utf-8")
+        self.review = self.dir / "review.md"
+
+    async def finding(self, **over):
+        return await self.post(**{"artifact": "review.md", "question": "F2", **over})
+
+    async def test_a_finding_is_appended_as_its_own_block_and_nothing_above_moves(self):
+        before = self.review.read_bytes()
+        got = await self.finding()
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(got.json()["question"], "F2")
+        after = self.review.read_bytes()
+        self.assertTrue(after.startswith(before))
+        tail = after[len(before):].decode("utf-8").splitlines()
+        at = tail.index("### F2")
+        self.assertRegex(tail[at + 1], r"^Answered by: Phong\. Date: \S+\. Via: product\.$")
+        self.assertIn("## Answers", tail)
+
+    async def test_the_board_then_waits_on_the_other_one_only(self):
+        await self.finding()
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        [u] = board["units"]
+        self.assertEqual(u["waiting"], ["F3"])
+        self.assertEqual([p["answered"] for p in u["person_findings"]], [True, False])
+
+    async def refused_in_review(self, **over):
+        before = self.review.read_bytes()
+        got = await self.finding(**over)
+        self.assertEqual(got.status_code, 400, got.text)
+        self.assertEqual(self.review.read_bytes(), before)
+        return got.json()["error"]
+
+    async def test_a_finding_not_awaiting_a_person_is_refused(self):
+        self.assertIn("F9 is not a finding", await self.refused_in_review(question="F9"))
+
+    async def test_a_finding_is_answered_only_in_review_md(self):
+        before = (self.dir / "impl.md").read_bytes()
+        got = await self.finding(artifact="impl.md")
+        self.assertEqual(got.status_code, 400, got.text)
+        self.assertIn("answered in review.md", got.json()["error"])
+        self.assertEqual((self.dir / "impl.md").read_bytes(), before)
+
+    async def test_a_claim_no_review_has_confirmed_is_refused(self):
+        self.review.write_text(REVIEW_CLAIMED, encoding="utf-8")
+        await self.refused_in_review()
+
+
 class PostingAReviewRoundOverHttp(unittest.IsolatedAsyncioTestCase):
     """`0021` R8. The route posts a round once; a second press finds it and says so."""
 

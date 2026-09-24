@@ -158,6 +158,9 @@ class Question:
     answered: bool = False
     # Whether this is the artifact the unit's open count is taken from.
     counted: bool = False
+    # `0028`. What the row shows as its name: the number for a numbered question, `F<n>` for
+    # a review finding the last round confirmed needs a person (`number` is 0 for those).
+    label: str = ""
 
 
 @dataclasses.dataclass
@@ -290,6 +293,13 @@ def _run_target(data: dict) -> tuple[str, str]:
     return str(data.get("stage") or ""), str(data.get("action") or "")
 
 
+def _run_waiting(data: dict) -> list[str]:
+    """`0028`. The findings `cos.mjs next` says a person is awaited on, copied. Kept apart
+    from `_run_target` so that function's answer is what it was; nothing here decides whether
+    anyone is awaited."""
+    return [str(x) for x in data.get("waiting") or []]
+
+
 def _tokens(cost: dict) -> tuple[int, str]:
     """Every token the turn was billed for, as one number.
 
@@ -329,7 +339,11 @@ def _initials(name: str) -> str:
 def _questions(unit: dict) -> tuple[int, list[Question]]:
     """`0016` R7. The open count and the questions of one board unit, copied from what
     `cos.mjs` sent through `coscc/board.py`. Nothing is counted here: `open` is taken as
-    sent, so the page and `status --json` cannot disagree."""
+    sent, so the page and `status --json` cannot disagree.
+
+    `0028`: the findings `cos.mjs` lists in `personFindings` follow, one row each, keyed
+    `review.md#F<n>` and answered into `review.md`. They are not counted into `open`, which
+    stays `cos.mjs`'s number."""
     return int(unit.get("open") or 0), [
         Question(
             key=f"{q['artifact']}#{q['n']}",
@@ -338,8 +352,20 @@ def _questions(unit: dict) -> tuple[int, list[Question]]:
             text=str(q.get("text") or ""),
             answered=bool(q.get("answered")),
             counted=bool(q.get("counted")),
+            label=str(q["n"]),
         )
         for q in unit.get("questions") or []
+    ] + [
+        Question(
+            key=f"review.md#{p['id']}",
+            artifact="review.md",
+            number=0,
+            text=str(p.get("reason") or ""),
+            answered=bool(p.get("answered")),
+            counted=False,
+            label=str(p["id"]),
+        )
+        for p in unit.get("person_findings") or []
     ]
 
 
@@ -469,6 +495,10 @@ class StudioState(rx.State):
     # by `load_next`, from `_run_target`; `next_stage` reads it and nothing computes it.
     run_stage: str = ""
     run_said: str = ""
+    # `0028`. The findings `cos.mjs next` says a person is awaited on; set only by
+    # `load_next`, from `_run_waiting`. Non-empty means the button offers nothing and the
+    # page points at the Questions tab instead.
+    run_waiting: list[str] = []
 
     # -- answering a question (`0016`). One text box is live at a time: typing into a
     # question's box makes it the target, and the box of every other question reads empty.
@@ -1174,19 +1204,23 @@ class StudioState(rx.State):
         async with self:
             unit, cwd = self.unit_id, self.cwd
             self.run_stage = ""
+            self.run_waiting = []
             self.run_said = "Asking cos.mjs what comes next…"
         if not (unit and cwd):
             async with self:
                 self.run_said = ""
             return
+        waiting: list[str] = []
         try:
-            stage, said = _run_target(await SERVICE.next_step(cwd, unit))
+            stage, said = _run_target(found := await SERVICE.next_step(cwd, unit))
+            waiting = _run_waiting(found)
         except Invalid as e:
             stage, said = "", str(e)
         async with self:
             # A unit opened while this was asking is not the unit this answer is about.
             if self.unit_id == unit and self.cwd == cwd:
                 self.run_stage, self.run_said = stage, said
+                self.run_waiting = waiting
 
     @rx.event
     def toggle_detail(self, value: bool):
@@ -1230,8 +1264,9 @@ class StudioState(rx.State):
         finally:
             self.answering = False
         self.answer_target, self.answer_text = "", ""
+        kind = "finding" if str(done["question"]).startswith("F") else "question"
         self.notice = (
-            f"Answered question {done['question']} of {done['artifact']} as "
+            f"Answered {kind} {done['question']} of {done['artifact']} as "
             f"{done['answered_by']}. Nothing was started; the next step reads it when it runs."
         )
         await self._load_board()

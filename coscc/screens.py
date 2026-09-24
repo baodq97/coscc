@@ -1037,7 +1037,8 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
     return s.panel(
         rx.hstack(
             s.badge(q.artifact, rx.cond(q.counted, "amber", "gray")),
-            s.text("question " + q.number.to_string(), size="1"),
+            # `0028`: a finding a person is awaited on reads as one, by its `F<n>`.
+            s.text(rx.cond(q.number == 0, "finding ", "question ") + q.label, size="1"),
             width="100%", align="center",
         ),
         rx.box(rx.markdown(q.text), width="100%", margin_top="8px"),
@@ -1064,7 +1065,11 @@ def _questions_tab() -> rx.Component:
             "the artifact under ## Answers, with the name you type here; nothing above it "
             "changes. This is not an approval and it starts no step — the next step reads "
             "it when someone runs it. The name is not checked: this app has no login, so "
-            "anyone who reaches this port can type one.",
+            "anyone who reaches this port can type one. A row named finding F<n> is a review "
+            "finding the last review round confirmed needs a person; its answer goes into "
+            "review.md, and unlike a question's it is read: cos.mjs offers review again "
+            "once every such finding has one, and the ship gate counts a finding the review "
+            "then marks [answered] as closed.",
             size="1", line_height="1.8",
         ),
         rx.input(
@@ -1181,6 +1186,23 @@ def _detail_dialog() -> rx.Component:
                                 size="1", disabled=P.is_running,
                             ),
                             justify="between", align="center", width="100%", spacing="3",
+                        ),
+                        # `0028`. `cos.mjs next` named findings a person must act on, and
+                        # offers no stage. Say which, and point at where they are answered.
+                        rx.cond(
+                            (P.next_stage == "") & (P.run_waiting.length() > 0),
+                            rx.hstack(
+                                s.text("Needs a person: " + P.run_waiting.join(", "),
+                                       size="2", id="next-waiting"),
+                                rx.button(
+                                    rx.icon("message-square", size=13),
+                                    "Open Questions",
+                                    id="open-questions",
+                                    on_click=P.set_detail_tab("questions"),
+                                    variant="soft", size="1",
+                                ),
+                                justify="between", align="center", width="100%", spacing="3",
+                            ),
                         ),
                         rx.cond(
                             P.next_stage != "",
