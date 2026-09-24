@@ -1982,3 +1982,91 @@ class DescribeAttemptRendersTheRecord(unittest.TestCase):
         text = describe_attempt(found)
         self.assertIn("No snapshot record was captured", text)
         self.assertIn("unknown — the session returned no result", text)
+
+
+class AUnitOpenedFromAnIdea(unittest.TestCase):
+    """`0003_one-idea-is-trapped-inside-one-unit` R10, R11, R12."""
+
+    IDEA_NAME = "0002_shared-idea"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.directory = make_unit(self.root)
+        ideas = self.root / ".cos" / "ideas"
+        ideas.mkdir()
+        self.idea_path = ideas / f"{self.IDEA_NAME}.md"
+        self.idea_path.write_text(
+            "# Idea: shared idea\nAuthor: the originator. Status: accepted.\n\n"
+            f"## In their own words\n\nIDEA-WORDS-9f\n\n## Units\n\n- {UNIT}\n",
+            encoding="utf-8",
+        )
+        self.idea = {"name": self.IDEA_NAME, "file": f"ideas/{self.IDEA_NAME}.md", "path": str(self.idea_path)}
+
+    def run_intent(self, reply: str, stage: str = "intent") -> dict:
+        class Fixed:
+            async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
+                yield ("chunk", reply)
+                yield ("done", {"session_id": "s", "cost": {}})
+
+        async def go():
+            last = None
+            async for ev in Runner(Fixed(), None).run(
+                workspace=str(self.root), directory=self.directory, journal_key=str(self.root),
+                unit=UNIT, stage=stage, artifact=f"{stage}.md", stages=STAGES, mode="manual",
+                idea=self.idea,
+            ):
+                last = ev
+            return last[1]
+
+        return asyncio.run(go())
+
+    def intent(self, field: str) -> str:
+        return f"# Intent: x\nAuthor: t. Type: feat.{field} Status: accepted.\n\n## Problem\n\nx\n"
+
+    def test_the_intent_prompt_carries_the_idea_and_names_the_field(self):
+        prompt, included = build_prompt(
+            self.root, self.directory, UNIT, "intent", STAGES, "intent.md", idea=self.idea
+        )
+        self.assertIn("IDEA-WORDS-9f", prompt)
+        self.assertIn("# The idea it follows", prompt)
+        self.assertIn(f"Idea: ideas/{self.IDEA_NAME}.md.", prompt)
+        self.assertEqual(included, [f"ideas/{self.IDEA_NAME}.md"])
+
+    def test_a_unit_with_its_own_idea_md_is_prompted_as_before(self):
+        (self.directory / "idea.md").write_text("Status: accepted.\nOLD-IDEA\n", encoding="utf-8")
+        with_link, inc_with = build_prompt(
+            self.root, self.directory, UNIT, "intent", STAGES, "intent.md", idea=self.idea
+        )
+        without, inc_without = build_prompt(self.root, self.directory, UNIT, "intent", STAGES, "intent.md")
+        self.assertEqual((with_link, inc_with), (without, inc_without))
+        self.assertEqual(inc_without, ["idea.md"])
+
+    def test_a_reply_with_no_idea_field_or_another_idea_is_refused_and_nothing_is_written(self):
+        for field in ("", " Idea: ideas/0009_other.md.", f" Idea: ideas/{self.IDEA_NAME}.md. Idea: ideas/0009_other.md."):
+            with self.subTest(field):
+                done = self.run_intent(self.intent(field))
+                self.assertEqual(done["outcome"], "failed")
+                self.assertIn(f"Idea: ideas/{self.IDEA_NAME}.md", done["error"])
+                self.assertFalse((self.directory / "intent.md").exists())
+
+    def test_a_right_reply_is_written_and_cos_mjs_reads_the_same_idea_from_it(self):
+        # The one place the runner's check and `cos.mjs` `parseIdea` meet: if they drift so
+        # that the runner accepts what `cos.mjs` does not read, this is red (plan Risk 4).
+        import json
+
+        done = self.run_intent(self.intent(f" Idea: ideas/{self.IDEA_NAME}.md."))
+        self.assertEqual(done["outcome"], "done", done.get("error"))
+        out = subprocess.run(
+            ["node", str(harness.script()), "--root", str(self.root), "status", "--json"],
+            capture_output=True, text=True, check=True,
+        )
+        [unit] = json.loads(out.stdout)["units"]
+        self.assertEqual((unit.get("idea"), unit["problems"]), (self.IDEA_NAME, []))
+
+    def test_the_idea_stage_is_refused_on_a_linked_unit_before_anything_runs(self):
+        with self.assertRaises(RunError) as caught:
+            self.run_intent("# Idea: x\nStatus: accepted.\n", stage="idea")
+        self.assertIn(f"ideas/{self.IDEA_NAME}.md", str(caught.exception))
+        self.assertFalse((self.directory / "idea.md").exists())

@@ -232,7 +232,7 @@ async def claims_b_to_g(root: Path) -> bool:
     outcome = (last[1] if last else {}).get("outcome")
     g = outcome == "failed" and not (cos / unit_a / "intent.md").exists()
     ok &= say(g, "C-g an intent reply with no Idea: line is refused and nothing is written",
-              f"outcome={outcome!r}, detail={(last[1] if last else {}).get('detail', '')[:200]!r}")
+              f"outcome={outcome!r}, error={(last[1] if last else {}).get('error', '')[:200]!r}")
 
     # C-e
     for name in (unit_a, unit_b):

@@ -96,6 +96,35 @@ class ThePhaseIsCarriedFromTheScript(unittest.TestCase):
         self.assertEqual({u["phase"] for u in data["units"]}, {"started"})
 
 
+class IdeasAreCarriedFromTheScript(unittest.TestCase):
+    """`0003_one-idea-is-trapped-inside-one-unit`. Linked by `cos.mjs`, copied here."""
+
+    def test_an_idea_and_the_unit_it_lists_arrive_linked(self):
+        with tempfile.TemporaryDirectory() as d:
+            cos = Path(d) / ".cos"
+            (cos / "0001_fresh").mkdir(parents=True)
+            (cos / "ideas").mkdir()
+            (cos / "ideas" / "0003_seed.md").write_text(
+                "# Idea: seed\nStatus: accepted.\n\n## Units\n\n- 0001_fresh\n", encoding="utf-8"
+            )
+            (cos / "ideas" / "0004_alone.md").write_text("# Idea: alone\nStatus: draft.\n", encoding="utf-8")
+            data = run(board.read(d))
+            [u] = data["units"]
+            self.assertEqual((u["idea"], u["idea_declared"], u["phase"]), ("0003_seed", "", "pre-intent"))
+            seed, alone = data["ideas"]
+            self.assertEqual((seed["file"], seed["units"], seed["status"]), ("ideas/0003_seed.md", ["0001_fresh"], "accepted"))
+            self.assertEqual((alone["units"], alone["next"]), ([], "write-intent — open a unit from this idea"))
+            self.assertEqual(board.idea_of(data, u, d), {
+                "name": "0003_seed", "file": "ideas/0003_seed.md", "path": str(Path(d) / ".cos" / "ideas" / "0003_seed.md"),
+            })
+
+    def test_a_unit_with_no_idea_has_none(self):
+        data = run(board.read(REPO))
+        self.assertEqual({u["idea"] for u in data["units"]}, {""})
+        self.assertEqual(data["ideas"], [])
+        self.assertIsNone(board.idea_of(data, data["units"][0], REPO))
+
+
 class QuestionsAreCarriedFromTheScript(unittest.TestCase):
     """`0016` R7. The board forwards what `cos.mjs` decided and recounts nothing."""
 

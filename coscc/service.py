@@ -1078,6 +1078,9 @@ class Service:
                 plan_drift=plan_drift,
                 drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
                 end_fields=end_fields,
+                # `0003_one-idea-is-trapped-inside-one-unit` R10–R12. Linked by `cos.mjs`,
+                # from the same board read as everything else here.
+                idea=board_reader.idea_of(data, found, self._units_root(cwd)),
                 **config,
             ):
                 if item[0] == "done":
