@@ -912,6 +912,49 @@ class TheNextStageOverHttp(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(got.status_code, 400)
 
 
+class WhatIsRunningOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0051` R2. `GET /api/board/running`: two keys, and nothing a stop button would need."""
+
+    asyncSetUp = AnsweringAQuestionOverHttp.asyncSetUp
+    asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
+
+    async def test_missing_or_foreign_cwd_is_a_400(self):
+        for params in ({}, {"cwd": ""}, {"cwd": "/etc"}):
+            with self.subTest(params=params):
+                got = await self.client.get("/api/board/running", params=params)
+                self.assertEqual(got.status_code, 400)
+
+    async def test_both_keys_and_no_session_id_prompt_or_path(self):
+        service = self.app.state.service
+        key = service._journal_key(self.cwd)
+        service._mark_running(key, self.unit, "impl", "step")
+        service._journal().started(
+            key, "0099_other", "plan", "manual", session_id="sess-secret", prompt_chars=10,
+        )
+        got = await self.client.get("/api/board/running", params={"cwd": self.cwd})
+        self.assertEqual(got.status_code, 200, got.text)
+        body = got.json()
+        self.assertEqual(set(body), {"running", "unknown_end"})
+        self.assertEqual(body["running"][self.unit][0]["agent"], {"glyph": "ᚢ", "name": "Uruz"})
+        self.assertEqual(list(body["unknown_end"]), ["0099_other"])
+
+        keys: set[str] = set()
+
+        def walk(node):
+            if isinstance(node, dict):
+                keys.update(node)
+                for v in node.values():
+                    walk(v)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v)
+
+        walk(body)
+        for banned in ("session_id", "prompt", "prompt_chars", "worktree", "path", "workspace", "cwd"):
+            self.assertNotIn(banned, keys)
+        self.assertNotIn("sess-secret", got.text)
+
+
 class IntegratingOverHttp(PostingAReviewRoundOverHttp):
     """`0035` R12 over HTTP: outside the window is a 400 before anything runs, and the
     route is never a stage `next` offers (R3)."""
