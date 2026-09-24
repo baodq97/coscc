@@ -27,7 +27,6 @@ class WhatStartupSays(unittest.TestCase):
         self.assertIn("login page", text)
         self.assertIn("readable", text)
         self.assertIn("COS_HOST=127.0.0.1", text)
-        self.assertNotIn("no login", text)
 
     def test_a_named_interface_gets_the_same_warning(self):
         # The check is "not loopback", not "is 0.0.0.0" -- someone binding one real

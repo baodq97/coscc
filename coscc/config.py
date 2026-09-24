@@ -14,10 +14,11 @@ turning it on hands a loopback port a capability it does not need to reach the o
 (`rxconfig.py` records that). `0011` changed it to `0.0.0.0` because the app now ships to
 a VM that people reach from elsewhere -- the originator decided it that day, after being
 shown what it costs. What it costs is written in `0011`'s `spec.md` C1 and is not softened
-here: this app has no authentication of any kind, so every machine that can route to this
-port can use all of it, including the two controls that spend real Claude quota. The
-startup banner in `coscc/run.py` says so out loud every time it is not loopback, which is
-the only thing standing where a login would be.
+here. Until `0070` nothing asked for a password, so every machine that could route to
+this port could use all of it, including the two controls that spend real Claude quota.
+Since `0070` the master password in `coscc/auth.py` stands in front; what binding every
+interface still costs is the wire, and the startup banner in `coscc/run.py` says that out
+loud every time the address is not loopback.
 """
 
 from __future__ import annotations

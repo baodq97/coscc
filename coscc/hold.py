@@ -146,7 +146,7 @@ async def remove_tree(
     """R12(b). Remove the unit's worktree, never forced; the local branch stays.
 
     A tree with uncommitted changes is left where it is and reported `failed` (spec C4):
-    keeping somebody's work beats removing it on the word of a route with no login.
+    keeping somebody's work beats removing it on the word of a route that names nobody.
     """
     try:
         found = await worktrees.find(workspace, unit, data_dir)

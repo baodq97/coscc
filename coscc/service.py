@@ -1340,7 +1340,7 @@ class Service:
         """Stop one running board step (`0034` R2, R5, R6). The route and the page's
         button both call this, and nothing else.
 
-        `by` is a name the person typed, not an identity: no route has a login. What it
+        `by` is a name the person typed, not an identity: the password names nobody. What it
         leaves is an `end` record with `outcome: stopped` and `stopped_by`. It opens and
         closes no gate, and starts nothing.
         """
@@ -2390,8 +2390,8 @@ class Service:
     async def set_stage_model(self, name: Any, model: Any = None) -> dict[str, Any]:
         """Set one row's model, or remove the override when `model` is None.
 
-        **No login, like every route here.** Whoever reaches the port can move `review` to
-        a weaker model, or every stage to a dearer one. The one trace is the `setting`
+        **Behind the password like every route here** (`0070`): whoever holds it or a live
+        session can move `review` to a weaker model, or every stage to a dearer one. The one trace is the `setting`
         record appended below, with the old and new value. It chooses a model and nothing
         else: no gate reads it, and no stage starts because of it.
 
@@ -2417,7 +2417,7 @@ class Service:
     async def set_stage_effort(self, name: Any, effort: Any = None) -> dict[str, Any]:
         """`0033` R9. Set one row's effort, or remove the override when `effort` is None.
 
-        The same exposure as `set_stage_model`: no login, and the `setting` record is the
+        The same exposure as `set_stage_model`, and the `setting` record is the
         trace. `max` is accepted here and only here — `models.json` may not ship it, so
         every `max` run traces back to one of these records (spec R7, C8). `chat` has no
         effort (spec Out of scope).
@@ -2547,7 +2547,8 @@ class Service:
         `stage_models` and `set_stage_model` are. `0004_no-setting-says-which-model-runs-
         a-stage` made it changeable on purpose — a model is a choice of cost, not of
         capability, and the originator asked for it without a release. The price is a
-        route with no login that decides what every step spends. `cos_model` below is only
+        route that decides what every step spends for whoever holds the password or a live
+        session. `cos_model` below is only
         the fallback for a row nothing else answers.
         """
         c = self.config

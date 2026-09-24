@@ -14,6 +14,14 @@ Nothing here decides anything either (`spec.md` R10). Every route translates a r
 into a `Service` call and a result back into JSON.
 
 Reflex reserves `/ping/`, `/_event` and `/_upload`. Nothing here may use them.
+
+**Every route here sits behind `coscc/auth.py`** (`0070`), which decides before this app
+sees a request: without a live session only `GET /api/health` gets through. The guard also
+serves `/login`, `/setup` and `/logout` itself — they are not routes of this app, and
+nothing here may use them either. One password, one user: whoever holds it or a live
+session cookie can call every route below, and every name a body carries (`answered_by`,
+`by`, `stopped_by`, `recorded_by`) is still a word they typed, not an identity. Tests that
+build this app on its own, as `api_test.py` does, drive it without the guard.
 """
 
 from __future__ import annotations
@@ -121,7 +129,8 @@ def build(config: Config | None = None) -> FastAPI:
     async def set_stage_model(request: Request) -> Any:
         """`{name, model}` sets one row's model; `{name}` alone removes its override.
 
-        No login, like every route here, and it decides what every step spends. The trace
+        Behind the password like every route here, and it decides what every step spends:
+        whoever holds the password or a live session can move any stage's model. The trace
         is a `setting` record in the run log.
         """
         try:
@@ -139,7 +148,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def set_stage_effort(request: Request) -> Any:
         """`0033`. `{name, effort}` sets one row's effort; `{name}` alone removes its override.
 
-        The same exposure as the model route: no login, and `max` is accepted only here.
+        The same exposure as the model route, and `max` is accepted only here.
         The trace is a `setting` record in the run log.
         """
         try:
@@ -188,9 +197,9 @@ def build(config: Config | None = None) -> FastAPI:
         """`0016` R2. A person answers one item under an artifact's `## Open questions`.
 
         Appends a `### Câu N` block under `## Answers` at the end of that artifact and
-        writes nothing else. **No route here has a login and the default bind is
-        `0.0.0.0`**, so anyone who reaches the port can put words into an artifact under a
-        name they chose, and the next stage reads them as a person's decision.
+        writes nothing else. **The name is not checked**: whoever holds the password or a
+        live session can put words into an artifact under a name they chose, and the next
+        stage reads them as a person's decision.
 
         Since `0028` `question` may also be `"F<n>"` with `artifact` `review.md`: a finding
         the last review round confirmed needs a person. That appends `### F<n>`, and it does
@@ -220,9 +229,9 @@ def build(config: Config | None = None) -> FastAPI:
         """`0047` R1–R4. Record whether a finished unit met its intent's outcome.
 
         Appends a `### Outcome` block under `intent.md`'s `## Answers` and writes nothing
-        else. `result` is `đạt`, `trượt` or `không đo được`. **No login, and the default
-        bind is `0.0.0.0`**: anyone who reaches the port can record `đạt` under any name,
-        and `measured_by` is a word they typed too. No gate reads the block; the board shows
+        else. `result` is `đạt`, `trượt` or `không đo được`. **Whoever holds the password
+        or a live session can record `đạt` under any name**, and `measured_by` is a word
+        they typed too. No gate reads the block; the board shows
         it as the ground for keeping or dropping a unit.
         """
         try:
@@ -251,8 +260,8 @@ def build(config: Config | None = None) -> FastAPI:
 
         Appends a `### Paused|Dropped|Resumed` block under `intent.md ## Answers` and a
         `hold` row to the run log; `cos.mjs` then offers no stage and closes every gate.
-        **No route here has a login and the default bind is `0.0.0.0`**: anyone who reaches
-        the port can pause every unit under a name they chose, and `to: "dropped"` closes the
+        **Whoever holds the password or a live session can pause every unit under a name
+        they chose**, and `to: "dropped"` closes the
         unit's open pull request **with this machine's `gh` login** and removes its worktree.
         It starts nothing, a resume included.
         """
@@ -277,8 +286,8 @@ def build(config: Config | None = None) -> FastAPI:
     async def post_review_comment(request: Request) -> Any:
         """`0021` R8, R9. Post one review round to the unit's pull request, once.
 
-        Writes to GitHub **under this machine's `gh` login**, from a route with no login on
-        a default bind of `0.0.0.0`. What it posts is the round as it stands in
+        Writes to GitHub **under this machine's `gh` login**, for whoever holds the password
+        or a live session. What it posts is the round as it stands in
         `review.md`; the request names a unit and a round number and nothing else, so no
         caller can choose the words. A round already on the pull request comes back
         `already` and is not posted twice. A failure is a 200 with `state: failed` and
@@ -341,8 +350,8 @@ def build(config: Config | None = None) -> FastAPI:
         """`0051` R2. What has an agent working in one workspace now, and what ended unseen.
 
         Cheap enough to ask every few seconds: memory and the run log, no `git` or `gh`.
-        No login, like every route here: whoever reaches the port sees which units have a
-        paid session open, and since when.
+        Whoever holds the password or a live session sees which units have a paid session
+        open, and since when.
         """
         try:
             return service.running(request.query_params.get("cwd", ""))
@@ -424,8 +433,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def stop_step(request: Request) -> Any:
         """`0034`. Stop the step running on one unit: `{cwd, unit, by}`.
 
-        No login, like every route here: anyone who reaches the port can stop anyone's
-        step, under any name. `by` is what the `end` record's `stopped_by` says, and it is
+        Whoever holds the password or a live session can stop any step, under any name. `by` is what the `end` record's `stopped_by` says, and it is
         a claim, not an identity. It opens no gate and starts nothing.
         """
         try:
@@ -453,8 +461,8 @@ def build(config: Config | None = None) -> FastAPI:
     async def integrate_unit(request: Request) -> Any:
         """`0035`. Integrate one unit onto `main`, on request. Streams like `/api/board/run`.
 
-        No login, like every route here: whoever reaches the port can make this machine's
-        `gh` login rebase a unit's pull request, or open a paid Gebo session. A refusal
+        Whoever holds the password or a live session can make this machine's `gh` login
+        rebase a unit's pull request, or open a paid Gebo session. A refusal
         (R12) is a 400 before anything changes.
         """
         try:
@@ -503,10 +511,9 @@ def build(config: Config | None = None) -> FastAPI:
     async def get_unit_history(request: Request) -> Any:
         """`0013` R8. Every transition of one unit, and the projection over them.
 
-        Read-only, like every other GET here. `spec.md` C6 names what it widens: this app
-        has no authentication on any route and binds `0.0.0.0` by default, so one more
-        readable route is one more thing readable from the network. Not a new hole — the
-        same one, a little larger — and `0011` chose that posture on purpose.
+        Read-only, like every other GET here. `spec.md` C6 named what it widened when every
+        route was open to the network: one more readable route. Since `0070` it is readable
+        by whoever holds the password or a live session, like the rest.
         """
         try:
             return service.unit_history(
@@ -590,9 +597,9 @@ def build(config: Config | None = None) -> FastAPI:
 
     # -- `0068`: updating the app --------------------------------------------
     #
-    # No login, like every route here, and `0.0.0.0` by default: anyone who reaches the
-    # port can apply an update, cut running work with "áp dụng ngay", cancel a wait or start
-    # a local build. What they cannot do is choose what gets installed. A body is read for
+    # Behind the password like every route here: whoever holds it or a live session can
+    # apply an update, cut running work with "áp dụng ngay", cancel a wait or start a local
+    # build. What they cannot do is choose what gets installed. A body is read for
     # `channel`, `mode`, `by` and `token` only; a URL, a path, a version or a ref in it is
     # never read (R15), as `POST /api/workspaces` ignores a working folder sent to it.
 

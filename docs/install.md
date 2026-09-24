@@ -154,8 +154,15 @@ leaves a database the old version may answer with 500 on every route.
 **The board never rewrites the unit file or the env file.** A release that changes what
 `install.sh` generates reaches this machine only through the `curl … | sh` line above.
 
-**Anyone who reaches the port can press these buttons**, under any name — there is no login
-(see below). What they cannot choose is what gets installed.
+**Anyone holding the master password or a live session can press these buttons**, under any
+name — the password names nobody (see `## Logging in`). What they cannot choose is what gets
+installed.
+
+**The first update from the board past the release that adds the login fails its trial, on
+purpose.** The version you are running checks a trial copy of the new one by asking
+`/api/workspaces` for `200`, and from that release on the answer without a session is `401`.
+The panel reports the trial failed and nothing is installed. Install that one release with
+the `curl … | sh` line above; every update after it logs in to its own trial and passes.
 
 **Upgrading past the release that adds per-stage models changes which model runs.**
 `COS_MODEL` no longer decides the model of the eight stages: each now ships with a default
@@ -194,19 +201,55 @@ Changing any of these after the first install means editing
 `systemctl --user restart coscc` — `install.sh` will not touch that file again on its own,
 by design (see `## Update`).
 
-## The default bind address is 0.0.0.0, and there is no authentication anywhere in this app
+## Logging in
 
-Say this plainly, because softening it would be the wrong kind of documentation: **this app
-has no login, no token, no password, on any route.** Binding `0.0.0.0` means every machine
-that can route to this one, on this port, can do everything the page can do — including the
-two controls that spend real Claude account quota (sending a chat message, and running a
-step of the SDLC loop). There is no in-between state; reaching the port is using the app.
+**The default bind address is still `0.0.0.0`**, and since
+`.cos/0070_anyone-who-reaches-the-port-can-run-anything` one master password stands in front of
+every route: the page, its socket, every `/api` route. The only paths that answer without a
+session are `/api/health` (`install.sh` probes it), `/login`, and `/setup` until a password is
+set. It is one password for one person: whoever holds it, or a live session cookie, can do
+everything the page can — including the two controls that spend real Claude account quota —
+under any name they type.
 
-This is a decision the project's originator made on 2026-09-22, not an oversight
-(`.cos/0011_no-install-path-on-a-clean-machine/spec.md:158-170`). If that is not what you want,
-pass `--host 127.0.0.1` at install time (see `## Options`) and reach the page over an SSH
-tunnel or a VPN instead of exposing the port directly. There is no built-in access control
-to fall back on if you leave it open.
+**The first visit sets the password.** With no password stored, the service prints a setup
+token to its log each time it starts, and `/setup` asks for it:
+
+```sh
+journalctl --user -u coscc | grep 'setup token'
+```
+
+Run by hand (`uv run coscc`), the line is on that terminal. Only someone who can read this
+machine's log can set the password — anyone in the `adm` or `systemd-journal` group included,
+until you have set it. After that the token in the log is dead.
+
+**Forgot it?** On the machine running coscc, with the service running or not:
+
+```sh
+coscc reset-password
+```
+
+It removes the password and every session from `cos.db` and prints that file's path. The
+running service notices on its next request: every browser is logged out, and the next visit
+goes back to `/setup` with a new token in the log. There is no way to reset it over the web.
+
+**A session lasts 30 days from its last use**; *Đăng xuất* at the bottom of the sidebar ends it.
+**Five wrong passwords from one address in a minute lock that address out** for 60 s, then twice
+as long after each further failure, up to an hour. The count lives in memory: restarting the
+service clears it.
+
+**Plain HTTP is readable.** coscc serves no TLS. Off loopback, the password, the session cookie
+and the setup token cross the network as anyone watching it can read; the startup banner and the
+login page both say so. Put it behind a reverse proxy with TLS, or on a private network (a VPN,
+an SSH tunnel, or `--host 127.0.0.1` at install time, see `## Options`). A proxy in front must:
+
+- **pass `Host` through unchanged.** A request that changes something, and every websocket
+  handshake, is refused with `403` when its `Origin` does not match `Host`.
+- **carry the websocket at `/_event`.** The page does nothing without it.
+- be on this machine for the session cookie to carry `Secure`: `X-Forwarded-Proto: https` is read
+  only from a loopback peer.
+
+Behind a proxy every client shares the proxy's address, so one stranger's five wrong tries lock
+the owner out as well. `X-Forwarded-For` is never read; that is deliberate.
 
 ## What install leaves behind, and why there is no uninstall
 
