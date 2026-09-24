@@ -259,7 +259,10 @@ no commands, one turn, no budget.
   names the plan already wrote can match, and landing one needs a merge to `main`. The
   diff reads `origin/main` as the step's own preparation left it and does not fetch: an
   `impl` re-run on a tree already on its branch measures against the last fetch, and
-  `plan_drift.main_sha` in the `start` record says which. Anything that fails — no `done`
+  `plan_drift.main_sha` in the `start` record says which. Since `0048` that preparation
+  reuses a fetch under 30s old, so a merge landing in the 30s before `impl` starts is not
+  in the diff either (`coscc/service_test.py`,
+  `test_a_merge_under_thirty_seconds_after_the_plans_fetch_is_not_seen`). Anything that fails — no `done`
   run of `plan`, no section, a commit the tree lacks — is `checked: false` with a reason,
   never an empty list, and never stops the step. A step started at a terminal gets none of
   this.

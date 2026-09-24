@@ -19,7 +19,7 @@ from datetime import date
 from pathlib import Path
 from unittest import mock
 
-from coscc import gitops, harness, units, worktrees
+from coscc import fetches, gitops, harness, units, worktrees
 from coscc.config import Config
 from coscc.service import STAGE_FILES, Invalid, Service, describe_base, outcome_label, step_cwd
 from coscc.sessions import Live, Sessions
@@ -895,7 +895,15 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
             yield ("chunk", self.reply)
             yield ("done", {"session_id": "sess-42", "cost": {"output_tokens": 3}})
 
-    setUp = AUnitsBaseIsTheRemoteTrunk.setUp
+    def setUp(self):
+        AUnitsBaseIsTheRemoteTrunk.setUp(self)
+        # `0048`: a step under 30s after the last fetch reuses it, so a merge between
+        # `plan` and `impl` is only seen when `impl` starts later — `_impl` moves this clock.
+        self.now = [1000.0]
+        patcher = mock.patch.object(fetches, "shared", fetches.Fetches(clock=lambda: self.now[0]))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     _git = AUnitsBaseIsTheRemoteTrunk._git
     _advance_remote = AUnitsBaseIsTheRemoteTrunk._advance_remote
     _typed_unit = AUnitsBaseIsTheRemoteTrunk._typed_unit
@@ -922,6 +930,7 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         return unit
 
     def _impl(self, unit: str) -> tuple[str, dict]:
+        self.now[0] += fetches.REUSE_SECONDS
         self.service.sessions.reply = "working"
         self._run_step(unit, "impl")
         return self.service.sessions.prompts[-1], self._start(unit, "impl")
@@ -961,6 +970,18 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         self.assertEqual(start["plan_drift"]["files"], [])
         self.assertTrue(start["plan_drift"]["checked"])
         self.assertNotIn(self.HEADING, prompt)
+
+    def test_a_merge_under_thirty_seconds_after_the_plans_fetch_is_not_seen(self):
+        # `0048` C1 reaching `0042`: the fetch is reused, so `origin/main` has not moved and
+        # the merge is missing from the diff. `main_sha` says which tip was measured.
+        unit = self._planned()
+        self._advance_remote("a.py", "changed\n")
+        self.now[0] -= fetches.REUSE_SECONDS  # `_impl` adds it back: the same instant
+        _, start = self._impl(unit)
+        self.assertEqual(start["base"]["fetch"]["outcome"], "reused")
+        self.assertEqual(start["plan_drift"]["files"], [])
+        self.assertTrue(start["plan_drift"]["checked"])
+        self.assertEqual(start["plan_drift"]["main_sha"], start["plan_drift"]["plan_sha"])
 
     def test_r4c_a_plan_no_run_wrote_cannot_be_checked(self):
         unit, directory = self._unit_with_spec()

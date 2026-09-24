@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -114,9 +115,15 @@ def section_of(prompt: str) -> str:
 async def run(root: Path) -> bool:
     import httpx
 
+    from coscc import fetches
     from coscc.api import build
     from coscc.config import Config
     from coscc.journal import Journal
+
+    # `0048`: a step under 30s after the last fetch reuses it. The merge in step 3 stands
+    # for one that lands later than that, so the clock is moved past it there.
+    offset = [0.0]
+    fetches.shared = fetches.Fetches(clock=lambda: time.monotonic() + offset[0])
 
     remote = root / "remote.git"
     git(root, "init", "-q", "--bare", "-b", "main", str(remote))
@@ -190,6 +197,7 @@ async def run(root: Path) -> bool:
         git(other, "commit", "-q", "-m", "B: another unit merged")
         git(other, "push", "-q", "origin", "main")
         b_sha = git(other, "rev-parse", "HEAD")
+        offset[0] += fetches.REUSE_SECONDS
 
         # 4-5. `impl` starts for both.
         stand_in.reply = "working"
