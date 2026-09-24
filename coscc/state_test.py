@@ -275,6 +275,18 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
         )
         self.assertEqual(_hold_fields({})["hold_state"], "")
 
+    def test_the_activity_row_says_which_pull_requests_were_already_closed(self):
+        from coscc.state import _hold_detail
+
+        row = {"reason": "không đáng", "by": "Leif", "effects": [
+            {"effect": "close-pr", "result": "failed", "detail": "closed #7; #9: HTTP 502: Bad Gateway"},
+            {"effect": "remove-worktree", "result": "done", "detail": "removed /t"},
+        ]}
+        self.assertEqual(
+            _hold_detail(row),
+            " / không đáng / by Leif / close-pr: failed (closed #7; #9: HTTP 502: Bad Gateway)",
+        )
+
     def test_dropped_units_leave_the_lanes_and_paused_ones_stay(self):
         from types import SimpleNamespace
 

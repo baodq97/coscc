@@ -128,11 +128,14 @@ async def close_pr(root: str, branch: str, gh: prcomment.Run | None = None) -> d
     for row in mine:
         number = str(int(row.get("number") or 0))
         said = await prcomment._call(gh, ["pr", "close", number], root, None)
-        if isinstance(said, str):
-            return _effect("close-pr", "failed", said)
-        code, out, err = said
-        if code != 0:
-            return _effect("close-pr", "failed", prcomment._said(code, out, err))
+        if not isinstance(said, str):
+            code, out, err = said
+            said = prcomment._said(code, out, err) if code != 0 else ""
+        if said:
+            # Nothing retries a failed side effect (spec C6): the person cleaning up by hand
+            # needs to know which were already closed, not only which one failed.
+            already = f"closed {', '.join(closed)}; " if closed else ""
+            return _effect("close-pr", "failed", f"{already}#{number}: {said}")
         closed.append(f"#{number}")
     return _effect("close-pr", "done", f"closed {', '.join(closed)}")
 

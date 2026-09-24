@@ -351,6 +351,17 @@ def _hold_fields(u: dict) -> dict:
     }
 
 
+def _hold_detail(row: dict) -> str:
+    """The Activity detail of one `hold` run-log row after its unit: reason, name, and each
+    side effect that did not finish with what it said — a failed close names the pull
+    requests already closed, and nothing retries it (review round 1, F2)."""
+    detail = f" / {row.get('reason', '')} / by {row.get('by', '')}"
+    for e in row.get("effects") or []:
+        if e.get("result") != "done":
+            detail += f" / {e.get('effect')}: {e.get('result')} ({e.get('detail', '')})"
+    return detail
+
+
 def _integration_fields(info: dict | None) -> dict:
     """`Unit`'s integration fields from the board's `integration` dict, or all empty."""
     if not info:
@@ -1139,10 +1150,7 @@ class StudioState(rx.State):
             }.get(row["kind"], row["kind"])
             detail = f"{row['unit']}"
             if row["kind"] == "hold":
-                detail += f" / {row.get('reason', '')} / by {row.get('by', '')}"
-                for e in row.get("effects") or []:
-                    if e.get("result") != "done":
-                        detail += f" / {e.get('effect')}: {e.get('result')}"
+                detail += _hold_detail(row)
             if row["denials"]:
                 detail += f" / {row['denials']} tool call(s) refused"
             if row["artifact"]:

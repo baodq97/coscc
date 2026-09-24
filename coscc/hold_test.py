@@ -121,9 +121,26 @@ class ClosingThePullRequest(unittest.TestCase):
         self.assertEqual(asyncio.run(hold.close_pr("/tmp", "", FakeGh()))["result"], "skipped")
 
     def test_gh_failing_is_failed_not_raised(self):
-        for which in ("list", "close"):
+        for which, detail in (("list", "HTTP 401: Bad credentials"), ("close", f"#{PR}: HTTP 401: Bad credentials")):
             got = asyncio.run(hold.close_pr("/tmp", BRANCH, FakeGh(fail=which)))
-            self.assertEqual((got["result"], got["detail"]), ("failed", "HTTP 401: Bad credentials"), which)
+            self.assertEqual((got["result"], got["detail"]), ("failed", detail), which)
+
+    def test_a_close_failing_after_another_says_which_were_closed(self):
+        gh = FakeGh(prs=[{"number": PR, "headRefName": BRANCH}, {"number": 9, "headRefName": BRANCH},
+                         {"number": 11, "headRefName": BRANCH}])
+        real = gh.__call__
+
+        async def second_fails(argv, cwd, stdin):
+            if argv == ["pr", "close", "9"]:
+                gh.calls.append(list(argv))
+                return 1, "", "HTTP 502: Bad Gateway"
+            return await real(argv, cwd, stdin)
+
+        got = asyncio.run(hold.close_pr("/tmp", BRANCH, second_fails))
+        self.assertEqual(got, {"effect": "close-pr", "result": "failed",
+                               "detail": f"closed #{PR}; #9: HTTP 502: Bad Gateway"})
+        # It stops at the failure: #11 is neither closed nor claimed.
+        self.assertNotIn(["pr", "close", "11"], gh.calls)
 
         async def missing(argv, cwd, stdin):
             raise FileNotFoundError("gh")
