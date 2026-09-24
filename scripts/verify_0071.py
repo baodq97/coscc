@@ -30,7 +30,9 @@ message that passes only because nothing scrolled has measured nothing.
     2  the environment is not ready — no build, stale build, no browser, port in use
 
 No session, no quota: nothing here runs a stage. It needs `COS_PORT` free, for the reason
-`scripts/proof_harness.py` gives; never run it alongside `verify_0003` or `verify_0006`.
+`scripts/proof_harness.py` gives, and a bundle built for that port; never run it alongside
+`verify_0003` or `verify_0006`. Beside a running board:
+`COS_PORT=8791 uv run coscc-build && COS_PORT=8791 uv run python scripts/verify_0071.py`.
 Since `0070` every route sits behind the login, so this writes a password hash and one
 session into the temporary data root before the app starts, and carries that cookie.
 
@@ -41,6 +43,7 @@ installed from a wheel, before 2026-10-08 (`intent.md ## Answers, câu 4`).
 from __future__ import annotations
 
 import hashlib
+import os
 import secrets
 import shutil
 import subprocess
@@ -392,6 +395,11 @@ def one_width(browser, base, token, api, cwd, size) -> list[bool]:
 
 
 def run() -> int:
+    # A step the app starts inherits `__REFLEX_*` blank, and `run.py`'s `setdefault` keeps
+    # a blank mount flag: no page, `/` a 404 (measured 2026-09-24, as `verify_0070.py
+    # --browser` found). Only the blank ones go; one somebody set is kept.
+    for name in [k for k, v in os.environ.items() if k.startswith("__REFLEX") and not v]:
+        del os.environ[name]
     config = from_env()
     require_build(config)
     require_free_port(config)
