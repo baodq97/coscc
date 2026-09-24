@@ -1072,6 +1072,23 @@ class EverySessionGetsADataRootOfItsOwn(unittest.IsolatedAsyncioTestCase):
             await task
         self.assertFalse(self._root(_EnvClient.envs[0]).exists())
 
+    async def test_r3_a_stop_that_cancels_the_close_waits_for_the_closing(self):
+        """Review round 1, F1: the directory went while the CLI the cancelled close was
+        still ending could open a `Data` and make it again."""
+        h = sessions.StepHandle()
+        client = _SlowClient()
+        with mock.patch("coscc.sessions.ClaudeSDKClient", lambda options=None: client):
+            task = asyncio.create_task(self._step(h))
+            await client.closing.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertTrue(h.scratch.is_dir(), "the CLI may still be running")
+        client.release.set()
+        await h.close()  # the closing the cancel did not reach
+        await asyncio.sleep(0)
+        self.assertFalse(h.scratch.exists())
+
     async def test_r3_gone_when_the_client_cannot_be_built(self):
         _EnvClient.boom = True
         with self.assertRaises(RuntimeError):

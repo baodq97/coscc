@@ -371,6 +371,20 @@ class StepHandle:
             self._closing = _begin(_shut(self.client, transport, reached=True))
         await asyncio.shield(self._closing)
 
+    def drop_scratch(self) -> None:
+        """Remove the step's data root once its client is closed (`0076` R3).
+
+        A Stop's cancel can land on the close itself: the closing goes on without its
+        caller, and the CLI may live `DISCONNECT_TIMEOUT + KILL_AFTER` longer. A `Data` it
+        opened in that time would make the directory again with nobody left to remove it
+        (`0076` review round 1, F1), so the removal waits for that closing.
+        """
+        scratch = self.scratch
+        if self._closing is not None and not self._closing.done():
+            self._closing.add_done_callback(lambda _: _drop(scratch))
+        else:
+            _drop(scratch)
+
 
 async def _abandon(client: Any) -> None:
     """Close a client whose `connect` did not finish.
@@ -685,7 +699,7 @@ class Sessions:
                 # closing goes on without us, and the handle must still leave the set.
                 self._steps.discard(step)
                 # After the close, so the CLI is gone before its data root is (`0076` R3).
-                _drop(step.scratch)
+                step.drop_scratch()
 
     async def _stream(
         self, cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
@@ -865,4 +879,4 @@ class Sessions:
         for step in list(self._steps):
             await step.close()
             self._steps.discard(step)
-            _drop(step.scratch)
+            step.drop_scratch()
