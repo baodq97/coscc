@@ -1483,3 +1483,23 @@ test('0003 R7: ## Units is read wherever it sits, after ## Answers included', ()
   const text = `${IDEA(['0001_a'])}\n## Answers\n\n### Câu 1\n- not a unit\n\n## Units\n\n- 0002_b\n`
   assert.deepEqual(parseIdeaUnits(text), ['0001_a', '0002_b'])
 })
+
+test('0003 R2: new-idea numbers ideas on their own sequence and writes nothing', () => {
+  assert.equal(cli('--root', ideaRoot(), 'new-idea', 'x').stdout.trim(), '.cos/ideas/0001_x.md')
+  const root = ideaRoot({ '0009_y': {} }, { '0003_x.md': IDEA() })
+  const out = cli('--root', root, 'new-idea', 'z')
+  assert.equal(out.status, 0, out.stderr)
+  assert.equal(out.stdout.trim(), '.cos/ideas/0004_z.md', 'the unit 0009 does not move it')
+  assert.deepEqual(readdirSync(join(root, '.cos', 'ideas')), ['0003_x.md'])
+  // And an idea does not move a unit's number.
+  assert.equal(cli('--root', root, 'new-path', 'w').stdout.trim(), '.cos/0010_w')
+})
+
+test('0003 R2: new-idea counts --reserve-from, and refuses a bad slug in new-path\'s words', () => {
+  const host = ideaRoot({}, { '0007_h.md': IDEA() })
+  assert.equal(cli('--root', ideaRoot(), '--reserve-from', host, 'new-idea', 'x').stdout.trim(), '.cos/ideas/0008_x.md')
+  const idea = cli('--root', ideaRoot(), 'new-idea', 'Bad_Slug')
+  const path = cli('--root', ideaRoot(), 'new-path', 'Bad_Slug')
+  assert.equal(idea.status, 2)
+  assert.equal(idea.stderr, path.stderr)
+})

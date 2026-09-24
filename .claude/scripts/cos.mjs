@@ -1411,19 +1411,35 @@ const LOCAL_ONLY = new Set(['check-branch', 'check-tag', 'check-version'])
 // is, and a directory without one contributes nothing. The path printed stays relative to
 // the root, because the root is the only place anything is created.
 function cmdNewPath(slug, cosDir, reserveFrom = []) {
+  if (slugRefused('new-path', slug)) return 2
+  const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))].flatMap((d) => readAll(d))
+  console.log(`.cos/${nextNumber(taken)}_${slug}`)
+  return 0
+}
+
+// `0003_one-idea-is-trapped-inside-one-unit` R2. The same rules as `new-path`, on the ideas'
+// own sequence: the highest number in `.cos/ideas/` of the root and of each reserved
+// directory, plus one. A unit's number does not move it. Nothing is written.
+function cmdNewIdea(slug, cosDir, reserveFrom = []) {
+  if (slugRefused('new-idea', slug)) return 2
+  const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))].flatMap((d) => readIdeas(d))
+  console.log(`.cos/${IDEAS_DIR}/${nextNumber(taken)}_${slug}.md`)
+  return 0
+}
+
+// One wording for a refused slug, whichever sequence asked.
+function slugRefused(cmd, slug) {
   if (!slug) {
-    console.error('usage: cos.mjs new-path <slug>')
-    return 2
+    console.error(`usage: cos.mjs ${cmd} <slug>`)
+    return true
   }
   if (!SLUG_RE.test(slug)) {
     console.error(`Invalid slug "${slug}".`)
     console.error('  Lowercase letters, digits and single hyphens only; no underscore,')
     console.error('  because the underscore separates the number from the slug.')
-    return 2
+    return true
   }
-  const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))].flatMap((d) => readAll(d))
-  console.log(`.cos/${nextNumber(taken)}_${slug}`)
-  return 0
+  return false
 }
 
 // Only when run as a command. Importing this file for tests must not exit the process.
@@ -1479,6 +1495,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     gate: () => cmdGate(rest[0], rest[1], cosDir, repoDir, limit),
     next: () => cmdNext(rest[0], cosDir, repoDir, limit),
     'new-path': () => cmdNewPath(rest[0], cosDir, reserveFrom),
+    'new-idea': () => cmdNewIdea(rest[0], cosDir, reserveFrom),
     'unit-branch': () => cmdUnitBranch(rest[0], cosDir),
     'check-branch': () => cmdCheckBranch(rest[0]),
     'check-tag': () => cmdCheckTag(rest[0]),
@@ -1488,7 +1505,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!run) {
     console.error('usage: cos.mjs [--root <dir>] <command>')
     console.error('  reading a .cos/ (these take --root):')
-    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit>')
+    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea [--reserve-from <dir>]... <slug> | unit-branch <unit>')
     console.error('  describing this checkout (these do not):')
     console.error('    check-branch [name] | check-tag <tag> | check-version')
     process.exit(2)
@@ -1507,10 +1524,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
 
   // `--reserve-from` means "these numbers are taken too", which is a question only
-  // `new-path` asks. Anywhere else it would be silently ignored, and a flag that is
-  // accepted and ignored reads as a flag that worked.
-  if (reserveFrom.length && cmd !== 'new-path') {
-    console.error(`--reserve-from applies only to \`new-path\`, not to \`${cmd}\`.`)
+  // `new-path` and `new-idea` ask. Anywhere else it would be silently ignored, and a flag
+  // that is accepted and ignored reads as a flag that worked.
+  if (reserveFrom.length && cmd !== 'new-path' && cmd !== 'new-idea') {
+    console.error(`--reserve-from applies only to \`new-path\` and \`new-idea\`, not to \`${cmd}\`.`)
     process.exit(2)
   }
 
