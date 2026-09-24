@@ -409,9 +409,11 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
-    @api.get("/api/board/running")
+    @api.get("/api/board/steps")
     async def running_steps(request: Request) -> Any:
-        """`0034`. The board steps running now in one workspace. This process only."""
+        """`0034`. The board steps running now in one workspace, as the registry a Stop
+        reads holds them. This process only. Not `/api/board/running`: that is `0051`'s
+        display of steps and integrations, and it says nothing a Stop would need."""
         try:
             return service.running_steps(request.query_params.get("cwd", ""))
         except Invalid as e:

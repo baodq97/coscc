@@ -412,13 +412,13 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(running.stop_requested)
 
     async def test_the_running_list_is_what_the_registry_holds(self):
-        self.assertEqual((await self.client.get("/api/board/running", params={"cwd": "/tmp"})).json(), [])
+        self.assertEqual((await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), [])
         self.service.steps.claim(self.service._journal_key("/tmp"), "0001_a", "plan")
-        [row] = (await self.client.get("/api/board/running", params={"cwd": "/tmp"})).json()
+        [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual((row["unit"], row["stage"], row["stopping"]), ("0001_a", "plan", False))
 
     async def test_the_running_list_refuses_a_directory_that_is_not_a_workspace(self):
-        r = await self.client.get("/api/board/running", params={"cwd": "/etc"})
+        r = await self.client.get("/api/board/steps", params={"cwd": "/etc"})
         self.assertEqual(r.status_code, 400)
 
 

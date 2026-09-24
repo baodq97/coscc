@@ -324,7 +324,7 @@ async def run_plain(root: Path) -> bool:
         return await client.post("/api/board/run", json={"cwd": ws, "unit": unit, "stage": "spec"})
 
     async def listed():
-        return {r["unit"] for r in (await client.get("/api/board/running", params={"cwd": ws})).json()}
+        return {r["unit"] for r in (await client.get("/api/board/steps", params={"cwd": ws})).json()}
 
     async def until(predicate, what):
         for _ in range(400):
