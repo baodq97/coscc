@@ -2417,3 +2417,83 @@ class AStoppedStepEndsStopped(unittest.TestCase):
             self.assertEqual(out[-1], ("cancelled", None))
             self.assertEqual(self._ends(journal), [])
             self.assertEqual([r for r in journal.records() if r["kind"] == "attempt"], [])
+
+
+class RecordingChangesNothing(unittest.TestCase):
+    """`0073` R5. The same step with a recorder and without one: the same outcome, the same
+    artifact, the same `start` and `end` but for `run` and `events_lost`. A recorder that
+    raises everywhere changes none of that, and the `end` says events were lost."""
+
+    class Replies:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+            yield ("done", {"session_id": "s-1", "terminal_reason": "success",
+                            "cost": {"turns": 2, "cost_usd": 0.25}})
+
+    class Raises:
+        run = "r-broken"
+        seq = 4
+
+        def __getattr__(self, name):
+            def boom(*a, **k):
+                raise RuntimeError(name)
+            return boom
+
+    IGNORED = ("at", "run", "events_lost", "session_id")
+
+    def _once(self, make_recorder):
+        """`make_recorder(data)` gives the step's recorder; `None` runs it with no row at all."""
+        from coscc import steps
+        from coscc.data import Data
+
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            running = None
+            if make_recorder is not None:
+                running = steps.Registry().claim(d, UNIT, "spec")
+                running.handle.recorder = make_recorder(Data(d))
+
+            async def go():
+                return [i async for i in Runner(sessions=self.Replies(), journal=journal).run(
+                    workspace=d, directory=directory, journal_key=d, unit=UNIT,
+                    stage="spec", artifact="spec.md", stages=STAGES, mode="manual", running=running,
+                )]
+
+            out = asyncio.run(go())
+            raw = [r for r in journal.records() if r["kind"] in ("start", "end")]
+            # Each run has its own temporary directory, and the records name it.
+            same = [
+                {k: (v.replace(d, "<d>") if isinstance(v, str) else v)
+                 for k, v in r.items() if k not in self.IGNORED}
+                for r in raw
+            ]
+            return out[-1][1]["outcome"], (directory / "spec.md").read_bytes(), same, raw
+
+    def test_with_and_without_a_recorder_the_step_is_the_same(self):
+        from coscc import events
+
+        plain = self._once(None)
+        recorded = self._once(lambda data: events.Recorder("r-1", data, "/w", "/w/ws", UNIT, "spec"))
+        self.assertEqual(plain[:3], recorded[:3])
+        start, end = recorded[3]
+        self.assertEqual((start["run"], end["run"], end["events_lost"]), ("r-1", "r-1", 0))
+        self.assertNotIn("run", plain[3][0])
+
+    def test_a_recorder_that_raises_everywhere_changes_nothing_but_events_lost(self):
+        plain = self._once(None)
+        broken = self._once(lambda data: self.Raises())
+        self.assertEqual(plain[:3], broken[:3])
+        self.assertGreater(broken[3][1]["events_lost"], 0)
+
+    def test_every_refusal_reaches_the_listener_and_the_record_keeps_five(self):
+        from coscc.runner import Denials
+
+        heard = []
+        denials = Denials()
+        denials.listener = lambda tool, tool_input, reason: heard.append((tool, tool_input, reason))
+        for i in range(7):
+            denials.record("Bash", "no", {"command": str(i)})
+        self.assertEqual(len(heard), 7)
+        self.assertEqual(heard[6], ("Bash", {"command": "6"}, "no"))
+        self.assertEqual((denials.count, len(denials.reasons)), (7, Denials.KEEP))
