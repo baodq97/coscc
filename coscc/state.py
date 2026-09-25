@@ -74,9 +74,12 @@ def _cell_label(row: dict) -> tuple[str, str]:
     if status == "not started" and last_run and last_run.get("outcome") != "done":
         turns, cost = last_run.get("turns"), last_run.get("cost_usd")
         outcome = last_run.get("outcome")
-        if turns is None or cost is None:
+        # `0092` R8 a: turns and cost are each known or not, and each is said as it is.
+        if turns is None and cost is None:
             return f"not started · {outcome} · turns and cost unknown", "amber"
-        return f"not started · {outcome} · {turns} turns · ${cost:.2f}", "amber"
+        said_turns = "turns unknown" if turns is None else f"{turns} turns"
+        said_cost = "cost unknown" if cost is None else f"${cost:.2f}"
+        return f"not started · {outcome} · {said_turns} · {said_cost}", "amber"
     return status, STATUS_COLOR.get(status, "gray")
 
 
@@ -387,6 +390,12 @@ def backlog_view(data: dict) -> dict:
         "shortlist_draft": [str(e.get("unit") or "") for e in b.get("shortlist") or []],
         "backlog_unestimated": list(b.get("unestimated") or []),
         "backlog_note": note,
+        # `0092` R11: the finished units measured, and those left out for an unknown cost.
+        "backlog_measured": (
+            f"{int(b.get('measured_count') or 0)} finished units measured; "
+            f"{int(b.get('undetermined_count') or 0)} left out, cost unknown."
+            if int(b.get("undetermined_count") or 0) > 0 else ""
+        ),
         "backlog_recorded": (
             f"Saved {present.when(record.get('at'))} by {record.get('by')}: {record.get('reason')}"
             if record else ""
@@ -788,12 +797,25 @@ def _channel_line(channel: dict) -> str:
     return " ".join(parts)
 
 
+COST_NOTE = "Added up from each finished run"
+
+
+def cost_note(total: dict) -> str:
+    """`0092` R8 c. The Cost tile's caption, saying how many runs it could not add (S1)."""
+    n = int(total.get("unknown") or 0)
+    return f"{COST_NOTE}; {n} run(s) with unknown cost" if n > 0 else COST_NOTE
+
+
 def _usd(cost: dict) -> str:
     usd = float(cost.get(COST_USD) or 0.0)
+    # `0092` R8 b, c. Runs whose cost nobody knows are never shown as `—` or as nothing:
+    # the known part is added, and the rest said to be unknown.
+    unknown = int(cost.get("unknown") or 0) > 0
     if not usd:
-        return "—"
+        return "unknown" if unknown else "—"
     # Under a cent still has to read as a number, not as $0.00.
-    return f"${usd:.4f}" if usd < 0.01 else f"${usd:.2f}"
+    known = f"${usd:.4f}" if usd < 0.01 else f"${usd:.2f}"
+    return f"{known} + unknown" if unknown else known
 
 
 def _title_of(unit_name: str) -> str:
@@ -1088,6 +1110,7 @@ class StudioState(rx.State):
     backlog_rest: list[BacklogRow] = []
     backlog_unestimated: list[str] = []
     backlog_note: str = ""
+    backlog_measured: str = ""
     backlog_recorded: str = ""
     backlog_warnings: list[str] = []
     backlog_suggested: list[str] = []
@@ -1128,6 +1151,7 @@ class StudioState(rx.State):
     events: list[Event] = []
     usage_total_tokens: str = "—"
     usage_total_usd: str = "—"
+    usage_cost_note: str = COST_NOTE
     knobs: list[Knob] = []
     grants: list[GrantRow] = []
     data_dir: str = ""
@@ -1596,6 +1620,7 @@ class StudioState(rx.State):
     def _load_activity(self) -> None:
         self.events = []
         self.usage_total_tokens, self.usage_total_usd = "—", "—"
+        self.usage_cost_note = COST_NOTE
         if not self.cwd:
             return
         try:
@@ -1640,6 +1665,7 @@ class StudioState(rx.State):
         _, shown = _tokens(total)
         self.usage_total_tokens = shown
         self.usage_total_usd = _usd(total)
+        self.usage_cost_note = cost_note(total)
 
     def _load_timeline(self) -> None:
         self.runs = []
@@ -1660,7 +1686,10 @@ class StudioState(rx.State):
                 outcome=r.get("outcome") or "—",
                 session_id=(r.get("session_id") or "—")[:12],
                 tokens=_tokens(r.get("cost") or {})[1],
-                usd=_usd(r.get("cost") or {}),
+                # `0092` R8 b: an ended run that reported no cost reads `unknown`, not `—`.
+                usd=_usd({**(r.get("cost") or {}), "unknown": int(
+                    r.get("ended") is not None and not r.get("reported", True)
+                )}),
                 color="grass" if r.get("outcome") == "done" else "amber",
                 detail=r.get("detail") or "",
                 run=r.get("run") or "",

@@ -229,7 +229,7 @@ def _metrics() -> rx.Component:
                "The gate is closed on the next step", "circle-dot", "amber"),
         s.stat("Tokens", P.usage_total_tokens, "Billed for this workspace, from the run log",
                "sparkles", "blue"),
-        s.stat("Cost", P.usage_total_usd, "Added up from each finished run", "wallet", "grass"),
+        s.stat("Cost", P.usage_total_usd, P.usage_cost_note, "wallet", "grass"),
         columns=rx.breakpoints(initial="2", lg="4"), gap="12px", width="100%",
         id="workspace-metrics",
     )
@@ -1606,6 +1606,7 @@ def _backlog_screen() -> rx.Component:
             s.section_head("Shortlist",
                            rx.button("Take the first 7", on_click=P.fill_shortlist, size="1", variant="soft")),
             rx.cond(P.backlog_note != "", s.text(P.backlog_note, size="1")),
+            rx.cond(P.backlog_measured != "", s.text(P.backlog_measured, size="1")),
             rx.cond(P.backlog_recorded != "", s.text(P.backlog_recorded, size="1", margin_bottom="8px")),
             head,
             rx.foreach(P.backlog_rows, lambda r: _backlog_row(r, True)),

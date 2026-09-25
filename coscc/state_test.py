@@ -538,6 +538,39 @@ class CellLabelNamesAFailureTheArtifactCannot(unittest.TestCase):
         self.assertEqual(label, "accepted")
         self.assertEqual(color, "grass")
 
+    def test_0092_turns_known_and_cost_not_says_each(self):
+        from coscc.state import _cell_label
+
+        row = {"status": "not started", "last_run": {"outcome": "failed", "turns": 109, "cost_usd": None}}
+        self.assertEqual(_cell_label(row), ("not started · failed · 109 turns · cost unknown", "amber"))
+
+    def test_0092_cost_known_and_turns_not_says_each(self):
+        from coscc.state import _cell_label
+
+        row = {"status": "not started", "last_run": {"outcome": "failed", "turns": None, "cost_usd": 0.4}}
+        self.assertEqual(_cell_label(row), ("not started · failed · turns unknown · $0.40", "amber"))
+
+
+class ACostNobodyKnowsIsNeverShownAsNothing(unittest.TestCase):
+    """`0092` R8 b, c: `_usd` and the Cost caption say `unknown`, never `—` or `$0.00`."""
+
+    def test_usd(self):
+        from coscc.state import _usd
+
+        self.assertEqual(_usd({"cost_usd": 3.2}), "$3.20")
+        self.assertEqual(_usd({"cost_usd": 3.2, "unknown": 0}), "$3.20")
+        self.assertEqual(_usd({"cost_usd": 3.2, "unknown": 2}), "$3.20 + unknown")
+        self.assertEqual(_usd({"cost_usd": 0.004, "unknown": 1}), "$0.0040 + unknown")
+        self.assertEqual(_usd({"cost_usd": 0.0, "unknown": 1}), "unknown")
+        self.assertEqual(_usd({}), "—")
+
+    def test_the_cost_caption_counts_the_runs_it_could_not_add(self):
+        from coscc.state import COST_NOTE, cost_note
+
+        self.assertEqual(cost_note({"unknown": 0}), COST_NOTE)
+        self.assertEqual(cost_note({}), COST_NOTE)
+        self.assertEqual(cost_note({"unknown": 3}), "Added up from each finished run; 3 run(s) with unknown cost")
+
 
 class ACardShowsWhatServiceRunningSaid(unittest.TestCase):
     """`0051` plan step 6: `_activities` copies, and only `poll_running` feeds it."""
@@ -769,6 +802,13 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
         self.assertEqual(row.by, "agent")  # `0082` D68: the session id stays in the API
         self.assertIn("picks nothing out", view["backlog_note"])
         self.assertEqual(view["propose_warning"], "paid")
+        self.assertEqual(view["backlog_measured"], "")
+
+    def test_0092_the_units_left_out_for_an_unknown_cost_are_counted(self):
+        from coscc.state import backlog_view
+
+        view = backlog_view({**self.BOARD, "backlog": {**self.BOARD["backlog"], "undetermined_count": 3}})
+        self.assertEqual(view["backlog_measured"], "2 finished units measured; 3 left out, cost unknown.")
 
     def test_f3_no_saved_shortlist_leaves_the_empty_row_to_say_so(self):
         from coscc.state import backlog_view
