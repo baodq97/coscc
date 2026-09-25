@@ -22,13 +22,14 @@ Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/boa
   and a tool's own output can carry a token or a local path. Capturing is best-effort:
   `Runner.run`'s `finally` swallows every exception around it, so a step's outcome and its
   `end` record never depend on the capture succeeding.
-- **`POST /api/board/stop` ends anyone's step, under any name.** Since
+- **`POST /api/board/stop` ends anyone's step.** Since
   `0034`. It closes the step's CLI client and cancels the step's task; a CLI still running
   `sessions.DISCONNECT_TIMEOUT` (5s, chosen) after the close began gets SIGTERM from the
   app, and SIGKILL `KILL_AFTER` (3s, chosen) later — through the SDK's private
   `_transport._process`, so an SDK that renames it loses this silently; the step ends `stopped`, writes no artifact and records no
-  transition, and whatever it already committed or pushed stays. `stopped_by` is a name
-  the person typed, not an identity, and the trace is that one `end` record. A Stop whose
+  transition, and whatever it already committed or pushed stays. `stopped_by` is `owner`
+  from the board since `0082` (or a name the request carried), not an identity, and the
+  trace is that one `end` record. A Stop whose
   cancel reaches the step's task before its first turn leaves no trace at all: the runner
   never ran, so there is neither `start` nor `end`, and only the Stop's own reply names
   `stopped_by` (`Service._never_driven`, since `0050`). A step that

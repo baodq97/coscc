@@ -13,11 +13,15 @@ paths:
   `test_the_known_limit_of_the_deny_list`). `ship`'s grant holds `git` and `gh` with this
   machine's login and lands the change on `main` after the `ship` gate opens.
 - **The `pr` and `ship` grants reach further than this repository.** Their capability is
-  this machine's `gh` login, so they reach every repository that login reaches. The page
-  shows a warning string before the button is pressed; do not remove either.
+  this machine's `gh` login, so they reach every repository that login reaches. Since
+  `0082` (`.cos/0082_*/spec.md ## Answers, câu 5`) the page keeps one sentence beside the
+  button saying so (`service.CONSEQUENCE`); the full warning string is `policy.py`'s, still
+  in `/api/board` as `warning`, and this bullet is its place in the documentation. Do not
+  remove the sentence.
 - **The mode grants nothing, so the default button hands `pr` and `ship` their full grant.**
   `pr` pushes and `ship` merges with this machine's `gh` login whatever mode is set. What
-  still stands in front is the gate `run_step` asks and the warning string above.
+  still stands in front is the gate `run_step` asks and the one sentence beside the button
+  (`0082`); the full warning is behind *What it may use* on the unit.
 - **The read boundary is not a sandbox.** `Read`, `Glob` and `Grep` are held to the unit's
   worktree and its own folder in the store, for every grant. It binds only the stages
   without `Bash`: `impl`, `pr` and `ship` still have `cat` and `head`, and `check_command`

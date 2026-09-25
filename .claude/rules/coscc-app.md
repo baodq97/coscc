@@ -34,8 +34,8 @@ the page and forgetting to rebuild is possible at all.
 
 ## Shape
 
-One shell under seven static routes: `/` Overview, `/workspaces`, `/board`, `/sessions`,
-`/activity`, `/settings`, and `/unit` — the Board with a unit's dialog open,
+One shell under eight static routes (`/backlog` since `0082`): `/` Overview, `/workspaces`,
+`/board`, `/backlog`, `/sessions`, `/activity`, `/settings`, and `/unit` — the Board with a unit's dialog open,
 `?ws=<workspace name>&id=<unit>&tab=<tab>`. `coscc/place.py` reads and writes the address;
 `StudioState.arrive`, every route's `on_load`, is the only handler that sets `screen`,
 `cwd`, `unit_id` and `detail_tab` — a navigation button only returns `rx.redirect`. A new
@@ -68,8 +68,9 @@ locked position: no tools, no commands, one turn, no budget.
   review* and empties the other three. `state.py` reads lanes off artifact statuses.
 - **The five prose stages get no write tools and no commands, in any mode.** `plan`,
   `review` and `spec` may read, in every mode, inside the read boundary. A session that
-  cannot write a file needs the app to write its artifact from the reply. Settings says so
-  on the page, because otherwise it looks like the agent wrote the file.
+  cannot write a file needs the app to write its artifact from the reply. Since `0082` the
+  page no longer says so (`spec.md ## Answers, câu 5`); this bullet is where it is said,
+  because otherwise it looks like the agent wrote the file.
   `.cos/0005_hand-driven-invisible-loop/plan.md` Risk 1 records why.
 - **A `coscc/_harness/` left in a checkout shadows `.claude/`.** Both are gitignored and
   built, not committed, so `git status` stays clean while the app reads the stale copy —
@@ -106,4 +107,5 @@ only from here.
 | `POST /api/units/answer`, `/outcome`, `/hold`; re-running keeps `## Answers` | `.claude/docs/coscc-answers.md` | editing those routes, `coscc/hold.py`, or `answers_section`/`strip_answers`/`with_answers` in `coscc/runner.py` |
 | `POST /api/settings/models` and `/efforts`; `POST /api/backlog/*` | `.claude/docs/coscc-settings.md` | editing `/api/settings/*`, `coscc/models.py`, `/api/backlog/*` or `coscc/backlog.py` |
 | `spike` runs arbitrary code | `.claude/docs/coscc-spike.md` | editing the `spike` grant, its scratch directory, or its progress-file write |
+| what the page stopped explaining in `0082` | `.claude/docs/coscc-page-text.md` | adding words to a screen, or removing a sentence the page says beside a button |
 | every proof's cost; `capture_screens.py` overwrites `.web` | `.claude/docs/coscc-proofs.md` | running any `scripts/verify_*.py` or `scripts/capture_screens.py`, or writing a proof |

@@ -64,9 +64,10 @@ screen with a Vietnamese error message.
 **S7. Do not ask for a name once there is a one-person login.** The session already says
 who is there.
 A violation looks like: a "Your name" field beside *Send this answer*, *Stop* or *Pause*.
-Many recorded fields are typed names today (`Answered by:`, `stopped_by`, the backlog's
-`by`); the first unit that removes such a field decides what name replaces it, and the
-originator chooses it (spec C4).
+Those fields (`Answered by:`, `stopped_by`, the backlog's, hold's and update's `by`) were
+typed names until `0082`; since then the app writes the fixed word `owner` when a request
+names nobody (`.cos/0082_*/spec.md ## Answers, câu 1`). `owner` is not an identity: it says
+someone held the password or a live session, not who.
 
 **S8. A disabled button says why, or is hidden.** A control that cannot be used either
 carries its reason in view (a tooltip alone does not count on a phone) or is not shown.
