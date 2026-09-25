@@ -80,9 +80,6 @@ def _cell_label(row: dict) -> tuple[str, str]:
     return status, STATUS_COLOR.get(status, "gray")
 
 
-# `0082` D35. What `Updater.cut_list` says each job will do, in the page's words.
-_CUT_ACTION = {"sẽ bị dừng": "will be stopped", "sẽ chờ": "will be waited for"}
-
 LANE_COLOR = {
     "Planned": "gray",
     "In progress": "iris",
@@ -2384,7 +2381,7 @@ class StudioState(rx.State):
 
     def _show_cut(self, channel: str, listing: dict) -> None:
         self.cut_channel = channel
-        self.cut_items = [f"{_CUT_ACTION.get(i['action'], i['action'])}: {_job_line(i)}"
+        self.cut_items = [f"{i['action']}: {_job_line(i)}"
                           for i in listing.get("items") or []]
         self.cut_token = str(listing.get("token") or "")
         self.cut_open = True
