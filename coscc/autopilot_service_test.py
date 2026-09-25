@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from coscc import autopilot
 from coscc.config import Config
 from coscc.journal import Journal
 from coscc.service import Invalid, Service
@@ -319,6 +320,27 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [("0002_b", "integrate", "autopilot")])
         self.assertEqual(self.stops(), {"0001_a": "e"})
+
+    async def test_an_integration_before_its_mark_is_counted_against_the_cap(self):
+        reading = asyncio.Event()
+        self.addCleanup(reading.set)
+
+        async def slow(cwd, unit, started_by="person"):
+            # `integrate` fetches and asks `gh` before it takes its mark.
+            await reading.wait()
+            yield ("done", {})
+
+        self.service.integrate = slow
+        need = autopilot.reservation("integrate")
+        self.service.set_autopilot(self.ws, "daily_cap_usd", need + autopilot.reservation("spec") / 2)
+        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again",
+                 integration={"state": "behind"}, rounds=[], between_pr_and_ship=True)
+        await self.pass_()
+        self.assertNotIn((self.key, "0001_a"), self.service._active)
+        self.assertEqual(self.service._autopilot_cap([], 100.0)["running"], need)
+        self.add("0002_b", "spec")
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0002_b": "cap"}))
 
     async def test_ci_pending_is_quiet(self):
         self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", between_pr_and_ship=True)

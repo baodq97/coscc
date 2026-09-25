@@ -3421,11 +3421,17 @@ class Service:
         """R7's figures, for a pass and for the board: every workspace, every starter."""
         now = datetime.now().astimezone()
         spent, unknown = autopilot.spent_today(records, now)
-        active = [
-            (k, unit, "integrate" if mark.kind == "integrate" else mark.stage)
+        active = {
+            (k, unit): "integrate" if mark.kind == "integrate" else mark.stage
             for (k, unit), mark in self._active.items()
-        ]
-        running = autopilot.reserved(records, now, active)
+        }
+        # A launch holds no mark until `run_step` or `integrate` takes one — `integrate` only
+        # after its fetch and `gh` reads — and is counted from the moment it was chosen.
+        for k, runs in self._autopilot_runs.items():
+            for unit, (stage, task) in runs.items():
+                if not task.done():
+                    active.setdefault((k, unit), stage)
+        running = autopilot.reserved(records, now, [(k, unit, stage) for (k, unit), stage in active.items()])
         return {
             "limit": limit, "spent": round(spent, 2), "running": round(running, 2),
             "day": autopilot.today(now), "unknown": unknown,
