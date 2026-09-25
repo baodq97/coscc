@@ -15,6 +15,7 @@ touches a name that is not there", and it costs nothing to find every one of the
 from __future__ import annotations
 
 import ast
+import re
 import unittest
 
 from coscc import present
@@ -1389,23 +1390,61 @@ class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
         from coscc import state
         from coscc.service import Invalid
 
+        from coscc.screens_test import VIETNAMESE
+
         async def refuse(*args):
             refuse.args = args
-            raise Invalid("đạt needs a source: where the figure it rests on came from")
+            raise Invalid("the result needs a source: where the figure it rests on came from")
 
         async def never():
             raise AssertionError("a refused outcome must not reload the board")
 
+        fields = state.StudioState.get_fields()
+        self.assertEqual((fields["outcome_result"].default, fields["outcome_measured_by"].default),
+                         ("met", "Agent"))
         page = SimpleNamespace(
-            cwd="/w", unit_id="0001_x", outcome_result="đạt", outcome_measured_by="agent",
+            cwd="/w", unit_id="0001_x", outcome_result="met", outcome_measured_by="Agent",
             outcome_source="", outcome_reason="", outcome_note="",
             recording_outcome=False, notice="", _load_board=never,
         )
         with mock.patch.object(state, "SERVICE", SimpleNamespace(record_outcome=refuse)):
             asyncio.run(state.StudioState.record_outcome.fn(page))
-        self.assertEqual(page.notice, "đạt needs a source: where the figure it rests on came from")
+        self.assertEqual(page.notice, "the result needs a source: where the figure it rests on came from")
+        self.assertIsNone(VIETNAMESE.search(page.notice))
         self.assertFalse(page.recording_outcome)
         self.assertEqual(refuse.args, ("/w", "0001_x", "đạt", "agent", "", "", "", ""))
+
+    def test_0089_the_labels_go_down_as_the_stored_words(self):
+        """`0089` R1, R4. The page holds English labels; the service gets the stored words."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+        from coscc.screens_test import VIETNAMESE
+
+        sent = []
+
+        async def record(*args):
+            sent.append(args)
+            return {"unit": args[1], "result": args[2], "measured_by": args[3], "recorded_by": "owner"}
+
+        async def board():
+            return None
+
+        for label, word, who, stored in (("met", "đạt", "Agent", "agent"),
+                                         ("missed", "trượt", "You", "owner"),
+                                         ("could not be measured", "không đo được", "You", "owner")):
+            page = SimpleNamespace(
+                cwd="/w", unit_id="0001_x", outcome_result=label, outcome_measured_by=who,
+                outcome_source="s", outcome_reason="r", outcome_note="",
+                recording_outcome=False, notice="", _load_board=board, _load_artifact=lambda: None,
+            )
+            with mock.patch.object(state, "SERVICE", SimpleNamespace(record_outcome=record)):
+                asyncio.run(state.StudioState.record_outcome.fn(page))
+            self.assertEqual(sent[-1][2:4], (word, stored))
+            self.assertEqual(page.notice, f"Recorded {label} for 0001_x, measured by {who}.")
+            self.assertIsNone(VIETNAMESE.search(page.notice))
 
 
 class AnsweringAlwaysSaysSomething(unittest.TestCase):
@@ -1696,7 +1735,7 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
         self.assertEqual(asyncio.run(go()), (page.WATCH_WINDOW, 10, 400))
 
     def test_a_batch_already_in_the_last_page_is_not_shown_twice(self):
-        """`review.md` F1: *Về cuối* read the last page while a batch the follower had
+        """`review.md` F1: *Jump to latest* read the last page while a batch the follower had
         yielded waited for the state; applied after, it adds nothing it already shows."""
         import asyncio
 
@@ -1719,7 +1758,7 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
     def test_older_pages_past_the_window_say_newer_rows_left_and_about_to_the_end_returns(self):
         """`review.md` F2: an ended step of 654 events, scrolled up twice. The newest rows
         leave the list, the pane says so, a live batch is not appended after the gap, and
-        *Về cuối* reads the last page again, `end` included."""
+        *Jump to latest* reads the last page again, `end` included."""
         import asyncio
 
         from coscc import state as page
@@ -1755,15 +1794,22 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
         self.assertFalse(after)
 
     def test_the_four_notes_read_as_r13_says(self):
+        """`0073` R13's four notes, in English since `0089` R14 (S6)."""
         from coscc import state as page
+        from coscc.screens_test import VIETNAMESE
 
-        self.assertEqual(page.NO_RUN_NOTE, "không có luồng sự kiện: step này chạy trước 0073")
-        self.assertEqual(page._watch_note({"status": "purged", "purged_at": "2026-10-01"}), "đã xoá (2026-10-01)")
-        self.assertIn(
-            "app dừng khi step đang chạy; không có sự kiện nào sau ",
-            page._watch_note({"status": "ended-unknown", "last_at": 1_700_000_000_000}),
-        )
-        self.assertEqual(page._watch_note({"status": "ended", "events_lost": 3}), "thiếu 3 sự kiện")
+        self.assertEqual(page.NO_RUN_NOTE, "no event stream: this step ran before events were recorded")
+        purged = page._watch_note({"status": "purged", "purged_at": "2026-10-01T00:00:00+00:00"})
+        self.assertTrue(purged.startswith("events purged ("), purged)
+        self.assertNotIn("2026-10-01T", purged)
+        unknown = page._watch_note({"status": "ended-unknown", "last_at": 1_700_000_000_000})
+        self.assertIn("the app stopped while this step ran; no events after ", unknown)
+        none = page._watch_note({"status": "none"})
+        self.assertEqual(none, "no events were stored for this run")
+        lost = page._watch_note({"status": "ended", "events_lost": 3})
+        self.assertEqual(lost, "3 events missing")
+        for note in (page.NO_RUN_NOTE, purged, unknown, none, lost):
+            self.assertIsNone(VIETNAMESE.search(note), note)
 
 
 
@@ -2103,6 +2149,88 @@ class SessionsAreReadWhereTheyAreShown(unittest.TestCase):
         with fake.patches():
             asyncio.run(go())
         self.assertEqual(seen, [0, 0, 1, 1, 1, 2, 3])
+
+
+class _ReadOnly(_Page):
+    BOARD = {"stages": [], "recording": False, "units": [],
+             "read_only_because": "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR",
+             "empty_because": "this workspace has no .cos/ — nothing here runs the loop yet"}
+
+
+class TheBoardNoteNamesNoVariable(unittest.TestCase):
+    """`0089` R11 (D55): the page's own sentence in place of `read_only_because`."""
+
+    def test_a_read_only_empty_board(self):
+        import asyncio
+
+        from coscc import state as page
+
+        token = "state-test-0089-read-only"
+
+        async def go():
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            async with processor:
+                await arrive("/board?ws=a", "s1")
+                await asyncio.sleep(0.2)
+                note = (await _studio(manager, token)).board_note
+                await arrive("/sessions?ws=a", "s9")
+                await asyncio.sleep(0.15)
+                return note
+
+        with _ReadOnly().patches():
+            note = asyncio.run(go())
+        self.assertEqual(note, page.READ_ONLY_NOTE)
+        self.assertNotIn("COS_", note)
+
+
+ISO = re.compile(r"\d{4}-\d{2}-\d{2}T")
+
+
+class TimesReadForAReader(unittest.TestCase):
+    """`0089` R6, R12 (D52, D60): no raw time reaches `/activity` or the Timeline."""
+
+    def test_an_activity_row_has_a_readers_time(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+
+        row = {"kind": "end", "stage": "plan", "mode": "manual", "outcome": "done", "unit": "0001_x",
+               "denials": 0, "artifact": "", "at": "2026-09-25T04:13:29+00:00"}
+        feed = {"events": [row], "total": {}}
+        page = SimpleNamespace(cwd="/w", events=[], usage_total_tokens="", usage_total_usd="")
+        service = SimpleNamespace(activity_and_usage=lambda cwd, limit: feed)
+        with mock.patch.object(state, "SERVICE", service):
+            state.StudioState._load_activity(page)
+        [event] = page.events
+        self.assertTrue(event.time)
+        self.assertIsNone(ISO.search(event.time), event.time)
+
+    def test_a_timeline_row_has_readers_times_and_its_own_key(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+
+        runs = [
+            {"stage": "plan", "mode": "manual", "started": "2026-09-25T04:00:00+00:00",
+             "ended": "2026-09-25T04:10:00+00:00", "outcome": "done", "session_id": "abc", "run": "r1"},
+            {"stage": "impl", "mode": "manual", "started": "2026-09-25T05:00:00+00:00", "ended": None,
+             "outcome": None, "session_id": None, "run": ""},
+        ]
+        page = SimpleNamespace(cwd="/w", unit_id="0001_x", runs=[])
+        service = SimpleNamespace(timeline=lambda cwd, unit: {"runs": runs})
+        with mock.patch.object(state, "SERVICE", service):
+            state.StudioState._load_timeline(page)
+        done, running = page.runs
+        for field in (done.started, done.ended, running.started):
+            self.assertTrue(field)
+            self.assertIsNone(ISO.search(field), field)
+        self.assertEqual(running.ended, "")
+        self.assertFalse(any("still running" in f"{r.started}{r.ended}" for r in page.runs))
+        self.assertNotEqual(done.key, running.key)
+        self.assertEqual((done.key, running.key), ("r1", "impl-1"))
 
 
 if __name__ == "__main__":

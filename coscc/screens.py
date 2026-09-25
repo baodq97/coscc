@@ -289,7 +289,7 @@ def _empty_board() -> rx.Component:
                         rx.cond(
                             P.has_workspace,
                             "This workspace has no work units.",
-                            "Add a workspace, or set COS_WORKING_DIR and restart.",
+                            "Add a workspace, or open one from Workspaces.",
                         ),
                     ),
                     text_align="center", max_width="420px", id="board-note",
@@ -372,7 +372,8 @@ def _overview() -> rx.Component:
                 rx.foreach(P.workspaces, lambda w: rx.button(
                     s.mark(w.initials, w.color, "36px"),
                     rx.vstack(rx.text(w.name, size="2", weight="medium"),
-                              s.text(w.path, size="1"), spacing="0", align="start"),
+                              rx.cond(w.label != "", s.text(w.label, size="1")),
+                              spacing="0", align="start"),
                     rx.spacer(),
                     rx.cond(w.missing, s.badge("missing", "red")),
                     rx.icon("arrow-up-right", size=15, color=s.MUTED),
@@ -416,13 +417,15 @@ def _workspace_card(workspace: rx.Var[Workspace]) -> rx.Component:
                    overflow_wrap="anywhere"),
         s.text(rx.cond(workspace.label != "", workspace.label, "No label yet."),
                margin_top="8px", min_height="44px", overflow_wrap="anywhere"),
-        rx.hstack(rx.icon("folder-git-2", size=14, color=s.MUTED),
-                  s.text(workspace.path, size="1", overflow_wrap="anywhere"),
-                  spacing="2", margin_top="20px", align="start"),
+        _details("ws-path-" + workspace.id, "Details",
+                 rx.hstack(rx.icon("folder-git-2", size=14, color=s.MUTED),
+                           s.text(workspace.path, size="1", overflow_wrap="anywhere"),
+                           spacing="2", align="start"),
+                 margin_top="20px"),
         rx.box(height="1px", background=s.LINE, margin="20px 0 16px"),
         rx.hstack(
             s.text(rx.cond(workspace.source == "env",
-                           "From COS_WORKSPACES — read only here", "Stored"), size="1"),
+                           "Read only", "Stored"), size="1"),
             rx.spacer(),
             rx.button("Open workspace", rx.icon("arrow-right", size=14),
                       aria_label="Open " + workspace.name,
@@ -443,8 +446,7 @@ def _workspaces_screen() -> rx.Component:
         rx.cond(
             P.working_dir == "",
             rx.callout(
-                "No working folder is set, so no workspace can be added or removed. "
-                "Set COS_WORKING_DIR and restart — it is deliberately not settable here.",
+                "No working folder is set, so workspaces cannot be added or removed here.",
                 icon="info", color_scheme="amber", variant="surface", width="100%",
             ),
         ),
@@ -1050,8 +1052,7 @@ def _activity() -> rx.Component:
                 )),
                 rx.cond(P.usage_rows.length() == 0,
                         s.text("No run has cost anything here yet.")),
-                s.text("Bars share the largest value on this board. Cache reads and writes "
-                       "are counted, because they are billed.", size="1", margin_top="18px"),
+                s.text("Includes cache reads and writes, which are billed.", size="1", margin_top="18px"),
             ),
             columns=rx.breakpoints(initial="1", lg="2"), gap="16px", width="100%",
             align_items="start",
@@ -1278,14 +1279,17 @@ def _run_row(run: rx.Var[Run]) -> rx.Component:
                       s.badge(run.mode, "gray"), s.badge(run.outcome, run.color),
                       rx.spacer(),
                       # `0073` R10, R13: a run from before `0073` opens the pane on its note.
-                      rx.button(rx.icon("eye", size=13), "Xem",
+                      rx.button(rx.icon("eye", size=13), "View",
                                 on_click=P.open_watch(run.run, P.unit_id + " · " + run.stage, P.unit_id),
                                 class_name="watch-run", variant="soft", size="1"),
                       spacing="2", wrap="wrap", align="center", width="100%"),
-            s.text(run.started + " → " + run.ended, size="1",
-                   font_family="ui-monospace, monospace"),
-            s.text(run.tokens + " tokens / " + run.usd + " / session " + run.session_id,
+            s.text(rx.cond(run.ended != "", run.started + " → " + run.ended, run.started + " · running"),
                    size="1"),
+            s.text(run.tokens + " tokens / " + run.usd, size="1"),
+            rx.cond(run.session_id != "—",
+                    _details("run-" + run.key, "Details",
+                             s.text("session " + run.session_id, size="1",
+                                    font_family="ui-monospace, monospace"))),
             rx.cond(
                 run.detail != "",
                 rx.box(
@@ -1424,13 +1428,8 @@ def _outcome_panel() -> rx.Component:
             rx.cond(
                 u.outcome_form,
                 rx.vstack(
-                    s.text(
-                        "Appended to intent.md under ## Answers as ### Outcome; nothing above it "
-                        "changes, a later block replaces an earlier one, and no gate reads it. "
-                        "Neither name is checked: the password names nobody.",
-                        size="1", line_height="1.7",
-                    ),
-                    rx.select(["đạt", "trượt", "không đo được"], value=P.outcome_result,
+                    s.text("Adds an outcome block to intent.md.", size="1"),
+                    rx.select(list(present.RESULT_LABEL.values()), value=P.outcome_result,
                               on_change=P.set_outcome_result, size="1", id="outcome-result"),
                     rx.input(placeholder="Source — where the figure came from",
                              value=P.outcome_source, on_change=P.set_outcome_source,
@@ -1438,9 +1437,13 @@ def _outcome_panel() -> rx.Component:
                     rx.input(placeholder="Reason — why it could not be measured",
                              value=P.outcome_reason, on_change=P.set_outcome_reason,
                              width="100%", id="outcome-reason"),
-                    rx.input(placeholder="Measured by — agent, or a person's name",
-                             value=P.outcome_measured_by, on_change=P.set_outcome_measured_by,
-                             width="100%", id="outcome-measured-by"),
+                    rx.hstack(
+                        s.text("Measured by", size="1"),
+                        rx.select(list(present.MEASURER_LABEL.values()), value=P.outcome_measured_by,
+                                  on_change=P.set_outcome_measured_by, size="1",
+                                  aria_label="Measured by", id="outcome-measured-by"),
+                        spacing="2", align="center",
+                    ),
                     rx.text_area(placeholder="Note (optional)", value=P.outcome_note,
                                  on_change=P.set_outcome_note, width="100%", id="outcome-note"),
                     rx.button(
@@ -1694,17 +1697,9 @@ def _round_row(r: rx.Var[Round]) -> rx.Component:
 
 
 def _comments_tab() -> rx.Component:
-    """`0021` R4, R10, said on the page: what a comment is and what it is not."""
+    """`0021` R4, R10. What a comment is not is `.claude/docs/not-built.md`'s since `0089`."""
     return rx.vstack(
-        s.text(
-            "Each round of review.md goes to the pull request as one ordinary comment, "
-            "posted under this machine's gh login and marked as written by an agent "
-            "session. It is not an approval, and no gate reads it. A round the board ran "
-            "is posted when it is written; a round written at a terminal waits here until "
-            "someone presses Post to PR. The text goes up verbatim. Whoever holds the "
-            "password or a live session can press the button.",
-            size="1", line_height="1.8",
-        ),
+        s.text("Each review round is posted to the pull request as one comment.", size="1"),
         rx.cond(P.current_unit.pr_url != "",
                 rx.link(P.current_unit.pr_url, href=P.current_unit.pr_url,
                         is_external=True, size="1"),
@@ -1881,9 +1876,7 @@ def _detail_dialog() -> rx.Component:
                                 ),
                                 spacing="4", width="100%", align="start",
                             ),
-                            s.text("cos.mjs names no stage to run now — the line above "
-                                   "says why. Nothing re-asks on its own: press Ask again "
-                                   "once that has changed."),
+                            s.text("No stage is ready to run; the line above says why."),
                         ),
                         rx.cond(~P.unit_dropped, _integration_panel()),
                         rx.cond(~P.unit_dropped, _outcome_panel()),
@@ -1923,8 +1916,7 @@ def _detail_dialog() -> rx.Component:
                 rx.tabs.content(_comments_tab(), value="comments"),
                 rx.tabs.content(
                     rx.vstack(
-                        s.text("Every run of every step of this unit, oldest first. Read "
-                               "from the run log.", size="1"),
+                        s.text("Every run of this unit, oldest first.", size="1"),
                         rx.foreach(P.runs, _run_row),
                         rx.cond(P.runs.length() == 0,
                                 s.text("No step of this unit has been run from here.")),
@@ -1959,7 +1951,7 @@ def _detail_dialog() -> rx.Component:
 # scroll height nor the row nodes say where the row went; the seq does. The anchor is
 # never spent on the first change, so a live batch landing between *older* and its page
 # does not leave the page to arrive with none (F6 b). *Older* pressed at the bottom
-# anchors too; *Về cuối* drops the anchor and goes to the bottom. `data-seq` is watched as
+# anchors too; *Jump to latest* drops the anchor and goes to the bottom. `data-seq` is watched as
 # an attribute because a list that stays at `WATCH_WINDOW` rows changes no child at all.
 # The browser's own scroll anchoring is off on `#watch-list`, so this is the one thing
 # that moves it.
@@ -2038,9 +2030,9 @@ def _watch_row(e: rx.Var[WatchEvent]) -> rx.Component:
                 e.collapsed,
                 rx.cond(
                     opened,
-                    rx.button("Thu gọn", on_click=P.watch_collapse, size="1", variant="ghost",
+                    rx.button("Collapse", on_click=P.watch_collapse, size="1", variant="ghost",
                               class_name="watch-collapse"),
-                    rx.button("Mở", on_click=P.watch_expand(e.seq), size="1", variant="ghost",
+                    rx.button("Expand", on_click=P.watch_expand(e.seq), size="1", variant="ghost",
                               class_name="watch-expand"),
                 ),
             ),
@@ -2055,9 +2047,9 @@ def _watch_row(e: rx.Var[WatchEvent]) -> rx.Component:
                        "font_size": "12px", "font_family": _MONO},
             ),
         ),
-        rx.cond(e.collapsed & ~opened, s.text("… đã thu gọn; bấm Mở để xem hết", size="1")),
+        rx.cond(e.collapsed & ~opened, s.text("… collapsed; press Expand to see all", size="1")),
         rx.cond(e.truncated,
-                s.text("đã cắt khi lưu: chỉ giữ 64 000 ký tự đầu của " + e.original_length.to_string() + " ký tự",
+                s.text("cut when stored: kept the first 64 000 of " + e.original_length.to_string() + " characters",
                        size="1", color=rx.color("amber", 11))),
         rx.cond(e.persisted != "", s.text(e.persisted, size="1", color=rx.color("amber", 11))),
         class_name="watch-ev", custom_attrs={"data-seq": e.seq, "data-at": e.at},
@@ -2073,17 +2065,16 @@ def _watch_dialog() -> rx.Component:
                 rx.dialog.title(P.watch_title, size="4", weight="medium"),
                 s.badge(rx.cond(P.watch_status != "", P.watch_status, "—"), "iris"),
                 rx.spacer(),
-                rx.dialog.close(s.icon_button("x", "Đóng khung xem")),
+                rx.dialog.close(s.icon_button("x", "Close")),
                 width="100%", align="center",
             ),
             rx.dialog.description(
-                "Chỉ xem: không mở gate nào, không chạy gì, không đổi step. Ai giữ mật khẩu hoặc "
-                "một session còn sống đọc được mọi lệnh, đường dẫn, suy nghĩ và đầu ra tool ở đây.",
+                "This step's events, oldest first.",
                 size="1", margin_top="6px",
             ),
             rx.cond(P.watch_note != "", rx.callout(P.watch_note, id="watch-note", size="1",
                                                    color_scheme="amber", margin_top="8px")),
-            rx.button("Tải sự kiện cũ hơn", id="watch-older", on_click=P.watch_older,
+            rx.button("Load older events", id="watch-older", on_click=P.watch_older,
                       disabled=~P.watch_has_older, variant="ghost", size="1", margin_top="8px"),
             rx.box(
                 rx.box(id="watch-top", height="1px"),
@@ -2093,11 +2084,11 @@ def _watch_dialog() -> rx.Component:
             ),
             rx.hstack(
                 rx.cond(P.watch_pending > 0,
-                        s.text(P.watch_pending.to_string() + " sự kiện mới", id="watch-pending", size="1")),
+                        s.text(P.watch_pending.to_string() + " new events", id="watch-pending", size="1")),
                 rx.cond(P.watch_has_newer,
-                        s.text("Các sự kiện mới hơn đã rời khung xem", id="watch-newer", size="1")),
+                        s.text("Newer events have left this view", id="watch-newer", size="1")),
                 rx.cond(P.watch_has_newer | (~P.watch_following & (P.watch_status == "running")),
-                        rx.button("Về cuối", id="watch-live", on_click=P.watch_live, size="1")),
+                        rx.button("Jump to latest", id="watch-live", on_click=P.watch_live, size="1")),
                 spacing="3", align="center", margin_top="8px",
             ),
             id="watch-pane", max_width="min(960px, 96vw)", width="96vw",

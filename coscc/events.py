@@ -372,27 +372,27 @@ def _label(event: dict[str, Any]) -> str:
     if kind == "text":
         return "text" + (" (user)" if event.get("role") == "user" else "")
     if kind == "turn":
-        return f"lượt {event.get('n')}"
+        return f"turn {event.get('n')}"
     if kind == "tool_use":
         return f"{event.get('name')}"
     if kind == "tool_result":
-        return f"kết quả của {str(event.get('tool_use_id') or '')[-8:]}" + (
-            " (lỗi)" if event.get("is_error") else ""
+        return f"result of {str(event.get('tool_use_id') or '')[-8:]}" + (
+            " (error)" if event.get("is_error") else ""
         )
     if kind == "denied":
-        return f"{event.get('tool')} bị từ chối: {event.get('reason')}"
+        return f"{event.get('tool')} refused: {event.get('reason')}"
     if kind == "result":
         cost = event.get("cost_usd")
         tokens = sum(int(event.get(name) or 0) for name in TOKEN_FIELDS)
         return (
-            f"{event.get('num_turns')} lượt · "
-            + (f"${float(cost):.4f}" if cost is not None else "chi phí không rõ")
-            + f" · {tokens} token · {event.get('terminal_reason') or ''}"
+            f"{event.get('num_turns')} turns · "
+            + (f"${float(cost):.4f}" if cost is not None else "cost unknown")
+            + f" · {tokens} tokens · {event.get('terminal_reason') or ''}"
         ).rstrip(" ·")
     if kind == "system":
         return " ".join(str(p) for p in (event.get("class"), event.get("subtype")) if p)
     if kind == "end":
-        return f"kết thúc: {event.get('outcome')}"
+        return f"ended: {event.get('outcome')}"
     return str(kind or "")
 
 
@@ -413,8 +413,8 @@ def collapse(event: dict[str, Any]) -> dict[str, Any]:
     if event.get("persisted_path"):
         size = event.get("persisted_size")
         persisted = (
-            f"đầu ra đầy đủ ({size if size is not None else '?'} ký tự) nằm ở "
-            f"{event['persisted_path']} trên máy chạy app; board không đọc file này"
+            f"full output ({size if size is not None else '?'} characters) is at "
+            f"{event['persisted_path']} on the machine running the app; the board does not read it"
         )
     return {
         "seq": int(event.get("seq") or 0),
@@ -432,7 +432,7 @@ def collapse(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def full_text(event: dict[str, Any]) -> str:
-    """R12 *Mở*: the body as stored, whole (R4's cut is all that was ever kept)."""
+    """R12 *Expand*: the body as stored, whole (R4's cut is all that was ever kept)."""
     return _body(event)
 
 

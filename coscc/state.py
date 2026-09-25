@@ -615,6 +615,8 @@ class Run:
     detail: str = ""
     # `0073`. The step's `run`, empty for one written before `0073` (R13).
     run: str = ""
+    # `0089`. The row's own `_details` key: `run`, or `<stage>-<i>` when that is empty.
+    key: str = ""
 
 
 @dataclasses.dataclass
@@ -643,8 +645,13 @@ WATCH_WINDOW = 400
 # Seconds the pane gathers new events before it sends them (`spike.md ## U3`).
 WATCH_GATHER = 0.5
 
-# `0073` R13, word for word.
-NO_RUN_NOTE = "không có luồng sự kiện: step này chạy trước 0073"
+# `0073` R13, in English since `0089` (S6): no longer R13's words (`.cos/0089_*/spec.md` C1).
+NO_RUN_NOTE = "no event stream: this step ran before events were recorded"
+
+
+# `0089` R11 (D55). What the board says in place of the service's `read_only_because`, which
+# names `COS_WORKING_DIR` and stays as it is for the API (`coscc/board_api_test.py`).
+READ_ONLY_NOTE = "No working folder is set, so nothing can be recorded."
 
 
 def _watch_note(page: dict) -> str:
@@ -652,17 +659,17 @@ def _watch_note(page: dict) -> str:
     notes: list[str] = []
     status = page.get("status")
     if status == "purged":
-        notes.append(f"đã xoá ({page.get('purged_at') or ''})")
+        notes.append(f"events purged ({present.when(page.get('purged_at'))})")
     elif status == "ended-unknown":
         notes.append(
-            "app dừng khi step đang chạy; không có sự kiện nào sau "
-            + (events_mod.when(page.get("last_at")) if page.get("last_at") else "lúc bắt đầu")
+            "the app stopped while this step ran; no events after "
+            + (events_mod.when(page.get("last_at")) if page.get("last_at") else "the start")
         )
     elif status == "none":
-        notes.append("không có sự kiện nào được lưu cho lần chạy này")
+        notes.append("no events were stored for this run")
     lost = int(page.get("events_lost") or 0)
     if lost > 0:
-        notes.append(f"thiếu {lost} sự kiện")
+        notes.append(f"{lost} events missing")
     return " · ".join(notes)
 
 
@@ -999,7 +1006,7 @@ class StudioState(rx.State):
     watch_note: str = ""
     watch_events: list[WatchEvent] = []
     watch_has_older: bool = False
-    # Older pages pushed the newest rows out of the list; *Về cuối* brings them back.
+    # Older pages pushed the newest rows out of the list; *Jump to latest* brings them back.
     watch_has_newer: bool = False
     # At the bottom and taking new events; off once older ones were loaded.
     watch_following: bool = False
@@ -1064,8 +1071,10 @@ class StudioState(rx.State):
     integrating: bool = False
     # `0047`. The outcome form. Nobody types who records it (`0082` R3); `outcome_measured_by`
     # starts as `agent`, the case with no script to run.
-    outcome_result: str = "đạt"
-    outcome_measured_by: str = "agent"
+    # Both hold the English label the select shows (`0089` R1, R4); `record_outcome` sends
+    # the stored word.
+    outcome_result: str = "met"
+    outcome_measured_by: str = "Agent"
     outcome_source: str = ""
     outcome_reason: str = ""
     outcome_note: str = ""
@@ -1416,7 +1425,8 @@ class StudioState(rx.State):
             u["name"]: tree_line(u.get("worktree")) for u in data.get("units") or []
         }
         self.recording = bool(data["recording"])
-        self.board_note = data.get("read_only_because") or data.get("empty_because") or ""
+        read_only = READ_ONLY_NOTE if data.get("read_only_because") else ""
+        self.board_note = read_only or data.get("empty_because") or ""
         empty = data.get("empty") or {}
         self.empty_store = str(empty.get("store") or "")
         self.empty_host = str(empty.get("host") or "")
@@ -1425,7 +1435,7 @@ class StudioState(rx.State):
             # `empty_because` speaks of the store's `.cos/`, and next to a host `.cos/`
             # that is full it reads as a claim about the wrong directory — the fault this
             # unit exists for. Only the read-only reason survives, appended by the page.
-            self.board_note = data.get("read_only_because") or ""
+            self.board_note = read_only
 
         units: list[Unit] = []
         for u in data["units"]:
@@ -1624,7 +1634,7 @@ class StudioState(rx.State):
                 detail += f" / {row['denials']} tool call(s) refused"
             if row["artifact"]:
                 detail += f" / wrote {row['artifact']}"
-            events.append(Event(title=title, detail=detail, icon=icon, color=color, time=row["at"]))
+            events.append(Event(title=title, detail=detail, icon=icon, color=color, time=present.when(row["at"])))
         self.events = events
         total = feed.get("total") or {}
         _, shown = _tokens(total)
@@ -1644,8 +1654,9 @@ class StudioState(rx.State):
             Run(
                 stage=r.get("stage") or "",
                 mode=r.get("mode") or "",
-                started=r.get("started") or "",
-                ended=r.get("ended") or "(still running)",
+                # `0089` R12: a reader's time; `ended` is empty while the run is not over.
+                started=present.when(r.get("started")),
+                ended=present.when(r.get("ended")),
                 outcome=r.get("outcome") or "—",
                 session_id=(r.get("session_id") or "—")[:12],
                 tokens=_tokens(r.get("cost") or {})[1],
@@ -1653,8 +1664,9 @@ class StudioState(rx.State):
                 color="grass" if r.get("outcome") == "done" else "amber",
                 detail=r.get("detail") or "",
                 run=r.get("run") or "",
+                key=r.get("run") or f"{r.get('stage') or ''}-{i}",
             )
-            for r in data["runs"]
+            for i, r in enumerate(data["runs"])
         ]
 
     def _load_artifact(self) -> None:
@@ -2203,7 +2215,7 @@ class StudioState(rx.State):
         """New events, by `plan.md` step 7's rule: at the bottom, appended and the oldest
         dropped past `WATCH_WINDOW`; reading older ones, appended while there is room and
         counted in `watch_pending` once there is none. An event already shown is dropped: a
-        batch the follower yielded before *Về cuối* read the last page again is also in that
+        batch the follower yielded before *Jump to latest* read the last page again is also in that
         page (`review.md` F1)."""
         last = self.watch_events[-1].seq if self.watch_events else 0
         fresh = [e for e in fresh if e.seq > last]
@@ -2303,7 +2315,7 @@ class StudioState(rx.State):
 
     @rx.event
     def watch_live(self):
-        """*Về cuối*: the last page again, and following again."""
+        """*Jump to latest*: the last page again, and following again."""
         page = self._watch_page()
         if page is None:
             return
@@ -2500,11 +2512,16 @@ class StudioState(rx.State):
     @rx.event
     async def record_outcome(self):
         """`0047`. Record the open unit's outcome. Every rule about whether it may be written
-        is `Service.record_outcome`'s; a refusal arrives here as its words, shown as they are."""
+        is `Service.record_outcome`'s; a refusal arrives here as its words, shown as they are.
+        A label missing from the tables goes as it is, for the service to refuse."""
+        result = {v: k for k, v in present.RESULT_LABEL.items()}.get(self.outcome_result, self.outcome_result)
+        measurer = {v: k for k, v in present.MEASURER_LABEL.items()}.get(
+            self.outcome_measured_by, self.outcome_measured_by
+        )
         self.recording_outcome = True
         try:
             done = await SERVICE.record_outcome(
-                self.cwd, self.unit_id, self.outcome_result, self.outcome_measured_by,
+                self.cwd, self.unit_id, result, measurer,
                 self.outcome_source, self.outcome_reason, self.outcome_note, "",
             )
         except Invalid as e:
@@ -2514,8 +2531,8 @@ class StudioState(rx.State):
             self.recording_outcome = False
         self.outcome_source, self.outcome_reason, self.outcome_note = "", "", ""
         self.notice = (
-            f"Recorded {done['result']} for {done['unit']} as {done['recorded_by']}, measured by "
-            f"{done['measured_by']}. Nothing was started, and no gate reads it."
+            f"Recorded {present.RESULT_LABEL.get(done['result'], done['result'])} for {done['unit']}, "
+            f"measured by {present.MEASURER_LABEL.get(done['measured_by'], done['measured_by'])}."
         )
         await self._load_board()
         self._load_artifact()
