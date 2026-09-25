@@ -399,6 +399,34 @@ test('a derived name that no grammar would accept cannot be produced', () => {
   assert.match(unitBranch(undefined, 'Type: feat.').error, /does not match NNNN_<slug>/)
 })
 
+// --- 0102: a slug longer than the branch allows -------------------------------
+
+// A slug of exactly `n` characters, made of short words the way a real one is.
+const slugOf = (n) => 'abcd-'.repeat(Math.ceil(n / 5)).slice(0, n).replace(/-$/, 'e')
+const OLD_0044 = '0044_open-questions-wait-for-the-originator-even-when-precedent-answers-them'
+
+test('every name unit-branch gives passes check-branch, whatever the slug length', () => {
+  const slugs = [1, 59, 60, 61, 71].map(slugOf)
+  // One word too long to cut at a hyphen, and a hyphen exactly where the cut falls.
+  slugs.push('a'.repeat(71), 'a'.repeat(60) + '-b')
+  for (const t of BRANCH_TYPES) {
+    for (const slug of slugs) {
+      const { branch } = unitBranch(`0001_${slug}`, `Type: ${t}.`)
+      assert.equal(branchProblem(branch), null, `${t} with a ${slug.length}-character slug: ${branch}`)
+    }
+  }
+})
+
+test('a slug over the limit is cut at its last hyphen, and one within it is left alone', () => {
+  assert.equal(unitBranch(OLD_0044, 'Type: feat.').branch,
+    'feat/open-questions-wait-for-the-originator-even-when-precedent')
+  assert.equal(slugOf(60).length, 60)
+  assert.equal(unitBranch(`0001_${slugOf(60)}`, 'Type: feat.').branch, `feat/${slugOf(60)}`)
+  assert.equal(unitBranch(`0001_${'a'.repeat(71)}`, 'Type: fix.').branch, `fix/${'a'.repeat(60)}`)
+  assert.equal(unitBranch(`0001_${'a'.repeat(60)}-b`, 'Type: fix.').branch, `fix/${'a'.repeat(60)}`)
+  assert.equal(unitBranch(OLD_0044, 'Type: feat.').branch, unitBranch(OLD_0044, 'Type: feat.').branch)
+})
+
 // --- the --root boundary, exercised through the CLI --------------------------
 
 // Every other test in this file imports a pure function. These four have to spawn the
@@ -484,6 +512,30 @@ test('--reserve-from with no directory is misuse', () => {
   const out = cli('new-path', 'x', '--reserve-from')
   assert.equal(out.status, 2)
   assert.match(out.stderr, /needs a directory/)
+})
+
+test('new-path refuses a slug longer than a branch allows, and makes nothing', () => {
+  const root = cosTree('0003_c')
+  const fits = cli('--root', root, 'new-path', 'a'.repeat(60))
+  assert.equal(fits.status, 0, fits.stderr)
+  assert.equal(fits.stdout.trim(), `.cos/0004_${'a'.repeat(60)}`)
+  const over = cli('--root', root, 'new-path', 'a'.repeat(61))
+  assert.equal(over.status, 2)
+  assert.equal(over.stdout, '')
+  assert.match(over.stderr, /61/)
+  assert.match(over.stderr, /60/)
+  assert.deepEqual(readdirSync(join(root, '.cos')), ['0003_c'])
+})
+
+test('status and unit-branch name the same shortened branch', () => {
+  const name = `0001_${slugOf(71)}`
+  const dir = cosTree(name)
+  writeFileSync(join(dir, '.cos', name, 'intent.md'), '# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n')
+  const said = cli('--root', dir, 'unit-branch', name)
+  assert.equal(said.status, 0, said.stderr)
+  const status = JSON.parse(cli('--root', dir, 'status', '--json').stdout)
+  assert.equal(status.units[0].branch, said.stdout.trim())
+  assert.equal(branchProblem(said.stdout.trim()), null)
 })
 
 // --- 0016: the numbered items under `## Open questions`, and answers to them ---------

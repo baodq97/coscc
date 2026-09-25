@@ -1452,6 +1452,16 @@ export const BRANCH_TYPES = ['feat', 'fix', 'docs', 'refactor', 'test', 'chore',
 const SLUG_MAX = 60
 const TYPE_LIST = () => BRANCH_TYPES.join(', ')
 
+// The slug a branch can carry. `new-path` refuses a slug over `SLUG_MAX`, so only a unit
+// made before it did (`0102`) reaches the cut: at the last hyphen that leaves `SLUG_MAX` or
+// fewer, or mid-word when there is none. A unit slug has no leading or doubled hyphen, so
+// either cut still matches `SLUG_RE`.
+function branchSlug(slug) {
+  if (slug.length <= SLUG_MAX) return slug
+  const cut = slug.slice(0, SLUG_MAX + 1).lastIndexOf('-')
+  return cut > 0 ? slug.slice(0, cut) : slug.slice(0, SLUG_MAX)
+}
+
 // `null` when the name is fine, otherwise the rule it broke. A boolean here would make
 // every rejection say the same thing, and the point of a convention is to name what is
 // wrong with the name you chose.
@@ -1513,14 +1523,16 @@ export function parseType(text) {
 
 // A unit's branch is derived, never typed. `0009_branch-and-release-conventions` carrying
 // `Type: feat` can only be `feat/branch-and-release-conventions`, so the branch name and
-// the unit name cannot drift apart.
+// the unit name cannot drift apart. The one exception is an old unit whose slug is over
+// `SLUG_MAX`: its branch carries the slug cut by `branchSlug`, still derived, so that
+// `check-branch` accepts every name this prints.
 export function unitBranch(unitName, intentText) {
   const match = String(unitName ?? '').match(UNIT_RE)
   if (!match) return { error: `"${unitName}" does not match NNNN_<slug>` }
   const type = parseType(intentText ?? '')
   if (!type) return { error: `${unitName}/intent.md declares no Type: — one of ${TYPE_LIST()}` }
   if (!BRANCH_TYPES.includes(type)) return { error: `"${type}" is not one of ${TYPE_LIST()}` }
-  return { branch: `${type}/${match[2]}` }
+  return { branch: `${type}/${branchSlug(match[2])}` }
 }
 
 // --- commands ----------------------------------------------------------------
@@ -1805,6 +1817,10 @@ function cmdNewPath(slug, cosDir, reserveFrom = []) {
     console.error(`Invalid slug "${slug}".`)
     console.error('  Lowercase letters, digits and single hyphens only; no underscore,')
     console.error('  because the underscore separates the number from the slug.')
+    return 2
+  }
+  if (slug.length > SLUG_MAX) {
+    console.error(`Invalid slug "${slug}": it is ${slug.length} characters, over the ${SLUG_MAX} a branch allows.`)
     return 2
   }
   const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))].flatMap((d) => readAll(d))
