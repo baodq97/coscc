@@ -336,6 +336,12 @@ class BacklogRow:
     agent_differs: str = ""
 
 
+def _estimated_by(by) -> str:
+    """`0082` D68: an agent's estimate reads `agent`; its session id stays in the API."""
+    by = str(by or "")
+    return "agent" if by.startswith("agent:") else by
+
+
 def _backlog_row(entry: dict, rank: int) -> BacklogRow:
     est = entry.get("estimate") or {}
     effort = str(est.get("effort") or "")
@@ -345,7 +351,7 @@ def _backlog_row(entry: dict, rank: int) -> BacklogRow:
     other = entry.get("agent_differs") or {}
     return BacklogRow(
         rank=rank, unit=str(entry.get("unit") or ""),
-        value=str(est.get("value") or "—"), effort=effort or "—", basis=basis, by=str(est.get("by") or ""),
+        value=str(est.get("value") or "—"), effort=effort or "—", basis=basis, by=_estimated_by(est.get("by")),
         drift=(f"off by rank — computed {entry.get('computed') or 'none'}" if entry.get("drift") else ""),
         warnings="; ".join(entry.get("warnings") or []),
         agent_differs=(

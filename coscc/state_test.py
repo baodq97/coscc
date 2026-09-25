@@ -765,6 +765,7 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
         view = backlog_view(self.BOARD)
         [row] = view["backlog_rows"]
         self.assertEqual((row.unit, row.value, row.effort, row.warnings), ("0009_x", "4", "S (guess)", "bị 0010_y thay thế"))
+        self.assertEqual(row.by, "agent")  # `0082` D68: the session id stays in the API
         self.assertIn("picks nothing out", view["backlog_note"])
         self.assertEqual(view["propose_warning"], "paid")
 

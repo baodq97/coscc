@@ -690,11 +690,13 @@ def _running_steps() -> rx.Component:
 _MONO = "ui-monospace, monospace"
 
 
-def _log_tail(text) -> rx.Component:
+def _log_tail(key: str, text) -> rx.Component:
+    """`0082` D67: a log's tail holds paths and commands, so it opens only on request."""
     return rx.cond(
         text != "",
-        rx.text(text, size="1", font_family=_MONO, white_space="pre-wrap",
-                background=rx.color("gray", 2), padding="8px", width="100%", margin_top="6px"),
+        _details(f"log-{key}", "Log",
+                 rx.text(text, size="1", font_family=_MONO, white_space="pre-wrap",
+                         background=rx.color("gray", 2), padding="8px", width="100%", margin_top="6px")),
     )
 
 
@@ -734,7 +736,7 @@ def _update_panel() -> rx.Component:
             rx.vstack(
                 _update_actions("release", P.upd_line),
                 _update_actions("local", P.upd_local_line),
-                _log_tail(P.upd_local_tail),
+                _log_tail("local", P.upd_local_tail),
                 rx.cond(
                     P.update_pending,
                     rx.box(
@@ -763,11 +765,11 @@ def _update_panel() -> rx.Component:
                 ),
                 rx.cond(P.upd_error != "", rx.box(
                     s.text("The last update stopped: " + P.upd_error, size="1"),
-                    _log_tail(P.upd_error_tail), id="update-error", width="100%",
+                    _log_tail("error", P.upd_error_tail), id="update-error", width="100%",
                 )),
                 rx.cond(P.upd_last != "", rx.box(
                     s.text("Last update: " + P.upd_last, size="1"),
-                    _log_tail(P.upd_last_tail), id="update-last", width="100%",
+                    _log_tail("last", P.upd_last_tail), id="update-last", width="100%",
                 )),
                 width="100%", spacing="1", margin_top="6px", align="start",
             ),
@@ -1774,8 +1776,12 @@ def _detail_dialog() -> rx.Component:
                         rx.cond(
                             (P.next_stage == "") & (P.run_waiting.length() > 0),
                             rx.hstack(
-                                s.text("Needs a person: " + P.run_waiting.join(", "),
-                                       size="2", id="next-waiting"),
+                                # `0082` D69: the findings as a list, not a comma run.
+                                rx.hstack(
+                                    s.text("Needs a person", size="2"),
+                                    rx.foreach(P.run_waiting, lambda f: s.badge(f, "amber")),
+                                    spacing="2", align="center", flex_wrap="wrap", id="next-waiting",
+                                ),
                                 rx.button(
                                     rx.icon("message-square", size=13),
                                     "Open Questions",
