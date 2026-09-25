@@ -637,23 +637,33 @@ def browser() -> int:
             ok &= claim(short <= 2000 < whole and again == short,
                         "R12: collapsed, Mở shows the stored length, Thu gọn goes back", f"{short} {whole} {again}")
             # After `end`: reload, the unit's timeline, the step's row, and back to seq 1.
-            b.evaluate("window.__rows = {}")
             b.goto(f"{base}/unit?ws={ws_name}&id={unit}&tab=timeline", wait_until="domcontentloaded", timeout=60_000)
             b.wait_for_selector(".watch-run", timeout=60_000)
             b.locator(".watch-run").last.click()
             b.wait_for_function("document.querySelectorAll('#watch-list .watch-ev').length > 0", timeout=60_000)
             status = b.locator("#watch-pane").inner_text()
+            # Rows are drawn by position, so a prepended page mostly rewrites rows in place:
+            # the seqs are read off the list after each load, not from added nodes.
+            shown: set[int] = set()
+
+            def rows_now() -> list[int]:
+                return b.eval_on_selector_all("#watch-list .watch-ev", "rs => rs.map(r => +r.dataset.seq)")
+
             for _ in range(20):
-                if b.evaluate("!!window.__rows[1]") or b.is_disabled("#watch-older"):
+                current = rows_now()
+                shown.update(current)
+                if 1 in shown or b.is_disabled("#watch-older"):
                     break
-                top = b.eval_on_selector("#watch-list .watch-ev", "r => +r.dataset.seq")
                 b.click("#watch-older")
-                b.wait_for_function(f"+document.querySelector('#watch-list .watch-ev').dataset.seq < {top}",
+                b.wait_for_function(f"+document.querySelector('#watch-list .watch-ev').dataset.seq < {current[0]}",
                                     timeout=30_000)
-            seen = sorted(int(k) for k in b.evaluate("Object.keys(window.__rows)"))
+            shown.update(rows_now())
+            seen = sorted(shown)
             end_seq = max(seen) if seen else 0
             ok &= claim("ended" in status and "kết thúc" in status and seen == list(range(1, end_seq + 1)),
-                        f"after end: B reloads, opens the timeline row and reads 1..{end_seq} with nothing missing")
+                        f"after end: B reloads, opens the timeline row and reads 1..{end_seq} with nothing missing",
+                        f"ended in pane: {'ended' in status}, end row: {'kết thúc' in status}, seen {len(seen)}, "
+                        f"missing {sorted(set(range(1, end_seq + 1)) - set(seen))[:10]}")
             ca = {(c["name"], c["value"]) for c in ctx_a.cookies()}
             cb = {(c["name"], c["value"]) for c in ctx_b.cookies()}
             shared = bool(ca & cb)
