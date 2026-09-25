@@ -757,7 +757,7 @@ def _job_line(job: dict) -> str:
     """`0068` R10: one running job, as the confirmation lists it."""
     kind = job.get("kind", "")
     if kind == "chat":
-        what = f"chat {job.get('session_id') or '(phiên mới)'} in {job.get('workspace', '')}"
+        what = f"chat {job.get('session_id') or '(new session)'} in {job.get('workspace', '')}"
     elif kind == "build":
         what = "build local"
     else:
@@ -1010,7 +1010,6 @@ class StudioState(rx.State):
     upd_version: str = ""
     upd_commit: str = ""
     upd_available: bool = False
-    upd_reason: str = ""
     upd_state: str = ""
     upd_waiting: list[str] = []
     upd_pending_reason: str = ""
@@ -2334,7 +2333,6 @@ class StudioState(rx.State):
         self.upd_local_line = str(u.get("local_line") or "")
         self.upd_actions = [str(a) for a in u.get("actions") or []]
         self.upd_available = u.get("shape") == "service"
-        self.upd_reason = str(u.get("reason") or "")
         self.upd_state = str(u.get("state") or "")
         pending = u.get("pending") or {}
         self.upd_waiting = [_job_line(j) for j in pending.get("waiting") or []]

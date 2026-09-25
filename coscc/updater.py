@@ -1,4 +1,4 @@
-"""The update state machine behind the board's *Update* panel.
+"""The update state machine behind the Updates section of Settings.
 
 `.cos/0068_updating-the-app-is-a-manual-reinstall` R3 to R13. `Service` holds one
 `Updater`; the page and the routes only ever reach it through `Service`, and neither decides

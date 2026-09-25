@@ -774,7 +774,6 @@ def _update_panel() -> rx.Component:
         ),
         _details("update", "Details",
                  s.text("commit " + P.upd_commit_full, size="1", font_family=_MONO, overflow_wrap="anywhere"),
-                 rx.cond(P.upd_reason != "", s.text(P.upd_reason, size="1", overflow_wrap="anywhere")),
                  margin_top="8px"),
         id="update-panel",
     )

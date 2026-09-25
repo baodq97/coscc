@@ -3314,29 +3314,25 @@ class Service:
                     "name": "tools",
                     "value": ", ".join(c.effective_tools()) or "none",
                     "on": bool(c.effective_tools()),
-                    "detail": "Chat sessions are created with this tool list. Empty means "
-                              "chat only — a session with no tools cannot write a file.",
+                    "detail": "The tools a chat session gets; none means chat only.",
                 },
                 {
                     "name": "allow_write_and_exec",
                     "value": "on" if c.allow_write_and_exec else "off",
                     "on": c.allow_write_and_exec,
-                    "detail": "While off, no write or exec tool survives into a session, "
-                              "whatever the tool list says.",
+                    "detail": "While off, no chat session can write files or run commands.",
                 },
                 {
                     "name": "bypass_permissions",
                     "value": "on" if c.bypass_permissions else "off",
                     "on": c.bypass_permissions,
-                    "detail": "Off, and not settable over HTTP. The only way in is the "
-                              "environment this process was started with.",
+                    "detail": "Set only by the environment the app started with.",
                 },
                 {
                     "name": "resume_foreign_sessions",
                     "value": "on" if c.resume_foreign_sessions else "off",
                     "on": c.resume_foreign_sessions,
-                    "detail": "Off because it is untested, not because it is dangerous. "
-                              "The app resumes only what it created.",
+                    "detail": "The app resumes only the sessions it created.",
                 },
             ],
             # The board's own grants, from `policy.py` rather than from the config. They
