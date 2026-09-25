@@ -7,16 +7,13 @@ words. What changed is where every value comes from: the prototype read `prototy
 nothing here reads anything but `StudioState`, which reads `Service`. That swap is the
 whole of `spec.md` R12.
 
-Three things are said on the page rather than only in a document, and each is a
-requirement rather than a flourish:
-
-- **R17.** Before a step can be started, the screen shows the tools that step would be
-  granted and the warning attached to them. A capability that comes from this machine's own
-  `gh` login is invisible in an app unless somebody puts it next to the button.
-- **C8.** The prototype's equivalent button ran a simulation and cost nothing. This one calls a
-  real model. It says so before it is pressed, not after.
-- **C7.** The six prose stages get no tools, so the app writes the artifact from the reply.
-  The screen says that plainly rather than letting it look like the agent wrote the file.
+Since `0082` (`spec.md ## Answers, câu 5`) each action whose effect costs money or leaves
+this machine keeps one sentence beside its button — `Service.CONSEQUENCE` — and nothing more.
+The lists of limits these screens used to carry (what a grant reaches, who else holds the
+password, that the app writes a prose stage's artifact) are in `.claude/CLAUDE.md` and
+`.claude/rules/coscc-app.md`, and the full grant warnings are still in the API. Paths, full
+shas, UUIDs and variable names sit only inside a closed `_details`
+(`.claude/rules/ui-standard.md` S3).
 """
 
 from __future__ import annotations
@@ -24,10 +21,11 @@ from __future__ import annotations
 import reflex as rx
 from reflex.style import set_color_mode
 
-from coscc import backlog
 from coscc import hold as hold_rules
 from coscc import models
+from coscc import present
 from coscc import studio as s
+from coscc.service import CONSEQUENCE
 from coscc.state import (
     LANE_COLOR,
     NAVIGATION,
@@ -49,6 +47,11 @@ from coscc.state import (
 )
 
 P = StudioState
+
+
+def _details(key: str, label: str, *children, **props) -> rx.Component:
+    """A closed-by-default `studio.details` keyed in `StudioState.open_details`."""
+    return s.details(P.open_details.contains(key), P.toggle_details(key), label, *children, **props)
 
 
 # --- chrome ------------------------------------------------------------------
@@ -122,16 +125,7 @@ def _sidebar() -> rx.Component:
                 ),
                 rx.text(rx.cond(P.loopback_only, "Local only", "Open on the network"),
                         size="2", weight="medium")),
-            s.text(
-                rx.cond(
-                    P.loopback_only,
-                    "Loopback, and chat sessions with no tools by default.",
-                    "Anyone who can reach this port gets the login page; whoever holds the "
-                    "password or a live session can do everything here. Chat sessions still "
-                    "have no tools by default.",
-                ),
-                size="1", margin_top="8px"),
-            rx.button("What this can do", rx.icon("arrow-up-right", size=14),
+            rx.button("Settings", rx.icon("arrow-up-right", size=14),
                       on_click=P.navigate("settings"), variant="ghost", size="1", margin_top="12px"),
             padding="14px", background=rx.color("grass", 2),
         ),
@@ -184,29 +178,8 @@ def _topbar() -> rx.Component:
 
 
 def _status_bar() -> rx.Component:
-    """Where the data is. `spec.md` C1: two roots, and a backup of one is not both.
-
-    S3: the two paths stay closed until the person opens them.
-    """
+    """How many workspaces. The two roots are on Settings, inside *Details* (`0082` D26)."""
     return rx.flex(
-        rx.el.details(
-            rx.el.summary(s.text("Where the data is", size="1"), cursor="pointer"),
-            rx.hstack(
-                rx.icon("folder", size=13, color=s.MUTED),
-                s.text("workspaces", size="1"),
-                s.text(rx.cond(P.working_dir != "", P.working_dir, "not set"),
-                       size="1", id="working-dir", font_family="ui-monospace, monospace"),
-                spacing="2", align="center", min_width="0", margin_top="6px",
-            ),
-            rx.hstack(
-                rx.icon("database", size=13, color=s.MUTED),
-                s.text("data", size="1"),
-                s.text(P.data_dir, size="1", id="data-dir",
-                       font_family="ui-monospace, monospace"),
-                spacing="2", align="center", min_width="0",
-            ),
-            id="data-roots", min_width="0",
-        ),
         rx.spacer(),
         s.text(P.workspaces.length().to_string() + " workspace(s)", size="1",
                id="workspace-count"),
@@ -292,11 +265,10 @@ def _empty_board() -> rx.Component:
     no sentence on the page said so, and the one that did speak named the store's `.cos/`
     while the reader was looking at the repository's.
     """
+    # `0082` D63: the count, not the two paths.
     host_note = rx.text(
-        P.empty_host, "/.cos/ holds ", P.empty_host_units,
-        " work units, and this board does not list them. Units started in this app live "
-        "in its own store, ", P.empty_store, ", and the board reads only that.",
-        rx.cond(P.board_note != "", rx.fragment(" ", P.board_note), rx.fragment()),
+        "This repository's own .cos/ holds ", P.empty_host_units,
+        " work units that this board does not list.",
         size="2", color=s.MUTED, text_align="center", max_width="420px", id="board-note",
     )
     return s.panel(
@@ -509,7 +481,7 @@ def _activity_line(line: rx.Var[Activity], unit_id=None) -> rx.Component:
         rx.box(
             _activity_body(line, watchable=True),
             on_click=P.open_watch(line.run, unit_id + " · " + line.stage, unit_id).stop_propagation,
-            role="button", aria_label="Xem step đang chạy", data_testid="card-watch",
+            role="button", aria_label="Watch the running step", data_testid="card-watch",
             cursor="pointer", width="100%",
         ),
         plain,
@@ -560,8 +532,11 @@ def _unit_card(unit: rx.Var[Card]) -> rx.Component:
         rx.hstack(
             s.badge(unit.stage, unit.color),
             rx.cond(unit.has_problem, s.badge("problem", "red")),
+            # `0082` R12: what a unit in *Needs you* waits on, as the service said it.
+            rx.cond(unit.attention_reason != "", s.badge(unit.attention_reason, "amber")),
             # `0016` R8. A number, not a lane: an open question does not stop the loop.
-            rx.cond(unit.open_questions > 0,
+            # `0082` R11: only while the service says the unit can still be answered.
+            rx.cond((unit.open_questions > 0) & unit.answerable,
                     s.badge(unit.open_questions.to_string() + " waiting on you", "amber")),
             # `0035` R1. Only for a unit in the window; the button lives on the unit screen.
             # `0052`: `current` has a button too, and still reads gray on the card.
@@ -579,8 +554,9 @@ def _unit_card(unit: rx.Var[Card]) -> rx.Component:
             rx.spacer(),
             rx.center(rx.text(unit.owner, size="1", weight="medium"),
                       width="27px", height="27px", border_radius="50%",
-                      background=rx.color("gray", 4), color=s.MUTED),
-            width="100%", align="center", margin_top="18px",
+                      background=rx.color("gray", 4), color=s.MUTED, flex_shrink="0"),
+            # `0082` D57, R17: the badges wrap inside the card instead of running past it.
+            width="100%", align="center", margin_top="18px", flex_wrap="wrap", row_gap="6px",
         ),
         # `0074` R9. Its relations, on both units' cards.
         rx.cond(unit.relations_text != "",
@@ -652,11 +628,8 @@ def _start_unit() -> rx.Component:
                 ),
                 width="100%", align="center", spacing="2",
             ),
-            s.text(
-                "The number comes from the harness. Say the problem in your own words — "
-                "that becomes the unit's idea.md, and the intent step reads it.",
-                size="1", margin_top="2px",
-            ),
+            s.text("Say the problem in your own words; it becomes the unit's idea.md.",
+                   size="1", margin_top="2px"),
             rx.input(
                 placeholder="short-name-for-the-problem",
                 value=P.new_slug, on_change=P.set_new_slug,
@@ -684,17 +657,12 @@ def _running_steps() -> rx.Component:
     """`0034` R6, R13. Every step running in this workspace, one Stop each.
 
     The list is the service's, re-read on each board load and after each Stop; nothing
-    refreshes it on a timer. The name is a claim, not a login -- it is what the run log's
-    `stopped_by` will say, unless the cancel lands before the step's first turn, which
-    leaves no record at all.
+    refreshes it on a timer. No name is asked (`0082` R3): `stopped_by` records `owner`.
     """
     return rx.cond(
         P.running_steps.length() > 0,
         s.panel(
             s.eyebrow("RUNNING STEPS"),
-            rx.input(placeholder="Your name, to stop a step", value=P.stop_by,
-                     on_change=P.set_stop_by, size="1", margin_top="10px",
-                     aria_label="Your name, to stop a step", id="stop-by"),
             rx.foreach(P.running_steps, lambda r: rx.hstack(
                 s.text(r.unit, size="1", font_family="ui-monospace, monospace"),
                 s.badge(r.stage, "iris"),
@@ -702,7 +670,7 @@ def _running_steps() -> rx.Component:
                 rx.spacer(),
                 # `0073` R10. Watching changes nothing; Stop, beside it, is what acts.
                 rx.button(
-                    rx.icon("eye", size=13), "Xem",
+                    rx.icon("eye", size=13), "Watch",
                     on_click=P.open_watch(r.run, r.unit + " · " + r.stage, r.unit),
                     class_name="watch-step", variant="soft", size="1",
                 ),
@@ -730,69 +698,62 @@ def _log_tail(text) -> rx.Component:
     )
 
 
-def _update_channel(label: str, channel: str, line, ready, extra: rx.Component | None = None) -> rx.Component:
+def _update_actions(channel: str, line) -> rx.Component:
+    """One channel's line and only the buttons `Service.update_status` lists (`0082` R9)."""
     return rx.hstack(
-        s.text(label, size="1", font_family=_MONO),
         s.text(line, size="1"),
         rx.spacer(),
-        *([extra] if extra is not None else []),
-        rx.button("Apply", id=f"update-apply-{channel}", on_click=P.apply_update(channel),
-                  disabled=~ready | P.update_pending, size="1", variant="soft"),
-        rx.button("Apply now…", id=f"update-now-{channel}", on_click=P.show_cut_list(channel),
-                  disabled=~ready, size="1", variant="soft", color_scheme="red"),
+        rx.cond(P.upd_actions.contains(f"apply-{channel}"),
+                rx.button("Apply", id=f"update-apply-{channel}", on_click=P.apply_update(channel),
+                          size="1", variant="soft")),
+        rx.cond(P.upd_actions.contains(f"now-{channel}"),
+                rx.button("Apply now…", id=f"update-now-{channel}", on_click=P.show_cut_list(channel),
+                          size="1", variant="soft", color_scheme="red")),
+        *([rx.cond(P.upd_actions.contains("build-local"),
+                   rx.button("Build from origin/main", id="update-build-local", on_click=P.build_local,
+                             size="1", variant="soft"))] if channel == "local" else []),
         width="100%", align="center", spacing="3", margin_top="10px", flex_wrap="wrap",
     )
 
 
 def _update_panel() -> rx.Component:
-    """`0068`. What runs, whether a newer build is ready, and one press to apply it.
-
-    Every string and every enabled button comes from `Service.update_status`. The name
-    typed here is what the run log's `by` says, a claim and not an identity: one password
-    stands in front of the page (`0070`), and it names nobody.
+    """`0068`, on Settings since `0082` R9. What runs, one line of state, and only the
+    buttons that can be used. Every word and every button comes from `Service.update_status`.
     """
     return s.panel(
-        s.eyebrow("UPDATE"),
+        s.section_head("Updates", rx.icon("download", size=18, color=s.MUTED)),
         rx.hstack(
             s.text("Running " + P.upd_version, size="2"),
             s.text(P.upd_commit, size="1", font_family=_MONO),
-            spacing="3", align="center", margin_top="8px", flex_wrap="wrap", id="update-running",
+            rx.cond(P.upd_checked_at != "", s.text("checked " + P.upd_checked_at, size="1")),
+            spacing="3", align="center", flex_wrap="wrap", id="update-running",
         ),
         rx.cond(
             ~P.upd_available,
-            s.text(P.upd_reason, size="1", margin_top="6px", id="update-unavailable"),
+            s.text(P.upd_line, size="1", margin_top="6px", id="update-unavailable"),
             rx.vstack(
-                s.text("Last successful check: "
-                       + rx.cond(P.upd_checked_at != "", P.upd_checked_at, "never"), size="1"),
-                rx.input(placeholder="Your name, to apply, cancel the wait or build", value=P.update_by,
-                         on_change=P.set_update_by, size="1", aria_label="Your name, for the update",
-                         id="update-by"),
-                _update_channel("release", "release", P.upd_release, P.upd_release_ready),
-                _update_channel(
-                    "local", "local", P.upd_local, P.upd_local_ready,
-                    rx.button("Build from origin/main", id="update-build-local", on_click=P.build_local,
-                              disabled=~P.upd_local_configured, size="1", variant="soft"),
-                ),
+                _update_actions("release", P.upd_line),
+                _update_actions("local", P.upd_local_line),
                 _log_tail(P.upd_local_tail),
                 rx.cond(
                     P.update_pending,
                     rx.box(
-                        s.text("Applies once nothing is running", size="2"),
-                        s.text(P.upd_pending_reason, size="1"),
-                        rx.foreach(P.upd_waiting, lambda w: s.text("Waiting for: " + w, size="1")),
-                        rx.button("Cancel the wait", id="update-cancel", on_click=P.cancel_update,
-                                  size="1", variant="soft", margin_top="6px"),
+                        rx.foreach(P.upd_waiting, lambda w: s.text("waiting for " + w, size="1")),
+                        rx.cond(P.upd_actions.contains("cancel"),
+                                rx.button("Stop waiting", id="update-cancel", on_click=P.cancel_update,
+                                          size="1", variant="soft", margin_top="6px")),
                         id="update-pending", margin_top="10px",
                     ),
                 ),
                 rx.cond(
                     P.cut_open,
                     rx.box(
-                        s.text("Applying now will:", size="2"),
-                        rx.cond(P.cut_items.length() == 0, s.text("Nothing is cut", size="1")),
+                        s.text("Applying now:", size="2"),
+                        rx.cond(P.cut_items.length() == 0, s.text("stops nothing", size="1")),
                         rx.foreach(P.cut_items, lambda i: s.text(i, size="1")),
+                        s.text(CONSEQUENCE["apply-now"], size="1", id="update-now-consequence"),
                         rx.hstack(
-                            rx.button("Confirm, apply now", id="update-confirm-now",
+                            rx.button("Apply now", id="update-confirm-now",
                                       on_click=P.confirm_apply_now, size="1", color_scheme="red"),
                             rx.button("Cancel", on_click=P.close_cut_list, size="1", variant="soft"),
                             spacing="2", margin_top="6px",
@@ -801,17 +762,21 @@ def _update_panel() -> rx.Component:
                     ),
                 ),
                 rx.cond(P.upd_error != "", rx.box(
-                    s.text("The last apply stopped: " + P.upd_error, size="1"),
+                    s.text("The last update stopped: " + P.upd_error, size="1"),
                     _log_tail(P.upd_error_tail), id="update-error", width="100%",
                 )),
                 rx.cond(P.upd_last != "", rx.box(
-                    s.text("Previous update: " + P.upd_last, size="1"),
+                    s.text("Last update: " + P.upd_last, size="1"),
                     _log_tail(P.upd_last_tail), id="update-last", width="100%",
                 )),
                 width="100%", spacing="1", margin_top="6px", align="start",
             ),
         ),
-        id="update-panel", padding="16px",
+        _details("update", "Details",
+                 s.text("commit " + P.upd_commit_full, size="1", font_family=_MONO, overflow_wrap="anywhere"),
+                 rx.cond(P.upd_reason != "", s.text(P.upd_reason, size="1", overflow_wrap="anywhere")),
+                 margin_top="8px"),
+        id="update-panel",
     )
 
 
@@ -822,7 +787,7 @@ def _update_warning() -> rx.Component:
 
 # R14. Asks `/api/update` every 5 s outside Reflex's socket, and reloads the page when the
 # build it answers for is not the one the page was loaded under. The overlay says
-# `Restarting…` while nothing answers, and after 120 s says it could not reconnect.
+# "Restarting…" while nothing answers, and after 120 s says it could not reconnect.
 # A `401` is not a restart: the session ended (expiry, logout elsewhere, `reset-password`),
 # so the page goes to `/login` rather than point at a rollback (`0070` review F3).
 _RECONNECT_JS = """
@@ -855,8 +820,7 @@ _RECONNECT_JS = """
     }).catch(function () {
       if (failing === null) failing = Date.now();
       if (Date.now() - failing > 120000) {
-        show("Could not reconnect. The update's log: " + (log || "(unknown)") +
-             ". The command to roll back by hand is in that log, and in docs/install.md ## Update.");
+        show("Could not reconnect. See docs/install.md, Update, to roll back.");
       } else {
         show("Restarting…");
       }
@@ -871,9 +835,7 @@ _RECONNECT_JS = """
 def _board() -> rx.Component:
     return rx.vstack(
         s.heading("Work board", "From an idea to something real. One clear step at a time."),
-        _update_panel(),
         rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
-        rx.cond(P.has_workspace, _backlog_panel(), rx.fragment()),
         _running_steps(),
         rx.flex(
             rx.input(rx.input.slot(rx.icon("search", size=15)), id="work-search",
@@ -882,7 +844,7 @@ def _board() -> rx.Component:
                      width=rx.breakpoints(initial="100%", sm="240px")),
             rx.segmented_control.root(
                 *[rx.segmented_control.item(label, value=label)
-                  for label in ("All work", "Autonomous", "Needs review")],
+                  for label in ("All work", "Autonomous", "Needs you")],
                 value=P.focus, on_change=P.filter_work, size="1",
             ),
             rx.spacer(),
@@ -913,7 +875,7 @@ def _board() -> rx.Component:
                     rx.grid(
                         *(
                             _lane(name, LANE_COLOR[name])
-                            for name in ("Planned", "In progress", "Needs review", "Complete")
+                            for name in ("Planned", "In progress", "Needs you", "Complete")
                         ),
                         columns=rx.breakpoints(initial="1", sm="2", lg="4"),
                         gap="12px", width="100%", align_items="start", id="board-grid",
@@ -934,12 +896,6 @@ def _board() -> rx.Component:
             ),
         ),
         _dropped_group(),
-        rx.hstack(
-            rx.icon("info", size=13, color=s.MUTED),
-            s.text("Lanes organise attention. Stage statuses come from each artifact's "
-                   "Status line, never from the run log.", size="1"),
-            spacing="2", align="center",
-        ),
         spacing="5", width="100%",
     )
 
@@ -953,8 +909,10 @@ def _message(message: rx.Var[Message], index: rx.Var[int]) -> rx.Component:
         s.mark(rx.cond(is_user, "ME", "AI"), "gray", "30px"),
         rx.vstack(
             rx.text(rx.cond(is_user, "You", "Claude"), size="2", weight="medium"),
-            rx.text(message.text, size="2", white_space="pre-wrap", line_height="1.9",
-                    overflow_wrap="anywhere"),
+            # `0082` D17: the message as markdown. `use_raw=False`: Reflex's default passes
+            # raw HTML through (`rehypeRaw`, measured in `screens_test.py`), and a message
+            # carrying `<img onerror>` would then run on a page with a session (plan Risk 8).
+            rx.box(rx.markdown(message.text, use_raw=False), width="100%", overflow_wrap="anywhere"),
             # `0053` R10. The rest of a long message comes down only when asked for.
             rx.cond(
                 message.cut > 0,
@@ -1006,10 +964,12 @@ def _sessions() -> rx.Component:
             s.panel(
                 rx.hstack(
                     rx.vstack(
-                        rx.heading(rx.cond(P.session_id != "", P.session_id, "New conversation"),
-                                   size="4", weight="medium",
-                                   font_family="ui-monospace, monospace"),
+                        rx.heading(rx.cond(P.session_title != "", P.session_title, "New conversation"),
+                                   size="4", weight="medium"),
                         s.text(P.current_workspace.name, size="1"),
+                        rx.cond(P.session_id != "",
+                                _details("session", "Details",
+                                         s.text(P.session_id, size="1", font_family=_MONO))),
                         spacing="1", min_width="0",
                     ),
                     rx.spacer(),
@@ -1020,8 +980,7 @@ def _sessions() -> rx.Component:
                 rx.box(
                     rx.foreach(P.messages, lambda m, i: _message(m, i)),
                     rx.cond(P.messages.length() == 0,
-                            s.text("Say something to start. The session is created on the "
-                                   "first message and saved by the SDK, not by this app.")),
+                            s.text("Say something to start.")),
                     min_height="300px", max_height="480px", overflow_y="auto",
                     padding="10px 0", role="log", aria_label="Conversation messages",
                     id="chat-log",
@@ -1034,8 +993,7 @@ def _sessions() -> rx.Component:
                         disabled=~P.has_workspace,
                     ),
                     rx.hstack(
-                        s.text("Chat only — no tools. Each message spends account quota.",
-                               size="1"),
+                        s.text("Each message spends account quota.", size="1"),
                         rx.spacer(),
                         rx.button("Send", rx.icon("arrow-up", size=15), id="send-message",
                                   on_click=P.send, loading=P.sending,
@@ -1131,11 +1089,7 @@ def _grant_row(grant: rx.Var[GrantRow]) -> rx.Component:
         s.text("tools: " + grant.tools, size="1", margin_top="10px", overflow_wrap="anywhere"),
         s.text("commands: " + grant.commands, size="1", margin_top="4px",
                overflow_wrap="anywhere"),
-        rx.cond(
-            grant.warning != "",
-            rx.callout(grant.warning, icon="triangle_alert", color_scheme="amber",
-                       variant="surface", size="1", margin_top="12px"),
-        ),
+        s.text(grant.consequence, size="1", margin_top="6px"),
         padding="16px 0", border_bottom=f"1px solid {s.LINE}", width="100%",
         data_testid="grant-row",
     )
@@ -1205,7 +1159,7 @@ def _settings() -> rx.Component:
         s.panel(
             s.section_head("Appearance", rx.icon("palette", size=18, color=s.MUTED)),
             _settings_row(
-                "Color mode", "Choose the light you like to work in. Kept by this browser.",
+                "Color mode", "Kept by this browser.",
                 rx.hstack(
                     rx.button(rx.icon("sun", size=16), "Light", id="mode-light",
                               on_click=set_color_mode("light"),
@@ -1217,8 +1171,7 @@ def _settings() -> rx.Component:
             ),
             _settings_row(
                 "Board density",
-                "Give work some breathing room, or bring more into view. Kept in the "
-                "database, so it is a setting for this machine rather than this browser.",
+                "Kept for this machine.",
                 rx.hstack(
                     rx.button("Comfortable", id="density-comfortable",
                               on_click=P.set_density("comfortable"), size="2",
@@ -1233,36 +1186,31 @@ def _settings() -> rx.Component:
         rx.grid(
             s.panel(
                 s.section_head("Where things live", rx.icon("monitor", size=18, color=s.MUTED)),
-                _settings_row("Workspaces", "Built from COS_WORKING_DIR on every read. "
-                              "Not settable here, and not settable over HTTP.",
-                              s.text(rx.cond(P.working_dir != "", P.working_dir, "not set"),
-                                     size="1", font_family="ui-monospace, monospace")),
-                _settings_row("App data", "The database and the object folder. Backing this "
-                              "up does not back up your workspaces.",
-                              s.text(P.data_dir, size="1",
-                                     font_family="ui-monospace, monospace")),
+                _settings_row("Workspaces", "Where your projects live.",
+                              s.badge(rx.cond(P.working_dir != "", "set", "not set"), "gray")),
+                _settings_row("App data", "Backing it up does not back up your workspaces.",
+                              s.badge("set", "gray")),
                 _settings_row("Address",
-                              rx.cond(
-                                  P.loopback_only,
-                                  "Loopback only.",
-                                  "Reachable from any machine that can route here; the "
-                                  "master password stands in front, and over plain HTTP "
-                                  "it crosses the network readable. Set "
-                                  "COS_HOST=127.0.0.1 to bind this machine only.",
-                              ),
-                              s.text(P.host_port, size="1",
-                                     font_family="ui-monospace, monospace")),
-                _settings_row("COS_MODEL (fallback)",
-                              "Used only by a row below that has neither an override nor a "
-                              "shipped default — today, chat.",
-                              s.badge(P.model, "gray")),
+                              rx.cond(P.loopback_only, "This machine only.",
+                                      "Reachable from the network, behind the password."),
+                              s.badge(rx.cond(P.loopback_only, "local", "network"),
+                                      rx.cond(P.loopback_only, "grass", "amber"))),
+                _settings_row("Fallback model", "Used by chat.", s.badge(P.model, "gray")),
+                # `0082` D39, D40, D43: the paths, the address and the variable names.
+                _details("where", "Details",
+                         s.text("workspaces (COS_WORKING_DIR): "
+                                + rx.cond(P.working_dir != "", P.working_dir, "not set"),
+                                size="1", id="working-dir", font_family=_MONO, overflow_wrap="anywhere"),
+                         s.text("data (COS_DATA_DIR): " + P.data_dir, size="1", id="data-dir",
+                                font_family=_MONO, overflow_wrap="anywhere"),
+                         s.text("address (COS_HOST, COS_PORT): " + P.host_port, size="1", font_family=_MONO),
+                         s.text("fallback model: COS_MODEL", size="1", font_family=_MONO),
+                         margin_top="10px", id="data-roots"),
             ),
             s.panel(
                 s.section_head("What a chat session may do",
                                rx.icon("shield-check", size=18, color=s.MUTED)),
-                s.text("Read from the running configuration. This screen cannot change any "
-                       "of it — the only way in is the environment this process started "
-                       "with.", size="1"),
+                s.text("Set when the app starts.", size="1"),
                 rx.foreach(P.knobs, _knob_row),
                 id="knobs-panel",
             ),
@@ -1272,48 +1220,22 @@ def _settings() -> rx.Component:
         s.panel(
             s.section_head("What a board step may do",
                            rx.icon("key-round", size=18, color=s.MUTED)),
-            s.text("These come from the grant table, not from the configuration above. "
-                   "Everything not listed here gets nothing: no tools, no commands, one "
-                   "turn, no budget.", size="1"),
+            s.text("A stage not listed gets no tools.", size="1"),
             rx.foreach(P.grants, _grant_row),
             id="grants-panel",
         ),
         s.panel(
             s.section_head("Which model runs each stage",
                            rx.icon("cpu", size=18, color=s.MUTED)),
-            s.text("The stages come from cos.mjs; chat is last. A model is taken from the "
-                   "override set here, else the default shipped with coscc, else "
-                   "COS_MODEL. A change applies to the next session a step or a chat "
-                   "starts. It opens no gate and starts nothing.", size="1"),
-            s.text("Effort is looked up the same way, with no COS_MODEL step: unset means "
-                   "the SDK's default. A :novel row is what a stage after plan runs on when "
-                   "the plan's label is novel — declared, forced by a file on the security "
-                   "surface, missing, or escalated after impl ran out of turns. max is taken "
-                   "only from an override set here.", size="1", margin_top="8px"),
-            s.text("Default là điểm xuất phát, sẽ chỉnh theo số đo, không phải kết luận.",
-                   size="1", margin_top="8px"),
-            rx.callout("Anyone holding the password or a live session can change these. "
-                       "Every change is written to the run log with its old and new "
-                       "value.", icon="triangle_alert", color_scheme="amber",
-                       variant="surface", size="1", margin_top="12px"),
+            s.text("A change applies to the next session a step or a chat starts.", size="1"),
             rx.foreach(P.model_problems,
                        lambda p: rx.callout(p, icon="circle_alert", color_scheme="red",
                                             variant="surface", size="1", margin_top="8px")),
             rx.foreach(P.model_rows, _model_row),
             id="models-panel",
         ),
-        s.panel(
-            rx.hstack(rx.icon("info", size=19, color=rx.color("iris", 11)),
-                      rx.heading("Five stages write their artifact from the reply.", size="4",
-                                 weight="medium")),
-            s.text("idea, intent, spec, plan and review cannot write a file, so this app "
-                   "writes the artifact from what the session says. spec, plan and review "
-                   "may read, and only inside the unit's worktree and its own folder in "
-                   "the store; idea and intent get no tools. The mode does not change "
-                   "this. impl, pr and ship write their own.",
-                   margin_top="12px", max_width="800px", line_height="1.8"),
-            background=rx.color("iris", 2),
-        ),
+        # `0082` R9: the update panel lives here now.
+        _update_panel(),
         spacing="5", width="100%",
     )
 
@@ -1379,9 +1301,11 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
             width="100%", align="center",
         ),
         rx.box(rx.markdown(q.text), width="100%", margin_top="8px"),
-        # `0056` R11: a dropped unit is read, not answered.
+        # `0056` R11: a dropped unit is read, not answered. `0082` R11: nor a finished or
+        # closed one — the service's `answerable` says which.
+        rx.cond(~P.current_unit.answerable, s.badge("Not answered", "gray")),
         rx.cond(
-            ~P.unit_dropped,
+            ~P.unit_dropped & P.current_unit.answerable,
             rx.fragment(
                 rx.text_area(
                     placeholder="Your answer.",
@@ -1401,25 +1325,13 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
 
 
 def _questions_tab() -> rx.Component:
-    """`0016` R2 and R10, said on the page: what an answer is and what it is not."""
+    """`0016` R2 and R10. What an answer is and is not is in `.claude/CLAUDE.md` (`0082`
+    D12); the page says one sentence, and asks no name (R3)."""
     return rx.vstack(
-        s.text(
-            "Answer an item under ## Open questions. The answer is appended to the end of "
-            "the artifact under ## Answers, with the name you type here; nothing above it "
-            "changes. This is not an approval and it starts no step — the next step reads "
-            "it when someone runs it. The name is not checked: one password stands in front "
-            "of this app and it names nobody, so whoever holds it or a live session can type "
-            "any name. A row named finding F<n> is a review "
-            "finding the last review round confirmed needs a person; its answer goes into "
-            "review.md, and unlike a question's it is read: cos.mjs offers review again "
-            "once every such finding has one, and the ship gate counts a finding the review "
-            "then marks [answered] as closed.",
-            size="1", line_height="1.8",
-        ),
-        rx.input(
-            placeholder="Your name", value=P.answer_by, on_change=P.set_answer_by,
-            aria_label="Who is answering", id="answer-by", width="100%",
-        ),
+        s.text(rx.cond(P.current_unit.answerable,
+                       "Your answer is added under ## Answers; the next step reads it.",
+                       "This unit is finished; its questions are shown to read."),
+               size="1"),
         rx.foreach(P.open_questions_here, _question_row),
         rx.cond(P.open_questions_here.length() == 0,
                 s.text("No question in this unit is waiting for an answer.")),
@@ -1441,22 +1353,18 @@ def _integration_panel() -> rx.Component:
                         rx.cond(u.integrate_button & (u.integration_state != "current"), "amber", "gray")),
                 width="100%", align="center",
             ),
-            rx.cond(u.integration_behind != "",
-                    s.text(u.integration_behind + " commit(s) behind origin/main "
-                           + u.integration_origin, size="1", margin_top="8px")),
+            # `0082` R13: one state; the count only when there is one.
+            rx.cond((u.integration_behind != "") & (u.integration_behind != "0"),
+                    s.text(u.integration_behind + " commits behind main, as of the last fetch",
+                           size="1", margin_top="8px", id="integration-behind")),
             rx.cond(u.integration_reason != "",
                     s.text(u.integration_reason, size="1", overflow_wrap="anywhere")),
-            # `0052` R3: the board does not fetch, so `current` may be against a stale ref.
-            rx.cond(u.integration_state == "current",
-                    s.text("Counted against origin/main " + u.integration_origin
-                           + " as the last fetch left it. Integrate fetches first, then decides.",
-                           size="1", margin_top="8px")),
             rx.foreach(u.integration_needs_person,
                        lambda n: s.text("[needs-person] " + n, size="1", color=rx.color("red", 11))),
             rx.cond(
                 u.integrate_button,
                 rx.vstack(
-                    rx.foreach(u.integration_warnings, lambda w: s.text(w, size="1", line_height="1.7")),
+                    s.text(CONSEQUENCE["integrate"], size="1", id="integration-consequence"),
                     rx.button(
                         rx.icon("git-pull-request-arrow", size=14), "Integrate",
                         on_click=P.integrate,
@@ -1519,8 +1427,6 @@ def _outcome_panel() -> rx.Component:
                     rx.input(placeholder="Measured by — agent, or a person's name",
                              value=P.outcome_measured_by, on_change=P.set_outcome_measured_by,
                              width="100%", id="outcome-measured-by"),
-                    rx.input(placeholder="Your name", value=P.answer_by, on_change=P.set_answer_by,
-                             width="100%", id="outcome-recorded-by"),
                     rx.text_area(placeholder="Note (optional)", value=P.outcome_note,
                                  on_change=P.set_outcome_note, width="100%", id="outcome-note"),
                     rx.button(
@@ -1550,8 +1456,8 @@ def _hold_panel() -> rx.Component:
     """`0045` R14. The unit's hold as `cos.mjs` read it, and one button per move it allows.
 
     Nothing here decides which moves exist: a button shows only when its value is in
-    `hold_moves`. The *Drop* warning is always on screen before the button, because a drop
-    closes a pull request with this machine's `gh` login.
+    `hold_moves`. The *Drop* sentence is on screen before the button, because a drop closes
+    a pull request with this machine's `gh` login. No name is asked (`0082` R3).
     """
     u = P.current_unit
     return rx.cond(
@@ -1570,9 +1476,7 @@ def _hold_panel() -> rx.Component:
             ),
             rx.input(placeholder="Why, in one line", value=P.hold_reason, on_change=P.set_hold_reason,
                      aria_label="Reason for this change", id="hold-reason", width="100%", margin_top="8px"),
-            rx.input(placeholder="Your name", value=P.hold_by, on_change=P.set_hold_by,
-                     aria_label="Who decides this", id="hold-by", width="100%"),
-            rx.cond(u.hold_moves.contains("dropped"), s.text(hold_rules.DROP_WARNING, size="1", line_height="1.7")),
+            rx.cond(u.hold_moves.contains("dropped"), s.text(hold_rules.DROP_WARNING, size="1", id="hold-drop-warning")),
             rx.hstack(
                 *(
                     rx.cond(
@@ -1590,85 +1494,117 @@ def _hold_panel() -> rx.Component:
     )
 
 
-def _backlog_line(row: rx.Var[BacklogRow]) -> rx.Component:
+def _backlog_row(row: rx.Var[BacklogRow], shortlisted: bool) -> rx.Component:
+    """`0082` R10. One unit: its rank, estimate and who made it, and *Edit* in the row."""
+    editing = P.backlog_editing == row.unit
+    cell = lambda value, width, **kw: s.text(value, size="1", width=width, flex_shrink="0", **kw)  # noqa: E731
     return rx.box(
         rx.hstack(
-            s.text("#" + row.rank.to_string(), size="1", min_width="28px"),
-            rx.button(row.unit, on_click=P.show_backlog_history(row.unit), variant="ghost", size="1",
-                      font_family="ui-monospace, monospace"),
-            s.badge("value " + row.value, "iris"),
-            s.badge("effort " + row.effort, "gray"),
+            cell(rx.cond(row.rank > 0, "#" + row.rank.to_string(), ""), "36px"),
+            rx.text(row.unit, size="2", font_family=_MONO, flex="1", min_width="0", overflow_wrap="anywhere"),
+            cell(row.value, "44px"),
+            cell(row.effort, "70px"),
+            cell(row.by, "110px", overflow="hidden", text_overflow="ellipsis", white_space="nowrap"),
             rx.cond(row.drift != "", s.badge(row.drift, "amber")),
-            s.text(row.by, size="1"),
-            spacing="2", align="center", flex_wrap="wrap",
+            *([rx.hstack(
+                s.icon_button("arrow-up", "Move " + row.unit + " up", on_click=P.shortlist_move(row.unit, -1), size="1"),
+                s.icon_button("arrow-down", "Move " + row.unit + " down", on_click=P.shortlist_move(row.unit, 1), size="1"),
+                spacing="1",
+            )] if shortlisted else []),
+            rx.cond(P.shortlist_draft.contains(row.unit),
+                    rx.button("Remove", on_click=P.shortlist_remove(row.unit), size="1", variant="ghost"),
+                    rx.button("Add to shortlist", on_click=P.shortlist_add(row.unit), size="1", variant="ghost")),
+            rx.button(rx.cond(editing, "Close", "Edit"), on_click=P.edit_backlog_row(row.unit),
+                      size="1", variant="soft"),
+            width="100%", align="center", spacing="3", flex_wrap="wrap",
         ),
-        rx.cond(row.basis != "", s.text(row.basis, size="1", line_height="1.6", overflow_wrap="anywhere")),
-        rx.cond(row.warnings != "", s.text("⚠ " + row.warnings, size="1", color=rx.color("amber", 11))),
+        rx.cond(row.warnings != "", s.text(row.warnings, size="1", color=rx.color("amber", 11))),
+        rx.cond(editing, _backlog_editor(row)),
+        width="100%", padding="10px 0", border_bottom=f"1px solid {s.LINE}", data_testid="backlog-row",
+    )
+
+
+def _backlog_editor(row: rx.Var[BacklogRow]) -> rx.Component:
+    """The open row's estimate and relation forms; the unit is the row's, never typed."""
+    pick = lambda name, options, value: s.native_select(  # noqa: E731
+        *options, value=value, on_change=lambda v: P.set_backlog_field(name, v))
+    return rx.vstack(
+        rx.cond(row.basis != "", s.text(row.basis, size="1", overflow_wrap="anywhere")),
         rx.cond(row.agent_differs != "", s.text(row.agent_differs, size="1", overflow_wrap="anywhere")),
-        width="100%", padding="8px 0", border_bottom=f"1px solid {s.LINE}",
-    )
-
-
-def _backlog_panel() -> rx.Component:
-    """`0074`. The shortlist, the rest in computed order, and the three write forms.
-
-    Display only: nothing here reaches the run button, a gate or `next` (R15). The
-    proposal's warning stands above its button, always (R19).
-    """
-    field = lambda name, value, label, **kw: rx.input(  # noqa: E731
-        placeholder=label, value=value, on_change=lambda v: P.set_backlog_field(name, v),
-        aria_label=label, id=f"backlog-{name}", size="1", **kw,
-    )
-    return rx.el.details(
-        rx.el.summary(s.text("Backlog — shortlist, estimates and relations", size="2"), cursor="pointer"),
-        s.panel(
-            s.text(P.backlog_note, size="1"),
-            s.text(P.backlog_recorded, size="1", margin_top="4px"),
-            s.eyebrow("SHORTLIST"),
-            rx.foreach(P.backlog_rows, _backlog_line),
-            rx.foreach(P.backlog_warnings, lambda w: s.text("⚠ " + w, size="1", color=rx.color("amber", 11))),
-            s.eyebrow("THE REST, IN COMPUTED ORDER"),
-            rx.foreach(P.backlog_rest, _backlog_line),
-            rx.cond(P.backlog_unestimated.length() > 0,
-                    s.text("Chưa có ước lượng: " + P.backlog_unestimated.join(", "), size="1")),
-            rx.cond(
-                P.history_unit != "",
-                rx.box(s.eyebrow("HISTORY OF " + P.history_unit),
-                       rx.foreach(P.history_lines, lambda line: s.text(line, size="1", overflow_wrap="anywhere"))),
-            ),
-            field("backlog_by", P.backlog_by, "Your name", width="100%", margin_top="8px"),
-            rx.hstack(
-                field("shortlist_input", P.shortlist_input, "Shortlist: unit names in order, at most 7",
-                      flex="1"),
-                field("shortlist_reason", P.shortlist_reason, "Why, in one line", flex="1"),
-                rx.button("Take the first 7", on_click=P.fill_shortlist, size="1", variant="soft"),
-                rx.button("Save shortlist", on_click=P.save_shortlist, size="1", id="backlog-save-shortlist"),
-                width="100%", flex_wrap="wrap",
-            ),
-            rx.hstack(
-                field("est_unit", P.est_unit, "Unit"), field("est_value", P.est_value, "Value 1–5", width="90px"),
-                field("est_effort", P.est_effort, "S / M / L", width="80px"),
-                field("est_basis", P.est_basis, "Basis, your own words", flex="1"),
-                rx.button("Save estimate", on_click=P.save_estimate, size="1"),
-                width="100%", flex_wrap="wrap",
-            ),
-            rx.hstack(
-                field("rel_unit", P.rel_unit, "Unit"),
-                rx.select(list(backlog.RELATIONS), value=P.rel_type,
-                          on_change=lambda v: P.set_backlog_field("rel_type", v), size="1"),
-                field("rel_other", P.rel_other, "Other unit"),
-                rx.select(list(backlog.OPS), value=P.rel_op,
-                          on_change=lambda v: P.set_backlog_field("rel_op", v), size="1"),
-                field("rel_reason", P.rel_reason, "Why, in one line", flex="1"),
-                rx.button("Save relation", on_click=P.save_relation, size="1"),
-                width="100%", flex_wrap="wrap",
-            ),
-            s.text(P.propose_warning, size="1", line_height="1.7", margin_top="8px", id="backlog-propose-warning"),
-            rx.button(rx.icon("sparkles", size=14), "Propose estimates", on_click=P.propose_estimates,
-                      loading=P.proposing, disabled=P.proposing, size="1", variant="soft", id="backlog-propose"),
-            width="100%", id="backlog-panel",
+        rx.hstack(
+            pick("est_value", [rx.el.option("Value", value="")] + [rx.el.option(str(v), value=str(v)) for v in range(1, 6)],
+                 P.est_value),
+            pick("est_effort", [rx.el.option("Effort", value="")] + [rx.el.option(e, value=e) for e in ("S", "M", "L")],
+                 P.est_effort),
+            rx.input(placeholder="Basis", value=P.est_basis, size="1", flex="1",
+                     on_change=lambda v: P.set_backlog_field("est_basis", v), aria_label="Basis for the estimate"),
+            rx.button("Save estimate", on_click=P.save_estimate, size="1"),
+            width="100%", flex_wrap="wrap", align="center",
         ),
-        width="100%",
+        rx.hstack(
+            pick("rel_type", [rx.el.option(label, value=key) for key, label in present.RELATION_LABEL.items()], P.rel_type),
+            s.native_select(rx.el.option("Other unit", value=""),
+                            rx.foreach(P.cards, lambda c: rx.cond(c.id != row.unit, rx.el.option(c.id, value=c.id),
+                                                                  rx.fragment())),
+                            value=P.rel_other, on_change=lambda v: P.set_backlog_field("rel_other", v)),
+            pick("rel_op", [rx.el.option("add", value="add"), rx.el.option("remove", value="remove")], P.rel_op),
+            rx.input(placeholder="Why", value=P.rel_reason, size="1", flex="1",
+                     on_change=lambda v: P.set_backlog_field("rel_reason", v), aria_label="Why this relation"),
+            rx.button("Save relation", on_click=P.save_relation, size="1"),
+            width="100%", flex_wrap="wrap", align="center",
+        ),
+        rx.foreach(P.history_lines, lambda line: s.text(line, size="1", overflow_wrap="anywhere")),
+        width="100%", spacing="2", padding="10px 0 4px 36px",
+    )
+
+
+def _backlog_screen() -> rx.Component:
+    """`0074`, on its own route since `0082` R10: the shortlist and the rest as one table.
+
+    Display only: nothing here reaches the run button, a gate or `next` (`0074` R15)."""
+    head = rx.hstack(
+        *(s.text(label, size="1", weight="medium", width=w, flex_shrink="0") for label, w in
+          (("Rank", "36px"),)),
+        s.text("Unit", size="1", weight="medium", flex="1"),
+        *(s.text(label, size="1", weight="medium", width=w, flex_shrink="0") for label, w in
+          (("Value", "44px"), ("Effort", "70px"), ("By", "110px"))),
+        width="100%", padding="0 0 6px", border_bottom=f"1px solid {s.LINE}",
+    )
+    return rx.vstack(
+        s.heading("Backlog", "What to take next, in order."),
+        s.panel(
+            s.section_head("Shortlist",
+                           rx.button("Take the first 7", on_click=P.fill_shortlist, size="1", variant="soft")),
+            rx.cond(P.backlog_note != "", s.text(P.backlog_note, size="1")),
+            s.text(P.backlog_recorded, size="1", margin_bottom="8px"),
+            head,
+            rx.foreach(P.backlog_rows, lambda r: _backlog_row(r, True)),
+            rx.cond(P.backlog_rows.length() == 0, s.text("No unit is on the saved shortlist.", size="1", padding="10px 0")),
+            rx.hstack(
+                s.text(P.shortlist_draft.length().to_string() + " of 7 chosen", size="1"),
+                rx.input(placeholder="Why this order", value=P.shortlist_reason, size="1", flex="1",
+                         on_change=lambda v: P.set_backlog_field("shortlist_reason", v),
+                         aria_label="Why this order", id="backlog-shortlist_reason"),
+                rx.button("Save shortlist", on_click=P.save_shortlist, size="1", id="backlog-save-shortlist"),
+                width="100%", align="center", margin_top="12px", flex_wrap="wrap",
+            ),
+            rx.foreach(P.backlog_warnings, lambda w: s.text(w, size="1", color=rx.color("amber", 11))),
+        ),
+        s.panel(
+            s.section_head("The rest, in computed order"),
+            head,
+            rx.foreach(P.backlog_rest, lambda r: _backlog_row(r, False)),
+            rx.cond(P.backlog_rest.length() == 0, s.text("Nothing else waits.", size="1", padding="10px 0")),
+        ),
+        s.panel(
+            rx.hstack(
+                rx.button(rx.icon("sparkles", size=14), "Propose estimates", on_click=P.propose_estimates,
+                          loading=P.proposing, disabled=P.proposing, size="1", variant="soft", id="backlog-propose"),
+                s.text(P.propose_warning, size="1", id="backlog-propose-warning"),
+                align="center", spacing="3", flex_wrap="wrap",
+            ),
+        ),
+        spacing="5", width="100%", id="backlog-panel",
     )
 
 
@@ -1798,8 +1734,7 @@ def _detail_dialog() -> rx.Component:
                     P.unit_dropped,
                     rx.callout(
                         "Dropped: " + P.current_unit.hold_reason + " — "
-                        + P.current_unit.hold_by + ", " + P.current_unit.hold_date
-                        + ". Shown to be read; nothing here writes to it but the hold panel.",
+                        + P.current_unit.hold_by + ", " + P.current_unit.hold_date + ".",
                         icon="circle-x", color_scheme="gray", variant="surface", size="1",
                         margin_top="20px", id="unit-dropped",
                     ),
@@ -1856,44 +1791,27 @@ def _detail_dialog() -> rx.Component:
                         rx.cond(
                             ~P.unit_dropped & (P.next_stage != ""),
                             rx.vstack(
-                                s.text("Running this starts a real Claude session in this "
-                                       "workspace and spends account quota.",
-                                       line_height="1.8"),
                                 _settings_row(
                                     "Mode",
-                                    "Recorded in the run log. It does not change what the "
-                                    "step may do: each stage has one grant.",
+                                    "",
                                     rx.segmented_control.root(
                                         rx.segmented_control.item("Manual", value="manual"),
                                         rx.segmented_control.item("Auto", value="autonomous"),
                                         value=P.next_cell.mode, on_change=P.set_mode, size="1",
                                     ),
                                 ),
-                                # `spec.md` R17: what the step may do, before it runs.
-                                s.panel(
-                                    s.eyebrow("WHAT THIS STEP WOULD BE ALLOWED TO DO"),
-                                    rx.hstack(
-                                        s.badge(P.next_stage, "iris"),
-                                        s.badge(P.next_cell.mode, "gray"),
-                                        margin_top="10px", wrap="wrap",
-                                    ),
-                                    s.text("tools: " + P.next_cell.grants, size="1",
-                                           margin_top="10px", overflow_wrap="anywhere",
-                                           id="next-grants"),
-                                    rx.cond(
-                                        P.next_cell.warning != "",
-                                        rx.callout(P.next_cell.warning, icon="triangle_alert",
-                                                   color_scheme="amber", variant="surface",
-                                                   size="1", margin_top="12px",
-                                                   id="next-warning"),
-                                    ),
-                                    rx.cond(
-                                        ~P.next_cell.opens_tools,
-                                        s.text("No tools. This app writes the artifact from "
-                                               "the reply; the session does not write it.",
-                                               size="1", margin_top="12px"),
-                                    ),
-                                    padding="16px", background=rx.color("gray", 2),
+                                # `0082` D9: one line of what the step may do; the grant's
+                                # tools and its full warning only inside *Details*.
+                                rx.hstack(
+                                    s.badge(P.next_stage, "iris"),
+                                    s.text(rx.cond(P.next_cell.opens_tools, "with tools", "no tools"),
+                                           size="1", id="next-grants"),
+                                    _details("grant", "What it may use",
+                                             s.text(P.next_cell.grants, size="1", overflow_wrap="anywhere"),
+                                             rx.cond(P.next_cell.warning != "",
+                                                     s.text(P.next_cell.warning, size="1", id="next-warning",
+                                                            overflow_wrap="anywhere"))),
+                                    align="center", spacing="3", flex_wrap="wrap", width="100%",
                                 ),
                                 rx.button(
                                     rx.icon("play", size=15),
@@ -1902,6 +1820,7 @@ def _detail_dialog() -> rx.Component:
                                     disabled=P.running_here | ~P.recording,
                                     loading=P.running_here, width="100%",
                                 ),
+                                s.text(P.next_cell.consequence, size="1", id="run-consequence"),
                                 _update_warning(),
                                 # `0014` R8. The one control on this page that writes to
                                 # the repository's git. It is separate from Run and stays
@@ -1913,17 +1832,13 @@ def _detail_dialog() -> rx.Component:
                                     id="cut-branch", on_click=P.start_branch,
                                     variant="soft", width="100%",
                                 ),
-                                s.text(
-                                    "Fetches main from origin, then cuts <type>/<slug> "
-                                    "from it, named by the Type: in intent.md, in this "
-                                    "unit's own worktree — the workspace stays on main. "
-                                    "If that fetch fails, nothing is cut. The app never "
-                                    "pushes, merges or commits.",
-                                    size="1",
-                                ),
+                                s.text("Cuts the unit's branch from a fresh main, in its own worktree.",
+                                       size="1"),
                                 rx.cond(
                                     P.unit_tree != "",
-                                    s.text(P.unit_tree, id="unit-tree", size="1"),
+                                    _details("tree", "Worktree",
+                                             s.text(P.unit_tree, id="unit-tree", size="1",
+                                                    overflow_wrap="anywhere")),
                                 ),
                                 rx.cond(
                                     ~P.recording,
@@ -2292,6 +2207,7 @@ def _screen() -> rx.Component:
         ("overview", _overview()),
         ("workspaces", _workspaces_screen()),
         ("board", _board()),
+        ("backlog", _backlog_screen()),
         ("sessions", _sessions()),
         ("activity", _activity()),
         ("settings", _settings()),

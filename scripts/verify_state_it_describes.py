@@ -13,7 +13,7 @@ measured through the page and the API the page uses, in six claims:
     2  (R8)      a 15th directory in the repository is counted after a reload
     3  (R10)     a unit made through the API is numbered 0016, and the repository's
                  `.cos/` is not written to
-    4  (R4)      that unit's card sits in Planned, not in Needs review
+    4  (R4)      that unit's card sits in Planned, not in Needs you
     5  (R1, R3)  the branch is cut from the remote's main — one commit ahead of the local
                  one — the page names origin/main and that commit, and it tracks nothing
     6  (R2)      with origin unreachable nothing is cut, and the page says so
@@ -235,11 +235,11 @@ def run() -> int:
             # 4 (R4)
             reload_board(page)
             planned = page.locator(f'[data-testid="lane-Planned"] #unit-{unit}').count()
-            review = page.locator(f'[data-testid="lane-Needs review"] #unit-{unit}').count()
+            review = page.locator(f'[data-testid="lane-Needs you"] #unit-{unit}').count()
             results.append(say(
                 bool(unit) and planned == 1 and review == 0,
-                "4 its card is in Planned, not in Needs review",
-                f"in Planned: {planned}, in Needs review: {review}",
+                "4 its card is in Planned, not in Needs you",
+                f"in Planned: {planned}, in Needs you: {review}",
             ))
 
             # 5 (R1, R3)

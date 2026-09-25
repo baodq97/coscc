@@ -484,15 +484,14 @@ def run_restart(root: Path) -> int:
         try:
             page = browser.new_page()
             page.goto(f"http://127.0.0.1:{port}/")
-            page.click("#nav-board")
+            page.click("#nav-settings")  # `0082` R9: the panel moved to Settings
             panel = page.locator("#update-panel")
             panel.wait_for(timeout=30000)
             text = panel.inner_text()
             va_sha7 = va_version.split("+g", 1)[1]
-            shown_commit = va_sha7[:7] in text.split()
-            ok &= say(va_version in text and shown_commit and "ready " + vb_version in text,
+            shown_commit = va_sha7[:7] in text.split()  # `0082` D4: seven characters
+            ok &= say(va_version in text and shown_commit and vb_version in text,
                       "--restart the panel shows vA with its commit, and the local channel ready", text[:400])
-            page.fill("#update-by", "Proof")
             page.click("#update-apply-local")
             deadline = time.monotonic() + 120
             seen = ""

@@ -30,7 +30,7 @@ class AnAddressReadsBackAsThePlaceItWasWrittenFrom(unittest.TestCase):
             with self.subTest(place=p):
                 self.assertEqual(_read(place.href(p)), p)
                 count += 1
-        self.assertEqual(count, 12 + 20)
+        self.assertEqual(count, 14 + 20)  # `0082`: seven screens, `/backlog` the seventh
 
     def test_no_address_ends_in_a_slash_but_the_root(self):
         for p in self._every_place():

@@ -96,3 +96,19 @@ def native_select(*children, **props) -> rx.Component:
         border_radius="8px", padding="7px 10px", font_size="12px",
         max_width="100%", cursor="pointer",
     )
+
+
+def details(is_open, on_toggle, label, *children, **props) -> rx.Component:
+    """`0082` R6. A disclosure for internal detail — a path, a full sha, a UUID, a variable
+    name. Opened by a state var through `rx.cond`, not `<details>`: while closed, what it
+    holds is not in the DOM at all, so nothing on the screen shows it (`ui-standard.md` S3).
+    """
+    return rx.box(
+        rx.button(
+            rx.cond(is_open, rx.icon("chevron-down", size=13), rx.icon("chevron-right", size=13)),
+            label, on_click=on_toggle, variant="ghost", size="1", color_scheme="gray",
+            aria_expanded=rx.cond(is_open, "true", "false"),
+        ),
+        rx.cond(is_open, rx.box(*children, padding="6px 0 0 18px", width="100%")),
+        **props,
+    )

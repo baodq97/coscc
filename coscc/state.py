@@ -27,7 +27,7 @@ import reflex as rx
 from reflex_base.event.context import EventContext
 
 from coscc import events as events_mod
-from coscc import place
+from coscc import place, present
 from coscc.api import build
 from coscc.journal import COST_USD, TOKEN_FIELDS
 from coscc.service import Invalid, StaleCutList, describe_base
@@ -39,6 +39,8 @@ NAVIGATION = (
     ("overview", "Overview", "house"),
     ("workspaces", "Workspaces", "layers"),
     ("board", "Board", "columns-3"),
+    # `0082` R10. The backlog left the board for a route of its own.
+    ("backlog", "Backlog", "list-ordered"),
     ("sessions", "Sessions", "messages-square"),
     ("activity", "Activity & usage", "chart-no-axes-combined"),
     ("settings", "Settings", "settings-2"),
@@ -78,10 +80,13 @@ def _cell_label(row: dict) -> tuple[str, str]:
     return status, STATUS_COLOR.get(status, "gray")
 
 
+# `0082` D35. What `Updater.cut_list` says each job will do, in the page's words.
+_CUT_ACTION = {"sẽ bị dừng": "will be stopped", "sẽ chờ": "will be waited for"}
+
 LANE_COLOR = {
     "Planned": "gray",
     "In progress": "iris",
-    "Needs review": "amber",
+    "Needs you": "amber",
     "Complete": "grass",
 }
 
@@ -145,6 +150,8 @@ class Cell:
     grants: str = ""
     warning: str = ""
     opens_tools: bool = False
+    # `0082` R8: the one sentence the page keeps beside Run.
+    consequence: str = ""
     # `idea` is the one optional stage and it gates nothing. Carried here so the run
     # button can skip it: the board card says "Next: write-pr" and a button offering to
     # run `idea` beside it is two answers to one question.
@@ -197,14 +204,14 @@ class Unit:
     usd: str = ""
     token_count: int = 0
     progress: int = 0
-    # True when this unit sits in *Needs review*: an artifact is in draft, or the harness
+    # True when this unit sits in *Needs you*: an artifact is in draft, or the harness
     # reported a problem with the directory. Not the harness's `blocked` — see `_lane`.
     needs_attention: bool = False
     problems: str = ""
     cells: list[Cell] = dataclasses.field(default_factory=list)
     # `0016` R8. How many questions in the counted artifact nobody has answered, taken
     # from `cos.mjs` (`open`) and never recounted (R7). Shown as a badge, not a lane:
-    # an open question does not move a unit into *Needs review*.
+    # an open question does not move a unit into *Needs you*.
     open_questions: int = 0
     questions: list[Question] = dataclasses.field(default_factory=list)
     # `0021`. The pull request `pr.md` names, and every review round with its comment state.
@@ -245,6 +252,10 @@ class Unit:
     # relations in one line (R9). Labels only.
     shortlist_rank: int = 0
     relations_text: str = ""
+    # `0082` R11, R12. The service's decisions: whether the board invites an answer, and
+    # what a unit in *Needs you* waits on.
+    answerable: bool = True
+    attention_reason: str = ""
 
 
 @dataclasses.dataclass
@@ -277,6 +288,8 @@ class Card:
     shortlist_rank: int = 0
     relations_text: str = ""
     live: list[Activity] = dataclasses.field(default_factory=list)
+    answerable: bool = True
+    attention_reason: str = ""
 
 
 def _card(u: Unit) -> Card:
@@ -288,6 +301,7 @@ def _card(u: Unit) -> Card:
         integration_state=u.integration_state, integrate_button=u.integrate_button,
         outcome_text=u.outcome_text, outcome_color=u.outcome_color, hold_state=u.hold_state,
         shortlist_rank=u.shortlist_rank, relations_text=u.relations_text, live=list(u.live),
+        answerable=u.answerable, attention_reason=u.attention_reason,
     )
 
 
@@ -326,26 +340,30 @@ def _backlog_row(entry: dict, rank: int) -> BacklogRow:
     est = entry.get("estimate") or {}
     effort = str(est.get("effort") or "")
     if est.get("effort_source") == "guess":
-        effort = f"{effort} (ước đoán)"
+        effort = f"{effort} (guess)"
     basis = " · ".join(x for x in (str(est.get("basis") or ""), str(est.get("effort_basis") or "")) if x)
     other = entry.get("agent_differs") or {}
     return BacklogRow(
         rank=rank, unit=str(entry.get("unit") or ""),
         value=str(est.get("value") or "—"), effort=effort or "—", basis=basis, by=str(est.get("by") or ""),
-        drift=(f"lệch — hạng tính được {entry.get('computed') or 'không có'}" if entry.get("drift") else ""),
+        drift=(f"off by rank — computed {entry.get('computed') or 'none'}" if entry.get("drift") else ""),
         warnings="; ".join(entry.get("warnings") or []),
         agent_differs=(
-            f"agent đề xuất: value {other.get('value')}, effort {other.get('effort')} — {other.get('basis')}"
+            f"agent proposed: value {other.get('value')}, effort {other.get('effort')} — {other.get('basis')}"
             if other else ""
         ),
     )
 
 
 def _relations_text(relations: list | None) -> str:
-    """R9. `thay thế` and `phụ thuộc` read from the side they are on; the other two either way."""
-    words = {("thay thế", "in"): "bị thay thế bởi", ("phụ thuộc", "in"): "được cần bởi"}
+    """R9. `thay thế` and `phụ thuộc` read from the side they are on; the other two either way.
+    `0082` D31: in English, from `present`'s tables; the stored words are unchanged."""
+    def word(r: dict) -> str:
+        if r.get("direction") == "in" and r.get("type") in present.RELATION_LABEL_IN:
+            return present.RELATION_LABEL_IN[r["type"]]
+        return present.RELATION_LABEL.get(r.get("type"), str(r.get("type")))
     return "; ".join(
-        f"{words.get((r.get('type'), r.get('direction')), r.get('type'))} {r.get('other')}"
+        f"{word(r)} {r.get('other')}"
         for r in relations or []
     )
 
@@ -354,30 +372,27 @@ def backlog_view(data: dict) -> dict:
     """`0074`. The panel's fields from the board's `backlog`; copies, decides nothing."""
     b = data.get("backlog") or {}
     cuts = b.get("terciles")
-    note = [f"{b.get('measured_count', 0)} unit finished có báo chi phí"]
-    if cuts:
-        note.append(
-            f"tercile chi phí ≤${cuts['cost_usd'][0]:.2f} S, ≤${cuts['cost_usd'][1]:.2f} M; "
-            f"lượt ≤{cuts['turns'][0]} S, ≤{cuts['turns'][1]} M"
-        )
-    if b.get("undiscriminating"):
-        note.append(
-            f"backlog có {len(b.get('backlog') or [])} unit, không quá 7: lúc này shortlist không phân biệt được gì"
-        )
+    # `0082` D32: one English sentence; the cost thresholds stay in the API and in `backlog`.
+    note = (f"Only {len(b.get('backlog') or [])} units wait, so a shortlist of 7 picks nothing out."
+            if b.get("undiscriminating") else "")
     record = b.get("shortlist_record") or {}
     return {
         "backlog_rows": [_backlog_row(e, int(e.get("rank") or 0)) for e in b.get("shortlist") or []],
-        "backlog_rest": [_backlog_row(e, int(e.get("computed") or 0)) for e in b.get("order") or []],
+        # `0082` R10: a unit with no estimate is a row too, with value and effort empty.
+        "backlog_rest": [_backlog_row(e, int(e.get("computed") or 0)) for e in b.get("order") or []]
+        + [BacklogRow(unit=str(n), value="—", effort="—") for n in b.get("unestimated") or []],
+        "shortlist_draft": [str(e.get("unit") or "") for e in b.get("shortlist") or []],
         "backlog_unestimated": list(b.get("unestimated") or []),
-        "backlog_note": "; ".join(note),
+        "backlog_note": note,
         "backlog_recorded": (
-            f"Ghi lần {record.get('n')} lúc {record.get('at')} bởi {record.get('by')}: {record.get('reason')}"
-            if record else "Chưa có shortlist nào được ghi."
+            f"Saved {present.when(record.get('at'))} by {record.get('by')}: {record.get('reason')}"
+            if record else "No shortlist saved yet."
         ),
         "backlog_warnings": [f"{w.get('unit')}: {w.get('text')}" for w in b.get("warnings") or []]
         + list(b.get("problems") or []),
         "backlog_suggested": list(b.get("suggested") or []),
-        "propose_warning": str(b.get("propose_warning") or ""),
+        "propose_warning": str(b.get("propose_consequence") or b.get("propose_warning") or ""),
+        "backlog_names": list(b.get("backlog") or []),
     }
 
 
@@ -392,14 +407,15 @@ def _outcome_fields(label: dict | None) -> dict:
         str(x) for x in (label.get("source") or label.get("reason"), label.get("note")) if x
     )
     return {
-        "outcome_text": str(label.get("text") or ""),
+        # `0082` D22: the English label; the API keeps `text` as it was.
+        "outcome_text": str(label.get("label") or label.get("text") or ""),
         "outcome_color": str(label.get("color") or "gray"),
         "outcome_detail": detail,
         "outcome_by": str(label.get("by") or ""),
         "outcome_date": str(label.get("date") or ""),
         "outcome_measured_by": str(label.get("measured_by") or ""),
         "outcome_deadline": str(label.get("deadline") or ""),
-        "outcome_hint": str(label.get("hint") or ""),
+        "outcome_hint": str(label.get("hint_label") or label.get("hint") or ""),
         "outcome_invalid": int(label.get("invalid") or 0),
         "outcome_form": bool(label.get("form")),
     }
@@ -437,7 +453,7 @@ def _activities(unit: str, read: dict) -> list[Activity]:
             label="rebasing" if row.get("kind") == "rebase" else "running",
             agent=f"{agent['glyph']} {agent['name']}" if agent else "",
             stage=str(row.get("stage") or ""),
-            started=str(row.get("started") or ""),
+            started=present.when(row.get("started")),
             turns="" if turns is None else str(turns),
             cost="" if cost is None else f"${float(cost):.2f}",
             kind=str(row.get("kind") or ""),
@@ -447,7 +463,7 @@ def _activities(unit: str, read: dict) -> list[Activity]:
         out.append(Activity(
             label="ended, unknown",
             stage=str(row.get("stage") or ""),
-            started=str(row.get("started") or ""),
+            started=present.when(row.get("started")),
             kind="unknown",
         ))
     return out
@@ -693,6 +709,7 @@ class GrantRow:
     turns: str = ""
     budget: str = ""
     warning: str = ""
+    consequence: str = ""
 
 
 # --- formatting --------------------------------------------------------------
@@ -844,7 +861,7 @@ def _lane(unit: dict) -> str:
     reading `cos.mjs status --json` against this repository: `blocked` is `true` for every
     unit that is not finished — `.claude/scripts/cos.mjs:122-135` returns it for "the next
     stage has not been written yet" as readily as for "an artifact is sitting in draft".
-    Mapping it onto a lane called *Needs review* put all six unfinished units there and
+    Mapping it onto a lane called *Needs you* put all six unfinished units there and
     left *Planned* and *In progress* permanently empty, which is a board that sorts nothing.
 
     So the lanes are read off the artifacts instead: a `draft` artifact is something a
@@ -865,7 +882,7 @@ def _lane(unit: dict) -> str:
     if unit.get("problems") or any(
         r.get("status") in ("draft", "changes-requested") for r in rows
     ):
-        return "Needs review"
+        return "Needs you"
     if any(r.get("status") != "not started" for r in rows):
         return "In progress"
     return "Planned"
@@ -966,8 +983,8 @@ class StudioState(rx.State):
     # The unit whose step this page is streaming into `run_log`, so another unit's
     # reply is never shown under the one now open.
     log_unit: str = ""
-    # A name typed to stop a step. Like `answer_by`, never stored as a preference.
-    stop_by: str = ""
+    # `0082` R7, R3: which *Details* are open, by key. Closed, their content is not in the DOM.
+    open_details: list[str] = []
     # -- `0073`: the watch pane. One `run` at a time; `_watch_token` changes whenever the pane
     # closes or opens another, and the loop following the old one stops at its next batch.
     watch_run: str = ""
@@ -1010,9 +1027,12 @@ class StudioState(rx.State):
     upd_last_tail: str = ""
     update_pending: bool = False
     update_warning: str = ""
-    # A name typed to apply, cancel or build. Never stored, like `stop_by`.
-    update_by: str = ""
-    # R10's confirmation: what "apply now" would cut, and the token of that list.
+    # `0082` R9: the service's line and the buttons it lists; the full sha for *Details*.
+    upd_line: str = ""
+    upd_local_line: str = ""
+    upd_actions: list[str] = []
+    upd_commit_full: str = ""
+    # R10's confirmation: what "áp dụng ngay" would cut, and the token of that list.
     cut_open: bool = False
     cut_channel: str = ""
     cut_items: list[str] = []
@@ -1028,11 +1048,9 @@ class StudioState(rx.State):
 
     # -- answering a question (`0016`). One text box is live at a time: typing into a
     # question's box makes it the target, and the box of every other question reads empty.
-    # `answer_by` stays in the page's state and is not stored as a preference, so the
-    # settings store gains no key for a name nobody verified.
+    # `0082` R3: no name is typed; the service records `owner`.
     answer_target: str = ""
     answer_text: str = ""
-    answer_by: str = ""
     # `0071` R6. The key of the question being sent, `""` while none is: only that row's
     # button shows it is sending.
     answering_key: str = ""
@@ -1040,21 +1058,19 @@ class StudioState(rx.State):
     posting_round: int = 0
     # `0035`. True while an integration runs; locks the *Integrate* button.
     integrating: bool = False
-    # `0047`. The outcome form. The person recording is `answer_by`, so nobody types a name
-    # twice; `outcome_measured_by` starts as `agent`, the case with no script to run.
+    # `0047`. The outcome form. Nobody types who records it (`0082` R3); `outcome_measured_by`
+    # starts as `agent`, the case with no script to run.
     outcome_result: str = "đạt"
     outcome_measured_by: str = "agent"
     outcome_source: str = ""
     outcome_reason: str = ""
     outcome_note: str = ""
     recording_outcome: bool = False
-    # `0045`. The reason and name typed into the hold panel, and whether a move is in flight.
-    # Like `answer_by`, the name is a claim nobody verifies and is not stored as a preference.
+    # `0045`. The reason typed into the hold panel, and whether a move is in flight.
     hold_reason: str = ""
-    hold_by: str = ""
     holding: bool = False
     # `0074`. The Backlog panel, copied from `Service.board`'s `backlog` by `backlog_view`,
-    # and what a person types into it. `backlog_by` is a claim like `hold_by`.
+    # and what a person types into it. `0082` R10: the shortlist is edited row by row.
     backlog_rows: list[BacklogRow] = []
     backlog_rest: list[BacklogRow] = []
     backlog_unestimated: list[str] = []
@@ -1066,8 +1082,10 @@ class StudioState(rx.State):
     _backlog_history: dict = {}
     history_unit: str = ""
     history_lines: list[str] = []
-    backlog_by: str = ""
-    shortlist_input: str = ""
+    backlog_names: list[str] = []
+    shortlist_draft: list[str] = []
+    # The unit whose row is open for editing, `""` for none.
+    backlog_editing: str = ""
     shortlist_reason: str = ""
     est_unit: str = ""
     est_value: str = ""
@@ -1129,6 +1147,11 @@ class StudioState(rx.State):
         return SCREEN_TITLES.get(self.screen, "Overview")
 
     @rx.var
+    def session_title(self) -> str:
+        """`0082` R14. The open conversation's title, as its row in the list shows it."""
+        return next((c.title for c in self.conversations if c.id == self.session_id), "")
+
+    @rx.var
     def current_workspace(self) -> Workspace:
         for w in self.workspaces:
             if w.id == self.cwd:
@@ -1160,9 +1183,9 @@ class StudioState(rx.State):
             rows = [c for c in rows if q in c.id.lower() or q in c.title.lower()]
         if self.focus == "Autonomous":
             rows = [c for c in rows if c.mode == "autonomous"]
-        elif self.focus == "Needs review":
+        elif self.focus == "Needs you":
             # `Unit.needs_attention` is set from exactly this (`_load_board`).
-            rows = [c for c in rows if c.lane == "Needs review"]
+            rows = [c for c in rows if c.lane == "Needs you"]
         return [c.id for c in rows]
 
     @rx.var
@@ -1187,7 +1210,7 @@ class StudioState(rx.State):
 
     @rx.var
     def attention_count(self) -> int:
-        return len([c for c in self.cards if c.lane == "Needs review" and c.hold_state != "dropped"])
+        return len([c for c in self.cards if c.lane == "Needs you" and c.hold_state != "dropped"])
 
     @rx.var
     def dropped_count(self) -> int:
@@ -1288,6 +1311,7 @@ class StudioState(rx.State):
                 turns=str(g["max_turns"]),
                 budget=f"${g['max_budget_usd']:.2f}",
                 warning=g["warning"],
+                consequence=str(g.get("consequence") or ""),
             )
             for g in data.get("grants") or []
         ]
@@ -1346,7 +1370,8 @@ class StudioState(rx.State):
         if not self.cwd:
             return
         try:
-            self.running_steps = [RunningStep(**r) for r in SERVICE.running_steps(self.cwd)]
+            self.running_steps = [RunningStep(**{**r, "started_at": present.when(r.get("started_at"))})
+                                  for r in SERVICE.running_steps(self.cwd)]
         except Invalid:
             self.running_steps = []
 
@@ -1412,6 +1437,7 @@ class StudioState(rx.State):
                     grants=", ".join(row.get("grants") or []) or "no tools",
                     warning=row.get("warning") or "",
                     opens_tools=bool(row.get("grants")),
+                    consequence=str(row.get("consequence") or ""),
                 ))
             started = len([c for c in cells if c.started])
             lane = _lane(u)
@@ -1436,7 +1462,7 @@ class StudioState(rx.State):
                     usd=_usd(u.get("cost") or {}),
                     token_count=count,
                     progress=int(started * 100 / len(cells)) if cells else 0,
-                    needs_attention=lane == "Needs review",
+                    needs_attention=lane == "Needs you",
                     problems="; ".join(u.get("problems") or []),
                     cells=cells,
                     open_questions=waiting,
@@ -1449,6 +1475,8 @@ class StudioState(rx.State):
                     **_hold_fields(u),
                     shortlist_rank=int((u.get("backlog") or {}).get("rank") or 0),
                     relations_text=_relations_text((u.get("backlog") or {}).get("relations")),
+                    answerable=bool(u.get("answerable", True)),
+                    attention_reason=str(u.get("attention_reason") or ""),
                 )
             )
         self._full = {u.id: u for u in units}
@@ -1490,7 +1518,7 @@ class StudioState(rx.State):
             Conversation(
                 id=row["session_id"],
                 title=(row.get("summary") or row.get("session_id") or "")[:60] or "Untitled",
-                subtitle=str(row.get("last_modified") or row.get("created_at") or "")[:19],
+                subtitle=present.when(row.get("last_modified") or row.get("created_at")),
                 resumable=bool(row.get("resumable")),
             )
             for row in data["sessions"]
@@ -1871,7 +1899,7 @@ class StudioState(rx.State):
     def filter_work(self, value: str | list[str]):
         # `rx.segmented_control` hands back a list when it is multi-select. This one is
         # not, and the prototype shipped a version that accepted a list and then indexed a string.
-        if not isinstance(value, str) or value not in ("All work", "Autonomous", "Needs review"):
+        if not isinstance(value, str) or value not in ("All work", "Autonomous", "Needs you"):
             self.notice = "Choose one of the work filters."
             return
         self.focus = value
@@ -2126,12 +2154,12 @@ class StudioState(rx.State):
         self.answer_text = value
 
     @rx.event
-    def set_answer_by(self, value: str):
-        self.answer_by = value
+    def toggle_details(self, key: str):
+        """`0082`. Open or close one *Details*; nothing else reads which are open."""
+        self.open_details = ([k for k in self.open_details if k != key]
+                             if key in self.open_details else [*self.open_details, key])
 
     @rx.event
-    def set_stop_by(self, value: str):
-        self.stop_by = value
 
     @rx.event
     async def stop_step(self, unit: str):
@@ -2140,7 +2168,7 @@ class StudioState(rx.State):
         refusal is shown as its words. The streaming handler sees the `stopped` outcome."""
         self.error = ""
         try:
-            done = await SERVICE.stop_step(self.cwd, unit, self.stop_by)
+            done = await SERVICE.stop_step(self.cwd, unit, "")
             self.notice = f"Stopping {done['unit']} {done['stage']} (by {done['stopped_by']})."
         except Invalid as e:
             self._fail(e)
@@ -2300,9 +2328,11 @@ class StudioState(rx.State):
     def _load_update(self) -> None:
         u = SERVICE.update_status()
         self.upd_version = str(u.get("version") or "")
-        # S3: a full SHA stays in `/api/update`; the card shows the short one.
-        commit = str(u.get("commit") or "")
-        self.upd_commit = commit[:7] if commit else str(u.get("commit_label") or "")
+        self.upd_commit = present.short_sha(u.get("commit"))
+        self.upd_commit_full = str(u.get("commit_label") or u.get("commit") or "")
+        self.upd_line = str(u.get("line") or "")
+        self.upd_local_line = str(u.get("local_line") or "")
+        self.upd_actions = [str(a) for a in u.get("actions") or []]
         self.upd_available = u.get("shape") == "service"
         self.upd_reason = str(u.get("reason") or "")
         self.upd_state = str(u.get("state") or "")
@@ -2318,26 +2348,22 @@ class StudioState(rx.State):
         self.upd_local_ready = local.get("state") == "ready"
         self.upd_local_configured = bool(local) and local.get("state") != "unconfigured"
         self.upd_local_tail = str(local.get("log_tail") or "")
-        self.upd_checked_at = str(u.get("checked_at") or "")
+        self.upd_checked_at = present.when(u.get("checked_at"))
         error = u.get("error") or {}
         self.upd_error = str(error.get("message") or "")
         self.upd_error_tail = str(error.get("log_tail") or "")
         last = u.get("last") or {}
         self.upd_last = (
-            f"{last.get('result')}: {last.get('from')} → {last.get('to')} (log: {last.get('log')})"
+            f"{last.get('result')}: {last.get('from')} → {last.get('to')}"
             if last else ""
         )
         self.upd_last_tail = str(last.get("log_tail") or "")
 
     @rx.event
-    def set_update_by(self, value: str):
-        self.update_by = value
-
-    @rx.event
     async def apply_update(self, channel: str):
         """R7: apply, or wait for what is running (R9)."""
         try:
-            await SERVICE.update_apply(channel, "wait", self.update_by, "")
+            await SERVICE.update_apply(channel, "wait", "", "")
         except Invalid as e:
             self._fail(e)
         self._load_update()
@@ -2354,7 +2380,8 @@ class StudioState(rx.State):
 
     def _show_cut(self, channel: str, listing: dict) -> None:
         self.cut_channel = channel
-        self.cut_items = [f"{i['action']}: {_job_line(i)}" for i in listing.get("items") or []]
+        self.cut_items = [f"{_CUT_ACTION.get(i['action'], i['action'])}: {_job_line(i)}"
+                          for i in listing.get("items") or []]
         self.cut_token = str(listing.get("token") or "")
         self.cut_open = True
 
@@ -2365,7 +2392,7 @@ class StudioState(rx.State):
     @rx.event
     async def confirm_apply_now(self):
         try:
-            await SERVICE.update_apply(self.cut_channel, "now", self.update_by, self.cut_token)
+            await SERVICE.update_apply(self.cut_channel, "now", "", self.cut_token)
             self.cut_open = False
         except StaleCutList as e:
             # The list changed since it was shown: show the new one, cut nothing.
@@ -2378,7 +2405,7 @@ class StudioState(rx.State):
     @rx.event
     def cancel_update(self):
         try:
-            SERVICE.update_cancel(self.update_by)
+            SERVICE.update_cancel("")
         except Invalid as e:
             self._fail(e)
         self._load_update()
@@ -2386,7 +2413,7 @@ class StudioState(rx.State):
     @rx.event
     def build_local(self):
         try:
-            SERVICE.update_build_local(self.update_by)
+            SERVICE.update_build_local("")
         except Invalid as e:
             self._fail(e)
         self._load_update()
@@ -2418,7 +2445,7 @@ class StudioState(rx.State):
         yield
         try:
             done = await SERVICE.answer(
-                self.cwd, self.unit_id, artifact, number, self.answer_text, self.answer_by
+                self.cwd, self.unit_id, artifact, number, self.answer_text, ""
             )
         except Invalid as e:
             self._fail(e)
@@ -2473,7 +2500,7 @@ class StudioState(rx.State):
         try:
             done = await SERVICE.record_outcome(
                 self.cwd, self.unit_id, self.outcome_result, self.outcome_measured_by,
-                self.outcome_source, self.outcome_reason, self.outcome_note, self.answer_by,
+                self.outcome_source, self.outcome_reason, self.outcome_note, "",
             )
         except Invalid as e:
             self.notice = str(e)
@@ -2555,8 +2582,6 @@ class StudioState(rx.State):
         self.hold_reason = value
 
     @rx.event
-    def set_hold_by(self, value: str):
-        self.hold_by = value
 
     @rx.event
     async def set_hold(self, to: str):
@@ -2569,7 +2594,7 @@ class StudioState(rx.State):
         self.holding = True
         yield
         try:
-            done = await SERVICE.hold(self.cwd, self.unit_id, to, self.hold_reason, self.hold_by)
+            done = await SERVICE.hold(self.cwd, self.unit_id, to, self.hold_reason, "")
         except Invalid as e:
             self.notice = f"Not changed: {e}"
             return
@@ -2593,22 +2618,51 @@ class StudioState(rx.State):
 
     @rx.event
     def set_backlog_field(self, name: str, value: str):
-        if name in ("backlog_by", "shortlist_input", "shortlist_reason", "est_unit", "est_value", "est_effort",
-                    "est_basis", "rel_unit", "rel_other", "rel_type", "rel_op", "rel_reason"):
+        if name in ("shortlist_reason", "est_value", "est_effort", "est_basis", "rel_other", "rel_type",
+                    "rel_op", "rel_reason"):
             setattr(self, name, value)
 
     @rx.event
+    def edit_backlog_row(self, unit: str):
+        """`0082` R10. Open one row's estimate and relation forms, or close the open one."""
+        if self.backlog_editing == unit:
+            self.backlog_editing = ""
+            return
+        self.backlog_editing, self.est_unit, self.rel_unit = unit, unit, unit
+        self.show_backlog_history(unit)
+
+    @rx.event
+    def shortlist_add(self, unit: str):
+        if unit not in self.shortlist_draft:
+            self.shortlist_draft = [*self.shortlist_draft, unit]
+
+    @rx.event
+    def shortlist_remove(self, unit: str):
+        self.shortlist_draft = [u for u in self.shortlist_draft if u != unit]
+
+    @rx.event
+    def shortlist_move(self, unit: str, step: int):
+        """Move one unit of the draft up (-1) or down (1). The page decides nothing else."""
+        draft = list(self.shortlist_draft)
+        if unit not in draft:
+            return
+        i = draft.index(unit)
+        j = min(max(i + int(step), 0), len(draft) - 1)
+        draft[i], draft[j] = draft[j], draft[i]
+        self.shortlist_draft = draft
+
+    @rx.event
     def fill_shortlist(self):
-        """R12. The first seven of the computed order, into the box. A person still saves it."""
-        self.shortlist_input = ", ".join(self.backlog_suggested)
+        """R12. The first seven of the computed order, into the draft. A person still saves it."""
+        self.shortlist_draft = list(self.backlog_suggested)
 
     @rx.event
     def show_backlog_history(self, unit: str):
         self.history_unit = unit
         self.history_lines = [
-            (f"{h.get('at')} · {h.get('by')} · value {h.get('value')}, effort {h.get('effort')} — {h.get('basis')}"
+            (f"{present.when(h.get('at'))} · {h.get('by')} · value {h.get('value')}, effort {h.get('effort')} — {h.get('basis')}"
              if h.get("kind") == "estimate" else
-             f"{h.get('at')} · {h.get('by')} · {h.get('op')} {h.get('unit')} {h.get('type')} {h.get('other')} — {h.get('reason')}")
+             f"{present.when(h.get('at'))} · {h.get('by')} · {h.get('op')} {h.get('unit')} {present.RELATION_LABEL.get(h.get('type'), h.get('type'))} {h.get('other')} — {h.get('reason')}")
             for h in self._backlog_history.get(unit) or []
         ]
 
@@ -2623,21 +2677,20 @@ class StudioState(rx.State):
 
     @rx.event
     async def save_shortlist(self):
-        names = [n for n in self.shortlist_input.replace(",", " ").split() if n]
-        await self._backlog_write(SERVICE.record_shortlist(self.cwd, names, self.shortlist_reason, self.backlog_by))
+        await self._backlog_write(SERVICE.record_shortlist(self.cwd, list(self.shortlist_draft), self.shortlist_reason, ""))
 
     @rx.event
     async def save_estimate(self):
         await self._backlog_write(SERVICE.record_estimate(
             self.cwd, self.est_unit.strip(), self.est_value.strip(), self.est_effort.strip(), self.est_basis,
-            self.backlog_by,
+            "",
         ))
 
     @rx.event
     async def save_relation(self):
         await self._backlog_write(SERVICE.record_relation(
             self.cwd, self.rel_unit.strip(), self.rel_other.strip(), self.rel_type, self.rel_op, self.rel_reason,
-            self.backlog_by,
+            "",
         ))
 
     @rx.event

@@ -8,7 +8,7 @@ units:
 
     1  (a)  a valid answer to question 1 appends one `### Câu 1`, nothing above moves,
             and the dialog says so in view
-    2  (b)  a refused answer (no name) writes nothing, keeps the text, and the reason is
+    2  (b)  an answer sent with no name (`0082` R3) is recorded as `owner`, and the notice is
             in view in the dialog
     3  (c)  text in question 2's box, Send pressed on question 3: nothing is written, the
             text stays, and the reason names both questions, in view
@@ -277,7 +277,6 @@ def one_width(browser, base, token, api, cwd, size) -> list[bool]:
     context, page = open_board(browser, base, token, size)
     try:
         open_unit(page, answers, "Questions")
-        page.locator("#answer-by").fill("verify_0071")
         page.wait_for_timeout(300)
 
         # 1 (a)
@@ -296,20 +295,18 @@ def one_width(browser, base, token, api, cwd, size) -> list[bool]:
             f"appended {tail[:120]!r}; in view: {why or 'yes'}",
         ))
 
-        # 2 (b)
-        page.locator("#answer-by").fill("")
-        page.wait_for_timeout(300)
-        before = sha(intent.read_bytes())
+        # 2 (b), rewritten by `0082` R3: no name is asked any more, and an answer sent with
+        # none is recorded as `owner` rather than refused.
         type_in(page, box(page, "intent.md#2"), "Câu hai, nhưng không ký tên.")
         press(page, "intent.md#2")
-        said = wait_text(page, "#detail-error", "say who is answering")
-        kept = box(page, "intent.md#2").input_value()
-        why = in_view(page, "#detail-error")
+        said = wait_text(page, "#detail-notice", "")
+        tail = intent.read_text(encoding="utf-8")
+        why = in_view(page, "#detail-notice")
+        kept = "Answered by: owner" in tail.split("### Câu 2", 1)[-1]
         results.append(say(
-            "say who is answering" in said and sha(intent.read_bytes()) == before
-            and kept == "Câu hai, nhưng không ký tên." and not why,
-            f"2 [{w}] (b) a refusal writes nothing, keeps the text, and is in view",
-            f"error {said[:160]!r}; file unchanged {sha(intent.read_bytes()) == before}; "
+            kept and "Câu hai, nhưng không ký tên." in tail and not why,
+            f"2 [{w}] (b) an answer sent with no name is recorded as owner, and the notice is in view",
+            f"notice {said[:160]!r}; owner block {kept}; "
             f"box {kept!r}; in view: {why or 'yes'}",
         ))
 
@@ -373,7 +370,6 @@ def one_width(browser, base, token, api, cwd, size) -> list[bool]:
         # 4 F<n>
         before = review.read_bytes()
         open_unit(page, finding, "Questions")
-        page.locator("#answer-by").fill("verify_0071")
         page.wait_for_timeout(300)
         type_in(page, box(page, "review.md#F2"), "Người quyết: chấp nhận.")
         # A double click (review round 1, F1): the second press may reach the queue before
