@@ -419,7 +419,8 @@ def collapse(event: dict[str, Any]) -> dict[str, Any]:
         "body": body,
         "collapsed": collapsed,
         "truncated": bool(event.get("truncated")),
-        "length": int(event.get("length") or 0),
+        # Not `length`: on the page that name is a list's own method.
+        "original_length": int(event.get("length") or 0),
         "persisted": persisted,
     }
 
