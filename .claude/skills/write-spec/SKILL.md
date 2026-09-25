@@ -45,6 +45,21 @@ Intent: intent.md. Author: <name>. Status: skipped.
 A skip that leaves no file is indistinguishable later from a spec nobody got round to
 writing, and the gate ahead cannot tell those apart either.
 
+## Screens
+
+This applies when the spec means to change a file listed under `paths:` in
+`.claude/rules/ui-standard.md` — a **UI unit** (`0083`). `impl` will take screenshots of
+the addresses this spec names, and `review` will judge them against that file's rules.
+
+In `## Design`, list every screen the change reaches as an address of the app, at most six,
+and the rules `S<n>` that apply to each. The screenshots run on a fixed fixture: workspace
+`proj`, units `0001_fresh-intent`, `0002_open-question`, `0003_awaiting-ship` and
+`0004_finished` — for example `/board`, `/settings`,
+`/unit?ws=proj&id=0002_open-question&tab=questions` (`tab` is one of `coscc/place.py`'s
+`TABS`). A screen only an action reaches (a running step, a dialog opened by a button) has
+no address: say so, because no screenshot will show it. A unit's dialog is taken as the
+viewport shows it, so what it scrolls to below the fold is not in the image either.
+
 ## Output
 
 One file, `.cos/NNNN_<slug>/spec.md`, in the directory the intent already occupies. Do not

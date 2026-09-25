@@ -22,3 +22,5 @@ __pycache__/
 # Source material this repository reads but does not own and must never republish.
 .raws/
 dist/
+# What `scripts/capture_screens.py` writes: screenshots and their manifest (`0083`).
+.screens/

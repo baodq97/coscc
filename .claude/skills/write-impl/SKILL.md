@@ -64,6 +64,28 @@ since the commit the plan was written on, each with the `git diff` command that 
 When the section says the app could not check, nothing is known either way: read the plan's
 citations against the tree as it is.
 
+## Screens
+
+This applies when the branch changes a file listed under `paths:` in
+`.claude/rules/ui-standard.md` — a **UI unit** (`0083`). The `ship` gate will not open on one
+until a review round has looked at screenshots of it.
+
+1. After your last commit that touches such a file, with nothing left uncommitted (the
+   command refuses a dirty tree), run
+   `uv run python scripts/capture_screens.py <address>...` with the addresses the spec's
+   `## Design` lists (at most six). It takes each at 1440×900 and 390×844 on a fixed fixture
+   and writes the PNGs and `manifest.json` to `.screens/`, which git ignores.
+2. Open every PNG with `Read` and compare it against the standard's rules, `S1` to `S8`. Fix
+   what you can, commit, and run the command again, so the manifest's `head` is the last
+   commit touching a UI file.
+3. Record it in `impl.md` under `## Screens`: the command, its exit code, the manifest's
+   `head`, the path of each image, and every entry of the manifest's `hits` you left, each
+   with the reason. A hit nobody explains is a `high` finding in review.
+
+The command builds a bundle for its own port into `<repo>/.web`, overwriting the one the
+worktree had, and builds that one again at the end (about 26 s); its last line says whether
+it did. If that rebuild failed, run the command it prints before any browser proof.
+
 ## Output
 
 One file, `impl.md`, in the unit's directory.
@@ -78,6 +100,8 @@ Intent: intent.md. Plan: plan.md. Author: <name>. Status: accepted.
 
 ## What was measured
 
+## Screens
+
 ## What is still open
 
 ## Needs a person
@@ -85,8 +109,9 @@ Intent: intent.md. Plan: plan.md. Author: <name>. Status: accepted.
 - F<k>: <what the grant lacks, or what costs real money>
 ```
 
-`## Needs a person` is present only on a run a review sent back, and only when a finding
-is left that this stage cannot close. Omit it otherwise.
+`## Screens` is present only on a UI unit (`## Screens` above). `## Needs a person` is
+present only on a run a review sent back, and only when a finding is left that this stage
+cannot close. Omit each otherwise.
 
 `Status` is `draft`, `accepted`, `rejected` or `done`.
 
