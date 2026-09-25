@@ -81,6 +81,13 @@ class StartingAUnit(Fixture):
         self.assertIn("Bad_Slug", str(caught.exception))
         self.assertIn("slug", str(caught.exception).lower())
 
+    def test_a_slug_longer_than_a_branch_allows_is_refused_with_both_lengths(self):
+        # `0102` R3: the limit is `check-branch`'s, said by the script and carried here as is.
+        with self.assertRaises(CannotCreate) as caught:
+            units.create(WS, "a" * 61, "", self.data)
+        self.assertIn("61", str(caught.exception))
+        self.assertIn("60", str(caught.exception))
+
     def test_making_the_same_unit_twice_is_not_possible(self):
         # `new-path` allocates the next number, so a second call with the same slug gets a
         # different number rather than colliding. The point is that nothing is overwritten.
