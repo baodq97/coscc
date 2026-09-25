@@ -100,6 +100,21 @@ class TheAutopilotBlockIsCopied(unittest.TestCase):
         StudioState._show_autopilot_block(page, {"on": False})
         self.assertEqual((page.autopilot_on, page.autopilot_stops, page.autopilot_cap), (False, [], ""))
 
+    def test_no_shortlist_has_its_own_label(self):
+        """`0104` R9."""
+        from types import SimpleNamespace
+
+        from coscc import autopilot
+        from coscc.state import AutopilotStop, StudioState
+
+        page = SimpleNamespace()
+        StudioState._show_autopilot_block(page, {"on": True, "stops": [
+            {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST},
+        ]})
+        self.assertEqual(page.autopilot_stops, [
+            AutopilotStop(unit="the workspace", kind="No shortlist", reason=autopilot.NO_SHORTLIST),
+        ])
+
 
 class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
     """`0001_product-describes-a-state-it-is-not-in` R4/R5, from this store.
