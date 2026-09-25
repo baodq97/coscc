@@ -12,6 +12,7 @@
     "review": {"model": "claude-opus-5-5[1m]", "effort": "high"},
     "review:novel": {"model": "claude-opus-5-5[1m]", "effort": "xhigh"},
     "ship": {"model": "claude-sonnet-5[1m]", "effort": "low"},
-    "estimate": {"model": "claude-opus-5-5[1m]", "effort": "medium"}
+    "estimate": {"model": "claude-opus-5-5[1m]", "effort": "medium"},
+    "precedent": {"model": "claude-opus-5-5[1m]", "effort": "medium"}
   }
 }
