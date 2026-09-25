@@ -258,6 +258,16 @@ def cites_of(text: str) -> list[str]:
     return []
 
 
+def words_of(text: str) -> str:
+    """The words of a block `block_text` wrote, without the `Tiền lệ:` line `cites_of` reads."""
+    lines = (text or "").splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].startswith(CITES):
+            del lines[i]
+            break
+    return "\n".join(lines).strip()
+
+
 async def ask(sessions: Any, cwd: str, prompt: str, grant: Any, model: str | None,
               effort: str | None) -> tuple[str, dict[str, Any], str]:
     """One tool-less session, as `Service.propose_estimates` runs its own. `(reply, end,

@@ -87,7 +87,8 @@ class ThePage(unittest.TestCase):
 
         tab = _render(screens._questions_tab())
         for said in ("Ask Jera", "ask-jera", CONSEQUENCE["precedent"], "Answered by Jera",
-                     "Needs a person", "Jera's proposal", "Precedent", "jera_can_ask"):
+                     "Needs a person", "Jera's proposal", "Precedent", "jera_can_ask",
+                     "Jera's answer", "jera-said"):
             self.assertIn(said, tab)
         self.assertIn("Send this answer", tab, "a person can still answer over Jera")
         settings = _render(screens._settings())

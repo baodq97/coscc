@@ -159,9 +159,9 @@ def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, 
 
 
 def _attach_precedent(units_: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
-    """`0044` R10. On each question: `by_jera` and its `cites` when the answer in force is
-    Jera's, and — while it is still unanswered — `needs_person`, `proposal` and `reason` from
-    the last `precedent` row for it. Display only: `cos.mjs` never sees any of this (R9)."""
+    """`0044` R10. On each question: `by_jera`, its `cites` and the words it `said` when the
+    answer in force is Jera's, and — while it is still unanswered — `needs_person`,
+    `proposal` and `reason` from the last `precedent` row for it. Display only: `cos.mjs` never sees any of this (R9)."""
     last: dict[tuple[str, str, Any], dict[str, Any]] = {}
     for r in rows:
         last[(str(r.get("unit") or ""), str(r.get("artifact") or ""), r.get("n"))] = r
@@ -174,6 +174,7 @@ def _attach_precedent(units_: list[dict[str, Any]], rows: list[dict[str, Any]]) 
             waiting = not q.get("answered") and row.get("verdict") == precedent_mod.PERSON
             q["by_jera"] = jera
             q["cites"] = precedent_mod.cites_of(str(said.get("text") or "")) if jera else []
+            q["said"] = precedent_mod.words_of(str(said.get("text") or "")) if jera else ""
             q["needs_person"] = waiting
             q["proposal"] = str(row.get("text") or "") if waiting else ""
             q["reason"] = str(row.get("reason") or "") if waiting else ""

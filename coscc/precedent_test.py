@@ -144,6 +144,8 @@ class TheBlock(unittest.TestCase):
         self.assertTrue(text.endswith("Tiền lệ: pref:1; 0001_a/spec.md#Câu 1"))
         self.assertEqual(precedent.cites_of(text), v["cites"])
         self.assertEqual(precedent.cites_of("no line"), [])
+        self.assertEqual(precedent.words_of(text), v["text"])
+        self.assertEqual(precedent.words_of("no line"), "no line")
 
     def test_jera_is_matched_however_it_is_typed(self):
         self.assertTrue(all(precedent.is_jera(n) for n in ("Jera", " jera ", "JERA")))

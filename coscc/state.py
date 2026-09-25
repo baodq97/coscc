@@ -177,10 +177,11 @@ class Question:
     # a review finding the last round confirmed needs a person (`number` is 0 for those).
     label: str = ""
     # `0044` R10, all decided by `Service.board`. `by_jera`: the answer in force is Jera's,
-    # citing `cites`. `needs_person`: Jera's last run said a person must answer it, with its
-    # `proposal` and `reason`.
+    # which `said` this and cites `cites`. `needs_person`: Jera's last run said a person must
+    # answer it, with its `proposal` and `reason`.
     by_jera: bool = False
     cites: list[str] = dataclasses.field(default_factory=list)
+    said: str = ""
     needs_person: bool = False
     proposal: str = ""
     reason: str = ""
@@ -1024,6 +1025,7 @@ def _questions(unit: dict) -> tuple[int, list[Question]]:
             label=str(q["n"]),
             by_jera=bool(q.get("by_jera")),
             cites=[str(c) for c in q.get("cites") or []],
+            said=str(q.get("said") or ""),
             needs_person=bool(q.get("needs_person")),
             proposal=str(q.get("proposal") or ""),
             reason=str(q.get("reason") or ""),

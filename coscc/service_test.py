@@ -3321,14 +3321,14 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
                                            reason="đánh đổi", text="Đề xuất: không."))
         self.ask()
         q1, q2 = self.board_questions()
-        self.assertEqual((q1["answered"], q1["by_jera"], q1["cites"], q1["needs_person"]),
-                         (True, True, [self.cite], False))
+        self.assertEqual((q1["answered"], q1["by_jera"], q1["cites"], q1["said"], q1["needs_person"]),
+                         (True, True, [self.cite], "Trả lời 1.", False))
         self.assertEqual((q2["answered"], q2["by_jera"], q2["needs_person"], q2["proposal"], q2["reason"]),
                          (False, False, True, "Đề xuất: không.", "đánh đổi"))
         # A person answering after Jera puts their block in force; nothing is rewritten.
         asyncio.run(self.service.answer(self.cwd, self.asked, "spec.md", 1, "Của tôi.", ""))
         q1, q2 = self.board_questions()
-        self.assertEqual((q1["by"], q1["by_jera"], q1["cites"]), ("owner", False, []))
+        self.assertEqual((q1["by"], q1["by_jera"], q1["cites"], q1["said"]), ("owner", False, [], ""))
 
     def test_r5_an_unknown_citation_writes_nothing(self):
         before = self.spec.read_bytes()

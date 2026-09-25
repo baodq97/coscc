@@ -1544,10 +1544,15 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
         rx.box(rx.markdown(q.text), width="100%", margin_top="8px"),
         rx.cond(
             q.by_jera,
-            rx.flex(
-                s.text("Precedent", size="1", weight="medium"),
-                rx.foreach(q.cites, lambda c: s.badge(c, "gray")),
-                gap="6px", wrap="wrap", align="center", width="100%", margin_top="8px",
+            rx.vstack(
+                s.text("Jera's answer", size="1", weight="medium"),
+                rx.box(rx.markdown(q.said), width="100%", data_testid="jera-said"),
+                rx.flex(
+                    s.text("Precedent", size="1", weight="medium"),
+                    rx.foreach(q.cites, lambda c: s.badge(c, "gray")),
+                    gap="6px", wrap="wrap", align="center", width="100%",
+                ),
+                spacing="1", width="100%", margin_top="8px", align="start",
             ),
         ),
         rx.cond(

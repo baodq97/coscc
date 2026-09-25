@@ -550,7 +550,7 @@ class JerasAnswersAreShownAndAnswerable(unittest.TestCase):
         "open": 1,
         "questions": [
             {"artifact": "spec.md", "n": 1, "text": "a", "answered": True, "counted": True, "by_jera": True,
-             "cites": ["0001_a/spec.md#Câu 1"]},
+             "cites": ["0001_a/spec.md#Câu 1"], "said": "Có."},
             {"artifact": "spec.md", "n": 2, "text": "b", "answered": False, "counted": True,
              "needs_person": True, "proposal": "Đề xuất.", "reason": "tiền"},
             {"artifact": "spec.md", "n": 3, "text": "c", "answered": True, "counted": True},
@@ -570,9 +570,9 @@ class JerasAnswersAreShownAndAnswerable(unittest.TestCase):
         from coscc.state import _questions
 
         _, (q1, q2, _q3, q4) = _questions(self.UNIT)
-        self.assertEqual((q1.by_jera, q1.cites, q1.needs_person), (True, ["0001_a/spec.md#Câu 1"], False))
+        self.assertEqual((q1.by_jera, q1.cites, q1.said, q1.needs_person), (True, ["0001_a/spec.md#Câu 1"], "Có.", False))
         self.assertEqual((q2.needs_person, q2.proposal, q2.reason), (True, "Đề xuất.", "tiền"))
-        self.assertEqual((q4.by_jera, q4.cites, q4.needs_person, q4.proposal), (False, [], False, ""))
+        self.assertEqual((q4.by_jera, q4.cites, q4.said, q4.needs_person, q4.proposal), (False, [], "", False, ""))
 
     def test_waiting_first_then_jeras_and_never_a_persons(self):
         from coscc.state import StudioState
