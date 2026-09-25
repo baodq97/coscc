@@ -24,9 +24,15 @@ directory, and four units in it, always the same, so a spec can name its address
                            github.com/o/r/pull/1
     0004_finished          plan.md: done
 
-For example `/board`, `/settings`, or `/unit?ws=proj&id=0002_open-question&tab=Questions`.
+For example `/board`, `/settings`, or `/unit?ws=proj&id=0002_open-question&tab=questions`
+(`tab` is one of `coscc/place.py`'s `TABS`, lowercase; any other value opens `overview`).
 The fixture's paths live under `/tmp/`, so a screen that shows the workspace's path today
 hits `S3` on every run; say so rather than hide it.
+
+A page is taken full length, except one with a dialog open: the dialog scrolls inside
+itself over a fixed backdrop, so a full-page image would cut it at the viewport and show
+the page behind it instead. That one is taken as the viewport shows it, and what the
+dialog holds below its fold is not in the image (`full_page` in the manifest says which).
 
 It logs in by writing a password hash and one session into that root before the app
 starts (as `scripts/verify_0071.py` does), puts a `gh` first on `PATH` that answers
@@ -167,9 +173,9 @@ def make_fixture(api: httpx.Client, proj: Path) -> None:
             (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
 
 
-def shoot(browser, base: str, token: str, address: str, size: tuple[int, int], out: Path) -> tuple[Path, str, str]:
-    """One address at one size: the PNG, the URL it ended on, and the visible text.
-    Raises `RuntimeError` when the page is not the app's."""
+def shoot(browser, base: str, token: str, address: str, size: tuple[int, int], out: Path) -> tuple[Path, str, str, bool]:
+    """One address at one size: the PNG, the URL it ended on, the visible text, and whether
+    the image is the full page. Raises `RuntimeError` when the page is not the app's."""
     context = browser.new_context(viewport={"width": size[0], "height": size[1]})
     context.add_cookies([{"name": auth.COOKIE, "value": token, "url": base}])
     try:
@@ -183,8 +189,9 @@ def shoot(browser, base: str, token: str, address: str, size: tuple[int, int], o
             raise RuntimeError(f"{address} at {size[0]}x{size[1]}: landed on the login page, {page.url}")
         page.wait_for_timeout(SETTLE_MS)
         path = out / f"{slug(address)}-{size[0]}x{size[1]}.png"
-        page.screenshot(path=str(path), full_page=True)
-        return path, page.url, page.inner_text("body")
+        full = page.locator("[role=dialog]").count() == 0
+        page.screenshot(path=str(path), full_page=full)
+        return path, page.url, page.inner_text("body"), full
     finally:
         context.close()
 
@@ -277,12 +284,13 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
             for address in args.addresses:
                 for size in SIZES:
                     try:
-                        path, url, text = shoot(browser, app.base, token, address, size, out)
+                        path, url, text, full = shoot(browser, app.base, token, address, size, out)
                     except RuntimeError as e:
                         print(str(e), file=sys.stderr)
                         return EXIT_BROKEN
                     where = f"{size[0]}x{size[1]}"
-                    shots.append({"address": address, "size": where, "path": str(path.relative_to(REPO) if path.is_relative_to(REPO) else path), "url": url})
+                    shots.append({"address": address, "size": where, "path": str(path.relative_to(REPO) if path.is_relative_to(REPO) else path),
+                                  "url": url, "full_page": full})
                     found = scan(text)
                     hits += [{"address": address, "size": where, "kind": k, "snippet": s} for k, s in found]
                     print(f"{where} {address} -> {shots[-1]['path']} ({path.stat().st_size} bytes, {len(found)} hits)")

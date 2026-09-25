@@ -55,9 +55,10 @@ In `## Design`, list every screen the change reaches as an address of the app, a
 and the rules `S<n>` that apply to each. The screenshots run on a fixed fixture: workspace
 `proj`, units `0001_fresh-intent`, `0002_open-question`, `0003_awaiting-ship` and
 `0004_finished` — for example `/board`, `/settings`,
-`/unit?ws=proj&id=0002_open-question&tab=Questions`. A screen only an action reaches (a
-running step, a dialog opened by a button) has no address: say so, because no screenshot
-will show it.
+`/unit?ws=proj&id=0002_open-question&tab=questions` (`tab` is one of `coscc/place.py`'s
+`TABS`). A screen only an action reaches (a running step, a dialog opened by a button) has
+no address: say so, because no screenshot will show it. A unit's dialog is taken as the
+viewport shows it, so what it scrolls to below the fold is not in the image either.
 
 ## Output
 

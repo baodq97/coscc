@@ -1895,7 +1895,7 @@ const screens = ({ taken = SHA, by = 'an agent session (write-review)', standard
 
 test('0083 R9: parseReview reads ### Screens, and a round without one reads null', () => {
   const text = `${round(1, 'changes-requested', ['- F1 [open] x'])}\n${round(2, 'pass', [`- F1 [fixed ${FIX}] x`])}${screens({
-    shots: [SHOT, '- `.screens/board-390x844.png` — 390x844 — `/unit?ws=proj&id=0002_open-question&tab=Questions` — S3: a /tmp path', 'prose between lines'],
+    shots: [SHOT, '- `.screens/board-390x844.png` — 390x844 — `/unit?ws=proj&id=0002_open-question&tab=questions` — S3: a /tmp path', 'prose between lines'],
   })}`
   const [one, two] = parseReview(text).rounds
   assert.equal(one.screens, null)
@@ -1904,7 +1904,7 @@ test('0083 R9: parseReview reads ### Screens, and a round without one reads null
     header: `Taken at: ${SHA}. Standard: \`${UI_STANDARD}\`. Looked at by: an agent session (write-review), from screenshots.`,
     shots: [
       { path: '.screens/board-1440x900.png', size: '1440x900', address: '/board', result: 'no violation' },
-      { path: '.screens/board-390x844.png', size: '390x844', address: '/unit?ws=proj&id=0002_open-question&tab=Questions', result: 'S3: a /tmp path' },
+      { path: '.screens/board-390x844.png', size: '390x844', address: '/unit?ws=proj&id=0002_open-question&tab=questions', result: 'S3: a /tmp path' },
     ],
   })
   // Findings still end where ### Screens begins, and the round's text keeps the section.
