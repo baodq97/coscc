@@ -397,11 +397,15 @@ class Journal:
         per_stage: dict[str, dict[str, Any]] = {}
         for row in self.timeline(workspace, unit, timeout=timeout):
             stage = row.get("stage") or ""
-            add_cost(per_stage.setdefault(stage, zero_cost()), row.get("cost") or {})
+            bucket = per_stage.setdefault(stage, {**zero_cost(), "unknown": 0})
+            add_cost(bucket, row.get("cost") or {})
+            # `0092` R7: how many of these runs have no known cost.
+            bucket["unknown"] += int(_cost_unknown(row))
 
-        total = zero_cost()
+        total = {**zero_cost(), "unknown": 0}
         for bucket in per_stage.values():
             add_cost(total, bucket)
+            total["unknown"] += bucket["unknown"]
         return {"per_stage": per_stage, "total": total}
 
     def failed_attempts(
@@ -458,6 +462,10 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Records in order, folded into one row per run. Shared by `timeline`/`timelines`."""
     rows: list[dict[str, Any]] = []
     open_runs: dict[str, dict[str, Any]] = {}
+    # `0092` R6. The same open rows by their `run`, so an `end` that names one closes that
+    # one: two runs of a stage can be open at once, and the latest is not always the one
+    # that ended.
+    open_by_run: dict[str, dict[str, Any]] = {}
     for item in items:
         kind = item.get("kind")
         stage = str(item.get("stage") or "")
@@ -485,8 +493,18 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             }
             rows.append(row)
             open_runs[stage] = row
+            if row["run"]:
+                open_by_run[str(row["run"])] = row
         elif kind == "end":
-            row = open_runs.pop(stage, None)
+            row = open_by_run.pop(str(item.get("run") or ""), None) if item.get("run") else None
+            if row is not None:
+                if open_runs.get(stage) is row:
+                    del open_runs[stage]
+            else:
+                # An `end` with no `run`, or one naming no open row: by stage, as before `0092`.
+                row = open_runs.pop(stage, None)
+                if row is not None and row.get("run"):
+                    open_by_run.pop(str(row["run"]), None)
             if row is None:
                 # An end with no start: keep it rather than drop it, so a half-written
                 # history still shows that something happened.
@@ -512,6 +530,9 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             # Without this a step that failed before its first billed turn reads on the
             # board as a run that cost nothing, rather than one nobody measured.
             row["reported"] = "cost_usd" in item
+            # `0092` R7. Whether it carried `turns`, known apart from its cost: a step that
+            # died after three turns knows them, and not what they cost.
+            row["turns_reported"] = "turns" in item
             if "events_lost" in item:
                 row["events_lost"] = item.get("events_lost")
     return rows
@@ -525,11 +546,22 @@ def timelines_of(items: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, An
     return {unit: _fold(rows) for unit, rows in by_unit.items()}
 
 
+def _cost_unknown(row: dict[str, Any]) -> bool:
+    """`0092` R7. A run that ended with no `cost_usd`: what it cost is not known, not zero."""
+    return row.get("ended") is not None and not row.get("reported", True)
+
+
 def totals_of(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
-    """Add the cost of some timeline rows. Exposed so a caller can total a subset."""
+    """Add the cost of some timeline rows. Exposed so a caller can total a subset.
+
+    Only known costs are added; `unknown` counts the ended runs whose cost is not known
+    (`0092` R7), so the sum is never shown as the whole of it.
+    """
     out = zero_cost()
+    out["unknown"] = 0
     for row in rows:
         add_cost(out, row.get("cost") or {})
+        out["unknown"] += int(_cost_unknown(row))
     return out
 
 
@@ -546,11 +578,12 @@ def last_runs(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             continue
         stage = str(row.get("stage") or "")
         cost = row.get("cost") or {}
-        reported = row.get("reported", True)
+        # `0092` R7. Each known or not on its own: a step can report its turns and not what
+        # they cost.
         out[stage] = {
             "outcome": row.get("outcome"),
             "ended": row.get("ended"),
-            "turns": cost.get("turns") if reported else None,
-            "cost_usd": cost.get("cost_usd") if reported else None,
+            "turns": cost.get("turns") if row.get("turns_reported", True) else None,
+            "cost_usd": cost.get("cost_usd") if row.get("reported", True) else None,
         }
     return out

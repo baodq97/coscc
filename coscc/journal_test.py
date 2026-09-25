@@ -15,7 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc.journal import BadRecord, Busy, Journal, last_runs
+from coscc.journal import BadRecord, Busy, Journal, last_runs, totals_of
 
 WRITERS = 4
 PER_WRITER = 5
@@ -339,6 +339,76 @@ class TotalsAreAddedNotStored(unittest.TestCase):
     def test_a_unit_that_never_ran_totals_zero_rather_than_failing(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(Journal(d, d).totals("w", "0009_x")["total"]["input_tokens"], 0)
+
+
+class AnEndClosesTheRunItNames(unittest.TestCase):
+    """`0092` R6, R7: an `end` is matched to its `start` by `run`, and turns and cost are
+    known apart."""
+
+    def test_an_end_written_after_a_later_start_closes_its_own_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous", run="A")
+            j.started("w", "0009_x", "impl", "autonomous", run="B")
+            j.finished("w", "0009_x", "impl", "failed", run="A", turns=3, cost_unknown=True)
+            a, b = j.timeline("w", "0009_x")
+            self.assertEqual((a["run"], a["outcome"]), ("A", "failed"))
+            self.assertEqual((b["run"], b["ended"]), ("B", None))
+            [still] = j.open_starts("w")["0009_x"]["open"]
+            self.assertEqual(still["run"], "B")
+            j.finished("w", "0009_x", "impl", "done", run="B", turns=4, cost_usd=0.5)
+            self.assertEqual(j.open_starts("w"), {})
+
+    def test_an_old_end_with_no_run_still_closes_by_stage(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous", run="A")
+            j.finished("w", "0009_x", "impl", "done", turns=2, cost_usd=0.1)
+            [row] = j.timeline("w", "0009_x")
+            self.assertEqual((row["run"], row["outcome"]), ("A", "done"))
+            self.assertEqual(j.open_starts("w"), {})
+
+    def test_an_end_naming_no_open_run_closes_by_stage(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "failed", run="elsewhere")
+            [row] = j.timeline("w", "0009_x")
+            self.assertEqual(row["outcome"], "failed")
+
+    def test_turns_without_a_cost_are_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous", run="A")
+            j.finished("w", "0009_x", "impl", "failed", run="A", turns=5, cost_unknown=True)
+            [row] = j.timeline("w", "0009_x")
+            self.assertEqual((row["turns_reported"], row["reported"]), (True, False))
+            got = last_runs([row])["impl"]
+            self.assertEqual((got["turns"], got["cost_usd"]), (5, None))
+
+    def test_a_cost_without_turns_is_kept(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "failed", cost_usd=0.25)
+            got = last_runs(j.timeline("w", "0009_x"))["impl"]
+            self.assertEqual((got["turns"], got["cost_usd"]), (None, 0.25))
+
+    def test_a_sum_counts_the_runs_whose_cost_is_unknown(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "spec", "autonomous")
+            j.finished("w", "0009_x", "spec", "done", turns=4, cost_usd=0.52)
+            j.started("w", "0009_x", "impl", "autonomous")
+            j.finished("w", "0009_x", "impl", "failed", turns=109, cost_unknown=True)
+            j.started("w", "0009_x", "impl", "autonomous")  # still running: not unknown
+            got = totals_of(j.timeline("w", "0009_x"))
+            self.assertEqual((got["cost_usd"], got["unknown"]), (0.52, 1))
+            totals = j.totals("w", "0009_x")
+            self.assertEqual(totals["total"]["unknown"], 1)
+            self.assertEqual(totals["per_stage"]["impl"]["unknown"], 1)
+            self.assertEqual(totals["per_stage"]["spec"]["unknown"], 0)
+            self.assertEqual(totals["total"]["cost_usd"], 0.52)
 
 
 WRITER = """
