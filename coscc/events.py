@@ -130,7 +130,9 @@ def _system_fields(thing: Any) -> dict[str, Any]:
     except TypeError:
         data = {"repr": repr(thing)}
     return {
-        "type": type(thing).__name__,
+        # Not `type`: the follow route's NDJSON lines carry their own `type`, and an event's
+        # field of that name would replace it.
+        "class": type(thing).__name__,
         "subtype": getattr(thing, "subtype", None),
         "data": _json(data),
     }
@@ -384,7 +386,7 @@ def _label(event: dict[str, Any]) -> str:
             + f" · {tokens} token · {event.get('terminal_reason') or ''}"
         ).rstrip(" ·")
     if kind == "system":
-        return " ".join(str(p) for p in (event.get("type"), event.get("subtype")) if p)
+        return " ".join(str(p) for p in (event.get("class"), event.get("subtype")) if p)
     if kind == "end":
         return f"kết thúc: {event.get('outcome')}"
     return str(kind or "")

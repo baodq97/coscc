@@ -77,8 +77,10 @@ class WhatIsRecorded(unittest.TestCase):
         tool_result = rec.events[4]
         self.assertEqual(tool_result["persisted_path"], "/p/out.txt")
         self.assertEqual(tool_result["persisted_size"], 90000)
-        self.assertEqual(rec.events[7]["type"], "SystemMessage")
-        self.assertEqual(rec.events[9]["type"], "Odd")
+        self.assertEqual(rec.events[7]["class"], "SystemMessage")
+        # The follow route's NDJSON envelope has a `type` of its own; an event must not.
+        self.assertFalse(any("type" in e for e in rec.events))
+        self.assertEqual(rec.events[9]["class"], "Odd")
         done = rec.events[-1]
         self.assertEqual((done["num_turns"], done["cost_usd"]), (3, 0.25))
         self.assertEqual(
