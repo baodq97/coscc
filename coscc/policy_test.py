@@ -97,7 +97,8 @@ class OneGrantPerStage(unittest.TestCase):
         }
         # `integrate` since `0035`: not a stage, and pinned in `GeboPushesOnlyWithTheLease`.
         # `spike` since `0039`: pinned in `SpikeWritesOnlyItsScratch`.
-        self.assertEqual(set(policy.GRANTS), set(expected) | {"spec", "integrate", "spike", "estimate"})
+        # `precedent` since `0044`: pinned in `TheJeraGrantOpensNothing`.
+        self.assertEqual(set(policy.GRANTS), set(expected) | {"spec", "integrate", "spike", "estimate", "precedent"})
         for stage, grant in expected.items():
             self.assertEqual(grant_for(stage), grant, stage)
 
@@ -324,6 +325,19 @@ class TheEstimateGrantOpensNothing(unittest.TestCase):
         g = grant_for("estimate")
         self.assertFalse(g.opens_anything)
         self.assertEqual((g.max_turns, g.max_budget_usd), (1, 2.0))
+        self.assertIn("paid session", g.warning)
+        self.assertIn("password", g.warning)
+
+
+class TheJeraGrantOpensNothing(unittest.TestCase):
+    """`0044` R13: Jera starts from the locked position — no tool, no command, one turn, $1.00."""
+
+    def test_the_grant(self):
+        g = grant_for("precedent")
+        self.assertEqual((g.tools, g.commands), ((), ()))
+        self.assertEqual(policy.beyond_reading(g), ())
+        self.assertFalse(g.opens_anything)
+        self.assertEqual((g.max_turns, g.max_budget_usd), (1, 1.0))
         self.assertIn("paid session", g.warning)
         self.assertIn("password", g.warning)
 

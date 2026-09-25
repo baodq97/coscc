@@ -217,6 +217,14 @@ ESTIMATE_WARNING = (
     "can rewrite any estimate, relation or the shortlist under any name they type."
 )
 
+# `0044`. Said wherever *Ask Jera* is explained in full; the page keeps one sentence
+# (`service.CONSEQUENCE["precedent"]`).
+PRECEDENT_WARNING = (
+    "Asking Jera opens one paid session (1 turn, $1.00 ceiling) on the model of the Settings "
+    "row `precedent`. What it answers is an agent's inference from precedent, and every later "
+    "stage reads it as decided. Whoever holds the password or a live session can press it."
+)
+
 # Only stages that appear here get anything. The rest — `idea`, `intent`, and any
 # stage invented later — falls through to `Grant()`. Keyed by stage alone since `0020`:
 # the mode a step is started in is recorded, and grants nothing.
@@ -367,6 +375,15 @@ GRANTS: dict[str, Grant] = {
         max_turns=1,
         max_budget_usd=2.0,
         warning=ESTIMATE_WARNING,
+    ),
+    # `0044`. Jera, not a stage either: *Ask Jera* on a unit's Questions tab, one session per
+    # press. No tools, no commands, one turn; the app reads the reply and writes what survives
+    # its filter (`coscc/precedent.py`). $1.00 is chosen, not measured (`spec.md` C7): nobody
+    # has measured a prompt carrying every answer of a workspace.
+    "precedent": Grant(
+        max_turns=1,
+        max_budget_usd=1.0,
+        warning=PRECEDENT_WARNING,
     ),
 }
 
