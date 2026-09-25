@@ -32,8 +32,10 @@ directory, and four units in it, always the same, so a spec can name its address
 
 The run log holds, since `0092`, a `spec` run that ended `done` for $0.52 and an `impl` run
 that ended `failed` after 109 turns with no known cost on `0002_open-question`, and an
-`impl` run on `0004_finished` that ended `failed` with neither (`seed_runs`),
-and one chat conversation in a temporary `CLAUDE_CONFIG_DIR`, titled `Backlog screen
+`impl` run on `0004_finished` that ended `failed` with neither; since `0093` also two
+`impl` runs and one `integrate` opened by a conflict on `0002_open-question` ($16.32 in all,
+over the $15 budget, one `impl` at four times the median tokens per turn) and three `impl`
+runs on `0004_finished` (`seed_runs`), so every anomaly `/cost` knows has a row, and one chat conversation in a temporary `CLAUDE_CONFIG_DIR`, titled `Backlog screen
 plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
 visible text as `<address slug>-<W>x<H>.txt`.
 
@@ -250,6 +252,25 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
                      cost_unknown=True, detail="ProcessError: Command failed with exit code -9")
     journal.started(key, "0004_finished", "impl", "autonomous")
     journal.finished(key, "0004_finished", "impl", "failed", cost_unknown=True)
+    # `0093` plan step 9 (spec C8): enough that each of R10's four anomalies has a row on
+    # `/cost` — `0002` over $15, `impl` run too often on both units, one `impl` step at four
+    # times the median tokens per turn — and an `integrate` opened by a conflict (R8).
+    for turns, usd, tokens in ((20, 6.00, 800_000), (30, 9.00, 300_000)):
+        journal.started(key, "0002_open-question", "impl", "autonomous")
+        journal.finished(key, "0002_open-question", "impl", "done", turns=turns, cost_usd=usd,
+                         **_tokens(tokens))
+    journal.started(key, "0002_open-question", "integrate", "manual", integrate_state="conflicting")
+    journal.finished(key, "0002_open-question", "integrate", "done", turns=6, cost_usd=0.80)
+    for _ in range(3):
+        journal.started(key, "0004_finished", "impl", "autonomous")
+        journal.finished(key, "0004_finished", "impl", "done", turns=10, cost_usd=0.40,
+                         **_tokens(100_000))
+
+
+def _tokens(total: int) -> dict[str, int]:
+    """`total` split across the four billed kinds, cache reads the most as in real runs."""
+    return {"input_tokens": total // 20, "output_tokens": total // 20,
+            "cache_read_tokens": total * 8 // 10, "cache_creation_tokens": total // 10}
 
 
 def shoot(browser, base: str, token: str, address: str, size: tuple[int, int], out: Path) -> tuple[Path, str, str, bool]:

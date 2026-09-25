@@ -31,7 +31,7 @@ from coscc import board as board_reader
 from coscc import drift, events, fetches, gitops
 from coscc import harness, integrate
 from coscc import hold as hold_rules
-from coscc import present, prcomment, prsync
+from coscc import present, prcomment, prsync, spend
 from coscc import sessions as reader
 from coscc.board import Unavailable
 from coscc.config import Config
@@ -1134,7 +1134,9 @@ class Service:
         try:
             journal.started(key, unit, "integrate", "manual", prompt_chars=len(prompt), granted=list(grant.tools),
                             max_turns=grant.max_turns, head=head_before, model=model, model_source=model_source,
-                            pointed=list(own), app_version=app["version"], app_commit=app["commit"])
+                            pointed=list(own), app_version=app["version"], app_commit=app["commit"],
+                            # `0093` R8: what opened this session, for *Integrate for a conflict*.
+                            integrate_state=info["state"])
         except (BadRecord, Busy):
             pass
         end: dict[str, Any] = {}
@@ -1437,7 +1439,7 @@ class Service:
                 raise Invalid(str(e)) from e
             end_fields = None
             if rounds_before is not None:
-                async def end_fields() -> dict[str, int]:
+                async def end_fields() -> dict[str, Any]:
                     return await self._findings_added(cwd, unit, rounds_before)
             # `0035` R10. The integration pushed since the last review round, for `review` only.
             integration_note = ""
@@ -3088,15 +3090,17 @@ class Service:
             ),
         }
 
-    async def _findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, int]:
+    async def _findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, Any]:
         """`0033` R10. The findings in the rounds a `review` step added, off the board —
-        `parseReview`'s count, read the way `_post_new_rounds` reads it."""
+        `parseReview`'s count, read the way `_post_new_rounds` reads it. `0093` R9: and
+        those rounds' verdicts, each a string, for *Changes-requested rounds*."""
         data = await board_reader.read(self._units_root(cwd))
         found = next((u for u in data["units"] if u["name"] == unit), None) or {}
         added = [r for r in found.get("rounds") or [] if r.get("n") not in before]
         return {
             "findings": sum(int(r.get("findings") or 0) for r in added),
             "findings_open": sum(int(r.get("findings_open") or 0) for r in added),
+            "verdicts": [str(r.get("verdict") or "") for r in added],
         }
 
     async def stage_models(self) -> dict[str, Any]:
@@ -3296,6 +3300,33 @@ class Service:
                 "cwd": cwd, "events": [], "total": {}, "per_unit": {}, "recording": False,
             }
         return {**self._events_of(cwd, rows, limit), **self._usage_of(cwd, rows)}
+
+    def cost(self, cwd: str, rounds: dict[str, list[str]] | None = None) -> dict[str, Any]:
+        """`0093`. Where this workspace's money went, from one read of its run log.
+
+        `rounds` is each unit's review verdicts, from the board read the page already has
+        (R9). Read only; no figure here is read by a gate (R13).
+        """
+        rows = self._records_or_none(cwd)
+        if rows is None:
+            return {"cwd": cwd, "recording": False}
+        return {**spend.model(rows, rounds), "recording": True}
+
+    def unit_cost(self, cwd: str, unit: str) -> dict[str, Any]:
+        """`0093` R11. One unit's cost by stage and its anomalies.
+
+        The whole log is read, not the unit's rows: a token-per-turn median is the
+        workspace's (spec `## Design` §1).
+        """
+        rows = self._records_or_none(cwd)
+        if rows is None:
+            return {"by_stage": [], "anomalies": [], "recording": False}
+        found = spend.model(rows)
+        return {
+            "by_stage": found["unit_stages"].get(unit, []),
+            "anomalies": [a for a in found["anomalies"] if a["unit"] == unit],
+            "recording": True,
+        }
 
     def settings(self) -> dict[str, Any]:
         """The safety posture, as something a screen can render. Read only.

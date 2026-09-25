@@ -176,6 +176,8 @@ class GeboThroughTheService(unittest.TestCase):
         ends = [r for r in self.records("end") if r.get("stage") == "integrate"]
         self.assertEqual((len(starts), len(ends)), (1, 1))
         self.assertEqual(starts[0]["mode"], "manual")
+        # `0093` R8: a pull request GitHub calls conflicting opened this one.
+        self.assertEqual(starts[0]["integrate_state"], "conflicting")
         self.assertEqual(ends[0]["outcome"], "done")
         runs = self.service.timeline(self.cwd, self.unit)
         self.assertEqual([r.get("stage") for r in runs["runs"]], ["integrate"])
@@ -319,6 +321,8 @@ class GeboThroughTheService(unittest.TestCase):
         starts = [r for r in self.records("start") if r.get("stage") == "integrate"]
         ends = [r for r in self.records("end") if r.get("stage") == "integrate"]
         self.assertEqual((len(starts), len(ends)), (1, 1))
+        # `0093` R8: behind, with the rebase refused; not counted as a conflict.
+        self.assertEqual(starts[0]["integrate_state"], "behind")
 
     def test_a_timed_out_update_branch_opens_no_session(self):
         """`0052` plan step 3: no exit code to go on, and GitHub may still be rebasing."""

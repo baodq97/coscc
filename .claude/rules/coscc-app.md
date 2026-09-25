@@ -34,8 +34,8 @@ the page and forgetting to rebuild is possible at all.
 
 ## Shape
 
-One shell under eight static routes (`/backlog` since `0082`): `/` Overview, `/workspaces`,
-`/board`, `/backlog`, `/sessions`, `/activity`, `/settings`, and `/unit` — the Board with a unit's dialog open,
+One shell under nine static routes (`/cost` since `0093`): `/` Overview, `/workspaces`,
+`/board`, `/backlog`, `/sessions`, `/activity`, `/cost`, `/settings`, and `/unit` — the Board with a unit's dialog open,
 `?ws=<workspace name>&id=<unit>&tab=<tab>`. `coscc/place.py` reads and writes the address;
 `StudioState.arrive`, every route's `on_load`, is the only handler that sets `screen`,
 `cwd`, `unit_id` and `detail_tab` — a navigation button only returns `rx.redirect`. A new

@@ -27,7 +27,7 @@ import reflex as rx
 from reflex_base.event.context import EventContext
 
 from coscc import events as events_mod
-from coscc import place, present
+from coscc import place, present, spend
 from coscc.api import build
 from coscc.journal import COST_USD, TOKEN_FIELDS
 from coscc.service import Invalid, StaleCutList, describe_base
@@ -43,6 +43,8 @@ NAVIGATION = (
     ("backlog", "Backlog", "list-ordered"),
     ("sessions", "Sessions", "messages-square"),
     ("activity", "Activity & usage", "chart-no-axes-combined"),
+    # `0093` R1.
+    ("cost", "Cost", "circle-dollar-sign"),
     ("settings", "Settings", "settings-2"),
 )
 
@@ -314,6 +316,143 @@ class UsageRow:
     tokens: str = ""
     usd: str = ""
     token_count: int = 0
+
+
+@dataclasses.dataclass
+class SpendRow:
+    """`0093` R1–R3, R11. One unit, stage or day of the *Cost* screen: money read by
+    `present.money`, and beside it the steps whose cost is not known (R5)."""
+
+    key: str = ""
+    usd: str = ""
+    steps: str = ""
+    unknown: str = ""
+    over: bool = False
+
+
+@dataclasses.dataclass
+class TokenRow:
+    """`0093` R6. The four kinds of token for the workspace or one stage, each `1,234 (12%)`."""
+
+    scope: str = ""
+    input: str = ""
+    output: str = ""
+    cache_read: str = ""
+    cache_creation: str = ""
+    total: str = ""
+
+
+@dataclasses.dataclass
+class WasteRow:
+    """`0093` R7–R9. One kind of waste; `sub` is a line under the kind above it."""
+
+    label: str = ""
+    count: str = ""
+    usd: str = ""
+    unknown: str = ""
+    sub: bool = False
+
+
+@dataclasses.dataclass
+class AnomalyRow:
+    """`0093` R10. One anomaly, its measure and threshold in one cell."""
+
+    key: str = ""
+    kind: str = ""
+    unit: str = ""
+    stage: str = ""
+    ended: str = ""
+    measured: str = ""
+    usd: str = ""
+
+
+# `0093`. The words each kind of `spend.model` reads as. Labels only.
+WASTE_LABEL = {
+    "exhausted-or-failed": ("Exhausted or failed", False),
+    "run-again": ("Stage run again", False),
+    "integrate-conflict": ("Integrate for a conflict", False),
+    "integrate-other": ("other reason", True),
+    "integrate-not-recorded": ("reason not recorded", True),
+    "changes-requested": ("Changes-requested rounds", False),
+}
+ANOMALY_LABEL = {
+    "over-budget": "Over budget",
+    "failed": "Exhausted or failed",
+    "reruns": "Run too many times",
+    "tokens-per-turn": "Tokens per turn",
+}
+NO_UNIT = "No unit"
+
+
+def _unknown(n) -> str:
+    """`0093` R5: said beside the money, or nothing when every cost is known."""
+    n = int(n or 0)
+    return f"{n} unknown" if n else ""
+
+
+def _spend_rows(rows: list[dict], unit: bool = False) -> list[SpendRow]:
+    return [
+        SpendRow(
+            key=(r["key"] or NO_UNIT) if unit else (r["key"] or "—"),
+            usd=present.money(r.get("usd")),
+            steps=f"{int(r.get('steps') or 0):,}",
+            unknown=_unknown(r.get("unknown")),
+            over=bool(r.get("over")),
+        )
+        for r in rows
+    ]
+
+
+def _token_row(scope: str, t: dict) -> TokenRow:
+    total = int(t.get("total") or 0)
+
+    def cell(name: str) -> str:
+        n = int(t.get(name) or 0)
+        return f"{n:,} ({round(100 * n / total)}%)" if total else "0"
+
+    return TokenRow(
+        scope=scope, input=cell("input_tokens"), output=cell("output_tokens"),
+        cache_read=cell("cache_read_tokens"), cache_creation=cell("cache_creation_tokens"),
+        total=f"{total:,}",
+    )
+
+
+def _waste_rows(rows: list[dict]) -> list[WasteRow]:
+    out: list[WasteRow] = []
+    for r in rows:
+        label, sub = WASTE_LABEL.get(r["kind"], (r["kind"], False))
+        out.append(WasteRow(label=label, count=f"{int(r.get('count') or 0):,}", usd=present.money(r.get("usd")),
+                            unknown=_unknown(r.get("unknown")), sub=sub))
+        if r["kind"] == "changes-requested":
+            # R9, C5: the rounds no `review` step claimed are counted; their money is not known.
+            out.append(WasteRow(label="not recorded", count=f"{int(r.get('note') or 0):,}",
+                                usd="not recorded", sub=True))
+    return out
+
+
+def _measured(a: dict) -> str:
+    """`0093` R10: the measure and the threshold, `$18.40 > $15`, `4 runs > 3`."""
+    value, limit = a.get("value"), a.get("limit")
+    if a["kind"] == "over-budget":
+        return f"{present.money(value)} > ${limit:g}"
+    if a["kind"] == "reruns":
+        return f"{value} runs > {limit}"
+    if a["kind"] == "tokens-per-turn":
+        median = limit / spend.TOKENS_PER_TURN_TIMES
+        return f"{value:,.0f} per turn > {spend.TOKENS_PER_TURN_TIMES} × {median:,.0f}"
+    return str(value or "")
+
+
+def _anomaly_rows(rows: list[dict]) -> list[AnomalyRow]:
+    return [
+        AnomalyRow(
+            key=f"{a['kind']}-{i}", kind=ANOMALY_LABEL.get(a["kind"], a["kind"]),
+            unit=a.get("unit") or NO_UNIT, stage=a.get("stage") or "—",
+            ended=present.when(a.get("ended")) or "—", measured=_measured(a),
+            usd=present.money(a.get("usd")),
+        )
+        for i, a in enumerate(rows)
+    ]
 
 
 # `0053` R10. A chat message longer than this many characters is sent cut to it, with a
@@ -1152,6 +1291,20 @@ class StudioState(rx.State):
     usage_total_tokens: str = "—"
     usage_total_usd: str = "—"
     usage_cost_note: str = COST_NOTE
+    # `0093`. The *Cost* screen, read only on arrival there (R12), and the open unit's part.
+    cost_recording: bool = True
+    cost_total_usd: str = "—"
+    cost_total_steps: str = "0"
+    cost_total_unknown: str = ""
+    cost_offset: str = ""
+    cost_units: list[SpendRow] = []
+    cost_stages: list[SpendRow] = []
+    cost_days: list[SpendRow] = []
+    cost_tokens: list[TokenRow] = []
+    cost_waste: list[WasteRow] = []
+    cost_anomalies: list[AnomalyRow] = []
+    unit_cost_stages: list[SpendRow] = []
+    unit_anomalies: list[AnomalyRow] = []
     knobs: list[Knob] = []
     grants: list[GrantRow] = []
     data_dir: str = ""
@@ -1671,6 +1824,52 @@ class StudioState(rx.State):
         self.usage_total_usd = _usd(total)
         self.usage_cost_note = cost_note(total)
 
+    def _load_cost(self) -> None:
+        """`0093`. The *Cost* screen, from one read of the run log (R12). The review rounds
+        come from the board already read (R9); nothing here adds or decides a figure."""
+        self.cost_units, self.cost_stages, self.cost_days = [], [], []
+        self.cost_tokens, self.cost_waste, self.cost_anomalies = [], [], []
+        self.cost_total_usd, self.cost_total_steps, self.cost_total_unknown = "—", "0", ""
+        self.cost_offset, self.cost_recording = "", True
+        if not self.cwd:
+            return
+        rounds = {key: [r.verdict for r in u.rounds] for key, u in self.get_value("_full").items()}
+        try:
+            data = SERVICE.cost(self.cwd, rounds)
+        except Invalid as e:
+            self._fail(e)
+            return
+        if not data.get("recording"):
+            self.cost_recording = False
+            return
+        total = data["total"]
+        self.cost_total_usd = present.money(total.get("usd"))
+        self.cost_total_steps = f"{int(total.get('steps') or 0):,}"
+        self.cost_total_unknown = _unknown(total.get("unknown"))
+        self.cost_offset = data["offset"]
+        self.cost_units = _spend_rows(data["by_unit"], unit=True)
+        self.cost_stages = _spend_rows(data["by_stage"])
+        self.cost_days = _spend_rows(data["by_day"])
+        tokens = data["tokens"]
+        self.cost_tokens = [_token_row("Workspace", tokens["workspace"])] + [
+            _token_row(t["stage"] or "—", t) for t in tokens["by_stage"]
+        ]
+        self.cost_waste = _waste_rows(data["waste"])
+        self.cost_anomalies = _anomaly_rows(data["anomalies"])
+
+    def _load_unit_cost(self) -> None:
+        """`0093` R11. The open unit's cost by stage and its anomalies."""
+        self.unit_cost_stages, self.unit_anomalies = [], []
+        if not (self.cwd and self.unit_id):
+            return
+        try:
+            data = SERVICE.unit_cost(self.cwd, self.unit_id)
+        except Invalid as e:
+            self._fail(e)
+            return
+        self.unit_cost_stages = _spend_rows(data["by_stage"])
+        self.unit_anomalies = _anomaly_rows(data["anomalies"])
+
     def _load_timeline(self) -> None:
         self.runs = []
         if not (self.cwd and self.unit_id):
@@ -1747,6 +1946,7 @@ class StudioState(rx.State):
             # a page's first arrival, whose messages are about the load itself.
             self.error, self.notice = "", ""
         self._load_timeline()
+        self._load_unit_cost()
         self._load_artifact()
 
     # -- where the page is (`0056`) ------------------------------------------
@@ -1854,6 +2054,9 @@ class StudioState(rx.State):
             self._load_update()
         if self.screen == "sessions" and self._sessions_cwd != cwd:
             self._load_sessions()
+        if self.screen == "cost":
+            # `0093` R12: every arrival here reads the run log once; no other screen does.
+            self._load_cost()
         self._read_cwd = cwd
         self.unit_id, self.detail_tab = unit, tab
         self._set_current()

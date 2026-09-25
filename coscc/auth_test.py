@@ -28,7 +28,7 @@ from urllib.parse import urlencode
 from argon2.exceptions import VerifyMismatchError
 from starlette.routing import Route
 
-from coscc import auth
+from coscc import auth, place
 from coscc.api import build
 from coscc.config import Config
 from coscc.data import Data
@@ -47,6 +47,9 @@ REFLEX_PATHS = (
     ("GET", "/assets/x.js"),
     ("GET", "/no/such/path"),
     ("OPTIONS", "/api/board"),
+    # Every page route `coscc.py` registers, `/cost` (`0093`) included.
+    *(("GET", f"/{screen}") for screen in place.SCREENS[1:]),
+    ("GET", "/unit"),
 )
 
 

@@ -164,6 +164,17 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
             self.assertEqual((before["run"], before["events_lost"]), (None, None))
             self.assertEqual((after["run"], after["events_lost"]), ("r-1", 3))
 
+    def test_0093_an_integrate_row_carries_the_state_that_opened_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "integrate", "manual", integrate_state="conflicting")
+            j.finished("w", "0009_x", "integrate", "done")
+            j.started("w", "0009_x", "integrate", "manual")
+            j.finished("w", "0009_x", "integrate", "done")
+            recorded, older = j.timeline("w", "0009_x")
+            self.assertEqual(recorded["integrate_state"], "conflicting")
+            self.assertIsNone(older["integrate_state"])
+
 
 class OpenStartsAreTheRunsNobodyEnded(unittest.TestCase):
     """`0051` plan step 2."""
