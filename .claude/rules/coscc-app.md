@@ -38,9 +38,13 @@ One shell under seven static routes: `/` Overview, `/workspaces`, `/board`, `/se
 `/activity`, `/settings`, and `/unit` — the Board with a unit's dialog open,
 `?ws=<workspace name>&id=<unit>&tab=<tab>`. `coscc/place.py` reads and writes the address;
 `StudioState.arrive`, every route's `on_load`, is the only handler that sets `screen`,
-`cwd`, `unit_id` and `detail_tab` — a navigation button only returns `rx.redirect`. A
-navigation cancels the older arrival and what it chained, except the `cos.mjs next` ask
-`load_next` waits on (`_ASKING`). A proof that drives the state in-process has no browser to
+`cwd`, `unit_id` and `detail_tab` — a navigation button only returns `rx.redirect`. A new
+socket `session_id` is a new page and reads everything; a move inside the app reads only
+what changed. Reflex's `on_load_internal` supersedes, so a navigation cancels the older
+arrival and what it chained; `arrive` records a read only once it is done. The one thing a
+navigation does not cancel is the `cos.mjs next` ask `load_next` waits on: it runs in its
+own task (`_ASKING`), and the next arrival at that unit waits for it instead of asking
+again. A proof that drives the state in-process has no browser to
 follow a redirect: it arrives where the button would have sent it (`arrive_at`).
 Components in `screens.py`, state in `state.py`, logic behind `service.py`.
 **A handler that decides anything is a bug in `service.py`, not in the page.**
