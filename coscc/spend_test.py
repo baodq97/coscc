@@ -1,0 +1,197 @@
+"""`0093`: the cost model, on the pure function and against SQLite.
+
+Every threshold of R10 is tested just above and just under. R4's reference queries are the
+spec's `## Design` §5, word for word, run on a `cos.db` this file writes.
+"""
+
+from __future__ import annotations
+
+import unittest
+from datetime import timedelta, timezone
+from typing import Any
+
+from coscc import spend
+
+TZ = timezone(timedelta(hours=7))
+
+_seq = 0
+
+
+def end(unit: str, stage: str, outcome: str = "done", at: str | None = None, **extra: Any) -> dict[str, Any]:
+    global _seq
+    _seq += 1
+    at = at or f"2026-09-2{_seq % 3}T0{_seq % 10}:00:00+00:00"
+    return {"kind": "end", "unit": unit, "stage": stage, "outcome": outcome, "at": at, **extra}
+
+
+def start(unit: str, stage: str, **extra: Any) -> dict[str, Any]:
+    return {"kind": "start", "unit": unit, "stage": stage, "mode": "manual", **extra}
+
+
+def kinds(model: dict[str, Any], kind: str) -> list[dict[str, Any]]:
+    return [a for a in model["anomalies"] if a["kind"] == kind]
+
+
+def waste(model: dict[str, Any], kind: str) -> dict[str, Any]:
+    return next(w for w in model["waste"] if w["kind"] == kind)
+
+
+class OnlyEndsAreAdded(unittest.TestCase):
+    """R7, C1: an `attempt` and an `estimate` repeat a step's cost; an absent one is unknown."""
+
+    def test_attempt_and_estimate_do_not_move_the_total(self):
+        m = spend.model([
+            {"kind": "attempt", "unit": "u", "stage": "impl", "cost_usd": 5.0},
+            end("u", "impl", cost_usd=1.0),
+            {"kind": "estimate", "unit": "", "stage": "estimate", "cost_usd": 9.0},
+            end("", "estimate", cost_usd=0.5),
+        ], tz=TZ)
+        self.assertEqual(m["total"]["usd"], 1.5)
+        self.assertEqual(m["total"]["steps"], 2)
+
+    def test_an_end_with_no_cost_is_unknown_not_zero(self):
+        m = spend.model([end("u", "impl", cost_usd=1.0), end("u", "impl"), end("u", "plan", cost_usd=None)], tz=TZ)
+        self.assertEqual((m["total"]["usd"], m["total"]["unknown"]), (1.0, 2))
+        plan = next(r for r in m["by_stage"] if r["key"] == "plan")
+        self.assertIsNone(plan["usd"])
+        self.assertEqual(plan["unknown"], 1)
+
+    def test_rows_are_the_most_money_first_and_no_unit_has_its_own(self):
+        m = spend.model([end("a", "impl", cost_usd=1.0), end("b", "impl", cost_usd=3.0),
+                         end("", "estimate", cost_usd=2.0), end("c", "impl")], tz=TZ)
+        self.assertEqual([r["key"] for r in m["by_unit"]], ["b", "", "a", "c"])
+
+
+class Days(unittest.TestCase):
+    def test_r3_a_day_is_the_local_calendar_day_of_the_end(self):
+        m = spend.model([
+            end("u", "impl", at="2026-09-24T16:59:59+00:00", cost_usd=1.0),
+            end("u", "impl", at="2026-09-24T17:00:00+00:00", cost_usd=2.0),
+        ], tz=TZ)
+        self.assertEqual([(r["key"], r["usd"]) for r in m["by_day"]], [("2026-09-25", 2.0), ("2026-09-24", 1.0)])
+        self.assertEqual(m["offset"], "UTC+07:00")
+
+
+class Tokens(unittest.TestCase):
+    def test_r6_four_kinds_for_the_workspace_and_each_stage(self):
+        m = spend.model([
+            end("u", "impl", input_tokens=10, output_tokens=20, cache_read_tokens=60, cache_creation_tokens=10),
+            end("u", "spec", input_tokens=5),
+        ], tz=TZ)
+        self.assertEqual(m["tokens"]["workspace"]["total"], 105)
+        self.assertEqual(m["tokens"]["workspace"]["cache_read_tokens"], 60)
+        impl = next(r for r in m["tokens"]["by_stage"] if r["stage"] == "impl")
+        self.assertEqual((impl["total"], impl["output_tokens"]), (100, 20))
+
+
+class Waste(unittest.TestCase):
+    def test_r7_failed_and_run_again(self):
+        m = spend.model([
+            end("u", "spec", cost_usd=1.0),
+            end("u", "spec", outcome="failed", cost_usd=2.0),
+            end("u", "spec", outcome="exhausted"),
+            end("u", "plan", outcome="stopped", cost_usd=4.0),
+            end("", "estimate", cost_usd=1.0),
+            end("", "estimate", cost_usd=1.0),
+        ], tz=TZ)
+        self.assertEqual(waste(m, "exhausted-or-failed"), {
+            "kind": "exhausted-or-failed", "count": 2, "usd": 2.0, "unknown": 1, "note": None})
+        again = waste(m, "run-again")
+        self.assertEqual((again["count"], again["usd"], again["unknown"]), (2, 2.0, 1))
+
+    def test_r8_three_integrate_steps_fall_into_three_rows(self):
+        m = spend.model([
+            start("u", "integrate", integrate_state="conflicting"),
+            end("u", "integrate", cost_usd=1.0),
+            start("u", "integrate", integrate_state="behind"),
+            end("u", "integrate", cost_usd=2.0),
+            start("u", "integrate"),
+            end("u", "integrate"),
+        ], tz=TZ)
+        self.assertEqual((waste(m, "integrate-conflict")["count"], waste(m, "integrate-conflict")["usd"]), (1, 1.0))
+        self.assertEqual((waste(m, "integrate-other")["count"], waste(m, "integrate-other")["usd"]), (1, 2.0))
+        none = waste(m, "integrate-not-recorded")
+        self.assertEqual((none["count"], none["usd"], none["unknown"]), (1, None, 1))
+
+    def test_r9_rounds_from_review_md_money_from_the_steps_that_said(self):
+        m = spend.model(
+            [end("u", "review", cost_usd=2.0, verdicts=["changes-requested"]),
+             end("u", "review", cost_usd=5.0, verdicts=["pass"]),
+             end("u", "review", cost_usd=7.0)],
+            rounds={"u": ["changes-requested", "changes-requested", "pass"]}, tz=TZ,
+        )
+        row = waste(m, "changes-requested")
+        self.assertEqual((row["count"], row["usd"], row["note"]), (2, 2.0, 1))
+
+    def test_there_is_no_total_row(self):
+        m = spend.model([end("u", "impl", cost_usd=1.0)], tz=TZ)
+        self.assertEqual([w["kind"] for w in m["waste"]], list(spend.WASTE_KINDS))
+
+
+class Anomalies(unittest.TestCase):
+    """R10: each kind just above its threshold is flagged, just under it is not."""
+
+    def test_over_budget(self):
+        m = spend.model([end("above", "impl", cost_usd=15.01), end("at", "impl", cost_usd=15.0)], tz=TZ)
+        self.assertEqual([(a["unit"], a["value"], a["limit"]) for a in kinds(m, "over-budget")],
+                         [("above", 15.01, 15.0)])
+        self.assertEqual({r["key"]: r["over"] for r in m["by_unit"]}, {"above": True, "at": False})
+
+    def test_no_unit_is_never_over_budget(self):
+        m = spend.model([end("", "estimate", cost_usd=20.0)], tz=TZ)
+        self.assertEqual(kinds(m, "over-budget"), [])
+
+    def test_reruns(self):
+        records = (
+            [end("four", "review") for _ in range(4)] + [end("three", "review") for _ in range(3)]
+            + [end("four", "spec") for _ in range(3)] + [end("three", "spec") for _ in range(2)]
+            + [end("three", "integrate") for _ in range(3)]
+        )
+        m = spend.model(records, tz=TZ)
+        self.assertEqual(
+            sorted((a["unit"], a["stage"], a["value"], a["limit"]) for a in kinds(m, "reruns")),
+            [("four", "review", 4, 3), ("four", "spec", 3, 2), ("three", "integrate", 3, 2)],
+        )
+
+    def test_tokens_per_turn(self):
+        # A median of 10,000 per turn: 30,100 is above three times it, 30,000 is not.
+        records = [end("u", "impl", turns=1, input_tokens=10_000) for _ in range(4)]
+        records += [end("u", "impl", turns=1, input_tokens=30_100, at="2026-09-24T01:00:00+00:00"),
+                    end("u", "impl", turns=2, input_tokens=60_000)]
+        m = spend.model(records, tz=TZ)
+        flagged = kinds(m, "tokens-per-turn")
+        self.assertEqual([(a["value"], a["limit"]) for a in flagged], [(30_100, 30_000)])
+
+    def test_a_stage_with_four_valid_steps_flags_nothing(self):
+        records = [end("u", "impl", turns=1, input_tokens=10) for _ in range(3)]
+        records += [end("u", "impl", turns=1, input_tokens=1_000_000), end("u", "impl", turns=0, input_tokens=1)]
+        records += [end("u", "impl", turns=3)]
+        self.assertEqual(kinds(spend.model(records, tz=TZ), "tokens-per-turn"), [])
+
+    def test_failed(self):
+        m = spend.model([end("u", "impl", outcome="exhausted"), end("u", "plan", outcome="stopped"),
+                         end("v", "spec", outcome="failed", cost_usd=0.5)], tz=TZ)
+        self.assertEqual(sorted((a["unit"], a["value"]) for a in kinds(m, "failed")),
+                         [("u", "exhausted"), ("v", "failed")])
+
+    def test_kinds_come_in_order_each_latest_first(self):
+        m = spend.model([
+            end("u", "impl", outcome="failed", at="2026-09-20T00:00:00+00:00", cost_usd=16.0),
+            end("u", "impl", outcome="failed", at="2026-09-22T00:00:00+00:00"),
+            end("u", "impl", at="2026-09-21T00:00:00+00:00"),
+        ], tz=TZ)
+        self.assertEqual([a["kind"] for a in m["anomalies"]], ["over-budget", "failed", "failed", "reruns"])
+        self.assertEqual([a["ended"] for a in kinds(m, "failed")],
+                         ["2026-09-22T00:00:00+00:00", "2026-09-20T00:00:00+00:00"])
+
+
+class UnitStages(unittest.TestCase):
+    def test_r11_one_units_cost_by_stage(self):
+        m = spend.model([end("u", "impl", cost_usd=1.0), end("u", "impl", cost_usd=2.0),
+                         end("u", "spec"), end("v", "impl", cost_usd=9.0)], tz=TZ)
+        self.assertEqual([(r["key"], r["usd"], r["steps"], r["unknown"]) for r in m["unit_stages"]["u"]],
+                         [("impl", 3.0, 2, 0), ("spec", None, 1, 1)])
+
+
+if __name__ == "__main__":
+    unittest.main()
