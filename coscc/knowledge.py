@@ -95,12 +95,14 @@ def _entry(n: int, lines: list[str]) -> tuple[dict[str, Any] | None, str]:
 def parse(text: str) -> dict[str, Any]:
     """`{header, entries, skipped}`. A store with no header reads as `empty_header()`, and a
     block missing its scope, a source or a statement is in `skipped` with why (R5: the file
-    may be edited by hand)."""
+    may be edited by hand). So is every line outside the entries but the title and the
+    header: `render` writes back nothing else, so a line nobody names would be lost."""
     header = empty_header()
     entries: list[dict[str, Any]] = []
     skipped: list[str] = []
     block: list[str] | None = None
     number = 0
+    titled = headed = foreign = False
 
     def close() -> None:
         if block is None:
@@ -115,21 +117,40 @@ def parse(text: str) -> dict[str, Any]:
         head = _ENTRY_HEAD.match(line.rstrip())
         if head:
             close()
-            number, block = int(head.group(1)), [line.rstrip()]
+            number, block, foreign = int(head.group(1)), [line.rstrip()], False
             continue
         if line.startswith("## "):
             close()
-            block = None
+            block, foreign = None, True
             skipped.append(f"a block that is not an entry: {line.strip()[:80]}")
             continue
         if block is not None:
             block.append(line.rstrip())
             continue
-        m = _HEADER.match(line.strip())
-        if m:
+        s = line.strip()
+        if not s or foreign:  # the lines of a block already in `skipped`
+            continue
+        if s == TITLE and not titled and not headed:
+            titled = True
+            continue
+        m = _HEADER.match(s)
+        if m and not headed:
             header = {"version": int(m.group(1)), "gathered": m.group(2), "max_id": int(m.group(3))}
+            headed = True
+            continue
+        skipped.append(f"a line outside every entry: {s[:80]}")
     close()
     return {"header": header, "entries": entries, "skipped": skipped}
+
+
+def has_header(text: str) -> bool:
+    """Whether a `Version: … Max id: K<n>.` line comes before the first block."""
+    for line in (text or "").splitlines():
+        if line.startswith("## "):
+            return False
+        if _HEADER.match(line.strip()):
+            return True
+    return False
 
 
 def entries_text(entries: Iterable[dict[str, Any]]) -> str:

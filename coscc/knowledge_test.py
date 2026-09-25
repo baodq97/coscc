@@ -49,6 +49,24 @@ class ParseAndRender(unittest.TestCase):
         self.assertEqual([e["id"] for e in parsed["entries"]], [1, 5])
         self.assertEqual(len(parsed["skipped"]), 3)
 
+    def test_a_line_outside_every_entry_is_skipped_since_render_would_drop_it(self):
+        text = store(entry(1), max_id=1).replace(
+            "Max id: K1.\n", "Max id: K1.\nRemoved K4 by hand on 2026-09-20.\n# Knowledge\n")
+        parsed = knowledge.parse(text)
+        self.assertEqual([e["id"] for e in parsed["entries"]], [1])
+        self.assertEqual(parsed["skipped"], ["a line outside every entry: Removed K4 by hand on 2026-09-20.",
+                                             "a line outside every entry: # Knowledge"])
+        # A second header is a stray line too, not a header that replaces the first.
+        twice = store(entry(1), max_id=1).replace("\n## K1", "Version: 9. Gathered: x. Max id: K9.\n\n## K1")
+        self.assertEqual((knowledge.parse(twice)["header"]["max_id"], len(knowledge.parse(twice)["skipped"])), (1, 1))
+        # The lines under a heading that is not an entry are that block's, named once.
+        self.assertEqual(len(knowledge.parse(store(entry(1)) + "\n## Notes\none\ntwo\n")["skipped"]), 1)
+
+    def test_a_header_is_found_only_before_the_first_block(self):
+        self.assertTrue(knowledge.has_header(store(entry(1), max_id=1)))
+        self.assertFalse(knowledge.has_header(entry(1)))
+        self.assertFalse(knowledge.has_header(entry(1) + "\nVersion: 1. Gathered: x. Max id: K1.\n"))
+
     def test_an_empty_or_headerless_text_reads(self):
         self.assertEqual(knowledge.parse(""), {"header": knowledge.empty_header(), "entries": [], "skipped": []})
         self.assertEqual([e["id"] for e in knowledge.parse(entry(3))["entries"]], [3])
@@ -160,6 +178,10 @@ class TheCheckOfAGatheredStore(unittest.TestCase):
 
     def test_an_unreadable_block_is_a_reason(self):
         self.assertTrue(self.check(self.OLD + "\n\n## K3\nScope: tool:x\nMeasured: 2026-01-01\nS."))
+
+    def test_words_outside_every_entry_are_a_reason(self):
+        reasons = self.check("Here is the store you asked for.\n\n" + self.OLD)
+        self.assertIn("a line outside every entry: Here is the store you asked for.", reasons)
 
     def test_the_check_touches_no_disk(self):
         with tempfile.TemporaryDirectory() as d:

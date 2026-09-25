@@ -202,6 +202,16 @@ class AGather(Fixture):
                 self.assertIn("## Notes", str(refused.exception))
                 self.assertEqual((s.prompts, self.rows(), self.store()), ([], [], written))
 
+    def test_a_note_under_the_header_is_refused_before_a_session(self):
+        written = knowledge.render({"version": 1, "gathered": "never", "max_id": 1}, []).replace(
+            "Max id: K1.\n", "Max id: K1.\nRemoved K4 by hand on 2026-09-20.\n") + "\n" + entry(1, self.src) + "\n"
+        knowledge.save(self.dir / knowledge.STORE, written)
+        s = Replies(reply(entry(2, self.src)))
+        with self.assertRaises(gather.Refused) as refused:
+            self.run_gather(s)
+        self.assertIn("Removed K4 by hand", str(refused.exception))
+        self.assertEqual((s.prompts, self.rows(), self.store()), ([], [], written))
+
     def test_new_ids_start_above_every_id_the_store_holds_whatever_its_header_says(self):
         # B's K5, under a header lost (read as Max id: K0) and under one edited down to K2.
         held = entry(5, f"{B}/0001_a/spike.md ## U1", scope=f"workspace:{B}")
