@@ -461,8 +461,10 @@ no commands, one turn, no budget.
   200 MB of stored JSON (`KEEP_BYTES`), and `0068`'s `updates/cos.db.bak` carries a copy.
   The purge runs only in `coscc/run.py` before the server starts (spec C5): between starts
   the total can pass 200 MB by any amount, and without a `VACUUM` the file never shrinks. A
-  purge that fails prints one line and the app starts anyway. What a running step holds in
-  memory is unmeasured (C7). A second copy of the app on the same data root writes its
+  purge that fails prints one line and the app starts anyway. The runner's `end` record
+  waits for the recorder's last write: up to 20 s when `cos.db` is busy (`4 * CLOSE_WAIT`,
+  chosen, unmeasured), the card reading "running" and a *Stop* refused as already sealed all
+  that time. What a running step holds in memory is unmeasured (C7). A second copy of the app on the same data root writes its
   steps' events into the same tables, but nobody can follow them live, and this copy reads
   them as `ended-unknown` while they run (C9). The watch pane holds at most `WATCH_WINDOW` =
   400 events, because every frame resends the whole list (`spike.md ## U4`: about 2 062

@@ -11,7 +11,9 @@ of `cos.db` beside the run log -- never into it (Design 2).
 **Nothing here may change the step.** `message` and `denied` run on the SDK's read loop, so
 they are synchronous, never wait for a reader or for the database, and swallow every error
 into `lost` (R5). A reader that falls `SUB_LIMIT` events behind is cut, not waited for (R8).
-The writes happen in a task of their own, off that loop; `close` is bounded by `CLOSE_WAIT`.
+The writes happen in a task of their own, off that loop. `close` waits at most
+`2 * CLOSE_WAIT` for the last write and as long again to close the index row -- 20 s in all,
+which the runner's `end` record waits for.
 
 **Everything a step saw is kept and handed out.** Commands, paths, thinking and tool output,
 unfiltered (`intent.md ## Answers, câu 6`), for up to `KEEP_DAYS` and `KEEP_BYTES`, to
@@ -50,8 +52,10 @@ FLUSH_EVERY = 1.0
 # the next write rather than holding the task, and far under `CLOSE_WAIT`.
 WRITE_WAIT = 2.0
 
-# Seconds `close` waits for the last write before counting what is left as lost. Chosen. It
-# is time the `end` record waits for (`plan.md` Risk 9).
+# Seconds `close` gives `cos.db` for the last write before counting what is left as lost, and
+# again for closing the index row. Chosen. Each is awaited up to twice this, since a write the
+# periodic task began still holds `Data`'s lock, so the `end` record can wait up to
+# `4 * CLOSE_WAIT` (`plan.md` Risk 9, unmeasured).
 CLOSE_WAIT = 5.0
 
 # R8. Events a follower may leave unread before it is cut. Chosen.
