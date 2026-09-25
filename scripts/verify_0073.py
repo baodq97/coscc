@@ -670,7 +670,7 @@ def browser() -> int:
                 if outcome.get("type") in ("done", "error"):
                     break
                 time.sleep(0.2)
-            b.wait_for_function("[...document.querySelectorAll('.watch-ev')].some(r => r.textContent.includes('kết thúc'))",
+            b.wait_for_function("[...document.querySelectorAll('.watch-ev')].some(r => r.textContent.includes('ended:'))",
                                 timeout=60_000)
             b.wait_for_timeout(800)
             lat = sorted(d for _, d in b.evaluate("window.__lat"))
@@ -755,9 +755,9 @@ def browser() -> int:
             shown.update(rows_now())
             seen = sorted(shown)
             end_seq = max(seen) if seen else 0
-            ok &= claim("ended" in status and "kết thúc" in status and seen == list(range(1, end_seq + 1)),
+            ok &= claim("ended" in status and "ended:" in status and seen == list(range(1, end_seq + 1)),
                         f"after end: B reloads, opens the timeline row and reads 1..{end_seq} with nothing missing",
-                        f"ended in pane: {'ended' in status}, end row: {'kết thúc' in status}, seen {len(seen)}, "
+                        f"ended in pane: {'ended' in status}, end row: {'ended:' in status}, seen {len(seen)}, "
                         f"missing {sorted(set(range(1, end_seq + 1)) - set(seen))[:10]}")
             ca = {(c["name"], c["value"]) for c in ctx_a.cookies()}
             cb = {(c["name"], c["value"]) for c in ctx_b.cookies()}

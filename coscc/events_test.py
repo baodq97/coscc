@@ -211,22 +211,44 @@ class Collapsing(unittest.TestCase):
         self.assertFalse(short["collapsed"])
 
     def test_the_labels_carry_what_r10_names(self):
-        self.assertEqual(events.collapse({"kind": "turn", "n": 4})["label"], "lượt 4")
+        self.assertEqual(events.collapse({"kind": "turn", "n": 4})["label"], "turn 4")
         denied = events.collapse({"kind": "denied", "tool": "Bash", "reason": "not granted", "input": {}})
         self.assertIn("not granted", denied["label"])
         paid = events.collapse({"kind": "result", "num_turns": 3, "cost_usd": 0.5, "input_tokens": 7,
                                 "terminal_reason": "completed"})
-        self.assertIn("3 lượt", paid["label"])
+        self.assertIn("3 turns", paid["label"])
         self.assertIn("$0.5000", paid["label"])
-        self.assertIn("7 token", paid["label"])
+        self.assertIn("7 tokens", paid["label"])
 
     def test_a_persisted_output_is_named_and_not_read(self):
         view = events.collapse({"kind": "tool_result", "content": "preview", "persisted_path": "/p/x",
                                 "persisted_size": 12})
         self.assertEqual(
             view["persisted"],
-            "đầu ra đầy đủ (12 ký tự) nằm ở /p/x trên máy chạy app; board không đọc file này",
+            "full output (12 characters) is at /p/x on the machine running the app; "
+            "the board does not read it",
         )
+
+    def test_0089_r14_every_label_is_english(self):
+        """`0089` R14 (D62): the labels the pane shows are the app's own text (S6)."""
+        from coscc.screens_test import VIETNAMESE
+
+        kinds = [
+            {"kind": "text", "text": "x"}, {"kind": "text", "role": "user", "text": "x"},
+            {"kind": "turn", "n": 2}, {"kind": "tool_use", "name": "Read"},
+            {"kind": "tool_result", "tool_use_id": "toolu_12345678", "is_error": True, "content": "x",
+             "persisted_path": "/p/x", "persisted_size": 3},
+            {"kind": "denied", "tool": "Bash", "reason": "not granted"},
+            {"kind": "result", "num_turns": 1, "input_tokens": 2},
+            {"kind": "system", "class": "SystemMessage", "subtype": "init"},
+            {"kind": "end", "outcome": "done"},
+        ]
+        for event in kinds:
+            view = events.collapse(event)
+            self.assertIsNone(VIETNAMESE.search(view["label"]), view["label"])
+            self.assertIsNone(VIETNAMESE.search(view["persisted"]), view["persisted"])
+        self.assertIn("cost unknown", events.collapse(kinds[6])["label"])
+        self.assertTrue(events.collapse(kinds[4])["persisted"])
 
 
 class Purging(unittest.IsolatedAsyncioTestCase):
