@@ -360,6 +360,89 @@ class AStepRecordsTheCommitItRanOn(unittest.TestCase):
             self.assertNotIn("shortlist", self._start_record(d))
 
 
+class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
+    """`0088` R4, R6, R13."""
+
+    class Replies:
+        def __init__(self):
+            self.kw: dict = {}
+            self.prompt = ""
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.prompt = text
+            self.kw = kw
+            yield ("chunk", "# Idea: x\nStatus: accepted.\n")
+            yield ("done", {"session_id": "s-idea", "cost": {}})
+
+    def _run(self, d: str, sessions, journal=None, stage="idea"):
+        r = Runner(sessions=sessions, journal=journal)
+
+        async def go():
+            async for _ in r.run(
+                workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d, unit=UNIT,
+                stage=stage, artifact=f"{stage}.md", stages=STAGES, mode="manual",
+            ):
+                pass
+
+        asyncio.run(go())
+
+    def test_an_empty_grant_is_an_empty_list_whatever_cos_tools_says(self):
+        # R4. `None` fell back to `COS_TOOLS`, so an `idea` held `Read` with no gate.
+        from coscc import sessions as sessions_mod
+        from coscc.config import Config
+
+        replies = self.Replies()
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d))
+            self._run(d, replies)
+            options = sessions_mod._options(
+                Config(tools=("Read", "Bash")), d, None,
+                tools=replies.kw["tools"], data_dir=d,
+            )
+        self.assertEqual(replies.kw["tools"], [])
+        self.assertNotIn("can_use_tool", {k for k, v in replies.kw.items() if v is not None})
+        self.assertEqual(options.tools, [])
+
+    def test_the_start_row_names_the_instructions_the_session_was_given(self):
+        # R13: verbatim first, scoped after, relative to the step's `cwd`.
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d))
+            rules = Path(d) / ".claude" / "rules"
+            rules.mkdir(parents=True)
+            (Path(d) / ".claude" / "CLAUDE.md").write_text("PROJECT\n", encoding="utf-8")
+            (rules / "app.md").write_text('---\npaths: ["x/**"]\n---\nAPP\n', encoding="utf-8")
+            journal = Journal(d, d)
+            self._run(d, self.Replies(), journal)
+            [start] = journal.records(d, kind="start")
+        self.assertEqual(
+            start["instructions"],
+            {"verbatim": [".claude/CLAUDE.md"], "scoped": [".claude/rules/app.md"]},
+        )
+
+    def test_the_prompt_is_build_prompts_own_byte_for_byte(self):
+        # R6. The runner hands on exactly what `build_prompt` made from the arguments it was
+        # given, and the project's block goes to the system prompt, not here.
+        from coscc import runner as runner_mod
+
+        replies = self.Replies()
+        built: list[str] = []
+
+        def spy(*args, **kwargs):
+            # Called again with the same arguments, before the step writes its artifact.
+            again, _ = build_prompt(*args, **kwargs)
+            built.append(again)
+            return build_prompt(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), idea_md="Status: accepted.\nI")
+            (Path(d) / "CLAUDE.md").write_text("PROJECT\n", encoding="utf-8")
+            with mock.patch.object(runner_mod, "build_prompt", spy):
+                self._run(d, replies, stage="intent")
+        self.assertEqual(len(built), 1)
+        self.assertEqual(replies.prompt.encode("utf-8"), built[0].encode("utf-8"))
+        self.assertNotIn("# Project instructions", replies.prompt)
+
+
 class ThePromptNamesTheBaseWhenItMightBeStale(unittest.TestCase):
     """`0030_a-unit-branch-starts-from-a-stale-main` plan.md step 4.
 

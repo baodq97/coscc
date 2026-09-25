@@ -27,7 +27,7 @@ from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
-from coscc import gitops, harness, steps
+from coscc import gitops, harness, instructions, steps
 from coscc import sessions as sessions_mod
 from coscc.journal import Journal
 from coscc.policy import Grant, beyond_reading, decide, grant_for_step, is_prose_stage
@@ -1125,9 +1125,17 @@ class Runner:
                 base=base,
                 # Which system prompt the step ran on, so a measurement can pick the steps
                 # that ran after the fix by what they ran on rather than by a date — the
-                # board runs the installed copy, not this checkout. `""` is the SDK's
-                # empty one; a record written before `0037` has no field, read as `""`.
+                # board runs the installed copy, not this checkout. `""` means no preset,
+                # and nothing more: since `0088` a step without one whose `cwd` holds
+                # project instructions runs on those as its whole system prompt, and only
+                # `instructions` below says whether it did. A record written before `0037`
+                # has no field, read as `""`.
                 system_prompt="claude_code" if preset else "",
+                # `0088` R13. Which project files `_options` puts into the system prompt,
+                # whole or as a line of contents. Read again there, so a file edited in
+                # between is not seen here (spec C7). A record written before `0088` has
+                # no field: that step ran on a build that loaded every settings source.
+                instructions=instructions.read(cwd).record(),
                 **({"plan_drift": plan_drift} if plan_drift is not None else {}),
                 **({"shortlist": shortlist} if shortlist is not None else {}),
                 **pr_extra,
@@ -1169,15 +1177,16 @@ class Runner:
                 prompt,
                 None,
                 max_turns=grant.max_turns,
-                # Only pass a list and a gate when something was actually granted. A step
-                # with an empty grant gets exactly the session the app makes by default,
-                # which is the one the zero-tool default is about.
+                # Only pass a gate when something was actually granted. The list is the
+                # grant's always, `[]` when it is empty: `None` would fall back to
+                # `COS_TOOLS`, and an `idea` on a machine that set it held tools with no
+                # gate in front of them (`0088` R4).
                 can_use_tool=(
                     permission_gate(grant, cwd, denials, *gate_args)
                     if grant.opens_anything
                     else None
                 ),
-                tools=list(grant.tools) if grant.opens_anything else None,
+                tools=list(grant.tools),
                 max_budget_usd=grant.max_budget_usd or None,
                 # Only named when it differs, so a stand-in `stream` written before `0017`
                 # without a `workspace` parameter keeps working for a plain step.
