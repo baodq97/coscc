@@ -80,6 +80,21 @@ class ThePage(unittest.TestCase):
                      "Whoever holds the"):
             self.assertNotIn(gone, self.page)
 
+    def test_0044_the_questions_tab_says_whose_answer_and_asks_no_name(self):
+        """`0044` R10, S7, S8: the labels, the sentence beside *Ask Jera*, and the button hidden
+        behind `jera_can_ask` rather than greyed."""
+        from coscc.service import CONSEQUENCE
+
+        tab = _render(screens._questions_tab())
+        for said in ("Ask Jera", "ask-jera", CONSEQUENCE["precedent"], "Answered by Jera",
+                     "Needs a person", "Jera's proposal", "Precedent", "jera_can_ask",
+                     "Jera's answer", "jera-said"):
+            self.assertIn(said, tab)
+        self.assertIn("Send this answer", tab, "a person can still answer over Jera")
+        settings = _render(screens._settings())
+        for said in ("Decision preferences", "decision-preferences", "company names"):
+            self.assertIn(said, settings)
+
     def test_r12_needs_review_is_gone(self):
         self.assertNotIn("Needs review", self.page)
         self.assertIn("Needs you", self.page)

@@ -129,9 +129,15 @@ INTENT = "# Intent: {title}\nAuthor: capture_screens. Type: feat. Status: accept
 ROUND = "\n## Round 1\n\nReviewed: {sha}. Verdict: pass.\n\n### Findings\n\n### What was not reviewed\n\nNothing.\n"
 FIXTURE = {
     "fresh-intent": {"intent.md": INTENT.format(title="fresh intent", problem="Một intent vừa được chấp nhận.")},
+    # `0044`: question 1 answered by Jera, question 2 left to a person by its last run
+    # (`seed_run`). Two rows only, so the Questions tab's dialog shows both labels above
+    # its fold at 1440×900.
     "open-question": {
         "intent.md": INTENT.format(title="open question", problem="Một intent còn một câu hỏi.")
-        + "\n## Open questions\n\n1. Có nên làm việc này tuần này không?\n",
+        + "\n## Open questions\n\n1. Nhánh lấy tên từ đâu?\n"
+        + "2. Có nên trả thêm tiền cho việc này không?\n"
+        + "\n## Answers\n\n### Câu 1\nAnswered by: Jera. Date: 2026-09-25. Via: precedent.\n\n"
+        + "Lấy từ Type của intent, như các unit trước.\n\nTiền lệ: pref:1; 0001_fresh-intent/intent.md#Câu 1\n",
     },
     "awaiting-ship": {
         "intent.md": INTENT.format(title="awaiting ship", problem="Một unit đã qua review, chờ ship."),
@@ -240,6 +246,12 @@ def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     journal, key = Journal(work, data_dir), str(proj.resolve())
     journal.started(key, "0004_finished", "plan", "manual")
     journal.finished(key, "0004_finished", "plan", "done", session_id=str(uuid.uuid4()))
+    journal.append({
+        "kind": "precedent", "workspace": key, "unit": "0002_open-question", "artifact": "intent.md", "n": 2,
+        "verdict": "needs-person", "category": "significant-spend", "text": "Đề xuất: không, chờ số đo.",
+        "reason": "Chi tiêu đáng kể cần người quyết.", "cites": [], "session_id": str(uuid.uuid4()),
+        "written": False,
+    })
 
 
 def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:

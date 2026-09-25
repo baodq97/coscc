@@ -189,6 +189,42 @@ def _answers_block(directory: Path, artifact: str, repeat_content: bool) -> str 
     )
 
 
+# `0044` R15. The header `Service.precedent` writes (`Answered by: Jera. … Via: precedent.`).
+_JERA_META = re.compile(r"^Answered by:\s*Jera\.", re.IGNORECASE)
+_BLOCK_HEAD = re.compile(r"^###\s+(.+?)\s*$")
+
+JERA_ADVICE = (
+    "Those blocks were written by Jera, an agent that infers an answer from precedent — "
+    "decisions already recorded in this project — not by the person who started this work. "
+    "Cite each as Jera's inference, never as that person's decision. A later block for the "
+    "same question from a person replaces it."
+)
+
+
+def _jera_answers(directory: Path, names: list[str]) -> str:
+    """`# Answers an agent gave`, listing every `<artifact> ### Câu N` block Jera wrote in
+    `names`; `""` when there is none."""
+    found: list[str] = []
+    for name in names:
+        try:
+            section = answers_section((directory / name).read_bytes())
+        except OSError:
+            continue
+        if section is None:
+            continue
+        head = ""
+        for line in section.decode("utf-8", errors="replace").splitlines():
+            m = _BLOCK_HEAD.match(line)
+            if m:
+                head = m.group(1)
+            elif head and _JERA_META.match(line.strip()):
+                found.append(f"- {name} ### {head}")
+                head = ""
+    if not found:
+        return ""
+    return "# Answers an agent gave\n\n" + "\n".join(found) + "\n\n" + JERA_ADVICE
+
+
 # `0094` R14. The stages whose prompt names the unit's artifacts by path instead of carrying
 # them, and the one artifact each still carries whole. Every one of them may `Read` the
 # unit's folder (`Runner.run` hands it to `decide` as `unit_dir`), which is R15's condition;
@@ -358,9 +394,11 @@ def compose_prompt(
     # without this, it cannot see a person's decision and may ask the same question again.
     # `review` gets the same block, but placed after *The rounds so far* below instead --
     # `stage != "review"` here keeps it from also landing in this earlier position.
+    own_answers = False
     if is_prose_stage(stage) and not writes_own and stage != "review":
         block = _answers_block(directory, artifact, repeat_content=stage != "intent")
         if block:
+            own_answers = True
             parts.append(block)
 
     # A review that asked for changes sends the unit back to `impl`, and the whole point of
@@ -459,6 +497,7 @@ def compose_prompt(
     if stage == "review" and is_prose_stage(stage) and not writes_own:
         block = _answers_block(directory, artifact, repeat_content=True)
         if block:
+            own_answers = True
             parts.append(block)
 
     # `write-review` step 2 needs the commit it reviewed, and the `ship` gate reads that
@@ -522,6 +561,14 @@ def compose_prompt(
             lines.append(f"- {directory.resolve() / name}" + (" (above)" if above else ""))
         if lines:
             parts.append("# The unit's files\n\n" + "\n".join(lines) + "\n\n" + UNIT_FILES_ADVICE)
+
+    # `0044` R15. Only when one of the files this prompt carries or names holds a block Jera
+    # wrote: otherwise not one byte is added, and a unit that never asked Jera gets the prompt
+    # it got before.
+    seen = [n for n in included if n.endswith(".md")] + pointed + ([artifact] if own_answers else [])
+    jera = _jera_answers(directory, list(dict.fromkeys(seen)))
+    if jera:
+        parts.append(jera)
 
     location = directory / artifact
     if writes_own and stage == "ship":

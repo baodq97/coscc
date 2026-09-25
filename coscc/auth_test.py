@@ -285,6 +285,12 @@ class TheCount(Door):
         self.assertGreater(len(self.requests()), 40)
         self.assertEqual(await self.count_not_refused(False), [])
 
+    async def test_asking_jera_is_behind_the_door(self):
+        """`0044`: the route that opens a paid session is counted above, and refused alone."""
+        self.assertIn(("POST", "/api/units/precedent"), self.requests())
+        self.assertNotIn(("POST", "/api/units/precedent"), auth.EXEMPT)
+        self.assertTrue(refused(await self.call("POST", "/api/units/precedent")))
+
     async def test_nothing_but_the_exempt_list_answers_after_a_password(self):
         self.assertEqual((await self.set_password()).status, 303)
         self.assertEqual(await self.count_not_refused(True), [])

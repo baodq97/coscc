@@ -73,7 +73,9 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: a
     that answer rather than to a default, and do not ask it again. Cite it as
     `spec.md ## Answers, câu N`. The words of an answer are a person's, not yours: quote
     them, and do not restate them as your own finding. The app only ever appends that
-    section; never write into it yourself.
+    section; never write into it yourself. A block headed `Answered by: Jera. … Via:
+    precedent.` is the exception: an agent inferred it from precedent, so cite it as Jera's
+    inference and never present it as the originator's decision.
 11. `Impl:` is `novel` when the work is new logic rather than an existing pattern followed,
     or when `## Files that change` names a file in `coscc/labels.py` `SECURITY_SURFACE`.
     Otherwise `routine`. A missing label is run as `novel`. The label picks the model and

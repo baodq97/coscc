@@ -542,6 +542,63 @@ class FindingsAwaitingAPersonAreCopied(unittest.TestCase):
         self.assertEqual(setters, {"load_next"})
 
 
+class JerasAnswersAreShownAndAnswerable(unittest.TestCase):
+    """`0044` R10. What `Service.board` decided about Jera is copied onto each row, and the
+    tab keeps Jera's answers in view under the ones still waiting."""
+
+    UNIT = {
+        "open": 1,
+        "questions": [
+            {"artifact": "spec.md", "n": 1, "text": "a", "answered": True, "counted": True, "by_jera": True,
+             "cites": ["0001_a/spec.md#Câu 1"], "said": "Có."},
+            {"artifact": "spec.md", "n": 2, "text": "b", "answered": False, "counted": True,
+             "needs_person": True, "proposal": "Đề xuất.", "reason": "tiền"},
+            {"artifact": "spec.md", "n": 3, "text": "c", "answered": True, "counted": True},
+            {"artifact": "intent.md", "n": 1, "text": "d", "answered": False, "counted": False},
+        ],
+    }
+
+    def page(self, unit=None, answerable=True):
+        from types import SimpleNamespace
+
+        from coscc.state import _questions
+
+        _, asked = _questions(unit or self.UNIT)
+        return SimpleNamespace(current_unit=SimpleNamespace(questions=asked, answerable=answerable))
+
+    def test_the_fields_are_copied(self):
+        from coscc.state import _questions
+
+        _, (q1, q2, _q3, q4) = _questions(self.UNIT)
+        self.assertEqual((q1.by_jera, q1.cites, q1.said, q1.needs_person), (True, ["0001_a/spec.md#Câu 1"], "Có.", False))
+        self.assertEqual((q2.needs_person, q2.proposal, q2.reason), (True, "Đề xuất.", "tiền"))
+        self.assertEqual((q4.by_jera, q4.cites, q4.said, q4.needs_person, q4.proposal), (False, [], "", False, ""))
+
+    def test_waiting_first_then_jeras_and_never_a_persons(self):
+        from coscc.state import StudioState
+
+        shown = StudioState.computed_vars["open_questions_here"].fget(self.page())
+        self.assertEqual([q.key for q in shown], ["spec.md#2", "intent.md#1", "spec.md#1"])
+
+    def test_ask_jera_is_offered_only_with_a_question_it_may_answer(self):
+        from coscc.state import StudioState
+
+        can = StudioState.computed_vars["jera_can_ask"].fget
+        self.assertTrue(can(self.page()))
+        self.assertFalse(can(self.page(answerable=False)))
+        only_review = {"questions": [{"artifact": "review.md", "n": 1, "text": "x", "answered": False}]}
+        self.assertFalse(can(self.page(only_review)))
+        answered = {"questions": [dict(q, answered=True) for q in self.UNIT["questions"]]}
+        self.assertFalse(can(self.page(answered)))
+
+    def test_the_handler_only_calls_the_service(self):
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+        fn = next(f for f in _state_class(tree).body if getattr(f, "name", "") == "ask_jera")
+        calls = {n.func.attr for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                 and isinstance(n.func.value, ast.Name) and n.func.value.id == "SERVICE"}
+        self.assertEqual(calls, {"precedent"})
+
+
 class CellLabelNamesAFailureTheArtifactCannot(unittest.TestCase):
     """`0019_a-failed-step-destroys-the-work-that-succeeded` plan step 7, `spec.md` R5."""
 

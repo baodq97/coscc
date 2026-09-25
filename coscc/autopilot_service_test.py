@@ -330,6 +330,21 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [])
         self.assertEqual(self.stops(), {"0001_a": "b", "0002_b": "d"})
 
+    async def test_e_reads_past_what_jera_wrote_on_the_unit(self):
+        """`0044`: a `precedent` line is no step. A done one does not lift a failed step's stop,
+        and a failed one stops nothing."""
+        journal = Journal(self.config.working_dir, self.config.data_dir)
+        self.add("0001_a", "spec")
+        journal.finished(self.key, "0001_a", "spec", "failed")
+        journal.finished(self.key, "0001_a", "precedent", "done")
+        self.add("0002_b", "plan")
+        journal.finished(self.key, "0002_b", "spec", "done")
+        journal.finished(self.key, "0002_b", "precedent", "failed")
+        await self.pass_()
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertIn("spec step ended failed", self.service._autopilot_stops[self.key]["0001_a"]["reason"])
+        self.assertEqual([(u, s) for u, s, _ in self.launched], [("0002_b", "plan")])
+
     async def test_integrate_when_behind_but_never_after_a_pass(self):
         self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again",
                  integration={"state": "behind"}, rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)

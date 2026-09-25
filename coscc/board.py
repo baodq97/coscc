@@ -167,7 +167,12 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             # many are still open in the counted artifact. Both decided by `cos.mjs` and
             # copied, never recounted here (`0016` spec R7). An older `cos.mjs` sends
             # neither, which reads as no questions, the same way `phase` degrades.
-            "questions": list(u.get("questions") or []),
+            "questions": _questions_of(u),
+            # `0044`. Every answer in force, read off `artifacts[*].questions[].answer` as
+            # `cos.mjs` joined them — the store Jera reads its precedent from. Copied, never
+            # parsed here (`spec.md` Design 2). An older `cos.mjs` sends no `artifacts`,
+            # which reads as none.
+            "answers": _answers_of(u),
             "open": int(u.get("open") or 0),
             "counted": u.get("counted") or "",
             # `0021`. The pull request `pr.md` names and the rounds `review.md` holds, each
@@ -368,6 +373,42 @@ async def pr_text(units_root: str | Path, unit: str, timeout: float = TIMEOUT) -
         return json.loads(out_text)
     except (json.JSONDecodeError, ValueError) as e:
         raise Unavailable(f"the harness script did not return JSON: {e}") from e
+
+
+def _answer_of(unit: dict[str, Any], artifact: str, n: Any) -> dict[str, Any] | None:
+    for q in ((unit.get("artifacts") or {}).get(artifact) or {}).get("questions") or []:
+        if isinstance(q, dict) and q.get("n") == n and isinstance(q.get("answer"), dict):
+            return q["answer"]
+    return None
+
+
+def _questions_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
+    """`questions` as `cos.mjs` sent them, each with `by` added (`0044`): who gave the answer
+    in force, from the same artifact's joined answer, `""` when none."""
+    out = []
+    for q in unit.get("questions") or []:
+        if not isinstance(q, dict):
+            continue
+        answer = _answer_of(unit, str(q.get("artifact") or ""), q.get("n"))
+        out.append({**q, "by": str((answer or {}).get("by") or "")})
+    return out
+
+
+def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
+    """`[{artifact, n, question, by, date, via, text}]`, one per question with an answer in
+    force, in the order of `artifacts`."""
+    out = []
+    for artifact, a in (unit.get("artifacts") or {}).items():
+        for q in (a or {}).get("questions") or []:
+            answer = q.get("answer") if isinstance(q, dict) and q.get("answered") else None
+            if not isinstance(answer, dict):
+                continue
+            out.append({
+                "artifact": str(artifact), "n": q.get("n"), "question": str(q.get("text") or ""),
+                "by": str(answer.get("by") or ""), "date": str(answer.get("date") or ""),
+                "via": str(answer.get("via") or ""), "text": str(answer.get("text") or ""),
+            })
+    return out
 
 
 def _person_findings_of(unit: dict[str, Any]) -> list[dict[str, Any]]:

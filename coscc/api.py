@@ -254,6 +254,25 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.post("/api/units/precedent")
+    async def ask_jera(request: Request) -> Any:
+        """`0044`. **Opens one paid session**: Jera answers a unit's open questions from
+        precedent, `{cwd, unit}`. What it answers is appended under `## Answers` as
+        `Answered by: Jera`, and every later stage reads it as decided. Whoever holds the
+        password or a live session can press it; the default bind is `0.0.0.0`. Returns a
+        summary, not a stream: one turn has nothing to watch, and `/api/board/running` shows
+        the run while it lasts. A second press on the same unit while one runs is a 400.
+        """
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        try:
+            return await service.precedent(str(body.get("cwd") or ""), str(body.get("unit") or ""))
+        except Updating as e:
+            return _bad(str(e), 503)
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.post("/api/units/outcome")
     async def record_outcome(request: Request) -> Any:
         """`0047` R1–R4. Record whether a finished unit met its intent's outcome.

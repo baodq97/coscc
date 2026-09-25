@@ -105,7 +105,7 @@ only from here.
 | the `review`/`ship` gates call `gh`; the run button follows `next` | `.claude/rules/coscc-board.md` | editing `coscc/board.py` or the run button |
 | two roots, and what `--measure` reads | `.claude/rules/coscc-data.md` | editing `coscc/config.py`, `units.py`, `data.py`, `journal.py`, or a run-log field |
 | `/api/timeline` returns a failed reply; `pull` within one process; a failed step's tail; `POST /api/board/stop`; units at the same time; `GET /api/board/running` | `.claude/docs/coscc-steps.md` | editing `/api/timeline`, `/api/board/stop`, `/api/board/running`, `Service.run_step`, `runner.describe_attempt` or `journal.failed_attempts` |
-| `POST /api/units/answer`, `/outcome`, `/hold`; re-running keeps `## Answers` | `.claude/docs/coscc-answers.md` | editing those routes, `coscc/hold.py`, or `answers_section`/`strip_answers`/`with_answers` in `coscc/runner.py` |
+| `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold`; re-running keeps `## Answers` | `.claude/docs/coscc-answers.md` | editing those routes, `coscc/hold.py`, or `answers_section`/`strip_answers`/`with_answers` in `coscc/runner.py` |
 | `POST /api/settings/models` and `/efforts`; `POST /api/backlog/*` | `.claude/docs/coscc-settings.md` | editing `/api/settings/*`, `coscc/models.py`, `/api/backlog/*` or `coscc/backlog.py` |
 | `spike` runs arbitrary code | `.claude/docs/coscc-spike.md` | editing the `spike` grant, its scratch directory, or its progress-file write |
 | what the page stopped explaining in `0082` | `.claude/docs/coscc-page-text.md` | adding words to a screen, or removing a sentence the page says beside a button |
