@@ -10,8 +10,9 @@ whole of `spec.md` R12.
 Since `0082` (`spec.md ## Answers, câu 5`) each action whose effect costs money or leaves
 this machine keeps one sentence beside its button — `Service.CONSEQUENCE` — and nothing more.
 The lists of limits these screens used to carry (what a grant reaches, who else holds the
-password, that the app writes a prose stage's artifact) are in `.claude/CLAUDE.md` and
-`.claude/rules/coscc-app.md`, and the full grant warnings are still in the API. Paths, full
+password, that the app writes a prose stage's artifact) are in `.claude/docs/coscc-page-text.md`
+and the rules and documents `.claude/rules/coscc-app.md` indexes, and the full grant warnings
+are still in the API. Paths, full
 shas, UUIDs and variable names sit only inside a closed `_details`
 (`.claude/rules/ui-standard.md` S3).
 """
