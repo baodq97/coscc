@@ -384,7 +384,8 @@ def _brief(r: dict[str, Any]) -> dict[str, Any]:
     """What the page shows of one estimate record."""
     return {
         "unit": r.get("unit") or "", "value": r.get("value"), "effort": r.get("effort"),
-        "effort_source": r.get("effort_source") or "", "similar": list(r.get("similar") or []),
+        "effort_source": r.get("effort_source") or "",
+        "similar": [s for s in r["similar"] if isinstance(s, str)] if isinstance(r.get("similar"), list) else [],
         "basis": r.get("basis") or "", "effort_basis": r.get("effort_basis") or "",
         "by": r.get("by") or "", "at": r.get("at") or "",
     }
@@ -453,9 +454,9 @@ def fold(
             item = {"kind": "relation", "unit": r.get("unit"), "other": r.get("other"), "type": r.get("type"),
                     "op": r.get("op"), "reason": r.get("reason") or "", "by": r.get("by") or "",
                     "at": r.get("at") or ""}
-            for n in {r.get("unit"), r.get("other")}:
-                if isinstance(n, str):
-                    history.setdefault(n, []).append(item)
+            other = r.get("other")
+            for n in {r["unit"], other} if isinstance(other, str) else {r["unit"]}:
+                history.setdefault(n, []).append(item)
 
     cuts = None
     if len(found) >= TERCILE_MIN:
