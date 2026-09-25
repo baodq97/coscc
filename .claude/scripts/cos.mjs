@@ -1192,8 +1192,9 @@ function shipNeeds(unit, probe, said = {}) {
   // block for that id. `[needs-person]` and `[claim-rejected]` never close one.
   const answered = personAnswers(unit)
   // `0061` R4: a finding that does not block is left open on purpose; `ship.md` lists it.
+  // A lowered one still blocks, but is named only on its own line below (`0078` R2).
   const { nonBlocking: low, demoted } = severityRule(unit)
-  const passes = new Set(low.map((f) => f.id))
+  const passes = new Set([...low, ...demoted].map((f) => f.id))
   const open = last.findings.filter((f) => f.label !== 'fixed' && !(f.label === 'answered' && answered.has(f.id)) && !passes.has(f.id))
   for (const d of demoted) {
     need.push(`${d.id} is low in review round ${last.n}, but review round ${d.round} rated it ${d.severity} — lowering a severity is not a fix: fix it on the branch, or keep it open`)
