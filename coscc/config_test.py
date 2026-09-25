@@ -212,6 +212,22 @@ class TheUpdaterSettings(unittest.TestCase):
         )
 
 
+class TheKnowledgeFlag(unittest.TestCase):
+    """`.cos/0090_agents-relearn-what-earlier-units-already-knew` R1: off unless turned on."""
+
+    def test_it_is_off_unset_and_empty(self):
+        self.assertFalse(Config().knowledge)
+        self.assertFalse(from_env({}).knowledge)
+        # A session inherits `COS_KNOWLEDGE=""` (`from_env`'s own comment on `COS_PORT`).
+        self.assertFalse(from_env({"COS_KNOWLEDGE": ""}).knowledge)
+        self.assertFalse(from_env({"COS_KNOWLEDGE": "0"}).knowledge)
+
+    def test_it_is_on_when_turned_on(self):
+        for raw in ("1", "true", "on", " ON "):
+            with self.subTest(raw=raw):
+                self.assertTrue(from_env({"COS_KNOWLEDGE": raw}).knowledge)
+
+
 class TheProtectedDatabases(unittest.TestCase):
     """`0076` R4. Every test passes `env`; none reads the environment around it."""
 
