@@ -162,7 +162,8 @@ async def proof(tmp: Path) -> bool:
                 "cwd": cwd, "unit": earlier, "artifact": "spec.md", "question": 1, "answer": "Vẫn vậy."})
             await board_unit(asked)
             rows = jera_rows()
-            ok &= claim(not rows, "R1", f"{len(rows)} Jera rows in the run log")
+            ran = [r for r in journal.records(key, earlier) if r.get("kind") == "end" and r.get("stage") == "plan"]
+            ok &= claim(not rows and bool(ran), "R1", f"{len(rows)} Jera rows in the run log, {len(ran)} plan steps ended")
         except Exception as e:  # noqa: BLE001 — a missing piece fails this line, not the proof
             ok &= claim(False, "R1", f"{type(e).__name__}: {e}")
 

@@ -242,12 +242,12 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         return {row["name"]: row for row in r.json()["rows"]}
 
-    async def test_fifteen_rows_with_nothing_configured(self):
+    async def test_sixteen_rows_with_nothing_configured(self):
         # `0033` R9 and `0039`: nine stages, a `:novel` row for each of the four after `plan`,
-        # `estimate` (`0074`), chat.
+        # `estimate` (`0074`), `precedent` (`0044`), chat.
         rows = await self.rows()
-        self.assertEqual(len(rows), 15)
-        self.assertEqual(list(rows)[-2:], ["estimate", "chat"])
+        self.assertEqual(len(rows), 16)
+        self.assertEqual(list(rows)[-3:], ["estimate", "precedent", "chat"])
         self.assertEqual(rows["impl"]["source"], "default")
         self.assertEqual((rows["impl:novel"]["effort"], rows["impl:novel"]["effort_source"]), ("high", "default"))
 
@@ -697,6 +697,60 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_a_directory_outside_the_list_is_refused(self):
         got = await self.client.post("/api/units/answer", json=self.body(cwd="/etc"))
         self.assertEqual(got.status_code, 400)
+
+    async def test_nobody_answers_as_jera(self):  # `0044` R11
+        self.assertIn("Jera", await self.refused(answered_by=" jera "))
+
+
+class AskingJeraOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0044`. `POST /api/units/precedent`: a 400 before any session, or a summary."""
+
+    # The fixture of the class above, borrowed rather than inherited so its tests run once.
+    _answering_setup = AnsweringAQuestionOverHttp.asyncSetUp
+    asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
+    body = AnsweringAQuestionOverHttp.body
+    post = AnsweringAQuestionOverHttp.post
+
+    class _Sessions:
+        def __init__(self) -> None:
+            self.text, self.calls = "", 0
+
+        def in_flight(self):
+            return []
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.calls += 1
+            yield ("chunk", self.text)
+            yield ("done", {"session_id": "s", "cost": {"cost_usd": 0.01, "turns": 1}})
+
+    async def asyncSetUp(self):
+        await self._answering_setup()
+        self.sessions = self._Sessions()
+        self.app.state.service.sessions = self.sessions
+
+    async def ask(self, **over):
+        return await self.client.post("/api/units/precedent", json={"cwd": self.cwd, "unit": self.unit, **over})
+
+    async def test_a_unit_with_no_open_question_is_a_400_and_spends_nothing(self):
+        for n in (1, 2, 3):
+            self.assertEqual((await self.post(question=n)).status_code, 200)
+        got = await self.ask()
+        self.assertEqual(got.status_code, 400, got.text)
+        self.assertEqual(self.sessions.calls, 0)
+        self.assertEqual((await self.ask(unit="0099_nothing")).status_code, 400)
+        self.assertEqual((await self.client.post("/api/units/precedent", content=b"nope")).status_code, 400)
+
+    async def test_a_reply_comes_back_as_a_summary(self):
+        before = self.intent.read_bytes()
+        self.sessions.text = '```json\n[{"artifact": "intent.md", "n": 1, "verdict": "needs-person", ' \
+                             '"category": "product-direction", "text": "Đề xuất.", "reason": "hướng", "cites": []}]\n```'
+        got = await self.ask()
+        self.assertEqual(got.status_code, 200, got.text)
+        body = got.json()
+        self.assertEqual(body["outcome"], "done")
+        self.assertEqual([q["n"] for q in body["needs_person"]], [1, 2, 3])
+        self.assertEqual((body["written"], body["cost_usd"]), ([], 0.01))
+        self.assertEqual(self.intent.read_bytes(), before)
 
 
 class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):

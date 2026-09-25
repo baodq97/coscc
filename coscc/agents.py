@@ -23,6 +23,8 @@ _AGENTS: dict[str, tuple[str, str]] = {
     "integrate": ("ᚷ", "Gebo"),
     # `0039` named its stage's agent in `.claude/CLAUDE.md`, after this table was chosen.
     "spike": ("ᛈ", "Perthro"),
+    # `0044`, named in its idea: not a stage, the session behind *Ask Jera*.
+    "precedent": ("ᛃ", "Jera"),
 }
 
 # `Service.run_step` takes both names for the one stage.
