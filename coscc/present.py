@@ -34,6 +34,10 @@ RESULT_LABEL = {
     "không đo được": "could not be measured",
 }
 
+# `Measured by:` of a `### Outcome` block, as the board offers it (`0089` R4). `owner` is the
+# signed-in person (S7); the API still takes any word.
+MEASURER_LABEL = {"agent": "Agent", "owner": "You"}
+
 # `service.outcome_label`'s kinds, in English (D22).
 OUTCOME_LABEL = {
     "met": "met",

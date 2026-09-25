@@ -1389,23 +1389,61 @@ class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
         from coscc import state
         from coscc.service import Invalid
 
+        from coscc.screens_test import VIETNAMESE
+
         async def refuse(*args):
             refuse.args = args
-            raise Invalid("đạt needs a source: where the figure it rests on came from")
+            raise Invalid("the result needs a source: where the figure it rests on came from")
 
         async def never():
             raise AssertionError("a refused outcome must not reload the board")
 
+        fields = state.StudioState.get_fields()
+        self.assertEqual((fields["outcome_result"].default, fields["outcome_measured_by"].default),
+                         ("met", "Agent"))
         page = SimpleNamespace(
-            cwd="/w", unit_id="0001_x", outcome_result="đạt", outcome_measured_by="agent",
+            cwd="/w", unit_id="0001_x", outcome_result="met", outcome_measured_by="Agent",
             outcome_source="", outcome_reason="", outcome_note="",
             recording_outcome=False, notice="", _load_board=never,
         )
         with mock.patch.object(state, "SERVICE", SimpleNamespace(record_outcome=refuse)):
             asyncio.run(state.StudioState.record_outcome.fn(page))
-        self.assertEqual(page.notice, "đạt needs a source: where the figure it rests on came from")
+        self.assertEqual(page.notice, "the result needs a source: where the figure it rests on came from")
+        self.assertIsNone(VIETNAMESE.search(page.notice))
         self.assertFalse(page.recording_outcome)
         self.assertEqual(refuse.args, ("/w", "0001_x", "đạt", "agent", "", "", "", ""))
+
+    def test_0089_the_labels_go_down_as_the_stored_words(self):
+        """`0089` R1, R4. The page holds English labels; the service gets the stored words."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+        from coscc.screens_test import VIETNAMESE
+
+        sent = []
+
+        async def record(*args):
+            sent.append(args)
+            return {"unit": args[1], "result": args[2], "measured_by": args[3], "recorded_by": "owner"}
+
+        async def board():
+            return None
+
+        for label, word, who, stored in (("met", "đạt", "Agent", "agent"),
+                                         ("missed", "trượt", "You", "owner"),
+                                         ("could not be measured", "không đo được", "You", "owner")):
+            page = SimpleNamespace(
+                cwd="/w", unit_id="0001_x", outcome_result=label, outcome_measured_by=who,
+                outcome_source="s", outcome_reason="r", outcome_note="",
+                recording_outcome=False, notice="", _load_board=board, _load_artifact=lambda: None,
+            )
+            with mock.patch.object(state, "SERVICE", SimpleNamespace(record_outcome=record)):
+                asyncio.run(state.StudioState.record_outcome.fn(page))
+            self.assertEqual(sent[-1][2:4], (word, stored))
+            self.assertEqual(page.notice, f"Recorded {label} for 0001_x, measured by {who}.")
+            self.assertIsNone(VIETNAMESE.search(page.notice))
 
 
 class AnsweringAlwaysSaysSomething(unittest.TestCase):

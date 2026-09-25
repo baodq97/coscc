@@ -1064,8 +1064,10 @@ class StudioState(rx.State):
     integrating: bool = False
     # `0047`. The outcome form. Nobody types who records it (`0082` R3); `outcome_measured_by`
     # starts as `agent`, the case with no script to run.
-    outcome_result: str = "đạt"
-    outcome_measured_by: str = "agent"
+    # Both hold the English label the select shows (`0089` R1, R4); `record_outcome` sends
+    # the stored word.
+    outcome_result: str = "met"
+    outcome_measured_by: str = "Agent"
     outcome_source: str = ""
     outcome_reason: str = ""
     outcome_note: str = ""
@@ -2500,11 +2502,16 @@ class StudioState(rx.State):
     @rx.event
     async def record_outcome(self):
         """`0047`. Record the open unit's outcome. Every rule about whether it may be written
-        is `Service.record_outcome`'s; a refusal arrives here as its words, shown as they are."""
+        is `Service.record_outcome`'s; a refusal arrives here as its words, shown as they are.
+        A label missing from the tables goes as it is, for the service to refuse."""
+        result = {v: k for k, v in present.RESULT_LABEL.items()}.get(self.outcome_result, self.outcome_result)
+        measurer = {v: k for k, v in present.MEASURER_LABEL.items()}.get(
+            self.outcome_measured_by, self.outcome_measured_by
+        )
         self.recording_outcome = True
         try:
             done = await SERVICE.record_outcome(
-                self.cwd, self.unit_id, self.outcome_result, self.outcome_measured_by,
+                self.cwd, self.unit_id, result, measurer,
                 self.outcome_source, self.outcome_reason, self.outcome_note, "",
             )
         except Invalid as e:
@@ -2514,8 +2521,8 @@ class StudioState(rx.State):
             self.recording_outcome = False
         self.outcome_source, self.outcome_reason, self.outcome_note = "", "", ""
         self.notice = (
-            f"Recorded {done['result']} for {done['unit']} as {done['recorded_by']}, measured by "
-            f"{done['measured_by']}. Nothing was started, and no gate reads it."
+            f"Recorded {present.RESULT_LABEL.get(done['result'], done['result'])} for {done['unit']}, "
+            f"measured by {present.MEASURER_LABEL.get(done['measured_by'], done['measured_by'])}."
         )
         await self._load_board()
         self._load_artifact()

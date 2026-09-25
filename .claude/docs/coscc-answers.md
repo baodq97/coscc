@@ -35,7 +35,8 @@ Read this before changing `POST /api/units/answer`, `/outcome` or `/hold`, `cosc
   `đạt` | `trượt` | `không đo được`, `Measured by:`, `Source:` or `Reason:`) under
   `intent.md ## Answers`, and the board labels the unit from the last valid one. Anyone
   holding the password can record `đạt`; the block's name is `owner` since `0082` unless the
-  request carries one, `Measured by:` is still a word they typed, and `Source:` is checked
+  request carries one, `Measured by:` is `agent` or `owner` from the board since `0089` but
+  still any word through the API, and `Source:` is checked
   against nothing. No gate reads
   the block. The trace is the block in the file and an `outputs` row with `source =
   outcome`. The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.

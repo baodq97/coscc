@@ -1424,13 +1424,8 @@ def _outcome_panel() -> rx.Component:
             rx.cond(
                 u.outcome_form,
                 rx.vstack(
-                    s.text(
-                        "Appended to intent.md under ## Answers as ### Outcome; nothing above it "
-                        "changes, a later block replaces an earlier one, and no gate reads it. "
-                        "Neither name is checked: the password names nobody.",
-                        size="1", line_height="1.7",
-                    ),
-                    rx.select(["đạt", "trượt", "không đo được"], value=P.outcome_result,
+                    s.text("Adds an outcome block to intent.md.", size="1"),
+                    rx.select(list(present.RESULT_LABEL.values()), value=P.outcome_result,
                               on_change=P.set_outcome_result, size="1", id="outcome-result"),
                     rx.input(placeholder="Source — where the figure came from",
                              value=P.outcome_source, on_change=P.set_outcome_source,
@@ -1438,9 +1433,13 @@ def _outcome_panel() -> rx.Component:
                     rx.input(placeholder="Reason — why it could not be measured",
                              value=P.outcome_reason, on_change=P.set_outcome_reason,
                              width="100%", id="outcome-reason"),
-                    rx.input(placeholder="Measured by — agent, or a person's name",
-                             value=P.outcome_measured_by, on_change=P.set_outcome_measured_by,
-                             width="100%", id="outcome-measured-by"),
+                    rx.hstack(
+                        s.text("Measured by", size="1"),
+                        rx.select(list(present.MEASURER_LABEL.values()), value=P.outcome_measured_by,
+                                  on_change=P.set_outcome_measured_by, size="1",
+                                  aria_label="Measured by", id="outcome-measured-by"),
+                        spacing="2", align="center",
+                    ),
                     rx.text_area(placeholder="Note (optional)", value=P.outcome_note,
                                  on_change=P.set_outcome_note, width="100%", id="outcome-note"),
                     rx.button(

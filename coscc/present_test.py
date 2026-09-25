@@ -55,6 +55,12 @@ class Labels(unittest.TestCase):
     def test_every_stored_result_has_an_english_label(self):
         self.assertEqual(set(present.RESULT_LABEL), set(service.OUTCOME_RESULTS))
 
+    def test_0089_the_board_offers_two_measurers(self):
+        """`0089` R4: `agent`, or `owner` for whoever is signed in (S7)."""
+        self.assertEqual(set(present.MEASURER_LABEL), {"agent", "owner"})
+        for label in present.MEASURER_LABEL.values():
+            self.assertTrue(label.isascii(), label)
+
     def test_every_outcome_kind_has_an_english_label(self):
         self.assertEqual(set(present.OUTCOME_LABEL), {"met", "missed", "unmeasurable", "due", "pending"})
 

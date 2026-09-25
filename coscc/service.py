@@ -2369,9 +2369,9 @@ class Service:
             if "\n" in why or "\r" in why:
                 raise Invalid("the reason is one line")
             if kind != "unmeasurable" and not src:
-                raise Invalid(f"{word} needs a source: where the figure it rests on came from")
+                raise Invalid("the result needs a source: where the figure it rests on came from")
             if kind == "unmeasurable" and not why:
-                raise Invalid(f"{word} needs a reason: why it could not be measured")
+                raise Invalid("the result needs a reason: why it could not be measured")
             # The same refusal as `answer()`, and for the same reason: a heading would end
             # this block early or open another, and `cos.mjs` would read it wrongly.
             if any(line.lstrip().startswith("#") for line in [src, why, *text.splitlines()]):
