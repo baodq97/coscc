@@ -714,6 +714,8 @@ def claim_g(tmp: Path) -> bool:
                 "skills": ["deep-research", "code-review"], "slash_commands": ["help", "code-review"],
                 "output_style": "default"}
 
+    added = {"plugin": "code-review:review", "personal-skill": "mine"}
+
     async def fixture(name: str, stages: list[str], bad: str = "") -> Path:
         root = tmp / name
         ship = root / "units" / "slot" / ".cos" / UNIT / "ship.md"
@@ -737,8 +739,9 @@ def claim_g(tmp: Path) -> bool:
             if run_tag or (stage == bad and name == "violation"):
                 init["mcp_servers"] = [{"name": "microsoft-learn", "status": "connected"}]
             elif stage == bad:
-                # What a loaded plugin, or a personal skill, puts into the init.
-                init["slash_commands"] += ["code-review:review", "mine"]
+                # What a loaded plugin, or a personal skill, puts into the init: one name per
+                # case, so each branch of r3's (d) is measured on its own.
+                init["slash_commands"] += [added[name]]
             rec = events.Recorder(run, data, str(root), "/w", "0100_x", stage)
             rec.message(SystemMessage(subtype="init", data=init))
             await rec.close("done", None)
@@ -749,7 +752,8 @@ def claim_g(tmp: Path) -> bool:
     for name, stages, bad, want in (
         ("pass", STAGES, "", EXIT_PASS),
         ("violation", STAGES, "review", EXIT_BROKEN),
-        ("plugin-and-skill", STAGES, "plan", EXIT_BROKEN),
+        ("plugin", STAGES, "plan", EXIT_BROKEN),
+        ("personal-skill", STAGES, "plan", EXIT_BROKEN),
         ("no-ship-step", [s for s in STAGES if s != "ship"], "", EXIT_ENV),
     ):
         root = asyncio.run(fixture(name, stages, bad))
