@@ -137,9 +137,10 @@ no commands, one turn, no budget.
   `active`. Measured 2026-09-22 when a checkout's `npm test` upgraded `~/.cos/cos.db` to
   schema 2 under an installed `v0.2.3`. Health checks do not see this; `curl /api/workspaces`
   does. The way out is to match the app to the database or delete the database — a downgrade
-  does not remove it. Since `0070` `SCHEMA_VERSION` is 3 and the login guard reads the
-  database on every request, so a pre-`0070` build meeting it fails every page, not only the
-  routes that read data.
+  does not remove it. Since `0070` the login guard reads the database on every request, so a
+  build meeting a newer database fails every page, not only the routes that read data. Since
+  `0073` `SCHEMA_VERSION` is 4: a build from before `0073` is a `500` on every page of a
+  database this one has touched.
 - **`coscc/auth.py` is the only door, and it opens on one password.** Since `0070` uvicorn
   serves `coscc.coscc:served`, the composed app wrapped by `auth.Guard` — the one position
   `.cos/0070_*/spike.md ## U1` measured to see every scope, CORS preflight included; moving
@@ -451,6 +452,26 @@ no commands, one turn, no budget.
   showing when the unit's next `start` is written or after 24 hours; nothing writes an
   `end` for it. A step started at a terminal has no entry either. The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
 
+- **`GET /api/board/events` hands out everything a step saw.** Since `0073` every board step
+  carries a recorder (`coscc/events.py`) fed by `Sessions._stream`, the grant's gate and the
+  runner: every SDK message, refusal and outcome, each field cut at 64 000 characters, kept
+  in memory while the step runs and written each second to `step_runs` and `step_events` in
+  `cos.db` — never the run log. Whoever holds the password or a live session reads all of
+  it, commands, paths, thinking and tool output included, for 30 days (`KEEP_DAYS`) and
+  200 MB of stored JSON (`KEEP_BYTES`), and `0068`'s `updates/cos.db.bak` carries a copy.
+  The purge runs only in `coscc/run.py` before the server starts (spec C5): between starts
+  the total can pass 200 MB by any amount, and without a `VACUUM` the file never shrinks. A
+  purge that fails prints one line and the app starts anyway. What a running step holds in
+  memory is unmeasured (C7). A second copy of the app on the same data root writes its
+  steps' events into the same tables, but nobody can follow them live, and this copy reads
+  them as `ended-unknown` while they run (C9). The watch pane holds at most `WATCH_WINDOW` =
+  400 events, because every frame resends the whole list (`spike.md ## U4`: about 2 062
+  bytes each at the collapsed size, 1 649 608 bytes the largest frame measured within 2 s on
+  loopback); on a link under about 13 Mbit/s the delay will pile up (unmeasured). Each tab
+  that opens the pane keeps a follower until the step ends, the pane closes, or it falls
+  5 000 events behind; a closed tab is not noticed (`plan.md` Risk 4). The list is drawn by
+  position, so a page prepended or a row dropped from the top rewrites rows in place.
+  Neither route writes anything; both are behind the `0070` login.
 - **`POST /api/backlog/*` writes the backlog's order, and `propose` opens a paid session, for
   whoever holds the password.** Since `0074`. `estimate`, `relation` and `shortlist` each
   append one run-log row (`estimate-value`, `relation`, `shortlist`) under a typed `by`; a
@@ -528,6 +549,7 @@ no commands, one turn, no budget.
 | `verify_0068.py` | plain: no session, no quota, no network; temporary data root, a fake `uv` (a shell script whose "installed" `coscc` serves 200 on a port) and `verify_0034`'s stand-in session, app driven in-process over ASGI. Needs `node` and `git`; either missing is exit 2. `--restart` builds two wheels of `HEAD` with `scripts/build_wheel.sh --local` in temporary worktrees, installs one with the real `uv` into a temporary tool dir, plays systemd itself (restart 2 s after a non-zero exit) and drives chromium: **needs the network** for the trial install, port 18790 free, and takes a few minutes. It does not measure the intent's outcome — two real updates on an `install.sh` machine. Since `0070` the fake `coscc` plays the login door for the trial; `--restart`'s browser was not taught to log in and was not run |
 | `verify_0070.py` | plain: no session, no quota, no network; temporary data root. Composes the real Reflex app in-process as `run.py` serves it, so it **needs `uv run coscc-build` first** (no bundle is exit 2). Sets a password through `/setup`, walks every registered route and counts the ones that answer without a session; also measures R8 on the real `/_event` socket. `--url` counts against a running service at `COS_URL` from this checkout's route list, sends no `POST /login`, and is exit 2 while that service has no password. `--browser` starts `coscc.run` on a temporary root and drives chromium through `/setup`, the board's `/_event`, *Đăng xuất* and back to `/login`, through `127.0.0.1` and through this machine's first non-loopback address, then removes the session under an open board and needs it on `/login` within 20 s: needs `COS_PORT` free, bound off loopback, and a bundle built for it (`COS_PORT=18791 uv run coscc-build`). A step the app starts inherits `__REFLEX_*` blank, and `run.py`'s `setdefault` keeps a blank mount flag — no page, `/` a 404 — so `--browser` drops them; `verify_0003`/`0006` do not |
 | `verify_0071.py` | browser, needs `COS_PORT` free and a bundle built for it; no session, no quota; temporary data root and a bare-directory remote. Writes a password hash and one session into that root before the app starts, so it passes the `0070` login without `/setup`, and drops blank `__REFLEX_*` as `verify_0070 --browser` does. Its `F<n>` unit carries a `pr.md` naming `github.com/o/r`; whether a board read asks `gh` about it, and so reaches the network, was not measured. Presses *Send this answer* in (a), (b), (c), double-clicks it on an `F<n>`, and presses a refused *Pause*, at 1280×900 and 390×844, and measures each message in view inside the dialog after scrolling it to the bottom. Does not measure the intent's outcome — a person's trial on the real board before 2026-10-08 |
+| `verify_0073.py` | plain: no session, no quota, no network; temporary data root, a workspace that is not a git checkout, only `ClaudeSDKClient` in `coscc.sessions` replaced by a scripted client, the app driven in-process over ASGI. Needs `node`; missing is exit 2. R1–R9, R13–R15; integrate is not run (it needs `git` and `gh`). `--browser` starts `coscc.run` on `COS_PORT` (18773) with the same kind of client and a password and two sessions written into a temporary root, and drives chrome through two contexts that share no cookie: needs the port free and a bundle built for it (`COS_HOST=127.0.0.1 COS_PORT=18773 uv run coscc-build`). R11's latency is read from rows added to the DOM, so it sees only a list under `WATCH_WINDOW`. Does not measure the intent's outcome — a person's two-browser trial before 2026-10-15 |
 | `verify_0074.py` | plain: no session, no quota, no network; temporary data root, the session replaced, the app driven in-process over ASGI. Needs `node`; missing is exit 2. R15 runs `cos.mjs gate` for every stage and `next` for every fixture unit before and after the three kinds of record. `--measure` reads `<COS_DATA_DIR>/cos.db` (`mode=ro`) and this unit's `ship.md` under `<COS_DATA_DIR>/units/*/.cos/`, and writes only to `<COS_DATA_DIR>/measurements/`; no merge line, or the 14-day window still open, is exit 2. Run it at a terminal: inside a step it reads a scratch data root (`0076`). It does not print the `lệch` count of each shortlist in use: that needs the board as it stood then |
 | `verify_0076.py` | plain: no session, no quota, no network; a temporary `HOME` whose `~/.cos` plays the running app, a child process standing in for a step with the environment `sessions.child_env` builds. Needs `httpx` and `coscc` importable; either missing is exit 2. `--suite` runs `npm test` in a session's environment with the `cos.db` `from_env` names protected, and reads that database (`mode=ro`) before and after: **run it at a terminal**, a step is not to read the real one. Does not measure the intent's outcome — a real `impl` step from the board on a branch that raises the schema, before 2026-10-31 |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
