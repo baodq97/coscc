@@ -3545,6 +3545,10 @@ class Service:
                     f"spent {cap['spent']:.2f} + running {cap['running']:.2f} + {c['stage']} "
                     f"{c['need']:.2f} is over the cap of {cap['limit']:.2f} USD ({cap['day']})"
                 )}
+            # R1: the switch may have been turned off while this pass read the board and
+            # `next`. Nothing from here on awaits, so nothing starts once it is off.
+            if not self._autopilot_on(key) or not self._autopilot_values(key)["autopilot"]:
+                return
             self._autopilot_set_stops(key, found, asked if window_only else None)
             for c in picked["chosen"]:
                 task = asyncio.get_running_loop().create_task(self._autopilot_launch(key, cwd, c["unit"], c["stage"]))
@@ -3561,6 +3565,9 @@ class Service:
             else self.run_step(cwd, unit, stage, started_by="autopilot")
         )
         try:
+            # R1: turned off between the pass and this task's first turn.
+            if not self._autopilot_on(key):
+                return
             async for _ in stream:
                 pass
         except asyncio.CancelledError:

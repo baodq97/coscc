@@ -250,6 +250,32 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual([u for u, _, _ in self.launched], ["0002_b"])
 
+    async def test_turned_off_in_the_middle_of_a_pass_starts_nothing(self):
+        read = self.service.board
+        reading, go_on = asyncio.Event(), asyncio.Event()
+
+        async def slow_board(cwd):
+            reading.set()
+            await go_on.wait()
+            return await read(cwd)
+
+        self.service.board = slow_board
+        self.add("0001_a", "spec")
+        passing = asyncio.get_running_loop().create_task(self.service._autopilot_pass(self.key))
+        await reading.wait()
+        self.service.set_autopilot(self.ws, "autopilot", False)
+        go_on.set()
+        await passing
+        await asyncio.sleep(0.05)
+        self.assertEqual((self.launched, self.stops()), ([], {}))
+
+    async def test_turned_off_before_a_launch_runs_starts_nothing(self):
+        self.add("0001_a", "spec")
+        await self.service._autopilot_pass(self.key)
+        self.service.set_autopilot(self.ws, "autopilot", False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.launched, [])
+
     async def test_one_ship_at_a_time_and_only_when_allowed(self):
         self.add("0001_a", "ship")
         self.add("0002_b", "ship")
