@@ -320,5 +320,139 @@ class MeasuredDays(unittest.TestCase):
         self.assertEqual(first["utc_to"], second["utc_from"])
 
 
+class ReasonsAndPassed(unittest.TestCase):
+    """`0104` R6: a reason is read off what the pass had, and never made up."""
+
+    def test_a_candidate_has_no_reason(self):
+        self.assertIsNone(ap.reason_for(nxt("spec", "write-spec"), "spec", None))
+
+    def test_stop(self):
+        stop = {"kind": "a", "reason": "open questions: spec.md question 2"}
+        self.assertEqual(ap.reason_for(nxt("spec"), "spec", stop), ("stop", "a: open questions: spec.md question 2"))
+
+    def test_held(self):
+        hold = {"state": "paused", "reason": "later", "by": "Leif", "date": "2026-09-25"}
+        self.assertEqual(ap.reason_for(nxt(hold=hold), "", None), ("held", "paused"))
+
+    def test_finished(self):
+        self.assertEqual(ap.reason_for(nxt(action=ap.FINISHED), "", None), ("finished", ap.FINISHED))
+
+    def test_closed(self):
+        said = ap.CLOSED + "spec rejected"
+        self.assertEqual(ap.reason_for(nxt(action=said), "", None), ("closed", said))
+
+    def test_ci(self):
+        said = ap.CI_PENDING + "3: t — wait, then ask again"
+        self.assertEqual(ap.reason_for(nxt(action=said), "", None), ("ci", said))
+
+    def test_nothing_to_read_it_off_raises(self):
+        with self.assertRaises(ValueError):
+            ap.reason_for(nxt(action="write-something"), "", None)
+
+    def test_passed_skips_what_was_chosen_before_it_in_the_pass(self):
+        reasons = {"0003_c": ("running", "impl")}
+        got = ap.passed_for(["0001_a", "0003_c", "0002_b"], ["0001_a", "0002_b"], reasons)
+        self.assertEqual(got, [[], [{"unit": "0003_c", "reason": "running", "detail": "impl"}]])
+
+    def test_passed_keeps_the_shortlists_order(self):
+        reasons = {"0005_e": ("held", "paused"), "0001_a": ("ci", "CI"), "0004_d": ("missing", "")}
+        [got] = ap.passed_for(["0005_e", "0001_a", "0004_d", "0002_b"], ["0002_b"], reasons)
+        self.assertEqual([p["unit"] for p in got], ["0005_e", "0001_a", "0004_d"])
+
+    def test_passed_raises_on_a_unit_with_no_reason(self):
+        with self.assertRaises(ValueError):
+            ap.passed_for(["0001_a", "0002_b"], ["0002_b"], {})
+
+
+def pick_row(unit, stage, units, pass_="p1", passed=(), delta=0, workspace="w"):
+    return {"kind": "autopilot-pick", "workspace": workspace, "unit": unit, "stage": stage, "pass": pass_,
+            "rank": units.index(unit) + 1 if unit in units else 0,
+            "shortlist": {"n": 1, "at": at(), "units": list(units)}, "passed": list(passed),
+            "at": at(timedelta(minutes=delta))}
+
+
+def step_row(unit, stage, delta=0, kind="start", **kw):
+    return {"kind": kind, "workspace": "w", "unit": unit, "stage": stage, "started_by": "autopilot",
+            "at": at(timedelta(minutes=delta)), **kw}
+
+
+def clean_log(steps: int) -> list[dict]:
+    """`steps` autopilot steps, each picked first: three units in shortlist order, one mechanical
+    integration among them, the one after the first passing over it as `running`."""
+    units = ["0003_c", "0001_a", "0002_b"]
+    rows: list[dict] = []
+    for i in range(steps):
+        unit = units[i % 3]
+        passed = [{"unit": u, "reason": "running", "detail": "spec"} for u in units[:units.index(unit)]]
+        if i == 4:
+            rows += [pick_row(unit, "integrate", units, f"p{i}", passed, i),
+                     step_row(unit, "integrate", i, kind="integration", mode="mechanical")]
+        else:
+            rows += [pick_row(unit, "spec", units, f"p{i}", passed, i), step_row(unit, "spec", i)]
+    return rows
+
+
+class MeasuringOrder(unittest.TestCase):
+    """`0104` R8, on sample run logs."""
+
+    def until(self):
+        return ap.today(NOW + timedelta(days=1))
+
+    def test_v1_a_pick_off_its_shortlist(self):
+        got = ap.measure_order([pick_row("0009_z", "spec", ["0001_a"]), step_row("0009_z", "spec", 1)], "w", self.until())
+        self.assertEqual([(v["v"], v["unit"]) for v in got["violations"]], [("V1", "0009_z")])
+
+    def test_v2_passed_over_with_no_reason(self):
+        rows = [pick_row("0002_b", "spec", ["0001_a", "0002_b"]), step_row("0002_b", "spec", 1)]
+        got = ap.measure_order(rows, "w", self.until())
+        self.assertEqual([(v["v"], v["unit"]) for v in got["violations"]], [("V2", "0002_b")])
+        self.assertIn("0001_a", got["violations"][0]["why"])
+
+    def test_v2_passed_over_for_a_reason_not_on_the_list(self):
+        passed = [{"unit": "0001_a", "reason": "busy", "detail": ""}]
+        rows = [pick_row("0002_b", "spec", ["0001_a", "0002_b"], passed=passed), step_row("0002_b", "spec", 1)]
+        got = ap.measure_order(rows, "w", self.until())
+        self.assertEqual([v["v"] for v in got["violations"]], ["V2"])
+
+    def test_v2_one_chosen_earlier_in_the_pass_is_not_passed_over(self):
+        units = ["0001_a", "0002_b"]
+        rows = [pick_row("0001_a", "spec", units), pick_row("0002_b", "spec", units),
+                step_row("0001_a", "spec", 1), step_row("0002_b", "spec", 1)]
+        self.assertEqual(ap.measure_order(rows, "w", self.until())["violations"], [])
+        rows[1]["pass"] = "p2"
+        self.assertEqual([v["v"] for v in ap.measure_order(rows, "w", self.until())["violations"]], ["V2"])
+
+    def test_v2_reads_only_a_units_first_pick(self):
+        units = ["0001_a", "0002_b"]
+        passed = [{"unit": "0001_a", "reason": "held", "detail": "paused"}]
+        rows = [pick_row("0002_b", "spec", units, "p1", passed), step_row("0002_b", "spec", 1),
+                pick_row("0002_b", "plan", units, "p2", (), 2), step_row("0002_b", "plan", 3)]
+        self.assertEqual(ap.measure_order(rows, "w", self.until())["violations"], [])
+
+    def test_v3_a_step_with_no_pick_since_the_last_one(self):
+        rows = [pick_row("0001_a", "spec", ["0001_a"]), step_row("0001_a", "spec", 1), step_row("0001_a", "plan", 2)]
+        got = ap.measure_order(rows, "w", self.until())
+        self.assertEqual([(v["v"], v["stage"]) for v in got["violations"]], [("V3", "plan")])
+        rows = [pick_row("0001_a", "spec", ["0001_a"]), step_row("0001_a", "spec", 1), step_row("0001_a", "spec", 2)]
+        self.assertEqual([v["v"] for v in ap.measure_order(rows, "w", self.until())["violations"]], ["V3"])
+
+    def test_nine_clean_steps(self):
+        got = ap.measure_order(clean_log(9), "w", self.until())
+        self.assertEqual((got["steps"], got["violations"]), (9, []))
+
+    def test_ten_clean_steps(self):
+        got = ap.measure_order(clean_log(10), "w", self.until())
+        self.assertEqual((got["steps"], got["violations"], got["since"]), (10, [], clean_log(1)[0]["at"]))
+
+    def test_the_window_opens_at_the_first_pick_and_closes_after_until(self):
+        before = step_row("0001_a", "spec", -5)
+        after = step_row("0001_a", "plan", 60 * 24 * 3)
+        agent = step_row("0001_a", "integrate", 2, kind="integration", mode="agent")
+        rows = [before] + clean_log(3) + [agent, after]
+        got = ap.measure_order(rows, "w", self.until())
+        self.assertEqual((got["steps"], got["violations"]), (3, []))
+        self.assertEqual(ap.measure_order(clean_log(3), "other", self.until())["steps"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

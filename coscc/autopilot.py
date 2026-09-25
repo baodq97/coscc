@@ -32,8 +32,13 @@ OPEN_FOR = timedelta(hours=24)
 # R8 b. The stages that write code, and so may not run beside another whose files overlap.
 CODE_STAGES = ("impl", "implement", "integrate")
 
-# R6, and the one stop the spec adds beside them.
-STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap")
+# R6, the one stop the spec adds beside them, and `0104` R3's empty shortlist.
+STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap", "shortlist")
+
+# `0104` R6. Why a unit ranked higher on the shortlist was passed over, and nothing else.
+REASONS = ("held", "finished", "closed", "stop", "ci", "running", "overlap", "ship-busy", "missing")
+# `0104` R3. The workspace's stop line when there is no shortlist to follow.
+NO_SHORTLIST = "Nothing is on the shortlist, so the autopilot starts nothing."
 
 # `cos.mjs`'s own words, read here because `next` hands out no `why`. `autopilot_test.py`
 # reads each one back out of `.claude/scripts/cos.mjs`, so a change there turns it red.
@@ -290,6 +295,54 @@ def pick(
     return {"chosen": chosen, "capped": capped}
 
 
+# --- `0104`, the shortlist's order --------------------------------------------
+
+
+def reason_for(
+    nxt: dict[str, Any], stage: str, stop: dict[str, str] | None,
+) -> tuple[str, str] | None:
+    """`0104` R6. Why a unit is no candidate, as `(reason, detail)`, or `None` when it is one.
+
+    Read off what the pass already has — `next`'s answer, the stage it settled on and the
+    stop it found — and never made up (spec C3): a case none of these explains raises.
+    """
+    if stage and stop is None:
+        return None
+    action = str(nxt.get("action") or "")
+    if stop is not None:
+        return ("stop", f"{stop['kind']}: {stop['reason']}")
+    if nxt.get("hold"):
+        return ("held", str((nxt["hold"] or {}).get("state") or "held"))
+    if action == FINISHED:
+        return ("finished", action)
+    if action.startswith(CLOSED):
+        return ("closed", action)
+    if is_ci_pending(action):
+        return ("ci", action)
+    raise ValueError(f"no reason for a unit with no stage and no stop: {action or 'nothing said'}")
+
+
+def passed_for(
+    units: list[str], chosen: list[str], reasons: dict[str, tuple[str, str]],
+) -> list[list[dict[str, str]]]:
+    """`0104` R6. For each of `chosen`, in order, every unit ranked above it on `units` that
+    was not chosen before it this pass, each `{unit, reason, detail}`. A unit with no reason
+    raises rather than be passed over for none."""
+    out: list[list[dict[str, str]]] = []
+    for i, name in enumerate(chosen):
+        before = set(chosen[:i])
+        passed = []
+        for above in units[:units.index(name)]:
+            if above in before:
+                continue
+            if above not in reasons:
+                raise ValueError(f"{name} would be started ahead of {above}, which has no reason recorded")
+            reason, detail = reasons[above]
+            passed.append({"unit": above, "reason": reason, "detail": detail})
+        out.append(passed)
+    return out
+
+
 # --- R11, what the intent's outcome is measured by ----------------------------
 
 # The stages before `intent` is accepted, and those that are not a unit's stage at all.
@@ -354,6 +407,76 @@ def measure(
     units_ = sorted(per_unit.values(), key=lambda u: (unit_number(u["unit"]), u["unit"]))
     met = [u["unit"] for u in units_ if u["reached"] and u["autopilot"] and not u["outside"]]
     return {"workspace": workspace, "since": since, "until": until, "units": units_, "met": met}
+
+
+def _autopilot_step(r: dict[str, Any]) -> str | None:
+    """The stage of a step the autopilot started, counted as `measure` counts one, or `None`.
+    An agent integration writes a `start` and an `integration`: only the `start` counts."""
+    if started_by(r) != "autopilot":
+        return None
+    if r.get("kind") == "start":
+        return str(r.get("stage") or "")
+    if r.get("kind") == "integration" and r.get("mode") == "mechanical":
+        return "integrate"
+    return None
+
+
+def measure_order(
+    records: Iterable[dict[str, Any]], workspace: str, until: str,
+) -> dict[str, Any]:
+    """`0104` R8. From `workspace`'s first `autopilot-pick` to the end of the machine's day
+    `until`: how many steps the autopilot started, and every violation of the shortlist's
+    order, each `{v, unit, stage, at, why}`.
+
+    V1 a pick of a unit not on its own shortlist. V2 a unit's first pick in the whole log
+    passing over one ranked above it with no reason, or with one outside `REASONS` — one
+    picked earlier in the same `pass` is not passed over. V3 a step with no pick of its unit
+    and stage since that unit's previous step.
+    """
+    rows = [r for r in records if r.get("workspace") == workspace]
+    first = next((i for i, r in enumerate(rows) if r.get("kind") == "autopilot-pick"), None)
+    if first is None:
+        return {"steps": 0, "violations": [], "since": None, "until": until}
+    since = rows[first].get("at")
+    violations: list[dict[str, Any]] = []
+
+    def bad(v: str, r: dict[str, Any], stage: str, why: str) -> None:
+        violations.append({"v": v, "unit": str(r.get("unit") or ""), "stage": stage, "at": r.get("at"), "why": why})
+
+    steps = 0
+    seen: set[str] = set()
+    in_pass: dict[str, list[str]] = {}
+    picked: dict[str, set[str]] = {}
+    for r in rows[first:]:
+        if spend.local_day(r.get("at")) > until:
+            break
+        unit = str(r.get("unit") or "")
+        if r.get("kind") == "autopilot-pick":
+            stage = str(r.get("stage") or "")
+            names = list((r.get("shortlist") or {}).get("units") or [])
+            same = in_pass.setdefault(str(r.get("pass") or ""), [])
+            if unit not in names:
+                bad("V1", r, stage, "not on the shortlist this pick recorded")
+            elif unit not in seen:
+                passed = {str(p.get("unit") or ""): p for p in r.get("passed") or []}
+                for above in names[:names.index(unit)]:
+                    if above in passed:
+                        if passed[above].get("reason") not in REASONS:
+                            bad("V2", r, stage, f"passed over {above} for {passed[above].get('reason')!r}, not a known reason")
+                    elif above not in same:
+                        bad("V2", r, stage, f"passed over {above} with no reason")
+            seen.add(unit)
+            same.append(unit)
+            picked.setdefault(unit, set()).add(stage)
+            continue
+        stage = _autopilot_step(r)
+        if stage is None:
+            continue
+        steps += 1
+        if stage not in picked.get(unit, set()):
+            bad("V3", r, stage, "started with no pick since this unit's previous step")
+        picked[unit] = set()
+    return {"steps": steps, "violations": violations, "since": since, "until": until}
 
 
 # The outcome of `0105`'s intent, per day: its four clauses.
