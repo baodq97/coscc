@@ -23,6 +23,8 @@ green) and a `git` shim that logs every argv before running the real `git`:
              and with the standard removed, not one `git` command more
     (g) R5   `capture_screens.scan` finds each of its six kinds, and nothing in clean text
     (h)      `--measure` on a store and repository built here, with `--today` given
+    (i)      review round 1, F1: `capture_screens` refuses an `--out` holding files and no
+             `manifest.json`, and removes only a previous run's PNGs and manifest
 
 `--measure` measures the intent's outcome. It takes the line from this unit's `ship.md`
 (`## What went out`, as `verify_0061` does), and once 2026-12-01 has come, lists the
@@ -419,6 +421,23 @@ def proof(old: Path, tmp: Path, real_git: str) -> list[bool]:
     ))
 
     results += measure_claims(tmp / "measure", real_git)
+
+    from scripts.capture_screens import clear_out, out_refused
+    outs = tmp / "outs"
+    stranger, previous, empty = outs / "stranger", outs / "previous", outs / "empty"
+    for d in (stranger, previous, empty):
+        d.mkdir(parents=True)
+    (stranger / "notes.md").write_text("mine\n", encoding="utf-8")
+    for name in ("manifest.json", "board-1440x900.png", "keep.md"):
+        (previous / name).write_text("x\n", encoding="utf-8")
+    refusals = [out_refused(d) for d in (stranger, stranger / "notes.md", previous, empty, outs / "missing")]
+    clear_out(previous)
+    left = sorted(p.name for p in previous.iterdir())
+    results.append(claim(
+        refusals[0] is not None and refusals[1] is not None and refusals[2:] == [None, None, None] and left == ["keep.md"],
+        "(i) review F1: capture refuses an --out it did not write, and clears only its own PNGs and manifest",
+        f"refusals {refusals}, left in a previous --out {left}",
+    ))
     return results
 
 
