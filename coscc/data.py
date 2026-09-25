@@ -61,7 +61,13 @@ from typing import Any, Iterator
 # database this one has touched** (that unit's `spec.md` C6), and since `0070` the login
 # guard reads the database on every request, so it is every page, not only the routes
 # that read data.
-SCHEMA_VERSION = 3
+#
+# 4 added `step_runs` and `step_events` for `.cos/0073_nobody-can-watch-what-a-running-agent-is-doing`.
+# The number had to move: `_prepare` runs `_SCHEMA` only below it, so two tables added at 3
+# would never reach a `cos.db` already at 3. The refusal applies once more (that unit's
+# `spec.md` C6): **a build from before `0073` answers `500` on a database this one has
+# touched.** Rolling the app back means rolling the database back with it.
+SCHEMA_VERSION = 4
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -214,6 +220,36 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     created_at   INTEGER NOT NULL,
     last_used_at INTEGER NOT NULL,
     expires_at   INTEGER NOT NULL
+)""",
+    """-- `0073` R6: one row per board step's `run`, written when its recorder starts and kept
+-- after its events are purged (R14). Times are epoch milliseconds, the unit of an event's
+-- `at`. `ended_at` stays NULL for a step the app went down under: `ended-unknown`.
+-- `events` and `bytes` count what was stored, `lost` what never was.
+CREATE TABLE IF NOT EXISTS step_runs (
+    run        TEXT PRIMARY KEY,
+    root       TEXT NOT NULL,
+    workspace  TEXT NOT NULL,
+    unit       TEXT NOT NULL,
+    stage      TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    ended_at   INTEGER,
+    events     INTEGER NOT NULL DEFAULT 0,
+    bytes      INTEGER NOT NULL DEFAULT 0,
+    lost       INTEGER NOT NULL DEFAULT 0,
+    purged_at  TEXT
+)""",
+    """CREATE INDEX IF NOT EXISTS step_runs_scope ON step_runs (root, workspace, unit, started_at)""",
+    """-- `0073` R2, R6: every event of a `run`, whole, as the JSON the recorder composed. Not
+-- rows of `runs`: the board folds every row of that table on every read, and the run log
+-- is append-only where R14 has to delete (spec Design 2).
+CREATE TABLE IF NOT EXISTS step_events (
+    run   TEXT NOT NULL,
+    seq   INTEGER NOT NULL,
+    at    INTEGER NOT NULL,
+    kind  TEXT NOT NULL,
+    event TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    PRIMARY KEY (run, seq)
 )""",
 )
 
@@ -398,7 +434,7 @@ class Data:
         # An equal number is the whole common path: one pragma read, and nothing else.
         # A lower number re-runs `_create`, and that is the whole migration mechanism:
         # every statement in `_SCHEMA` is `IF NOT EXISTS`, so a v1 database meets the
-        # tables 2 and 3 added and keeps every row it already had. This works for *adding*. A
+        # tables 2, 3 and 4 added and keeps every row it already had. This works for *adding*. A
         # version that has to change or drop a column will need a real migration here, and
         # will not be able to reuse this path.
 
@@ -613,3 +649,116 @@ class Data:
     def auth_session_delete(self, token_sha256: str) -> None:
         with self.write() as conn:
             conn.execute("DELETE FROM auth_sessions WHERE token_sha256 = ?", (token_sha256,))
+
+    # -- a step's events (`0073`) -------------------------------------------
+    #
+    # Written by `coscc/events.py`'s recorder from a thread, read by `Service.events_page`.
+    # Nothing here reads `runs`, and no route writes through these.
+
+    def step_run_open(
+        self, run: str, root: str, workspace: str, unit: str, stage: str, started_at: int,
+        timeout: float | None = None,
+    ) -> None:
+        with self.write(timeout=timeout) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO step_runs (run, root, workspace, unit, stage, started_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (run, root, workspace, unit, stage, int(started_at)),
+            )
+
+    def step_events_add(
+        self, run: str, rows: list[dict[str, Any]], timeout: float | None = None,
+    ) -> int:
+        """Store events and count them into the index row, in one transaction. A `(run, seq)`
+        already stored is ignored and not counted twice. Returns how many were new."""
+        added = 0
+        stored = 0
+        with self.write(timeout=timeout) as conn:
+            for event in rows:
+                text = json.dumps(event, ensure_ascii=False, default=str)
+                size = len(text.encode("utf-8"))
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO step_events (run, seq, at, kind, event, bytes) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (run, int(event["seq"]), int(event["at"]), str(event["kind"]), text, size),
+                )
+                if cur.rowcount > 0:
+                    added += 1
+                    stored += size
+            if added:
+                conn.execute(
+                    "UPDATE step_runs SET events = events + ?, bytes = bytes + ? WHERE run = ?",
+                    (added, stored, run),
+                )
+        return added
+
+    def step_run_close(self, run: str, ended_at: int, lost: int, timeout: float | None = None) -> None:
+        with self.write(timeout=timeout) as conn:
+            conn.execute(
+                "UPDATE step_runs SET ended_at = ?, lost = ? WHERE run = ?",
+                (int(ended_at), int(lost), run),
+            )
+
+    def step_run(self, run: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM step_runs WHERE run = ?", (run,)).fetchone()
+            if row is None:
+                return None
+            out = dict(row)
+            out["last_at"] = conn.execute(
+                "SELECT MAX(at) FROM step_events WHERE run = ?", (run,)
+            ).fetchone()[0]
+        return out
+
+    def step_events_page(self, run: str, before: int | None, limit: int) -> tuple[list[dict[str, Any]], bool]:
+        """The last `limit` events with `seq < before` (all of them when `before` is None),
+        oldest first, and whether any older one is stored."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT event FROM step_events WHERE run = ? AND seq < ? ORDER BY seq DESC LIMIT ?",
+                (run, int(before) if before is not None else 2**62, int(limit)),
+            ).fetchall()
+            events = [json.loads(r["event"]) for r in reversed(rows)]
+            older = bool(events) and conn.execute(
+                "SELECT 1 FROM step_events WHERE run = ? AND seq < ? LIMIT 1",
+                (run, int(events[0]["seq"])),
+            ).fetchone() is not None
+        return events, older
+
+    def step_event(self, run: str, seq: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT event FROM step_events WHERE run = ? AND seq = ?", (run, int(seq))
+            ).fetchone()
+        return None if row is None else json.loads(row["event"])
+
+    def step_events_purge(self, older_than_ms: int, max_bytes: int, now_iso: str) -> tuple[int, int]:
+        """`0073` R14. Whole runs only, and their index rows kept with `purged_at`: first every
+        run begun before `older_than_ms`, then the oldest while the stored total is over
+        `max_bytes`. Returns `(runs, bytes)` purged. One transaction."""
+        runs = 0
+        freed = 0
+        with self.write() as conn:
+            def drop(run: str, size: int) -> None:
+                nonlocal runs, freed
+                conn.execute("DELETE FROM step_events WHERE run = ?", (run,))
+                conn.execute("UPDATE step_runs SET purged_at = ? WHERE run = ?", (now_iso, run))
+                runs += 1
+                freed += int(size)
+
+            for row in conn.execute(
+                "SELECT run, bytes FROM step_runs WHERE purged_at IS NULL AND started_at < ? "
+                "ORDER BY started_at, run",
+                (int(older_than_ms),),
+            ).fetchall():
+                drop(row["run"], row["bytes"])
+            kept = conn.execute(
+                "SELECT run, bytes FROM step_runs WHERE purged_at IS NULL ORDER BY started_at, run"
+            ).fetchall()
+            total = sum(int(r["bytes"]) for r in kept)
+            for row in kept:
+                if total <= max_bytes:
+                    break
+                drop(row["run"], row["bytes"])
+                total -= int(row["bytes"])
+        return runs, freed
