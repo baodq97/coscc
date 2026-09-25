@@ -24,13 +24,14 @@ from reflex.style import set_color_mode
 
 from coscc import hold as hold_rules
 from coscc import models
-from coscc import present
+from coscc import present, spend
 from coscc import studio as s
 from coscc.service import CONSEQUENCE
 from coscc.state import (
     LANE_COLOR,
     NAVIGATION,
     Activity,
+    AnomalyRow,
     BacklogRow,
     Cell,
     Event,
@@ -42,7 +43,10 @@ from coscc.state import (
     Question,
     Round,
     Run,
+    SpendRow,
     StudioState,
+    TokenRow,
+    WasteRow,
     WatchEvent,
     Workspace,
 )
@@ -1061,6 +1065,136 @@ def _activity() -> rx.Component:
     )
 
 
+# --- cost (`0093`) -----------------------------------------------------------
+
+OVER_BUDGET = f"Over ${spend.BUDGET_USD:g}"
+
+
+def _table(headers: list[str], rows, render, empty: str, **props) -> rx.Component:
+    """`0093`. A list as a table (S5), scrolling sideways on a phone rather than wrapping."""
+    return rx.box(
+        rx.table.root(
+            rx.table.header(rx.table.row(*[rx.table.column_header_cell(h) for h in headers])),
+            rx.table.body(rx.foreach(rows, render)),
+            size="1", variant="ghost", width="100%",
+        ),
+        rx.cond(rows.length() == 0, s.text(empty, size="1", margin_top="8px")),
+        overflow_x="auto", width="100%", **props,
+    )
+
+
+def _mono(value) -> rx.Component:
+    return rx.text(value, size="1", font_family="ui-monospace, monospace", white_space="nowrap")
+
+
+def _spend_row(row: rx.Var[SpendRow]) -> rx.Component:
+    """R5: the steps whose cost is not known stand right beside the money."""
+    return rx.table.row(
+        rx.table.cell(rx.hstack(_mono(row.key), rx.cond(row.over, s.badge(OVER_BUDGET, "red")),
+                                spacing="2", align="center")),
+        rx.table.cell(_mono(row.usd)),
+        rx.table.cell(s.text(row.unknown, size="1", color=rx.color("amber", 11))),
+        rx.table.cell(s.text(row.steps, size="1")),
+    )
+
+
+SPEND_HEADERS = ["Cost", "Unknown", "Steps"]
+
+
+def _token_row(row: rx.Var[TokenRow]) -> rx.Component:
+    return rx.table.row(
+        rx.table.cell(_mono(row.scope)),
+        *[rx.table.cell(s.text(v, size="1", white_space="nowrap"))
+          for v in (row.input, row.output, row.cache_read, row.cache_creation, row.total)],
+    )
+
+
+def _waste_row(row: rx.Var[WasteRow]) -> rx.Component:
+    return rx.table.row(
+        rx.table.cell(rx.cond(row.sub, s.text(row.label, size="1", padding_left="16px"),
+                              rx.text(row.label, size="1", weight="medium"))),
+        rx.table.cell(s.text(row.count, size="1")),
+        rx.table.cell(_mono(row.usd)),
+        rx.table.cell(s.text(row.unknown, size="1", color=rx.color("amber", 11))),
+    )
+
+
+def _anomaly_cells(row: rx.Var[AnomalyRow]) -> list[rx.Component]:
+    return [
+        rx.table.cell(_mono(row.stage)),
+        rx.table.cell(s.text(row.ended, size="1", white_space="nowrap")),
+        rx.table.cell(_mono(row.measured)),
+        rx.table.cell(_mono(row.usd)),
+    ]
+
+
+def _anomaly_row(row: rx.Var[AnomalyRow]) -> rx.Component:
+    return rx.table.row(rx.table.cell(s.badge(row.kind, "amber")), rx.table.cell(_mono(row.unit)),
+                        *_anomaly_cells(row))
+
+
+def _unit_anomaly_row(row: rx.Var[AnomalyRow]) -> rx.Component:
+    """R11: the same row in the unit's own dialog, where the unit goes without saying."""
+    return rx.table.row(rx.table.cell(s.badge(row.kind, "amber")), *_anomaly_cells(row))
+
+
+def _cost() -> rx.Component:
+    """`0093` R1–R10, in the order of the spec's `## Design` §4. Tables only (S1, S2, S5)."""
+    return rx.vstack(
+        s.heading("Cost", "Where this workspace's money went, from the run log."),
+        rx.cond(
+            ~P.cost_recording,
+            rx.callout("No working folder is set, so nothing is being recorded.",
+                       icon="info", color_scheme="amber", variant="surface", width="100%"),
+        ),
+        rx.grid(
+            s.stat("Known cost", P.cost_total_usd, "Added from each finished step", "wallet", "grass"),
+            s.stat("Unknown cost", rx.cond(P.cost_total_unknown != "", P.cost_total_unknown, "None"),
+                   "Steps that ended without a cost", "triangle-alert", "amber"),
+            s.stat("Finished steps", P.cost_total_steps, "Every step that ended", "layers"),
+            columns=rx.breakpoints(initial="1", sm="3"), gap="12px", width="100%",
+            id="cost-total",
+        ),
+        s.panel(s.section_head("By unit"),
+                _table(["Unit"] + SPEND_HEADERS, P.cost_units, _spend_row,
+                       "No step has finished here yet.", id="cost-by-unit")),
+        s.panel(s.section_head("By stage"),
+                _table(["Stage"] + SPEND_HEADERS, P.cost_stages, _spend_row,
+                       "No step has finished here yet.", id="cost-by-stage")),
+        s.panel(s.section_head("By day (" + P.cost_offset + ")"),
+                _table(["Day"] + SPEND_HEADERS, P.cost_days, _spend_row,
+                       "No step has finished here yet.", id="cost-by-day")),
+        s.panel(s.section_head("Tokens by type"),
+                _table(["Scope", "Input", "Output", "Cache read", "Cache write", "Total"],
+                       P.cost_tokens, _token_row, "No tokens recorded yet.", id="cost-tokens")),
+        s.panel(s.section_head("Waste"),
+                _table(["Kind", "Count", "Cost", "Unknown"], P.cost_waste, _waste_row,
+                       "No step has finished here yet.", id="cost-waste")),
+        s.panel(s.section_head("Anomalies"),
+                _table(["Kind", "Unit", "Stage", "Ended", "Measured", "Cost"], P.cost_anomalies,
+                       _anomaly_row, "Nothing crossed a threshold.", id="cost-anomalies")),
+        spacing="5", width="100%",
+    )
+
+
+def _unit_cost() -> rx.Component:
+    """`0093` R11. The open unit's cost by stage and its anomalies; nothing when it has none."""
+    return rx.fragment(
+        rx.cond(
+            P.unit_cost_stages.length() > 0,
+            s.panel(s.section_head("Cost by stage"),
+                    _table(["Stage"] + SPEND_HEADERS, P.unit_cost_stages, _spend_row, "",
+                           id="unit-cost")),
+        ),
+        rx.cond(
+            P.unit_anomalies.length() > 0,
+            s.panel(s.section_head("Anomalies"),
+                    _table(["Kind", "Stage", "Ended", "Measured", "Cost"], P.unit_anomalies,
+                           _unit_anomaly_row, "", id="unit-anomalies")),
+        ),
+    )
+
+
 # --- settings ----------------------------------------------------------------
 
 
@@ -1881,6 +2015,7 @@ def _detail_dialog() -> rx.Component:
                         ),
                         rx.cond(~P.unit_dropped, _integration_panel()),
                         rx.cond(~P.unit_dropped, _outcome_panel()),
+                        _unit_cost(),
                         # Kept for a dropped unit: its one move (`paused`, `cos.mjs`
                         # `HOLD_MOVES`) is the board's way back (`spec.md ## Answers, câu 1`).
                         _hold_panel(),
@@ -2236,6 +2371,7 @@ def _screen() -> rx.Component:
         ("backlog", _backlog_screen()),
         ("sessions", _sessions()),
         ("activity", _activity()),
+        ("cost", _cost()),
         ("settings", _settings()),
         rx.fragment(),
     )

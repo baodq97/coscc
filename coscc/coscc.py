@@ -1,4 +1,4 @@
-"""The app: one shell, seven routes, one ASGI app, one port.
+"""The app: one shell, nine routes, one ASGI app, one port.
 
 It was "one loopback port" until `0011` made `0.0.0.0` the default. Since `0070` what
 uvicorn serves is `served()` below: this app behind `coscc/auth.py`, so every request —
@@ -30,7 +30,7 @@ from coscc.state import API, StudioState
 # The theme lives in `rxconfig.py` through `RadixThemesPlugin`, because 0.9.11 deprecates
 # `App(theme=...)` and removes it at 1.0. The global style still belongs here.
 app = rx.App(api_transformer=API, style=ui.GLOBAL_STYLE)
-# `0056`: one shell under seven static routes, each arriving through `StudioState.arrive`.
+# `0056`: one shell under static routes (nine since `0093`), each arriving through `StudioState.arrive`.
 # Static, not `/unit/[unit]`: 0.9.12 builds no page for a dynamic route and serves it
 # through the SPA fallback with a 404 (`.cos/0056_*/spike.md ## U1`).
 for route in ("/", *(f"/{s}" for s in place.SCREENS[1:]), "/unit"):
