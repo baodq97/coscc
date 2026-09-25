@@ -17,8 +17,9 @@ replaced by a stand-in. Needs `node` and `git`, and a merge-base between `HEAD` 
 (`0076`), and the merge time from this unit's `ship.md` under any
 `<COS_DATA_DIR>/units/*/.cos/`. The window runs from it to `2026-11-01T00:00:00+07:00` —
 the time zone is chosen, not sourced. Every `end` row with `stage: spike` in it is counted
-by its `spike_md`: `withheld` (a Stop, a changed worktree) is left out of the count; `none`
-or `unusable` is a failure, exit 1 even while the window is open; a row with no `spike_md`
+by its `spike_md`: `withheld` (a Stop, a changed worktree) is left out of the count; `none`,
+`unusable` or `unchecked` (the app could not read the worktree, so it wrote nothing) is a
+failure, exit 1 even while the window is open; a row with no `spike_md`
 at all (a step the installed copy ran before it carried this unit) is left out and counted
 apart. With no failure: fewer than 3 steps counted, or the window still open, is exit 2;
 otherwise exit 0. It also prints how many of those steps ended `exhausted`
@@ -53,7 +54,7 @@ COS = REPO / ".claude" / "scripts" / "cos.mjs"
 UNIT = "0080_a-spike-runs-out-of-turns-before-writing-spike-md"
 WINDOW_END = datetime.fromisoformat("2026-11-01T00:00:00+07:00")
 ENOUGH = 3
-FAILED = ("none", "unusable")
+FAILED = ("none", "unusable", "unchecked")
 EXIT_PASS, EXIT_BROKEN, EXIT_ENV = 0, 1, 2
 ISO = re.compile(r"\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(Z|[+-]\d{2}:?\d{2})?")
 
@@ -219,6 +220,7 @@ def measure_fixture(tmp: Path) -> bool:
         ("pass", ["reply", "progress", "reply"], closed, EXIT_PASS),
         ("none", ["reply", "progress", "reply", "none"], closed, EXIT_BROKEN),
         ("unusable", ["reply", "unusable", "reply", "reply"], closed, EXIT_BROKEN),
+        ("unchecked", ["reply", "reply", "unchecked", "reply"], closed, EXIT_BROKEN),
         ("withheld-left-out", ["reply", "reply", "progress", "withheld"], closed, EXIT_PASS),
         ("too-few", ["reply", "reply"], closed, EXIT_ENV),
         ("open", ["reply", "reply", "reply"], open_, EXIT_ENV),

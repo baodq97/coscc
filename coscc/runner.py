@@ -936,22 +936,25 @@ async def _from_progress(
 ) -> tuple[str, str]:
     """`0080` R3, R5. Write a spike's artifact from its progress file, when nothing forbids it.
 
-    Returns one of `0080` R6's values -- `withheld`, `none`, `unusable` or `progress` -- and
-    a sentence for `detail` (`""` for none). Called only for a spike whose reply was not
-    written; `outcome` is not this function's to change.
+    Returns one of `0080` R6's values -- `withheld`, `unchecked`, `none`, `unusable` or
+    `progress` -- and a sentence for `detail` (`""` for none). Called only for a spike whose
+    reply was not written; `outcome` is not this function's to change.
     """
     # R5: a Stop, or a worktree the spike changed, writes nothing from any source.
     if (running is not None and running.stop_requested) or tree_changed:
         return "withheld", ""
     # The same check the reply's road makes, made again: the session is over, but the
     # first reading may have failed, and a reply that failed before it was reached never
-    # compared the two.
+    # compared the two. A worktree the app could not read is not proven unchanged, so
+    # nothing is written; but no person and no change to the tree stopped it, so it is
+    # `unchecked` rather than `withheld`, and `verify_0080 --measure` counts it a failure
+    # (`0080` review round 1, F3).
     if before is None:
-        return "withheld", "spike.md not written from the progress file: the worktree's state was not read before the step"
+        return "unchecked", "spike.md not written from the progress file: the worktree's state was not read before the step"
     try:
         changed = describe_tree_change(before, await _tree_state(watch))
     except RunError as e:
-        return "withheld", f"spike.md not written from the progress file: {e}"
+        return "unchecked", f"spike.md not written from the progress file: {e}"
     if changed:
         return "withheld", f"spike.md not written from the progress file: the worktree changed during spike: {changed}"
     # `0034`. From here a Stop is refused, exactly as on the reply's road.

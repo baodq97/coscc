@@ -271,8 +271,9 @@ no commands, one turn, no budget.
   file carries `Status: accepted` from its first write while `U<n>` may still be missing;
   `cos.mjs` closes `plan` on each missing one, but a `Verdict: holds.` the agent wrote for a
   half-measured question now reaches the unit where it used to be lost with the reply.
-  Every spike `end` row carries `spike_md`: `reply`, `progress`, `none`, `unusable` or
-  `withheld`. The ceilings are 80 turns / $8.0 (`policy.py`, chosen, not measured), so one
+  Every spike `end` row carries `spike_md`: `reply`, `progress`, `none`, `unusable`,
+  `withheld` (a Stop, a changed worktree) or `unchecked` (git could not read the worktree,
+  so nothing was written — a failure to `verify_0080 --measure`, not a Stop). The ceilings are 80 turns / $8.0 (`policy.py`, chosen, not measured), so one
   press can spend twice what it did before, and `SPIKE_ROUNDS` does not count presses that
   hit the ceiling.
 - **A redirect may write under `/tmp`, outside the write boundary.** Since `0060`

@@ -2329,7 +2329,19 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
     its `end` row says which source wrote it."""
 
     def run_spike(self, progress=PROGRESS, reply="Tôi hết lượt ở U2.", terminal="max_turns",
-                  touch=None, raise_after=None, answers=None, running=None):
+                  touch=None, raise_after=None, answers=None, running=None, tree_fails_from=None):
+        # `tree_fails_from`: the 1-based reading of the worktree from which git fails.
+        from coscc import runner
+
+        real_tree_state = runner._tree_state
+        readings = []
+
+        async def tree_state(path):
+            readings.append(path)
+            if tree_fails_from is not None and len(readings) >= tree_fails_from:
+                raise RunError("could not read the worktree's state: git broke")
+            return await real_tree_state(path)
+
         class Fake:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 if progress is not None:
@@ -2362,7 +2374,8 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
                     **({"running": running} if running is not None else {}),
                 )]
 
-            _, final = asyncio.run(go())[-1]
+            with mock.patch("coscc.runner._tree_state", tree_state):
+                _, final = asyncio.run(go())[-1]
             target = directory / "spike.md"
             written = target.read_bytes() if target.exists() else None
             [end] = [x for x in journal.records() if x["kind"] == "end"]
@@ -2461,6 +2474,23 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
         self.assertEqual(end["spike_md"], "progress")
         self.assertEqual(answers_section(written), answers_section((SPIKE_REPLY + "\n" + section).encode("utf-8")))
         self.assertTrue(written.startswith(PROGRESS.encode("utf-8")))
+
+    def test_a_worktree_not_read_before_the_step_is_unchecked(self):
+        # `0080` review round 1, F2 and F3: no reading to compare with, so nothing is
+        # written -- and it is the app's failure, not a Stop's or the spike's.
+        final, written, end, _ = self.run_spike(tree_fails_from=1)
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["spike_md"]), ("failed", "unchecked"))
+        self.assertIn("the worktree's state was not read before the step", end["detail"])
+
+    def test_a_worktree_not_read_again_after_the_step_is_unchecked(self):
+        # The first two readings (before the session, and on the reply's road) agree; the
+        # one `_from_progress` makes fails.
+        final, written, end, _ = self.run_spike(tree_fails_from=3)
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "unchecked"))
+        self.assertIn("spike.md not written from the progress file: could not read the worktree's state: git broke",
+                      end["detail"])
 
     def test_a_session_that_broke_after_writing_it_is_progress(self):
         final, written, end, _ = self.run_spike(raise_after=RuntimeError("the stream broke"), terminal="")
