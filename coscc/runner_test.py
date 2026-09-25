@@ -2964,25 +2964,30 @@ class OpenFindings(unittest.TestCase):
         self.assertEqual(header, "PR: pr.md. Concluded by: agent. Status: changes-requested.")
         self.assertEqual(number, 2)
         self.assertEqual(findings, (
+            "- F2 [answered] b.py:2 — low — ROUND-TWO-F2-ANSWERED\n"
             "- F3 [open] c.py:3 — high — ROUND-TWO-F3-OPEN\n"
             "  CONTINUATION-OF-F3\n"
             "- F4 [needs-person] d.py:4 — medium — ROUND-TWO-F4-PERSON"
         ))
 
-    def test_fixed_and_answered_are_left_out_and_an_unknown_label_is_kept(self):
+    def test_only_fixed_with_a_sha_is_left_out(self):
+        # Review round 1 F6: `cos.mjs` counts `[answered]` closed only with a block under
+        # `## Answers`, and `[fixed]` only with a sha, so both stay in the prompt.
         from coscc.runner import open_findings
 
         text = (
             "# Review: x\nStatus: changes-requested.\n\n## Round 1\n\n"
             "- F1 [fixed abc1234] a — high — GONE-1\n  GONE-1-MORE\n"
-            "- F2 [answered] b — low — GONE-2\n"
+            "- F2 [answered] b — low — KEPT-2\n"
             "- F3 [claim-rejected] c — high — KEPT-3\n"
             "- F4 [who knows] d — high — KEPT-4\n"
+            "- F5 [fixed] e — high — KEPT-5\n"
+            "- F6 [Fixed 0123456789abcdef0123456789abcdef01234567] f — low — GONE-6\n"
         )
         _, _, findings = open_findings(text)
         self.assertNotIn("GONE", findings)
-        self.assertIn("KEPT-3", findings)
-        self.assertIn("KEPT-4", findings)
+        for kept in ("KEPT-2", "KEPT-3", "KEPT-4", "KEPT-5"):
+            self.assertIn(kept, findings)
 
     def test_no_round_reads_the_file_below_its_header_up_to_answers(self):
         from coscc.runner import open_findings

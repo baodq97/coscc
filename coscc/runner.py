@@ -613,9 +613,11 @@ def _header_status(text: str) -> str | None:
     return m.group(1).lower() if m else None
 
 
-# A finding line as `cos.mjs` `FINDING` reads it. The labels that close one (`0028`, `0061`).
+# A finding line as `cos.mjs` `FINDING` reads it, and the one label it counts closed whatever
+# else the file says: `fixed` with a sha. An `[answered]` is closed only by a block under
+# `## Answers` that `cos.mjs` validates, so it is left to `cos.mjs` and kept here.
 _FINDING_RE = re.compile(r"^- (F\d+)\s+\[([^\]]*)\]")
-_CLOSED_LABELS = ("fixed", "answered")
+_FIXED_RE = re.compile(r"^fixed\s+[0-9a-f]{7,40}$", re.IGNORECASE)
 
 
 def open_findings(text: str) -> tuple[str, int | None, str]:
@@ -623,9 +625,9 @@ def open_findings(text: str) -> tuple[str, int | None, str]:
     open, each with the indented lines under it (`0094` R14).
 
     Only cuts text out to embed in a prompt. It decides no gate: `cos.mjs` is the one reader
-    of findings whose answer opens anything. "Open" is every label but `fixed <sha>` and
-    `answered` -- `needs-person`, `claim-rejected` and a label nobody can read included, so a
-    finding is never dropped from the prompt for a label this function does not know.
+    of findings whose answer opens anything. "Open" is every label but `fixed <sha>` --
+    `answered`, `needs-person`, `claim-rejected`, a `fixed` with no sha and a label nobody can
+    read included, so a finding `cos.mjs` may still count open is never dropped from the prompt.
 
     The header is the line holding the first `Status:`, as `_header_status` reads it. A file
     with no `## Round` is read whole below that line, as a single round with no number.
@@ -646,8 +648,7 @@ def open_findings(text: str) -> tuple[str, int | None, str]:
     for line in body.splitlines():
         found = _FINDING_RE.match(line)
         if found:
-            label = found.group(2).split()[0].lower() if found.group(2).split() else ""
-            keeping = label not in _CLOSED_LABELS
+            keeping = not _FIXED_RE.match(found.group(2).strip())
         elif not (line[:1].isspace() and line.strip()):
             keeping = False
             continue
