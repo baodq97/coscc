@@ -351,10 +351,11 @@ def browser() -> bool:
 
             context, page = page_at("/settings")
             upd = page.locator("#update-panel")
-            text = upd.inner_text() if upd.count() else ""
-            disabled = upd.locator("button:disabled").count() if upd.count() else -1
+            found = upd.count()
+            text = upd.inner_text() if found else ""
+            disabled = upd.locator("button:disabled").count() if found else -1
             context.close()
-            ok &= claim(upd.count() == 1 and disabled == 0 and "COS_" not in text,
+            ok &= claim(found == 1 and disabled == 0 and "COS_" not in text,
                         "R9: /settings' Updates section has no disabled button and no COS_", f"disabled={disabled} {text[:120]!r}")
 
             context, page = page_at("/unit?ws=proj&id=0001_fresh-intent")
