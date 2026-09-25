@@ -304,14 +304,15 @@ class Scripted(_Base):
         self.assertIn("127.0.0.1", self.service._autopilot_stops[self.key][""]["reason"])
 
 
-class ResumedAtStartUp(unittest.IsolatedAsyncioTestCase):
+class ResumedAtStartUp(unittest.TestCase):
     """R5 c. The Reflex lifespan task, since the real stack never runs `api.py`'s.
 
     Sending `lifespan.startup` through `served()` compiles the page (about 14 s), so the
     test checks the registration and the call; `impl.md` records the run through `served()`.
     """
 
-    async def test_the_app_resumes_the_autopilot_when_it_starts(self):
+    def test_the_app_resumes_the_autopilot_when_it_starts(self):
+        # Synchronous: Reflex registers its states in a context an async test's task lacks.
         import coscc.coscc as composed
         from coscc.state import API
 
@@ -326,7 +327,7 @@ class ResumedAtStartUp(unittest.IsolatedAsyncioTestCase):
         real = API.state.service
         API.state.service = Stand()
         try:
-            await composed.resume_autopilot()
+            asyncio.run(composed.resume_autopilot())
         finally:
             API.state.service = real
         self.assertEqual(calls, [1])
