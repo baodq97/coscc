@@ -289,7 +289,7 @@ def _empty_board() -> rx.Component:
                         rx.cond(
                             P.has_workspace,
                             "This workspace has no work units.",
-                            "Add a workspace, or set COS_WORKING_DIR and restart.",
+                            "Add a workspace, or open one from Workspaces.",
                         ),
                     ),
                     text_align="center", max_width="420px", id="board-note",
@@ -372,7 +372,8 @@ def _overview() -> rx.Component:
                 rx.foreach(P.workspaces, lambda w: rx.button(
                     s.mark(w.initials, w.color, "36px"),
                     rx.vstack(rx.text(w.name, size="2", weight="medium"),
-                              s.text(w.path, size="1"), spacing="0", align="start"),
+                              rx.cond(w.label != "", s.text(w.label, size="1")),
+                              spacing="0", align="start"),
                     rx.spacer(),
                     rx.cond(w.missing, s.badge("missing", "red")),
                     rx.icon("arrow-up-right", size=15, color=s.MUTED),
@@ -416,13 +417,15 @@ def _workspace_card(workspace: rx.Var[Workspace]) -> rx.Component:
                    overflow_wrap="anywhere"),
         s.text(rx.cond(workspace.label != "", workspace.label, "No label yet."),
                margin_top="8px", min_height="44px", overflow_wrap="anywhere"),
-        rx.hstack(rx.icon("folder-git-2", size=14, color=s.MUTED),
-                  s.text(workspace.path, size="1", overflow_wrap="anywhere"),
-                  spacing="2", margin_top="20px", align="start"),
+        _details("ws-path-" + workspace.id, "Details",
+                 rx.hstack(rx.icon("folder-git-2", size=14, color=s.MUTED),
+                           s.text(workspace.path, size="1", overflow_wrap="anywhere"),
+                           spacing="2", align="start"),
+                 margin_top="20px"),
         rx.box(height="1px", background=s.LINE, margin="20px 0 16px"),
         rx.hstack(
             s.text(rx.cond(workspace.source == "env",
-                           "From COS_WORKSPACES — read only here", "Stored"), size="1"),
+                           "Read only", "Stored"), size="1"),
             rx.spacer(),
             rx.button("Open workspace", rx.icon("arrow-right", size=14),
                       aria_label="Open " + workspace.name,
@@ -443,8 +446,7 @@ def _workspaces_screen() -> rx.Component:
         rx.cond(
             P.working_dir == "",
             rx.callout(
-                "No working folder is set, so no workspace can be added or removed. "
-                "Set COS_WORKING_DIR and restart — it is deliberately not settable here.",
+                "No working folder is set, so workspaces cannot be added or removed here.",
                 icon="info", color_scheme="amber", variant="surface", width="100%",
             ),
         ),
@@ -1050,8 +1052,7 @@ def _activity() -> rx.Component:
                 )),
                 rx.cond(P.usage_rows.length() == 0,
                         s.text("No run has cost anything here yet.")),
-                s.text("Bars share the largest value on this board. Cache reads and writes "
-                       "are counted, because they are billed.", size="1", margin_top="18px"),
+                s.text("Includes cache reads and writes, which are billed.", size="1", margin_top="18px"),
             ),
             columns=rx.breakpoints(initial="1", lg="2"), gap="16px", width="100%",
             align_items="start",
@@ -1696,17 +1697,9 @@ def _round_row(r: rx.Var[Round]) -> rx.Component:
 
 
 def _comments_tab() -> rx.Component:
-    """`0021` R4, R10, said on the page: what a comment is and what it is not."""
+    """`0021` R4, R10. What a comment is not is `.claude/docs/not-built.md`'s since `0089`."""
     return rx.vstack(
-        s.text(
-            "Each round of review.md goes to the pull request as one ordinary comment, "
-            "posted under this machine's gh login and marked as written by an agent "
-            "session. It is not an approval, and no gate reads it. A round the board ran "
-            "is posted when it is written; a round written at a terminal waits here until "
-            "someone presses Post to PR. The text goes up verbatim. Whoever holds the "
-            "password or a live session can press the button.",
-            size="1", line_height="1.8",
-        ),
+        s.text("Each review round is posted to the pull request as one comment.", size="1"),
         rx.cond(P.current_unit.pr_url != "",
                 rx.link(P.current_unit.pr_url, href=P.current_unit.pr_url,
                         is_external=True, size="1"),
@@ -1883,9 +1876,7 @@ def _detail_dialog() -> rx.Component:
                                 ),
                                 spacing="4", width="100%", align="start",
                             ),
-                            s.text("cos.mjs names no stage to run now — the line above "
-                                   "says why. Nothing re-asks on its own: press Ask again "
-                                   "once that has changed."),
+                            s.text("No stage is ready to run; the line above says why."),
                         ),
                         rx.cond(~P.unit_dropped, _integration_panel()),
                         rx.cond(~P.unit_dropped, _outcome_panel()),

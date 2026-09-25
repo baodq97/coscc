@@ -649,6 +649,11 @@ WATCH_GATHER = 0.5
 NO_RUN_NOTE = "no event stream: this step ran before events were recorded"
 
 
+# `0089` R11 (D55). What the board says in place of the service's `read_only_because`, which
+# names `COS_WORKING_DIR` and stays as it is for the API (`coscc/board_api_test.py`).
+READ_ONLY_NOTE = "No working folder is set, so nothing can be recorded."
+
+
 def _watch_note(page: dict) -> str:
     """R13. The line the pane shows so it is never empty without a reason."""
     notes: list[str] = []
@@ -1420,7 +1425,8 @@ class StudioState(rx.State):
             u["name"]: tree_line(u.get("worktree")) for u in data.get("units") or []
         }
         self.recording = bool(data["recording"])
-        self.board_note = data.get("read_only_because") or data.get("empty_because") or ""
+        read_only = READ_ONLY_NOTE if data.get("read_only_because") else ""
+        self.board_note = read_only or data.get("empty_because") or ""
         empty = data.get("empty") or {}
         self.empty_store = str(empty.get("store") or "")
         self.empty_host = str(empty.get("host") or "")
@@ -1429,7 +1435,7 @@ class StudioState(rx.State):
             # `empty_because` speaks of the store's `.cos/`, and next to a host `.cos/`
             # that is full it reads as a claim about the wrong directory — the fault this
             # unit exists for. Only the read-only reason survives, appended by the page.
-            self.board_note = data.get("read_only_because") or ""
+            self.board_note = read_only
 
         units: list[Unit] = []
         for u in data["units"]:

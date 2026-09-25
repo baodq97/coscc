@@ -64,6 +64,22 @@ class ThePage(unittest.TestCase):
         self.assertIn("Every run of this unit, oldest first.", self.page)
         self.assertIn("run-", self.page)
 
+    def test_0089_no_variable_name_or_path_until_opened(self):
+        """`0089` R5, R7, R8, R11 (D51, D53, D54, D55)."""
+        for part in (screens._empty_board(), screens._workspaces_screen(), screens._activity()):
+            self.assertNotIn("COS_", _render(part))
+        # A workspace's `path` field, read anywhere on the overview.
+        self.assertNotIn('?.["path"]', _render(screens._overview()).replace("\\", ""))
+        cards = _render(screens._workspaces_screen())
+        self.assertIn("ws-path-", cards)
+        self.assertIn("Read only", cards)
+
+    def test_0089_one_sentence_and_no_limits(self):
+        """`0089` R2, R9, R10 (D44, D56, D59)."""
+        for gone in ("Nothing re-asks on its own", "Bars share", "not an approval", "verbatim",
+                     "Whoever holds the"):
+            self.assertNotIn(gone, self.page)
+
     def test_r12_needs_review_is_gone(self):
         self.assertNotIn("Needs review", self.page)
         self.assertIn("Needs you", self.page)

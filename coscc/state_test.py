@@ -2151,6 +2151,39 @@ class SessionsAreReadWhereTheyAreShown(unittest.TestCase):
         self.assertEqual(seen, [0, 0, 1, 1, 1, 2, 3])
 
 
+class _ReadOnly(_Page):
+    BOARD = {"stages": [], "recording": False, "units": [],
+             "read_only_because": "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR",
+             "empty_because": "this workspace has no .cos/ — nothing here runs the loop yet"}
+
+
+class TheBoardNoteNamesNoVariable(unittest.TestCase):
+    """`0089` R11 (D55): the page's own sentence in place of `read_only_because`."""
+
+    def test_a_read_only_empty_board(self):
+        import asyncio
+
+        from coscc import state as page
+
+        token = "state-test-0089-read-only"
+
+        async def go():
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            async with processor:
+                await arrive("/board?ws=a", "s1")
+                await asyncio.sleep(0.2)
+                note = (await _studio(manager, token)).board_note
+                await arrive("/sessions?ws=a", "s9")
+                await asyncio.sleep(0.15)
+                return note
+
+        with _ReadOnly().patches():
+            note = asyncio.run(go())
+        self.assertEqual(note, page.READ_ONLY_NOTE)
+        self.assertNotIn("COS_", note)
+
+
 ISO = re.compile(r"\d{4}-\d{2}-\d{2}T")
 
 
