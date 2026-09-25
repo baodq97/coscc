@@ -109,4 +109,5 @@ only from here.
 | `POST /api/settings/models` and `/efforts`; `POST /api/backlog/*` | `.claude/docs/coscc-settings.md` | editing `/api/settings/*`, `coscc/models.py`, `/api/backlog/*` or `coscc/backlog.py` |
 | `spike` runs arbitrary code | `.claude/docs/coscc-spike.md` | editing the `spike` grant, its scratch directory, or its progress-file write |
 | what the page stopped explaining in `0082` | `.claude/docs/coscc-page-text.md` | adding words to a screen, or removing a sentence the page says beside a button |
+| `coscc knowledge gather` spends quota past its ceiling; a wrong entry reaches every plan; baseline before the flag | `.claude/docs/coscc-knowledge.md` | editing `coscc/knowledge.py`, `gather.py`, `measure.py`, `knowledge_cli.py`, the `knowledge` grant, or running `coscc knowledge` |
 | every proof's cost; `capture_screens.py` overwrites `.web` | `.claude/docs/coscc-proofs.md` | running any `scripts/verify_*.py` or `scripts/capture_screens.py`, or writing a proof |

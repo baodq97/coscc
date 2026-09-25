@@ -151,6 +151,12 @@ back to. A release fetches it from its own GitHub release — at each check, or,
 build has no release to fetch from: once it is running, `current/` holds it only if it was
 applied from the board, and otherwise the panel says `blocked` and offers no press.
 
+`COS_KNOWLEDGE=1` in the env file, and a restart, hands `spec`, `spike` and `plan` what
+earlier units measured, from `<COS_DATA_DIR>/knowledge/knowledge.md`; unset, no prompt
+changes. The store is written only by `coscc knowledge gather`, at a terminal, which opens
+paid sessions (`coscc knowledge` alone prints the usage). Run `coscc knowledge baseline`
+before turning the flag on, or `coscc knowledge measure` refuses to compare.
+
 **What does not come back by itself.** If the new version passes its trial but fails to
 start for real, there is no board left to say so and nothing rolls it back: `systemctl
 --user status coscc` shows it restarting. The log of that update ends with the command to
