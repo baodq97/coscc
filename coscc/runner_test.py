@@ -49,6 +49,48 @@ def make_unit(root: Path, **files: str) -> Path:
     return d
 
 
+class AnAgentsAnswerIsSaidToBeOne(unittest.TestCase):
+    """`0044` R15. A stage whose prompt carries or names a file holding a block Jera wrote
+    is told those blocks are an agent's inference; a unit without one gets the old prompt."""
+
+    SPEC = (
+        "Status: accepted.\nSPEC\n\n## Open questions\n\n1. a?\n2. b?\n\n## Answers\n"
+        "\n### Câu 1\nAnswered by: {by}. Date: 2026-09-25. Via: {via}.\n\nyes\n\nTiền lệ: pref:1\n"
+        "\n### Câu 2\nAnswered by: owner. Date: 2026-09-25. Via: product.\n\nno\n"
+    )
+
+    def prompts(self, by: str, via: str, stage: str) -> tuple[str, str]:
+        """The prompt, and the same prompt built with this unit's section switched off."""
+        from coscc import runner
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nINTENT", spec_md=self.SPEC.format(by=by, via=via),
+                      plan_md="Status: accepted.\nPLAN")
+            args = (d, Path(d) / ".cos" / UNIT, UNIT, stage, STAGES, f"{stage}.md")
+            prompt = build_prompt(*args)[0]
+            with mock.patch.object(runner, "_jera_answers", lambda *a: ""):
+                return prompt, build_prompt(*args)[0]
+
+    def prompt(self, by: str, via: str, stage: str) -> str:
+        return self.prompts(by, via, stage)[0]
+
+    def test_it_is_said_when_the_prompt_carries_the_file(self):
+        prompt = self.prompt("Jera", "precedent", "plan")
+        self.assertIn("# Answers an agent gave\n\n- spec.md ### Câu 1\n\n", prompt)
+        self.assertNotIn("- spec.md ### Câu 2", prompt, "a person's block is not listed")
+
+    def test_it_is_said_when_the_prompt_only_names_the_file(self):
+        prompt = self.prompt("Jera", "precedent", "impl")
+        self.assertIn("- spec.md ### Câu 1", prompt)
+        self.assertIn("not by the person who started this work", prompt)
+
+    def test_a_unit_without_one_gets_the_prompt_byte_for_byte(self):
+        for stage in ("spec", "plan", "impl", "review"):
+            prompt, without = self.prompts("owner", "product", stage)
+            self.assertEqual(prompt, without, stage)
+            self.assertNotIn("Answers an agent gave", prompt)
+
+
 class ThePromptCarriesTheStageBefore(unittest.TestCase):
     def test_the_previous_artifact_is_included_verbatim(self):
         with tempfile.TemporaryDirectory() as d:
