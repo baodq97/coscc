@@ -284,5 +284,41 @@ class Measuring(unittest.TestCase):
         self.assertEqual(ap.measure(self.rows(), "w", "2000-01-01", "2000-01-02")["units"], [])
 
 
+class MeasuredDays(unittest.TestCase):
+    def test_each_clause_of_the_outcome_per_day(self):
+        one, two = ap.today(NOW), ap.today(NOW + timedelta(days=1))
+
+        def r(kind, delta=timedelta(), workspace="w", **kw):
+            return {"kind": kind, "workspace": workspace, "unit": "0010_a", "at": at(delta), **kw}
+
+        tomorrow = timedelta(days=1)
+        rows = (
+            [r("integration", mode="mechanical") for _ in range(5)]
+            + [r("end", stage="impl", outcome="failed"),
+               r("start", stage="spec", started_by="autopilot"),
+               r("end", stage="spec", outcome="done", cost_usd=3.0),
+               r("end", workspace="other", stage="review", outcome="done", cost_usd=1.0)]
+            + [r("integration", tomorrow, mode="agent") for _ in range(4)]
+            + [r("end", tomorrow, stage="impl", outcome="exhausted", cost_usd=2.0),
+               r("start", tomorrow, stage="plan", started_by="autopilot")]
+        )
+        first, second = ap.measure_days(rows, "w", one, two, 80.0)
+        self.assertEqual((first["day"], second["day"]), (one, two))
+        self.assertEqual((first["integrations"], first["failed"], first["autopilot_starts"]), (5, 1, 1))
+        self.assertEqual(
+            [first[k] for k in ("enough_integrations", "a_failure", "ran", "within", "met")], [True] * 5,
+        )
+        money = ap.spent_on(rows, one)
+        self.assertEqual(first["spent"], money["known"] + money["estimated"])
+        self.assertEqual(first["spent"], 3.0 + 1.0 + ap.estimate("impl"))
+        self.assertEqual(second["integrations"], 4)
+        self.assertEqual(
+            [second[k] for k in ("enough_integrations", "a_failure", "ran", "within", "met")],
+            [False, True, True, True, False],
+        )
+        self.assertFalse(ap.measure_days(rows, "w", one, one, 19.99)[0]["within"])
+        self.assertEqual(first["utc_to"], second["utc_from"])
+
+
 if __name__ == "__main__":
     unittest.main()
