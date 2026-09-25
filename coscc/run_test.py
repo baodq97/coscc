@@ -86,6 +86,20 @@ class TheVersionAnswer(unittest.TestCase):
             run.main(["reset-password", "--now"])
         self.assertEqual(caught.exception.code, 2)
 
+    def test_knowledge_goes_to_its_command_and_starts_no_server(self):
+        """`0090` R9: `coscc knowledge ...` is a terminal command, answered and exited."""
+        from unittest import mock
+
+        from coscc import knowledge_cli
+
+        for code in (0, 2):
+            with mock.patch.object(knowledge_cli, "main", return_value=code) as called, \
+                    mock.patch("uvicorn.Server", side_effect=AssertionError("a server")):
+                with self.assertRaises(SystemExit) as caught:
+                    run.main(["knowledge", "show"])
+            self.assertEqual(caught.exception.code, code)
+            called.assert_called_once_with(["show"])
+
 
 class ResetPassword(unittest.TestCase):
     """`0070` R10: the way back from a forgotten password, at a shell on this machine."""

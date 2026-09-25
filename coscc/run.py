@@ -179,6 +179,12 @@ def _answer_and_stop(args: list[str]) -> None:
     if args in (["--version"], ["-V"]):
         print(f"coscc {installed_version()}")
         return
+    if args[0] == "knowledge":
+        # `0090` R9. The knowledge store's commands, here for the same reason as
+        # `reset-password`: they need a shell on this machine, and no route reaches them.
+        from coscc import knowledge_cli
+
+        raise SystemExit(knowledge_cli.main(args[1:]))
     if args == ["reset-password"]:
         from coscc.config import from_env
         from coscc.data import Data
@@ -189,7 +195,7 @@ def _answer_and_stop(args: list[str]) -> None:
         return
     print(
         f"coscc: unrecognised argument {args[0]!r}\n"
-        "usage: coscc [--version | reset-password]\n"
+        "usage: coscc [--version | reset-password | knowledge ...]\n"
         "everything else is configuration, and it is read from the environment "
         "(COS_HOST, COS_PORT, COS_WORKING_DIR, ...) -- see docs/install.md",
         file=sys.stderr,
