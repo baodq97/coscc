@@ -47,6 +47,31 @@ class ShortSha(unittest.TestCase):
         self.assertEqual(present.short_sha(None), "")
 
 
+def _read_money(text: str) -> float:
+    return float(text.lstrip("$").replace(",", ""))
+
+
+class Money(unittest.TestCase):
+    """`0093` R4: `—` for none, two decimals from a dollar, three significant digits under."""
+
+    def test_the_named_values(self):
+        for value, text in [
+            (None, "—"), (0.0, "$0.00"), (0.123456, "$0.123"), (0.0045612, "$0.00456"),
+            (1.0, "$1.00"), (694.649, "$694.65"), (1234.5, "$1,234.50"),
+        ]:
+            self.assertEqual(present.money(value), text, value)
+
+    def test_just_under_a_dollar_does_not_read_as_a_thousandth_place(self):
+        self.assertEqual(present.money(0.9996), "$1.00")
+
+    def test_the_rounding_never_moves_a_figure_by_more_than_one_percent(self):
+        value = 0.0001
+        while value <= 10_000:
+            shown = _read_money(present.money(value))
+            self.assertLessEqual(abs(shown - value) / value, 0.01, (value, present.money(value)))
+            value *= 1.0137
+
+
 class Labels(unittest.TestCase):
     def test_every_stored_relation_has_an_english_label(self):
         self.assertEqual(set(present.RELATION_LABEL), set(backlog.RELATIONS))

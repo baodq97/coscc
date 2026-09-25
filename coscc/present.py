@@ -7,6 +7,7 @@ page draws, so the page shows a reader's words while everything else keeps the o
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 
 # `0082` R7. Under this many seconds a time reads as "3 min ago"; past it, as a date.
@@ -93,3 +94,22 @@ def when(value, now: datetime | None = None) -> str:
 def short_sha(sha) -> str:
     """The first seven characters of a commit id, `""` for none."""
     return str(sha or "")[:7]
+
+
+def money(usd: float | None) -> str:
+    """An amount in dollars for the *Cost* screen (`0093` R4).
+
+    `—` for none, so a sum nobody knows never reads as `$0`. From a dollar up, two decimals;
+    under one, three significant digits (`$0.123`, `$0.00456`), so the rounding alone never
+    moves a figure by more than the 1% R4 allows.
+    """
+    if usd is None:
+        return "—"
+    if usd == 0:
+        return "$0.00"
+    if abs(usd) >= 1:
+        return f"${usd:,.2f}"
+    places = 2 - math.floor(math.log10(abs(usd)))
+    if abs(round(usd, places)) >= 1:
+        return f"${usd:,.2f}"
+    return f"${usd:.{places}f}"
