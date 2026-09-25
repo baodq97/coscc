@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from coscc.journal import BadRecord, Busy, Journal, last_runs, totals_of
 
@@ -286,6 +287,63 @@ class AFailedStepLeavesARecord(unittest.TestCase):
             found = j.failed_attempts("w", "0009_x", "impl")
             self.assertIsNone(found["attempt"])
             self.assertEqual(len(found["earlier"]), 1)
+
+    def _review_that_wrote_nothing(self, j, review_md="none", run="r1", events=None, purge=False):
+        """`0085` R11: an exhausted review's `end`, and the `tool_use` events of its run."""
+        if events is not None:
+            j.data.step_run_open(run, "/w", "w", "0009_x", "review", 1000)
+            j.data.step_events_add(run, [
+                {"run": run, "seq": n, "at": 1000 + n, "kind": kind, "input": given}
+                for n, (kind, given) in enumerate(events, 1)
+            ])
+            if purge:
+                j.data.step_events_purge(10**12, 10**9, "2026-10-01T00:00:00+00:00")
+        j.started("w", "0009_x", "review", "manual", run=run)
+        j.finished("w", "0009_x", "review", "exhausted", turns=41, cost_usd=4.1, run=run, review_md=review_md)
+
+    def test_an_exhausted_review_that_wrote_nothing_names_what_it_opened(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            self._review_that_wrote_nothing(j, events=[
+                ("tool_use", {"file_path": "/w/a.py"}),
+                ("tool_result", {"file_path": "/w/nope.py"}),
+                ("tool_use", {"pattern": "def x", "path": "/w/coscc"}),
+                ("tool_use", {"pattern": "**/*.md"}),
+                ("tool_use", {"file_path": "/w/a.py"}),
+                # `events._cut` keeps a long input as the start of its JSON: read if it parses,
+                # passed over if it does not.
+                ("tool_use", '{"file_path": "/w/b.py"}'),
+                ("tool_use", '{"file_path": "/w/cut'),
+            ])
+            found = j.failed_attempts("w", "0009_x", "review")
+            self.assertEqual(found["opened"], {"paths": ["/w/a.py", "/w/coscc", "**/*.md", "/w/b.py"]})
+
+    def test_purged_events_say_so(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            self._review_that_wrote_nothing(j, events=[("tool_use", {"file_path": "/w/a.py"})], purge=True)
+            self.assertEqual(j.failed_attempts("w", "0009_x", "review")["opened"], {"purged": True})
+            k = Journal(Path(d) / "k", Path(d) / "k")
+            self._review_that_wrote_nothing(k, run="never-recorded")
+            self.assertEqual(k.failed_attempts("w", "0009_x", "review")["opened"], {"purged": True})
+
+    def test_a_log_that_cannot_be_read_is_a_reason_not_a_refusal(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            self._review_that_wrote_nothing(j, events=[("tool_use", {"file_path": "/w/a.py"})])
+            with mock.patch.object(j.data, "step_tool_uses", side_effect=Busy("locked")):
+                found = j.failed_attempts("w", "0009_x", "review")
+            self.assertIn("Busy", found["opened"]["error"])
+
+    def test_a_review_whose_closing_turn_wrote_a_round_names_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            self._review_that_wrote_nothing(j, review_md="incomplete", events=[("tool_use", {"file_path": "/w/a.py"})])
+            self.assertNotIn("opened", j.failed_attempts("w", "0009_x", "review"))
+            # Nor does another stage, nor a row written before `0085`.
+            j.started("w", "0009_x", "plan", "manual")
+            j.finished("w", "0009_x", "plan", "exhausted", run="r1", review_md="none")
+            self.assertNotIn("opened", j.failed_attempts("w", "0009_x", "plan"))
 
     def test_timeline_with_no_attempt_row_still_has_no_kind_attempt(self):
         with tempfile.TemporaryDirectory() as d:
