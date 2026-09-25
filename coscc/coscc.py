@@ -37,6 +37,18 @@ for route in ("/", *(f"/{s}" for s in place.SCREENS[1:]), "/unit"):
     app.add_page(screens.index, route=route, title="CoS Studio", on_load=StudioState.arrive)
 
 
+async def resume_autopilot() -> None:
+    """`0043` R5 c: every workspace whose autopilot switch is on starts again.
+
+    A Reflex lifespan task, because `api.py`'s lifespan is one the real stack never runs
+    (`coscc/run.py`). The service is read when the app starts, not when this is imported.
+    """
+    API.state.service.autopilot_resume()
+
+
+app.register_lifespan_task(resume_autopilot)
+
+
 def served():
     """What uvicorn serves: the composed app, behind the login guard (`0070`).
 
