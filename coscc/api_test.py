@@ -435,6 +435,68 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
 
 
+class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0073` R9. Two routes that translate `events_page` and `follow_events`, and write
+    nothing. Neither is exempt from the login (`auth_test` walks every route for that)."""
+
+    async def asyncSetUp(self):
+        from coscc import events
+        from coscc.data import Data
+
+        self.app = build(_tmp_config(self))
+        self.service = self.app.state.service
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
+        )
+        self.key = self.service._journal_key("/tmp")
+        data = Data(self.service.config.data_dir)
+        self.ended = events.Recorder("r-ended", data, "/w", self.key, "0001_a", "spec")
+        for i in range(3):
+            self.ended.denied("Bash", {"n": i}, "no")
+        await self.ended.close("done", "")
+        self.live = events.Recorder("r-live", data, "/w", self.key, "0001_a", "impl")
+        self.live.denied("Bash", {}, "no")
+        self.live._emit("end", outcome="done", detail="")
+        self.live.closed = True
+        self.service._recorders["r-live"] = self.live
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    def get(self, path, **params):
+        return self.client.get(path, params={"cwd": "/tmp", "unit": "0001_a", **params})
+
+    async def test_a_page_of_a_finished_step(self):
+        r = await self.get("/api/board/events", run="r-ended", limit="2")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual((body["status"], [e["seq"] for e in body["events"]]), ("ended", [3, 4]))
+        one = (await self.get("/api/board/events", run="r-ended", seq="1")).json()
+        self.assertEqual(one["events"][0]["input"], {"n": 0})
+
+    async def test_refusals_are_400(self):
+        from coscc import auth
+
+        for params in ({"run": "r-ended", "limit": "many"}, {"run": "nope"}, {"run": "r-ended", "unit": "0002_b"}):
+            r = await self.get("/api/board/events", **params)
+            self.assertEqual(r.status_code, 400, params)
+        r = await self.get("/api/board/events/follow", run="nope")
+        self.assertEqual(r.status_code, 400)
+        r = await self.get("/api/board/events/follow", run="r-live", after="x")
+        self.assertEqual(r.status_code, 400)
+        exempt = {path for _, path in auth.EXEMPT}
+        self.assertFalse({"/api/board/events", "/api/board/events/follow"} & exempt)
+
+    async def test_following_is_ndjson_that_ends_with_the_step(self):
+        r = await self.get("/api/board/events/follow", run="r-live", after="0")
+        lines = [json.loads(line) for line in r.text.splitlines()]
+        self.assertEqual([(x["type"], x["seq"]) for x in lines], [("event", 1), ("event", 2)])
+        self.assertEqual(lines[-1]["kind"], "end")
+        r = await self.get("/api/board/events/follow", run="r-ended", after="0")
+        [line] = [json.loads(line) for line in r.text.splitlines()]
+        self.assertEqual((line["type"], line["status"]), ("status", "ended"))
+
+
 if __name__ == "__main__":
     unittest.main()
 

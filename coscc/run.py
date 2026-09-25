@@ -75,6 +75,10 @@ def main(argv: list[str] | None = None) -> None:
     else:
         _refuse_a_bundle_that_does_not_match_the_source(static, config)
 
+    # `0073` R14: the only time a step's events are purged, before the first request. Not in
+    # `api.py`'s lifespan, which the real stack never runs (`0068`'s `spike.md ## U5`).
+    purge_events(config)
+
     import uvicorn
 
     for line in banner(config):
@@ -103,6 +107,20 @@ def main(argv: list[str] | None = None) -> None:
     handoff = update.take_handoff()
     if handoff is not None:
         raise SystemExit(update.finish(handoff))
+
+
+def purge_events(config) -> None:
+    """`0073` R14. A purge that fails is one line on stderr, and the app starts anyway: the
+    events are kept longer than asked, which is not a reason to have no board."""
+    from coscc import events
+
+    try:
+        runs, freed = events.purge_on_start(config)
+    except Exception as e:  # noqa: BLE001 - `Busy`, `Protected`, anything
+        print(f"coscc: step events were not purged this start: {type(e).__name__}: {e}", file=sys.stderr)
+        return
+    if runs:
+        print(f"step events purged: {runs} run(s), {freed} bytes")
 
 
 def installed_version() -> str:
