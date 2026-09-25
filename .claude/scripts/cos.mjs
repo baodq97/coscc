@@ -373,6 +373,11 @@ const FINDING = /^- (F\d+)\s+\[([^\]]*)\]\s*(.*)$/
 // location, `path:line — low — text`. Anything else — prose, a hyphen, an en dash — reads
 // `null`, and `null` is never read as `low`.
 const SEVERITY = /^\S+\s+—\s+(high|medium|low)\s+—\s/i
+// `0083` R9: the first line of a round's `### Screens`, and one line per screenshot, the
+// separators em dashes as in `SEVERITY`. Backticks around the sha, the path and the address
+// are allowed and dropped.
+const SCREENS_HEAD = /^Taken at:\s*`?([0-9a-f]{7,40})`?\.\s+Standard:\s*`?([^`\s]+?)`?\.\s+Looked at by:\s*(.+?),\s*from screenshots\.?\s*$/i
+const SCREENS_SHOT = /^- `?(\S+?\.png)`?\s+—\s+(\d+)\s*[×x]\s*(\d+)\s+—\s+`?([^`\s]+)`?\s+—\s+(\S.*)$/
 
 // `review.md` is a list of rounds, each `## Round N`, never rewritten once written: a
 // re-review appends a round. Each round opens with `Reviewed: <sha>. Verdict: pass|
@@ -384,22 +389,30 @@ const SEVERITY = /^\S+\s+—\s+(high|medium|low)\s+—\s/i
 // Each round also carries `text`: its lines verbatim, from `## Round N` up to the next
 // `## ` heading, trailing blank space trimmed. It is what the app posts to the pull
 // request, so the app never has to find a round's edges itself.
+// Since `0083` each round also carries `screens`: `null` when it has no `### Screens`, else
+// `{ taken, standard, by, header, shots }` — `header` the section's first line verbatim, the
+// three fields `null` when that line is not `SCREENS_HEAD`, and one `{ path, size, address,
+// result }` per line that is `SCREENS_SHOT`. What the `ship` gate makes of it is
+// `screensProblems`'s to say.
 export function parseReview(text) {
   const lines = text.split(/\r?\n/)
   const stop = lines.findIndex((l) => l.trimEnd() === '## Answers')
   const rounds = []
   let inFindings = false
+  let inScreens = false
   for (const line of stop === -1 ? lines : lines.slice(0, stop)) {
     const head = line.match(ROUND_HEAD)
     if (head) {
-      rounds.push({ n: Number(head[1]), reviewed: null, verdict: null, findings: [], seenText: false, closed: false, lines: [line] })
+      rounds.push({ n: Number(head[1]), reviewed: null, verdict: null, findings: [], screens: null, seenText: false, closed: false, lines: [line] })
       inFindings = false
+      inScreens = false
       continue
     }
     if (line.startsWith('## ')) {
       // A section that is not a round ends the one above it.
       if (rounds.length) rounds[rounds.length - 1].closed = true
       inFindings = false
+      inScreens = false
       continue
     }
     const r = rounds[rounds.length - 1]
@@ -416,6 +429,20 @@ export function parseReview(text) {
     }
     if (line.startsWith('### ')) {
       inFindings = line.trimEnd() === '### Findings'
+      inScreens = line.trimEnd() === '### Screens'
+      if (inScreens && !r.screens) r.screens = { taken: null, standard: null, by: null, header: null, shots: [] }
+      continue
+    }
+    if (inScreens) {
+      if (line.trim() === '') continue
+      if (r.screens.header === null) {
+        r.screens.header = line.trim()
+        const m = r.screens.header.match(SCREENS_HEAD)
+        if (m) Object.assign(r.screens, { taken: m[1].toLowerCase(), standard: m[2], by: m[3].trim() })
+        continue
+      }
+      const shot = line.trim().match(SCREENS_SHOT)
+      if (shot) r.screens.shots.push({ path: shot[1], size: `${shot[2]}x${shot[3]}`, address: shot[4], result: shot[5].trim() })
       continue
     }
     if (!inFindings) continue
@@ -434,8 +461,8 @@ export function parseReview(text) {
     })
   }
   return {
-    rounds: rounds.map(({ n, reviewed, verdict, findings, lines }) => ({
-      n, reviewed, verdict, findings, text: lines.join('\n').trimEnd(),
+    rounds: rounds.map(({ n, reviewed, verdict, findings, screens, lines }) => ({
+      n, reviewed, verdict, findings, screens, text: lines.join('\n').trimEnd(),
     })),
   }
 }
@@ -869,12 +896,17 @@ function severityRule(unit) {
       if ((f.severity === 'high' || f.severity === 'medium') && !higher.has(f.id)) higher.set(f.id, { round: r.n, severity: f.severity })
     }
   }
-  const low = last.findings.filter((f) => f.label === 'open' && f.severity === 'low')
+  // `0083` R11 (spec C3): a finding against the UI standard — its text after the severity
+  // opens with `S<n>` — is something the person sees wrong, so it blocks even when rated
+  // `low`. Taken out here, before the split, so every reader of this rule sees it block.
+  const low = last.findings.filter((f) => f.label === 'open' && f.severity === 'low' && !againstStandard(f.text))
   return {
     nonBlocking: low.filter((f) => !higher.has(f.id)).map((f) => ({ id: f.id, text: f.text })),
     demoted: low.filter((f) => higher.has(f.id)).map((f) => ({ id: f.id, ...higher.get(f.id) })),
   }
 }
+
+const againstStandard = (text) => /^S\d+\b/.test(text.slice(text.match(SEVERITY)?.[0].length ?? text.length))
 
 // The findings of the last round that do not block, `[{ id, text }]`. The `ship` gate,
 // `next` and `status --json` all read this; none of them applies the rule again.
@@ -940,6 +972,118 @@ function everyOpenClaimed(unit) {
 const needsAPerson = (used, limit) =>
   `needs a person — review used ${used} of ${limit} rounds and findings are still open`
 
+// --- the screens a unit changes (0083) ----------------------------------------
+
+// The UI standard: its rules for a person to read, and in its front-matter `paths:` the one
+// list of files that count as the app's screens (spec R2). This is the only place here that
+// names it. It is read from the repository being diffed (`--repo`), not from this script's
+// own checkout: the list is a list of that repository's files, and a repository that copied
+// `.claude/` without this file has a `ship` gate exactly as before (spec C6).
+export const UI_STANDARD = '.claude/rules/ui-standard.md'
+
+// The globs under `paths:` in the front-matter between the first two `---` lines, quotes
+// dropped. `[]` when there is no front-matter, no `paths:`, or nothing under it.
+export function parseStandard(text) {
+  const lines = text.split(/\r?\n/)
+  if (lines[0]?.trim() !== '---') return []
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === '---')
+  if (end === -1) return []
+  const globs = []
+  let inPaths = false
+  for (const line of lines.slice(1, end)) {
+    if (/^paths:\s*$/.test(line)) {
+      inPaths = true
+      continue
+    }
+    const item = line.match(/^\s+-\s+(.+?)\s*$/)
+    if (inPaths && item) globs.push(item[1].replace(/^(["'])(.*)\1$/, '$2'))
+    else if (!/^\s*$/.test(line)) inPaths = false
+  }
+  return globs
+}
+
+// A glob as the rule files write one, by hand so as to add no dependency (spec R3): `**/`
+// is zero or more directories, a trailing `**` is anything, `*` stays inside one directory,
+// `?` is one character that is not `/`, and every other character is itself.
+export function globMatch(glob, path) {
+  let re = ''
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i]
+    if (c === '*' && glob[i + 1] === '*') {
+      if (glob[i + 2] === '/') {
+        re += '(?:.*/)?'
+        i += 2
+      } else {
+        re += '.*'
+        i += 1
+      }
+    } else if (c === '*') re += '[^/]*'
+    else if (c === '?') re += '[^/]'
+    else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  }
+  return new RegExp(`^${re}$`).test(path)
+}
+
+// The paths among `paths` that some glob matches, in their order.
+export const uiFiles = (paths, globs) => paths.filter((p) => globs.some((g) => globMatch(g, p)))
+
+// `0083` R10: the one place the words of a passing round's `### Screens` are judged. Returns
+// what is wrong with them, `[]` when nothing is. Whether `Taken at` is still current needs
+// git, and is the gate's to ask (`screensNeeds`).
+export function screensProblems(screens, standardPath) {
+  if (!screens) return ['it has no ### Screens — review opens every screenshot in .screens/manifest.json and writes the section']
+  const problems = []
+  if (!screens.taken) {
+    problems.push(`the first line of its ### Screens is not "Taken at: <sha>. Standard: <path>. Looked at by: <which agent session>, from screenshots."`)
+  } else {
+    // Constraint two of the intent: whoever looked is named as an agent, never read as a person.
+    if (!/\bagent\b/i.test(screens.by)) problems.push(`its ### Screens says "Looked at by: ${screens.by}", which does not say it was an agent`)
+    if (screens.standard !== standardPath) problems.push(`its ### Screens names the standard ${screens.standard}, not ${standardPath}`)
+  }
+  if (!screens.shots.length) problems.push('its ### Screens lists no screenshot — one line per image, "- <path>.png — <W>×<H> — <address> — <result>"')
+  return problems
+}
+
+// `0083` R10/R12: asked by `shipNeeds` only once every earlier check has passed, so a unit
+// stuck for another reason spends no more `git`, and its reasons read as they did. With no
+// standard, or one with no globs, it asks nothing at all; for a unit that changes no screen
+// it asks one `git diff`. `said.screens` sends `nextStep` to another review round — except
+// when git could not say which files changed, which another round would not cure.
+function screensNeeds(unit, probe, last, said) {
+  const standard = probe.ui?.() ?? null
+  if (!standard || !standard.globs.length) return []
+  // Three dots: from the merge-base, in one command. The gate does not fetch (spec C7).
+  let diff = probe.git('diff', '--name-only', `origin/main...${said.head}`)
+  if (diff.code !== 0) {
+    const local = probe.git('diff', '--name-only', `main...${said.head}`)
+    if (local.code !== 0) {
+      return [`cannot tell whether ${unit.name} changes a screen: git could not diff origin/main...${said.head} (${diff.err.trim()}) nor main...${said.head} (${local.err.trim()}) — the gate does not fetch`]
+    }
+    diff = local
+  }
+  const own = `.cos/${unit.name}/`
+  const changed = uiFiles(diff.out.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith(own)), standard.globs)
+  if (!changed.length) return []
+  const why = `this unit changes ${changed.join(', ')}, which ${standard.path} counts as screens`
+  const need = screensProblems(last.screens, standard.path).map((p) => `review round ${last.n} passed, but ${p} — ${why}`)
+  if (!need.length) {
+    const taken = last.screens.taken
+    if (probe.git('merge-base', '--is-ancestor', taken, last.reviewed).code !== 0) {
+      need.push(`the screenshots of review round ${last.n} were taken at ${taken}, which is not an ancestor of the reviewed commit ${last.reviewed} — take them again on the branch, and review them`)
+    } else {
+      const after = probe.git('diff', '--name-only', `${taken}..${last.reviewed}`)
+      if (after.code !== 0) {
+        need.push(`git could not diff ${taken}..${last.reviewed}: ${after.err.trim()}`)
+      } else {
+        const moved = uiFiles(after.out.split('\n').map((l) => l.trim()).filter(Boolean), standard.globs)
+        if (moved.length) need.push(`${moved.join(', ')} changed after the screenshots of review round ${last.n} were taken at ${taken} — take them again, and review them`)
+      }
+    }
+  }
+  if (need.length) said.screens = true
+  return need
+}
+
 // --- what the gate asks git and gh -------------------------------------------
 
 // The two questions `review` and `ship` ask outside `.cos/`. Every other gate reads files
@@ -952,7 +1096,14 @@ export function makeProbe(repoDir) {
     if (r.error) return { code: -1, out: '', err: String(r.error.message ?? r.error) }
     return { code: r.status, out: r.stdout ?? '', err: r.stderr ?? '' }
   }
-  return { git: (...args) => run('git', args), gh: (...args) => run('gh', args) }
+  // `0083`: the UI standard of that repository, read from its files rather than `git`, or
+  // `null` without one. A test's probe that has no `ui` reads as having none.
+  const ui = () => {
+    const path = join(repoDir, UI_STANDARD)
+    if (!existsSync(path)) return null
+    return { path: UI_STANDARD, globs: parseStandard(readFileSync(path, 'utf8')) }
+  }
+  return { git: (...args) => run('git', args), gh: (...args) => run('gh', args), ui }
 }
 
 // `review` may begin only on an open pull request whose required checks are green
@@ -1102,7 +1253,8 @@ function shipNeeds(unit, probe, said = {}) {
       need.push(`${name} changed after the reviewed commit ${last.reviewed}: ${since.files.join(', ')} — review again`)
     }
   }
-  return need
+  if (need.length) return need
+  return screensNeeds(unit, probe, last, said)
 }
 
 // What reached `ref` after `reviewed`, outside the unit's own `.cos/` files:
@@ -1217,7 +1369,8 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   if (why === 'missing' && next.stage === 'ship') {
     const g = evaluate(unit, 'ship', { probe, limit })
     if (g.ok) return { ...next, action: `${next.action} — merge with --match-head-commit ${g.said.head}` }
-    if (g.said.moved) return onReview(g.need)
+    // `0083` R10: a UI unit whose pass lacks current screenshots is cured the same way.
+    if (g.said.moved || g.said.screens) return onReview(g.need)
     return none(g.need.join('; '))
   }
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -11,6 +11,7 @@ import {
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
   parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking, prText,
+  UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -1834,4 +1835,188 @@ test('0055 R2: pr-text writes nothing and leaves status as it was', () => {
   const before = [cli('--root', root, 'status', '--json').stdout, listing()]
   assert.equal(cli('--root', root, 'pr-text', '0001_a').status, 0)
   assert.deepEqual([cli('--root', root, 'status', '--json').stdout, listing()], before)
+})
+
+// --- a UI unit ships only with screenshots a review looked at (0083) ----------
+
+const REPO = fileURLToPath(new URL('../../', import.meta.url))
+
+test('0083 R2: parseStandard reads the globs under paths: in the front-matter, and nothing else', () => {
+  const text = '---\npaths:\n  - "coscc/screens.py"\n  - \'coscc/**\'\n  - a/*/b.py\nother: x\n  - "not/this.py"\n---\n\npaths:\n  - "nor/this.py"\n'
+  assert.deepEqual(parseStandard(text), ['coscc/screens.py', 'coscc/**', 'a/*/b.py'])
+  assert.deepEqual(parseStandard('# No front-matter\npaths:\n  - "x.py"\n'), [])
+  assert.deepEqual(parseStandard('---\npaths:\n---\n'), [])
+  assert.deepEqual(parseStandard('---\npaths:\n  - "x.py"\n'), [], 'a block never closed is not a block')
+})
+
+test('0083 R3: globMatch — ** crosses directories, * and ? stay inside one', () => {
+  assert.equal(globMatch('coscc/screens.py', 'coscc/screens.py'), true)
+  assert.equal(globMatch('coscc/screens.py', 'coscc/screens_py'), false, 'a dot is a dot')
+  assert.equal(globMatch('coscc/screens.py', 'x/coscc/screens.py'), false)
+  assert.equal(globMatch('coscc/**', 'coscc/a/b/c.py'), true)
+  assert.equal(globMatch('coscc/**', 'coscc2/a.py'), false)
+  assert.equal(globMatch('a/*/b.py', 'a/x/b.py'), true)
+  assert.equal(globMatch('a/*/b.py', 'a/x/y/b.py'), false)
+  assert.equal(globMatch('**/x.py', 'x.py'), true)
+  assert.equal(globMatch('**/x.py', 'a/b/x.py'), true)
+  assert.equal(globMatch('**/x.py', 'a/bx.py'), false)
+  assert.equal(globMatch('coscc/?i.py', 'coscc/ui.py'), true)
+  assert.equal(globMatch('coscc/?i.py', 'coscc//i.py'), false)
+  assert.deepEqual(uiFiles(['coscc/ui.py', 'coscc/runner.py', 'README.md'], ['coscc/ui.py', '*.md']), ['coscc/ui.py', 'README.md'])
+})
+
+test('0083 R2: every glob of this checkout\'s standard names a file git tracks', () => {
+  const globs = parseStandard(readFileSync(join(REPO, UI_STANDARD), 'utf8'))
+  assert.ok(globs.length > 0)
+  const tracked = spawnSync('git', ['ls-files'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean)
+  for (const g of globs) assert.ok(tracked.some((p) => globMatch(g, p)), `${g} matches no tracked file`)
+  assert.deepEqual(makeProbe(REPO).ui(), { path: UI_STANDARD, globs })
+  assert.equal(makeProbe(mkdtempSync(join(tmpdir(), 'cos-noui-'))).ui(), null)
+})
+
+test('0083 R2: no other tracked file holds a copy of the list', () => {
+  const globs = parseStandard(readFileSync(join(REPO, UI_STANDARD), 'utf8'))
+  const tracked = spawnSync('git', ['ls-files'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean)
+  const copies = tracked.filter((p) => p !== UI_STANDARD && !p.startsWith('.cos/')).filter((p) => {
+    let text
+    try {
+      text = readFileSync(join(REPO, p), 'utf8')
+    } catch {
+      return false
+    }
+    return globs.every((g) => text.includes(g))
+  })
+  assert.deepEqual(copies, [])
+})
+
+const SHOT = '- .screens/board-1440x900.png — 1440×900 — /board — no violation'
+const screens = ({ taken = SHA, by = 'an agent session (write-review)', standard = UI_STANDARD, shots = [SHOT], head = null } = {}) =>
+  `\n### Screens\n\n${head ?? `Taken at: ${taken}. Standard: \`${standard}\`. Looked at by: ${by}, from screenshots.`}\n\n${shots.join('\n')}\n`
+
+test('0083 R9: parseReview reads ### Screens, and a round without one reads null', () => {
+  const text = `${round(1, 'changes-requested', ['- F1 [open] x'])}\n${round(2, 'pass', [`- F1 [fixed ${FIX}] x`])}${screens({
+    shots: [SHOT, '- `.screens/board-390x844.png` — 390x844 — `/unit?ws=proj&id=0002_open-question&tab=Questions` — S3: a /tmp path', 'prose between lines'],
+  })}`
+  const [one, two] = parseReview(text).rounds
+  assert.equal(one.screens, null)
+  assert.deepEqual(two.screens, {
+    taken: SHA, standard: UI_STANDARD, by: 'an agent session (write-review)',
+    header: `Taken at: ${SHA}. Standard: \`${UI_STANDARD}\`. Looked at by: an agent session (write-review), from screenshots.`,
+    shots: [
+      { path: '.screens/board-1440x900.png', size: '1440x900', address: '/board', result: 'no violation' },
+      { path: '.screens/board-390x844.png', size: '390x844', address: '/unit?ws=proj&id=0002_open-question&tab=Questions', result: 'S3: a /tmp path' },
+    ],
+  })
+  // Findings still end where ### Screens begins, and the round's text keeps the section.
+  assert.deepEqual(two.findings.map((f) => f.id), ['F1'])
+  assert.match(two.text, /### Screens/)
+  const bad = parseReview(`${round(1, 'pass')}${screens({ head: 'Looked at it.' })}`).rounds[0].screens
+  assert.deepEqual([bad.taken, bad.standard, bad.by, bad.header], [null, null, null, 'Looked at it.'])
+})
+
+test('0083 R10: screensProblems names each thing wrong with the words', () => {
+  const read = (s) => parseReview(`${round(1, 'pass')}${s}`).rounds[0].screens
+  assert.deepEqual(screensProblems(read(screens()), UI_STANDARD), [])
+  assert.match(screensProblems(null, UI_STANDARD).join('\n'), /no ### Screens/)
+  assert.match(screensProblems(read(screens({ head: 'Taken at: abc. Looked.' })), UI_STANDARD).join('\n'), /first line of its ### Screens is not/)
+  assert.match(screensProblems(read(screens({ by: 'Bao' })), UI_STANDARD).join('\n'), /"Looked at by: Bao", which does not say it was an agent/)
+  assert.match(screensProblems(read(screens({ standard: '.claude/rules/other.md' })), UI_STANDARD).join('\n'), /names the standard \.claude\/rules\/other\.md, not/)
+  assert.match(screensProblems(read(screens({ shots: ['- a.jpg — 1×1 — / — x'] })), UI_STANDARD).join('\n'), /lists no screenshot/)
+})
+
+test('0083 R11: an open low against the standard blocks; one that is not still does not', () => {
+  const u = asked(round(1, 'pass', ['- F1 [open] coscc/screens.py:10 — low — S3 shows a full sha', low('F2'), '- F3 [open] a.py:3 — low — Sx is not a rule id']))
+  assert.deepEqual(nonBlocking(u).map((f) => f.id), ['F2', 'F3'])
+  const g = checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass', ['- F1 [open] coscc/screens.py:10 — low — S3 shows a full sha'])) }), 'ship', { probe: greenProbe() })
+  assert.equal(g.ok, false)
+  assert.match(g.need.join('\n'), /F1 \[open\]/)
+})
+
+// A probe whose repository has a standard listing one file, and whose branch diff against
+// the trunk is `files`. `extra` overrides any other git answer.
+const UI = { path: UI_STANDARD, globs: ['coscc/screens.py'] }
+const uiProbe = (files, extra = {}, ui = UI) => ({
+  ...greenProbe(undefined, { [`diff --name-only origin/main...${SHA}`]: ok(files.join('\n')), ...extra }),
+  ui: () => ui,
+})
+const passed = (tail = '') => branched({ ...CHAIN, 'review.md': reviewArt('accepted', `${round(1, 'pass')}${tail}`) })
+
+test('0083 R12: a unit that changes no screen reads exactly as with no standard', () => {
+  const u = passed()
+  const before = checkGate(u, 'ship', { probe: greenProbe() })
+  for (const files of [['coscc/runner.py'], ['.cos/0001_x/review.md'], []]) {
+    assert.deepEqual(checkGate(u, 'ship', { probe: uiProbe(files) }), before)
+    assert.deepEqual(nextStep(u, { probe: uiProbe(files) }), nextStep(u, { probe: greenProbe() }))
+  }
+  // A unit's own files are left out even when a glob would take them.
+  assert.deepEqual(checkGate(u, 'ship', { probe: uiProbe(['.cos/0001_x/x.py'], {}, { path: UI_STANDARD, globs: ['**/*.py'] }) }), before)
+  // A standard with no globs is no standard.
+  assert.deepEqual(checkGate(u, 'ship', { probe: uiProbe(['coscc/screens.py'], {}, { path: UI_STANDARD, globs: [] }) }), before)
+})
+
+test('0083 R10: a UI unit whose pass has no ### Screens cannot ship, and next offers review', () => {
+  const u = passed()
+  const g = checkGate(u, 'ship', { probe: uiProbe(['coscc/screens.py']) })
+  assert.equal(g.ok, false)
+  assert.equal(g.need.length, 1)
+  assert.match(g.need[0], /review round 1 passed, but it has no ### Screens .* this unit changes coscc\/screens\.py, which \.claude\/rules\/ui-standard\.md counts as screens/)
+  const n = nextStep(u, { probe: uiProbe(['coscc/screens.py']) })
+  assert.equal(n.stage, 'review')
+  assert.match(n.action, /no ### Screens/)
+})
+
+test('0083 R10: each condition, broken once, closes ship and says which', () => {
+  const ui = ['coscc/screens.py']
+  const closed = (tail, extra = {}) => {
+    const g = checkGate(passed(tail), 'ship', { probe: uiProbe(ui, extra) })
+    assert.equal(g.ok, false)
+    assert.equal(nextStep(passed(tail), { probe: uiProbe(ui, extra) }).stage, 'review')
+    return g.need.join('\n')
+  }
+  assert.match(closed(screens({ by: 'Bao' })), /does not say it was an agent/)
+  assert.match(closed(screens({ standard: 'STANDARD.md' })), /names the standard STANDARD\.md/)
+  assert.match(closed(screens({ shots: [] })), /lists no screenshot/)
+  const TAKEN = 'e'.repeat(40)
+  assert.match(closed(screens({ taken: TAKEN }), { [`merge-base --is-ancestor ${TAKEN} ${SHA}`]: { code: 1, out: '', err: '' } }),
+    new RegExp(`taken at ${TAKEN}, which is not an ancestor of the reviewed commit ${SHA}`))
+  assert.match(closed(screens({ taken: TAKEN }), { [`diff --name-only ${TAKEN}..${SHA}`]: ok('coscc/runner.py\ncoscc/screens.py\n') }),
+    new RegExp(`coscc/screens\\.py changed after the screenshots of review round 1 were taken at ${TAKEN}`))
+})
+
+test('0083 R10: valid ### Screens on a UI unit opens ship, pinned to the head', () => {
+  const TAKEN = 'e'.repeat(40)
+  const g = checkGate(passed(screens({ taken: TAKEN })), 'ship', { probe: uiProbe(['coscc/screens.py'], { [`diff --name-only ${TAKEN}..${SHA}`]: ok('coscc/runner.py\n') }) })
+  assert.deepEqual(g, { ok: true, need: [], head: SHA })
+})
+
+test('0083 C7: neither origin/main nor main readable closes ship, and no round is offered', () => {
+  const fail = { code: 128, out: '', err: 'fatal: bad revision' }
+  const probe = uiProbe([], { [`diff --name-only origin/main...${SHA}`]: fail, [`diff --name-only main...${SHA}`]: fail })
+  const g = checkGate(passed(), 'ship', { probe })
+  assert.equal(g.ok, false)
+  assert.match(g.need[0], /cannot tell whether 0001_x changes a screen: .*the gate does not fetch/)
+  assert.equal(nextStep(passed(), { probe }).stage, '')
+  // main alone is enough.
+  const local = uiProbe([], { [`diff --name-only origin/main...${SHA}`]: fail, [`diff --name-only main...${SHA}`]: ok('coscc/screens.py\n') })
+  assert.match(checkGate(passed(), 'ship', { probe: local }).need[0], /no ### Screens/)
+})
+
+test('0083 R12: no standard asks git nothing more; a standard and no screen, one diff more', () => {
+  const counting = (probe) => {
+    const calls = []
+    return { calls, probe: { ...probe, git: (...args) => (calls.push(args.join(' ')), probe.git(...args)) } }
+  }
+  const u = passed()
+  const plain = counting(greenProbe())
+  checkGate(u, 'ship', { probe: plain.probe })
+  const empty = counting(uiProbe(['coscc/screens.py'], {}, null))
+  checkGate(u, 'ship', { probe: empty.probe })
+  assert.deepEqual(empty.calls, plain.calls)
+  const some = counting(uiProbe(['coscc/runner.py']))
+  checkGate(u, 'ship', { probe: some.probe })
+  assert.deepEqual(some.calls, [...plain.calls, `diff --name-only origin/main...${SHA}`])
+  // A unit closed for an earlier reason never reaches the question.
+  const stuck = counting(uiProbe(['coscc/screens.py']))
+  checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass', ['- F1 [open] x'])) }), 'ship', { probe: stuck.probe })
+  assert.deepEqual(stuck.calls, [])
 })
