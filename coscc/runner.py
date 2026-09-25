@@ -1055,8 +1055,10 @@ def describe_attempt(found: dict[str, Any]) -> str:
     if opened is not None:
         lines.append("")
         lines.append(
-            "That review ran out of turns, and the closing turn the app gave it wrote no "
-            "round: `review.md` holds nothing from it."
+            "That review ran out of turns, and "
+            + ("the closing turn the app gave it wrote no round" if opened.get("closing")
+               else "the app could not give it a closing turn")
+            + ": `review.md` holds nothing from it."
         )
         if opened.get("purged"):
             lines.append(

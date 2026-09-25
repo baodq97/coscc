@@ -288,7 +288,7 @@ class AFailedStepLeavesARecord(unittest.TestCase):
             self.assertIsNone(found["attempt"])
             self.assertEqual(len(found["earlier"]), 1)
 
-    def _review_that_wrote_nothing(self, j, review_md="none", run="r1", events=None, purge=False):
+    def _review_that_wrote_nothing(self, j, review_md="none", run="r1", events=None, purge=False, **end):
         """`0085` R11: an exhausted review's `end`, and the `tool_use` events of its run."""
         if events is not None:
             j.data.step_run_open(run, "/w", "w", "0009_x", "review", 1000)
@@ -299,7 +299,7 @@ class AFailedStepLeavesARecord(unittest.TestCase):
             if purge:
                 j.data.step_events_purge(10**12, 10**9, "2026-10-01T00:00:00+00:00")
         j.started("w", "0009_x", "review", "manual", run=run)
-        j.finished("w", "0009_x", "review", "exhausted", turns=41, cost_usd=4.1, run=run, review_md=review_md)
+        j.finished("w", "0009_x", "review", "exhausted", turns=41, cost_usd=4.1, run=run, review_md=review_md, **end)
 
     def test_an_exhausted_review_that_wrote_nothing_names_what_it_opened(self):
         with tempfile.TemporaryDirectory() as d:
@@ -316,16 +316,23 @@ class AFailedStepLeavesARecord(unittest.TestCase):
                 ("tool_use", '{"file_path": "/w/cut'),
             ])
             found = j.failed_attempts("w", "0009_x", "review")
-            self.assertEqual(found["opened"], {"paths": ["/w/a.py", "/w/coscc", "**/*.md", "/w/b.py"]})
+            self.assertEqual(found["opened"], {"paths": ["/w/a.py", "/w/coscc", "**/*.md", "/w/b.py"], "closing": False})
+
+    def test_it_says_whether_a_closing_turn_ran(self):
+        # Review F2: with no session id or no head the `end` carries no `closing`.
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            self._review_that_wrote_nothing(j, events=[], closing={"cost_unknown": True})
+            self.assertEqual(j.failed_attempts("w", "0009_x", "review")["opened"], {"paths": [], "closing": True})
 
     def test_purged_events_say_so(self):
         with tempfile.TemporaryDirectory() as d:
             j = Journal(d, d)
             self._review_that_wrote_nothing(j, events=[("tool_use", {"file_path": "/w/a.py"})], purge=True)
-            self.assertEqual(j.failed_attempts("w", "0009_x", "review")["opened"], {"purged": True})
+            self.assertEqual(j.failed_attempts("w", "0009_x", "review")["opened"], {"purged": True, "closing": False})
             k = Journal(Path(d) / "k", Path(d) / "k")
             self._review_that_wrote_nothing(k, run="never-recorded")
-            self.assertEqual(k.failed_attempts("w", "0009_x", "review")["opened"], {"purged": True})
+            self.assertEqual(k.failed_attempts("w", "0009_x", "review")["opened"], {"purged": True, "closing": False})
 
     def test_a_log_that_cannot_be_read_is_a_reason_not_a_refusal(self):
         with tempfile.TemporaryDirectory() as d:

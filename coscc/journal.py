@@ -459,12 +459,13 @@ class Journal:
         latest = seq[last]
         # `0085` R11. A review that ran out of turns and whose closing turn wrote nothing left
         # no round; what it had opened is kept in its events, never in `review.md`. A round
-        # the app wrote later leaves a newer `end`, so this stops being the latest.
+        # the app wrote later leaves a newer `end`, so this stops being the latest. `closing`
+        # says whether a closing turn ran at all: none does with no session id or no head.
         if (
             stage == "review" and latest.get("outcome") == "exhausted"
             and latest.get("review_md") == "none" and latest.get("run")
         ):
-            found["opened"] = self._opened(str(latest["run"]), timeout)
+            found["opened"] = {**self._opened(str(latest["run"]), timeout), "closing": "closing" in latest}
         return found
 
     def _opened(self, run: str, timeout: float | None) -> dict[str, Any]:

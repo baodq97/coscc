@@ -3521,11 +3521,18 @@ class ThePromptSaysWhatAReviewThatWroteNothingOpened(unittest.TestCase):
         return describe_attempt({"attempt": None, "latest": self.LATEST, "earlier": [], "opened": opened})
 
     def test_the_paths_are_listed_as_opened_not_reviewed(self):
-        text = self.render({"paths": ["/w/coscc/x.py", "/w/coscc/y.py"]})
+        text = self.render({"paths": ["/w/coscc/x.py", "/w/coscc/y.py"], "closing": True})
         self.assertIn("- /w/coscc/x.py", text)
         self.assertIn("- /w/coscc/y.py", text)
         self.assertIn("no conclusion about any of them was written", text)
+        self.assertIn("the closing turn the app gave it wrote no round", text)
         self.assertIn("`review.md` holds nothing from it", text)
+
+    def test_a_closing_turn_that_never_ran_is_not_told_of(self):
+        # Review F2: no session id or no head, so the app gave it none.
+        text = self.render({"paths": ["/w/coscc/x.py"], "closing": False})
+        self.assertNotIn("the closing turn the app gave it", text)
+        self.assertIn("the app could not give it a closing turn", text)
 
     def test_purged_events_are_said_to_be_purged(self):
         self.assertIn("its recorded events have been purged", self.render({"purged": True}))
