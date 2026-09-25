@@ -1506,7 +1506,8 @@ def _backlog_row(row: rx.Var[BacklogRow], shortlisted: bool) -> rx.Component:
     cell = lambda value, width, **kw: s.text(value, size="1", width=width, flex_shrink="0", **kw)  # noqa: E731
     return rx.box(
         rx.hstack(
-            cell(rx.cond(row.rank > 0, "#" + row.rank.to_string(), ""), "36px"),
+            # `0082` F4: a unit with no estimate has no computed place, and reads "—" like its value.
+            cell(rx.cond(row.rank > 0, "#" + row.rank.to_string(), "—"), "36px"),
             rx.text(row.unit, size="2", font_family=_MONO, flex="1", min_width="96px", overflow_wrap="anywhere"),
             cell(row.value, "44px"),
             cell(row.effort, "70px"),

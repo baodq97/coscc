@@ -776,6 +776,13 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
         view = backlog_view(board)
         self.assertEqual(view["backlog_recorded"], "")
 
+    def test_f4_the_rest_carries_its_computed_place_or_none(self):
+        from coscc.state import backlog_view
+
+        order = [{"unit": "0011_z", "computed": 2, "estimate": {"value": 3, "effort": "M"}, "agent_differs": None}]
+        view = backlog_view({**self.BOARD, "backlog": {**self.BOARD["backlog"], "order": order}})
+        self.assertEqual([(r.unit, r.rank) for r in view["backlog_rest"]], [("0011_z", 2), ("0010_y", 0)])
+
     def test_r9_a_relation_reads_from_both_sides(self):
         from coscc.state import _relations_text
 
