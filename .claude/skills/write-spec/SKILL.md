@@ -105,7 +105,9 @@ Intent: intent.md. Author: <name>. Status: accepted.
    decided. Do not carry it forward as open and do not ask it again. Cite it as
    `<artifact> ## Answers, câu N`. The words of an answer are a person's, not yours: quote
    them, and do not restate them as your own finding. The app only ever appends that
-   section; never write into it yourself.
+   section; never write into it yourself. A block headed `Answered by: Jera. … Via:
+   precedent.` is the exception: an agent inferred it from precedent, so cite it as Jera's
+   inference and never present it as the originator's decision.
 10. A concern you could not measure from here — whether an SDK, a CLI or a process behaves
     the way the design assumes — is written as an item at column 0 under `## Concerns`
     that opens `[unmeasured]` and an id: `- [unmeasured] U1. Does disconnect() make the
