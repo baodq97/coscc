@@ -98,7 +98,11 @@ class OneGrantPerStage(unittest.TestCase):
         # `integrate` since `0035`: not a stage, and pinned in `GeboPushesOnlyWithTheLease`.
         # `spike` since `0039`: pinned in `SpikeWritesOnlyItsScratch`.
         # `precedent` since `0044`: pinned in `TheJeraGrantOpensNothing`.
-        self.assertEqual(set(policy.GRANTS), set(expected) | {"spec", "integrate", "spike", "estimate", "precedent"})
+        # `knowledge` since `0090`: pinned in `TheGatheringGrantOpensNothing`.
+        self.assertEqual(
+            set(policy.GRANTS),
+            set(expected) | {"spec", "integrate", "spike", "estimate", "precedent", "knowledge"},
+        )
         for stage, grant in expected.items():
             self.assertEqual(grant_for(stage), grant, stage)
 
@@ -340,6 +344,23 @@ class TheJeraGrantOpensNothing(unittest.TestCase):
         self.assertEqual((g.max_turns, g.max_budget_usd), (1, 1.0))
         self.assertIn("paid session", g.warning)
         self.assertIn("password", g.warning)
+
+
+class TheGatheringGrantOpensNothing(unittest.TestCase):
+    """`0090` plan step 5: one batch of `coscc knowledge gather` — no tool, no command, one
+    turn, $2.00. The session runs in the store's directory (`coscc/gather.py`); a tool here
+    would let it read whatever is there (plan Risk 5)."""
+
+    def test_the_grant(self):
+        g = grant_for("knowledge")
+        self.assertEqual((g.tools, g.commands), ((), ()))
+        self.assertEqual(policy.beyond_reading(g), ())
+        self.assertFalse(g.opens_anything)
+        self.assertEqual((g.max_turns, g.max_budget_usd), (1, 2.0))
+
+    def test_it_is_a_terminal_grant(self):
+        self.assertEqual(policy.TERMINAL_ONLY, {"knowledge"})
+        self.assertTrue(policy.TERMINAL_ONLY <= set(policy.GRANTS))
 
 
 if __name__ == "__main__":
