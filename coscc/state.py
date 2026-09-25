@@ -813,7 +813,7 @@ READ_ONLY_NOTE = "No working folder is set, so nothing can be recorded."
 # `0043` R9. A label for each of R6's stops (a–f) and the cap; the page words, not a decision.
 AUTOPILOT_STOP_LABEL = {
     "a": "Open question", "b": "Needs a person", "c": "Ship waits", "d": "Integration needs a person",
-    "e": "Last step did not finish", "f": "Blocked", "cap": "Daily cap",
+    "e": "Last step did not finish", "f": "Blocked", "cap": "Daily cap", "shortlist": "No shortlist",
 }
 
 

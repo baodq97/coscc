@@ -12,10 +12,11 @@ import dataclasses
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from coscc import autopilot
 from coscc.config import Config
-from coscc.journal import Journal
+from coscc.journal import Busy, Journal
 from coscc.service import Invalid, Service
 from coscc.sessions import Sessions
 
@@ -67,6 +68,14 @@ class _Base(unittest.IsolatedAsyncioTestCase):
     def starts(self) -> list[dict]:
         return Journal(self.config.working_dir, self.config.data_dir).records(kind="start")
 
+    def listed(self, *names: str) -> None:
+        """`0104`: a `shortlist` record, written straight to the run log. The autopilot follows
+        nothing else, so a test that wants a start writes one."""
+        Journal(self.config.working_dir, self.config.data_dir).append({
+            "kind": "shortlist", "workspace": self.key, "unit": "", "units": list(names),
+            "reason": "for the proof", "by": "proof",
+        })
+
     async def until(self, predicate, what: str) -> None:
         for _ in range(2000):
             if predicate():
@@ -107,6 +116,7 @@ class OnTheRealLoop(_Base):
     async def test_a_done_step_starts_the_next_stage_and_a_draft_stops_it(self):
         self.service.sessions = _Replies(accepted=1)
         unit = await self.unit("chain")
+        self.listed(unit)
         self.service.set_autopilot(self.ws, "autopilot", True)
         await self.until(lambda: len(self.starts()) >= 2, "two steps")
         await self.settled()
@@ -124,6 +134,7 @@ class OnTheRealLoop(_Base):
     async def test_a_open_question_stops_it(self):
         self.service.sessions = _Replies(accepted=5)
         unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
+        self.listed(unit)
         self.service.set_autopilot(self.ws, "autopilot", True)
         await self.settled()
         self.assertEqual(self.starts(), [])
@@ -135,6 +146,7 @@ class OnTheRealLoop(_Base):
         self.service.sessions = _Replies(accepted=5)
         unit = await self.unit("failed")
         Journal(self.config.working_dir, self.config.data_dir).finished(self.key, unit, "spec", "failed")
+        self.listed(unit)
         self.service.set_autopilot(self.ws, "autopilot", True)
         await self.settled()
         self.assertEqual(self.starts(), [])
@@ -144,6 +156,7 @@ class OnTheRealLoop(_Base):
     async def test_the_cap_holds_the_autopilot_and_not_a_person(self):
         self.service.sessions = _Replies(accepted=5)
         unit = await self.unit("capped")
+        self.listed(unit)
         self.service.set_autopilot(self.ws, "daily_cap_usd", 1.0)
         self.service.set_autopilot(self.ws, "autopilot", True)
         await self.settled()
@@ -179,12 +192,15 @@ class Scripted(_Base):
         self.units: dict[str, dict] = {}
         self.nexts: dict[str, dict] = {}
         self.launched: list[tuple[str, str, str]] = []
+        self.asked: list[str] = []
+        self.shortlisted = False
         self.release = asyncio.Event()
 
         async def board(cwd):
             return {"units": list(self.units.values())}
 
         async def next_step(cwd, unit):
+            self.asked.append(unit)
             return self.nexts[unit]
 
         def fake(kind):
@@ -219,9 +235,19 @@ class Scripted(_Base):
             d.mkdir(parents=True, exist_ok=True)
             (d / "plan.md").write_text(f"# Plan\n\n## Files that change\n\n{plan}\n\n## Order\n", encoding="utf-8")
 
+    def listed(self, *names: str) -> None:
+        """No names: every unit added, in the order it was added."""
+        super().listed(*(names or self.units))
+        self.shortlisted = True
+
     async def pass_(self):
+        if not self.shortlisted:
+            self.listed()
         await self.service._autopilot_pass(self.key)
         await asyncio.sleep(0.05)
+
+    def picks(self) -> list[dict]:
+        return Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-pick")
 
     def stops(self):
         return {u: s["kind"] for u, s in self.service._autopilot_stops.get(self.key, {}).items()}
@@ -243,6 +269,10 @@ class Scripted(_Base):
         self.add("0003_c", "impl", plan="- `coscc/z.py`")
         await self.pass_()
         self.assertEqual([u for u, _, _ in self.launched], ["0001_a", "0003_c"])
+        # `spec.md ## Answers`, câu 1: one ranked above that overlaps does not hold the rest.
+        [_, third] = self.picks()
+        self.assertEqual((third["unit"], third["passed"]),
+                         ("0003_c", [{"unit": "0002_b", "reason": "overlap", "detail": "0001_a"}]))
         self.release.set()
         await self.settled()
         self.launched.clear()
@@ -262,6 +292,7 @@ class Scripted(_Base):
 
         self.service.board = slow_board
         self.add("0001_a", "spec")
+        self.listed()
         passing = asyncio.get_running_loop().create_task(self.service._autopilot_pass(self.key))
         await reading.wait()
         self.service.set_autopilot(self.ws, "autopilot", False)
@@ -272,6 +303,7 @@ class Scripted(_Base):
 
     async def test_turned_off_before_a_launch_runs_starts_nothing(self):
         self.add("0001_a", "spec")
+        self.listed()
         await self.service._autopilot_pass(self.key)
         self.service.set_autopilot(self.ws, "autopilot", False)
         await asyncio.sleep(0.05)
@@ -339,6 +371,7 @@ class Scripted(_Base):
         self.assertNotIn((self.key, "0001_a"), self.service._active)
         self.assertEqual(self.service._autopilot_cap([], 100.0)["running"], need)
         self.add("0002_b", "spec")
+        self.listed()
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {"0002_b": "cap"}))
 
@@ -392,6 +425,119 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [])
         self.assertIn("127.0.0.1", self.service._autopilot_stops[self.key][""]["reason"])
+
+    # --- `0104`, the shortlist's order -----------------------------------------
+
+    def one_at_a_time(self):
+        self.service.set_autopilot(self.ws, "max_parallel", 1)
+        self.service.autopilot_stop(self.key)
+        self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
+
+    async def test_r1_the_last_shortlist_record_orders_the_pass(self):
+        self.one_at_a_time()
+        self.add("0001_a", "spec")
+        self.add("0002_b", "spec")
+        self.listed("0001_a", "0002_b")
+        self.listed("0002_b", "0001_a")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0002_b", "spec", "autopilot")])
+
+    async def test_r2_a_unit_off_the_shortlist_is_neither_asked_nor_started(self):
+        self.add("0001_a", "spec")
+        self.add("0002_b", "spec")
+        self.listed("0002_b")
+        await self.pass_()
+        self.assertEqual((self.launched, self.asked, self.stops()), ([("0002_b", "spec", "autopilot")], ["0002_b"], {}))
+
+    async def test_r3_no_shortlist_starts_nothing_and_says_so(self):
+        self.add("0001_a", "spec")
+        await self.service._autopilot_pass(self.key)
+        await asyncio.sleep(0.05)
+        self.assertEqual((self.launched, self.asked, self.stops()), ([], [], {"": "shortlist"}))
+        self.assertEqual(self.service._autopilot_stops[self.key][""]["reason"], autopilot.NO_SHORTLIST)
+        self.listed()
+        await self.service._autopilot_pass(self.key)
+        await asyncio.sleep(0.05)
+        self.assertEqual((self.launched, self.stops()), ([("0001_a", "spec", "autopilot")], {}))
+
+    async def test_r3_an_empty_shortlist_is_none(self):
+        self.add("0001_a", "spec")
+        self.listed()
+        _Base.listed(self)
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"": "shortlist"}))
+
+    async def test_r4_rank_not_number(self):
+        self.one_at_a_time()
+        self.add("0001_a", "spec")
+        self.add("0003_c", "spec")
+        self.listed("0003_c", "0001_a")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0003_c", "spec", "autopilot")])
+        [pick] = self.picks()
+        self.assertEqual((pick["rank"], pick["passed"]), (1, []))
+
+    async def test_r5_every_pass_asks_every_shortlisted_unit(self):
+        self.add("0001_a", "spec")
+        self.add("0002_b", "", action=autopilot.FINISHED)
+        self.add("0003_c", "", action="CI has not finished on #3: t — wait, then ask again", between_pr_and_ship=True)
+        await self.pass_()
+        self.assertEqual(self.asked, ["0001_a", "0002_b", "0003_c"])
+        await self.pass_()
+        self.assertEqual(len(self.asked), 6)
+        self.assertEqual(self.launched, [("0001_a", "spec", "autopilot")])
+
+    async def test_r6_a_pick_record_names_what_it_passed(self):
+        self.add("0001_a", "")
+        self.nexts["0001_a"]["hold"] = {"state": "paused", "reason": "later", "by": "Leif", "date": "2026-09-25"}
+        self.add("0002_b", "spec")
+        self.add("0003_c", "spec")
+        self.listed("0001_a", "0002_b", "0003_c")
+        await self.pass_()
+        second, third = self.picks()
+        self.assertEqual(
+            (second["unit"], second["stage"], second["rank"], second["passed"]),
+            ("0002_b", "spec", 2, [{"unit": "0001_a", "reason": "held", "detail": "paused"}]),
+        )
+        self.assertEqual((third["unit"], third["pass"]), ("0003_c", second["pass"]))
+        self.assertEqual(third["passed"], second["passed"])
+        self.assertEqual(second["shortlist"]["units"], ["0001_a", "0002_b", "0003_c"])
+        self.assertEqual(second["shortlist"]["n"], 1)
+        self.assertTrue(second["shortlist"]["at"])
+        self.assertEqual(self.stops(), {})
+
+    async def test_r6_no_record_no_start(self):
+        self.add("0001_a", "spec")
+        self.add("0002_b", "spec")
+        append = Journal.append
+
+        def refusing(journal, record, timeout=None):
+            if record.get("kind") == "autopilot-pick":
+                raise Busy("the run log is busy")
+            return append(journal, record, timeout)
+
+        self.listed()
+        with mock.patch.object(Journal, "append", refusing):
+            await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"": "f"}))
+        self.assertIn("could not record", self.service._autopilot_stops[self.key][""]["reason"])
+
+    async def test_r7_a_held_unit_is_no_candidate(self):
+        """And a shortlisted unit whose gate is closed is still not started."""
+        self.add("0001_a", "")
+        self.nexts["0001_a"]["hold"] = {"state": "dropped", "reason": "no", "by": "Leif", "date": "2026-09-25"}
+        await self.pass_()
+        self.assertEqual((self.launched, self.picks(), self.stops()), ([], [], {}))
+
+        async def refused(cwd, unit, stage, started_by="person"):
+            raise Invalid("blocked: plan.md is draft")
+            yield  # pragma: no cover
+
+        self.service.run_step = refused
+        self.add("0002_b", "impl", plan="- `a/b.py`")
+        self.listed()
+        await self.pass_()
+        self.assertEqual(self.stops(), {"0002_b": "f"})
 
 
 class ResumedAtStartUp(unittest.TestCase):

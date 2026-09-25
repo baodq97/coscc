@@ -39,6 +39,10 @@ runs on `0004_finished` (`seed_runs`), so every anomaly `/cost` knows has a row,
 plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
 visible text as `<address slug>-<W>x<H>.txt`.
 
+Since `0104` the autopilot is on for `proj` and the run log holds no `shortlist`, so `/board`
+shows its strip with one *No shortlist* stop and it starts nothing. **Add a shortlist to the
+fixture and the app under the camera starts real steps**, sessions that spend quota.
+
 For example `/board`, `/settings`, or `/unit?ws=proj&id=0002_open-question&tab=questions`
 (`tab` is one of `coscc/place.py`'s `TABS`, lowercase; any other value opens `overview`).
 The fixture's paths live under `/tmp/`, so a screen that shows the workspace's path today
@@ -414,6 +418,11 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                     seed_runs(work, data_dir, proj)
                 except RuntimeError as e:
                     print(str(e), file=sys.stderr)
+                    return EXIT_BROKEN
+                # `0104`: the autopilot on, and no shortlist, so it starts nothing and says so.
+                on = api.post("/api/settings/autopilot", json={"cwd": str(proj), "name": "autopilot", "value": True})
+                if on.status_code != 200:
+                    print(f"could not turn the autopilot on: {on.text}", file=sys.stderr)
                     return EXIT_BROKEN
             seed_run(work, data_dir, proj)
             for address in args.addresses:

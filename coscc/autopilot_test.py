@@ -1,13 +1,20 @@
-"""`0043`. The autopilot's decisions, with no session, no `gh` and no run log on disk."""
+"""`0043`. The autopilot's decisions, with no session, no `gh` and no run log on disk — but for
+`VerifyScript`, which writes one to a temporary directory for `scripts/verify_0104.py`."""
 
+import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from coscc import autopilot as ap
+from coscc.journal import Journal
 from coscc.policy import GRANTS, NOVEL_CEILINGS
 
 COS_MJS = Path(__file__).resolve().parent.parent / ".claude" / "scripts" / "cos.mjs"
+SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
 
 
@@ -135,7 +142,7 @@ class TheDaysMoney(unittest.TestCase):
         ]
         estimated = ap.spent_on(rows, ap.today(NOW))["estimated"]
         self.assertEqual(estimated, 48.0)
-        spec = {"unit": "0010_a", "stage": "spec", "files": None, "need": 4.0}
+        spec = {"unit": "0010_a", "stage": "spec", "files": None, "need": 4.0, "rank": 1}
         got = ap.pick([spec], [], 4, 80.0 - (20.0 + estimated) - 0.0)
         self.assertEqual((got["chosen"], got["capped"]), ([spec], []))
         got = ap.pick([spec], [], 4, 80.0 - (30.0 + estimated) - 0.0)
@@ -188,12 +195,15 @@ class TheDaysMoney(unittest.TestCase):
 
 
 class Scheduling(unittest.TestCase):
-    def c(self, unit, stage, files=None, need=1.0):
-        return {"unit": unit, "stage": stage, "files": files, "need": need}
+    def c(self, unit, stage, files=None, need=1.0, rank=None):
+        return {"unit": unit, "stage": stage, "files": files, "need": need,
+                "rank": ap.unit_number(unit) if rank is None else rank}
 
-    def test_lowest_unit_first_up_to_max_parallel(self):
-        got = ap.pick([self.c("0012_c", "spec"), self.c("0010_a", "spec"), self.c("0011_b", "pr")], [], 2, 100.0)
-        self.assertEqual([c["unit"] for c in got["chosen"]], ["0010_a", "0011_b"])
+    def test_highest_rank_first_up_to_max_parallel(self):
+        got = ap.pick([self.c("0012_c", "spec", rank=1), self.c("0010_a", "spec", rank=3),
+                       self.c("0011_b", "pr", rank=2)], [], 2, 100.0)
+        self.assertEqual([c["unit"] for c in got["chosen"]], ["0012_c", "0011_b"])
+        self.assertEqual(got["held"], {})
 
     def test_running_steps_count_person_ones_included(self):
         got = ap.pick([self.c("0010_a", "spec")], [{"unit": "0001_x", "stage": "review", "files": None}], 1, 100.0)
@@ -201,7 +211,7 @@ class Scheduling(unittest.TestCase):
 
     def test_a_unit_already_running_is_skipped(self):
         got = ap.pick([self.c("0010_a", "review")], [{"unit": "0010_a", "stage": "pr", "files": None}], 4, 100.0)
-        self.assertEqual(got["chosen"], [])
+        self.assertEqual((got["chosen"], got["held"]), ([], {"0010_a": ("running", "pr")}))
 
     def test_code_stages_with_overlapping_files_run_one_after_the_other(self):
         a = self.c("0010_a", "impl", {"coscc/x.py", "coscc/y.py"})
@@ -209,6 +219,7 @@ class Scheduling(unittest.TestCase):
         c = self.c("0012_c", "integrate", {"coscc/z.py"})
         got = ap.pick([a, b, c], [], 4, 100.0)
         self.assertEqual([x["unit"] for x in got["chosen"]], ["0010_a", "0012_c"])
+        self.assertEqual(got["held"], {"0011_b": ("overlap", "0010_a")})
 
     def test_unknown_files_overlap_with_everything(self):
         got = ap.pick([self.c("0010_a", "impl", None), self.c("0011_b", "impl", {"a/b.py"})], [], 4, 100.0)
@@ -223,8 +234,9 @@ class Scheduling(unittest.TestCase):
     def test_one_ship_in_the_workspace(self):
         got = ap.pick([self.c("0010_a", "ship"), self.c("0011_b", "ship")], [], 4, 100.0)
         self.assertEqual([x["unit"] for x in got["chosen"]], ["0010_a"])
+        self.assertEqual(got["held"], {"0011_b": ("ship-busy", "0010_a")})
         got = ap.pick([self.c("0011_b", "ship")], [{"unit": "0010_a", "stage": "ship", "files": None}], 4, 100.0)
-        self.assertEqual(got["chosen"], [])
+        self.assertEqual((got["chosen"], got["held"]), ([], {"0011_b": ("ship-busy", "0010_a")}))
 
     def test_the_cap_holds_back_what_does_not_fit(self):
         got = ap.pick([self.c("0010_a", "impl", {"a"}, 16.0), self.c("0011_b", "review", None, 2.0)], [], 4, 3.0)
@@ -318,6 +330,170 @@ class MeasuredDays(unittest.TestCase):
         )
         self.assertFalse(ap.measure_days(rows, "w", one, one, 19.99)[0]["within"])
         self.assertEqual(first["utc_to"], second["utc_from"])
+
+
+class ReasonsAndPassed(unittest.TestCase):
+    """`0104` R6: a reason is read off what the pass had, and never made up."""
+
+    def test_a_candidate_has_no_reason(self):
+        self.assertIsNone(ap.reason_for(nxt("spec", "write-spec"), "spec", None))
+
+    def test_stop(self):
+        stop = {"kind": "a", "reason": "open questions: spec.md question 2"}
+        self.assertEqual(ap.reason_for(nxt("spec"), "spec", stop), ("stop", "a: open questions: spec.md question 2"))
+
+    def test_held(self):
+        hold = {"state": "paused", "reason": "later", "by": "Leif", "date": "2026-09-25"}
+        self.assertEqual(ap.reason_for(nxt(hold=hold), "", None), ("held", "paused"))
+
+    def test_finished(self):
+        self.assertEqual(ap.reason_for(nxt(action=ap.FINISHED), "", None), ("finished", ap.FINISHED))
+
+    def test_closed(self):
+        said = ap.CLOSED + "spec rejected"
+        self.assertEqual(ap.reason_for(nxt(action=said), "", None), ("closed", said))
+
+    def test_ci(self):
+        said = ap.CI_PENDING + "3: t — wait, then ask again"
+        self.assertEqual(ap.reason_for(nxt(action=said), "", None), ("ci", said))
+
+    def test_nothing_to_read_it_off_raises(self):
+        with self.assertRaises(ValueError):
+            ap.reason_for(nxt(action="write-something"), "", None)
+
+    def test_passed_skips_what_was_chosen_before_it_in_the_pass(self):
+        reasons = {"0003_c": ("running", "impl")}
+        got = ap.passed_for(["0001_a", "0003_c", "0002_b"], ["0001_a", "0002_b"], reasons)
+        self.assertEqual(got, [[], [{"unit": "0003_c", "reason": "running", "detail": "impl"}]])
+
+    def test_passed_keeps_the_shortlists_order(self):
+        reasons = {"0005_e": ("held", "paused"), "0001_a": ("ci", "CI"), "0004_d": ("missing", "")}
+        [got] = ap.passed_for(["0005_e", "0001_a", "0004_d", "0002_b"], ["0002_b"], reasons)
+        self.assertEqual([p["unit"] for p in got], ["0005_e", "0001_a", "0004_d"])
+
+    def test_passed_raises_on_a_unit_with_no_reason(self):
+        with self.assertRaises(ValueError):
+            ap.passed_for(["0001_a", "0002_b"], ["0002_b"], {})
+
+
+def pick_row(unit, stage, units, pass_="p1", passed=(), delta=0, workspace="w"):
+    return {"kind": "autopilot-pick", "workspace": workspace, "unit": unit, "stage": stage, "pass": pass_,
+            "rank": units.index(unit) + 1 if unit in units else 0,
+            "shortlist": {"n": 1, "at": at(), "units": list(units)}, "passed": list(passed),
+            "at": at(timedelta(minutes=delta))}
+
+
+def step_row(unit, stage, delta=0, kind="start", **kw):
+    return {"kind": kind, "workspace": "w", "unit": unit, "stage": stage, "started_by": "autopilot",
+            "at": at(timedelta(minutes=delta)), **kw}
+
+
+def clean_log(steps: int) -> list[dict]:
+    """`steps` autopilot steps, each picked first: three units in shortlist order, one mechanical
+    integration among them, the one after the first passing over it as `running`."""
+    units = ["0003_c", "0001_a", "0002_b"]
+    rows: list[dict] = []
+    for i in range(steps):
+        unit = units[i % 3]
+        passed = [{"unit": u, "reason": "running", "detail": "spec"} for u in units[:units.index(unit)]]
+        if i == 4:
+            rows += [pick_row(unit, "integrate", units, f"p{i}", passed, i),
+                     step_row(unit, "integrate", i, kind="integration", mode="mechanical")]
+        else:
+            rows += [pick_row(unit, "spec", units, f"p{i}", passed, i), step_row(unit, "spec", i)]
+    return rows
+
+
+class MeasuringOrder(unittest.TestCase):
+    """`0104` R8, on sample run logs."""
+
+    def until(self):
+        return ap.today(NOW + timedelta(days=1))
+
+    def test_v1_a_pick_off_its_shortlist(self):
+        got = ap.measure_order([pick_row("0009_z", "spec", ["0001_a"]), step_row("0009_z", "spec", 1)], "w", self.until())
+        self.assertEqual([(v["v"], v["unit"]) for v in got["violations"]], [("V1", "0009_z")])
+
+    def test_v2_passed_over_with_no_reason(self):
+        rows = [pick_row("0002_b", "spec", ["0001_a", "0002_b"]), step_row("0002_b", "spec", 1)]
+        got = ap.measure_order(rows, "w", self.until())
+        self.assertEqual([(v["v"], v["unit"]) for v in got["violations"]], [("V2", "0002_b")])
+        self.assertIn("0001_a", got["violations"][0]["why"])
+
+    def test_v2_passed_over_for_a_reason_not_on_the_list(self):
+        passed = [{"unit": "0001_a", "reason": "busy", "detail": ""}]
+        rows = [pick_row("0002_b", "spec", ["0001_a", "0002_b"], passed=passed), step_row("0002_b", "spec", 1)]
+        got = ap.measure_order(rows, "w", self.until())
+        self.assertEqual([v["v"] for v in got["violations"]], ["V2"])
+
+    def test_v2_one_chosen_earlier_in_the_pass_is_not_passed_over(self):
+        units = ["0001_a", "0002_b"]
+        rows = [pick_row("0001_a", "spec", units), pick_row("0002_b", "spec", units),
+                step_row("0001_a", "spec", 1), step_row("0002_b", "spec", 1)]
+        self.assertEqual(ap.measure_order(rows, "w", self.until())["violations"], [])
+        rows[1]["pass"] = "p2"
+        self.assertEqual([v["v"] for v in ap.measure_order(rows, "w", self.until())["violations"]], ["V2"])
+
+    def test_v2_reads_only_a_units_first_pick(self):
+        units = ["0001_a", "0002_b"]
+        passed = [{"unit": "0001_a", "reason": "held", "detail": "paused"}]
+        rows = [pick_row("0002_b", "spec", units, "p1", passed), step_row("0002_b", "spec", 1),
+                pick_row("0002_b", "plan", units, "p2", (), 2), step_row("0002_b", "plan", 3)]
+        self.assertEqual(ap.measure_order(rows, "w", self.until())["violations"], [])
+
+    def test_v3_a_step_with_no_pick_since_the_last_one(self):
+        rows = [pick_row("0001_a", "spec", ["0001_a"]), step_row("0001_a", "spec", 1), step_row("0001_a", "plan", 2)]
+        got = ap.measure_order(rows, "w", self.until())
+        self.assertEqual([(v["v"], v["stage"]) for v in got["violations"]], [("V3", "plan")])
+        rows = [pick_row("0001_a", "spec", ["0001_a"]), step_row("0001_a", "spec", 1), step_row("0001_a", "spec", 2)]
+        self.assertEqual([v["v"] for v in ap.measure_order(rows, "w", self.until())["violations"]], ["V3"])
+
+    def test_nine_clean_steps(self):
+        got = ap.measure_order(clean_log(9), "w", self.until())
+        self.assertEqual((got["steps"], got["violations"]), (9, []))
+
+    def test_ten_clean_steps(self):
+        got = ap.measure_order(clean_log(10), "w", self.until())
+        self.assertEqual((got["steps"], got["violations"], got["since"]), (10, [], clean_log(1)[0]["at"]))
+
+    def test_the_window_opens_at_the_first_pick_and_closes_after_until(self):
+        before = step_row("0001_a", "spec", -5)
+        after = step_row("0001_a", "plan", 60 * 24 * 3)
+        agent = step_row("0001_a", "integrate", 2, kind="integration", mode="agent")
+        rows = [before] + clean_log(3) + [agent, after]
+        got = ap.measure_order(rows, "w", self.until())
+        self.assertEqual((got["steps"], got["violations"]), (3, []))
+        self.assertEqual(ap.measure_order(clean_log(3), "other", self.until())["steps"], 0)
+
+
+class VerifyScript(unittest.TestCase):
+    """`scripts/verify_0104.py`'s exit codes, on a run log written through `Journal`."""
+
+    def run_script(self, rows):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "data"
+            if rows is not None:
+                log = Journal(str(Path(tmp) / "work"), str(data))
+                for r in rows:
+                    log.append(r)
+            env = {**os.environ, "COS_DATA_DIR": str(data)}
+            return subprocess.run(
+                [sys.executable, str(SCRIPTS / "verify_0104.py"), "--workspace", "w",
+                 "--until", ap.today(NOW + timedelta(days=1))],
+                env=env, capture_output=True, text=True, timeout=60,
+            )
+
+    def test_nine_clean_steps_is_1(self):
+        done = self.run_script(clean_log(9))
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("9 of 10 steps needed, 0 violations", done.stdout)
+
+    def test_ten_clean_steps_is_0(self):
+        done = self.run_script(clean_log(10))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_no_cos_db_is_2(self):
+        self.assertEqual(self.run_script(None).returncode, 2)
 
 
 if __name__ == "__main__":
