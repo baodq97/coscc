@@ -36,6 +36,12 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or 
     the same unit out in this process only.
   - The whole store goes into one prompt, never cut; a store past the $1.00 ceiling is a
     failed `end` row with the money spent and nothing written (C7).
+  - With the workspace's autopilot on and the unit on its shortlist, a Jera answer that
+    clears the last open question lets the autopilot's next pass, at most
+    `autopilot.POLL_SECONDS` (300 s) later, start the next stage on it unpressed.
+    `precedent` does not call `_autopilot_nudge`, which only delays that. The autopilot
+    reads past Jera's own `start`/`end` rows (`autopilot.is_step`), so a Jera run neither
+    lifts nor sets the stop on a failed step.
 - **Re-running a prose stage keeps `## Answers` byte for byte; a reply's own attempt at
   one is dropped, silently.** Since `0025` the runner (`coscc/runner.py`: `answers_section`,
   `strip_answers`, `with_answers`) reads the section already on disk right before it
