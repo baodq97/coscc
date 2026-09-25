@@ -526,6 +526,9 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 # written before `0073`, or not from the board, has neither: None.
                 "run": item.get("run"),
                 "events_lost": None,
+                # `0093` R8. What state opened an `integrate` session. Any other stage, or an
+                # `integrate` started before `0093`, has none: None.
+                "integrate_state": item.get("integrate_state"),
             }
             rows.append(row)
             open_runs[stage] = row
