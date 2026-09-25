@@ -2048,3 +2048,69 @@ test('0083 R12: no standard asks git nothing more; a standard and no screen, one
   checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass', ['- F1 [open] x'])) }), 'ship', { probe: stuck.probe })
   assert.deepEqual(stuck.calls, [])
 })
+
+// --- `0085`: a review that ran out of turns -------------------------------------
+
+const incompleteRound = (n) =>
+  `## Round ${n}\n\nReviewed: ${SHA}. Verdict: incomplete.\n\n### Reviewed so far\n\n- a.py\n\n### Findings\n\n- F1 [open] a.py:3 — high — x\n\n### What was not reviewed\n\n- b.py\n`
+const reviewOfRounds = (status, rounds) =>
+  branched({ ...CHAIN, 'review.md': reviewArt(status, `# Review: x\nStatus: ${status}.\n\n${rounds.join('\n')}`) })
+const cr = (n) => round(n, 'changes-requested', ['- F1 [open] x'])
+
+test('0085 R8 a: an incomplete round is read as one, with its verdict', () => {
+  const { rounds } = parseReview(`# Review\nStatus: draft.\n\n${incompleteRound(1)}`)
+  assert.deepEqual(rounds.map((r) => [r.n, r.verdict, r.reviewed]), [[1, 'incomplete', SHA]])
+  assert.deepEqual(rounds[0].findings.map((f) => [f.id, f.label]), [['F1', 'open']])
+})
+
+test('0085 R8 b: draft over an incomplete round offers review on green, impl on red', () => {
+  const u = reviewOfRounds('draft', [cr(1), incompleteRound(2)])
+  const green = nextStep(u, { probe: greenProbe() })
+  assert.equal(green.stage, 'review')
+  assert.match(green.action, /review round 2 is incomplete — write-review again; CI is green: write-review/)
+  assert.equal(nextStep(u, { probe: greenProbe([{ name: 'tests', bucket: 'fail' }]) }).stage, 'impl')
+  assert.equal(nextStep(u, { probe: greenProbe([{ name: 'tests', bucket: 'pending' }]) }).stage, '')
+  // No probe: nothing, and it says --repo, as every other CI-bound answer does.
+  const bare = nextStep(u)
+  assert.equal(bare.stage, '')
+  assert.match(bare.action, /pass --repo/)
+  assert.doesNotMatch(bare.action, /finish and accept/)
+  assert.equal(checkGate(u, 'review', { probe: greenProbe() }).ok, true)
+  // The ship gate stays closed on it: the draft header closes it before any round is read.
+  const ship = checkGate(u, 'ship', { probe: greenProbe() })
+  assert.equal(ship.ok, false)
+  assert.match(ship.need.join('\n'), /review\.md is "draft", not accepted/)
+  // Under a header that would reach the rounds, the verdict itself closes it.
+  const accepted = reviewOfRounds('accepted', [incompleteRound(1)])
+  assert.match(checkGate(accepted, 'ship', { probe: greenProbe() }).need.join('\n'), /verdict "incomplete", not pass/)
+})
+
+test('0085 R9 c: an incomplete round never changes how many rounds are used', () => {
+  const used = (rounds, limit = 3) => nextStep(reviewOfRounds('changes-requested', rounds), { limit }).action
+  assert.match(used([cr(1), cr(2)]), /\(2 of 3 rounds used\)/)
+  assert.match(used([cr(1), incompleteRound(2), cr(3)]), /\(2 of 3 rounds used\)/)
+  assert.match(used([cr(1), cr(2)], 2), /needs a person/)
+  assert.match(used([cr(1), incompleteRound(2), cr(3)], 2), /needs a person/)
+  // While the incomplete round is last, the rounds before it are held to the limit too.
+  assert.equal(nextStep(reviewOfRounds('draft', [cr(1), incompleteRound(2)]), { limit: 2, probe: greenProbe() }).stage, 'review')
+  const spent = reviewOfRounds('draft', [cr(1), cr(2), incompleteRound(3)])
+  assert.match(nextStep(spent, { limit: 2, probe: greenProbe() }).action, /needs a person/)
+  assert.equal(checkGate(spent, 'review', { limit: 2, probe: greenProbe() }).ok, false)
+  // The floor survives the draft an incomplete round leaves: a full round with no readable
+  // verdict before it still counts as one, as it would under `changes-requested`.
+  const unread = `## Round 1\n\nReviewed: somewhere. Verdict: maybe.\n\n### Findings\n\n- F1 [open] x\n`
+  assert.match(nextStep(reviewOfRounds('changes-requested', [unread]), { limit: 1 }).action, /needs a person/)
+  assert.match(nextStep(reviewOfRounds('draft', [unread, incompleteRound(2)]), { limit: 1 }).action, /needs a person/)
+  assert.equal(nextStep(reviewOfRounds('draft', [incompleteRound(1)]), { limit: 1, probe: greenProbe() }).stage, 'review')
+})
+
+test('0085 R8 d: a draft whose last round is not incomplete is still finished by hand', () => {
+  for (const verdict of ['changes-requested', 'pass']) {
+    const n = nextStep(reviewOfRounds('draft', [round(1, verdict, ['- F1 [open] x'])]), { probe: greenProbe() })
+    assert.equal(n.stage, '')
+    assert.match(n.action, /finish and accept review\.md/)
+  }
+  assert.match(nextStep(reviewOfRounds('draft', [])).action, /finish and accept review\.md/)
+  // An incomplete round under any other header is not the closing turn's.
+  assert.doesNotMatch(nextStep(reviewOfRounds('changes-requested', [cr(1), incompleteRound(2)]), { probe: greenProbe() }).action, /is incomplete/)
+})
