@@ -111,23 +111,35 @@ class TheDaysMoney(unittest.TestCase):
             {"kind": "end", "at": at(-timedelta(minutes=5)), "cost_usd": 2.0, "workspace": "w2"},
             {"kind": "start", "at": at(), "workspace": "w1"},
         ]
-        self.assertEqual(ap.spent_today(rows, NOW), (3.5, False))
+        self.assertEqual(ap.spent_today(rows, NOW), {"known": 3.5, "estimated": 0.0, "estimated_count": 0})
 
-    def test_an_end_without_cost_is_the_cap_reached(self):
-        rows = [{"kind": "end", "at": at(), "cost_usd": 1.0}, {"kind": "end", "at": at()}]
-        spent, unknown = ap.spent_today(rows, NOW)
-        self.assertTrue(unknown)
-        self.assertFalse(ap.cap_allows(spent, unknown, 0.0, 0.0, 50.0))
+    def test_an_end_without_cost_is_not_the_cap_reached(self):
+        rows = [{"kind": "end", "at": at(), "cost_usd": 1.0}, {"kind": "end", "at": at(), "stage": "spec"}]
+        got = ap.spent_today(rows, NOW)
+        self.assertEqual((got["known"], got["estimated"]), (1.0, ap.estimate("spec")))
+        self.assertTrue(ap.cap_allows(got["known"] + got["estimated"], 0.0, 0.0, 50.0))
 
     def test_a_new_day_by_the_machines_clock_starts_again(self):
         local_midnight = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
         yesterday = (local_midnight - timedelta(seconds=1)).astimezone(timezone.utc).isoformat()
         rows = [{"kind": "end", "at": yesterday, "cost_usd": 49.0}, {"kind": "end", "at": yesterday}]
-        self.assertEqual(ap.spent_today(rows, NOW), (0.0, False))
+        self.assertEqual(ap.spent_today(rows, NOW), {"known": 0.0, "estimated": 0.0, "estimated_count": 0})
 
     def test_the_cap_fits_or_does_not(self):
-        self.assertTrue(ap.cap_allows(40.0, False, 2.0, 8.0, 50.0))
-        self.assertFalse(ap.cap_allows(40.0, False, 2.0, 8.01, 50.0))
+        self.assertTrue(ap.cap_allows(40.0, 2.0, 8.0, 50.0))
+        self.assertFalse(ap.cap_allows(40.0, 2.0, 8.01, 50.0))
+
+    def test_a_day_like_2026_09_25_fits_or_is_capped(self):
+        rows = [{"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"}] + [
+            {"kind": "end", "at": at(), "stage": "integrate", "outcome": "done"} for _ in range(4)
+        ]
+        estimated = ap.spent_on(rows, ap.today(NOW))["estimated"]
+        self.assertEqual(estimated, 48.0)
+        spec = {"unit": "0010_a", "stage": "spec", "files": None, "need": 4.0}
+        got = ap.pick([spec], [], 4, 80.0 - (20.0 + estimated) - 0.0)
+        self.assertEqual((got["chosen"], got["capped"]), ([spec], []))
+        got = ap.pick([spec], [], 4, 80.0 - (30.0 + estimated) - 0.0)
+        self.assertEqual((got["chosen"], got["capped"]), ([], [spec]))
 
     def test_a_reservation_is_the_largest_budget_a_label_can_give(self):
         self.assertEqual(ap.reservation("impl"), 16.0)
@@ -218,7 +230,7 @@ class Scheduling(unittest.TestCase):
         got = ap.pick([self.c("0010_a", "impl", {"a"}, 16.0), self.c("0011_b", "review", None, 2.0)], [], 4, 3.0)
         self.assertEqual([x["unit"] for x in got["chosen"]], ["0011_b"])
         self.assertEqual([x["unit"] for x in got["capped"]], ["0010_a"])
-        got = ap.pick([self.c("0011_b", "review", None, 2.0)], [], 4, None)
+        got = ap.pick([self.c("0011_b", "review", None, 2.0)], [], 4, -1.0)
         self.assertEqual((got["chosen"], len(got["capped"])), ([], 1))
 
     def test_files_of_keeps_paths_only(self):

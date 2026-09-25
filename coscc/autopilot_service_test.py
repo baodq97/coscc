@@ -342,14 +342,33 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {"0002_b": "cap"}))
 
-    async def test_an_unknown_cost_is_said_in_plain_words(self):
+    async def test_an_unknown_cost_is_estimated_not_the_cap_reached(self):
         Journal(self.config.working_dir, self.config.data_dir).finished(self.key, "0009_z", "spec", "done")
         self.add("0001_a", "spec")
         await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "spec", "autopilot")])
+        self.assertNotIn("0001_a", self.stops())
+
+    async def test_a_cap_stop_says_the_estimate(self):
+        Journal(self.config.working_dir, self.config.data_dir).finished(self.key, "0009_z", "spec", "done")
+        self.service.set_autopilot(
+            self.ws, "daily_cap_usd", autopilot.estimate("spec") + autopilot.reservation("spec") - 0.01,
+        )
+        self.add("0001_a", "spec")
+        await self.pass_()
         stop = self.service._autopilot_stops[self.key]["0001_a"]
-        self.assertEqual(stop["kind"], "cap")
-        self.assertTrue(stop["reason"].startswith("a cost is unknown today"), stop["reason"])
+        self.assertEqual((self.launched, stop["kind"]), ([], "cap"))
+        self.assertIn("estimated", stop["reason"])
         self.assertNotIn("cost_usd", stop["reason"])
+        self.assertNotIn("counts as reached", stop["reason"])
+
+    async def test_the_cap_block_carries_the_estimate(self):
+        log = Journal(self.config.working_dir, self.config.data_dir)
+        log.finished(self.key, "0009_z", "spec", "done")
+        cap = self.service._autopilot_cap(log.records(), 80.0)
+        self.assertEqual(set(cap), {"limit", "spent", "known", "estimated", "estimated_count", "running", "day"})
+        self.assertEqual(cap["spent"], round(cap["known"] + cap["estimated"], 2))
+        self.assertEqual((cap["estimated"], cap["estimated_count"]), (autopilot.estimate("spec"), 1))
 
     async def test_ci_pending_is_quiet(self):
         self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", between_pr_and_ship=True)

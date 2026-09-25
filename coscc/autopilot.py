@@ -147,20 +147,10 @@ def today(now: datetime) -> str:
     return spend.local_day(now.isoformat())
 
 
-def spent_today(records: Iterable[dict[str, Any]], now: datetime) -> tuple[float, bool]:
-    """`(usd, unknown)`: every `end` of the machine's day, whoever started it, every
-    workspace. One `end` with no `cost_usd` makes `unknown` true, and `unknown` is the cap
-    reached (`intent.md ## Answers`, câu 10)."""
-    day = today(now)
-    usd, unknown = 0.0, False
-    for r in records:
-        if r.get("kind") != "end" or spend.local_day(r.get("at")) != day:
-            continue
-        if r.get("cost_usd") is None:
-            unknown = True
-        else:
-            usd += float(r["cost_usd"])
-    return round(usd, 6), unknown
+def spent_today(records: Iterable[dict[str, Any]], now: datetime) -> dict[str, Any]:
+    """`spent_on` the machine's day of `now`. An `end` with no `cost_usd` is counted at its
+    estimate, not as the cap reached (`0105`)."""
+    return spent_on(records, today(now))
 
 
 def reservation(stage: str) -> float:
@@ -232,9 +222,10 @@ def reserved(
     return total
 
 
-def cap_allows(spent: float, unknown: bool, running: float, need: float, limit: float) -> bool:
-    """R7: spent + running + this step's reservation must fit under the limit."""
-    return not unknown and spent + running + need <= limit
+def cap_allows(spent: float, running: float, need: float, limit: float) -> bool:
+    """R7: spent (known and estimated) + running + this step's reservation must fit under
+    the limit."""
+    return spent + running + need <= limit
 
 
 # --- R8, which of the candidates run now --------------------------------------
@@ -264,13 +255,12 @@ def pick(
     candidates: Iterable[dict[str, Any]],
     running: Iterable[dict[str, Any]],
     max_parallel: int,
-    room: float | None,
+    room: float,
 ) -> dict[str, list[dict[str, Any]]]:
     """R8 a–f and R7 over the steps that could start, lowest unit number first.
 
     Each candidate and each running entry is `{unit, stage, files}`, and a candidate also
-    carries `need`, its reservation. `room` is the money left under the cap, `None` when it
-    is unknown. Returns `{"chosen": [...], "capped": [...]}`: what to start, and what the
+    carries `need`, its reservation. `room` is the money left under the cap. Returns `{"chosen": [...], "capped": [...]}`: what to start, and what the
     cap alone held back. What another rule held back is in neither; it waits its turn.
     """
     running = list(running)
@@ -290,7 +280,7 @@ def pick(
         ):
             continue
         need = float(c.get("need") or 0.0)
-        if room is None or need > room:
+        if need > room:
             capped.append(c)
             continue
         room -= need
