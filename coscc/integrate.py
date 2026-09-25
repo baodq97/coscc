@@ -369,10 +369,12 @@ def build_prompt(
     origin_sha: str,
     rel: dict[str, list[dict]],
     units_root: Path,
-    own_artifacts: dict[str, str],
+    own_paths: dict[str, Path],
     refused_update: dict | None = None,
 ) -> str:
     """Gebo's prompt: its rules, what is wrong, where to start, and whose intent to read.
+
+    `own_paths`: the unit's own artifacts that exist, by name, each an absolute path.
 
     `refused_update` (`0052`): the `{code, said}` of the app's own `update-branch`, when
     that refusal is why this session was opened.
@@ -416,9 +418,12 @@ def build_prompt(
         for name in names:
             for f in ("intent.md", "spec.md", "plan.md"):
                 parts.append(f"- {units_root / name / f}")
+    # `0094` R14: named, not carried. `read_paths` already lets Gebo `Read` its own unit's folder.
     parts.append("\n# This unit's own artifacts\n")
-    for name, text in own_artifacts.items():
-        parts.append(f"## {name}\n\n{text.strip()}\n")
+    for path in own_paths.values():
+        parts.append(f"- {path}")
+    if own_paths:
+        parts.append("\nRead one when resolving a conflict needs what the unit meant.")
     return "\n".join(parts) + "\n"
 
 

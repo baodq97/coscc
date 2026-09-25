@@ -234,17 +234,46 @@ class ThePrompt(unittest.TestCase):
                "open": [{"unit": "0036_b", "files": None}]}
         text = ig.build_prompt(skill="RULES", unit="0035_x", branch="feat/x", pr=7, state="conflicting",
                                reason="r", head_before=HEAD, origin_sha=MAIN, rel=rel,
-                               units_root=Path("/u"), own_artifacts={"intent.md": "INTENT"})
+                               units_root=Path("/u"),
+                               own_paths={"intent.md": Path("/u/0035_x/intent.md")})
         for want in ("RULES", f"--force-with-lease=feat/x:{HEAD}", MAIN, "0030_a", "no local commit",
-                     "/u/0030_a/plan.md", "INTENT"):
+                     "/u/0030_a/plan.md", "- /u/0035_x/intent.md"):
             self.assertIn(want, text)
         self.assertNotIn("The mechanical rebase was refused", text)
+
+    def test_every_own_artifact_it_names_can_be_read(self):
+        """`0094` R15: Gebo is handed its unit's artifacts by path, so its grant must read them."""
+        from coscc.policy import decide, grant_for
+
+        with tempfile.TemporaryDirectory() as d:
+            units_root = Path(d) / "units"
+            own = units_root / "0035_x"
+            own.mkdir(parents=True)
+            tree = Path(d) / "tree"
+            tree.mkdir()
+            paths = {}
+            for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
+                (own / name).write_text("Status: accepted.\nBODY-" + name, encoding="utf-8")
+                paths[name] = own.resolve() / name
+            rel = {"merged": [], "open": []}
+            text = ig.build_prompt(skill="RULES", unit="0035_x", branch="feat/x", pr=7, state="conflicting",
+                                   reason="r", head_before=HEAD, origin_sha=MAIN, rel=rel,
+                                   units_root=units_root, own_paths=paths)
+            self.assertNotIn("BODY-", text)
+            named = [line[2:] for line in text.split("# This unit's own artifacts\n")[1].splitlines()
+                     if line.startswith("- ")]
+            self.assertEqual(named, [str(p) for p in paths.values()])
+            for p in named:
+                self.assertEqual(
+                    decide(grant_for("integrate"), "Read", {"file_path": p}, str(tree), None,
+                           read_also=ig.read_paths(units_root, "0035_x", rel)),
+                    "", p)
 
     def test_a_refused_update_carries_its_code_and_words(self):
         """`0052`: the exit code and gh's words reach Gebo, and so does what they cannot say."""
         text = ig.build_prompt(skill="RULES", unit="0035_x", branch="feat/x", pr=7, state="behind",
                                reason="r", head_before=HEAD, origin_sha=MAIN,
-                               rel={"merged": [], "open": []}, units_root=Path("/u"), own_artifacts={},
+                               rel={"merged": [], "open": []}, units_root=Path("/u"), own_paths={},
                                refused_update={"code": 1, "said": "gh: merge conflict"})
         for want in ("# The mechanical rebase was refused", "gh pr update-branch 7 --rebase",
                      "exited 1", "gh: merge conflict", "a login, the network, a permission"):

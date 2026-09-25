@@ -187,7 +187,32 @@ def _answers_block(directory: Path, artifact: str, repeat_content: bool) -> str 
     )
 
 
-def build_prompt(
+# `0094` R14. The stages whose prompt names the unit's artifacts by path instead of carrying
+# them, and the one artifact each still carries whole. Every one of them may `Read` the
+# unit's folder (`Runner.run` hands it to `decide` as `unit_dir`), which is R15's condition;
+# `coscc/runner_test.py` `EveryPathAPromptNamesCanBeRead` fails the day one cannot.
+_EMBED: dict[str, tuple[str, ...]] = {
+    "impl": ("plan.md",),
+    "implement": ("plan.md",),
+    "pr": (),
+    "ship": ("pr.md",),
+    "review": (),
+}
+_POINTING = frozenset(_EMBED)
+
+UNIT_FILES_ADVICE = (
+    "The files not embedded above are not in this prompt; Read one when your rules or your "
+    "task need it."
+)
+
+
+def build_prompt(*args: Any, **kwargs: Any) -> tuple[str, list[str]]:
+    """`compose_prompt` without `pointed`, for every caller written before `0094`."""
+    prompt, included, _ = compose_prompt(*args, **kwargs)
+    return prompt, included
+
+
+def compose_prompt(
     workspace: str | Path,
     directory: str | Path,
     unit: str,
@@ -204,22 +229,21 @@ def build_prompt(
     worktree: str = "",
     pr_note: str = "",
     ceilings: tuple[int, float] | None = None,
-) -> tuple[str, list[str]]:
-    """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
+) -> tuple[str, list[str], list[str]]:
+    """The prompt for one step, the artifacts that went into it whole (`spec.md` R4), and
+    the ones it names by path only (`0094` R16).
 
     The list is returned rather than inferred later because R4 is checked against it: if a
     step ran without the previous stage's artifact in the prompt, the record says so.
 
-    `directory` is handed in rather than worked out here. Until `0014` this module derived
-    it from `workspace`, and so did `coscc/board.py` and `coscc/service.py` — three copies
-    of one formula, which is the shape `0012` paid a unit for. `coscc/units.py` is the one
-    place that answers it now, and the two paths are no longer the same thing: the
-    artifacts live in the product's own store while `workspace` stays the repository the
-    work is done in, which is the whole of `0014` `spec.md` R2.
+    `directory` is handed in rather than worked out here. `coscc/units.py` is the one place
+    that answers it: the artifacts live in the product's own store while `workspace` stays
+    the repository the work is done in (`0014` `spec.md` R2).
     """
     directory = Path(directory)
     included: list[str] = []
     parts: list[str] = []
+    pointing = stage in _POINTING
 
     # First, and outside any `try`. `Runner.run` calls this before it touches the journal
     # and before `Sessions.stream` exists as a coroutine, so a `MissingRules` raised here
@@ -258,16 +282,19 @@ def build_prompt(
     if drift_note:
         parts.append(f"# The files main changed since the plan\n\n{drift_note}")
 
-    intent = _read(directory / "intent.md")
+    intent = "" if pointing else _read(directory / "intent.md")
     if intent:
         included.append("intent.md")
         parts.append(f"# The intent this work is authorised by\n\n{intent}")
 
     # The stage immediately before this one, whatever it is. Taken from the stage list the
-    # board was read with, so the order is not restated here.
+    # board was read with, so the order is not restated here. `0094` R14: a pointing stage
+    # carries only what `_EMBED` names, under the same heading.
     position = stages.index(stage) if stage in stages else -1
     for earlier in reversed(stages[:position]):
         name = f"{earlier}.md"
+        if pointing and name not in _EMBED[stage]:
+            continue
         text = _read(directory / name)
         if text and name not in included:
             included.append(name)
@@ -345,10 +372,15 @@ def build_prompt(
     #
     # Only while the review is `changes-requested`. A review that passed has nothing for
     # `impl` to act on, and one that rejected closed the unit.
+    #
+    # `0094` R14: the header and the findings still open in the last round, not every round
+    # the file holds; the whole of it is named by path in *The unit's files*.
+    review_path = directory.resolve() / "review.md"
     if stage in ("impl", "implement"):
         review = _read(directory / "review.md")
-        if review and _header_status(review) == "changes-requested" and "review.md" not in included:
-            included.append("review.md")
+        if review and _header_status(review) == "changes-requested" and "review-findings" not in included:
+            header, number, findings = open_findings(review)
+            included.append("review-findings")
             parts.append(
                 "# The review that sent this back\n\n"
                 "The last review asked for changes. Fix every finding marked `[open]` below "
@@ -356,36 +388,31 @@ def build_prompt(
                 "the branch, then record in impl.md which commit fixed which finding. The "
                 "next review is offered only once a fix is on the pull request, so a fix "
                 "left unpushed keeps this unit on impl.\n\n"
-                f"{review}"
+                "Below are the review's header line and the findings its last round"
+                + (f" (Round {number})" if number is not None else "")
+                + f" left open. The whole review, every round, is `{review_path}`.\n\n"
+                f"{header}\n\n{findings or '(no finding is left open)'}"
             )
 
     # `review.md` accumulates rounds, and the app writes it from the reply -- so writing
-    # it must not erase the rounds already there (`merge_review`). Found 2026-09-23 on
-    # `0015`'s second review: round 1 and its five findings vanished from the file, and
-    # with them the count `cos.mjs` reads to stop at N rounds and ask for a person. A loop
-    # whose counter resets every run never reaches its limit.
-    # A review is asked to check what was measured, and `impl.md` is where that is written.
-    # The stage before `review` is `pr`, so without this `impl.md` never reached it -- and
-    # since `0014` the unit lives outside the repository, so it could not be found by
-    # looking either. Round 2 of `0015`'s review, 2026-09-23, left a finding open for
-    # exactly that reason while the evidence it asked for sat in `impl.md`.
+    # it must not erase the rounds already there (`merge_review`). A loop whose counter
+    # resets every run never reaches its limit. `0094` R14: the prompt carries the last
+    # round's number and what it left open; `impl.md`, `pr.md` and the earlier rounds are
+    # named by path in *The unit's files*, and the review reads what it needs of them.
     if stage == "review":
-        measured = _read(directory / "impl.md")
-        if measured and "impl.md" not in included:
-            included.append("impl.md")
-            parts.append(f"# What was built and measured\n\n{measured}")
-
-    if stage == "review":
-        earlier = _rounds(_read(directory / "review.md"))
-        if earlier:
-            included.append("review.md")
+        review = _read(directory / "review.md")
+        if _rounds(review):
+            _, number, findings = open_findings(review)
+            included.append("review-findings")
             parts.append(
                 "# The rounds so far\n\n"
-                "These are already in `review.md` and the app keeps them. Do not copy them "
-                "into your reply. Reply with the title, the header line and the next "
-                "`## Round N` section only; the app writes the earlier rounds back under "
-                "your header, unchanged, and appends yours after them.\n\n"
-                + "\n".join(earlier)
+                f"`review.md` already holds rounds up to Round {number}, and the app keeps "
+                "them. Do not copy them into your reply. Reply with the title, the header "
+                "line and the next `## Round N` section only; the app writes the earlier "
+                "rounds back under your header, unchanged, and appends yours after them.\n\n"
+                f"The findings Round {number} left open are below. Every earlier round is "
+                f"in `{review_path}`.\n\n"
+                f"{findings or '(no finding is left open)'}"
             )
 
     # `spec.md` R7, `review`'s own copy. Placed here rather than with the other stages'
@@ -442,6 +469,22 @@ def build_prompt(
     if pr_note and stage == "pr":
         included.append("pull-request")
         parts.append(pr_note.rstrip())
+
+    # `0094` R14. Every artifact of the unit that exists, by absolute path, so what the
+    # prompt no longer carries can still be found; `pointed` is what is here and not above.
+    pointed: list[str] = []
+    if pointing:
+        lines = []
+        for s in stages:
+            name = f"{s}.md"
+            if not (directory / name).is_file():
+                continue
+            above = name in included
+            if not above:
+                pointed.append(name)
+            lines.append(f"- {directory.resolve() / name}" + (" (above)" if above else ""))
+        if lines:
+            parts.append("# The unit's files\n\n" + "\n".join(lines) + "\n\n" + UNIT_FILES_ADVICE)
 
     location = directory / artifact
     if writes_own and stage == "ship":
@@ -506,7 +549,7 @@ def build_prompt(
             "code fence, no commentary. The first lines must carry the `Status:` line the "
             "rules above describe. Prose in Vietnamese; filenames and headings in English."
         )
-    return "\n\n---\n\n".join(parts), included
+    return "\n\n---\n\n".join(parts), included, pointed
 
 
 # One `## Round N` section of review.md: from its heading to the next `## ` heading.
@@ -568,6 +611,49 @@ def _header_status(text: str) -> str | None:
     """The artifact's own status, read the way `cos.mjs` reads it."""
     m = HEADER_STATUS_RE.search(text or "")
     return m.group(1).lower() if m else None
+
+
+# A finding line as `cos.mjs` `FINDING` reads it. The labels that close one (`0028`, `0061`).
+_FINDING_RE = re.compile(r"^- (F\d+)\s+\[([^\]]*)\]")
+_CLOSED_LABELS = ("fixed", "answered")
+
+
+def open_findings(text: str) -> tuple[str, int | None, str]:
+    """`review.md`'s header line, its last round's number, and that round's findings still
+    open, each with the indented lines under it (`0094` R14).
+
+    Only cuts text out to embed in a prompt. It decides no gate: `cos.mjs` is the one reader
+    of findings whose answer opens anything. "Open" is every label but `fixed <sha>` and
+    `answered` -- `needs-person`, `claim-rejected` and a label nobody can read included, so a
+    finding is never dropped from the prompt for a label this function does not know.
+
+    The header is the line holding the first `Status:`, as `_header_status` reads it. A file
+    with no `## Round` is read whole below that line, as a single round with no number.
+    """
+    text = text or ""
+    m = HEADER_STATUS_RE.search(text)
+    start = text.rfind("\n", 0, m.start()) + 1 if m else 0
+    end = text.find("\n", m.end()) if m else -1
+    header = text[start:end if end != -1 else len(text)].strip() if m else ""
+    rounds = _rounds(text)
+    if rounds:
+        body, number = rounds[-1], _round_number(rounds[-1])
+    else:
+        body, number = (text[end:] if m and end != -1 else ""), None
+        body = re.split(r"^## Answers\s*$", body, maxsplit=1, flags=re.MULTILINE)[0]
+    kept: list[str] = []
+    keeping = False
+    for line in body.splitlines():
+        found = _FINDING_RE.match(line)
+        if found:
+            label = found.group(2).split()[0].lower() if found.group(2).split() else ""
+            keeping = label not in _CLOSED_LABELS
+        elif not (line[:1].isspace() and line.strip()):
+            keeping = False
+            continue
+        if keeping:
+            kept.append(line)
+    return header, number, "\n".join(kept)
 
 
 # How much of an unusable reply to keep beside the reason it was refused. Long enough to
@@ -976,9 +1062,12 @@ async def _from_progress(
 class Runner:
     """Runs one step. Owns no state of its own beyond what it was handed."""
 
-    def __init__(self, sessions: Sessions, journal: Journal | None):
+    def __init__(self, sessions: Sessions, journal: Journal | None, app: dict | None = None):
         self.sessions = sessions
         self.journal = journal
+        # `0094` R13: `{"version", "commit"}` of the app running this step, from
+        # `update.identity`; `None` (a caller that has none) leaves `start` without them.
+        self.app = app
 
     async def run(
         self,
@@ -1086,7 +1175,7 @@ class Runner:
                 )
 
         head = await _head_of(watch or cwd)
-        prompt, included = build_prompt(
+        prompt, included, pointed = compose_prompt(
             cwd, directory, unit, stage, stages, artifact,
             writes_own=not grant.app_writes_artifact,
             gate_said=gate_said,
@@ -1115,6 +1204,16 @@ class Runner:
             self.journal.started(
                 journal_key, unit, stage, mode,
                 prompt_chars=len(prompt), included=included,
+                # `0094` R16: the artifacts named by path only, `[]` for a stage that names none.
+                pointed=pointed,
+                # `0094` R13: which build ran the step, so `verify_0094 --measure` splits
+                # before and after by what ran rather than by a date. A record written
+                # before `0094` has neither field.
+                **(
+                    {"app_version": self.app.get("version", ""), "app_commit": self.app.get("commit", "")}
+                    if self.app is not None
+                    else {}
+                ),
                 granted=list(grant.tools), max_turns=grant.max_turns,
                 head=head,
                 model=model, model_source=model_source,
