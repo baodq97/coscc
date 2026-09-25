@@ -1495,6 +1495,11 @@ def _hold_panel() -> rx.Component:
     )
 
 
+# On a phone the actions take their own line and *By* is not shown, so the unit keeps room.
+_BACKLOG_ACTIONS = rx.breakpoints(initial="100%", md="260px")
+_BACKLOG_WIDE = rx.breakpoints(initial="none", md="block")
+
+
 def _backlog_row(row: rx.Var[BacklogRow], shortlisted: bool) -> rx.Component:
     """`0082` R10. One unit: its rank, estimate and who made it, and *Edit* in the row."""
     editing = P.backlog_editing == row.unit
@@ -1502,21 +1507,26 @@ def _backlog_row(row: rx.Var[BacklogRow], shortlisted: bool) -> rx.Component:
     return rx.box(
         rx.hstack(
             cell(rx.cond(row.rank > 0, "#" + row.rank.to_string(), ""), "36px"),
-            rx.text(row.unit, size="2", font_family=_MONO, flex="1", min_width="0", overflow_wrap="anywhere"),
+            rx.text(row.unit, size="2", font_family=_MONO, flex="1", min_width="96px", overflow_wrap="anywhere"),
             cell(row.value, "44px"),
             cell(row.effort, "70px"),
-            cell(row.by, "110px", overflow="hidden", text_overflow="ellipsis", white_space="nowrap"),
-            rx.cond(row.drift != "", s.badge(row.drift, "amber")),
-            *([rx.hstack(
-                s.icon_button("arrow-up", "Move " + row.unit + " up", on_click=P.shortlist_move(row.unit, -1), size="1"),
-                s.icon_button("arrow-down", "Move " + row.unit + " down", on_click=P.shortlist_move(row.unit, 1), size="1"),
-                spacing="1",
-            )] if shortlisted else []),
-            rx.cond(P.shortlist_draft.contains(row.unit),
-                    rx.button("Remove", on_click=P.shortlist_remove(row.unit), size="1", variant="ghost"),
-                    rx.button("Add to shortlist", on_click=P.shortlist_add(row.unit), size="1", variant="ghost")),
-            rx.button(rx.cond(editing, "Close", "Edit"), on_click=P.edit_backlog_row(row.unit),
-                      size="1", variant="soft"),
+            cell(row.by, "110px", overflow="hidden", text_overflow="ellipsis", white_space="nowrap",
+                 display=_BACKLOG_WIDE),
+            # The actions keep a fixed width, `_BACKLOG_ACTIONS`, so the cells line up with the head.
+            rx.hstack(
+                rx.cond(row.drift != "", s.badge(row.drift, "amber")),
+                *([rx.hstack(
+                    s.icon_button("arrow-up", "Move " + row.unit + " up", on_click=P.shortlist_move(row.unit, -1), size="1"),
+                    s.icon_button("arrow-down", "Move " + row.unit + " down", on_click=P.shortlist_move(row.unit, 1), size="1"),
+                    spacing="1",
+                )] if shortlisted else []),
+                rx.cond(P.shortlist_draft.contains(row.unit),
+                        rx.button("Remove", on_click=P.shortlist_remove(row.unit), size="1", variant="ghost"),
+                        rx.button("Add to shortlist", on_click=P.shortlist_add(row.unit), size="1", variant="ghost")),
+                rx.button(rx.cond(editing, "Close", "Edit"), on_click=P.edit_backlog_row(row.unit),
+                          size="1", variant="soft"),
+                width=_BACKLOG_ACTIONS, flex_shrink="0", justify="end", align="center", spacing="3", flex_wrap="wrap",
+            ),
             width="100%", align="center", spacing="3", flex_wrap="wrap",
         ),
         rx.cond(row.warnings != "", s.text(row.warnings, size="1", color=rx.color("amber", 11))),
@@ -1566,10 +1576,12 @@ def _backlog_screen() -> rx.Component:
     head = rx.hstack(
         *(s.text(label, size="1", weight="medium", width=w, flex_shrink="0") for label, w in
           (("Rank", "36px"),)),
-        s.text("Unit", size="1", weight="medium", flex="1"),
-        *(s.text(label, size="1", weight="medium", width=w, flex_shrink="0") for label, w in
-          (("Value", "44px"), ("Effort", "70px"), ("By", "110px"))),
-        width="100%", padding="0 0 6px", border_bottom=f"1px solid {s.LINE}",
+        s.text("Unit", size="1", weight="medium", flex="1", min_width="96px"),
+        s.text("Value", size="1", weight="medium", width="44px", flex_shrink="0"),
+        s.text("Effort", size="1", weight="medium", width="70px", flex_shrink="0"),
+        s.text("By", size="1", weight="medium", width="110px", flex_shrink="0", display=_BACKLOG_WIDE),
+        rx.box(width="260px", flex_shrink="0", display=_BACKLOG_WIDE),
+        width="100%", spacing="3", flex_wrap="wrap", padding="0 0 6px", border_bottom=f"1px solid {s.LINE}",
     )
     return rx.vstack(
         s.heading("Backlog", "What to take next, in order."),
