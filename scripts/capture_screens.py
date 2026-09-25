@@ -11,9 +11,10 @@ Each address is a path of the app, starting with `/`, at most six of them. Each 
 at 1440×900 and 390×844, full page, into `<out>/<address slug>-<W>x<H>.png` (`<out>`
 defaults to `.screens/` in this checkout, which git ignores). The PNGs and manifest of the
 last run there are removed first and nothing else; a `<out>` that holds files but no
-`manifest.json` is refused, since this command did not write it. Beside
-them `<out>/manifest.json` records `head` (this checkout's `HEAD`, 40 hex), `dirty`, the
-time, the addresses, the sizes, every shot, and `hits`: every place the visible text of a
+`manifest.json` is refused, since this command did not write it. So is a tree with
+uncommitted changes: the screens must be `head`'s. Beside
+them `<out>/manifest.json` records `head` (this checkout's `HEAD`, 40 hex), `dirty` (the
+tree changed while it ran), the time, the addresses, the sizes, every shot, and `hits`: every place the visible text of a
 page matched one of the six patterns of `S3` and `S4` that can be measured (`scan`).
 A hit is reported, never an exit code.
 
@@ -50,7 +51,8 @@ prints the command to run and does not change the exit code.
     0  every address taken at both sizes
     1  a page did not open: the login page, or no `#studio-shell` in time
     2  the environment is not ready — too many addresses, one not starting with `/`, an
-       `<out>` this command did not write, the port in use, no build, no browser
+       `<out>` this command did not write, uncommitted changes, the port in use, no build,
+       no browser
 """
 
 from __future__ import annotations
@@ -217,6 +219,12 @@ def run(argv: list[str]) -> int:
     refused = out_refused(args.out.resolve())
     if refused:
         print(refused, file=sys.stderr)
+        return EXIT_ENV
+    # Review round 1, F2: a screen taken from uncommitted work may not be the one the pull
+    # request carries, and `head` would still name the last commit.
+    dirty = git_out("status", "--porcelain").rstrip("\n")
+    if dirty:
+        print(f"the tree has uncommitted changes; commit them first, so `head` is what was taken:\n{dirty}", file=sys.stderr)
         return EXIT_ENV
 
     for name in [k for k, v in os.environ.items() if k.startswith("__REFLEX") and not v]:

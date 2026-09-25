@@ -136,7 +136,8 @@ This applies when the branch changes a file listed under `paths:` in
    standard is something the person sees wrong.
 4. These are `high` findings and the round ends `changes-requested`: no manifest or no
    image; a manifest whose `head` is older than the branch's last commit touching a UI
-   file; a hit in the manifest's `hits` that `impl.md ## Screens` does not explain.
+   file; a manifest with `dirty: true`, whose screens may not be `head`'s; a hit in the
+   manifest's `hits` that `impl.md ## Screens` does not explain.
 5. Under `### What was not reviewed`, name the screens that can only be reached by an
    action (a running step, a dialog opened by a button) — the screenshots do not show them.
 

@@ -70,7 +70,8 @@ This applies when the branch changes a file listed under `paths:` in
 `.claude/rules/ui-standard.md` — a **UI unit** (`0083`). The `ship` gate will not open on one
 until a review round has looked at screenshots of it.
 
-1. After your last commit that touches such a file, run
+1. After your last commit that touches such a file, with nothing left uncommitted (the
+   command refuses a dirty tree), run
    `uv run python scripts/capture_screens.py <address>...` with the addresses the spec's
    `## Design` lists (at most six). It takes each at 1440×900 and 390×844 on a fixed fixture
    and writes the PNGs and `manifest.json` to `.screens/`, which git ignores.
