@@ -3290,10 +3290,8 @@ class Service:
         """Why the autopilot may not run on this bind, or `""` (`spec.md ## Answers`, câu 3)."""
         if self.config.host in LOOPBACK:
             return ""
-        return (
-            f"the app listens on {self.config.host}, not only on this machine, so the autopilot "
-            "does not run: restart it with COS_HOST=127.0.0.1"
-        )
+        # S3: no variable name here, the page shows it verbatim; `coscc-settings.md` names it.
+        return f"The app listens on {self.config.host}, beyond this machine; restart it on 127.0.0.1 to use the autopilot."
 
     def autopilot_settings(self, cwd: str) -> dict[str, Any]:
         """The four settings of one workspace, and whether the bind lets the autopilot run."""

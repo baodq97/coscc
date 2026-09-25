@@ -1339,7 +1339,7 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
         client = await self.client_for("0.0.0.0")
         got = await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": "autopilot", "value": True})
         self.assertEqual(got.status_code, 400)
-        self.assertIn("COS_HOST=127.0.0.1", got.json()["error"])
+        self.assertIn("restart it on 127.0.0.1", got.json()["error"])
         self.assertEqual((self.prefs(), self.started), ({}, []))
         # Everything but the switch itself may still be set.
         ok = await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": "max_parallel", "value": 2})

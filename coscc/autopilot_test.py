@@ -50,7 +50,7 @@ class Stops(unittest.TestCase):
         ]
         got = ap.stop_for(unit(qs), nxt("plan", "write-plan"), None, False)
         self.assertEqual(got["kind"], "a")
-        self.assertIn("spec.md câu 2", got["reason"])
+        self.assertIn("spec.md question 2", got["reason"])
         self.assertNotIn("intent.md", got["reason"])
 
     def test_b_waiting_and_rounds_used(self):

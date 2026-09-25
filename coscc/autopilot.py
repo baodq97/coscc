@@ -80,7 +80,7 @@ def stop_for(
         if q.get("counted") and not q.get("answered")
     ]
     if open_:
-        listed = ", ".join(f"{q.get('artifact')} câu {q.get('n')}" for q in open_)
+        listed = ", ".join(f"{q.get('artifact')} question {q.get('n')}" for q in open_)
         return _stop("a", f"open questions: {listed}")
 
     # b. A person is awaited: a finding `next` names, or review has used every round.

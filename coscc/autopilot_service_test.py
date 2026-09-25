@@ -128,7 +128,7 @@ class OnTheRealLoop(_Base):
         self.assertEqual(self.starts(), [])
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
         self.assertEqual((stop["unit"], stop["kind"]), (unit, "a"))
-        self.assertIn("intent.md câu 1", stop["reason"])
+        self.assertIn("intent.md question 1", stop["reason"])
 
     async def test_e_a_failed_step_is_not_run_again(self):
         self.service.sessions = _Replies(accepted=5)
@@ -301,7 +301,7 @@ class Scripted(_Base):
         self.add("0001_a", "spec")
         await self.pass_()
         self.assertEqual(self.launched, [])
-        self.assertIn("COS_HOST=127.0.0.1", self.service._autopilot_stops[self.key][""]["reason"])
+        self.assertIn("127.0.0.1", self.service._autopilot_stops[self.key][""]["reason"])
 
 
 class ResumedAtStartUp(unittest.IsolatedAsyncioTestCase):
