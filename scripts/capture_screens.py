@@ -81,7 +81,7 @@ from scripts.proof_harness import (  # noqa: E402
     port_free,
     require_browser,
 )
-from scripts.verify_0071 import make_repo, make_unit, seed_session  # noqa: E402
+from scripts.verify_0071 import make_repo, seed_session  # noqa: E402
 
 HOST, PORT = "127.0.0.1", 18783  # chosen: a port no other proof here uses
 SIZES = ((1440, 900), (390, 844))  # the two `verify_0056` and `verify_0071` measured
@@ -158,8 +158,13 @@ def run_build(env: dict[str, str]) -> bool:
 
 
 def make_fixture(api: httpx.Client, proj: Path) -> None:
+    """The four units, numbered 0001–0004 in this order, through the app's own route."""
     for name, files in FIXTURE.items():
-        make_unit(api, str(proj), name, files)
+        made = api.post("/api/units", json={"cwd": str(proj), "slug": name, "brief": f"The {name.replace('-', ' ')} fixture."})
+        if made.status_code != 200:
+            raise RuntimeError(f"could not make the unit {name}: {made.text}")
+        for file, text in files.items():
+            (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
 
 
 def shoot(browser, base: str, token: str, address: str, size: tuple[int, int], out: Path) -> tuple[Path, str, str]:
@@ -264,7 +269,11 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                 if added.status_code != 200:
                     print(f"could not adopt the workspace: {added.text}", file=sys.stderr)
                     return EXIT_BROKEN
-                make_fixture(api, proj)
+                try:
+                    make_fixture(api, proj)
+                except RuntimeError as e:
+                    print(str(e), file=sys.stderr)
+                    return EXIT_BROKEN
             for address in args.addresses:
                 for size in SIZES:
                     try:
