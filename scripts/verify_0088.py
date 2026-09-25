@@ -163,10 +163,15 @@ def r3(init: dict, granted: list[str], subtypes: list[str], home: Path) -> list[
     foreign = [p for p in plugins if not str((p or {}).get("source", "")).endswith("@builtin")]
     if foreign:
         bad.append(f"(c) plugins not @builtin: {foreign}")
-    theirs = user_skills(home) | project_skills(str(init.get("cwd") or "")) | user_plugins(home)
-    theirs |= {str(p.get("name")) for p in foreign if isinstance(p, dict)}
+    # A skill is listed by its bare name; a plugin's skills and commands as `<plugin>:<name>`.
+    # So a plugin is matched on the prefix only: the CLI's built-in `code-review` skill shares
+    # its name with the plugin `code-review@claude-plugins-official`, measured on the first
+    # `--paid` run with that plugin installed and not loaded.
+    skills = user_skills(home) | project_skills(str(init.get("cwd") or ""))
+    plugins = user_plugins(home) | {str(p.get("name")) for p in foreign if isinstance(p, dict)}
     names = [str(n) for n in (init.get("skills") or []) + (init.get("slash_commands") or [])]
-    clash = sorted({n for n in names if n in theirs or n.split(":", 1)[0] in theirs})
+    clash = sorted({n for n in names
+                    if n in skills or (":" in n and n.split(":", 1)[0] in plugins)})
     if clash:
         bad.append(f"(d) skills or slash commands from this machine or project: {clash}")
     if init.get("output_style") != "default":
@@ -598,12 +603,17 @@ def claim_g(tmp: Path) -> bool:
 
     home = tmp / "home"
     (home / ".claude" / "skills" / "mine").mkdir(parents=True)
+    (home / ".claude" / "plugins").mkdir(parents=True)
+    (home / ".claude" / "plugins" / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"code-review@market": []}}), encoding="utf-8")
     (home / ".claude.json").write_text(json.dumps({"mcpServers": {"x": {}}}), encoding="utf-8")
 
     def init_for(stage: str, cwd: str) -> dict:
+        # `code-review` is the CLI's built-in skill, named like the installed plugin: not a clash.
         return {"cwd": cwd, "mcp_servers": [], "tools": list(policy.grant_for(stage).tools),
                 "plugins": [{"name": "agents-md", "path": "builtin", "source": "agents-md@builtin"}],
-                "skills": ["deep-research"], "slash_commands": ["help"], "output_style": "default"}
+                "skills": ["deep-research", "code-review"], "slash_commands": ["help", "code-review"],
+                "output_style": "default"}
 
     async def fixture(name: str, stages: list[str], bad: str = "") -> Path:
         root = tmp / name
@@ -619,8 +629,11 @@ def claim_g(tmp: Path) -> bool:
                       "mode": "manual", "at": "2026-10-01T00:00:00+00:00", "run": run,
                       "granted": list(policy.grant_for(stage).tools)})
             init = init_for(stage, str(root))
-            if stage == bad:
+            if stage == bad and name == "violation":
                 init["mcp_servers"] = [{"name": "microsoft-learn", "status": "connected"}]
+            elif stage == bad:
+                # What a loaded plugin, or a personal skill, puts into the init.
+                init["slash_commands"] += ["code-review:review", "mine"]
             rec = events.Recorder(run, data, str(root), "/w", "0100_x", stage)
             rec.message(SystemMessage(subtype="init", data=init))
             await rec.close("done", None)
@@ -631,6 +644,7 @@ def claim_g(tmp: Path) -> bool:
     for name, stages, bad, want in (
         ("pass", STAGES, "", EXIT_PASS),
         ("violation", STAGES, "review", EXIT_BROKEN),
+        ("plugin-and-skill", STAGES, "plan", EXIT_BROKEN),
         ("no-ship-step", [s for s in STAGES if s != "ship"], "", EXIT_ENV),
     ):
         root = asyncio.run(fixture(name, stages, bad))
