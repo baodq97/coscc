@@ -344,6 +344,8 @@ def prove() -> int:
         "coscc.service_test.AStageRunsOnTheModelSettingsNames.test_the_start_record_names_the_build_that_ran_it",
         "coscc.service_test.AStageRunsOnTheModelSettingsNames."
         "test_a_build_that_cannot_be_read_is_two_empty_strings_and_the_step_runs",
+        "coscc.integrate_service_test.GeboThroughTheService."
+        "test_the_start_record_names_the_artifacts_it_pointed_at_and_the_build",
     )
     ok &= unittests(
         "R14, R15",
