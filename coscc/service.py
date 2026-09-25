@@ -1134,7 +1134,9 @@ class Service:
         try:
             journal.started(key, unit, "integrate", "manual", prompt_chars=len(prompt), granted=list(grant.tools),
                             max_turns=grant.max_turns, head=head_before, model=model, model_source=model_source,
-                            pointed=list(own), app_version=app["version"], app_commit=app["commit"])
+                            pointed=list(own), app_version=app["version"], app_commit=app["commit"],
+                            # `0093` R8: what opened this session, for *Integrate for a conflict*.
+                            integrate_state=info["state"])
         except (BadRecord, Busy):
             pass
         end: dict[str, Any] = {}
@@ -1437,7 +1439,7 @@ class Service:
                 raise Invalid(str(e)) from e
             end_fields = None
             if rounds_before is not None:
-                async def end_fields() -> dict[str, int]:
+                async def end_fields() -> dict[str, Any]:
                     return await self._findings_added(cwd, unit, rounds_before)
             # `0035` R10. The integration pushed since the last review round, for `review` only.
             integration_note = ""
@@ -3088,15 +3090,17 @@ class Service:
             ),
         }
 
-    async def _findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, int]:
+    async def _findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, Any]:
         """`0033` R10. The findings in the rounds a `review` step added, off the board —
-        `parseReview`'s count, read the way `_post_new_rounds` reads it."""
+        `parseReview`'s count, read the way `_post_new_rounds` reads it. `0093` R9: and
+        those rounds' verdicts, each a string, for *Changes-requested rounds*."""
         data = await board_reader.read(self._units_root(cwd))
         found = next((u for u in data["units"] if u["name"] == unit), None) or {}
         added = [r for r in found.get("rounds") or [] if r.get("n") not in before]
         return {
             "findings": sum(int(r.get("findings") or 0) for r in added),
             "findings_open": sum(int(r.get("findings_open") or 0) for r in added),
+            "verdicts": [str(r.get("verdict") or "") for r in added],
         }
 
     async def stage_models(self) -> dict[str, Any]:

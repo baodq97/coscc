@@ -1956,6 +1956,15 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         end = j.records(str(self.repo.resolve()), kind="end")[-1]
         self.assertEqual((end["outcome"], end["findings"], end["findings_open"]), ("done", 2, 1))
 
+    def test_0093_the_end_record_carries_the_added_rounds_verdicts(self):
+        # R9: the one round this step added, round 2, asks for changes.
+        from coscc.journal import Journal
+
+        self._run_review(FakeGh())
+        j = Journal(self.service.config.working_dir, self.service.config.data_dir)
+        end = j.records(str(self.repo.resolve()), kind="end")[-1]
+        self.assertEqual(end["verdicts"], ["changes-requested"])
+
     # R6
     def test_a_failed_post_leaves_review_md_byte_for_byte_the_same(self):
         self._run_review(FakeGh())
