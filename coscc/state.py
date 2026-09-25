@@ -615,6 +615,8 @@ class Run:
     detail: str = ""
     # `0073`. The step's `run`, empty for one written before `0073` (R13).
     run: str = ""
+    # `0089`. The row's own `_details` key: `run`, or `<stage>-<i>` when that is empty.
+    key: str = ""
 
 
 @dataclasses.dataclass
@@ -1626,7 +1628,7 @@ class StudioState(rx.State):
                 detail += f" / {row['denials']} tool call(s) refused"
             if row["artifact"]:
                 detail += f" / wrote {row['artifact']}"
-            events.append(Event(title=title, detail=detail, icon=icon, color=color, time=row["at"]))
+            events.append(Event(title=title, detail=detail, icon=icon, color=color, time=present.when(row["at"])))
         self.events = events
         total = feed.get("total") or {}
         _, shown = _tokens(total)
@@ -1646,8 +1648,9 @@ class StudioState(rx.State):
             Run(
                 stage=r.get("stage") or "",
                 mode=r.get("mode") or "",
-                started=r.get("started") or "",
-                ended=r.get("ended") or "(still running)",
+                # `0089` R12: a reader's time; `ended` is empty while the run is not over.
+                started=present.when(r.get("started")),
+                ended=present.when(r.get("ended")),
                 outcome=r.get("outcome") or "—",
                 session_id=(r.get("session_id") or "—")[:12],
                 tokens=_tokens(r.get("cost") or {})[1],
@@ -1655,8 +1658,9 @@ class StudioState(rx.State):
                 color="grass" if r.get("outcome") == "done" else "amber",
                 detail=r.get("detail") or "",
                 run=r.get("run") or "",
+                key=r.get("run") or f"{r.get('stage') or ''}-{i}",
             )
-            for r in data["runs"]
+            for i, r in enumerate(data["runs"])
         ]
 
     def _load_artifact(self) -> None:

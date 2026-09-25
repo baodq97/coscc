@@ -57,6 +57,13 @@ class ThePage(unittest.TestCase):
         self.assertIn("could not be measured", form)
         self.assertIn('"You"', form.replace('\\"', '"'))
 
+    def test_0089_a_timeline_row_keeps_its_session_behind_details(self):
+        """`0089` R12, R13, R15 (D60, D61, D64)."""
+        for gone in ('"Xem"', "/ session ", "Read from the run log", "(still running)"):
+            self.assertNotIn(gone, self.page.replace('\\"', '"'))
+        self.assertIn("Every run of this unit, oldest first.", self.page)
+        self.assertIn("run-", self.page)
+
     def test_r12_needs_review_is_gone(self):
         self.assertNotIn("Needs review", self.page)
         self.assertIn("Needs you", self.page)

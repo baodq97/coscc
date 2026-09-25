@@ -15,6 +15,7 @@ touches a name that is not there", and it costs nothing to find every one of the
 from __future__ import annotations
 
 import ast
+import re
 import unittest
 
 from coscc import present
@@ -2148,6 +2149,55 @@ class SessionsAreReadWhereTheyAreShown(unittest.TestCase):
         with fake.patches():
             asyncio.run(go())
         self.assertEqual(seen, [0, 0, 1, 1, 1, 2, 3])
+
+
+ISO = re.compile(r"\d{4}-\d{2}-\d{2}T")
+
+
+class TimesReadForAReader(unittest.TestCase):
+    """`0089` R6, R12 (D52, D60): no raw time reaches `/activity` or the Timeline."""
+
+    def test_an_activity_row_has_a_readers_time(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+
+        row = {"kind": "end", "stage": "plan", "mode": "manual", "outcome": "done", "unit": "0001_x",
+               "denials": 0, "artifact": "", "at": "2026-09-25T04:13:29+00:00"}
+        feed = {"events": [row], "total": {}}
+        page = SimpleNamespace(cwd="/w", events=[], usage_total_tokens="", usage_total_usd="")
+        service = SimpleNamespace(activity_and_usage=lambda cwd, limit: feed)
+        with mock.patch.object(state, "SERVICE", service):
+            state.StudioState._load_activity(page)
+        [event] = page.events
+        self.assertTrue(event.time)
+        self.assertIsNone(ISO.search(event.time), event.time)
+
+    def test_a_timeline_row_has_readers_times_and_its_own_key(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+
+        runs = [
+            {"stage": "plan", "mode": "manual", "started": "2026-09-25T04:00:00+00:00",
+             "ended": "2026-09-25T04:10:00+00:00", "outcome": "done", "session_id": "abc", "run": "r1"},
+            {"stage": "impl", "mode": "manual", "started": "2026-09-25T05:00:00+00:00", "ended": None,
+             "outcome": None, "session_id": None, "run": ""},
+        ]
+        page = SimpleNamespace(cwd="/w", unit_id="0001_x", runs=[])
+        service = SimpleNamespace(timeline=lambda cwd, unit: {"runs": runs})
+        with mock.patch.object(state, "SERVICE", service):
+            state.StudioState._load_timeline(page)
+        done, running = page.runs
+        for field in (done.started, done.ended, running.started):
+            self.assertTrue(field)
+            self.assertIsNone(ISO.search(field), field)
+        self.assertEqual(running.ended, "")
+        self.assertFalse(any("still running" in f"{r.started}{r.ended}" for r in page.runs))
+        self.assertNotEqual(done.key, running.key)
+        self.assertEqual((done.key, running.key), ("r1", "impl-1"))
 
 
 if __name__ == "__main__":

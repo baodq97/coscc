@@ -1278,14 +1278,17 @@ def _run_row(run: rx.Var[Run]) -> rx.Component:
                       s.badge(run.mode, "gray"), s.badge(run.outcome, run.color),
                       rx.spacer(),
                       # `0073` R10, R13: a run from before `0073` opens the pane on its note.
-                      rx.button(rx.icon("eye", size=13), "Xem",
+                      rx.button(rx.icon("eye", size=13), "View",
                                 on_click=P.open_watch(run.run, P.unit_id + " · " + run.stage, P.unit_id),
                                 class_name="watch-run", variant="soft", size="1"),
                       spacing="2", wrap="wrap", align="center", width="100%"),
-            s.text(run.started + " → " + run.ended, size="1",
-                   font_family="ui-monospace, monospace"),
-            s.text(run.tokens + " tokens / " + run.usd + " / session " + run.session_id,
+            s.text(rx.cond(run.ended != "", run.started + " → " + run.ended, run.started + " · running"),
                    size="1"),
+            s.text(run.tokens + " tokens / " + run.usd, size="1"),
+            rx.cond(run.session_id != "—",
+                    _details("run-" + run.key, "Details",
+                             s.text("session " + run.session_id, size="1",
+                                    font_family="ui-monospace, monospace"))),
             rx.cond(
                 run.detail != "",
                 rx.box(
@@ -1922,8 +1925,7 @@ def _detail_dialog() -> rx.Component:
                 rx.tabs.content(_comments_tab(), value="comments"),
                 rx.tabs.content(
                     rx.vstack(
-                        s.text("Every run of every step of this unit, oldest first. Read "
-                               "from the run log.", size="1"),
+                        s.text("Every run of this unit, oldest first.", size="1"),
                         rx.foreach(P.runs, _run_row),
                         rx.cond(P.runs.length() == 0,
                                 s.text("No step of this unit has been run from here.")),
