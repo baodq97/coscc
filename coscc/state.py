@@ -176,6 +176,14 @@ class Question:
     # `0028`. What the row shows as its name: the number for a numbered question, `F<n>` for
     # a review finding the last round confirmed needs a person (`number` is 0 for those).
     label: str = ""
+    # `0044` R10, all decided by `Service.board`. `by_jera`: the answer in force is Jera's,
+    # citing `cites`. `needs_person`: Jera's last run said a person must answer it, with its
+    # `proposal` and `reason`.
+    by_jera: bool = False
+    cites: list[str] = dataclasses.field(default_factory=list)
+    needs_person: bool = False
+    proposal: str = ""
+    reason: str = ""
 
 
 @dataclasses.dataclass
@@ -991,6 +999,11 @@ def _questions(unit: dict) -> tuple[int, list[Question]]:
             answered=bool(q.get("answered")),
             counted=bool(q.get("counted")),
             label=str(q["n"]),
+            by_jera=bool(q.get("by_jera")),
+            cites=[str(c) for c in q.get("cites") or []],
+            needs_person=bool(q.get("needs_person")),
+            proposal=str(q.get("proposal") or ""),
+            reason=str(q.get("reason") or ""),
         )
         for q in unit.get("questions") or []
     ] + [
@@ -1230,6 +1243,10 @@ class StudioState(rx.State):
     posting_round: int = 0
     # `0035`. True while an integration runs; locks the *Integrate* button.
     integrating: bool = False
+    # `0044`. True while Jera runs on the open unit; locks *Ask Jera*.
+    asking_jera: bool = False
+    # `0044` R8a. The Settings text Jera reads as precedent, as typed and as last saved.
+    decision_preferences: str = ""
     # `0047`. The outcome form. Nobody types who records it (`0082` R3); `outcome_measured_by`
     # starts as `agent`, the case with no script to run.
     # Both hold the English label the select shows (`0089` R1, R4); `record_outcome` sends
@@ -1430,9 +1447,18 @@ class StudioState(rx.State):
 
     @rx.var
     def open_questions_here(self) -> list[Question]:
-        """`0016`. The open unit's unanswered questions, counted artifact's first."""
-        waiting = [q for q in self.current_unit.questions if not q.answered]
-        return sorted(waiting, key=lambda q: not q.counted)
+        """`0016`. The open unit's unanswered questions, counted artifact's first. `0044`:
+        then the ones Jera answered, so a person can read them and answer over them."""
+        shown = [q for q in self.current_unit.questions if not q.answered or q.by_jera]
+        return sorted(shown, key=lambda q: (q.answered, not q.counted))
+
+    @rx.var
+    def jera_can_ask(self) -> bool:
+        """`0044` R2, as the page can see it: an unanswered question outside `review.md`.
+        `Service.precedent` still decides; this only hides a button it would refuse (S8)."""
+        return self.current_unit.answerable and any(
+            not q.answered and q.artifact != "review.md" for q in self.current_unit.questions
+        )
 
     @rx.var
     def next_stage(self) -> str:
@@ -1926,6 +1952,7 @@ class StudioState(rx.State):
             prefs = SERVICE.preferences()
             self.density = str(prefs.get("density") or "comfortable")
             self.board_view = str(prefs.get("board_view") or "Board")
+            self.decision_preferences = str(prefs.get("decision_preferences") or "")
             self._load_workspaces()
         except Invalid as e:
             self._fail(e)
@@ -2165,6 +2192,16 @@ class StudioState(rx.State):
             return
         self.board_view = value
         self._remember("board_view", value)
+
+    @rx.event
+    def edit_decision_preferences(self, value: str):
+        self.decision_preferences = value
+
+    @rx.event
+    def save_decision_preferences(self):
+        """`0044` R8a. Kept as typed; each paragraph becomes one `pref:<k>` Jera may cite."""
+        self._remember("decision_preferences", self.decision_preferences)
+        self.notice = "Decision preferences saved; Jera reads them on its next run."
 
     @rx.event
     def set_density(self, value: str):
@@ -2723,6 +2760,36 @@ class StudioState(rx.State):
             await self._load_board()
             self._load_artifact()
         except Exception as e:  # noqa: BLE001 - R5: the answer is written; say so regardless
+            self.notice += f" The board could not be read again: {type(e).__name__}: {e}"
+
+    @rx.event
+    async def ask_jera(self):
+        """`0044`. Ask Jera to answer the open unit's questions from precedent. Whether it may,
+        and what is written, is `Service.precedent`'s; this locks the button and says what
+        happened. The `yield` sends `asking_jera` to the browser, as `integrate` does."""
+        if self.asking_jera:
+            return
+        self.error, self.notice = "", ""
+        self.asking_jera = True
+        yield
+        try:
+            done = await SERVICE.precedent(self.cwd, self.unit_id)
+        except Invalid as e:
+            self._fail(e)
+            return
+        finally:
+            self.asking_jera = False
+        if done.get("outcome") == "failed":
+            self.error = f"Jera's reply could not be read, so nothing was written: {done.get('detail')}"
+        else:
+            self.notice = (
+                f"Jera answered {len(done['written'])}; {len(done['needs_person'])} need a person"
+                + (f"; {len(done['skipped'])} were answered meanwhile." if done["skipped"] else ".")
+            )
+        try:
+            await self._load_board()
+            self._load_artifact()
+        except Exception as e:  # noqa: BLE001 - what Jera wrote is written; say so regardless
             self.notice += f" The board could not be read again: {type(e).__name__}: {e}"
 
     @rx.event

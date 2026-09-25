@@ -1366,6 +1366,20 @@ def _settings() -> rx.Component:
             columns=rx.breakpoints(initial="1", lg="2"), gap="16px", width="100%",
             align_items="start",
         ),
+        # `0044` R8a. What Jera may cite besides earlier answers, one paragraph per entry.
+        s.panel(
+            s.section_head("Decision preferences", rx.icon("scroll-text", size=18, color=s.MUTED)),
+            s.text("Jera reads this word for word as precedent, so keep company names out of it.",
+                   size="1"),
+            rx.text_area(
+                value=P.decision_preferences, on_change=P.edit_decision_preferences,
+                placeholder="One preference per paragraph.", aria_label="Decision preferences",
+                rows="5", width="100%", margin_top="10px", id="decision-preferences",
+            ),
+            rx.button("Save", on_click=P.save_decision_preferences, size="1", margin_top="8px",
+                      id="save-decision-preferences"),
+            id="preferences-panel",
+        ),
         s.panel(
             s.section_head("What a board step may do",
                            rx.icon("key-round", size=18, color=s.MUTED)),
@@ -1450,9 +1464,30 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
             s.badge(q.artifact, rx.cond(q.counted, "amber", "gray")),
             # `0028`: a finding a person is awaited on reads as one, by its `F<n>`.
             s.text(rx.cond(q.number == 0, "finding ", "question ") + q.label, size="1"),
+            rx.spacer(),
+            # `0044` R10: whose answer is in force, or that Jera left it to a person.
+            rx.cond(q.by_jera, s.badge("Answered by Jera", "iris")),
+            rx.cond(q.needs_person, s.badge("Needs a person", "red")),
             width="100%", align="center",
         ),
         rx.box(rx.markdown(q.text), width="100%", margin_top="8px"),
+        rx.cond(
+            q.by_jera,
+            rx.flex(
+                s.text("Precedent", size="1", weight="medium"),
+                rx.foreach(q.cites, lambda c: s.badge(c, "gray")),
+                gap="6px", wrap="wrap", align="center", width="100%", margin_top="8px",
+            ),
+        ),
+        rx.cond(
+            q.needs_person,
+            rx.vstack(
+                s.text("Jera's proposal", size="1", weight="medium"),
+                rx.box(rx.markdown(q.proposal), width="100%"),
+                s.text(q.reason, size="1", color=rx.color("red", 11)),
+                spacing="1", width="100%", margin_top="8px", align="start",
+            ),
+        ),
         # `0056` R11: a dropped unit is read, not answered. `0082` R11: nor a finished or
         # closed one — the service's `answerable` says which.
         rx.cond(~P.current_unit.answerable, s.badge("Not answered", "gray")),
@@ -1484,6 +1519,19 @@ def _questions_tab() -> rx.Component:
                        "Your answer is added under ## Answers; the next step reads it.",
                        "This unit is finished; its questions are shown to read."),
                size="1"),
+        # `0044`. Hidden, not greyed, when there is nothing Jera may answer (S8).
+        rx.cond(
+            P.jera_can_ask & ~P.unit_dropped,
+            rx.hstack(
+                rx.button(
+                    rx.icon("scroll-text", size=14), "Ask Jera",
+                    on_click=P.ask_jera, loading=P.asking_jera, disabled=P.asking_jera,
+                    size="1", id="ask-jera",
+                ),
+                s.text(CONSEQUENCE["precedent"], size="1", id="ask-jera-consequence"),
+                spacing="2", align="center", wrap="wrap", width="100%",
+            ),
+        ),
         rx.foreach(P.open_questions_here, _question_row),
         rx.cond(P.open_questions_here.length() == 0,
                 s.text("No question in this unit is waiting for an answer.")),
