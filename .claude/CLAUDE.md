@@ -297,4 +297,6 @@ or root file is needed. Then put that repository's real build and test commands 
 as it is, the `ship` gate stays closed on any unit touching those paths until a review
 records screenshots — and the command that takes them, `scripts/capture_screens.py`, sits
 outside `.claude/` and does not come along. Point the list at your own screens and write a
-capture command, or delete the file: without it the `ship` gate is what it was before `0083`.
+capture command, or delete the file: without it the `ship` gate asks for no screenshots. One
+thing stays either way: an `[open]` `low` finding whose text opens with `S` and a number
+(`S3 bucket …`) is read as a rule of the standard and blocks.
