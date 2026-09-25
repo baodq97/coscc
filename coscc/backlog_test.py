@@ -86,6 +86,31 @@ class Effort(unittest.TestCase):
         }
         self.assertEqual(b.measured(timelines, units), {"0001_a": {"cost_usd": 1.5, "turns": 7}})
 
+    def test_0092_a_unit_with_one_unknown_cost_is_undetermined_not_measured(self):
+        """`0092` R11: neither met nor missed, and named apart."""
+        units = [_unit("0001_a", nxt="finished"), _unit("0002_b", nxt="finished"), _unit("0003_c")]
+        timelines = {
+            "0001_a": [{"ended": "t", "reported": True, "cost": {"cost_usd": 1.5, "turns": 7}}],
+            "0002_b": [
+                {"ended": "t", "reported": True, "cost": {"cost_usd": 0.5, "turns": 4}},
+                {"ended": "t", "reported": False, "turns_reported": True, "cost": {"turns": 109}},
+            ],
+            "0003_c": [{"ended": "t", "reported": False, "cost": {}}],
+        }
+        self.assertEqual(list(b.measured(timelines, units)), ["0001_a"])
+        self.assertEqual(b.undetermined(timelines, units), ["0002_b"])
+        self.assertEqual(b.fold(units, [], b.measured(timelines, units),
+                                b.undetermined(timelines, units))["undetermined_count"], 1)
+        self.assertEqual(b.fold(units, [], {})["undetermined_count"], 0)
+
+    def test_0092_the_basis_says_how_many_were_left_out(self):
+        got = b.effort_from(["0001_u"], self.FOUND, undetermined=2)
+        self.assertEqual(got["effort_source"], "measured")
+        self.assertTrue(got["effort_basis"].endswith("; 2 finished units with an unknown cost left out"))
+        guess = b.effort_from(["0001_u"], {}, undetermined=3)
+        self.assertIn("3 finished units with an unknown cost left out", guess["effort_basis"])
+        self.assertNotIn("unknown cost", b.effort_from(["0001_u"], self.FOUND)["effort_basis"])
+
 
 class Estimates(unittest.TestCase):
     def test_r2_out_of_range_is_refused(self):
@@ -297,6 +322,15 @@ class TheProposal(unittest.TestCase):
             self.assertIn(goal, text)
         self.assertIn("0001_a", text)
         self.assertIn("$1.20, 9 turns", text)
+        self.assertNotIn("unknown cost", text)
+
+    def test_0092_the_prompt_and_the_estimate_name_the_units_left_out(self):
+        text = b.build_prompt([{"unit": "0001_a", "idea": "words", "problem": "", "outcome": ""}], [], 4)
+        self.assertIn("## Finished units\n\n(4 finished units have an unknown cost and are left out)", text)
+        reply = json.dumps({"units": [
+            {"unit": "0001_a", "value": 4, "effort": "S", "similar": [], "basis": "bớt chi phí"}]})
+        out = b.parse_proposal(reply, self.BACKLOG, self.STORE, {}, "sess", [], undetermined=4)
+        self.assertIn("4 finished units with an unknown cost left out", out["records"][0]["effort_basis"])
 
 
 if __name__ == "__main__":

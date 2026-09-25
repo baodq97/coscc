@@ -656,7 +656,10 @@ class Service:
         _attach_comment_state(data["units"], comments)
         # `0074`. Display only: nothing below reads it, and `next`/`blocked` are untouched.
         data["backlog"] = {
-            **backlog.fold(data["units"], ranking, backlog.measured(timelines, data["units"])),
+            **backlog.fold(
+                data["units"], ranking, backlog.measured(timelines, data["units"]),
+                backlog.undetermined(timelines, data["units"]),
+            ),
             "propose_warning": grant_for("estimate").warning,
             "propose_consequence": CONSEQUENCE["estimate"],
         }
@@ -2636,7 +2639,10 @@ class Service:
                 raise Invalid(str(e)) from e
             except Busy as e:
                 raise Invalid(str(e)) from e
-            found = backlog.measured(timelines_of(rows), data["units"])
+            unit_timelines = timelines_of(rows)
+            found = backlog.measured(unit_timelines, data["units"])
+            # `0092` R11: how many finished units are left out for a cost nobody knows.
+            left_out = len(backlog.undetermined(unit_timelines, data["units"]))
             waiting = [u["name"] for u in data["units"] if backlog.in_backlog(u)]
             if not waiting:
                 raise Invalid("the backlog is empty; there is nothing to estimate")
@@ -2657,7 +2663,7 @@ class Service:
             finished = [
                 {"unit": n, "title": backlog.title_of(read(n, "intent.md")), **f} for n, f in found.items()
             ]
-            prompt = backlog.build_prompt(texts, finished)
+            prompt = backlog.build_prompt(texts, finished, left_out)
             grant = grant_for("estimate")
             defaults, _ = models.load_defaults()
             model, model_source, effort, effort_source = models.resolve(
@@ -2702,6 +2708,7 @@ class Service:
             if not failure:
                 parsed = backlog.parse_proposal(
                     reply, waiting, names, found, session, backlog.relations_of(rows), workspace=key,
+                    undetermined=left_out,
                 )
             written, rejected = 0, list(parsed["rejected"])
             for rec in parsed["records"]:
@@ -3238,15 +3245,19 @@ class Service:
         return {"cwd": cwd, "events": events[:limit], "recording": True}
 
     def _usage_of(self, cwd: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        # `0092` R7. Only known costs are added; `unknown` counts the `end` rows that carried
+        # no `cost_usd`, so the sum is never shown as the whole of it.
         per_unit: dict[str, dict[str, Any]] = {}
         for record in rows:
             if record.get("kind") != "end":
                 continue
-            bucket = per_unit.setdefault(str(record.get("unit") or ""), zero_cost())
+            bucket = per_unit.setdefault(str(record.get("unit") or ""), {**zero_cost(), "unknown": 0})
             add_cost(bucket, record)
-        total = zero_cost()
+            bucket["unknown"] += int(COST_USD not in record)
+        total = {**zero_cost(), "unknown": 0}
         for bucket in per_unit.values():
             add_cost(total, bucket)
+            total["unknown"] += bucket["unknown"]
         return {"cwd": cwd, "total": total, "per_unit": per_unit, "recording": True}
 
     def activity(self, cwd: str, limit: int = 40) -> dict[str, Any]:

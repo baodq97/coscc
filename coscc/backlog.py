@@ -74,18 +74,35 @@ def _status_of(unit: dict[str, Any]) -> str:
 # -- effort, from the run log --------------------------------------------------------------
 
 
+def _unknown_cost(rows: list[dict[str, Any]]) -> bool:
+    """`0092` R11. At least one run of the unit ended with no cost reported."""
+    return journal.totals_of(rows)["unknown"] > 0
+
+
 def measured(timelines: dict[str, list[dict[str, Any]]], units: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """R4, R5. `{unit: {cost_usd, turns}}` for every finished unit with a reported cost."""
+    """R4, R5. `{unit: {cost_usd, turns}}` for every finished unit with a reported cost.
+
+    `0092` R11: a unit with any run whose cost is unknown is left out -- neither met nor
+    missed, and in no tercile or median (spec C8). `undetermined` names those.
+    """
     out: dict[str, dict[str, Any]] = {}
     for u in units:
         if u.get("next") != "finished":
             continue
         rows = timelines.get(u.get("name") or "", [])
-        if not any(r.get("reported") for r in rows):
+        if not any(r.get("reported") for r in rows) or _unknown_cost(rows):
             continue
         total = journal.totals_of(rows)
         out[u["name"]] = {"cost_usd": total["cost_usd"], "turns": total["turns"]}
     return out
+
+
+def undetermined(timelines: dict[str, list[dict[str, Any]]], units: Iterable[dict[str, Any]]) -> list[str]:
+    """`0092` R11. The finished units `measured` leaves out for a cost nobody knows, by name."""
+    return sorted(
+        u["name"] for u in units
+        if u.get("next") == "finished" and _unknown_cost(timelines.get(u.get("name") or "", []))
+    )
 
 
 def terciles(values: Iterable[float]) -> tuple[float, float]:
@@ -105,8 +122,19 @@ def _median(values: list[float]) -> float:
     return v[mid] if len(v) % 2 else (v[mid - 1] + v[mid]) / 2
 
 
-def effort_from(similar: Iterable[str], found: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """R4, R5. `{effort, effort_source, effort_basis}`; `effort` is `None` for a guess."""
+def effort_from(similar: Iterable[str], found: dict[str, dict[str, Any]], undetermined: int = 0) -> dict[str, Any]:
+    """R4, R5. `{effort, effort_source, effort_basis}`; `effort` is `None` for a guess.
+
+    `0092` R11: how many finished units were left out for an unknown cost is said in
+    `effort_basis`, in English (spec C9), so the smaller set is never hidden.
+    """
+    got = _effort_from(similar, found)
+    if undetermined > 0:
+        got["effort_basis"] += f"; {undetermined} finished units with an unknown cost left out"
+    return got
+
+
+def _effort_from(similar: Iterable[str], found: dict[str, dict[str, Any]]) -> dict[str, Any]:
     named = [s for s in similar if s in found]
     if len(found) < TERCILE_MIN:
         return {"effort": None, "effort_source": "guess",
@@ -394,6 +422,7 @@ def _brief(r: dict[str, Any]) -> dict[str, Any]:
 
 def fold(
     units: list[dict[str, Any]], records: list[dict[str, Any]], found: dict[str, dict[str, Any]],
+    undetermined: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Everything the page shows, from one read of the board and the run log."""
     problems: list[str] = []
@@ -475,6 +504,8 @@ def fold(
         "suggested": order[:SHORTLIST_MAX],
         "undiscriminating": len(backlog) <= SHORTLIST_MAX,
         "measured_count": len(found),
+        # `0092` R11: finished units left out of `measured_count` for a cost nobody knows.
+        "undetermined_count": len(list(undetermined)),
         "terciles": cuts,
         "history": history,
         "per_unit": per_unit,
@@ -495,7 +526,9 @@ def _differs(est: dict[str, Any]) -> dict[str, Any] | None:
 # -- the agent's proposal ----------------------------------------------------------------
 
 
-def build_prompt(backlog_texts: list[dict[str, str]], finished_rows: list[dict[str, Any]]) -> str:
+def build_prompt(
+    backlog_texts: list[dict[str, str]], finished_rows: list[dict[str, Any]], undetermined: int = 0,
+) -> str:
     """R17. Instructions in English; the three value goals stay in the words `check_estimate` matches."""
     lines = [
         "You estimate the backlog of a software project. You have no tools and one turn.",
@@ -528,6 +561,9 @@ def build_prompt(backlog_texts: list[dict[str, str]], finished_rows: list[dict[s
             if b.get(key):
                 lines += [f"**{head}**", b[key].strip()]
     lines += ["", "## Finished units", ""]
+    if undetermined > 0:
+        # `0092` R11: never listed, and never hidden.
+        lines += [f"({undetermined} finished units have an unknown cost and are left out)", ""]
     if not finished_rows:
         lines.append("(none with a recorded cost)")
     for f in finished_rows:
@@ -552,7 +588,7 @@ _JSON_BLOCK = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
 def parse_proposal(
     reply: str, backlog: Iterable[str], store_names: Iterable[str],
     found: dict[str, dict[str, Any]], session: str, active: list[dict[str, Any]],
-    workspace: str = "",
+    workspace: str = "", undetermined: int = 0,
 ) -> dict[str, Any]:
     """R18. `{records, rejected, failed}`. Relations are checked one after another, so two in
     one reply cannot close a cycle between them."""
@@ -584,7 +620,7 @@ def parse_proposal(
         if said:
             rejected.append({"unit": unit, "reason": said})
         else:
-            got = effort_from(similar, found)
+            got = effort_from(similar, found, undetermined)
             records.append({
                 "kind": "estimate-value", "workspace": workspace, "unit": unit, "value": e["value"],
                 "effort": got["effort"] or e["effort"], "effort_source": got["effort_source"],
