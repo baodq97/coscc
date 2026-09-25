@@ -522,7 +522,8 @@ class Scripted(_Base):
         self.assertEqual((self.launched, self.stops()), ([], {"": "f"}))
         self.assertIn("could not record", self.service._autopilot_stops[self.key][""]["reason"])
 
-    async def test_r7_a_held_unit_is_no_candidate_and_a_closed_gate_still_closes(self):
+    async def test_r7_a_held_unit_is_no_candidate(self):
+        """And a shortlisted unit whose gate is closed is still not started."""
         self.add("0001_a", "")
         self.nexts["0001_a"]["hold"] = {"state": "dropped", "reason": "no", "by": "Leif", "date": "2026-09-25"}
         await self.pass_()
