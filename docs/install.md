@@ -55,6 +55,22 @@ PATH=/home/you/.nvm/versions/node/v24.20.0/bin:/usr/local/bin:/usr/bin:/bin
 Use the directory `dirname "$(command -v node)"` prints. A `node` installed by your
 distribution's package manager lands in `/usr/bin` and needs none of this.
 
+**A session the app opens does not read your Claude Code settings.** Since `0088` every
+session — each stage, chat, an integration, a proposal of estimates — starts with no
+settings source: nothing from `~/.claude/settings.json` or `settings.local.json`, no MCP
+server, no personal skill or plugin, and none of the `env` block in those files. Its
+environment is the service's. So a proxy (`ANTHROPIC_BASE_URL`), or any other variable a
+session needs, goes into the same env file, followed by `systemctl --user restart coscc`:
+
+```sh
+ANTHROPIC_BASE_URL=https://your-proxy.example
+```
+
+Left where it was, it is simply not used, and sessions go straight to Anthropic on this
+machine's `claude` login. A machine whose login lives in that `env` block
+(`ANTHROPIC_API_KEY`) or in `apiKeyHelper` has no login for the app's sessions until the
+key is in the env file too. Your own `claude` at a terminal is unchanged.
+
 **You do not need Node, npm or bun to *build* anything**, and that is a different sentence
 from the bullet above. The release wheel carries the frontend already compiled, so nothing
 on this machine compiles JavaScript; `node` is still what reads the Board at runtime.
