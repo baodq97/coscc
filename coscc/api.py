@@ -163,6 +163,35 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.get("/api/settings/autopilot")
+    async def get_autopilot(request: Request) -> Any:
+        """`0043`. One workspace's autopilot switches, `max_parallel`, and the app's daily cap."""
+        try:
+            return service.autopilot_settings(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/settings/autopilot")
+    async def set_autopilot(request: Request) -> Any:
+        """`0043`. `{cwd, name, value}` sets one of the four; a wrong value is a 400 and
+        nothing is written.
+
+        Behind the password like every route here: whoever holds it or a live session can
+        turn the autopilot on, raise the cap, or let it ship to `main` under this machine's
+        `gh` login. Turning it on is refused while the app listens beyond loopback. The
+        trace is a `setting` record in the run log.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        if not isinstance(body, dict):
+            return _bad("body must be a JSON object")
+        try:
+            return service.set_autopilot(str(body.get("cwd", "")), body.get("name"), body.get("value"))
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.post("/api/workspaces/{name}/pull")
     async def pull_workspace(name: str) -> Any:
         try:

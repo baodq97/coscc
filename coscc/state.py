@@ -733,6 +733,15 @@ class Conversation:
 
 
 @dataclasses.dataclass
+class AutopilotStop:
+    """`0043` R9. One unit the autopilot will not start anything on, and why."""
+
+    unit: str = ""
+    kind: str = ""
+    reason: str = ""
+
+
+@dataclasses.dataclass
 class RunningStep:
     """`0034`. One board step running now, as `Service.running_steps` lists it."""
 
@@ -800,6 +809,20 @@ NO_RUN_NOTE = "no event stream: this step ran before events were recorded"
 # `0089` R11 (D55). What the board says in place of the service's `read_only_because`, which
 # names `COS_WORKING_DIR` and stays as it is for the API (`coscc/board_api_test.py`).
 READ_ONLY_NOTE = "No working folder is set, so nothing can be recorded."
+
+# `0043` R9. A label for each of R6's stops (a–f) and the cap; the page words, not a decision.
+AUTOPILOT_STOP_LABEL = {
+    "a": "Open question", "b": "Needs a person", "c": "Ship waits", "d": "Integration needs a person",
+    "e": "Last step did not finish", "f": "Blocked", "cap": "Daily cap",
+}
+
+
+def _number(text: str, kind: type) -> object:
+    """`text` as `kind`, or the text itself for the service to refuse with its reason."""
+    try:
+        return kind(str(text).strip())
+    except ValueError:
+        return text
 
 
 def _watch_note(page: dict) -> str:
@@ -1152,6 +1175,11 @@ class StudioState(rx.State):
     # -- the service refuses a second -- and any number of units at once. This page holds
     # no running flag of its own; the list is re-read, never patched.
     running_steps: list[RunningStep] = []
+    # `0043` R9. The board's `autopilot` block, copied: whether it is on, its stops, the cap.
+    autopilot_on: bool = False
+    autopilot_stops: list[AutopilotStop] = []
+    autopilot_cap: str = ""
+    autopilot_refused: str = ""
     run_log: str = ""
     # The unit whose step this page is streaming into `run_log`, so another unit's
     # reply is never shown under the one now open.
@@ -1321,6 +1349,12 @@ class StudioState(rx.State):
     # is `model_target`, the same one-box-at-a-time shape the answers use.
     model_rows: list[ModelRow] = []
     model_problems: list[str] = []
+    # `0043` R2. One workspace's autopilot settings, as `Service.autopilot_settings` has them.
+    ap_on: bool = False
+    ap_may_ship: bool = False
+    ap_max_parallel: str = ""
+    ap_cap: str = ""
+    ap_refused: str = ""
     model_target: str = ""
     model_text: str = ""
     saving_model: bool = False
@@ -1533,6 +1567,39 @@ class StudioState(rx.State):
 
     async def _load_models(self) -> None:
         self._show_models(await SERVICE.stage_models())
+        self._load_autopilot()
+
+    def _show_autopilot_block(self, block: dict) -> None:
+        """`0043` R9. Copied from the board; nothing here decides whether to stop."""
+        self.autopilot_on = bool(block.get("on"))
+        self.autopilot_refused = str(block.get("refused_because") or "")
+        self.autopilot_stops = [
+            AutopilotStop(unit=str(x.get("unit") or "the workspace"), kind=AUTOPILOT_STOP_LABEL.get(
+                str(x.get("kind") or ""), str(x.get("kind") or "")), reason=str(x.get("reason") or ""))
+            for x in block.get("stops") or []
+        ]
+        cap = block.get("cap") or {}
+        self.autopilot_cap = (
+            "" if not cap else
+            f"Today: {cap.get('spent', 0):.2f} spent, {cap.get('running', 0):.2f} running, "
+            f"cap {cap.get('limit', 0):.2f} USD" + (" (a cost is unknown, so the cap counts as reached)" if cap.get("unknown") else "")
+        )
+
+    def _show_autopilot(self, data: dict) -> None:
+        self.ap_on = bool(data.get("autopilot"))
+        self.ap_may_ship = bool(data.get("autopilot_may_ship"))
+        self.ap_max_parallel = str(data.get("max_parallel") or "")
+        cap = data.get("daily_cap_usd")
+        self.ap_cap = f"{cap:g}" if isinstance(cap, (int, float)) else ""
+        self.ap_refused = str(data.get("refused_because") or "")
+
+    def _load_autopilot(self) -> None:
+        if not self.cwd:
+            return
+        try:
+            self._show_autopilot(SERVICE.autopilot_settings(self.cwd))
+        except Invalid:
+            return
 
     def _load_workspaces(self) -> None:
         data = SERVICE.workspaces()
@@ -1606,6 +1673,7 @@ class StudioState(rx.State):
             u["name"]: tree_line(u.get("worktree")) for u in data.get("units") or []
         }
         self.recording = bool(data["recording"])
+        self._show_autopilot_block(data.get("autopilot") or {})
         read_only = READ_ONLY_NOTE if data.get("read_only_because") else ""
         self.board_note = read_only or data.get("empty_because") or ""
         empty = data.get("empty") or {}
@@ -2208,6 +2276,40 @@ class StudioState(rx.State):
             if model is not None
             else f"{name} is back on its default."
         )
+
+    @rx.event
+    def set_autopilot_on(self, value: bool):
+        """`0043`. Whether it may be turned on is `Service.set_autopilot`'s call."""
+        self._change_autopilot("autopilot", bool(value))
+
+    @rx.event
+    def set_autopilot_may_ship(self, value: bool):
+        self._change_autopilot("autopilot_may_ship", bool(value))
+
+    @rx.event
+    def edit_ap_max_parallel(self, value: str):
+        self.ap_max_parallel = value
+
+    @rx.event
+    def edit_ap_cap(self, value: str):
+        self.ap_cap = value
+
+    @rx.event
+    def save_ap_max_parallel(self):
+        self._change_autopilot("max_parallel", _number(self.ap_max_parallel, int))
+
+    @rx.event
+    def save_ap_cap(self):
+        self._change_autopilot("daily_cap_usd", _number(self.ap_cap, float))
+
+    def _change_autopilot(self, name: str, value) -> None:
+        try:
+            self._show_autopilot(SERVICE.set_autopilot(self.cwd, name, value))
+        except Invalid as e:
+            self.notice = str(e)
+            self._load_autopilot()
+            return
+        self.notice = "Saved."
 
     @rx.event
     async def save_effort(self, name: str, effort: str):

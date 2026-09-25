@@ -91,6 +91,18 @@ class ThePage(unittest.TestCase):
         self.assertIn("update-panel", _render(screens._settings()))
         self.assertIn("backlog-panel", _render(screens._backlog_screen()))
 
+    def test_0043_the_autopilot_strip_and_its_settings(self):
+        """`0043` R2, R9: the board's strip lists each stop as a row; Settings holds the four
+        controls, and no variable name reaches either (S3)."""
+        board = _render(screens._board())
+        self.assertIn("autopilot-strip", board)
+        self.assertIn("autopilot-stop", board)
+        settings = _render(screens._settings())
+        for control in ("autopilot-panel", "autopilot-on", "autopilot-ship", "autopilot-parallel", "autopilot-cap"):
+            self.assertIn(control, settings)
+        self.assertNotIn("COS_", _render(screens._autopilot_settings()))
+        self.assertNotIn("COS_", _render(screens._autopilot_strip()))
+
     def test_f2_a_grants_tools_are_a_list_behind_details(self):
         settings = _render(screens._settings())
         self.assertNotIn("tools: ", settings)

@@ -37,6 +37,10 @@ STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown"
 BUTTON_STATES = ("behind", "conflicting", "red-after-integration")
 GEBO_STATES = ("conflicting", "red-after-integration")
 OUTCOMES = ("pushed", "needs-person", "refused", "failed")
+# `0043` R3. Who started a step or an integration: the autopilot, or a request to a route —
+# a person on the board, `curl`, or an agent at a terminal, which the app cannot tell apart.
+# Kept here, the module with no imports of its own, so `runner.py` can share it.
+STARTED_BY = ("person", "autopilot")
 
 # Seconds. Chosen, not measured — the same figure as `board.GATE_TIMEOUT` and
 # `prcomment.TIMEOUT`.
@@ -52,6 +56,13 @@ _NEEDS_PERSON = re.compile(r"^\s*(?:[-*]\s*)?\[needs-person\]\s*(.+?)\s*$")
 
 class IntegrateError(Exception):
     """A `gh` call that failed, carrying `gh`'s own words."""
+
+
+def check_started_by(value: str) -> str:
+    """`value` when it is one of `STARTED_BY`; `ValueError` otherwise."""
+    if value not in STARTED_BY:
+        raise ValueError(f"started_by must be one of {', '.join(STARTED_BY)}, got {value!r}")
+    return value
 
 
 # --- pure --------------------------------------------------------------------
@@ -292,6 +303,7 @@ def record(
     fetch: dict | None = None,
     merge_state: str = "",
     update_branch: dict | None = None,
+    started_by: str = "person",
 ) -> dict[str, Any]:
     """R9: the one record every integration leaves, whatever happened.
 
@@ -299,9 +311,13 @@ def record(
     said of the pull request then — observed, never decided on. `update_branch` is the exit
     code and words of a refused `gh pr update-branch` that sent the press to Gebo. All three
     keys are always written; a record from before `0052` has none of them.
+
+    `0043` R3: `started_by` is always written too; a record from before `0043` has none,
+    which reads as `person`.
     """
     if outcome not in OUTCOMES:
         raise ValueError(f"outcome must be one of {', '.join(OUTCOMES)}, got {outcome!r}")
+    check_started_by(started_by)
     return {
         "kind": "integration",
         "workspace": workspace,
@@ -323,6 +339,7 @@ def record(
             {"code": update_branch.get("code"), "said": str(update_branch.get("said") or "")}
             if update_branch else None
         ),
+        "started_by": started_by,
     }
 
 

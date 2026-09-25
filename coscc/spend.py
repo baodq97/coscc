@@ -86,6 +86,11 @@ def _day(at: Any, tz: tzinfo | None) -> str:
     return moment.astimezone(tz).date().isoformat()
 
 
+def local_day(at: Any, tz: tzinfo | None = None) -> str:
+    """`_day`, public: `0043`'s daily cap counts days the way this screen does."""
+    return _day(at, tz)
+
+
 def offset(tz: tzinfo | None = None) -> str:
     """`UTC+07:00`: today's offset of the zone the days are counted in (R3)."""
     delta = datetime.now(tz).astimezone(tz).utcoffset()

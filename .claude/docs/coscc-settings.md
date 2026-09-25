@@ -23,6 +23,24 @@ Read this before changing `POST /api/settings/*`, `coscc/models.py`, `POST /api/
   shown on Settings as `impl:novel`), so one press can spend twice as much. `max` is refused
   from `models.json` and taken from an override, so anyone holding the password can set it.
   The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
+- **`POST /api/settings/autopilot` lets the app start steps, and ship, on its own.** Since
+  `0043`, `{cwd, name, value}` sets one of four, in `prefs`: `autopilot:<key>` and
+  `autopilot_may_ship:<key>` (booleans, off), `max_parallel:<key>` (a whole number ≥ 1, 4),
+  keyed by the workspace's resolved path, and `autopilot_daily_cap_usd` (a number above 0,
+  50) for the whole app. A wrong value is a 400 and nothing is written; every change is a
+  `setting` record with `old` and `new`. Turning the switch on is refused while `COS_HOST`
+  is not loopback (`127.0.0.1`, `localhost`, `::1`), and a switch left on does nothing
+  after a restart onto `0.0.0.0` but show why. Otherwise anyone holding the password or a
+  live session can turn it on, raise the cap, or let the autopilot merge to `main` under
+  this machine's `gh` login. The cap counts every `end` of the machine's day in every
+  workspace, a person's too; an `end` with no `cost_usd` counts as the cap reached for the
+  rest of the day, and a step running is counted at the largest `max_budget_usd` its stage
+  can have. It holds only the autopilot: a press is never held. Each pass costs one board
+  read (a `gh pr list` when a unit sits between `pr` and `ship`) and one `cos.mjs next` per
+  unfinished unit, and the 5-minute pass repeats that for the units between `pr` and `ship`
+  with nobody looking. The run log's `start` and `integration` rows carry `started_by`
+  (`person` for any request, `autopilot` for its own), and an `autopilot-stop` row each
+  time a unit's stop changes; `scripts/verify_0043.py` reads both.
 - **`POST /api/backlog/*` writes the backlog's order, and `propose` opens a paid session, for
   whoever holds the password.** Since `0074`. `estimate`, `relation` and `shortlist` each
   append one run-log row (`estimate-value`, `relation`, `shortlist`) with `by` — `owner` from

@@ -56,7 +56,8 @@ locked position: no tools, no commands, one turn, no budget.
 ## Hazards every change can meet
 
 - **Sessions spend account quota.** Nothing that talks to the app belongs in an unattended
-  loop. These proofs spend money, push, or need another machine: `verify_0001`, `0002`,
+  loop — except the app's own autopilot (`0043`), on per workspace, capped per day, which
+  starts steps with nobody watching (`.claude/docs/not-built.md`). These proofs spend money, push, or need another machine: `verify_0001`, `0002`,
   `0004`, `0005`, `0011`, `0014`, and every `--paid` flag
   (`.claude/docs/coscc-proofs.md`).
 - **SQLite settings are ordered.** `busy_timeout` must be the **first statement on every

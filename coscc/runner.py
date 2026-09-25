@@ -29,6 +29,7 @@ from typing import Any, AsyncIterator
 import claude_agent_sdk as sdk
 
 from coscc import gitops, harness, instructions, steps
+from coscc.integrate import check_started_by
 from coscc import sessions as sessions_mod
 from coscc.journal import Journal
 from coscc.policy import Grant, beyond_reading, decide, grant_for_step, is_prose_stage
@@ -1293,6 +1294,7 @@ class Runner:
         pr_note: str = "",
         pr_before: str | None = None,
         running: steps.Running | None = None,
+        started_by: str = "person",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -1343,7 +1345,11 @@ class Runner:
         called before anything of the artifact is written or read, so a stopped step
         leaves no artifact behind it and a sealed one cannot be stopped halfway.
         A cancellation nobody asked for is the app shutting down, and writes no `end`.
+
+        `started_by` (`0043` R3) is `person` or `autopilot`, written into `start` and nowhere
+        else; anything else is a `ValueError` before anything is read.
         """
+        check_started_by(started_by)
         grant = grant_for_step(stage, label)
         directory = Path(directory)
         cwd = cwd or workspace
@@ -1395,6 +1401,7 @@ class Runner:
         if self.journal is not None:
             self.journal.started(
                 journal_key, unit, stage, mode,
+                started_by=started_by,
                 prompt_chars=len(prompt), included=included,
                 # `0094` R16: the artifacts named by path only, `[]` for a stage that names none.
                 pointed=pointed,

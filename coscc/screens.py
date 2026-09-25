@@ -32,6 +32,7 @@ from coscc.state import (
     NAVIGATION,
     Activity,
     AnomalyRow,
+    AutopilotStop,
     BacklogRow,
     Cell,
     Event,
@@ -840,10 +841,40 @@ _RECONNECT_JS = """
 """
 
 
+def _autopilot_stop_row(stop: rx.Var[AutopilotStop]) -> rx.Component:
+    return rx.flex(
+        s.badge(stop.unit, "iris"),
+        s.badge(stop.kind, "amber"),
+        s.text(stop.reason, size="1", min_width="0", overflow_wrap="anywhere"),
+        gap="8px", align="center", wrap="wrap", width="100%", data_testid="autopilot-stop",
+    )
+
+
+def _autopilot_strip() -> rx.Component:
+    """`0043` R9. Shown while the autopilot is on: the cap line, and one row per stop."""
+    return rx.cond(
+        P.autopilot_on,
+        rx.vstack(
+            rx.hstack(
+                rx.icon("bot", size=16, color=rx.color("iris", 11)),
+                rx.text("Autopilot is on", size="2", weight="medium"),
+                rx.spacer(),
+                s.text(P.autopilot_cap, size="1"),
+                width="100%", align="center", wrap="wrap",
+            ),
+            rx.cond(P.autopilot_refused != "", s.text(P.autopilot_refused, size="1")),
+            rx.foreach(P.autopilot_stops, _autopilot_stop_row),
+            padding="12px 16px", background=rx.color("iris", 3), border_radius="10px",
+            spacing="2", width="100%", role="status", id="autopilot-strip",
+        ),
+    )
+
+
 def _board() -> rx.Component:
     return rx.vstack(
         s.heading("Work board", "From an idea to something real. One clear step at a time."),
         rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
+        _autopilot_strip(),
         _running_steps(),
         rx.flex(
             rx.input(rx.input.slot(rx.icon("search", size=15)), id="work-search",
@@ -1301,10 +1332,50 @@ def _model_row(row: rx.Var[ModelRow]) -> rx.Component:
     )
 
 
+def _autopilot_settings() -> rx.Component:
+    """`0043` R2. This workspace's autopilot; the cap is the whole app's. A refusal comes
+    back from `Service.set_autopilot` as the page's notice, verbatim."""
+    return s.panel(
+        s.section_head("Autopilot", rx.icon("bot", size=18, color=s.MUTED)),
+        _settings_row(
+            "Run the next stage", "Starts each unit's next stage without a press, and spends quota.",
+            # S8: off loopback it cannot be turned on, and the reason stands in its place.
+            rx.cond((P.ap_refused != "") & ~P.ap_on, s.text(P.ap_refused, size="1", max_width="320px"),
+                    rx.switch(checked=P.ap_on, on_change=P.set_autopilot_on, id="autopilot-on",
+                              aria_label="Autopilot")),
+        ),
+        _settings_row(
+            "May ship", "Merges to main under this machine's gh login, with nobody looking.",
+            rx.switch(checked=P.ap_may_ship, on_change=P.set_autopilot_may_ship, id="autopilot-ship",
+                      aria_label="Autopilot may ship"),
+        ),
+        _settings_row(
+            "Sessions at once", "Counts the steps a person starts too.",
+            rx.hstack(
+                rx.input(value=P.ap_max_parallel, on_change=P.edit_ap_max_parallel, size="1", width="72px",
+                         aria_label="Sessions at once", id="autopilot-parallel"),
+                rx.button("Save", on_click=P.save_ap_max_parallel, size="1"),
+                align="center",
+            ),
+        ),
+        _settings_row(
+            "Daily cap (USD)", "One cap for every workspace; a person's press is never held.",
+            rx.hstack(
+                rx.input(value=P.ap_cap, on_change=P.edit_ap_cap, size="1", width="72px",
+                         aria_label="Daily cap in USD", id="autopilot-cap"),
+                rx.button("Save", on_click=P.save_ap_cap, size="1"),
+                align="center",
+            ),
+        ),
+        id="autopilot-panel",
+    )
+
+
 def _settings() -> rx.Component:
     return rx.vstack(
         s.heading("Make it feel like yours.",
                   "A considered default. A few thoughtful choices."),
+        rx.cond(P.has_workspace, _autopilot_settings(), rx.fragment()),
         s.panel(
             s.section_head("Appearance", rx.icon("palette", size=18, color=s.MUTED)),
             _settings_row(

@@ -212,6 +212,18 @@ class Record(unittest.TestCase):
                         origin_sha=MAIN, outcome="refused", fetch={"outcome": "failed", "detail": "no remote"})
         self.assertEqual(rec["fetch"], {"outcome": "failed", "detail": "no remote"})
 
+    def test_started_by_is_person_unless_named(self):
+        """`0043` R3: every integration record says who started it, and only two values."""
+        rec = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
+                        head_after="", origin_sha=MAIN, outcome="refused")
+        self.assertEqual(rec["started_by"], "person")
+        rec = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
+                        head_after="", origin_sha=MAIN, outcome="refused", started_by="autopilot")
+        self.assertEqual(rec["started_by"], "autopilot")
+        with self.assertRaises(ValueError):
+            ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
+                      head_after="", origin_sha=MAIN, outcome="refused", started_by="cron")
+
     def test_an_old_record_without_them_still_describes(self):
         old = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
                         head_after=NEW, origin_sha=MAIN, outcome="pushed")

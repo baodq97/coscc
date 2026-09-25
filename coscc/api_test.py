@@ -1288,3 +1288,101 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
         last = json.loads(got.text.strip().splitlines()[-1])
         self.assertEqual((last["type"], last["estimate"]["outcome"]), ("done", "failed"))
         self.assertEqual((await self.client.post("/api/backlog/propose", json={"cwd": "/nope"})).status_code, 400)
+
+
+class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0043` R1, R2 and `spec.md ## Answers`, câu 3."""
+
+    async def client_for(self, host: str) -> httpx.AsyncClient:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.config = Config(workspaces=("/tmp",), data_dir=tmp.name, working_dir=tmp.name, host=host)
+        app = build(self.config)
+        self.service = app.state.service
+        self.started: list[str] = []
+        self.service.autopilot_start = self.started.append
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+        self.addAsyncCleanup(client.aclose)
+        return client
+
+    def prefs(self) -> dict:
+        from coscc.data import Data
+        return Data(self.config.data_dir).prefs()
+
+    async def test_defaults_are_off_four_and_fifty(self):
+        client = await self.client_for("127.0.0.1")
+        got = (await client.get("/api/settings/autopilot", params={"cwd": "/tmp"})).json()
+        self.assertEqual(
+            (got["autopilot"], got["autopilot_may_ship"], got["max_parallel"], got["daily_cap_usd"]),
+            (False, False, 4, 50.0),
+        )
+        self.assertEqual(got["refused_because"], "")
+
+    async def test_a_wrong_value_is_a_400_and_nothing_is_written(self):
+        client = await self.client_for("127.0.0.1")
+        for name, value in [
+            ("autopilot", "yes"), ("autopilot", 1), ("autopilot_may_ship", None),
+            ("max_parallel", 0), ("max_parallel", 2.5), ("max_parallel", True), ("max_parallel", "3"),
+            ("daily_cap_usd", 0), ("daily_cap_usd", -1), ("daily_cap_usd", True), ("daily_cap_usd", "50"),
+            ("no_such", 1),
+        ]:
+            got = await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": name, "value": value})
+            self.assertEqual(got.status_code, 400, (name, value))
+        # JSON has no infinity; the service refuses one too.
+        from coscc.service import Invalid
+        with self.assertRaises(Invalid):
+            self.service.set_autopilot("/tmp", "daily_cap_usd", float("inf"))
+        self.assertEqual(self.prefs(), {})
+        self.assertEqual(self.started, [])
+
+    async def test_off_loopback_the_switch_will_not_turn_on(self):
+        client = await self.client_for("0.0.0.0")
+        got = await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": "autopilot", "value": True})
+        self.assertEqual(got.status_code, 400)
+        self.assertIn("restart it on 127.0.0.1", got.json()["error"])
+        self.assertEqual((self.prefs(), self.started), ({}, []))
+        # Everything but the switch itself may still be set.
+        ok = await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": "max_parallel", "value": 2})
+        self.assertEqual(ok.status_code, 200)
+
+    async def test_a_change_is_stored_started_and_logged_with_old_and_new(self):
+        from coscc.journal import Journal
+        client = await self.client_for("127.0.0.1")
+        got = await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": "autopilot", "value": True})
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertTrue(got.json()["autopilot"])
+        self.assertEqual(self.started, ["/tmp"])
+        await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": "daily_cap_usd", "value": 20})
+        rows = Journal(self.config.working_dir, self.config.data_dir).records(kind="setting")
+        self.assertEqual(
+            [(r["name"], r["old"], r["new"]) for r in rows],
+            [("autopilot:/tmp", False, True), ("autopilot_daily_cap_usd", 50.0, 20.0)],
+        )
+
+
+class NoRequestIsTheAutopilot(unittest.IsolatedAsyncioTestCase):
+    """`0043` R3. `started_by` is not read off a body: a request is always `person`."""
+
+    async def test_a_body_naming_the_autopilot_is_not_believed(self):
+        app = build(_tmp_config(self))
+        called: list[tuple] = []
+
+        async def run_step(*args, **kwargs):
+            called.append(("run", args, kwargs))
+            yield ("done", {"outcome": "done"})
+
+        async def integrate(*args, **kwargs):
+            called.append(("integrate", args, kwargs))
+            yield ("done", {"integration": {}})
+
+        service = app.state.service
+        service.run_step = run_step
+        service.integrate = integrate
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+            body = {"cwd": "/tmp", "unit": "0001_a", "stage": "spec", "started_by": "autopilot"}
+            self.assertEqual((await client.post("/api/board/run", json=body)).status_code, 200)
+            await client.post("/api/units/integrate", json=body)
+        self.assertEqual([c[0] for c in called], ["run", "integrate"])
+        for _, args, kwargs in called:
+            self.assertNotIn("started_by", kwargs)
+            self.assertNotIn("autopilot", args)

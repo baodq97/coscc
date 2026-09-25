@@ -72,6 +72,31 @@ class EveryVarAHandlerSetsIsDeclared(unittest.TestCase):
         )
 
 
+class TheAutopilotBlockIsCopied(unittest.TestCase):
+    """`0043` R9. The board's `autopilot` block, shown as it came: a row per stop, one cap line."""
+
+    def test_stops_and_cap(self):
+        from types import SimpleNamespace
+
+        from coscc.state import AutopilotStop, StudioState
+
+        page = SimpleNamespace()
+        StudioState._show_autopilot_block(page, {
+            "on": True, "refused_because": "",
+            "stops": [{"unit": "0010_a", "kind": "a", "reason": "open questions: spec.md question 2"},
+                      {"unit": "", "kind": "cap", "reason": "over"}],
+            "cap": {"limit": 50.0, "spent": 3.5, "running": 4.0, "day": "2026-10-01", "unknown": False},
+        })
+        self.assertTrue(page.autopilot_on)
+        self.assertEqual(page.autopilot_stops, [
+            AutopilotStop("0010_a", "Open question", "open questions: spec.md question 2"),
+            AutopilotStop("the workspace", "Daily cap", "over"),
+        ])
+        self.assertEqual(page.autopilot_cap, "Today: 3.50 spent, 4.00 running, cap 50.00 USD")
+        StudioState._show_autopilot_block(page, {"on": False})
+        self.assertEqual((page.autopilot_on, page.autopilot_stops, page.autopilot_cap), (False, [], ""))
+
+
 class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
     """`0001_product-describes-a-state-it-is-not-in` R4/R5, from this store.
 
