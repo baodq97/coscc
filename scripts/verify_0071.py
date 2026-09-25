@@ -96,17 +96,23 @@ INTENT = (
     # `0082`: (b) now answers question 2, so (c) leaves its text in question 4's box.
     f"4. **Câu thứ tư?**\n{FILLER}"
 )
-# `coscc/api_test.py`'s `0028` fixture: round 2 confirmed F2 and F3 need a person.
+# `coscc/api_test.py`'s `0028` fixture: round 2 confirmed F2 and F3 need a person. Since
+# `0082` the Questions tab opens with one sentence rather than a paragraph, so F4 to F8 and
+# `WHY` on each finding keep the tab long enough to scroll at 1280x900.
+WHY = " ".join(["Lý do cần một người quyết, viết dài để tab đủ dài mà cuộn."] * 14)
 _ROUND = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
 FINDING_FILES = {
     "spec.md": "Status: accepted.\n",
     "plan.md": "Status: accepted.\n",
-    "impl.md": "# Impl\nStatus: accepted.\n\n## Needs a person\n\n- F2: no budget\n- F3: no gh\n",
+    "impl.md": "# Impl\nStatus: accepted.\n\n## Needs a person\n\n- F2: no budget\n- F3: no gh\n"
+               + "".join(f"- F{k}: no gh\n" for k in range(4, 9)),
     "pr.md": "PR: https://github.com/o/r/pull/3. Status: accepted.\n",
     "review.md": (
         "# Review: q\nAuthor: t. Status: changes-requested.\n"
-        + _ROUND.format(n=1, v="changes-requested", f="- F2 [open] b\n- F3 [open] c")
-        + _ROUND.format(n=2, v="needs-person", f="- F2 [needs-person] b\n- F3 [needs-person] c")
+        + _ROUND.format(n=1, v="changes-requested",
+                        f="- F2 [open] b\n- F3 [open] c" + "".join(f"\n- F{k} [open] d" for k in range(4, 9)))
+        + _ROUND.format(n=2, v="needs-person", f=f"- F2 [needs-person] b {WHY}\n- F3 [needs-person] c {WHY}"
+                                  + "".join(f"\n- F{k} [needs-person] d {WHY}" for k in range(4, 9)))
     ),
 }
 
@@ -302,12 +308,13 @@ def one_width(browser, base, token, api, cwd, size) -> list[bool]:
         # none is recorded as `owner` rather than refused.
         type_in(page, box(page, "intent.md#2"), "Câu hai, nhưng không ký tên.")
         press(page, "intent.md#2")
-        said = wait_text(page, "#detail-notice", "")
+        said = wait_text(page, "#detail-notice", "Answered question 2")
         tail = intent.read_text(encoding="utf-8")
         why = in_view(page, "#detail-notice")
         kept = "Answered by: owner" in tail.split("### Câu 2", 1)[-1]
         results.append(say(
-            kept and "Câu hai, nhưng không ký tên." in tail and not why,
+            "Answered question 2 of intent.md" in said and kept and "Câu hai, nhưng không ký tên." in tail
+            and not why,
             f"2 [{w}] (b) an answer sent with no name is recorded as owner, and the notice is in view",
             f"notice {said[:160]!r}; owner block {kept}; "
             f"box {kept!r}; in view: {why or 'yes'}",
