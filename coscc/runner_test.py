@@ -1824,6 +1824,19 @@ class TheStepRunsOnTheModelItWasGiven(unittest.TestCase):
             self.assertEqual((row["model"], row["model_source"]), ("m", "override"))
             self.assertEqual((final["model"], final["model_source"]), ("m", "override"))
 
+    def test_the_start_record_says_who_started_it(self):
+        """`0043` R3: `person` unless the caller names `autopilot`; nothing else is taken."""
+        with tempfile.TemporaryDirectory() as d:
+            _, journal, _ = self.run_spec(d)
+            self.assertEqual(journal.records(d, kind="start")[-1]["started_by"], "person")
+        with tempfile.TemporaryDirectory() as d:
+            _, journal, _ = self.run_spec(d, started_by="autopilot")
+            self.assertEqual(journal.records(d, kind="start")[-1]["started_by"], "autopilot")
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(ValueError):
+                self.run_spec(d, started_by="someone")
+            self.assertEqual(Journal(d, d).records(d, kind="start"), [])
+
     def test_no_model_is_not_passed_at_all(self):
         # A stand-in `stream` without a `model` parameter must keep working.
         with tempfile.TemporaryDirectory() as d:

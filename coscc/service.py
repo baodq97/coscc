@@ -916,8 +916,13 @@ class Service:
             "consequence": CONSEQUENCE["integrate"],
         }
 
-    async def integrate(self, cwd: str, unit: str) -> AsyncIterator[tuple[str, Any]]:
+    async def integrate(
+        self, cwd: str, unit: str, started_by: str = "person",
+    ) -> AsyncIterator[tuple[str, Any]]:
         """`0035`. Integrate one unit, on a person's request. Streams like `run_step`.
+
+        `0043`: or on the autopilot's, which passes `started_by="autopilot"`; every record
+        this writes carries it (R3). No route passes it.
 
         Refuses before anything changes (R12), and every refusal, push or failure leaves one
         `integration` record (R9). `behind` goes the mechanical road (R4); `conflicting`
@@ -929,6 +934,10 @@ class Service:
         `mergeStateStatus`, only to record it. A mechanical road whose `update-branch`
         exits non-zero opens Gebo with that code and gh's words.
         """
+        try:
+            integrate.check_started_by(started_by)
+        except ValueError as e:
+            raise Invalid(str(e)) from e
         self._workspace_or_refuse(cwd)
         self._refuse_while_updating()
         journal = self._journal()
@@ -949,8 +958,8 @@ class Service:
         last = self._last_integrations(journal, key).get(unit)
         info = None
         pr = (found.get("pr") or {}).get("number")
-        # Spread into every record this press writes (`0052` R5).
-        seen: dict[str, Any] = {"fetch": None, "merge_state": ""}
+        # Spread into every record this press writes (`0052` R5; `started_by`, `0043` R3).
+        seen: dict[str, Any] = {"fetch": None, "merge_state": "", "started_by": started_by}
         if found.get("between_pr_and_ship") and found.get("pr"):
             try:
                 seen["fetch"] = await fetches.fetch(root, BRANCH_REMOTE, BRANCH_TRUNK)
@@ -1132,7 +1141,8 @@ class Service:
         model, model_source = self._model_for("impl")
         app = self._app_identity()
         try:
-            journal.started(key, unit, "integrate", "manual", prompt_chars=len(prompt), granted=list(grant.tools),
+            journal.started(key, unit, "integrate", "manual", started_by=seen["started_by"],
+                            prompt_chars=len(prompt), granted=list(grant.tools),
                             max_turns=grant.max_turns, head=head_before, model=model, model_source=model_source,
                             pointed=list(own), app_version=app["version"], app_commit=app["commit"],
                             # `0093` R8: what opened this session, for *Integrate for a conflict*.
@@ -1320,13 +1330,22 @@ class Service:
             raise Invalid(str(e)) from e
         return {"cwd": cwd, "unit": unit, "stage": stage, "mode": mode}
 
-    async def run_step(self, cwd: str, unit: str, stage: str) -> AsyncIterator[tuple[str, Any]]:
+    async def run_step(
+        self, cwd: str, unit: str, stage: str, started_by: str = "person",
+    ) -> AsyncIterator[tuple[str, Any]]:
         """Run one step of one unit, streaming the reply as it arrives.
 
         Everything this needs — the stage order, the artifact filename, the mode — comes
         from one board read, so a step cannot run against a different idea of the unit
         than the one the page is showing.
+
+        `started_by` (`0043` R3) is `autopilot` only when the autopilot calls this; no route
+        passes it, so a request cannot say it is the autopilot.
         """
+        try:
+            integrate.check_started_by(started_by)
+        except ValueError as e:
+            raise Invalid(str(e)) from e
         self._workspace_or_refuse(cwd)
         self._refuse_while_updating()
         journal = self._journal()
@@ -1534,6 +1553,8 @@ class Service:
                     **config,
                     # Only named for a spike, so a stand-in `run` without it keeps working.
                     **({"watch": work} if scratch is not None else {}),
+                    # The same: `Runner.run` writes `person` when it is not named.
+                    **({"started_by": started_by} if started_by != "person" else {}),
                 ),
             ))
             running.task.add_done_callback(
@@ -2673,7 +2694,8 @@ class Service:
                 self.config.model,
             )
             try:
-                journal.started(key, "", "estimate", "manual", prompt_chars=len(prompt), granted=[],
+                journal.started(key, "", "estimate", "manual", started_by="person",
+                                prompt_chars=len(prompt), granted=[],
                                 max_turns=grant.max_turns, model=model, model_source=model_source,
                                 effort=effort, effort_source=effort_source)
                 started = True

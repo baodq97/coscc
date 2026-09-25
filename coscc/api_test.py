@@ -1288,3 +1288,31 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
         last = json.loads(got.text.strip().splitlines()[-1])
         self.assertEqual((last["type"], last["estimate"]["outcome"]), ("done", "failed"))
         self.assertEqual((await self.client.post("/api/backlog/propose", json={"cwd": "/nope"})).status_code, 400)
+
+
+class NoRequestIsTheAutopilot(unittest.IsolatedAsyncioTestCase):
+    """`0043` R3. `started_by` is not read off a body: a request is always `person`."""
+
+    async def test_a_body_naming_the_autopilot_is_not_believed(self):
+        app = build(_tmp_config(self))
+        called: list[tuple] = []
+
+        async def run_step(*args, **kwargs):
+            called.append(("run", args, kwargs))
+            yield ("done", {"outcome": "done"})
+
+        async def integrate(*args, **kwargs):
+            called.append(("integrate", args, kwargs))
+            yield ("done", {"integration": {}})
+
+        service = app.state.service
+        service.run_step = run_step
+        service.integrate = integrate
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+            body = {"cwd": "/tmp", "unit": "0001_a", "stage": "spec", "started_by": "autopilot"}
+            self.assertEqual((await client.post("/api/board/run", json=body)).status_code, 200)
+            await client.post("/api/units/integrate", json=body)
+        self.assertEqual([c[0] for c in called], ["run", "integrate"])
+        for _, args, kwargs in called:
+            self.assertNotIn("started_by", kwargs)
+            self.assertNotIn("autopilot", args)
