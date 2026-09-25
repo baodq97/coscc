@@ -328,10 +328,42 @@ class Journal:
         The board needs one of these per unit. Asking `timeline` for each would open a
         connection and re-scan the working folder per unit — the same rows, N times.
         """
-        by_unit: dict[str, list[dict[str, Any]]] = {}
-        for item in self.records(workspace, timeout=timeout):
-            by_unit.setdefault(str(item.get("unit") or ""), []).append(item)
-        return {unit: _fold(items) for unit, items in by_unit.items()}
+        return timelines_of(self.records(workspace, timeout=timeout))
+
+    def append_checked(
+        self, record: dict[str, Any], kinds: Iterable[str], check: Any, timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """`0074`. Read the records of `kinds`, let `check` refuse, and append — in one transaction.
+
+        `check(rows)` raises `BadRecord` to refuse; nothing is written then. The read happens
+        on the transaction's own connection after `BEGIN IMMEDIATE`, so two writers checking
+        against each other's rows run one after the other.
+        """
+        if not isinstance(record, dict) or not record.get("kind"):
+            raise BadRecord("a journal record needs a 'kind'")
+        stamped = {"v": VERSION, "at": _now(), **record}
+        try:
+            json.dumps(stamped, ensure_ascii=False, sort_keys=False)
+        except (TypeError, ValueError) as e:
+            raise BadRecord(f"record is not JSON-serialisable: {e}") from e
+        wanted = list(kinds)
+        with self.transaction(timeout) as conn:
+            sql = (
+                "SELECT record FROM runs WHERE root = ? AND workspace = ?"
+                + (f" AND kind IN ({', '.join('?' for _ in wanted)})" if wanted else " AND 0")
+                + " ORDER BY id"
+            )
+            rows = []
+            for row in conn.execute(sql, [self._root, str(record.get("workspace") or ""), *wanted]).fetchall():
+                try:
+                    item = json.loads(row["record"])
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    continue
+                if isinstance(item, dict):
+                    rows.append(item)
+            check(rows)
+            self._insert(conn, stamped)
+        return stamped
 
     def open_starts(
         self, workspace: str, timeout: float | None = None
@@ -477,6 +509,14 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             # board as a run that cost nothing, rather than one nobody measured.
             row["reported"] = "cost_usd" in item
     return rows
+
+
+def timelines_of(items: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """`Journal.timelines` over records already read, so the board reads the run log once (`0074`)."""
+    by_unit: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        by_unit.setdefault(str(item.get("unit") or ""), []).append(item)
+    return {unit: _fold(rows) for unit, rows in by_unit.items()}
 
 
 def totals_of(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:

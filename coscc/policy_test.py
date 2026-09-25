@@ -97,7 +97,7 @@ class OneGrantPerStage(unittest.TestCase):
         }
         # `integrate` since `0035`: not a stage, and pinned in `GeboPushesOnlyWithTheLease`.
         # `spike` since `0039`: pinned in `SpikeWritesOnlyItsScratch`.
-        self.assertEqual(set(policy.GRANTS), set(expected) | {"spec", "integrate", "spike"})
+        self.assertEqual(set(policy.GRANTS), set(expected) | {"spec", "integrate", "spike", "estimate"})
         for stage, grant in expected.items():
             self.assertEqual(grant_for(stage), grant, stage)
 
@@ -315,6 +315,17 @@ class TheKnownLimit(unittest.TestCase):
         """
         self.assertEqual(check_command(IMPL, "git push --force"), "")
         self.assertEqual(check_command(IMPL, "npm install something"), "")
+
+
+class TheEstimateGrantOpensNothing(unittest.TestCase):
+    """`0074` R17, R19: one turn, $2.00, no tool, no command, and a warning for the page."""
+
+    def test_the_grant(self):
+        g = grant_for("estimate")
+        self.assertFalse(g.opens_anything)
+        self.assertEqual((g.max_turns, g.max_budget_usd), (1, 2.0))
+        self.assertIn("paid session", g.warning)
+        self.assertIn("password", g.warning)
 
 
 if __name__ == "__main__":

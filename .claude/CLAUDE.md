@@ -220,6 +220,15 @@ a `review` gate that never opens.
   `SHA256SUMS` from the same release catches a torn file, not a compromised release, and
   anyone who can write to `COS_DATA_DIR` can place a wheel and a manifest that agree. It
   opens and closes no gate and starts no stage.
+- **A shortlist is not an approval, and it starts nothing.** Since `0074` the board holds a
+  backlog: an estimate per unit (value 1–5, effort S/M/L, a basis), relations between units
+  (`liên quan`, `trùng`, `thay thế`, `phụ thuộc`), a computed order, and a shortlist of at
+  most seven that a person writes. All of it is rows in the app's run log, not artifacts; no
+  gate, no `next` and no run button reads any of it, and `cos.mjs` does not know it exists.
+  `by` is a name the person typed; an agent's estimate says `agent:<session>`, and a
+  person's estimate wins over an agent's whichever came later. *Propose estimates* opens one paid session under the grant
+  `estimate`. Each board step's `start` row records where its unit stood in the shortlist,
+  so `verify_0074 --measure` can tell afterwards whether work was taken from it.
 - **A login that knows who you are.** Since `0070` every route — the page, its socket,
   `/api`, the static files, paths that do not exist — is refused without a live session;
   only `/api/health`, `/login`, and `/setup` until a password is set, answer.

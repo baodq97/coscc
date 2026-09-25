@@ -75,7 +75,7 @@ class TheTable(unittest.TestCase):
     def test_chat_comes_after_the_stages_in_their_order(self):
         t = models.table(STAGES, {}, {}, {}, None, 1)
         expected = ["idea", "intent", "spec", "spike", "plan", "impl", "impl:novel", "pr", "pr:novel",
-                    "review", "review:novel", "ship", "ship:novel", "chat"]
+                    "review", "review:novel", "ship", "ship:novel", "estimate", "chat"]
         self.assertEqual([r["name"] for r in t["rows"]], expected)
         self.assertTrue(all(r["agents"] == 1 for r in t["rows"]))
 
@@ -169,7 +169,8 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
         defaults, problems = models.load_defaults()
         self.assertEqual(problems, [])
         base = {k for k in defaults if not k.endswith(models.NOVEL_SUFFIX)}
-        self.assertEqual(base, set(names))
+        # `0074`: `estimate` is a row of its own, not a stage `cos.mjs` names.
+        self.assertEqual(base, set(names) | {models.ESTIMATE})
         # `0033` spec R8: the only variants shipped are these two.
         self.assertEqual(set(defaults) - base, {"impl:novel", "review:novel"})
         self.assertEqual(models.table(names, {}, {}, defaults, None, 1)["problems"], [])
@@ -185,6 +186,8 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
             "impl": row(sonnet, "medium"), "impl:novel": row(opus, "high"),
             "review": row(opus, "high"), "review:novel": row(opus, "xhigh"),
             "pr": row(sonnet, "low"), "ship": row(sonnet, "low"),
+            # `0074`: chosen, not measured — the same row as `idea` and `intent`.
+            "estimate": row(opus, "medium"),
         }
         self.assertEqual(defaults, expected)
         self.assertNotIn("chat", defaults)
@@ -197,6 +200,16 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
         self.assertTrue(defaults, "load_defaults() trả về rỗng")
         for stage, entry in defaults.items():
             self.assertTrue(entry["model"].endswith("[1m]"), (stage, entry))
+
+
+class TheEstimateRow(unittest.TestCase):
+    """`0074`. A Settings row just before `chat`, resolved like any other."""
+
+    def test_it_sits_before_chat_and_resolves(self):
+        self.assertEqual(models.rows_for(["idea", "plan"])[-2:], [models.ESTIMATE, models.CHAT])
+        defaults, _ = models.load_defaults()
+        model, source, effort, _ = models.resolve(models.ESTIMATE, None, {}, {}, defaults, None)
+        self.assertEqual((model, source, effort), ("claude-opus-5-5[1m]", models.DEFAULT, "medium"))
 
 
 if __name__ == "__main__":

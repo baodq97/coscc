@@ -2789,3 +2789,189 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
             self.s.update_cut_list()
         with self.assertRaises(NotUpdatable):
             self.s.update_build_local("an")
+
+
+class TheBacklogIsDisplayOnly(unittest.TestCase):
+    """`0074`. Three write paths, one paid proposal, one field on `start` — and the board's
+    `next` and `blocked` exactly as they were (R15), with no file of the store touched (R16)."""
+
+    GOOD = "```json\n" + json.dumps({"units": [
+        {"unit": "0001_idea-only", "value": 4, "effort": "S", "similar": [], "basis": "bớt can thiệp tay: x",
+         "relations": [{"type": "liên quan", "other": "0002_has-intent", "reason": "cùng màn"}]},
+        {"unit": "0002_has-intent", "value": 2, "effort": "M", "similar": [], "basis": "cảm thấy vậy"},
+    ]}) + "\n```"
+
+    class Replies:
+        def __init__(self, text, gate=None):
+            self.text, self.gate, self.calls = text, gate, 0
+
+        def in_flight(self):
+            return []
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.calls += 1
+            if self.gate is not None:
+                await self.gate.wait()
+            yield ("chunk", self.text)
+            yield ("done", {"session_id": "sess-1", "cost": {"cost_usd": 0.12, "turns": 1}})
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.sessions = self.Replies(self.GOOD)
+        self.service = Service(
+            Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
+                   data_dir=str(self.root / "data")),
+            self.sessions,
+        )
+        self.cwd = str(self.repo)
+        self.a = create_sync(self.service, self.cwd, "idea-only", "words")["unit"]
+        made = create_sync(self.service, self.cwd, "has-intent", "words")
+        self.b = made["unit"]
+        (Path(made["path"]) / "intent.md").write_text(
+            "# Intent: b\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n", encoding="utf-8")
+        done = Path(create_sync(self.service, self.cwd, "finished", "words")["path"])
+        for name in ("intent", "spec", "plan"):
+            status = "done" if name == "plan" else "accepted"
+            (done / f"{name}.md").write_text(f"# {name}\nAuthor: t. Status: {status}.\n", encoding="utf-8")
+        self.journal = self.service._journal()
+        self.key = self.service._journal_key(self.cwd)
+
+    def board(self):
+        return asyncio.run(self.service.board(self.cwd))
+
+    def store_hash(self):
+        units_root = self.service._units_root(self.cwd)
+        return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(units_root.rglob("*")) if p.is_file()}
+
+    def test_r1_the_board_carries_the_backlog(self):
+        data = self.board()
+        self.assertEqual(data["backlog"]["backlog"], [self.a, self.b])
+        self.assertEqual(data["backlog"]["shortlist"], [])
+        self.assertTrue(data["backlog"]["propose_warning"])
+
+    def test_r15_only_the_new_keys_differ_after_every_kind_of_record(self):
+        def strip(data):
+            data = json.loads(json.dumps(data))
+            data.pop("backlog")
+            for u in data["units"]:
+                u.pop("backlog")
+            return data
+
+        before = self.board()
+        asyncio.run(self.service.record_estimate(self.cwd, self.a, 4, "S", "vì", "Leif"))
+        asyncio.run(self.service.record_relation(self.cwd, self.a, self.b, "phụ thuộc", "add", "r", "Leif"))
+        asyncio.run(self.service.record_shortlist(self.cwd, [self.a], "r", "Leif"))
+        after = self.board()
+        self.assertEqual(strip(before), strip(after))
+        self.assertEqual([(u["next"], u["blocked"]) for u in before["units"]],
+                         [(u["next"], u["blocked"]) for u in after["units"]])
+        self.assertEqual(after["backlog"]["shortlist"][0]["unit"], self.a)
+        self.assertEqual(next(u for u in after["units"] if u["name"] == self.a)["backlog"]["rank"], 1)
+
+    def test_r16_three_writes_touch_no_file_and_refusals_insert_nothing(self):
+        before = self.store_hash()
+        refusals = [
+            lambda: self.service.record_estimate(self.cwd, self.a, 9, "S", "x", "Leif"),
+            lambda: self.service.record_estimate(self.cwd, self.a, 3, "S", "x", "agent:me"),
+            lambda: self.service.record_estimate(self.cwd, "0003_finished", 3, "S", "x", "Leif"),
+            lambda: self.service.record_relation(self.cwd, self.a, self.a, "trùng", "add", "r", "Leif"),
+            lambda: self.service.record_shortlist(self.cwd, [self.a], "r", "Leif"),  # no estimate yet
+        ]
+        for call in refusals:
+            with self.assertRaises(Invalid):
+                asyncio.run(call())
+        self.assertEqual(self.journal.records(self.key, kinds=("estimate-value", "relation", "shortlist")), [])
+        asyncio.run(self.service.record_estimate(self.cwd, self.a, "4", "S", "vì", "Leif"))
+        asyncio.run(self.service.record_relation(self.cwd, self.a, self.b, "trùng", "add", "r", "Leif"))
+        asyncio.run(self.service.record_shortlist(self.cwd, [self.a], "r", "Leif"))
+        self.assertEqual(self.store_hash(), before)
+        self.assertEqual(self.board()["backlog"]["shortlist"][0]["estimate"]["value"], 4)
+
+    def _start_of_spec(self):
+        async def go():
+            async for _ in self.service.run_step(self.cwd, self.b, "spec"):
+                pass
+
+        try:
+            asyncio.run(go())
+        except Invalid:
+            pass
+        return self.journal.records(self.key, self.b, kind="start")[-1]
+
+    def test_r14_the_start_record_says_where_the_unit_stood(self):
+        first = self._start_of_spec()
+        self.assertEqual(first["shortlist"], {"rank": None, "of": None, "record": None})
+        asyncio.run(self.service.record_estimate(self.cwd, self.b, 3, "M", "vì", "Leif"))
+        asyncio.run(self.service.record_shortlist(self.cwd, [self.b], "r", "Leif"))
+        second = self._start_of_spec()
+        self.assertEqual((second["shortlist"]["rank"], second["shortlist"]["of"]), (1, 1))
+        self.assertEqual(second["shortlist"]["record"]["n"], 1)
+
+    def test_r14_a_busy_run_log_still_starts_the_step(self):
+        from coscc.journal import Busy, Journal
+
+        real = Journal.records
+
+        def busy_on_shortlist(self_, *a, **kw):
+            if kw.get("kind") == "shortlist":
+                raise Busy("locked")
+            return real(self_, *a, **kw)
+
+        with mock.patch.object(Journal, "records", busy_on_shortlist):
+            start = self._start_of_spec()
+        self.assertIsNone(start["shortlist"]["rank"])
+        self.assertIn("locked", start["shortlist"]["error"])
+
+    def _propose(self):
+        async def go():
+            out = []
+            async for item in self.service.propose_estimates(self.cwd):
+                out.append(item)
+            return out
+
+        return asyncio.run(go())
+
+    def test_r18_a_basis_with_no_goal_drops_only_that_unit(self):
+        done = self._propose()[-1][1]["estimate"]
+        self.assertEqual(done["outcome"], "done")
+        self.assertEqual(done["written"], 2)  # one estimate, one relation
+        self.assertEqual([r["unit"] for r in done["rejected"]], [self.b])
+        values = self.journal.records(self.key, kind="estimate-value")
+        self.assertEqual([(v["unit"], v["by"]) for v in values], [(self.a, "agent:sess-1")])
+        ends = [r for r in self.journal.records(self.key, kind="end") if r.get("stage") == "estimate"]
+        self.assertEqual((ends[-1]["outcome"], ends[-1]["cost_usd"]), ("done", 0.12))
+
+    def test_r18_a_reply_that_is_not_json_writes_no_estimate(self):
+        self.sessions.text = "value 4, I think"
+        done = self._propose()[-1][1]["estimate"]
+        self.assertEqual(done["outcome"], "failed")
+        self.assertIn("not JSON", done["detail"])
+        self.assertEqual(self.journal.records(self.key, kind="estimate-value"), [])
+
+    def test_r18_a_second_press_while_one_runs_is_refused_and_spends_nothing(self):
+        async def go():
+            gate = asyncio.Event()
+            self.sessions.gate = gate
+            first = self.service.propose_estimates(self.cwd)
+            task = asyncio.create_task(first.__anext__())
+            for _ in range(200):
+                await asyncio.sleep(0.01)
+                if self.sessions.calls:
+                    break
+            jobs = self.service._update_jobs()
+            with self.assertRaises(Invalid):
+                await self.service.propose_estimates(self.cwd).__anext__()
+            gate.set()
+            await task
+            async for _ in first:
+                pass
+            return jobs
+
+        jobs = asyncio.run(go())
+        self.assertEqual(self.sessions.calls, 1)
+        self.assertEqual([(j["kind"], j["stage"]) for j in jobs], [("integration", "estimate")])
+        self.assertEqual(self.service._active, {})
