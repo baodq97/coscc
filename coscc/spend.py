@@ -178,8 +178,14 @@ def model(
         seen.add((unit, stage))
 
     # R8. Paired the way the timeline pairs them, to read the `start`'s `integrate_state`.
+    # `_fold` counts an `end` as reporting its cost when the key is there, null or not; a
+    # null is dropped first so it is unknown here too, as in every other total (R5).
     integrate = {"conflicting": _zero(), "other": _zero(), "none": _zero()}
-    for rows in journal.timelines_of(records).values():
+    paired = [
+        {k: v for k, v in r.items() if k != "cost_usd"} if r.get("kind") == "end" and _usd(r) is None else r
+        for r in records
+    ]
+    for rows in journal.timelines_of(paired).values():
         for row in rows:
             if row.get("stage") != "integrate" or row.get("ended") is None:
                 continue

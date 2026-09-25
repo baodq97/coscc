@@ -124,6 +124,21 @@ class Waste(unittest.TestCase):
         none = waste(m, "integrate-not-recorded")
         self.assertEqual((none["count"], none["usd"], none["unknown"]), (1, None, 1))
 
+    def test_r5_an_integrate_step_with_a_null_cost_is_unknown_not_zero(self):
+        m = spend.model([
+            start("u", "integrate", integrate_state="conflicting"),
+            end("u", "integrate", cost_usd=None),
+            start("u", "integrate", integrate_state="conflicting"),
+            end("u", "integrate", cost_usd=1.5),
+            start("u", "integrate", integrate_state="behind"),
+            end("u", "integrate", cost_usd=None),
+        ], tz=TZ)
+        conflict = waste(m, "integrate-conflict")
+        self.assertEqual((conflict["count"], conflict["usd"], conflict["unknown"]), (2, 1.5, 1))
+        other = waste(m, "integrate-other")
+        self.assertEqual((other["count"], other["usd"], other["unknown"]), (1, None, 1))
+        self.assertEqual((m["total"]["unknown"], m["total"]["usd"]), (2, 1.5))
+
     def test_r9_rounds_from_review_md_money_from_the_steps_that_said(self):
         m = spend.model(
             [end("u", "review", cost_usd=2.0, verdicts=["changes-requested"]),
