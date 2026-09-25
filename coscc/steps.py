@@ -41,14 +41,15 @@ class Finishing(ValueError):
 
 @dataclass(eq=False)  # identity, not value: `Service._release` removes this one and no other
 class Mark:
-    """What holds a unit in `Service._active`: a step, an integration or a hold (`0050`).
+    """What holds a unit in `Service._active`: a step, an integration, a hold (`0050`) or
+    Jera (`0044`).
 
     `phase` is a step's only: `preparing` from `run_step`'s first line until the registry
     lists it, `running` after. `started_at` is the one time both the refusal and the
     Board's list show for that step.
     """
 
-    kind: str  # "step" | "integrate" | "hold"
+    kind: str  # "step" | "integrate" | "hold" | "precedent"
     stage: str = ""
     phase: str = ""
     started_at: str = field(default_factory=now)
@@ -59,6 +60,8 @@ def describe(unit: str, mark: Mark) -> str:
     t = mark.started_at
     if mark.kind == "integrate":
         return f"{unit} is busy: it is being integrated since {t}; wait for the integration to end"
+    if mark.kind == "precedent":
+        return f"{unit} is busy: Jera is answering its questions since {t}; wait for it to end"
     if mark.kind == "hold":
         return f"{unit} is busy: a hold is being recorded since {t}; try again in a moment"
     if mark.phase == "preparing":

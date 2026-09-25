@@ -32,6 +32,7 @@ from coscc import drift, events, fetches, gitops
 from coscc import harness, integrate
 from coscc import hold as hold_rules
 from coscc import present, prcomment, prsync, spend
+from coscc import precedent as precedent_mod
 from coscc import sessions as reader
 from coscc.board import Unavailable
 from coscc.config import Config
@@ -140,6 +141,27 @@ def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, 
                 if k in posted
                 else {"posted": False, "url": "", "reason": failed.get(k)}
             )
+
+
+def _attach_precedent(units_: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
+    """`0044` R10. On each question: `by_jera` and its `cites` when the answer in force is
+    Jera's, and — while it is still unanswered — `needs_person`, `proposal` and `reason` from
+    the last `precedent` row for it. Display only: `cos.mjs` never sees any of this (R9)."""
+    last: dict[tuple[str, str, Any], dict[str, Any]] = {}
+    for r in rows:
+        last[(str(r.get("unit") or ""), str(r.get("artifact") or ""), r.get("n"))] = r
+    for unit in units_:
+        answers = {(a["artifact"], a["n"]): a for a in unit.get("answers") or []}
+        for q in unit.get("questions") or []:
+            jera = bool(q.get("answered")) and precedent_mod.is_jera(q.get("by"))
+            said = answers.get((q.get("artifact"), q.get("n"))) or {}
+            row = last.get((unit["name"], str(q.get("artifact") or ""), q.get("n"))) or {}
+            waiting = not q.get("answered") and row.get("verdict") == precedent_mod.PERSON
+            q["by_jera"] = jera
+            q["cites"] = precedent_mod.cites_of(str(said.get("text") or "")) if jera else []
+            q["needs_person"] = waiting
+            q["proposal"] = str(row.get("text") or "") if waiting else ""
+            q["reason"] = str(row.get("reason") or "") if waiting else ""
 
 
 def step_cwd(stage: str, work: str, directory: Path, spike_dir: str | None = None) -> str:
@@ -271,6 +293,7 @@ CONSEQUENCE = {
     "ship": "Merges the pull request with this machine's gh login, and spends quota.",
     "integrate": "Rebases this pull request with this machine's gh login; a conflict opens a paid session.",
     "estimate": "Opens one paid session that proposes estimates.",
+    "precedent": "Opens one paid session; its answers reach later stages as decided.",
     "drop": "Closes this unit's open pull request with this machine's gh login.",
     "apply-now": "Stops every running step and chat turn, then restarts the app.",
 }
@@ -653,7 +676,11 @@ class Service:
             timelines = timelines_of(rows)
             comments = [r for r in rows if r.get("kind") == "pr-comment"]
             ranking = [r for r in rows if r.get("kind") in backlog.KINDS]
+            verdicts = [r for r in rows if r.get("kind") == "precedent"]
+        else:
+            verdicts = []
         _attach_comment_state(data["units"], comments)
+        _attach_precedent(data["units"], verdicts)
         # `0074`. Display only: nothing below reads it, and `next`/`blocked` are untouched.
         data["backlog"] = {
             **backlog.fold(
@@ -1877,6 +1904,13 @@ class Service:
                     "workspace": entry["workspace"], "unit": entry["unit"], "stage": "integrate",
                     "started": entry["started"],
                 })
+            elif entry["stage"] == "precedent":
+                # `0044`. Waited for like an estimate, never cut: its money is spent either way.
+                jobs.append({
+                    "kind": "integration", "id": f"precedent:{entry['workspace']}:{entry['unit']}",
+                    "workspace": entry["workspace"], "unit": entry["unit"], "stage": "precedent",
+                    "started": entry["started"],
+                })
             elif entry["stage"] == "estimate":
                 # `0074`. Waited for like an integration, never cut: its money is spent either way.
                 jobs.append({
@@ -2212,7 +2246,48 @@ class Service:
         """
         self._workspace_or_refuse(cwd)
         name = str(answered_by or "").strip() or OWNER
-        text = str(answer or "").strip("\n")
+        # `0044` R11. Jera's name marks the road a block came by, not who typed it, so a
+        # person may not take it.
+        if precedent_mod.is_jera(name):
+            raise Invalid(f"{precedent_mod.AGENT} is the agent that answers from precedent; answer under another name")
+        done = await self._append_answers(
+            cwd, unit, [(artifact, question, answer)], name, "product", f"human:{name}", "answer",
+        )
+        written = done["written"][0]
+        return {
+            "unit": unit,
+            "artifact": written["artifact"],
+            "question": written["question"],
+            "answered_by": name,
+            "date": done["date"],
+        }
+
+    async def _append_answers(
+        self,
+        cwd: str,
+        unit: str,
+        items: list[tuple[str, Any, str]],
+        answered_by: str,
+        via: str,
+        actor: str,
+        source: str,
+    ) -> dict[str, Any]:
+        """The one place that appends a block under `## Answers` (`0044` Design 3): a person's
+        through `answer`, Jera's through `precedent`. `items` is `[(artifact, question, text)]`,
+        all checked and written under one hold of `_answer_lock` and one board read.
+
+        A person's refusal raises, as `answer` always has. With `via == "precedent"` every
+        item is judged alone and a refused one is `skipped` with its reason, never raised
+        (R7): `review.md` and any `F<n>` before a file is opened (R3), and a question the
+        board read already shows answered — a person got there while Jera ran.
+        Returns `{written: [{artifact, question}], skipped: [{artifact, question, reason}],
+        date}`.
+        """
+        jera = via == precedent_mod.VIA
+        name = answered_by
+        today = date.today().isoformat()
+        written: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
         async with self._answer_lock:
             try:
                 data = await board_reader.read(self._units_root(cwd))
@@ -2222,77 +2297,18 @@ class Service:
             found = next((u for u in data["units"] if u["name"] == unit), None)
             if found is None:
                 raise Invalid(f"no such work unit in this workspace: {unit}")
-            # `0028`. A finding the last review round confirmed needs a person is answered
-            # by its id, `F<n>`, into `review.md` -- and only while `cos.mjs` lists it in
-            # `personFindings`, so what may be answered is its decision, not this route's.
-            finding = str(question).strip() if isinstance(question, str) else ""
-            finding = finding if re.fullmatch(r"F\d+", finding) else ""
-            if finding:
-                if artifact != "review.md":
-                    raise Invalid(f"a finding is answered in review.md, not {artifact}")
-                awaited = [p["id"] for p in found.get("person_findings") or []]
-                if finding not in awaited:
-                    raise Invalid(
-                        f"{finding} is not a finding the last review round of {unit} "
-                        "confirmed needs a person"
-                        + (f" (those are {', '.join(awaited)})" if awaited else "")
-                    )
-                number: int | str = finding
-            else:
-                asked = [q for q in found.get("questions") or [] if q.get("artifact") == artifact]
-                if not asked:
-                    raise Invalid(f"{artifact} in {unit} has no numbered item under ## Open questions")
+            for artifact, question, answer in items:
                 try:
-                    number = int(question)
-                except (TypeError, ValueError):
-                    raise Invalid(f"a question is named by its number, got {question!r}") from None
-                if number not in {q["n"] for q in asked}:
-                    raise Invalid(
-                        f"{artifact} has no question {number} "
-                        f"(it has {', '.join(str(q['n']) for q in asked)})"
+                    number, finding = self._append_one(
+                        cwd, unit, found, artifact, question, str(answer or "").strip("\n"), name, via,
+                        today, jera,
                     )
-            if not text.strip():
-                raise Invalid("the answer is empty")
-            if not name or "\n" in name or "\r" in name:
-                raise Invalid("say who is answering, on one line")
-            nxt = str(found.get("next") or "")
-            if nxt == "finished" or nxt.startswith("closed"):
-                raise Invalid(f"{unit} is {nxt}; its questions can no longer be answered")
-            # A line that reads as a heading would end this block early or open another,
-            # and `cos.mjs` would then read the answer wrongly. Refusing is cheaper and more
-            # honest than escaping somebody's words.
-            if any(line.lstrip().startswith("#") for line in text.splitlines()):
-                raise Invalid("no line of an answer may start with #")
-
-            path = self._unit_dir(cwd, unit) / artifact
-            try:
-                existing = path.read_text(encoding="utf-8")
-            except OSError as e:
-                raise Invalid(f"could not read {artifact}: {e}") from e
-            lines = existing.splitlines()
-            heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
-            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1:]):
-                raise Invalid(
-                    f"{artifact} has a section after its ## Answers, so a block appended at "
-                    "the end would not be read as an answer"
-                )
-
-            today = date.today().isoformat()
-            block = ""
-            if existing and not existing.endswith("\n"):
-                block += "\n"
-            if heading is None:
-                block += "\n## Answers\n"
-            block += f"\n### {finding}\n" if finding else f"\n### Câu {number}\n"
-            block += (
-                f"Answered by: {name}. Date: {today}. Via: product.\n\n"
-                f"{text}\n"
-            )
-            try:
-                with path.open("a", encoding="utf-8") as f:
-                    f.write(block)
-            except OSError as e:
-                raise Invalid(f"could not write {artifact}: {e}") from e
+                except Invalid as e:
+                    if not jera:
+                        raise
+                    skipped.append({"artifact": artifact, "question": question, "reason": str(e)})
+                    continue
+                written.append({"artifact": artifact, "question": finding or number})
 
         # `0016` plan, in place of spec R9: the store is not a git repository, so there is
         # no commit to make. The provenance this app already keeps is a row in `outputs`.
@@ -2300,26 +2316,107 @@ class Service:
         # person it was not.
         history = self._history()
         if history is not None:
-            try:
-                history.add_output(
-                    self._journal_key(cwd),
-                    unit,
-                    artifact.removesuffix(".md"),
-                    "deliverable",
-                    artifact,
-                    actor=f"human:{name}",
-                    source="answer",
-                )
-            except (OSError, BadTransition, Busy):
-                pass
+            for w in written:
+                try:
+                    history.add_output(
+                        self._journal_key(cwd),
+                        unit,
+                        w["artifact"].removesuffix(".md"),
+                        "deliverable",
+                        w["artifact"],
+                        actor=actor,
+                        source=source,
+                    )
+                except (OSError, BadTransition, Busy):
+                    pass
 
-        return {
-            "unit": unit,
-            "artifact": artifact,
-            "question": number,
-            "answered_by": name,
-            "date": today,
-        }
+        return {"written": written, "skipped": skipped, "date": today}
+
+    def _append_one(
+        self, cwd: str, unit: str, found: dict[str, Any], artifact: str, question: Any, text: str,
+        name: str, via: str, today: str, jera: bool,
+    ) -> tuple[int | str, str]:
+        """Check one answer against the board read `found` and append its block. Raises
+        `Invalid` before a byte is written; returns `(number, finding)`."""
+        if jera:
+            # `0044` R3. Decided by the name of the file and the shape of the heading, never
+            # by what the session said.
+            if artifact == "review.md" or re.fullmatch(r"F\d+", str(question).strip()):
+                raise Invalid(f"{precedent_mod.AGENT} never answers in review.md or a finding")
+            if any(q.get("artifact") == artifact and q.get("n") == question and q.get("answered")
+                   for q in found.get("questions") or []):
+                raise Invalid(f"{artifact} question {question} was answered while {precedent_mod.AGENT} ran")
+        # `0028`. A finding the last review round confirmed needs a person is answered
+        # by its id, `F<n>`, into `review.md` -- and only while `cos.mjs` lists it in
+        # `personFindings`, so what may be answered is its decision, not this route's.
+        finding = str(question).strip() if isinstance(question, str) else ""
+        finding = finding if re.fullmatch(r"F\d+", finding) else ""
+        if finding:
+            if artifact != "review.md":
+                raise Invalid(f"a finding is answered in review.md, not {artifact}")
+            awaited = [p["id"] for p in found.get("person_findings") or []]
+            if finding not in awaited:
+                raise Invalid(
+                    f"{finding} is not a finding the last review round of {unit} "
+                    "confirmed needs a person"
+                    + (f" (those are {', '.join(awaited)})" if awaited else "")
+                )
+            number: int | str = finding
+        else:
+            asked = [q for q in found.get("questions") or [] if q.get("artifact") == artifact]
+            if not asked:
+                raise Invalid(f"{artifact} in {unit} has no numbered item under ## Open questions")
+            try:
+                number = int(question)
+            except (TypeError, ValueError):
+                raise Invalid(f"a question is named by its number, got {question!r}") from None
+            if number not in {q["n"] for q in asked}:
+                raise Invalid(
+                    f"{artifact} has no question {number} "
+                    f"(it has {', '.join(str(q['n']) for q in asked)})"
+                )
+        if not text.strip():
+            raise Invalid("the answer is empty")
+        if not name or "\n" in name or "\r" in name:
+            raise Invalid("say who is answering, on one line")
+        nxt = str(found.get("next") or "")
+        if nxt == "finished" or nxt.startswith("closed"):
+            raise Invalid(f"{unit} is {nxt}; its questions can no longer be answered")
+        # A line that reads as a heading would end this block early or open another,
+        # and `cos.mjs` would then read the answer wrongly. Refusing is cheaper and more
+        # honest than escaping somebody's words.
+        if any(line.lstrip().startswith("#") for line in text.splitlines()):
+            raise Invalid("no line of an answer may start with #")
+
+        path = self._unit_dir(cwd, unit) / artifact
+        try:
+            existing = path.read_text(encoding="utf-8")
+        except OSError as e:
+            raise Invalid(f"could not read {artifact}: {e}") from e
+        lines = existing.splitlines()
+        heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
+        if heading is not None and any(l.startswith("## ") for l in lines[heading + 1:]):
+            raise Invalid(
+                f"{artifact} has a section after its ## Answers, so a block appended at "
+                "the end would not be read as an answer"
+            )
+
+        block = ""
+        if existing and not existing.endswith("\n"):
+            block += "\n"
+        if heading is None:
+            block += "\n## Answers\n"
+        block += f"\n### {finding}\n" if finding else f"\n### Câu {number}\n"
+        block += (
+            f"Answered by: {name}. Date: {today}. Via: {via}.\n\n"
+            f"{text}\n"
+        )
+        try:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(block)
+        except OSError as e:
+            raise Invalid(f"could not write {artifact}: {e}") from e
+        return number, finding
 
     async def record_outcome(
         self,
@@ -2751,6 +2848,115 @@ class Service:
                     pass
             if self._active.get((key, "")) is mark:
                 del self._active[(key, "")]
+            self._running.pop(rid, None)
+            self.updater.job_ended()
+
+    async def precedent(self, cwd: str, unit: str) -> dict[str, Any]:
+        """`0044`. Jera answers this unit's open questions from precedent: one paid session.
+
+        Started only by a person's press (`POST /api/units/precedent`, *Ask Jera*) — nothing
+        else in the app calls this (R1). Holds the unit like a step (`_take`), so Jera, a
+        step, an integration and a hold of one unit exclude each other in this process; a
+        session at a terminal is not excluded (`spec.md` C6).
+
+        Writes a `start` and an `end` (stage `precedent`, the unit's own), one `precedent`
+        row per question (R9, R12), and each `answer` that survives `precedent.verdicts`
+        through `_append_answers` as `Jera`, `Via: precedent`, `actor = agent:Jera` (R7). A
+        `needs-person` verdict writes no byte of any artifact. A reply that cannot be read
+        writes nothing either, and its tail is kept in the `end` row (R13).
+        """
+        self._workspace_or_refuse(cwd)
+        self._refuse_while_updating()
+        journal = self._journal()
+        if journal is None:
+            raise Invalid("no working folder is set, so nothing Jera says can be recorded — set COS_WORKING_DIR")
+        key = self._journal_key(cwd)
+        mark = self._take(key, unit, "precedent", "precedent")
+        rid = self._mark_running(key, unit, "precedent", "precedent")
+        started = ended = False
+        try:
+            try:
+                data = await board_reader.read(self._units_root(cwd))
+            except Unavailable as e:
+                raise Invalid(str(e)) from e
+            found = next((u for u in data["units"] if u["name"] == unit), None)
+            if found is None:
+                raise Invalid(f"no such work unit in this workspace: {unit}")
+            questions = precedent_mod.asked(found)
+            if not questions:
+                raise Invalid(f"{unit} has no open question Jera may answer")
+            prefs = str(self.preferences().get("decision_preferences") or "")
+            store = precedent_mod.entries(data["units"], prefs, {unit})
+            prompt = precedent_mod.build_prompt(questions, store)
+            grant = grant_for("precedent")
+            defaults, _ = models.load_defaults()
+            model, model_source, effort, effort_source = models.resolve(
+                models.PRECEDENT, None, self._model_overrides()[0], self._effort_overrides()[0], defaults,
+                self.config.model,
+            )
+            try:
+                journal.started(key, unit, "precedent", "manual", prompt_chars=len(prompt), granted=[],
+                                max_turns=grant.max_turns, model=model, model_source=model_source,
+                                effort=effort, effort_source=effort_source, questions=len(questions),
+                                entries=len(store))
+                started = True
+            except (BadRecord, Busy):
+                pass
+            reply, end, failure = await precedent_mod.ask(self.sessions, cwd, prompt, grant, model, effort)
+            cost = end.get("cost") or {}
+            session = end.get("session_id", "")
+            found_v = {"failed": failure or None, "verdicts": [], "ignored": []}
+            if not failure:
+                found_v = precedent_mod.verdicts(reply, questions, {e["id"] for e in store})
+            if found_v["failed"]:
+                try:
+                    # R13. The tail is chosen at 2000 characters, not measured.
+                    journal.finished(key, unit, "precedent", "failed", session_id=session,
+                                     detail=f"{found_v['failed']}; the reply ended: {reply[-2000:]}", **cost)
+                    ended = True
+                except (BadRecord, Busy):
+                    pass
+                return {"unit": unit, "outcome": "failed", "detail": found_v["failed"], "written": [],
+                        "needs_person": [], "skipped": [], "ignored": [], "cost_usd": cost.get("cost_usd")}
+
+            answers = [v for v in found_v["verdicts"] if v["verdict"] == precedent_mod.ANSWER]
+            done = await self._append_answers(
+                cwd, unit, [(v["artifact"], v["n"], precedent_mod.block_text(v)) for v in answers],
+                precedent_mod.AGENT, precedent_mod.VIA, precedent_mod.ACTOR, "precedent",
+            ) if answers else {"written": [], "skipped": []}
+            skipped = {(s["artifact"], s["question"]): s["reason"] for s in done["skipped"]}
+            for v in found_v["verdicts"]:
+                at = (v["artifact"], v["n"])
+                row = {"kind": "precedent", "workspace": key, "unit": unit, "artifact": v["artifact"],
+                       "n": v["n"], "verdict": v["verdict"], "category": v["category"], "text": v["text"],
+                       "reason": v["reason"], "cites": v["cites"], "session_id": session,
+                       "written": v["verdict"] == precedent_mod.ANSWER and at not in skipped}
+                if at in skipped:
+                    row.update(verdict="skipped", reason=skipped[at])
+                try:
+                    journal.append(row)
+                except (BadRecord, Busy):
+                    pass
+            try:
+                journal.finished(key, unit, "precedent", "done", session_id=session, **cost)
+                ended = True
+            except (BadRecord, Busy):
+                pass
+            return {
+                "unit": unit, "outcome": "done", "detail": None,
+                "written": [{"artifact": w["artifact"], "n": w["question"]} for w in done["written"]],
+                "needs_person": [{"artifact": v["artifact"], "n": v["n"]} for v in found_v["verdicts"]
+                                 if v["verdict"] == precedent_mod.PERSON],
+                "skipped": [{"artifact": a, "n": n, "reason": r} for (a, n), r in skipped.items()],
+                "ignored": found_v["ignored"], "cost_usd": cost.get("cost_usd"),
+            }
+        finally:
+            if started and not ended:
+                try:
+                    journal.finished(key, unit, "precedent", "cancelled", detail="Jera ended before its reply was read")
+                except (BadRecord, Busy):
+                    pass
+            self._release(key, unit, mark)
             self._running.pop(rid, None)
             self.updater.job_ended()
 
@@ -3430,7 +3636,9 @@ class Service:
     # Which preferences the page may keep. An open key/value store reachable from a
     # request is a place to put anything; this is the list of things the Settings screen
     # actually remembers, and nothing else is writable.
-    PREFERENCES = {"density": "comfortable", "screen": "overview", "board_view": "Board"}
+    # `0044` R8a: `decision_preferences`, the text Jera reads as precedent, word for word.
+    PREFERENCES = {"density": "comfortable", "screen": "overview", "board_view": "Board",
+                   "decision_preferences": ""}
 
     def preferences(self) -> dict[str, Any]:
         data = Data(self.config.data_dir)
