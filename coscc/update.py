@@ -314,7 +314,7 @@ def fetch_into(
         return {"state": "error", "reason": f"{type(e).__name__}: {e}"}
     if want is None or want != got:
         _unlink(part_wheel, part_sums)
-        return {"state": "checksum", "reason": f"sha256 của {name} không khớp SHA256SUMS", "sha256": got}
+        return {"state": "checksum", "reason": f"the sha256 of {name} does not match SHA256SUMS", "sha256": got}
     os.replace(part_sums, channel_dir / SUMS)
     os.replace(part_wheel, channel_dir / name)
     for old in channel_dir.glob("*.whl"):

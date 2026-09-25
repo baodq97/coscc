@@ -62,8 +62,8 @@ _ORIGIN = re.compile(
     r"(https://github\.com/|git@github\.com:|ssh://git@github\.com/)baodq97/coscc(\.git)?/?"
 )
 
-UPDATING = "đang cập nhật"
-WAITING_WARNING = "đang chờ cập nhật — bắt đầu sẽ lùi việc áp dụng"
+UPDATING = "an update is being applied"
+WAITING_WARNING = "An update is waiting; starting work delays it."
 
 
 class Refused(Exception):
@@ -204,16 +204,16 @@ class Updater:
         if not self.config.update_check:
             self.release = {"state": "off", "reason": "COS_UPDATE_CHECK=0"}
         elif self.node() is None:
-            self.release = {"state": "unavailable", "reason": "không chạy được node, nên không kiểm được tag"}
+            self.release = {"state": "unavailable", "reason": "node cannot run, so no release can be checked"}
         else:
             found = update.verified_wheel(self.root / "release")
             if found and self._newer(found["version"]):
                 self.release = {"state": "ready", **found}
         name = self.config.update_local_from
         if not name:
-            self.local = {"state": "unconfigured", "reason": "COS_UPDATE_LOCAL_FROM chưa đặt"}
+            self.local = {"state": "unconfigured", "reason": "no workspace is set to build from"}
         elif self.service.store is None:
-            self.local = {"state": "unconfigured", "reason": "chưa có working folder"}
+            self.local = {"state": "unconfigured", "reason": "no working folder is set"}
         else:
             found = update.verified_wheel(self.root / "local")
             if found and self._local_ready(found, me):
@@ -327,7 +327,7 @@ class Updater:
             self.release = {"state": "ready", **(update.verified_wheel(self.root / "release") or got)}
             self._record("downloaded", "", to=cand["version"], channel="release")
         elif got["state"] == "checksum":
-            self.release = {"state": "error", "reason": "lỗi checksum", "version": cand["version"]}
+            self.release = {"state": "error", "reason": "checksum mismatch", "version": cand["version"]}
             self._record("checksum-failed", "", to=cand["version"], channel="release")
         else:
             self.release = before
@@ -367,7 +367,7 @@ class Updater:
         version = self.me()["version"]
         if self._refetchable(version) or self._current_matches():
             return ""
-        return f"ô current không có wheel của bản đang chạy ({version}), và một bản local không tải lại được, nên không có đường quay về"
+        return f"no way back: no current wheel of the running version ({version}), and a local build cannot be fetched again"
 
     @staticmethod
     def _offered(channel: dict[str, Any], blocked: str) -> dict[str, Any]:
@@ -386,7 +386,7 @@ class Updater:
         """R10. What "apply now" would cut, and a token for exactly this list."""
         self._require_service()
         items = [
-            {**j, "action": "sẽ chờ" if j["kind"] == "integration" else "sẽ bị dừng"}
+            {**j, "action": "will wait" if j["kind"] == "integration" else "will be stopped"}
             for j in self.jobs()
         ]
         # A step's id names only its unit: the stage and the start time make another run
@@ -462,16 +462,16 @@ class Updater:
         if self.state == "applying":
             raise Updating(UPDATING)
         if getattr(self, channel).get("state") != "ready":
-            raise Refused(f"kênh {channel} chưa có bản sẵn sàng")
+            raise Refused(f"the {channel} channel has no version ready")
         blocked = self.rollback()
         if blocked:
             raise Refused(blocked)
         if mode == "now":
             listing = self.cut_list()
             if token != listing["token"]:
-                raise Stale("danh sách việc sẽ bị cắt đã đổi; xem lại rồi xác nhận lần nữa", listing)
+                raise Stale("the work to be stopped has changed; review it and confirm again", listing)
             for job in listing["items"]:
-                if job["action"] != "sẽ bị dừng":
+                if job["action"] != "will be stopped":
                     continue
                 if await self._cut(job, name):
                     self._record("cut", name, cut=_describe(job), stopped_by=name)
@@ -501,7 +501,7 @@ class Updater:
         if not name:
             raise Refused("a name is required to cancel the wait")
         if self.state != "pending":
-            raise Refused("không có cập nhật nào đang chờ")
+            raise Refused("no update is waiting")
         channel = (self.pending or {}).get("channel")
         self.state, self.pending = "idle", None
         self._record("cancelled", name, channel=channel)
@@ -525,21 +525,21 @@ class Updater:
         log = logs / f"{_stamp()}-update.log"
         self.log = str(log)
         if not await asyncio.to_thread(self._fetch_lock.acquire, True, FETCH_LOCK_WAIT):
-            return self._fail("một lần tải khác vẫn đang ghi vào updates/; bấm lại sau")
+            return self._fail("another download is still under way; try again later")
         handed = False
         try:
             # Step 1: from disk, right now, before anything changes.
             if update.SERVER.server is None:
-                return self._fail("không có uvicorn.Server nào để dừng (app không chạy qua `coscc`)")
+                return self._fail("no uvicorn.Server to stop (the app was not started with `coscc`)")
             target = update.verified_wheel(self.root / channel)
             if target is None:
-                return self._fail(f"wheel của kênh {channel} không khớp checksum đã lưu")
+                return self._fail(f"the {channel} wheel does not match its saved checksum")
             current = self._current_matches()
             if current is None and self._refetchable(me["version"]):
                 await asyncio.to_thread(self._ensure_current)
                 current = self._current_matches()
             if current is None:
-                return self._fail("ô current không có wheel khớp với bản đang chạy, nên không có đường quay về")
+                return self._fail("no way back: no current wheel matches the running version")
             # Step 2: a trial run, while this one keeps serving.
             log.write_text(f"trial of {target['version']} from {channel}, pressed by {by}\n", encoding="utf-8")
             problem = await self._trial(target, log)
@@ -549,7 +549,7 @@ class Updater:
             if self.jobs():
                 self.state = "pending"
                 self.pending = {"channel": channel, "by": by, "since": update.now(),
-                                "reason": "có việc mới bắt đầu trong lúc chạy thử"}
+                                "reason": "new work started during the trial"}
                 self._record("pending", by, channel=channel, to=target["version"])
                 return
             self.window = True
@@ -581,7 +581,7 @@ class Updater:
             )
             handed = update.SERVER.hand_off(handoff)
             if not handed:
-                self._fail("uvicorn.Server biến mất trước khi được yêu cầu dừng", log)
+                self._fail("uvicorn.Server was gone before it was asked to stop", log)
         except Exception as e:  # noqa: BLE001 - the panel says what went wrong
             self._fail(f"{type(e).__name__}: {e}", log)
         finally:
@@ -602,11 +602,11 @@ class Updater:
                 TRIAL_INSTALL_TIMEOUT, UV_TOOL_DIR=str(tools), UV_TOOL_BIN_DIR=str(bin_dir),
             )
             if code != 0:
-                return "cài thử bản mới thất bại"
+                return "the trial install failed"
             code = await self._run([str(bin_dir / "coscc"), "--version"], log, 30)
             seen = update.tail(log, 3)
             if code != 0 or f"coscc {target['version']}" not in seen:
-                return f"bản thử không trả lời --version là {target['version']}"
+                return f"the trial did not answer --version with {target['version']}"
             await asyncio.to_thread(backup_db, self.db, data / "cos.db")
             # `0070` step 6. The copy of the database carries this machine's password; the
             # trial clears it on the copy — never on `cos.db` — so it can set its own and
@@ -615,7 +615,7 @@ class Updater:
                 [str(bin_dir / "coscc"), "reset-password"], log, 30, COS_DATA_DIR=str(data)
             )
             if code != 0:
-                return "bản thử không chạy được coscc reset-password trên bản sao cos.db"
+                return "the trial could not run coscc reset-password on its copy of cos.db"
             port = _free_port()
             proc = await asyncio.create_subprocess_exec(
                 str(bin_dir / "coscc"), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -627,7 +627,7 @@ class Updater:
             copier = asyncio.ensure_future(_copy_output(proc.stdout, log, token))
             failed = await _healthy(port, TRIAL_HEALTHY_WITHIN, lambda: token[-1] if token else None)
             if failed:
-                return f"bản thử trượt ở bước {failed} trong {TRIAL_HEALTHY_WITHIN}s"
+                return f"the trial failed at {failed} within {TRIAL_HEALTHY_WITHIN}s"
             return ""
         finally:
             if proc is not None and proc.returncode is None:
@@ -674,9 +674,9 @@ class Updater:
         if not name:
             raise Refused("a name is required to start a build")
         if self.local.get("state") == "unconfigured":
-            raise Refused(f"kênh local chưa cấu hình: {self.local.get('reason', '')}")
+            raise Refused(f"the local channel is not configured: {self.local.get('reason', '')}")
         if self._build_task is not None and not self._build_task.done():
-            raise Refused("đang có một build chạy")
+            raise Refused("a build is already running")
         self.local = {"state": "building", "started": update.now(), "by": name,
                       "workspace": self.config.update_local_from}
         self._build_task = asyncio.get_running_loop().create_task(self._build(name))
@@ -698,24 +698,24 @@ class Updater:
             except Exception as e:  # noqa: BLE001 - a bad name is a reason, not a crash
                 raise _BuildFailed(f"workspace {name!r}: {e}") from e
             if not (workspace / ".git").exists():
-                raise _BuildFailed(f"workspace {name!r} không tồn tại hoặc không phải git checkout")
+                raise _BuildFailed(f"workspace {name!r} does not exist or is not a git checkout")
             url = await self._git(workspace, ["remote", "get-url", "origin"], log)
             if url is None or not _ORIGIN.fullmatch(url.strip()):
-                raise _BuildFailed(f"origin của {name!r} không trỏ tới github.com/baodq97/coscc")
+                raise _BuildFailed(f"the origin of {name!r} is not github.com/baodq97/coscc")
             try:
                 await fetches.fetch(workspace)
             except Exception as e:  # noqa: BLE001
-                raise _BuildFailed(f"fetch origin/main thất bại: {e}") from e
+                raise _BuildFailed(f"fetching origin/main failed: {e}") from e
             tmp.parent.mkdir(parents=True, exist_ok=True)
             if await self._git(workspace, ["worktree", "add", "--detach", str(tmp), "origin/main"], log) is None:
-                raise _BuildFailed("không tạo được worktree tạm tại origin/main")
+                raise _BuildFailed("could not create a temporary worktree at origin/main")
             script = tmp / "scripts" / "build_wheel.sh"
             if not script.is_file():
-                raise _BuildFailed("origin/main chưa có scripts/build_wheel.sh, nên không có công thức để build")
+                raise _BuildFailed("origin/main has no scripts/build_wheel.sh to build with")
             code = await self._run(["bash", str(script), "--local", "--out", str(tmp / "out")], log, BUILD_TIMEOUT, cwd=tmp)
             wheels = sorted((tmp / "out").glob("*.whl"))
             if code != 0 or len(wheels) != 1:
-                raise _BuildFailed(f"build thất bại (exit {code})")
+                raise _BuildFailed(f"the build failed (exit {code})")
             commit = (await self._git(tmp, ["rev-parse", "HEAD"], log) or "").strip()
             wheel = wheels[0]
             m = re.fullmatch(r"coscc-(.+)-py3-none-any\.whl", wheel.name)
@@ -735,12 +735,12 @@ class Updater:
                 self.local = {"state": "ready", **found, "log": str(log)}
             else:
                 self.local = {"state": "idle", "workspace": name, "log": str(log),
-                              "reason": "bản vừa build trùng hoặc thấp hơn bản đang chạy"}
+                              "reason": "the new build is not newer than the running version"}
             result = "ok"
         except _BuildFailed as e:
             self.local = {"state": "error", "reason": str(e), "log": str(log), "log_tail": update.tail(log, LOG_TAIL)}
         except asyncio.CancelledError:
-            self.local = {"state": "error", "reason": "build đã bị dừng", "log": str(log), "log_tail": update.tail(log, LOG_TAIL)}
+            self.local = {"state": "error", "reason": "the build was stopped", "log": str(log), "log_tail": update.tail(log, LOG_TAIL)}
             result = "cut"
         except Exception as e:  # noqa: BLE001
             self.local = {"state": "error", "reason": f"{type(e).__name__}: {e}", "log": str(log),
@@ -854,7 +854,7 @@ async def _trial_step(port: int, token: Callable[[], str | None], held: dict[str
             return "setup token"
         status, _ = await call("GET", "/api/workspaces")
         if status != 401:
-            return "/api/workspaces không cookie (không phải 401)"
+            return "/api/workspaces without a cookie (not 401)"
         password = secrets.token_urlsafe(24)
         form = urllib.parse.urlencode(
             {"token": given, "password": password, "password_confirm": password}
@@ -871,5 +871,5 @@ async def _trial_step(port: int, token: Callable[[], str | None], held: dict[str
     for path in ("/api/workspaces", "/"):
         status, _ = await call("GET", path, headers={"Cookie": f"{auth.COOKIE}={held['cookie']}"})
         if status != 200:
-            return f"{path} có cookie"
+            return f"{path} with a cookie"
     return ""

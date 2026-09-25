@@ -1211,7 +1211,7 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
             with self.subTest(path=path):
                 r = await self.client.post(path, json=body)
                 self.assertEqual(r.status_code, 503, r.text)
-                self.assertIn("đang cập nhật", r.json()["error"])
+                self.assertIn("update is being applied", r.json()["error"])
 
     async def test_a_stale_cut_list_is_refused_with_the_fresh_one(self):
         self.as_a_service()
