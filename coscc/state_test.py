@@ -290,16 +290,18 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
     def test_dropped_units_leave_the_lanes_and_paused_ones_stay(self):
         from types import SimpleNamespace
 
-        from coscc.state import StudioState, Unit
+        from coscc.state import Card, StudioState
 
+        # `0053`: the lanes draw the cards `shown_ids` names; the Dropped group draws the
+        # cards whose `hold_state` is `dropped` and counts them with `dropped_count`.
         page = SimpleNamespace(
-            units=[Unit(id="a", hold_state="dropped"), Unit(id="b", hold_state="paused"), Unit(id="c")],
+            cards=[Card(id="a", hold_state="dropped"), Card(id="b", hold_state="paused"), Card(id="c")],
             query="", focus="All work",
         )
-        visible = StudioState.computed_vars["visible_units"].fget(page)
-        dropped = StudioState.computed_vars["dropped_units"].fget(page)
-        self.assertEqual([u.id for u in visible], ["b", "c"])
-        self.assertEqual([u.id for u in dropped], ["a"])
+        shown = StudioState.computed_vars["shown_ids"].fget(page)
+        dropped = StudioState.computed_vars["dropped_count"].fget(page)
+        self.assertEqual(shown, ["b", "c"])
+        self.assertEqual(([c.id for c in page.cards if c.hold_state == "dropped"], dropped), (["a"], 1))
 
     def test_the_handler_calls_hold_and_no_step(self):
         tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
@@ -723,7 +725,7 @@ class ChangingWorkspaceForgetsTheOldRead(unittest.TestCase):
                 await arrive("/sessions?ws=b", settle=0.05)
                 async with manager.modify_state(_key(token)) as root:
                     studio = await root.get_state(page.StudioState)
-                    return [(u.id, len(u.live)) for u in studio.units]
+                    return [(u.id, len(u.live)) for u in studio.cards]
 
         with (
             mock.patch.object(page.SERVICE, "running", lambda cwd: running_in[cwd]),
@@ -799,7 +801,7 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
                 await arrive("/sessions?ws=b", settle=0.05)
                 async with manager.modify_state(_key(token)) as root:
                     studio = await root.get_state(page.StudioState)
-                    return [(u.id, u.shortlist_rank) for u in studio.units], list(studio.backlog_unestimated)
+                    return [(u.id, u.shortlist_rank) for u in studio.cards], list(studio.backlog_unestimated)
 
         with (
             mock.patch.object(page.SERVICE, "running", lambda cwd: {"running": {}, "unknown_end": {}}),
@@ -1142,7 +1144,7 @@ class AnArrivalReadsOnce(unittest.TestCase):
                     await asyncio.sleep(0.05)
                     await arrive(start, "s1")  # Back
                     studio = await _studio(manager, token)
-                    got = (list(read), len(studio.units), studio.unit_id, studio.unit_missing)
+                    got = (list(read), len(studio.cards), studio.unit_id, studio.unit_missing)
                     await arrive("/sessions?ws=a", "s9")
                     await asyncio.sleep(0.15)
                     return got
@@ -1263,11 +1265,15 @@ class TheUnitDialogKnowsMissingAndDropped(unittest.TestCase):
                 studio = await root.get_state(page.StudioState)
                 studio.workspaces = [page.Workspace(id="/p", name="proj")]
                 studio.cwd = "/p"
-                studio.units = [page.Unit(id="0001_alpha"),
-                                page.Unit(id="0002_gone", hold_state="dropped")]
+                # `0053`: the board read as `_load_board` leaves it, and `current_unit` set
+                # wherever `unit_id` moves, as `arrive` does.
+                full = [page.Unit(id="0001_alpha"), page.Unit(id="0002_gone", hold_state="dropped")]
+                studio._full = {u.id: u for u in full}
+                studio.cards = [page._card(u) for u in full]
                 for unit, loading in [("", False), ("0001_alpha", False), ("0002_gone", False),
                                       ("9999_nope", False), ("9999_nope", True)]:
                     studio.unit_id, studio.loading = unit, loading
+                    studio._set_current()
                     out.append((studio.unit_missing, studio.unit_dropped))
                 out.append(studio.board_href)
             return out
@@ -1742,6 +1748,345 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
             page._watch_note({"status": "ended-unknown", "last_at": 1_700_000_000_000}),
         )
         self.assertEqual(page._watch_note({"status": "ended", "events_lost": 3}), "thiếu 3 sự kiện")
+
+
+
+def _sample_board() -> dict:
+    """`0053`. A `Service.board` answer with a unit in each lane and each badge a card draws."""
+
+    def rows(statuses, auto: str = ""):
+        return [{"stage": n, "status": st, "mode": "autonomous" if n == auto else "manual",
+                 "grants": ["Read"] if n == "impl" else [], "warning": "w" if n == "impl" else ""}
+                for n, st in zip(("intent", "spec", "plan", "impl"), statuses)]
+
+    return {"stages": ["intent", "spec", "plan", "impl"], "recording": True, "units": [
+        {"name": "0001_planned", "stages": rows(["not started"] * 4), "next": "write-intent",
+         "problems": []},
+        {"name": "0002_going", "stages": rows(["accepted", "accepted", "not started", "not started"]),
+         "next": "write-plan", "next_stage": "plan", "problems": [],
+         "cost": {"input_tokens": 10, "output_tokens": 5, "cost_usd": 0.5}, "open": 1,
+         "questions": [{"artifact": "spec.md", "n": 1, "text": "Câu hỏi?", "answered": False,
+                        "counted": True}],
+         "backlog": {"rank": 2, "relations": [{"type": "trùng", "other": "0003_review",
+                                               "direction": "out"}]}},
+        {"name": "0003_review", "stages": rows(["accepted", "draft", "not started", "not started"]),
+         "next": "accept spec", "problems": ["no plan.md"],
+         "pr": {"url": "https://github.com/o/r/pull/1"},
+         "rounds": [{"n": 1, "verdict": "accepted", "comment": {"posted": True, "url": "u"}}],
+         "integration": {"state": "behind", "behind": 2, "button": True, "warnings": ["w"]}},
+        {"name": "0004_done", "stages": rows(["accepted"] * 4), "next": "finished", "problems": [],
+         "cost": {"input_tokens": 30, "cost_usd": 1.5},
+         "outcome_label": {"text": "đạt", "color": "grass", "source": "verify"},
+         "worktree": {"path": "/t/0004", "branch": "feat/x", "prepare": {"ok": True}}},
+        {"name": "0005_gone", "stages": rows(["accepted", "not started", "not started", "not started"]),
+         "next": "write-spec", "problems": [],
+         "hold": {"state": "dropped", "reason": "r", "by": "b", "date": "d"}, "hold_moves": ["paused"]},
+        {"name": "0006_auto", "stages": rows(["accepted", "not started", "not started", "not started"],
+                                             auto="spec"),
+         "next": "write-spec", "next_stage": "spec", "problems": []},
+    ]}
+
+
+_LIVE = {"running": {"0002_going": [{"kind": "step", "stage": "plan",
+                                     "agent": {"glyph": "ᚱ", "name": "Raidho"},
+                                     "started": "2026-09-25T01:00:00+00:00",
+                                     "turns": None, "cost_usd": None}]},
+         "unknown_end": {}}
+
+
+class _Sample(_Page):
+    BOARD = _sample_board()
+
+
+def _sample_read(token: str, then=None):
+    """The sample read by a first arrival at the Board, a poll applying `_LIVE`, then
+    `then(arrive, manager)` if given. Returns `(_full, cards, what then returned)`."""
+    import asyncio
+    from unittest import mock
+
+    from coscc import state as page
+
+    fake = _Sample()
+
+    async def go():
+        manager, processor, _ = _processor(token)
+        arrive = _arrival(manager, processor, token)
+        async with processor:
+            await arrive("/board?ws=a", "s1")
+            await asyncio.sleep(0.2)
+            studio = await _studio(manager, token)
+            full, cards = dict(studio.get_value("_full")), list(studio.get_value("cards"))
+            more = await then(arrive, manager) if then else None
+            await arrive("/sessions?ws=a", "s9")  # leave the Board, so the loop ends
+            await asyncio.sleep(0.15)
+            return full, cards, more
+
+    with fake.patches(), mock.patch.object(page.SERVICE, "running", lambda cwd: _LIVE):
+        return asyncio.run(go())
+
+
+class NoCardLosesWhatItShowed(unittest.TestCase):
+    """`0053` R13: a card carries every field its card draws with the value the whole unit
+    has; the dialog of each unit is the whole unit `_load_board` built."""
+
+    def test_every_field_a_card_draws_is_the_unit_s(self):
+        import dataclasses
+        import inspect
+        import re
+
+        from coscc import screens
+        from coscc.state import Card
+
+        full, cards, _ = _sample_read("state-test-r13-cards")
+        self.assertEqual([c.id for c in cards], list(full))
+        self.assertEqual(len(cards), 6)
+        fields = {f.name for f in dataclasses.fields(Card)}
+        drawn = set(re.findall(r"\bunit\.(\w+)", inspect.getsource(screens._unit_card)))
+        self.assertLessEqual(drawn, fields, "`_unit_card` draws a field a card does not carry")
+        for card in cards:
+            whole = full[card.id]
+            for name in fields - {"has_problem"}:
+                self.assertEqual(getattr(card, name), getattr(whole, name), f"{card.id}.{name}")
+            self.assertEqual(card.has_problem, whole.problems != "", card.id)
+        # The sample reaches every badge: a problem, a question, integration, outcome, hold,
+        # a rank, a relation, a cost and a session running.
+        self.assertTrue(all(any(getattr(c, n) for c in cards) for n in (
+            "has_problem", "open_questions", "integration_state", "outcome_text", "hold_state",
+            "shortlist_rank", "relations_text", "token_count", "live")))
+
+    def test_each_dialog_is_the_whole_unit(self):
+        async def open_each(arrive, manager):
+            got = {}
+            for uid in [u["name"] for u in _Sample.BOARD["units"]]:
+                await arrive(f"/unit?ws=a&id={uid}", "s1")
+                studio = await _studio(manager, "state-test-r13-dialog")
+                got[uid] = (studio.get_value("current_unit"), studio.unit_tree)
+            return got
+
+        full, _, opened = _sample_read("state-test-r13-dialog", open_each)
+        self.assertEqual(set(opened), set(full))
+        shared = set()
+        for uid, (current, tree) in opened.items():
+            self.assertEqual(current, full[uid], uid)
+            self.assertIsNot(current, full[uid], uid)
+            # Review round 1, F1: the lists are the dialog's own too, not `_full`'s.
+            for name in ("cells", "questions", "rounds", "live"):
+                if getattr(full[uid], name):
+                    shared.add(name)
+                    self.assertIsNot(getattr(current, name), getattr(full[uid], name),
+                                     f"{uid}.{name}")
+        self.assertEqual(shared, {"cells", "questions", "rounds", "live"})
+        self.assertEqual(opened["0004_done"][1], "Worktree: /t/0004 on feat/x · prepared")
+        self.assertEqual(opened["0003_review"][0].pr_url, "https://github.com/o/r/pull/1")
+
+
+class TheIdListsAnswerAsTheCardListsDid(unittest.TestCase):
+    """`0053` plan step 2: `shown_ids`, `lane_counts`, `resume_id` and `command_ids` against
+    the rules of `visible_units`, the four lanes, `in_progress[:1]` and `command_units` as
+    they stood before, on the same sample."""
+
+    def test_same_answers(self):
+        from types import SimpleNamespace
+
+        from coscc.state import LANE_COLOR, StudioState
+
+        full, cards, _ = _sample_read("state-test-id-lists")
+        units = list(full.values())
+
+        def visible(query, focus):  # `visible_units` before `0053`, verbatim in its rules
+            q = query.strip().lower()
+            rows = [u for u in units if u.hold_state != "dropped"]
+            if q:
+                rows = [u for u in rows if q in u.id.lower() or q in u.title.lower()]
+            if focus == "Autonomous":
+                rows = [u for u in rows if u.mode == "autonomous"]
+            elif focus == "Needs review":
+                rows = [u for u in rows if u.needs_attention]
+            return rows
+
+        def command(query):  # `command_units` before `0053`
+            q = query.strip().lower()
+            if not q:
+                return units[:5]
+            return [u for u in units if q in u.title.lower() or q in u.id.lower()][:6]
+
+        cv = StudioState.computed_vars
+        for query, focus in [("", "All work"), ("going", "All work"), ("", "Autonomous"),
+                             ("", "Needs review"), ("000", "Needs review"), ("nothing", "All work")]:
+            page = SimpleNamespace(cards=cards, query=query, focus=focus, command_query=query)
+            page.shown_ids = cv["shown_ids"].fget(page)
+            old = visible(query, focus)
+            self.assertEqual(page.shown_ids, [u.id for u in old], (query, focus))
+            self.assertEqual(cv["lane_counts"].fget(page),
+                             {lane: len([u for u in old if u.lane == lane]) for lane in LANE_COLOR})
+            going = [u for u in old if u.lane == "In progress"][:1]
+            self.assertEqual(cv["resume_id"].fget(page), going[0].id if going else "")
+            self.assertEqual(cv["command_ids"].fget(page), [u.id for u in command(query)])
+
+
+class ARunningAskSendsTheCardsOnlyWhenOneChanged(unittest.TestCase):
+    """`0053` C4, plan step 4: `_apply_running` sets `cards` only when a `live` changed, and
+    `current_unit` only when the open unit's did."""
+
+    def test_the_three_asks(self):
+        import asyncio
+
+        from coscc import state as page
+
+        token = "state-test-apply-running"
+        other = {"running": {"0003_review": _LIVE["running"]["0002_going"]}, "unknown_end": {}}
+
+        async def go():
+            manager, _, _ = _processor(token)
+            out = []
+            async with manager.modify_state(_key(token)) as root:
+                studio = await root.get_state(page.StudioState)
+                units = [page.Unit(id="0002_going"), page.Unit(id="0003_review")]
+                studio._full = {u.id: u for u in units}
+                studio.cards = [page._card(u) for u in units]
+                studio.unit_id = "0002_going"
+                studio._set_current()
+                for read in (_LIVE, _LIVE, other):
+                    studio._clean()
+                    studio._apply_running(read)
+                    out.append(({"cards", "current_unit"} & set(studio.dirty_vars),
+                                [len(c.live) for c in studio.cards], len(studio.current_unit.live)))
+            return out
+
+        self.assertEqual(asyncio.run(go()), [
+            ({"cards", "current_unit"}, [1, 0], 1),
+            (set(), [1, 0], 1),
+            ({"cards", "current_unit"}, [0, 1], 0),
+        ])
+
+    def test_the_source_never_changes_full_in_place(self):
+        self.assertNotIn("self._full[", SOURCE.read_text(encoding="utf-8"))
+
+
+class UsageIsSentOnlyOnItsScreen(unittest.TestCase):
+    """`0053` R11."""
+
+    def test_rows_only_on_activity(self):
+        from types import SimpleNamespace
+
+        from coscc.state import Card, StudioState, UsageRow
+
+        cards = [Card(id="a", title="A", tokens="10", usd="$0.50", token_count=10, lane="Planned"),
+                 Card(id="b", title="B")]
+        rows = StudioState.computed_vars["usage_rows"].fget
+        self.assertEqual(rows(SimpleNamespace(screen="board", cards=cards)), [])
+        self.assertEqual(rows(SimpleNamespace(screen="activity", cards=cards)),
+                         [UsageRow(id="a", title="A", tokens="10", usd="$0.50", token_count=10)])
+
+
+class ALongMessageIsCutAndOpensWhole(unittest.TestCase):
+    """`0053` R10, R13 point 3."""
+
+    def test_cut_then_opened_byte_for_byte(self):
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        token = "state-test-long-message"
+        long = "Bước một: đọc kỹ. " * 4148  # 74664 characters, the size `idea.md` found
+        read = {"messages": [{"role": "user", "text": "ngắn"}, {"role": "user", "text": long},
+                             {"role": "assistant", "text": "Đã đọc."}]}
+
+        async def go():
+            manager, _, _ = _processor(token)
+            async with manager.modify_state(_key(token)) as root:
+                studio = await root.get_state(page.StudioState)
+                studio.cwd, studio.session_id = "/a", "s"
+                studio._load_history()
+                cut = [(m.text, m.cut) for m in studio.messages]
+                page.StudioState.open_message.fn(studio, 9)  # out of range: nothing moves
+                page.StudioState.open_message.fn(studio, 1)
+                opened = [(m.text, m.cut) for m in studio.messages]
+            return cut, opened
+
+        with mock.patch.object(page.SERVICE, "history", lambda cwd, sid: read):
+            cut, opened = asyncio.run(go())
+        self.assertEqual(cut[0], ("ngắn", 0))
+        self.assertEqual(cut[1], (long[:page.MESSAGE_CUT], len(long) - page.MESSAGE_CUT))
+        self.assertEqual(cut[2], ("Đã đọc.", 0))
+        self.assertEqual(opened[1][0].encode(), long.encode())
+        self.assertEqual((opened[0], opened[1][1], opened[2]), (cut[0], 0, cut[2]))
+
+    def test_what_send_showed_whole_stays_whole(self):
+        """Review round 1, F3: the read at the end of `send` cuts neither the reply that
+        just streamed nor a message opened before it; one never opened stays cut."""
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        token = "state-test-send-keeps-whole"
+        opened, closed, reply = "Mở. " * 2000, "Đóng. " * 1500, "Trả lời. " * 1000
+        said = [{"role": "user", "text": "hỏi"}, {"role": "assistant", "text": opened},
+                {"role": "assistant", "text": closed}]
+        reads = iter([{"messages": said}, {"messages": [
+            *said, {"role": "user", "text": "nữa"}, {"role": "assistant", "text": reply}]}])
+
+        async def stream(cwd, text, session_id):
+            for i in range(0, len(reply), 1000):
+                yield "chunk", reply[i:i + 1000]
+            yield "done", {"session_id": "s"}
+
+        async def go():
+            manager, _, _ = _processor(token)
+            async with manager.modify_state(_key(token)) as root:
+                studio = await root.get_state(page.StudioState)
+                studio.cwd, studio.session_id = "/a", "s"
+                studio._load_history()
+                page.StudioState.open_message.fn(studio, 1)
+                studio.prompt = "nữa"
+                async for _ in page.StudioState.send.fn(studio):
+                    pass
+                return [(m.text, m.cut) for m in studio.messages], studio.error
+
+        with mock.patch.multiple(
+            page.SERVICE,
+            history=lambda cwd, sid: next(reads),
+            check_send=lambda cwd, text: None,
+            stream=stream,
+            sessions_for=lambda cwd, limit: {"sessions": [{"session_id": "s"}]},
+            activity_and_usage=lambda cwd, limit: {"events": [], "total": {}},
+        ):
+            shown, error = asyncio.run(go())
+        self.assertEqual(error, "")
+        self.assertEqual(len(shown), 5)
+        self.assertEqual(shown[1], (opened, 0))
+        self.assertEqual(shown[2], (closed[:page.MESSAGE_CUT], len(closed) - page.MESSAGE_CUT))
+        self.assertEqual(shown[4], (reply, 0))
+
+
+class SessionsAreReadWhereTheyAreShown(unittest.TestCase):
+    """`0053` R9. `SERVICE.sessions_for` is asked on arriving at Sessions in a workspace it
+    was not read for, and nowhere else."""
+
+    def test_the_count_per_arrival(self):
+        import asyncio
+
+        fake = _Page()
+        token = "state-test-sessions-read"
+        steps = [("/board?ws=a", "s1"), ("/board?ws=b", "s1"), ("/sessions?ws=b", "s1"),
+                 ("/board?ws=b", "s1"), ("/sessions?ws=b", "s1"), ("/sessions?ws=a", "s1"),
+                 ("/sessions/?ws=a", "s2")]  # a reload reads again
+        seen = []
+
+        async def go():
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            async with processor:
+                for address, sid in steps:
+                    await arrive(address, sid)
+                    seen.append(fake.calls["sessions_for"])
+                await asyncio.sleep(0.15)
+
+        with fake.patches():
+            asyncio.run(go())
+        self.assertEqual(seen, [0, 0, 1, 1, 1, 2, 3])
 
 
 if __name__ == "__main__":
