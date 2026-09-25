@@ -10,8 +10,9 @@ units:
             and the dialog says so in view
     2  (b)  an answer sent with no name (`0082` R3) is recorded as `owner`, and the notice is
             in view in the dialog
-    3  (c)  text in question 2's box, Send pressed on question 3: nothing is written, the
-            text stays, and the reason names both questions, in view
+    3  (c)  text in question 4's box (question 2's until `0082`), Send pressed on
+            question 3: nothing is written, the text stays, and the reason names both
+            questions, in view
     4  F<n> a finding the last review round confirmed needs a person, its Send
             double-clicked, is answered once into `review.md`, and the dialog still says
             so in view once it settles (review round 1, F1)
@@ -85,13 +86,15 @@ GIT_ID = ("-c", "user.name=verify", "-c", "user.email=verify@example.invalid",
 # the bottom moves something and the sticky copy is actually tested.
 FILLER = "".join(f"   Dòng giải thích {i} của câu hỏi, để tab đủ dài mà cuộn.\n" for i in range(12))
 INTENT = (
-    "# Intent: ba câu để trả lời\n"
+    "# Intent: bốn câu để trả lời\n"
     "Author: verify_0071. Type: fix. Status: accepted.\n\n"
-    "## Problem\n\nMột unit có ba câu hỏi đang mở.\n\n"
+    "## Problem\n\nMột unit có bốn câu hỏi đang mở.\n\n"
     "## Open questions\n\n"
     f"1. **Câu thứ nhất?**\n{FILLER}"
     f"2. **Câu thứ hai?**\n{FILLER}"
     f"3. **Câu thứ ba?**\n{FILLER}"
+    # `0082`: (b) now answers question 2, so (c) leaves its text in question 4's box.
+    f"4. **Câu thứ tư?**\n{FILLER}"
 )
 # `coscc/api_test.py`'s `0028` fixture: round 2 confirmed F2 and F3 need a person.
 _ROUND = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
@@ -311,15 +314,17 @@ def one_width(browser, base, token, api, cwd, size) -> list[bool]:
         ))
 
         # 3 (c)
+        before = sha(intent.read_bytes())
+        type_in(page, box(page, "intent.md#4"), "Câu bốn, chưa gửi.")
         press(page, "intent.md#3")
-        said = wait_text(page, "#detail-error", "question 3 of intent.md", "question 2 of intent.md")
-        kept = box(page, "intent.md#2").input_value()
+        said = wait_text(page, "#detail-error", "question 3 of intent.md", "question 4 of intent.md")
+        kept = box(page, "intent.md#4").input_value()
         why = in_view(page, "#detail-error")
         results.append(say(
-            "question 3 of intent.md" in said and "question 2 of intent.md" in said
-            and sha(intent.read_bytes()) == before and kept == "Câu hai, nhưng không ký tên."
+            "question 3 of intent.md" in said and "question 4 of intent.md" in said
+            and sha(intent.read_bytes()) == before and kept == "Câu bốn, chưa gửi."
             and not why,
-            f"3 [{w}] (c) Send on question 3 with text in question 2's box names both, in view",
+            f"3 [{w}] (c) Send on question 3 with text in question 4's box names both, in view",
             f"error {said[:200]!r}; file unchanged {sha(intent.read_bytes()) == before}; "
             f"box {kept!r}; in view: {why or 'yes'}",
         ))
