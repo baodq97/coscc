@@ -21,8 +21,19 @@ Read this before adding a route, a button or a grant, and before copying this ha
   but `node -e` spawning `gh`, or an alias defined before the step, still walks past it,
   and at a terminal nothing refuses anything. What stops a merge before review is the
   `ship` gate being asked — and only when it is asked.
-- **Anything that starts the next stage.** An accepted artifact lights no gate. A person
-  chooses the mode and presses the button, every time.
+- **Anything that starts the next stage — unless a workspace turns the autopilot on.** An
+  accepted artifact lights no gate. Since `0043` each workspace has an autopilot switch,
+  off by default (`POST /api/settings/autopilot`). While it is on, the app itself starts
+  the stage `cos.mjs next` names after each step or integration ends, after an answer, and
+  every 5 minutes for a unit between `pr` and `ship`, through the same `run_step` a press
+  uses, so the gate is asked there. It stops at an open question, where `next` awaits a
+  person, at `ship` unless its own switch is on, at a Gebo `[needs-person]`, after a step
+  that did not end `done`, and where the gate refuses; and at a daily cap for the whole
+  app. None of that makes a gate more than advice or a grant more than a reading of words,
+  and a step the autopilot starts is not a person's approval of anything. It never
+  releases. It refuses to turn on while the app listens beyond loopback, but whoever holds
+  the password or a live session can turn it on, raise the cap, or let it ship to `main`
+  under this machine's `gh` login. The run log's `started_by` says which starts were its.
 - **A person's answer is not an approval, and it starts nothing either.** Since `0016` the
   app has one place where a person answers an item under `## Open questions`: the
   *Questions* tab, or `POST /api/units/answer`. It appends a block under `## Answers` and
@@ -66,8 +77,9 @@ Read this before adding a route, a button or a grant, and before copying this ha
   (`gh api`, `git send-pack`, an alias made during the step) — but, like every grant here,
   it reads words: `node -e` or `python -c` pushing by itself still walks past. Gebo stops with `[needs-person]` rather than drop one side. How
   a conflict was resolved is the app's or an agent's word; the next review round is the
-  only thing that reads it. No board read, timer or finished step presses the button, and
-  whoever holds the password or a live session can make this machine's `gh` login rebase a
+  only thing that reads it. No board read, timer or finished step presses the button unless
+  the workspace's autopilot is on (`0043`), which integrates a unit behind, conflicting or
+  red — never after a `pass` round; and whoever holds the password or a live session can make this machine's `gh` login rebase a
   unit's pull request or open a paid session. It is not a stage and `cos.mjs`
   does not know it exists beyond the `betweenPrAndShip` field `status --json` carries.
 - **Stopping a step is not an approval, and anyone holding the password can do it.** Since
