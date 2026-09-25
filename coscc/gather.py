@@ -237,6 +237,12 @@ def read_store(directory: Path) -> tuple[str, dict[str, Any]]:
         raise Refused(
             f"{directory / knowledge.STORE} holds blocks that cannot be read, and gathering would "
             "delete them: " + "; ".join(parsed["skipped"]) + " — fix or remove each by hand first")
+    ids = [e["id"] for e in parsed["entries"]]
+    twice = sorted({n for n in ids if ids.count(n) > 1})
+    if twice:
+        raise Refused(
+            f"{directory / knowledge.STORE} holds " + ", ".join(f"K{n}" for n in twice)
+            + " more than once; an id names one entry (R7) — renumber or merge them by hand first")
     return text, parsed
 
 
@@ -290,6 +296,9 @@ async def gather(
         manifest = load_manifest(manifest_path)
         _, before = planned["store"]
         header = dict(before["header"])
+        # A header edited by hand, or lost (`parse` reads it as `Max id: K0`), is not the
+        # highest id the store holds; new ids start above both (R7).
+        header["max_id"] = max([header["max_id"]] + [e["id"] for e in before["entries"]])
         # `all` starts from nothing and keeps `Max id` (R7); `new` from the store as it is.
         entries = [] if mode == "all" else list(before["entries"])
         rebuilt = [{"id": f"K{e['id']}", "reason": REBUILT} for e in before["entries"]] if mode == "all" else []

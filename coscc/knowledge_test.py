@@ -131,6 +131,13 @@ class TheCheckOfAGatheredStore(unittest.TestCase):
         reasons = self.check(self.OLD + "\n\n" + entry(3), max_id=5)
         self.assertTrue(any("K3 is new but not above" in r for r in reasons), reasons)
 
+    def test_a_new_id_another_workspace_holds(self):
+        # A header below the ids the store holds would let K3 past the Max id check alone.
+        other = knowledge.parse(entry(3, scope=f"workspace:{OTHER}"))["entries"]
+        reasons = self.check(self.OLD + "\n\n" + entry(3), others=other)
+        self.assertTrue(any("K3 is new but another workspace's entry already holds it" in r for r in reasons), reasons)
+        self.assertEqual(self.check(self.OLD + "\n\n" + entry(4), others=other), [])
+
     def test_an_old_id_gone_and_not_dropped(self):
         self.assertTrue(any("K2 is gone" in r for r in self.check(entry(1))))
         self.assertEqual(self.check(entry(1), dropped=[{"id": "K2", "reason": "merged", "merged_into": "K1"}]), [])

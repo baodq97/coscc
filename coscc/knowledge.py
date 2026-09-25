@@ -222,11 +222,13 @@ def validate(
     gave back, `dropped` its `[{id, reason, merged_into?}]`, `batch_sources` the labels it
     read, `slot` the batch's workspace and `max_id` the store header's. `others` are the
     entries of the store it was not given — other workspaces' — so the cap is checked for
-    what each of them would receive too."""
+    what each of them would receive too, and no new entry takes one of their ids (R7)."""
+    others = list(others)
     old = parse(old_slice)["entries"]
     new = parse(new_text)
     reasons = list(new["skipped"])
     old_ids = {e["id"]: e for e in old}
+    other_ids = {e["id"] for e in others}
     known = set(batch_sources)
     for e in old:
         known |= {label_of(s) for s in e["sources"]}
@@ -240,6 +242,8 @@ def validate(
         seen.add(e["id"])
         if e["id"] not in old_ids and e["id"] <= max_id:
             reasons.append(f"{k} is new but not above the store's Max id K{max_id}: an id is never used again")
+        if e["id"] not in old_ids and e["id"] in other_ids:
+            reasons.append(f"{k} is new but another workspace's entry already holds it")
         if not _SCOPE.match(e["scope"]):
             reasons.append(f"{k} has the scope {e['scope']!r}, not tool:<name>[ <versions>] or workspace:<key>")
         elif e["scope"].startswith("workspace:") and e["scope"] != f"workspace:{slot}":
