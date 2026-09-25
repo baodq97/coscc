@@ -25,7 +25,13 @@ directory, and four units in it, always the same, so a spec can name its address
     0002_open-question     an intent with one open question nobody answered
     0003_awaiting-ship     every artifact up to a passing review.md; pr.md names
                            github.com/o/r/pull/1
-    0004_finished          plan.md: done
+    0004_finished          plan.md: done; its intent has a `## Proposed outcome` whose
+                           deadline (2026-09-20) has passed and two open questions
+                           (`0082` R19)
+
+and one chat conversation in a temporary `CLAUDE_CONFIG_DIR`, titled `Backlog screen
+plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
+visible text as `<address slug>-<W>x<H>.txt`.
 
 For example `/board`, `/settings`, or `/unit?ws=proj&id=0002_open-question&tab=questions`
 (`tab` is one of `coscc/place.py`'s `TABS`, lowercase; any other value opens `overview`).
@@ -125,14 +131,51 @@ FIXTURE = {
         "pr.md": "# PR: awaiting ship\nPR: https://github.com/o/r/pull/1. Author: capture_screens. Status: accepted.\n",
         "review.md": "# Review: awaiting ship\nAuthor: capture_screens. Status: accepted.\n" + ROUND.format(sha="a" * 40),
     },
+    # `0082` R19: a deadline already past, so the card carries an outcome badge, and two
+    # questions nobody answered, so the Questions tab has something to show read-only.
     "finished": {
-        "intent.md": INTENT.format(title="finished", problem="Một unit đã xong."),
+        "intent.md": INTENT.format(title="finished", problem="Một unit đã xong.")
+        + "\n## Proposed outcome\n\nĐến hết ngày 2026-09-20, việc này đã được đo.\n"
+        + "\n## Open questions\n\n1. Có cần đo lại sau một tuần không?\n2. Ai đọc kết quả?\n",
         "spec.md": "# Spec: finished\nAuthor: capture_screens. Status: accepted.\n",
         "plan.md": "# Plan: finished\nAuthor: capture_screens. Status: done.\n",
     },
 }
 
 FAKE_GH = "#!/bin/sh\nif [ \"$1\" = pr ] && [ \"$2\" = list ]; then echo '[]'; exit 0; fi\nexit 1\n"
+
+
+# `0082` R19: one conversation with a title and a markdown reply, written where the SDK
+# reads its sessions (`.cos/0082_*/spike.md ## U2`). No session is opened, no quota spent.
+CHAT_TITLE = "Backlog screen plan"
+CHAT = (
+    ("user", "Can the backlog be a table?"),
+    ("assistant", [{"type": "text", "text": "Yes. The **plan** is:\n\n- one row per unit\n- *Edit* opens in the row"}]),
+)
+
+
+def seed_conversation(workspace: Path) -> str:
+    """One conversation under `CLAUDE_CONFIG_DIR` for `workspace`; returns its session id.
+    `CLAUDE_CONFIG_DIR` must already be set, and the app started after this."""
+    import uuid
+
+    from claude_agent_sdk._internal import sessions as sdk
+
+    where = sdk._get_projects_dir() / sdk._sanitize_path(sdk._canonicalize_path(str(workspace)))
+    where.mkdir(parents=True, exist_ok=True)
+    sid, parent, lines = str(uuid.uuid4()), None, []
+    for i, (kind, content) in enumerate(CHAT):
+        me = str(uuid.uuid4())
+        lines.append(json.dumps({
+            "type": kind, "uuid": me, "parentUuid": parent, "sessionId": sid,
+            "cwd": str(workspace), "timestamp": f"2026-09-24T01:00:0{i}.000Z",
+            "isSidechain": False, "userType": "external",
+            "message": {"role": kind, "content": content},
+        }))
+        parent = me
+    lines.append(json.dumps({"type": "custom-title", "customTitle": CHAT_TITLE, "sessionId": sid}))
+    (where / f"{sid}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return sid
 
 
 def scan(text: str) -> list[tuple[str, str]]:
@@ -195,7 +238,10 @@ def shoot(browser, base: str, token: str, address: str, size: tuple[int, int], o
         path = out / f"{slug(address)}-{size[0]}x{size[1]}.png"
         full = page.locator("[role=dialog]").count() == 0
         page.screenshot(path=str(path), full_page=full)
-        return path, page.url, page.inner_text("body"), full
+        text = page.inner_text("body")
+        # `0082`: the visible text beside the image, so a proof can count what the page says.
+        path.with_suffix(".txt").write_text(text, encoding="utf-8")
+        return path, page.url, text, full
     finally:
         context.close()
 
@@ -277,7 +323,7 @@ def out_refused(out: Path) -> str | None:
 def clear_out(out: Path) -> None:
     """Removes what a previous run wrote — its PNGs and manifest — and nothing else."""
     out.mkdir(parents=True, exist_ok=True)
-    for old in [*out.glob("*.png"), out / "manifest.json"]:
+    for old in [*out.glob("*.png"), *out.glob("*.txt"), out / "manifest.json"]:
         old.unlink(missing_ok=True)
 
 
@@ -295,12 +341,15 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
     (bin_dir / "gh").write_text(FAKE_GH, encoding="utf-8")
     (bin_dir / "gh").chmod(0o755)
     os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+    # `RealApp` hands `os.environ` to the app (`scripts/proof_harness.py:131-136`).
+    os.environ["CLAUDE_CONFIG_DIR"] = str(outside / "claude")
 
     shots, hits = [], []
     started = time.monotonic()
     try:
         proj = make_repo(work, outside)
         token = seed_session(data_dir)
+        seed_conversation(proj)
         with RealApp(config, work, data_dir) as app:
             with httpx.Client(base_url=app.base, timeout=30, cookies={auth.COOKIE: token}) as api:
                 added = api.post("/api/workspaces", json={"name": "proj"})
