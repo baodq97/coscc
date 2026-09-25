@@ -187,6 +187,21 @@ class AGather(Fixture):
             with self.assertRaises(gather.Refused):
                 self.run_gather(Replies())
 
+    def test_a_store_with_a_block_it_cannot_read_is_refused_before_a_session(self):
+        # Every save renders only what `parse` read, so gathering would delete these (R5).
+        written = knowledge.render(knowledge.empty_header(), []) + (
+            "\n## K1\nScope: tool:x\nMeasured: 2026-09-25\nwritten by hand, no source\n"
+            "\n## Notes\nkept by a person\n")
+        knowledge.save(self.dir / knowledge.STORE, written)
+        for mode in gather.MODES:
+            with self.subTest(mode=mode):
+                s = Replies(reply(entry(2, self.src)))
+                with self.assertRaises(gather.Refused) as refused:
+                    self.run_gather(s, mode)
+                self.assertIn("K1 has no Source:", str(refused.exception))
+                self.assertIn("## Notes", str(refused.exception))
+                self.assertEqual((s.prompts, self.rows(), self.store()), ([], [], written))
+
 
 class AllRebuilds(Fixture):
     def setUp(self):

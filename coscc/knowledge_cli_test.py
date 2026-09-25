@@ -74,6 +74,13 @@ class Gather(Fixture):
             self.assertEqual(self.run_cli("gather", "--all", "--yes", "--model", "m1"), 0)
         self.assertEqual(seen, {"mode": "all", "model": "m1"})
 
+    def test_a_store_with_a_block_it_cannot_read_is_refused_even_without_yes(self):
+        self.a_source()
+        knowledge.save(knowledge.path_of(str(self.data)) / knowledge.STORE, "# Knowledge\n\n## K1\nno scope\n")
+        with mock.patch.object(gather, "gather", side_effect=AssertionError("ran")):
+            self.assertEqual(self.run_cli("gather", "--all"), 2)
+        self.assertIn("K1 has no Scope:", self.said[-1])
+
 
 class Show(Fixture):
     def test_no_store_yet(self):

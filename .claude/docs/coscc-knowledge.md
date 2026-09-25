@@ -19,6 +19,9 @@ workspace (`coscc/knowledge.py`); `coscc knowledge gather` writes that file
 - A batch whose reply the check refuses is sent again by every later `gather`, since the
   manifest records only what was written. Nothing skips it; read its `reason` in the
   `knowledge` rows of `cos.db` and decide.
+- A store edited by hand into a block `parse` cannot read — no `Scope:`, no `Source:`, no
+  statement, or a `## ` heading that is not `## K<n>` — refuses every `gather`, dry run
+  included, until the block is fixed or removed: a save renders only what was read.
 - The session runs in the store's directory and `Sessions.membership` is narrowed to it.
   It has no tool; give the grant one and the session reads everything there.
 

@@ -222,14 +222,33 @@ class _Lock:
             os.close(self.fd)
 
 
+def read_store(directory: Path) -> tuple[str, dict[str, Any]]:
+    """`(text, parsed)` of the store, `("", parse(""))` when there is none.
+
+    A store holding a block `parse` skips is refused: every save renders only the entries it
+    read, so gathering over it would delete what a person wrote (R5), and delete it without
+    naming it in any `dropped` (R13)."""
+    try:
+        text = knowledge.load(directory / knowledge.STORE)
+    except FileNotFoundError:
+        text = ""
+    parsed = knowledge.parse(text)
+    if parsed["skipped"]:
+        raise Refused(
+            f"{directory / knowledge.STORE} holds blocks that cannot be read, and gathering would "
+            "delete them: " + "; ".join(parsed["skipped"]) + " — fix or remove each by hand first")
+    return text, parsed
+
+
 def plan_of(data_dir: str | os.PathLike[str] | None, mode: str) -> dict[str, Any]:
-    """What a gather would do: `{sources, batches, ceiling_usd}`, reading and spending nothing
-    beyond the files."""
+    """What a gather would do: `{sources, batches, ceiling_usd, store}`, reading and spending
+    nothing beyond the files. `store` is `read_store`'s, so it refuses what that refuses."""
     from coscc.policy import grant_for
 
     if mode not in MODES:
         raise Refused(f"mode must be one of {', '.join(MODES)}")
     directory = knowledge.path_of(data_dir)
+    store = read_store(directory)
     found = sources(data_dir)
     if mode == "new":
         seen = load_manifest(directory / knowledge.SOURCES)
@@ -239,6 +258,7 @@ def plan_of(data_dir: str | os.PathLike[str] | None, mode: str) -> dict[str, Any
         "sources": found,
         "batches": parts,
         "ceiling_usd": round(len(parts) * float(grant_for("knowledge").max_budget_usd), 2),
+        "store": store,
     }
 
 
@@ -267,12 +287,8 @@ async def gather(
             return 0
         store_path = directory / knowledge.STORE
         manifest_path = directory / knowledge.SOURCES
-        try:
-            text = knowledge.load(store_path)
-        except FileNotFoundError:
-            text = ""
         manifest = load_manifest(manifest_path)
-        before = knowledge.parse(text)
+        _, before = planned["store"]
         header = dict(before["header"])
         # `all` starts from nothing and keeps `Max id` (R7); `new` from the store as it is.
         entries = [] if mode == "all" else list(before["entries"])

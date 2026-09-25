@@ -81,6 +81,9 @@ def _gather(config, opts: dict[str, str | bool], say: Callable[[str], None]) -> 
         return 2
     try:
         planned = gather.plan_of(config.data_dir, mode)
+    except gather.Refused as e:
+        say(f"coscc knowledge gather: {e}")
+        return 2
     except ValueError as e:
         say(f"coscc knowledge gather: {e}")
         return 1
