@@ -149,8 +149,8 @@ async def plain(tmp: Path) -> bool:
                     "R3/C3: a name sent along is still recorded as sent", f"{r.status_code} {r.text[:200]}")
         r = await post("/api/units/outcome", unit=done, result="đạt", measured_by="agent", source="verify_0082")
         text = (store / done / "intent.md").read_text(encoding="utf-8")
-        ok &= claim(r.status_code == 200 and f"Recorded by: {owner}" in text,
-                    "R3: /api/units/outcome with no recorded_by writes 'Recorded by: owner'", f"{r.status_code} {r.text[:200]}")
+        ok &= claim(r.status_code == 200 and f"Answered by: {owner}" in text.split("### Outcome", 1)[-1],
+                    "R3: /api/units/outcome with no recorded_by writes 'Answered by: owner' in its block", f"{r.status_code} {r.text[:200]}")
         r = await post("/api/units/hold", unit=other, to="paused", reason="waiting for a decision")
         text = (store / other / "intent.md").read_text(encoding="utf-8")
         ok &= claim(r.status_code == 200 and owner in text.split("### Paused", 1)[-1],
@@ -200,7 +200,8 @@ async def plain(tmp: Path) -> bool:
         service.updater = _Updater(status)
         out = service.update_status()
         line, actions = str(out.get("line") or ""), list(out.get("actions") or [])
-        usable = {"apply-release", "now-release"} if name == "newer ready" else set()
+        usable = {"nothing newer": {"build-local"},
+                  "newer ready": {"apply-release", "now-release", "build-local"}}.get(name, set())
         ok &= claim(line != "" and "COS_" not in line and not VIETNAMESE.search(line) and set(actions) == usable,
                     f"R9: update status '{name}' says '{line}' and offers {actions}",
                     f"line={line!r} actions={actions}")

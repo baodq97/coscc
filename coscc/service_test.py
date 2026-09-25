@@ -1221,17 +1221,21 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         self.assertIn("Status: accepted.", (Path(a["path"]) / "intent.md").read_text())
         self.assertEqual(self.service.running_steps(self.ws), [])
 
-    def test_stopping_nothing_or_without_a_name_is_refused(self):
+    def test_stopping_nothing_is_refused_and_no_name_stops_as_owner(self):
+        """`0082` R3: a Stop with no name used to be refused; it now records `owner`."""
         a = self.units[0]
 
         async def go():
             with self.assertRaises(Invalid):
                 await self.service.stop_step(self.ws, a["unit"], "Lan")
             agen = await self._first_chunk(a)
-            with self.assertRaises(Invalid):
-                await self.service.stop_step(self.ws, a["unit"], "  ")
+            done = await self.service.stop_step(self.ws, a["unit"], "  ")
+            self.assertEqual(done["stopped_by"], "owner")
             self._release(a)
-            [i async for i in agen]
+            try:
+                [i async for i in agen]
+            except (Invalid, asyncio.CancelledError):
+                pass
 
         asyncio.run(go())
 
@@ -2141,6 +2145,12 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertTrue(str(e.exception))
         return str(e.exception)
 
+    def test_no_recorded_by_is_recorded_as_owner(self):
+        """`0082` R3: what `recorded_by="  "` was refused for until then."""
+        self.record(recorded_by="  ")
+        block = self.intent.read_text(encoding="utf-8").split("### Outcome", 1)[1]
+        self.assertIn("Answered by: owner", block)
+
     def test_a_block_is_appended_and_every_byte_before_it_stays(self):
         before = self.intent.read_bytes()
         got = self.record(note="Ghi chú.")
@@ -2177,7 +2187,6 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertIn("source", self.refused(source=""))
         self.assertIn("source", self.refused(result="trượt", source=" "))
         self.assertIn("reason", self.refused(result="không đo được", source="", reason=""))
-        self.refused(recorded_by="  ")
         self.refused(recorded_by="A\nStatus: rejected")
         self.refused(measured_by="")
         self.refused(measured_by="agent\nResult: đạt")

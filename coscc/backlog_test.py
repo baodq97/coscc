@@ -172,7 +172,7 @@ class TheOrder(unittest.TestCase):
                    _rel("0001_a", "0002_b", "phụ thuộc"), _rel("0002_b", "0001_a", "phụ thuộc")]
         out = b.fold(units, records, {})
         self.assertEqual([e["unit"] for e in out["order"]], ["0003_c", "0001_a", "0002_b"])
-        self.assertTrue(any("chu trình" in w["text"] for w in out["warnings"]))
+        self.assertTrue(any("cycle" in w["text"] for w in out["warnings"]))
 
 
 class TheShortlist(unittest.TestCase):
@@ -208,8 +208,8 @@ class TheShortlist(unittest.TestCase):
         ]
         out = b.fold(units, records, {})
         self.assertEqual([e["unit"] for e in out["shortlist"]], ["0001_a", "0002_b"])
-        self.assertTrue(any("thay thế" in w for w in out["shortlist"][0]["warnings"]))
-        self.assertTrue(any("trùng" in w for w in out["shortlist"][1]["warnings"]))
+        self.assertTrue(any("replaced by" in w for w in out["shortlist"][0]["warnings"]))
+        self.assertTrue(any("duplicates" in w for w in out["shortlist"][1]["warnings"]))
         self.assertEqual(out["per_unit"]["0001_a"]["rank"], 1)
 
     def test_r14_stamp(self):
