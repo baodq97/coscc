@@ -35,7 +35,7 @@ from claude_agent_sdk import (
 )
 
 from coscc import config as cfg
-from coscc import frontend
+from coscc import frontend, instructions
 from coscc.config import Config
 from coscc.data import Data
 
@@ -485,6 +485,12 @@ def _options(
     the tool list, the permission mode, `setting_sources` and the callback are what they
     would have been without it, and what a step may do is still decided by `can_use_tool`.
 
+    Since `0088` no settings source is loaded, for any session, so the CLI reads nothing of
+    the user's, the machine's or the project's own configuration. The project's
+    instructions come back through `coscc/instructions.py`: into the preset's `append`
+    when there is a preset, as the whole system prompt when there is not, and not at all
+    when `cwd` holds none -- the session is then exactly the one it was before.
+
     `data_dir` is the session's own data root (`0076`); the database it protects is the
     one `config` names. Building a `Data` touches no disk.
     """
@@ -503,7 +509,16 @@ def _options(
         fork_session=False,  # spec.md C7 — R3 needs the same id back, not a branch
         model=model if model is not None else config.model,
         max_turns=max(1, int(max_turns)),
-        setting_sources=None,  # no project/user settings can widen the tool list
+        # `0088`. No source at all -- not user, project, local, nor what claude.ai adds.
+        # `None` said "no project/user settings" here and meant the opposite: on this SDK
+        # it passes no flag, and the CLI then loads every source, so each session carried
+        # the machine's MCP servers, skills, plugins and `permissions.allow` -- the last
+        # one answering a `Bash` call before `can_use_tool` was asked. `[]` passes
+        # `--setting-sources=` with nothing after it; `0088` `spike.md ## U6` measured the
+        # argv, the init and the gate on 0.2.159.
+        setting_sources=[],
+        # And no MCP server but the ones declared here, which are none.
+        strict_mcp_config=True,
         # Without this the CLI rewrites the prompt before the model sees it: an `@path`
         # anywhere in it is replaced by that file's contents, and a leading `/word` is
         # dispatched as a slash command. Neither is anything this app ever means to do.
@@ -521,11 +536,18 @@ def _options(
         # The second layer, and the one that matters. Eleven MCP tools were measured
         # reaching a session created with `tools=[]`, because `--tools` names the built-in
         # set only. This callback is on the path every call takes, whatever declared it.
+        # Since `0088` `strict_mcp_config` keeps those tools out of the session's init;
+        # this is still what decides whether a call runs.
         options.can_use_tool = can_use_tool
     if max_budget_usd:
         options.max_budget_usd = float(max_budget_usd)
+    project = instructions.read(cwd).text
     if system_prompt is not None:
         options.system_prompt = dict(system_prompt)
+        if project:
+            options.system_prompt["append"] = project
+    elif project:
+        options.system_prompt = project
     if effort is not None:
         # `0033`: what `coscc/models.py` resolved for this stage and label. Unset, the
         # SDK's own default applies, as it did before.

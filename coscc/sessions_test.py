@@ -216,7 +216,11 @@ class OptionsCarryTheKnobs(unittest.TestCase):
     def test_project_settings_cannot_widen_the_tool_list(self):
         # A repo's own .claude/settings.json must not be able to grant a tool the four
         # knobs did not. C2b is about the app deciding, not the directory it visits.
-        self.assertIsNone(_options(Config(), "/p", None).setting_sources)
+        # `0088` R1, R2: `None` loaded every source on this SDK; `[]` loads none, and no
+        # MCP server is taken from anywhere.
+        options = _options(Config(), "/p", None)
+        self.assertEqual(options.setting_sources, [])
+        self.assertIs(options.strict_mcp_config, True)
 
     def test_the_prompt_reaches_the_model_as_written(self):
         """No `@path` expansion and no slash-command dispatch, for every session.
@@ -279,10 +283,71 @@ class OptionsCarryTheKnobs(unittest.TestCase):
             self.assertEqual(preset.tools, bare.tools)
             self.assertIs(preset.can_use_tool, gate)
             self.assertIs(bare.can_use_tool, gate)
-            self.assertIsNone(preset.setting_sources)
+            self.assertEqual(preset.setting_sources, [])
             self.assertTrue(preset.verbatim_prompts)
             self.assertEqual(preset.permission_mode, bare.permission_mode)
             self.assertEqual(preset.max_turns, bare.max_turns)
+
+    # `0088`. No settings source, no MCP server, and the project's own instructions put
+    # into the system prompt by the app, since the CLI no longer loads them.
+
+    def test_the_project_instructions_go_into_the_preset_or_become_the_prompt(self):
+        # R5. The fixture is the reader's own, with a canary in every kind of file.
+        from coscc import instructions
+        from coscc.instructions_test import plant
+        from coscc.runner import CLAUDE_CODE_PRESET
+
+        with tempfile.TemporaryDirectory() as d:
+            plant(Path(d))
+            block = instructions.read(d).text
+            preset = _options(Config(), d, None, system_prompt=CLAUDE_CODE_PRESET)
+            bare = _options(Config(), d, None)
+        self.assertIn("CANARY-DOTCLAUDE", block)
+        self.assertEqual(
+            preset.system_prompt, {"type": "preset", "preset": "claude_code", "append": block}
+        )
+        self.assertEqual(bare.system_prompt, block)
+        # The module's constant is still bare.
+        self.assertNotIn("append", CLAUDE_CODE_PRESET)
+
+    def test_a_directory_with_no_instructions_leaves_the_prompt_as_it_was(self):
+        from coscc.runner import CLAUDE_CODE_PRESET
+
+        self.assertIsNone(_options(Config(), "/p", None).system_prompt)
+        got = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET).system_prompt
+        self.assertNotIn("append", got)
+
+    def test_every_shape_of_session_reaches_the_cli_with_no_source_and_no_mcp(self):
+        # R1, R2 at the argv, the way `scripts/verify_0037.py` builds it: no tool, the read
+        # tools, a preset with an `append`, and a string system prompt.
+        from coscc import policy
+        from coscc.instructions_test import plant
+        from coscc.runner import CLAUDE_CODE_PRESET
+
+        with tempfile.TemporaryDirectory() as d:
+            plant(Path(d))
+            shapes = {
+                "no tool": _options(Config(), "/p", None, tools=[]),
+                "read tools": _options(Config(), "/p", None, tools=list(policy.READ_TOOLS)),
+                "preset with append": _options(
+                    Config(), d, None, tools=["Read"], system_prompt=CLAUDE_CODE_PRESET
+                ),
+                "string": _options(Config(), d, None, tools=[]),
+            }
+        for name, options in shapes.items():
+            transport = SubprocessCLITransport(prompt="", options=options)
+            transport._cli_path = "claude"
+            argv = transport._build_command()
+            self.assertIn("--setting-sources=", argv, name)
+            self.assertFalse(
+                [a for a in argv if a.startswith("--setting-sources=") and a != "--setting-sources="],
+                name,
+            )
+            self.assertIn("--strict-mcp-config", argv, name)
+        preset_argv = SubprocessCLITransport(prompt="", options=shapes["preset with append"])
+        preset_argv._cli_path = "claude"
+        argv = preset_argv._build_command()
+        self.assertIn("CANARY-ROOT", argv[argv.index("--append-system-prompt") + 1])
 
     # `0033`. Effort is chosen per stage and label; `_options` only carries it.
 
