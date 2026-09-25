@@ -1310,11 +1310,15 @@ class StudioState(rx.State):
 
     @rx.var
     def usage_rows(self) -> list[UsageRow]:
-        """`0053` R11. Only while *Activity & usage* is shown; nothing elsewhere."""
+        """`0053` R11. Only while *Activity & usage* is shown; nothing elsewhere.
+
+        `0092` R8 c: a unit whose steps all died before a token was counted still has a
+        row, reading `unknown`, rather than leaving the table as if it cost nothing."""
         if self.screen != "activity":
             return []
         return [UsageRow(id=c.id, title=c.title, tokens=c.tokens, usd=c.usd,
-                         token_count=c.token_count) for c in self.cards if c.token_count > 0]
+                         token_count=c.token_count) for c in self.cards
+                if c.token_count > 0 or c.usd not in ("", "—")]
 
     @rx.var
     def usage_scale(self) -> int:

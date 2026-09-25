@@ -2080,6 +2080,19 @@ class UsageIsSentOnlyOnItsScreen(unittest.TestCase):
         self.assertEqual(rows(SimpleNamespace(screen="activity", cards=cards)),
                          [UsageRow(id="a", title="A", tokens="10", usd="$0.50", token_count=10)])
 
+    def test_0092_a_unit_whose_every_run_died_costless_still_has_a_row(self):
+        """R8 c. No token and no cost is still a cost nobody knows, not nothing."""
+        from types import SimpleNamespace
+
+        from coscc.state import Card, StudioState, UsageRow, _tokens, _usd
+
+        count, shown = _tokens({"unknown": 2})
+        cards = [Card(id="d", title="D", tokens=shown, usd=_usd({"unknown": 2}), token_count=count),
+                 Card(id="e", title="E", tokens="—", usd=_usd({}), token_count=0)]
+        rows = StudioState.computed_vars["usage_rows"].fget
+        self.assertEqual(rows(SimpleNamespace(screen="activity", cards=cards)),
+                         [UsageRow(id="d", title="D", tokens="—", usd="unknown", token_count=0)])
+
 
 class ALongMessageIsCutAndOpensWhole(unittest.TestCase):
     """`0053` R10, R13 point 3."""
