@@ -27,7 +27,8 @@ directory, and four units in it, always the same, so a spec can name its address
                            github.com/o/r/pull/1
     0004_finished          plan.md: done; its intent has a `## Proposed outcome` whose
                            deadline (2026-09-20) has passed and two open questions
-                           (`0082` R19)
+                           (`0082` R19); one `plan` run of it, ended, in the run log
+                           (`0089` R16), so `/`, `/activity` and its Timeline show a time
 
 and one chat conversation in a temporary `CLAUDE_CONFIG_DIR`, titled `Backlog screen
 plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
@@ -220,6 +221,18 @@ def make_fixture(api: httpx.Client, proj: Path) -> None:
             (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
 
 
+def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
+    """`0089` R16: one ended `plan` run of `0004_finished` in the running app's run log, keyed
+    as `Service._journal_key` keys it. `at` is when it is written, so the page reads "just now"."""
+    import uuid
+
+    from coscc.journal import Journal
+
+    journal, key = Journal(work, data_dir), str(proj.resolve())
+    journal.started(key, "0004_finished", "plan", "manual")
+    journal.finished(key, "0004_finished", "plan", "done", session_id=str(uuid.uuid4()))
+
+
 def shoot(browser, base: str, token: str, address: str, size: tuple[int, int], out: Path) -> tuple[Path, str, str, bool]:
     """One address at one size: the PNG, the URL it ended on, the visible text, and whether
     the image is the full page. Raises `RuntimeError` when the page is not the app's."""
@@ -361,6 +374,7 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                 except RuntimeError as e:
                     print(str(e), file=sys.stderr)
                     return EXIT_BROKEN
+            seed_run(work, data_dir, proj)
             for address in args.addresses:
                 for size in SIZES:
                     try:
