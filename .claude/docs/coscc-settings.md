@@ -33,11 +33,11 @@ Read this before changing `POST /api/settings/*`, `coscc/models.py`, `POST /api/
   after a restart onto `0.0.0.0` but show why. Otherwise anyone holding the password or a
   live session can turn it on, raise the cap, or let the autopilot merge to `main` under
   this machine's `gh` login. The cap counts every `end` of the machine's day in every
-  workspace, a person's too; an `end` with no `cost_usd` counts as the cap reached for the
-  rest of the day, and a step running is counted at the largest `max_budget_usd` its stage
-  can have. It holds only the autopilot: a press is never held. Since `0104` it starts only
-  units on the workspace's last `shortlist` (`POST /api/backlog/shortlist`), highest first,
-  and asks nothing else: **with no shortlist it starts nothing at all**, a unit already half
+  workspace, a person's too; a step running is counted at the largest `max_budget_usd` its
+  stage can have, and since `0105` so is an `end` with no `cost_usd` — at the grant table's
+  largest when its stage has none. It holds only the autopilot: a press is never held.
+  Since `0104` it starts only units on the workspace's last `shortlist`
+  (`POST /api/backlog/shortlist`), highest first, and asks nothing else: **with no shortlist it starts nothing at all**, a unit already half
   way through included, and the board shows one *No shortlist* stop instead. Each pass, and
   the 5-minute one with nobody looking, costs one board read (a `gh pr list` when a unit
   sits between `pr` and `ship`) and one `cos.mjs next` per shortlisted unit — up to 7, each
