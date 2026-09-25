@@ -381,5 +381,65 @@ class FourProcessesLoseNothing(unittest.TestCase):
             self.assertIn(d, str(caught.exception))
 
 
+class AppendCheckedReadsAndWritesInOneTransaction(unittest.TestCase):
+    """`0074`. The check sees the rows of its kinds; a refusal writes nothing."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.j = Journal(self._tmp.name, self._tmp.name)
+
+    def test_a_refusal_inserts_nothing(self):
+        def no(rows):
+            raise BadRecord("no")
+
+        with self.assertRaises(BadRecord):
+            self.j.append_checked({"kind": "shortlist", "workspace": "w", "units": ["a"]}, ["shortlist"], no)
+        self.assertEqual(self.j.records("w"), [])
+
+    def test_the_check_sees_only_its_kinds_in_its_workspace(self):
+        self.j.append({"kind": "shortlist", "workspace": "w", "units": ["a"]})
+        self.j.append({"kind": "shortlist", "workspace": "other", "units": ["b"]})
+        self.j.append({"kind": "start", "workspace": "w", "unit": "a", "stage": "spec", "mode": "manual"})
+        seen = []
+        self.j.append_checked({"kind": "relation", "workspace": "w"}, ["shortlist", "relation"], seen.append)
+        self.assertEqual([r["units"] for r in seen[0]], [["a"]])
+        self.assertEqual(len(self.j.records("w", kind="relation")), 1)
+
+    def test_two_threads_checking_each_others_rows_do_not_both_pass(self):
+        import threading
+
+        barrier = threading.Barrier(2)
+        errors = []
+
+        def only_first(rows):
+            if rows:
+                raise BadRecord("already one")
+
+        def go():
+            barrier.wait()
+            try:
+                Journal(self._tmp.name, self._tmp.name).append_checked(
+                    {"kind": "shortlist", "workspace": "w", "units": ["a"]}, ["shortlist"], only_first
+                )
+            except BadRecord as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=go) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(len(self.j.records("w", kind="shortlist")), 1)
+        self.assertEqual(len(errors), 1)
+
+    def test_timelines_is_timelines_of_the_same_rows(self):
+        from coscc.journal import timelines_of
+
+        self.j.started("w", "u", "spec", "manual")
+        self.j.finished("w", "u", "spec", "done", cost_usd=0.5, turns=2)
+        self.assertEqual(self.j.timelines("w"), timelines_of(self.j.records("w")))
+
+
 if __name__ == "__main__":
     unittest.main()
