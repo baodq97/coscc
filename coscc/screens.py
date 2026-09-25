@@ -1984,19 +1984,32 @@ def _detail_dialog() -> rx.Component:
 # list that was at its bottom before a change is put back there. Every rule about what the
 # list holds is `StudioState`'s; this only scrolls.
 #
-# *Older*, pressed by the observer or by hand, keeps the row being read where it was: the
-# first row in view is remembered by its `data-seq` and brought back to the same offset
-# once the page arrives. Rows are drawn by position and a full list drops its newest rows
-# (`review.md` F5), so neither the scroll height nor the row nodes say where it went; the
-# seq does. `data-seq` is watched as an attribute because a list that stays at
-# `WATCH_WINDOW` rows changes no child at all. The browser's own scroll anchoring is off
-# on `#watch-list`, so this is the one thing that moves it.
+# Away from the bottom, the row being read stays where it was whatever changed the list:
+# the first row in view is remembered by its `data-seq` and offset on every scroll, and
+# brought back to that offset after every change. Rows are drawn by position, so a page
+# prepended, a full list dropping its newest rows (`review.md` F5) and a live batch
+# dropping its oldest while following (F6 a) all rewrite rows in place, and neither the
+# scroll height nor the row nodes say where the row went; the seq does. The anchor is
+# never spent on the first change, so a live batch landing between *older* and its page
+# does not leave the page to arrive with none (F6 b). *Older* pressed at the bottom
+# anchors too; *Về cuối* drops the anchor and goes to the bottom. `data-seq` is watched as
+# an attribute because a list that stays at `WATCH_WINDOW` rows changes no child at all.
+# The browser's own scroll anchoring is off on `#watch-list`, so this is the one thing
+# that moves it.
 _WATCH_JS = """
 (function () {
   if (window.__coscc_watch) return;
   window.__coscc_watch = true;
   var atBottom = true, anchor = null, observed = null;
   function rows(list) { return list.querySelectorAll(".watch-ev"); }
+  function mark(list) {
+    var all = rows(list), box = list.getBoundingClientRect();
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i].getBoundingClientRect();
+      if (r.bottom > box.top) { anchor = {seq: +all[i].dataset.seq, offset: r.top - box.top}; return; }
+    }
+    anchor = null;
+  }
   var io = new IntersectionObserver(function (entries) {
     entries.forEach(function (e) {
       if (!e.isIntersecting) return;
@@ -2005,24 +2018,18 @@ _WATCH_JS = """
     });
   });
   document.addEventListener("click", function (ev) {
-    var older = ev.target && ev.target.closest && ev.target.closest("#watch-older");
+    var t = ev.target && ev.target.closest ? ev.target : null;
     var list = document.getElementById("watch-list");
-    if (!older || older.disabled || !list) return;
-    var all = rows(list), box = list.getBoundingClientRect();
-    if (!all.length) return;
-    for (var i = 0; i < all.length; i++) {
-      var r = all[i].getBoundingClientRect();
-      if (r.bottom > box.top) {
-        anchor = {seq: all[i].dataset.seq, offset: r.top - box.top, first: all[0].dataset.seq,
-                  until: Date.now() + 10000};
-        return;
-      }
-    }
+    if (!t || !list) return;
+    var older = t.closest("#watch-older");
+    if (older && !older.disabled) { atBottom = false; mark(list); }
+    else if (t.closest("#watch-live")) { atBottom = true; anchor = null; list.scrollTop = list.scrollHeight; }
   }, true);
   document.addEventListener("scroll", function (ev) {
     var list = ev.target;
     if (!list || list.id !== "watch-list") return;
     atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    if (atBottom) anchor = null; else mark(list);
   }, true);
   new MutationObserver(function () {
     var list = document.getElementById("watch-list");
@@ -2033,15 +2040,13 @@ _WATCH_JS = """
       io.observe(top);
       observed = top;
     }
-    if (anchor && Date.now() > anchor.until) anchor = null;
-    if (anchor) {
-      var all = rows(list);
-      if (!all.length || all[0].dataset.seq === anchor.first) return;
-      var row = list.querySelector('.watch-ev[data-seq="' + anchor.seq + '"]');
+    if (anchor && !atBottom) {
+      // The row itself, or the oldest one still after it when it has left from the top.
+      var row = null, all = rows(list);
+      for (var i = 0; i < all.length && !row; i++) if (+all[i].dataset.seq >= anchor.seq) row = all[i];
       if (row) {
         list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - anchor.offset;
       }
-      anchor = null;
     } else if (atBottom) {
       list.scrollTop = list.scrollHeight;
     }

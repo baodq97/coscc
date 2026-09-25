@@ -8,7 +8,9 @@ the grant's gate. Claims R1-R9, R13-R15. Needs `node`; missing is exit 2.
 `--browser` starts `coscc.run` in a child process on `COS_PORT` (default 18773) with the
 same kind of scripted client, writes a password and two sessions into a temporary data
 root, and drives Google Chrome through two contexts that share no cookie: A starts the
-step, B watches it. Claims R10, R11, R12 and the reading back after `end`. Needs a bundle
+step, B watches it. Claims R10, R11 (on a list filled to `WATCH_WINDOW` too), R12, the row
+being read staying put on a running and on an ended step (`review.md` F5, F6), and the
+reading back after `end`. Needs a bundle
 built for that port (`COS_HOST=127.0.0.1 COS_PORT=18773 uv run coscc-build`), playwright
 and chrome; any missing is exit 2. Loopback, headless, one machine (spec C8): it does not
 measure the intent's outcome, which is a person's two-browser trial before 2026-10-15.
@@ -434,12 +436,15 @@ def PAGE_OK(events) -> bool:
 # -- the browser --------------------------------------------------------------------
 
 
-BACKLOG, LIVE, RATE, CHARS = 500, 150, 5, 2100
+# 350 live events at 10 a second: B opens on 200 rows, so its list reaches `WATCH_WINDOW`
+# (400) while following with about 150 to go, and F6 is measured on a running step.
+BACKLOG, LIVE, RATE, CHARS = 500, 350, 10, 2100
+WINDOW = 400
 
 
 def browser_plan(go_file: Path) -> list:
-    """500 events of 2 100 characters at once, then -- once the driver says go -- 150 more
-    at 5 a second, then the artifact and the result."""
+    """500 events of 2 100 characters at once, then -- once the driver says go -- 350 more
+    at 10 a second, then the artifact and the result."""
     sdk = messages()
     rng = __import__("random").Random(73)
 
@@ -476,23 +481,41 @@ def serve(go_file: str) -> None:
     run_mod.main([])
 
 
+# A row counts the first time its seq is in the DOM, added or rewritten in place: a list at
+# `WATCH_WINDOW` rows changes no child, only `data-seq`. While `__pause` is set (B is reading
+# older rows and not following, so live rows are only counted), a first sighting is counted
+# in `__skipped` rather than timed.
 OBSERVE = """
-window.__rows = {}; window.__lat = []; window.__cb = 0; window.__base = null;
+window.__rows = {}; window.__lat = []; window.__base = null; window.__pause = false; window.__skipped = 0;
+function __see(r, now) {
+  const seq = +r.dataset.seq;
+  if (window.__rows[seq]) return;
+  window.__rows[seq] = true;
+  if (window.__base === null || seq <= window.__base) return;
+  if (window.__pause) window.__skipped++; else window.__lat.push([seq, now - +r.dataset.at]);
+}
 new MutationObserver(ms => {
-  const now = Date.now(); let hit = false;
-  for (const m of ms) for (const n of m.addedNodes) {
-    if (n.nodeType !== 1) continue;
-    const rows = n.classList && n.classList.contains('watch-ev') ? [n] : n.querySelectorAll('.watch-ev');
-    for (const r of rows) {
-      const seq = +r.dataset.seq;
-      window.__rows[seq] = true;
-      if (window.__base !== null && seq > window.__base) window.__lat.push([seq, now - +r.dataset.at]);
-      hit = true;
+  const now = Date.now();
+  for (const m of ms) {
+    if (m.type === 'attributes') {
+      if (m.target.classList && m.target.classList.contains('watch-ev')) __see(m.target, now);
+      continue;
+    }
+    for (const n of m.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      const rows = n.classList && n.classList.contains('watch-ev') ? [n] : n.querySelectorAll('.watch-ev');
+      for (const r of rows) __see(r, now);
     }
   }
-  if (hit) window.__cb++;
-}).observe(document, {subtree: true, childList: true});
+}).observe(document, {subtree: true, childList: true, attributes: true, attributeFilter: ['data-seq']});
 """
+
+# The first row in view (seq None) or the row carrying seq: [seq, its top minus the list's top].
+WHERE = """seq => { const l = document.getElementById('watch-list');
+    const r = seq === null ? [...l.querySelectorAll('.watch-ev')].find(
+        x => x.getBoundingClientRect().bottom > l.getBoundingClientRect().top)
+      : l.querySelector('.watch-ev[data-seq="' + seq + '"]');
+    return r ? [+r.dataset.seq, r.getBoundingClientRect().top - l.getBoundingClientRect().top] : null; }"""
 
 
 def browser() -> int:
@@ -602,6 +625,47 @@ def browser() -> int:
             b.evaluate(f"window.__base = {max(first)}")
             go_file.write_text("go")
             end_seq = None
+
+            def rows_now() -> list[int]:
+                return b.eval_on_selector_all("#watch-list .watch-ev", "rs => rs.map(r => +r.dataset.seq)")
+
+            # `review.md` F6, on the running step. (a) B's list is full and following, so each
+            # live batch drops its oldest rows; B scrolls a quarter of the way down and reads.
+            b.wait_for_function(f"document.querySelectorAll('#watch-list .watch-ev').length >= {WINDOW}",
+                                timeout=90_000)
+            b.eval_on_selector("#watch-list", "l => { l.scrollTop = l.scrollHeight / 4; }")
+            b.wait_for_timeout(300)
+            before = b.evaluate(f"({WHERE})(null)")
+            top_before = rows_now()[0]
+            b.wait_for_timeout(2500)
+            after = b.evaluate(WHERE, before[0])
+            top_after = rows_now()[0]
+            ok &= claim(top_after > top_before and after is not None and abs(after[1] - before[1]) <= 2,
+                        "F6 (a): reading a full list that follows, the row read stays put as live rows drop",
+                        f"first row {top_before} -> {top_after}; seq {before[0]} at {before[1]:.0f}px -> "
+                        f"{'gone' if after is None else f'{after[1]:.0f}px'}")
+            # (b) *older* pressed by hand while live batches still arrive, then *Về cuối*.
+            b.evaluate("window.__pause = true")
+            before = b.evaluate(f"({WHERE})(null)")
+            top_before = rows_now()[0]
+            b.click("#watch-older")
+            b.wait_for_function(f"+document.querySelector('#watch-list .watch-ev').dataset.seq < {top_before}",
+                                timeout=30_000)
+            b.wait_for_timeout(1200)
+            after = b.evaluate(WHERE, before[0])
+            ok &= claim(after is not None and abs(after[1] - before[1]) <= 2,
+                        "F6 (b): *older* pressed while live rows arrive keeps the row read where it was",
+                        f"seq {before[0]} at {before[1]:.0f}px -> {'gone' if after is None else f'{after[1]:.0f}px'}")
+            live_ok = outcome.get("type") not in ("done", "error")
+            ok &= claim(live_ok, "F6: both were measured while the step was still running", str(outcome)[:200])
+            newest = max(rows_now())
+            b.click("#watch-live")
+            b.wait_for_function(f"Math.max(...[...document.querySelectorAll('#watch-list .watch-ev')]"
+                                f".map(r => +r.dataset.seq)) > {newest} + 50", timeout=30_000)
+            b.wait_for_timeout(300)
+            at_end = b.eval_on_selector("#watch-list", "l => l.scrollHeight - l.scrollTop - l.clientHeight")
+            ok &= claim(at_end < 40, "*Về cuối* brings B back to the bottom", f"{at_end:.0f}px from it")
+            b.evaluate("window.__pause = false")
             for _ in range(600):
                 if outcome.get("type") in ("done", "error"):
                     break
@@ -610,12 +674,15 @@ def browser() -> int:
                                 timeout=60_000)
             b.wait_for_timeout(800)
             lat = sorted(d for _, d in b.evaluate("window.__lat"))
+            skipped = b.evaluate("window.__skipped")
             ok &= claim(outcome.get("outcome") == "done", "the step A started ends done", str(outcome)[:300])
             if lat:
                 say(f"      latency at -> DOM in B, ms: n {len(lat)} min {lat[0]} p50 {lat[len(lat) // 2]} "
-                    f"p99 {lat[int(len(lat) * .99)]} max {lat[-1]}")
-            ok &= claim(len(lat) >= LIVE and lat[-1] <= 2000,
-                        "R11: every live event reached B's DOM within 2000 ms of its at", f"{len(lat)} rows")
+                    f"p99 {lat[int(len(lat) * .99)]} max {lat[-1]}; {skipped} not timed (read while "
+                    f"B was not following)")
+            ok &= claim(len(lat) + skipped >= LIVE and lat[-1] <= 2000,
+                        "R11: every live event B followed reached its DOM within 2000 ms of its at",
+                        f"{len(lat)} timed, {skipped} not")
             biggest = max((n for _, n in frames), default=0)
             say(f"      largest frame carrying watch_events: {biggest} bytes (spike U4 passed at 1649608)")
             ok &= claim(biggest <= 1_649_608, "R11: no frame carrying watch_events above 1 649 608 bytes")
@@ -646,18 +713,11 @@ def browser() -> int:
             # the seqs are read off the list after each load, not from added nodes.
             shown: set[int] = set()
 
-            def rows_now() -> list[int]:
-                return b.eval_on_selector_all("#watch-list .watch-ev", "rs => rs.map(r => +r.dataset.seq)")
-
             # `review.md` F5: loading older rows keeps the row being read where it was --
             # scrolled to the top (the observer presses *older*), once while the list grows
             # and once when it is full and drops its newest rows, then pressed by hand from a
             # quarter of the way down.
-            where = """seq => { const l = document.getElementById('watch-list');
-                const r = seq === null ? [...l.querySelectorAll('.watch-ev')].find(
-                    x => x.getBoundingClientRect().bottom > l.getBoundingClientRect().top)
-                  : l.querySelector('.watch-ev[data-seq="' + seq + '"]');
-                return r ? [+r.dataset.seq, r.getBoundingClientRect().top - l.getBoundingClientRect().top] : null; }"""
+            where = WHERE
             place: list[str] = []
             for how in ("top", "top", "hand"):
                 current = rows_now()
