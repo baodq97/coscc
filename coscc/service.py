@@ -2260,7 +2260,8 @@ class Service:
         and whether it is answered is `cos.mjs`'s decision, read through one board read;
         nothing here parses `## Open questions` a second time (R7).
 
-        Not an approval, and it starts nothing. `answered_by` is whatever name the caller
+        Not an approval, and it starts nothing itself; with the autopilot on, the pass it
+        nudges may start the next stage (`0043`). `answered_by` is whatever name the caller
         typed: no route in this app has a login, so it is a claim, not an identity.
 
         `0028`: `question` may be `"F<n>"`, a finding `cos.mjs` lists in the unit's

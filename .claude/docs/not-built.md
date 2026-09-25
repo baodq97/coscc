@@ -34,11 +34,13 @@ Read this before adding a route, a button or a grant, and before copying this ha
   releases. It refuses to turn on while the app listens beyond loopback, but whoever holds
   the password or a live session can turn it on, raise the cap, or let it ship to `main`
   under this machine's `gh` login. The run log's `started_by` says which starts were its.
-- **A person's answer is not an approval, and it starts nothing either.** Since `0016` the
+- **A person's answer is not an approval.** Since `0016` the
   app has one place where a person answers an item under `## Open questions`: the
   *Questions* tab, or `POST /api/units/answer`. It appends a block under `## Answers` and
-  a row to the run log, and that is all — no gate reads it and no stage runs because of it;
-  the next stage finds it in its prompt when somebody presses the button. Since `0082` the
+  a row to the run log, and no gate reads it; the next stage finds it in its prompt. With
+  the workspace's autopilot off, that stage runs when somebody presses the button; with it
+  on (`0043`), an answer that clears the last open question can start it with nobody
+  pressing anything. Since `0082` the
   board asks no name: `Answered by:` is `owner`, a fixed word the app writes for whoever
   holds the password or a live session. It is not an identity and does not say who
   answered. The route still takes a name sent with the request and writes that instead, so
