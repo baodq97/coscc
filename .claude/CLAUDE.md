@@ -226,7 +226,7 @@ a `review` gate that never opens.
   most seven that a person writes. All of it is rows in the app's run log, not artifacts; no
   gate, no `next` and no run button reads any of it, and `cos.mjs` does not know it exists.
   `by` is a name the person typed; an agent's estimate says `agent:<session>`, and a
-  person's later one wins. *Propose estimates* opens one paid session under the grant
+  person's estimate wins over an agent's whichever came later. *Propose estimates* opens one paid session under the grant
   `estimate`. Each board step's `start` row records where its unit stood in the shortlist,
   so `verify_0074 --measure` can tell afterwards whether work was taken from it.
 - **A login that knows who you are.** Since `0070` every route — the page, its socket,
