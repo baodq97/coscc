@@ -23,13 +23,16 @@ project's own instructions in its system prompt instead. Three modes:
                    The stand-in counts, asks each body that one question in memory, and
                    answers 400; it writes nothing anywhere.
                (f) nothing under `~/.claude/` this proof reads changed while it ran.
-               (g) `--measure` on fixture databases: pass, a violation, a missing stage.
+               (g) `--measure` on fixture databases: pass, a violation, a missing stage; in
+                   each, a step whose start row lacks `instructions` is not counted.
     --paid     **spends real money**: four sessions on this machine's login.
                R3 on the init of a tool-less, a read-only and an `impl` session; R8 at
                `cwd=$HOME` with a `Bash` rule `~/.claude/settings.json` allows; R10 on the
                model ids those sessions ran; C4, printed only: does the context hold an email.
     --measure  the intent's outcome, after the window: every board step between this unit's
-               merge and the end of 2026-10-16 (+07:00), read from `step_events`.
+               merge and the end of 2026-10-16 (+07:00), read from `step_events`. A step
+               whose start row has no `instructions` (R13) ran on a build from before this
+               unit -- the installed copy, not yet updated -- and is listed apart, not counted.
 
     0  pass    1  a claim, or the outcome, did not hold    2  the environment cannot answer
 
@@ -250,6 +253,7 @@ def measure(root: Path, now: datetime | None = None, home: Path | None = None) -
         print(f"no {db}")
         return EXIT_ENV
     steps: list[dict] = []
+    stale: list[dict] = []
     with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
         for (raw,) in conn.execute("SELECT record FROM runs WHERE kind = 'start' ORDER BY id"):
             try:
@@ -260,6 +264,13 @@ def measure(root: Path, now: datetime | None = None, home: Path | None = None) -
             if r.get("stage") not in STAGES or not r.get("run") or at is None:
                 continue
             if not (installed <= at < WINDOW_END):
+                continue
+            if "instructions" not in r:
+                # R13's field. The board runs the installed copy, not the merge: a step
+                # between the merge and the update (`0068`) ran on a build that loaded every
+                # settings source, and says so by lacking it (review round 1, F2).
+                stale.append({"unit": r.get("unit"), "stage": r["stage"], "at": r.get("at"),
+                              "run": r["run"]})
                 continue
             events = conn.execute(
                 "SELECT event FROM step_events WHERE run = ? AND kind = 'system' ORDER BY seq",
@@ -297,6 +308,9 @@ def measure(root: Path, now: datetime | None = None, home: Path | None = None) -
         state = "unreadable: " + s["unreadable"] if s["unreadable"] else (
             "; ".join(s["problems"]) or "holds")
         print(f"  {s['unit']} {s['stage']} {s['at']} run {s['run']}: {state}")
+    for s in stale:
+        print(f"  {s['unit']} {s['stage']} {s['at']} run {s['run']}: not counted, its start row "
+              "has no `instructions` — a build from before 0088")
     if broken:
         code, result = EXIT_BROKEN, "trượt"
     elif missing or unreadable:
@@ -304,12 +318,13 @@ def measure(root: Path, now: datetime | None = None, home: Path | None = None) -
     else:
         code, result = EXIT_PASS, "đạt"
     print(f"merged {installed.isoformat()}, window to {WINDOW_END.isoformat()}: {len(steps)} steps, "
-          f"{len(broken)} breaking R3, {len(unreadable)} unreadable, stages missing {missing} → {result}")
+          f"{len(broken)} breaking R3, {len(unreadable)} unreadable, stages missing {missing}, "
+          f"{len(stale)} more from a build before 0088 not counted → {result}")
     out = root / "measurements" / f"0088-{now.strftime('%Y%m%dT%H%M%SZ')}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({
         "merged": installed.isoformat(), "window_end": WINDOW_END.isoformat(), "result": result,
-        "missing": missing, "steps": steps, "exit": code,
+        "missing": missing, "steps": steps, "before_0088": stale, "exit": code,
     }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"wrote {out}")
     return code
@@ -707,13 +722,19 @@ def claim_g(tmp: Path) -> bool:
                         encoding="utf-8")
         j = Journal(root / "work", root)
         data = Data(root)
-        for stage in stages:
-            run = f"run-{stage}"
-            j.append({"kind": "start", "workspace": "/w", "unit": "0100_x", "stage": stage,
-                      "mode": "manual", "at": "2026-10-01T00:00:00+00:00", "run": run,
-                      "granted": list(policy.grant_for(stage).tools)})
+        # A step the installed copy ran before it was updated: no `instructions`, and the
+        # machine's MCP server in its init. Every fixture has one; none may count it.
+        before = [("stale", "review")]
+        for run_tag, stage in before + [("", s) for s in stages]:
+            run = f"run-{run_tag or stage}"
+            start = {"kind": "start", "workspace": "/w", "unit": "0100_x", "stage": stage,
+                     "mode": "manual", "at": "2026-10-01T00:00:00+00:00", "run": run,
+                     "granted": list(policy.grant_for(stage).tools)}
+            if not run_tag:
+                start["instructions"] = {"verbatim": [], "scoped": []}
+            j.append(start)
             init = init_for(stage, str(root))
-            if stage == bad and name == "violation":
+            if run_tag or (stage == bad and name == "violation"):
                 init["mcp_servers"] = [{"name": "microsoft-learn", "status": "connected"}]
             elif stage == bad:
                 # What a loaded plugin, or a personal skill, puts into the init.
