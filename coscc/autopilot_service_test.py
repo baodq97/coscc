@@ -342,6 +342,15 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {"0002_b": "cap"}))
 
+    async def test_an_unknown_cost_is_said_in_plain_words(self):
+        Journal(self.config.working_dir, self.config.data_dir).finished(self.key, "0009_z", "spec", "done")
+        self.add("0001_a", "spec")
+        await self.pass_()
+        stop = self.service._autopilot_stops[self.key]["0001_a"]
+        self.assertEqual(stop["kind"], "cap")
+        self.assertTrue(stop["reason"].startswith("a cost is unknown today"), stop["reason"])
+        self.assertNotIn("cost_usd", stop["reason"])
+
     async def test_ci_pending_is_quiet(self):
         self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", between_pr_and_ship=True)
         await self.pass_()

@@ -3550,7 +3550,7 @@ class Service:
             picked = autopilot.pick(candidates, running, settings["max_parallel"] - elsewhere, room)
             for c in picked["capped"]:
                 found[c["unit"]] = {"unit": c["unit"], "kind": "cap", "reason": (
-                    f"an end today carries no cost_usd, so the cap counts as reached ({cap['day']})"
+                    f"a cost is unknown today, so the cap counts as reached ({cap['day']})"
                     if cap["unknown"] else
                     f"spent {cap['spent']:.2f} + running {cap['running']:.2f} + {c['stage']} "
                     f"{c['need']:.2f} is over the cap of {cap['limit']:.2f} USD ({cap['day']})"
