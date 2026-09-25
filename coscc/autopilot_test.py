@@ -135,7 +135,7 @@ class TheDaysMoney(unittest.TestCase):
         ]
         estimated = ap.spent_on(rows, ap.today(NOW))["estimated"]
         self.assertEqual(estimated, 48.0)
-        spec = {"unit": "0010_a", "stage": "spec", "files": None, "need": 4.0}
+        spec = {"unit": "0010_a", "stage": "spec", "files": None, "need": 4.0, "rank": 1}
         got = ap.pick([spec], [], 4, 80.0 - (20.0 + estimated) - 0.0)
         self.assertEqual((got["chosen"], got["capped"]), ([spec], []))
         got = ap.pick([spec], [], 4, 80.0 - (30.0 + estimated) - 0.0)
@@ -188,12 +188,15 @@ class TheDaysMoney(unittest.TestCase):
 
 
 class Scheduling(unittest.TestCase):
-    def c(self, unit, stage, files=None, need=1.0):
-        return {"unit": unit, "stage": stage, "files": files, "need": need}
+    def c(self, unit, stage, files=None, need=1.0, rank=None):
+        return {"unit": unit, "stage": stage, "files": files, "need": need,
+                "rank": ap.unit_number(unit) if rank is None else rank}
 
-    def test_lowest_unit_first_up_to_max_parallel(self):
-        got = ap.pick([self.c("0012_c", "spec"), self.c("0010_a", "spec"), self.c("0011_b", "pr")], [], 2, 100.0)
-        self.assertEqual([c["unit"] for c in got["chosen"]], ["0010_a", "0011_b"])
+    def test_highest_rank_first_up_to_max_parallel(self):
+        got = ap.pick([self.c("0012_c", "spec", rank=1), self.c("0010_a", "spec", rank=3),
+                       self.c("0011_b", "pr", rank=2)], [], 2, 100.0)
+        self.assertEqual([c["unit"] for c in got["chosen"]], ["0012_c", "0011_b"])
+        self.assertEqual(got["held"], {})
 
     def test_running_steps_count_person_ones_included(self):
         got = ap.pick([self.c("0010_a", "spec")], [{"unit": "0001_x", "stage": "review", "files": None}], 1, 100.0)
@@ -201,7 +204,7 @@ class Scheduling(unittest.TestCase):
 
     def test_a_unit_already_running_is_skipped(self):
         got = ap.pick([self.c("0010_a", "review")], [{"unit": "0010_a", "stage": "pr", "files": None}], 4, 100.0)
-        self.assertEqual(got["chosen"], [])
+        self.assertEqual((got["chosen"], got["held"]), ([], {"0010_a": ("running", "pr")}))
 
     def test_code_stages_with_overlapping_files_run_one_after_the_other(self):
         a = self.c("0010_a", "impl", {"coscc/x.py", "coscc/y.py"})
@@ -209,6 +212,7 @@ class Scheduling(unittest.TestCase):
         c = self.c("0012_c", "integrate", {"coscc/z.py"})
         got = ap.pick([a, b, c], [], 4, 100.0)
         self.assertEqual([x["unit"] for x in got["chosen"]], ["0010_a", "0012_c"])
+        self.assertEqual(got["held"], {"0011_b": ("overlap", "0010_a")})
 
     def test_unknown_files_overlap_with_everything(self):
         got = ap.pick([self.c("0010_a", "impl", None), self.c("0011_b", "impl", {"a/b.py"})], [], 4, 100.0)
@@ -223,8 +227,9 @@ class Scheduling(unittest.TestCase):
     def test_one_ship_in_the_workspace(self):
         got = ap.pick([self.c("0010_a", "ship"), self.c("0011_b", "ship")], [], 4, 100.0)
         self.assertEqual([x["unit"] for x in got["chosen"]], ["0010_a"])
+        self.assertEqual(got["held"], {"0011_b": ("ship-busy", "0010_a")})
         got = ap.pick([self.c("0011_b", "ship")], [{"unit": "0010_a", "stage": "ship", "files": None}], 4, 100.0)
-        self.assertEqual(got["chosen"], [])
+        self.assertEqual((got["chosen"], got["held"]), ([], {"0011_b": ("ship-busy", "0010_a")}))
 
     def test_the_cap_holds_back_what_does_not_fit(self):
         got = ap.pick([self.c("0010_a", "impl", {"a"}, 16.0), self.c("0011_b", "review", None, 2.0)], [], 4, 3.0)

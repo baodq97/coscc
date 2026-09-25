@@ -3380,22 +3380,19 @@ class Service:
         scheduled and not waited for; nothing happens when the switch is off."""
         if not self._autopilot_on(key):
             return
-        task = asyncio.get_running_loop().create_task(self._autopilot_guarded(key, window_only=False))
+        task = asyncio.get_running_loop().create_task(self._autopilot_guarded(key))
         self._autopilot_pending.add(task)
         task.add_done_callback(self._autopilot_pending.discard)
 
     async def _autopilot_loop(self, key: str) -> None:
-        window_only = False
         while True:
-            await self._autopilot_guarded(key, window_only)
-            # R5 d: after the first, only the units between `pr` and `ship` are asked.
-            window_only = True
+            await self._autopilot_guarded(key)
             await asyncio.sleep(autopilot.POLL_SECONDS)
 
-    async def _autopilot_guarded(self, key: str, window_only: bool) -> None:
+    async def _autopilot_guarded(self, key: str) -> None:
         """A pass that raises leaves a stop line saying so, not a dead loop."""
         try:
-            await self._autopilot_pass(key, window_only)
+            await self._autopilot_pass(key)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — shown on the board, never swallowed
@@ -3473,8 +3470,9 @@ class Service:
             except (BadRecord, Busy):
                 pass
 
-    async def _autopilot_pass(self, key: str, window_only: bool = False) -> None:
-        """One look at a workspace: find each unit's stop, then start what may start."""
+    async def _autopilot_pass(self, key: str) -> None:
+        """One look at a workspace: follow its shortlist (`0104`), find each listed unit's stop
+        or why it waits, then start what may start, highest first, each after its record."""
         cwd = self._autopilot_cwd.get(key)
         if cwd is None or not self._autopilot_on(key):
             return
@@ -3493,10 +3491,19 @@ class Service:
                 return
             data = await self.board(cwd)
             try:
-                records = journal.records(kinds=("start", "end", "integration"))
+                records = journal.records(kinds=("start", "end", "integration", "shortlist"))
             except Busy as e:
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
                 return
+            # `0104` R1: the last well-formed shortlist, read again on every pass.
+            listed, n = backlog.shortlist_of(r for r in records if r.get("workspace") == key)
+            if listed is None or not listed["units"]:
+                # R3: nothing is asked and nothing starts. R1 of `0043` as below.
+                if not self._autopilot_on(key) or not self._autopilot_values(key)["autopilot"]:
+                    return
+                self._autopilot_set_stops(key, {"": {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST}})
+                return
+            names = list(listed["units"])
             last: dict[str, dict[str, Any]] = {}
             integrations: dict[str, dict[str, Any]] = {}
             for r in records:
@@ -3505,18 +3512,24 @@ class Service:
                     if r.get("kind") == "integration":
                         integrations[str(r.get("unit") or "")] = r
 
+            running = self._autopilot_running(key)
+            here = {r["unit"]: r["stage"] for r in running}
+            board = {u["name"]: u for u in data["units"]}
             found: dict[str, dict[str, str]] = {}
             candidates: list[dict[str, Any]] = []
-            asked: set[str] = set()
-            for u in data["units"]:
-                name = u["name"]
-                if u.get("next") == autopilot.FINISHED or (window_only and not u.get("between_pr_and_ship")):
+            # R6: why each unit that is no candidate waits, for the units ranked below it.
+            reasons: dict[str, tuple[str, str]] = {}
+            # R2, R5: every unit on the shortlist is asked, and no other.
+            for rank, name in enumerate(names, 1):
+                u = board.get(name)
+                if u is None:
+                    reasons[name] = ("missing", "")
                     continue
-                asked.add(name)
                 try:
                     nxt = await self.next_step(cwd, name)
                 except Invalid as e:
                     found[name] = {"unit": name, "kind": "f", "reason": str(e)}
+                    reasons[name] = ("running", here[name]) if name in here else autopilot.reason_for({}, "", found[name])
                     continue
                 stop = autopilot.stop_for(u, nxt, last.get(name), settings["autopilot_may_ship"])
                 stage = nxt.get("stage") or ""
@@ -3531,19 +3544,22 @@ class Service:
                     and (stop is None or stop["kind"] == "f")
                 ):
                     stop, stage = autopilot.red_again(info, integrations.get(name)), "integrate"
+                reason = ("running", here[name]) if name in here else autopilot.reason_for(nxt, stage, stop)
+                if reason is not None:
+                    reasons[name] = reason
                 if stop is not None:
                     found[name] = {"unit": name, **stop}
                     continue
                 if not stage:
                     continue
                 files = self._autopilot_files(cwd, name) if stage in autopilot.CODE_STAGES else None
-                candidates.append({"unit": name, "stage": stage, "files": files, "need": autopilot.reservation(stage)})
+                candidates.append({
+                    "unit": name, "stage": stage, "files": files, "need": autopilot.reservation(stage), "rank": rank,
+                })
 
-            running = self._autopilot_running(key)
             for r in running:
                 if r["stage"] in autopilot.CODE_STAGES:
                     r["files"] = self._autopilot_files(cwd, r["unit"])
-            here = {r["unit"] for r in running}
             now = datetime.now().astimezone()
             # The spec's `## Design`: a `start` with no `end`, from a process before this one,
             # counts against N for 24 hours.
@@ -3551,18 +3567,38 @@ class Service:
             cap = self._autopilot_cap(records, settings["daily_cap_usd"])
             room = cap["limit"] - cap["spent"] - cap["running"]
             picked = autopilot.pick(candidates, running, settings["max_parallel"] - elsewhere, room)
+            reasons.update(picked["held"])
             est = f" ({cap['estimated']:.2f} estimated)" if cap["estimated_count"] else ""
             for c in picked["capped"]:
                 found[c["unit"]] = {"unit": c["unit"], "kind": "cap", "reason": (
                     f"spent {cap['spent']:.2f}{est} + running {cap['running']:.2f} + {c['stage']} "
                     f"{c['need']:.2f} is over the cap of {cap['limit']:.2f} USD ({cap['day']})"
                 )}
+                reasons[c["unit"]] = autopilot.reason_for({}, c["stage"], found[c["unit"]])
+            # Raises before anything is recorded or started when a unit above one chosen has no
+            # reason; `_autopilot_guarded` shows it as a stop line.
+            passed = autopilot.passed_for(names, [c["unit"] for c in picked["chosen"]], reasons)
             # R1: the switch may have been turned off while this pass read the board and
             # `next`. Nothing from here on awaits, so nothing starts once it is off.
             if not self._autopilot_on(key) or not self._autopilot_values(key)["autopilot"]:
                 return
-            self._autopilot_set_stops(key, found, asked if window_only else None)
-            for c in picked["chosen"]:
+            self._autopilot_set_stops(key, found)
+            run_id = uuid.uuid4().hex
+            shortlist = {"n": n, "at": listed.get("at"), "units": names}
+            for c, over in zip(picked["chosen"], passed):
+                # R6: no record, no start — and nothing ranked below it either, since starting
+                # one would pass over a unit chosen with no record of it.
+                try:
+                    journal.append({
+                        "kind": "autopilot-pick", "workspace": key, "unit": c["unit"], "stage": c["stage"],
+                        "pass": run_id, "rank": c["rank"], "shortlist": shortlist, "passed": over,
+                    })
+                except (BadRecord, Busy) as e:
+                    self._autopilot_set_stops(key, {**found, "": {
+                        "unit": "", "kind": "f",
+                        "reason": f"could not record the autopilot's choice, so nothing more was started: {e}",
+                    }})
+                    return
                 task = asyncio.get_running_loop().create_task(self._autopilot_launch(key, cwd, c["unit"], c["stage"]))
                 self._autopilot_runs.setdefault(key, {})[c["unit"]] = (c["stage"], task)
 

@@ -261,28 +261,39 @@ def pick(
     running: Iterable[dict[str, Any]],
     max_parallel: int,
     room: float,
-) -> dict[str, list[dict[str, Any]]]:
-    """R8 a–f and R7 over the steps that could start, lowest unit number first.
+) -> dict[str, Any]:
+    """R8 a–f and R7 over the steps that could start, highest on the shortlist first
+    (`0104` R4).
 
     Each candidate and each running entry is `{unit, stage, files}`, and a candidate also
-    carries `need`, its reservation. `room` is the money left under the cap. Returns `{"chosen": [...], "capped": [...]}`: what to start, and what the
-    cap alone held back. What another rule held back is in neither; it waits its turn.
+    carries `rank`, its place on the shortlist, and `need`, its reservation. `room` is the
+    money left under the cap. Returns `{"chosen": [...], "capped": [...], "held": {...}}`:
+    what to start, what the cap alone held back, and `(reason, detail)` for each candidate
+    another rule held back (`0104` R6). What `max_parallel` held back is in none of them:
+    nothing after it is chosen, so nothing passes over it.
     """
     running = list(running)
     busy = {r["unit"] for r in running}
     taken = list(running)
     chosen: list[dict[str, Any]] = []
     capped: list[dict[str, Any]] = []
-    for c in sorted(candidates, key=lambda c: (unit_number(c["unit"]), c["unit"])):
+    held: dict[str, tuple[str, str]] = {}
+    for c in sorted(candidates, key=lambda c: (c["rank"], c["unit"])):
         if c["unit"] in busy:
+            held[c["unit"]] = ("running", next((t["stage"] for t in taken if t["unit"] == c["unit"]), ""))
             continue
         if len(busy) >= max_parallel:
             break
-        if c["stage"] == "ship" and any(t["stage"] == "ship" for t in taken):
+        shipping = next((t for t in taken if c["stage"] == "ship" and t["stage"] == "ship"), None)
+        if shipping is not None:
+            held[c["unit"]] = ("ship-busy", shipping["unit"])
             continue
-        if c["stage"] in CODE_STAGES and any(
-            t["stage"] in CODE_STAGES and overlaps(c.get("files"), t.get("files")) for t in taken
-        ):
+        crossing = next((
+            t for t in taken
+            if c["stage"] in CODE_STAGES and t["stage"] in CODE_STAGES and overlaps(c.get("files"), t.get("files"))
+        ), None)
+        if crossing is not None:
+            held[c["unit"]] = ("overlap", crossing["unit"])
             continue
         need = float(c.get("need") or 0.0)
         if need > room:
@@ -292,7 +303,7 @@ def pick(
         chosen.append(c)
         taken.append(c)
         busy.add(c["unit"])
-    return {"chosen": chosen, "capped": capped}
+    return {"chosen": chosen, "capped": capped, "held": held}
 
 
 # --- `0104`, the shortlist's order --------------------------------------------
