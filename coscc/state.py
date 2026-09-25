@@ -2033,7 +2033,11 @@ class StudioState(rx.State):
     def _watch_take(self, fresh: list[WatchEvent]) -> None:
         """New events, by `plan.md` step 7's rule: at the bottom, appended and the oldest
         dropped past `WATCH_WINDOW`; reading older ones, appended while there is room and
-        counted in `watch_pending` once there is none."""
+        counted in `watch_pending` once there is none. An event already shown is dropped: a
+        batch the follower yielded before *Về cuối* read the last page again is also in that
+        page (`review.md` F1)."""
+        last = self.watch_events[-1].seq if self.watch_events else 0
+        fresh = [e for e in fresh if e.seq > last]
         if not fresh:
             return
         if self.watch_following:

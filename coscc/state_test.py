@@ -1673,6 +1673,27 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
 
         self.assertEqual(asyncio.run(go()), (page.WATCH_WINDOW, 10, 400))
 
+    def test_a_batch_already_in_the_last_page_is_not_shown_twice(self):
+        """`review.md` F1: *Về cuối* read the last page while a batch the follower had
+        yielded waited for the state; applied after, it adds nothing it already shows."""
+        import asyncio
+
+        from coscc import state as page
+
+        token = "state-test-watch-twice"
+
+        async def go():
+            manager, processor, _ = _processor(token)
+            async with processor:
+                async with manager.modify_state(_key(token)) as root:
+                    studio = await root.get_state(page.StudioState)
+                    studio.watch_following = True
+                    studio.watch_events = [page.WatchEvent(seq=n) for n in range(1, 211)]
+                    studio._watch_take([page.WatchEvent(seq=n) for n in range(201, 216)])
+                    return [e.seq for e in studio.watch_events]
+
+        self.assertEqual(asyncio.run(go()), list(range(1, 216)))
+
     def test_the_four_notes_read_as_r13_says(self):
         from coscc import state as page
 
