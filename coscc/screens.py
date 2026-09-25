@@ -1983,21 +1983,42 @@ def _detail_dialog() -> rx.Component:
 # Two observers, and nothing else: the first row coming into view presses *older*, and a
 # list that was at its bottom before a change is put back there. Every rule about what the
 # list holds is `StudioState`'s; this only scrolls.
+#
+# *Older*, pressed by the observer or by hand, keeps the row being read where it was: the
+# first row in view is remembered by its `data-seq` and brought back to the same offset
+# once the page arrives. Rows are drawn by position and a full list drops its newest rows
+# (`review.md` F5), so neither the scroll height nor the row nodes say where it went; the
+# seq does. `data-seq` is watched as an attribute because a list that stays at
+# `WATCH_WINDOW` rows changes no child at all. The browser's own scroll anchoring is off
+# on `#watch-list`, so this is the one thing that moves it.
 _WATCH_JS = """
 (function () {
   if (window.__coscc_watch) return;
   window.__coscc_watch = true;
   var atBottom = true, anchor = null, observed = null;
+  function rows(list) { return list.querySelectorAll(".watch-ev"); }
   var io = new IntersectionObserver(function (entries) {
     entries.forEach(function (e) {
       if (!e.isIntersecting) return;
-      var list = document.getElementById("watch-list");
       var older = document.getElementById("watch-older");
-      if (!list || !older || older.disabled) return;
-      anchor = {height: list.scrollHeight, top: list.scrollTop};
-      older.click();
+      if (older && !older.disabled) older.click();
     });
   });
+  document.addEventListener("click", function (ev) {
+    var older = ev.target && ev.target.closest && ev.target.closest("#watch-older");
+    var list = document.getElementById("watch-list");
+    if (!older || older.disabled || !list) return;
+    var all = rows(list), box = list.getBoundingClientRect();
+    if (!all.length) return;
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i].getBoundingClientRect();
+      if (r.bottom > box.top) {
+        anchor = {seq: all[i].dataset.seq, offset: r.top - box.top, first: all[0].dataset.seq,
+                  until: Date.now() + 10000};
+        return;
+      }
+    }
+  }, true);
   document.addEventListener("scroll", function (ev) {
     var list = ev.target;
     if (!list || list.id !== "watch-list") return;
@@ -2012,13 +2033,20 @@ _WATCH_JS = """
       io.observe(top);
       observed = top;
     }
+    if (anchor && Date.now() > anchor.until) anchor = null;
     if (anchor) {
-      list.scrollTop = anchor.top + (list.scrollHeight - anchor.height);
+      var all = rows(list);
+      if (!all.length || all[0].dataset.seq === anchor.first) return;
+      var row = list.querySelector('.watch-ev[data-seq="' + anchor.seq + '"]');
+      if (row) {
+        list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - anchor.offset;
+      }
       anchor = null;
     } else if (atBottom) {
       list.scrollTop = list.scrollHeight;
     }
-  }).observe(document.documentElement, {subtree: true, childList: true});
+  }).observe(document.documentElement,
+             {subtree: true, childList: true, attributes: true, attributeFilter: ["data-seq"]});
 })();
 """
 
@@ -2089,6 +2117,7 @@ def _watch_dialog() -> rx.Component:
                 rx.box(id="watch-top", height="1px"),
                 rx.foreach(P.watch_events, _watch_row),
                 id="watch-list", max_height="62vh", overflow_y="auto", width="100%",
+                style={"overflow_anchor": "none"},
             ),
             rx.hstack(
                 rx.cond(P.watch_pending > 0,

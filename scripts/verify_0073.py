@@ -649,6 +649,41 @@ def browser() -> int:
             def rows_now() -> list[int]:
                 return b.eval_on_selector_all("#watch-list .watch-ev", "rs => rs.map(r => +r.dataset.seq)")
 
+            # `review.md` F5: loading older rows keeps the row being read where it was --
+            # scrolled to the top (the observer presses *older*), once while the list grows
+            # and once when it is full and drops its newest rows, then pressed by hand from a
+            # quarter of the way down.
+            where = """seq => { const l = document.getElementById('watch-list');
+                const r = seq === null ? [...l.querySelectorAll('.watch-ev')].find(
+                    x => x.getBoundingClientRect().bottom > l.getBoundingClientRect().top)
+                  : l.querySelector('.watch-ev[data-seq="' + seq + '"]');
+                return r ? [+r.dataset.seq, r.getBoundingClientRect().top - l.getBoundingClientRect().top] : null; }"""
+            place: list[str] = []
+            for how in ("top", "top", "hand"):
+                current = rows_now()
+                shown.update(current)
+                if b.is_disabled("#watch-older"):
+                    place.append(f"{how}: nothing older")
+                    break
+                n = len(current)
+                if how == "top":
+                    before = b.evaluate(f"() => {{ document.getElementById('watch-list').scrollTop = 0; "
+                                        f"return ({where})(null); }}")
+                else:
+                    b.eval_on_selector("#watch-list", "l => { l.scrollTop = l.scrollHeight / 4; }")
+                    b.wait_for_timeout(200)
+                    before = b.evaluate(f"({where})(null)")
+                    b.click("#watch-older")
+                b.wait_for_function(f"+document.querySelector('#watch-list .watch-ev').dataset.seq < {current[0]}",
+                                    timeout=30_000)
+                b.wait_for_timeout(400)
+                after = b.evaluate(where, before[0])
+                place.append(f"{how} {n}->{len(rows_now())} rows: seq {before[0]} at {before[1]:.0f}px -> "
+                             f"{'gone' if after is None else f'{after[1]:.0f}px'}")
+                ok &= claim(after is not None and abs(after[1] - before[1]) <= 2,
+                            f"F5: {how}, {n} rows: the row read before *older* is where it was", place[-1])
+            say("      " + "; ".join(place))
+
             for _ in range(20):
                 current = rows_now()
                 shown.update(current)
