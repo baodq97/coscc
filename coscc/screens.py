@@ -138,7 +138,7 @@ def _sidebar() -> rx.Component:
         # `0070` R7. A same-origin `fetch`, not a `<form>`: how Reflex renders a form's
         # `action` was not measured, and a `fetch` to this origin carries the cookie and a
         # matching `Origin`. The guard ends the session whatever the page does next.
-        rx.button("Đăng xuất", rx.icon("log-out", size=14), id="logout",
+        rx.button("Log out", rx.icon("log-out", size=14), id="logout",
                   on_click=rx.call_script(
                       "fetch('/logout',{method:'POST',credentials:'same-origin'})"
                       ".finally(()=>{window.location.href='/login'})"
@@ -184,26 +184,33 @@ def _topbar() -> rx.Component:
 
 
 def _status_bar() -> rx.Component:
-    """Where the data is. `spec.md` C1: two roots, and a backup of one is not both."""
+    """Where the data is. `spec.md` C1: two roots, and a backup of one is not both.
+
+    S3: the two paths stay closed until the person opens them.
+    """
     return rx.flex(
-        rx.hstack(
-            rx.icon("folder", size=13, color=s.MUTED),
-            s.text("workspaces", size="1"),
-            s.text(rx.cond(P.working_dir != "", P.working_dir, "not set"),
-                   size="1", id="working-dir", font_family="ui-monospace, monospace"),
-            spacing="2", align="center", min_width="0",
-        ),
-        rx.hstack(
-            rx.icon("database", size=13, color=s.MUTED),
-            s.text("data", size="1"),
-            s.text(P.data_dir, size="1", id="data-dir",
-                   font_family="ui-monospace, monospace"),
-            spacing="2", align="center", min_width="0",
+        rx.el.details(
+            rx.el.summary(s.text("Where the data is", size="1"), cursor="pointer"),
+            rx.hstack(
+                rx.icon("folder", size=13, color=s.MUTED),
+                s.text("workspaces", size="1"),
+                s.text(rx.cond(P.working_dir != "", P.working_dir, "not set"),
+                       size="1", id="working-dir", font_family="ui-monospace, monospace"),
+                spacing="2", align="center", min_width="0", margin_top="6px",
+            ),
+            rx.hstack(
+                rx.icon("database", size=13, color=s.MUTED),
+                s.text("data", size="1"),
+                s.text(P.data_dir, size="1", id="data-dir",
+                       font_family="ui-monospace, monospace"),
+                spacing="2", align="center", min_width="0",
+            ),
+            id="data-roots", min_width="0",
         ),
         rx.spacer(),
         s.text(P.workspaces.length().to_string() + " workspace(s)", size="1",
                id="workspace-count"),
-        width="100%", align="center", wrap="wrap", gap="16px", padding="12px 0 20px",
+        width="100%", align="start", wrap="wrap", gap="16px", padding="12px 0 20px",
     )
 
 
@@ -729,9 +736,9 @@ def _update_channel(label: str, channel: str, line, ready, extra: rx.Component |
         s.text(line, size="1"),
         rx.spacer(),
         *([extra] if extra is not None else []),
-        rx.button("Áp dụng", id=f"update-apply-{channel}", on_click=P.apply_update(channel),
+        rx.button("Apply", id=f"update-apply-{channel}", on_click=P.apply_update(channel),
                   disabled=~ready | P.update_pending, size="1", variant="soft"),
-        rx.button("Áp dụng ngay…", id=f"update-now-{channel}", on_click=P.show_cut_list(channel),
+        rx.button("Apply now…", id=f"update-now-{channel}", on_click=P.show_cut_list(channel),
                   disabled=~ready, size="1", variant="soft", color_scheme="red"),
         width="100%", align="center", spacing="3", margin_top="10px", flex_wrap="wrap",
     )
@@ -745,9 +752,9 @@ def _update_panel() -> rx.Component:
     stands in front of the page (`0070`), and it names nobody.
     """
     return s.panel(
-        s.eyebrow("CẬP NHẬT"),
+        s.eyebrow("UPDATE"),
         rx.hstack(
-            s.text("Đang chạy " + P.upd_version, size="2"),
+            s.text("Running " + P.upd_version, size="2"),
             s.text(P.upd_commit, size="1", font_family=_MONO),
             spacing="3", align="center", margin_top="8px", flex_wrap="wrap", id="update-running",
         ),
@@ -755,25 +762,25 @@ def _update_panel() -> rx.Component:
             ~P.upd_available,
             s.text(P.upd_reason, size="1", margin_top="6px", id="update-unavailable"),
             rx.vstack(
-                s.text("Kiểm tra thành công gần nhất: "
-                       + rx.cond(P.upd_checked_at != "", P.upd_checked_at, "chưa có"), size="1"),
-                rx.input(placeholder="Tên của bạn, để áp dụng, huỷ chờ hoặc build", value=P.update_by,
-                         on_change=P.set_update_by, size="1", aria_label="Tên của bạn, để cập nhật",
+                s.text("Last successful check: "
+                       + rx.cond(P.upd_checked_at != "", P.upd_checked_at, "never"), size="1"),
+                rx.input(placeholder="Your name, to apply, cancel the wait or build", value=P.update_by,
+                         on_change=P.set_update_by, size="1", aria_label="Your name, for the update",
                          id="update-by"),
                 _update_channel("release", "release", P.upd_release, P.upd_release_ready),
                 _update_channel(
                     "local", "local", P.upd_local, P.upd_local_ready,
-                    rx.button("Build từ origin/main", id="update-build-local", on_click=P.build_local,
+                    rx.button("Build from origin/main", id="update-build-local", on_click=P.build_local,
                               disabled=~P.upd_local_configured, size="1", variant="soft"),
                 ),
                 _log_tail(P.upd_local_tail),
                 rx.cond(
                     P.update_pending,
                     rx.box(
-                        s.text("sẽ áp dụng khi không còn việc chạy", size="2"),
+                        s.text("Applies once nothing is running", size="2"),
                         s.text(P.upd_pending_reason, size="1"),
-                        rx.foreach(P.upd_waiting, lambda w: s.text("đang chờ: " + w, size="1")),
-                        rx.button("Huỷ chờ", id="update-cancel", on_click=P.cancel_update,
+                        rx.foreach(P.upd_waiting, lambda w: s.text("Waiting for: " + w, size="1")),
+                        rx.button("Cancel the wait", id="update-cancel", on_click=P.cancel_update,
                                   size="1", variant="soft", margin_top="6px"),
                         id="update-pending", margin_top="10px",
                     ),
@@ -781,24 +788,24 @@ def _update_panel() -> rx.Component:
                 rx.cond(
                     P.cut_open,
                     rx.box(
-                        s.text("Áp dụng ngay sẽ:", size="2"),
-                        rx.cond(P.cut_items.length() == 0, s.text("không cắt việc nào", size="1")),
+                        s.text("Applying now will:", size="2"),
+                        rx.cond(P.cut_items.length() == 0, s.text("Nothing is cut", size="1")),
                         rx.foreach(P.cut_items, lambda i: s.text(i, size="1")),
                         rx.hstack(
-                            rx.button("Xác nhận, áp dụng ngay", id="update-confirm-now",
+                            rx.button("Confirm, apply now", id="update-confirm-now",
                                       on_click=P.confirm_apply_now, size="1", color_scheme="red"),
-                            rx.button("Thôi", on_click=P.close_cut_list, size="1", variant="soft"),
+                            rx.button("Cancel", on_click=P.close_cut_list, size="1", variant="soft"),
                             spacing="2", margin_top="6px",
                         ),
                         id="update-cut-list", margin_top="10px",
                     ),
                 ),
                 rx.cond(P.upd_error != "", rx.box(
-                    s.text("Lần áp dụng vừa rồi dừng lại: " + P.upd_error, size="1"),
+                    s.text("The last apply stopped: " + P.upd_error, size="1"),
                     _log_tail(P.upd_error_tail), id="update-error", width="100%",
                 )),
                 rx.cond(P.upd_last != "", rx.box(
-                    s.text("Lần cập nhật trước: " + P.upd_last, size="1"),
+                    s.text("Previous update: " + P.upd_last, size="1"),
                     _log_tail(P.upd_last_tail), id="update-last", width="100%",
                 )),
                 width="100%", spacing="1", margin_top="6px", align="start",
@@ -815,7 +822,7 @@ def _update_warning() -> rx.Component:
 
 # R14. Asks `/api/update` every 5 s outside Reflex's socket, and reloads the page when the
 # build it answers for is not the one the page was loaded under. The overlay says
-# `đang khởi động lại` while nothing answers, and after 120 s says it could not reconnect.
+# `Restarting…` while nothing answers, and after 120 s says it could not reconnect.
 # A `401` is not a restart: the session ended (expiry, logout elsewhere, `reset-password`),
 # so the page goes to `/login` rather than point at a rollback (`0070` review F3).
 _RECONNECT_JS = """
@@ -848,10 +855,10 @@ _RECONNECT_JS = """
     }).catch(function () {
       if (failing === null) failing = Date.now();
       if (Date.now() - failing > 120000) {
-        show("không kết nối lại được. Log của lần cập nhật: " + (log || "(không rõ)") +
-             ". Lệnh quay về tay nằm trong log đó, và trong docs/install.md ## Update.");
+        show("Could not reconnect. The update's log: " + (log || "(unknown)") +
+             ". The command to roll back by hand is in that log, and in docs/install.md ## Update.");
       } else {
-        show("đang khởi động lại…");
+        show("Restarting…");
       }
     });
   }

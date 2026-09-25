@@ -1,4 +1,4 @@
-"""The update state machine behind the board's *Cập nhật* panel.
+"""The update state machine behind the board's *Update* panel.
 
 `.cos/0068_updating-the-app-is-a-manual-reinstall` R3 to R13. `Service` holds one
 `Updater`; the page and the routes only ever reach it through `Service`, and neither decides
@@ -15,7 +15,7 @@ anything (`.claude/rules/coscc-app.md`, "A handler that decides anything is a bu
   the new version beside the old one; then hand the install to `run.main` and stop uvicorn.
 
 **It is not an approval and it starts nothing** (R16): no path here asks a gate, reads
-`next` or runs a step. It stops running work only when a person chose "áp dụng ngay".
+`next` or runs a step. It stops running work only when a person chose "apply now".
 """
 
 from __future__ import annotations
@@ -383,7 +383,7 @@ class Updater:
         return jobs
 
     def cut_list(self) -> dict[str, Any]:
-        """R10. What "áp dụng ngay" would cut, and a token for exactly this list."""
+        """R10. What "apply now" would cut, and a token for exactly this list."""
         self._require_service()
         items = [
             {**j, "action": "sẽ chờ" if j["kind"] == "integration" else "sẽ bị dừng"}

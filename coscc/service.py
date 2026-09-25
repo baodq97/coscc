@@ -1453,7 +1453,7 @@ class Service:
 
     def _never_driven(self, running: steps_mod.Running, mark: steps_mod.Mark, rid: str) -> None:
         """`0050` review round 2, F2. A task cancelled before its first turn -- a Stop queued
-        ahead of it, or "áp dụng ngay" -- never enters `_drive`, so its `finally` never runs.
+        ahead of it, or "apply now" -- never enters `_drive`, so its `finally` never runs.
         That `finally` is the only thing that frees the mark once the step is handed over, so
         a mark still held when the task is done means the body never ran: give back what it
         would have, and tell the reader instead of leaving it waiting."""
@@ -1571,7 +1571,7 @@ class Service:
         return await self._stop_running(self._journal_key(cwd), unit, name)
 
     async def _stop_running(self, key: str, unit: str, by: str) -> dict[str, Any]:
-        """The Stop itself, shared with `0068`'s "áp dụng ngay" so a step it cuts ends the
+        """The Stop itself, shared with `0068`'s "apply now" so a step it cuts ends the
         same way: an `end` record with `stopped` and `stopped_by`, or none for a step
         cancelled before its first turn."""
         try:

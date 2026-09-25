@@ -89,7 +89,7 @@ Read this before adding a route, a button or a grant, and before copying this ha
 - **An update is not an approval, and anyone holding the password can press it.** Since
   `0068` an install made by `install.sh` updates itself from the Board
   (`POST /api/update/apply`, `/cancel`, `/build-local`). Applying can stop every running
-  step and chat turn of this process when the person chooses "áp dụng ngay", and restarts
+  step and chat turn of this process when the person chooses "apply now", and restarts
   the process; the local build runs upstream `main`'s build scripts under this user.
   Whoever holds the password or a live session can do all of it under any name. The only constraint is what gets installed: a wheel from
   `github.com/baodq97/coscc` checked against its release's `SHA256SUMS`, or one this

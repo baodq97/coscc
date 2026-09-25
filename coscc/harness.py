@@ -215,7 +215,7 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     model_set = _posix(models.DEFAULT_PATH.name)
     if model_set not in names:
         out.append(f"no {model_set} — every stage would run on COS_MODEL, silently")
-    # `0068` R1: without it the board shows `commit không rõ` for a release it built itself.
+    # `0068` R1: without it the board shows `commit unknown` for a release it built itself.
     stamp = _posix(BUILD_STAMP)
     if stamp not in names:
         out.append(f"no {stamp} — the board could not say which commit it runs")

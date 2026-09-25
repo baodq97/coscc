@@ -31,7 +31,7 @@ Read this before changing `POST /api/settings/*`, `coscc/models.py`, `POST /api/
   model of the Settings row `estimate` — no tools, 1 turn, $2.0, all chosen, and nobody has
   measured a prompt carrying ~70 units — and writes `start`/`end` rows with `unit: ""` and
   `stage: "estimate"`, one `estimate` row, and each valid part of the reply. A second press in
-  the same workspace is refused, in this process only (`_active`). *Áp dụng* waits for it
+  the same workspace is refused, in this process only (`_active`). *Apply* waits for it
   like an integration. No gate, no `next` and no run button reads any of it; every board
   step's `start` row carries `shortlist` (R14), read only by `verify_0074 --measure`. A step
   started at a terminal has none, so the outcome's measurement cannot see it (`spec.md ##

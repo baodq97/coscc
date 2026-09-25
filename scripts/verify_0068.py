@@ -12,7 +12,7 @@ fake `uv` (a shell script) where one is run, and the app driven in-process over 
 one with its version lowered to `0.0.0`), installs the older into a temporary uv tool
 directory, writes a fake `coscc.service`, and plays systemd itself: it starts `coscc` with
 `INVOCATION_ID` set and starts it again 2 s after every non-zero exit. A browser then
-presses *Áp dụng* and must see the newer version within 120 s without a reload. It needs
+presses *Apply* and must see the newer version within 120 s without a reload. It needs
 `uv`, `git`, `node`, chromium and the network (the trial install resolves dependencies).
 
 Exit 0 every claim held, 1 one did not, 2 the environment could not answer. The intent's
@@ -489,7 +489,7 @@ def run_restart(root: Path) -> int:
             panel.wait_for(timeout=30000)
             text = panel.inner_text()
             va_sha7 = va_version.split("+g", 1)[1]
-            shown_commit = any(w.startswith(va_sha7) and len(w) == 40 for w in text.split())
+            shown_commit = va_sha7[:7] in text.split()
             ok &= say(va_version in text and shown_commit and "ready " + vb_version in text,
                       "--restart the panel shows vA with its commit, and the local channel ready", text[:400])
             page.fill("#update-by", "Proof")

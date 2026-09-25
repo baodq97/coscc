@@ -9,11 +9,11 @@ paths:
 
 - **`POST /api/update/*` stops work, restarts the app and builds upstream code, for whoever
   holds the password.**
-  - *Áp dụng ngay* stops every board step (through Stop's road, so each that had begun gets
+  - *Apply now* stops every board step (through Stop's road, so each that had begun gets
     an `end` with `stopped_by`; one cut before its first turn gets none) and cuts every chat
-    turn of this process. *Áp dụng* waits for them instead, and a person can keep it waiting
+    turn of this process. *Apply* waits for them instead, and a person can keep it waiting
     forever by starting new work.
-  - *Build từ origin/main* runs `scripts/build_wheel.sh` of the configured workspace's
+  - *Build from origin/main* runs `scripts/build_wheel.sh` of the configured workspace's
     upstream `main` under this user — `uv sync`, Reflex fetching Node/Bun, all of it.
   - The source of a release is a constant and a wheel is installed only after its sha256
     matched, but that checksum comes from the same release (`.cos/0068_*/spec.md` C5).

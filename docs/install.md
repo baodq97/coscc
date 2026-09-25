@@ -125,7 +125,7 @@ the only supported update path from a terminal — running it again *is* the upg
 ### From the board
 
 Since `0068`, an install made by `install.sh` can also update itself from the Board's
-*Cập nhật* panel. The panel shows the version and commit running now and, per channel,
+*Update* panel. The panel shows the version and commit running now and, per channel,
 whether a newer build is ready:
 
 - **release** — the app asks `https://api.github.com/repos/baodq97/coscc/releases/latest`
@@ -134,12 +134,12 @@ whether a newer build is ready:
   The source is fixed in the code; nothing in a request or the environment changes it.
   `COS_UPDATE_CHECK=0` in the env file turns the asking and the downloading off.
 - **local** — set `COS_UPDATE_LOCAL_FROM=<workspace name>` in the env file and the panel
-  offers *Build từ origin/main*: it fetches that workspace, checks that `origin` is
+  offers *Build from origin/main*: it fetches that workspace, checks that `origin` is
   `github.com/baodq97/coscc`, and runs `scripts/build_wheel.sh --local` from `origin/main`
   in a throwaway worktree. That runs upstream `main`'s build scripts under your user.
 
-*Áp dụng* waits until no step, integration, chat turn or local build of this process is
-running, then applies. *Áp dụng ngay…* lists what it would stop first; integrations are
+*Apply* waits until no step, integration, chat turn or local build of this process is
+running, then applies. *Apply now…* lists what it would stop first; integrations are
 never stopped, only waited for. Applying tries the new version beside the running one,
 then stops the app, installs the wheel offline, checks `coscc --version`, and exits with
 code 75 so `Restart=on-failure` brings it back. The page reloads itself when it answers
@@ -147,7 +147,7 @@ again. Every step is written to `<COS_DATA_DIR>/updates/logs/<time>-update.log`.
 
 Applying keeps the running version's own wheel in `<COS_DATA_DIR>/updates/current/`, to go
 back to. A release fetches it from its own GitHub release — at each check, or, with
-`COS_UPDATE_CHECK=0`, when *Áp dụng* is pressed, so that press needs the network. A local
+`COS_UPDATE_CHECK=0`, when *Apply* is pressed, so that press needs the network. A local
 build has no release to fetch from: once it is running, `current/` holds it only if it was
 applied from the board, and otherwise the panel says `blocked` and offers no press.
 
@@ -254,7 +254,7 @@ It removes the password and every session from `cos.db` and prints that file's p
 running service notices on its next request: every browser is logged out, and the next visit
 goes back to `/setup` with a new token in the log. There is no way to reset it over the web.
 
-**A session lasts 30 days from its last use**; *Đăng xuất* at the bottom of the sidebar ends it.
+**A session lasts 30 days from its last use**; *Log out* at the bottom of the sidebar ends it.
 When a session ends under an open board — it expired, you logged out in another tab, or
 someone ran `coscc reset-password` — that board goes to `/login` the next time it asks `/api/update`, which it does every 5 s.
 **Five wrong passwords from one address in a minute lock that address out** for 60 s, then twice

@@ -19,7 +19,7 @@ paths:
   - A board step's directory is removed after its CLI is closed. Gebo's and a chat's live
     with their client in `Sessions._live` — Gebo streams with no `step` — and nothing in the
     app closes one but `Sessions.close_all`, which the installed service runs only on an
-    update, and `cut_turn`, only on "áp dụng ngay": every Gebo run and every new chat adds
+    update, and `cut_turn`, only on "apply now": every Gebo run and every new chat adds
     one that stays until then. A SIGKILL of the app, or any restart without that update,
     leaves every `/tmp/coscc-session-*` behind for good, and nothing sweeps them (C4, size
     unmeasured). Chat does not fall back to `~/.cos` (C6).

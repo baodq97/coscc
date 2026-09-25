@@ -145,12 +145,15 @@ def live_data_reaches_the_page(browser, url: str, working_dir: str, count: int) 
     connection, observed rather than inferred from a label.
 
     Both moved onto `#working-dir` and `#workspace-count`. The phrasing of the
-    count — "N workspace(s)" — is still the exact string this waits for.
+    count — "N workspace(s)" — is still the exact string this waits for. The working
+    folder sits under *Where the data is*, closed until opened (UI standard S3), so this
+    opens it first.
     """
     page = browser.new_page()
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
         try:
+            page.locator("#data-roots summary").click(timeout=PAGE_TIMEOUT_MS)
             page.get_by_text(working_dir, exact=False).first.wait_for(
                 timeout=PAGE_TIMEOUT_MS
             )
