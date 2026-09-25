@@ -238,7 +238,9 @@ a `review` gate that never opens.
   for up to 30 days and 200 MB in total, purged only when the app starts, and they travel
   with `0068`'s `updates/cos.db.bak`. Watching opens and closes no gate, starts no stage,
   writes no row and reaches no step; *Stop* is still the only thing that acts on one. A chat,
-  Gebo, a step at a terminal or one another copy of the app runs records nothing here.
+  Gebo or a step at a terminal records nothing here. A step another copy of the app runs on
+  the same data root writes into the same tables, but only that copy can follow it live;
+  this one reads it as `ended-unknown` until it ends.
 - **A login that knows who you are.** Since `0070` every route — the page, its socket,
   `/api`, the static files, paths that do not exist — is refused without a live session;
   only `/api/health`, `/login`, and `/setup` until a password is set, answer.
