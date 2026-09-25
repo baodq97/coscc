@@ -19,6 +19,7 @@ differently depending on which door you came through.
 from __future__ import annotations
 
 import asyncio
+import copy
 import dataclasses
 import sys
 
@@ -1350,10 +1351,11 @@ class StudioState(rx.State):
             self.running_steps = []
 
     def _set_current(self) -> None:
-        """`0053`. `current_unit` from `_full` for `unit_id`: its own copy, so nothing shares
-        an object with `_full`. Called wherever either of the two changes."""
+        """`0053`. `current_unit` from `_full` for `unit_id`: its own copy, lists and the
+        rows in them included, so nothing shares an object with `_full` (review round 1,
+        F1). Called wherever either of the two changes."""
         found = self.get_value("_full").get(self.unit_id)
-        self.current_unit = dataclasses.replace(found) if found is not None else Unit()
+        self.current_unit = copy.deepcopy(found) if found is not None else Unit()
 
     async def _load_board(self) -> None:
         self._full, self.cards, self.stages, self.board_note = {}, [], [], ""
@@ -1530,6 +1532,22 @@ class StudioState(rx.State):
             Message(role=m.role, text=m.text[:MESSAGE_CUT], cut=max(len(m.text) - MESSAGE_CUT, 0))
             for m in rows
         ]
+
+    def _keep_whole(self, shown: list[Message]) -> None:
+        """`0053` review round 1, F3. After `send` reads the conversation again, a message
+        the page showed whole just before — the reply that streamed, one opened with
+        `open_message` — stays whole instead of shrinking under the reader. Matched on the
+        text, not the index: the read may not line up with what streamed."""
+        whole = {m.text for m in shown if not m.cut and len(m.text) > MESSAGE_CUT}
+        full = self.get_value("_history")
+        messages = list(self.get_value("messages"))
+        kept = False
+        for i, m in enumerate(messages):
+            if m.cut and i < len(full) and full[i].text in whole:
+                messages[i] = Message(role=full[i].role, text=full[i].text, cut=0)
+                kept = True
+        if kept:
+            self.messages = messages
 
     def _load_activity(self) -> None:
         self.events = []
@@ -2858,5 +2876,7 @@ class StudioState(rx.State):
         finally:
             self.sending = False
         yield
+        shown = list(self.get_value("messages"))
         self._load_sessions()
+        self._keep_whole(shown)
         self._load_activity()

@@ -1865,9 +1865,17 @@ class NoCardLosesWhatItShowed(unittest.TestCase):
 
         full, _, opened = _sample_read("state-test-r13-dialog", open_each)
         self.assertEqual(set(opened), set(full))
+        shared = set()
         for uid, (current, tree) in opened.items():
             self.assertEqual(current, full[uid], uid)
             self.assertIsNot(current, full[uid], uid)
+            # Review round 1, F1: the lists are the dialog's own too, not `_full`'s.
+            for name in ("cells", "questions", "rounds", "live"):
+                if getattr(full[uid], name):
+                    shared.add(name)
+                    self.assertIsNot(getattr(current, name), getattr(full[uid], name),
+                                     f"{uid}.{name}")
+        self.assertEqual(shared, {"cells", "questions", "rounds", "live"})
         self.assertEqual(opened["0004_done"][1], "Worktree: /t/0004 on feat/x · prepared")
         self.assertEqual(opened["0003_review"][0].pr_url, "https://github.com/o/r/pull/1")
 
@@ -2004,6 +2012,53 @@ class ALongMessageIsCutAndOpensWhole(unittest.TestCase):
         self.assertEqual(cut[2], ("Đã đọc.", 0))
         self.assertEqual(opened[1][0].encode(), long.encode())
         self.assertEqual((opened[0], opened[1][1], opened[2]), (cut[0], 0, cut[2]))
+
+    def test_what_send_showed_whole_stays_whole(self):
+        """Review round 1, F3: the read at the end of `send` cuts neither the reply that
+        just streamed nor a message opened before it; one never opened stays cut."""
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        token = "state-test-send-keeps-whole"
+        opened, closed, reply = "Mở. " * 2000, "Đóng. " * 1500, "Trả lời. " * 1000
+        said = [{"role": "user", "text": "hỏi"}, {"role": "assistant", "text": opened},
+                {"role": "assistant", "text": closed}]
+        reads = iter([{"messages": said}, {"messages": [
+            *said, {"role": "user", "text": "nữa"}, {"role": "assistant", "text": reply}]}])
+
+        async def stream(cwd, text, session_id):
+            for i in range(0, len(reply), 1000):
+                yield "chunk", reply[i:i + 1000]
+            yield "done", {"session_id": "s"}
+
+        async def go():
+            manager, _, _ = _processor(token)
+            async with manager.modify_state(_key(token)) as root:
+                studio = await root.get_state(page.StudioState)
+                studio.cwd, studio.session_id = "/a", "s"
+                studio._load_history()
+                page.StudioState.open_message.fn(studio, 1)
+                studio.prompt = "nữa"
+                async for _ in page.StudioState.send.fn(studio):
+                    pass
+                return [(m.text, m.cut) for m in studio.messages], studio.error
+
+        with mock.patch.multiple(
+            page.SERVICE,
+            history=lambda cwd, sid: next(reads),
+            check_send=lambda cwd, text: None,
+            stream=stream,
+            sessions_for=lambda cwd, limit: {"sessions": [{"session_id": "s"}]},
+            activity_and_usage=lambda cwd, limit: {"events": [], "total": {}},
+        ):
+            shown, error = asyncio.run(go())
+        self.assertEqual(error, "")
+        self.assertEqual(len(shown), 5)
+        self.assertEqual(shown[1], (opened, 0))
+        self.assertEqual(shown[2], (closed[:page.MESSAGE_CUT], len(closed) - page.MESSAGE_CUT))
+        self.assertEqual(shown[4], (reply, 0))
 
 
 class SessionsAreReadWhereTheyAreShown(unittest.TestCase):
