@@ -32,8 +32,9 @@ first-parent commits on `origin/main` of this checkout from that line to the end
 2026-11-30, keeps those that change a file the standard at that commit lists — matched by
 `cos.mjs`'s own `parseStandard` and `uiFiles`, through `node`, so there is no second glob
 matcher here — and reads each one's unit number from `(NNNN)` in its subject. For each
-unit it reads `cos.mjs --root <slot> status --json` under `<COS_DATA_DIR>/units/*/.cos/`
-and asks `cos.mjs`'s `screensProblems` about the last passing round. It does not check
+unit it reads `cos.mjs --root <slot> status --json` of the one slot under
+`<COS_DATA_DIR>/units/*/` that holds this unit's `ship.md` — every workspace numbers from
+`0001`, so another slot's numbers would collide — and asks `cos.mjs`'s `screensProblems` about the last passing round. It does not check
 `Taken at` against `Reviewed` again: the squash removed the branch's commits, and the
 `ship` gate checked both when it merged. It writes `<COS_DATA_DIR>/measurements/0083-
 <timestamp>.json` and nothing else. Run it at a terminal: inside a step it reads a scratch
@@ -124,6 +125,8 @@ def git_in(repo: Path, *args: str) -> subprocess.CompletedProcess:
 
 def measure(root: Path, repo: Path, today: date) -> int:
     """The intent's outcome. Everything it prints, it also writes under `measurements/`."""
+    # Only the slot holding this unit is read: every workspace numbers its units from 0001,
+    # so a second one would make each number ambiguous (review round 1, F4).
     slots = sorted(p for p in (root / "units").glob("*") if (p / ".cos").is_dir())
     units: dict[int, list[dict]] = {}
     line: datetime | None = None
@@ -131,12 +134,19 @@ def measure(root: Path, repo: Path, today: date) -> int:
         data = status_json(COS, slot)
         if data is None:
             return EXIT_ENV
-        for unit in data.get("units") or []:
-            if isinstance(unit.get("number"), int):
-                units.setdefault(unit["number"], []).append({**unit, "slot": slot.name})
+        here = data.get("units") or []
+        for unit in here:
             accepted = ((unit.get("artifacts") or {}).get("ship.md") or {}).get("status") == "accepted"
-            if unit.get("slug") == SLUG and accepted:
-                line = shipped_at(slot / ".cos" / unit["name"] / "ship.md") or line
+            at = shipped_at(slot / ".cos" / unit["name"] / "ship.md") if unit.get("slug") == SLUG and accepted else None
+            if at is not None:
+                line = at
+                units = {}
+                for u in here:
+                    if isinstance(u.get("number"), int):
+                        units.setdefault(u["number"], []).append({**u, "slot": slot.name})
+                break
+        if line is not None:
+            break
     if line is None:
         say(f"line: none — {SLUG} has no accepted ship.md with a timestamp")
         return EXIT_ENV
@@ -452,10 +462,13 @@ GOOD_SCREENS = ("### Screens\n\nTaken at: {sha}. Standard: .claude/rules/ui-stan
                 "session, from screenshots.\n\n- .screens/board-1440x900.png — 1440×900 — /board — ok\n")
 
 
-def measured(tmp: Path, name: str, today: date, window: dict[str, str] | None, valid: bool = True) -> int:
+def measured(tmp: Path, name: str, today: date, window: dict[str, str] | None, valid: bool = True,
+             neighbour: bool = False) -> int:
     """A repository whose `origin/main` has one base commit before the line and, when
     `window` is given, one squash commit `feat(0090): …` changing those files inside it; a
-    store holding this unit's `ship.md` and `0090`'s review. `measure`'s exit code, quietly."""
+    store holding this unit's `ship.md` and `0090`'s review — and, with `neighbour`, a
+    second workspace's slot with its own `0090` and no screens. `measure`'s exit code,
+    quietly."""
     here = tmp / name
     remote, repo = here / "remote.git", here / "repo"
     here.mkdir(parents=True)
@@ -487,6 +500,11 @@ def measured(tmp: Path, name: str, today: date, window: dict[str, str] | None, v
     sha = "f" * 40
     (other / "review.md").write_text(
         PASS_ROUND.format(sha=sha, screens=GOOD_SCREENS.format(sha=sha) if valid else ""), encoding="utf-8")
+    if neighbour:
+        theirs = here / "data" / "units" / "another" / ".cos" / "0090_their-change"
+        theirs.mkdir(parents=True)
+        (theirs / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
+        (theirs / "review.md").write_text(PASS_ROUND.format(sha=sha, screens=""), encoding="utf-8")
 
     quiet = io.StringIO()
     with contextlib.redirect_stdout(quiet):
@@ -498,13 +516,16 @@ def measure_claims(tmp: Path, real_git: str) -> list[bool]:
     tmp.mkdir(parents=True)
     after, before = date(2026, 12, 1), date(2026, 11, 15)
     results = []
-    for name, today, window, valid, want, text in [
-        ("early", before, {"coscc/screens.py": "# x\n"}, True, EXIT_ENV, "before 2026-12-01: exit 2"),
-        ("none", after, {"coscc/runner.py": "# x\n"}, True, EXIT_BROKEN, "no UI unit in the window: exit 1"),
-        ("valid", after, {"coscc/screens.py": "# x\n"}, True, EXIT_PASS, "one UI unit with valid screens: exit 0"),
-        ("missing", after, {"coscc/screens.py": "# x\n"}, False, EXIT_BROKEN, "one UI unit without screens: exit 1"),
+    ui = {"coscc/screens.py": "# x\n"}
+    for name, today, window, valid, neighbour, want, text in [
+        ("early", before, ui, True, False, EXIT_ENV, "before 2026-12-01: exit 2"),
+        ("none", after, {"coscc/runner.py": "# x\n"}, True, False, EXIT_BROKEN, "no UI unit in the window: exit 1"),
+        ("valid", after, ui, True, False, EXIT_PASS, "one UI unit with valid screens: exit 0"),
+        ("missing", after, ui, False, False, EXIT_BROKEN, "one UI unit without screens: exit 1"),
+        ("neighbour", after, ui, True, True, EXIT_PASS,
+         "a second workspace's own 0090, without screens, is not read (review F4): exit 0"),
     ]:
-        got = measured(tmp, name, today, window, valid)
+        got = measured(tmp, name, today, window, valid, neighbour)
         results.append(claim(got == want, f"(h) --measure: {text}", f"exit {got}"))
     return results
 
