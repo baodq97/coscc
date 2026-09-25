@@ -556,6 +556,77 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    def _ints(request: Request, *names: str) -> dict[str, int | None] | None:
+        """The named query parameters as integers, absent as `None`; `None` if one is not."""
+        out: dict[str, int | None] = {}
+        for name in names:
+            raw = request.query_params.get(name)
+            if raw is None or raw == "":
+                out[name] = None
+                continue
+            try:
+                out[name] = int(raw)
+            except ValueError:
+                return None
+        return out
+
+    @api.get("/api/board/events")
+    async def step_events(request: Request) -> Any:
+        """`0073` R7, R9. One page of a step's events: `cwd`, `unit`, `run`, and `before` and
+        `limit`, or `seq` for one event whole. Reads only.
+
+        Whoever holds the password or a live session reads everything the step saw --
+        commands, paths, thinking, tool output -- unfiltered."""
+        q = request.query_params
+        nums = _ints(request, "before", "limit", "seq")
+        if nums is None:
+            return _bad("before, limit and seq must be whole numbers")
+        try:
+            return service.events_page(
+                q.get("cwd", ""), q.get("unit", ""), q.get("run", ""),
+                before=nums["before"],
+                **({"limit": nums["limit"]} if nums["limit"] is not None else {}),
+                seq=nums["seq"],
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/board/events/follow")
+    async def follow_step_events(request: Request) -> Any:
+        """`0073` R8, R9. NDJSON: one `event` line per event past `after`, until the step's
+        `end`; a `cut` line (`from`) when this reader fell too far behind; one `status` line
+        for a step not running in this process. A refusal is a 400, as `/api/board/run`'s is."""
+        q = request.query_params
+        nums = _ints(request, "after")
+        if nums is None:
+            return _bad("after must be a whole number")
+        stream = service.follow_events(q.get("cwd", ""), q.get("unit", ""), q.get("run", ""), nums["after"] or 0)
+        try:
+            first = await stream.__anext__()
+        except Invalid as e:
+            return _bad(str(e))
+        except StopAsyncIteration:
+            return _bad("nothing to follow")
+
+        async def lines() -> AsyncIterator[bytes]:
+            def out(kind: str, payload: Any) -> list[bytes]:
+                if kind == "events":
+                    return [json.dumps({"type": "event", **e}).encode() + b"\n" for e in payload]
+                if kind == "cut":
+                    return [json.dumps({"type": "cut", "from": payload}).encode() + b"\n"]
+                return [json.dumps({"type": "status", **payload}).encode() + b"\n"]
+
+            try:
+                for line in out(*first):
+                    yield line
+                async for kind, payload in stream:
+                    for line in out(kind, payload):
+                        yield line
+            finally:
+                await stream.aclose()
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
     @api.post("/api/units/integrate")
     async def integrate_unit(request: Request) -> Any:
         """`0035`. Integrate one unit onto `main`, on request. Streams like `/api/board/run`.

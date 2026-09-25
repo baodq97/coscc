@@ -52,10 +52,14 @@ class OneStepPerUnit(unittest.TestCase):
 
     def test_listing_carries_what_the_page_shows(self):
         r = Registry()
-        r.claim("w", "0001_a", "spec")
+        running = r.claim("w", "0001_a", "spec")
         [row] = r.listing("w")
-        self.assertEqual(set(row), {"unit", "stage", "started_at", "stopping"})
+        self.assertEqual(set(row), {"unit", "stage", "started_at", "stopping", "run"})
         self.assertFalse(row["stopping"])
+        # `0073` R1: `Service.run_step` sets it as it hands the step over.
+        self.assertEqual(row["run"], "")
+        running.run = "r-1"
+        self.assertEqual(r.listing("w")[0]["run"], "r-1")
 
 
 class Describe(unittest.TestCase):

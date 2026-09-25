@@ -229,6 +229,18 @@ a `review` gate that never opens.
   person's estimate wins over an agent's whichever came later. *Propose estimates* opens one paid session under the grant
   `estimate`. Each board step's `start` row records where its unit stood in the shortlist,
   so `verify_0074 --measure` can tell afterwards whether work was taken from it.
+- **Watching a step is not an approval, and it changes nothing.** Since `0073` a board step
+  records every event of its session — each message, tool call and result, thought,
+  refusal, turn, the cost at the end and the outcome — and the board shows them live to any
+  tab that opens the step, and afterwards from the unit's timeline (`GET /api/board/events`,
+  `/follow`). Whoever holds the password or a live session reads every command, path,
+  thought and tool output of every step the board ran, unfiltered. They sit in `cos.db`
+  for up to 30 days and 200 MB in total, purged only when the app starts, and they travel
+  with `0068`'s `updates/cos.db.bak`. Watching opens and closes no gate, starts no stage,
+  writes no row and reaches no step; *Stop* is still the only thing that acts on one. A chat,
+  Gebo or a step at a terminal records nothing here. A step another copy of the app runs on
+  the same data root writes into the same tables, but only that copy can follow it live;
+  this one reads it as `ended-unknown` until it ends.
 - **A login that knows who you are.** Since `0070` every route — the page, its socket,
   `/api`, the static files, paths that do not exist — is refused without a live session;
   only `/api/health`, `/login`, and `/setup` until a password is set, answer.

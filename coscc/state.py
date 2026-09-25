@@ -25,6 +25,7 @@ import sys
 import reflex as rx
 from reflex_base.event.context import EventContext
 
+from coscc import events as events_mod
 from coscc import place
 from coscc.api import build
 from coscc.journal import COST_USD, TOKEN_FIELDS
@@ -361,6 +362,8 @@ class Activity:
     cost: str = ""
     # `step`, `gebo`, `rebase` or `unknown`.
     kind: str = ""
+    # `0073`. The step's `run`, what the watch pane opens; empty for anything else.
+    run: str = ""
 
 
 def _activities(unit: str, read: dict) -> list[Activity]:
@@ -377,6 +380,7 @@ def _activities(unit: str, read: dict) -> list[Activity]:
             turns="" if turns is None else str(turns),
             cost="" if cost is None else f"${float(cost):.2f}",
             kind=str(row.get("kind") or ""),
+            run=str(row.get("run") or ""),
         ))
     for row in (read.get("unknown_end") or {}).get(unit) or []:
         out.append(Activity(
@@ -506,6 +510,8 @@ class RunningStep:
     stage: str = ""
     started_at: str = ""
     stopping: bool = False
+    # `0073`. What the watch pane opens.
+    run: str = ""
 
 
 @dataclasses.dataclass
@@ -525,6 +531,61 @@ class Run:
     # else sends the only person who can fix it to the database -- and for a prose stage
     # this is where the reply it was paid for comes back (`coscc/runner.py`, `_with_reply`).
     detail: str = ""
+    # `0073`. The step's `run`, empty for one written before `0073` (R13).
+    run: str = ""
+
+
+@dataclasses.dataclass
+class WatchEvent:
+    """`0073` R10, R12. One event of the watch pane, as `events.collapse` shaped it. Never
+    more than the collapsed body: the whole of one opened event is `watch_open_text`."""
+
+    seq: int = 0
+    at: int = 0
+    when: str = ""
+    kind: str = ""
+    label: str = ""
+    body: str = ""
+    collapsed: bool = False
+    truncated: bool = False
+    original_length: int = 0
+    persisted: str = ""
+
+
+# `0073`. The most events the watch pane holds at once. Every frame carries the whole list
+# (`spike.md ## U4`: about 2 062 bytes an event at the collapsed size), so the list has a
+# ceiling: 400 × 2 062 ≈ 825 KB at worst -- a multiplication, not a measurement, under the
+# 1 031 008 bytes U4 measured within 2 s on loopback. Chosen.
+WATCH_WINDOW = 400
+
+# Seconds the pane gathers new events before it sends them (`spike.md ## U3`).
+WATCH_GATHER = 0.5
+
+# `0073` R13, word for word.
+NO_RUN_NOTE = "không có luồng sự kiện: step này chạy trước 0073"
+
+
+def _watch_note(page: dict) -> str:
+    """R13. The line the pane shows so it is never empty without a reason."""
+    notes: list[str] = []
+    status = page.get("status")
+    if status == "purged":
+        notes.append(f"đã xoá ({page.get('purged_at') or ''})")
+    elif status == "ended-unknown":
+        notes.append(
+            "app dừng khi step đang chạy; không có sự kiện nào sau "
+            + (events_mod.when(page.get("last_at")) if page.get("last_at") else "lúc bắt đầu")
+        )
+    elif status == "none":
+        notes.append("không có sự kiện nào được lưu cho lần chạy này")
+    lost = int(page.get("events_lost") or 0)
+    if lost > 0:
+        notes.append(f"thiếu {lost} sự kiện")
+    return " · ".join(notes)
+
+
+def _watch_events(raw: list) -> list[WatchEvent]:
+    return [WatchEvent(**events_mod.collapse(e)) for e in raw]
 
 
 @dataclasses.dataclass
@@ -834,6 +895,24 @@ class StudioState(rx.State):
     log_unit: str = ""
     # A name typed to stop a step. Like `answer_by`, never stored as a preference.
     stop_by: str = ""
+    # -- `0073`: the watch pane. One `run` at a time; `_watch_token` changes whenever the pane
+    # closes or opens another, and the loop following the old one stops at its next batch.
+    watch_run: str = ""
+    watch_unit: str = ""
+    watch_title: str = ""
+    watch_status: str = ""
+    watch_note: str = ""
+    watch_events: list[WatchEvent] = []
+    watch_has_older: bool = False
+    # Older pages pushed the newest rows out of the list; *Về cuối* brings them back.
+    watch_has_newer: bool = False
+    # At the bottom and taking new events; off once older ones were loaded.
+    watch_following: bool = False
+    # New events not in the list because it was full while the person read older ones.
+    watch_pending: int = 0
+    watch_open_seq: int = 0
+    watch_open_text: str = ""
+    _watch_token: int = 0
 
     # -- `0068`: the *Cập nhật* panel. Every field is copied from `Service.update_status`,
     # re-read on load, on every screen change and on every `poll_running` ask; the page
@@ -1415,6 +1494,7 @@ class StudioState(rx.State):
                 usd=_usd(r.get("cost") or {}),
                 color="grass" if r.get("outcome") == "done" else "amber",
                 detail=r.get("detail") or "",
+                run=r.get("run") or "",
             )
             for r in data["runs"]
         ]
@@ -1497,6 +1577,9 @@ class StudioState(rx.State):
         path, query, sid = self._address()
         want = place.read(path, query)
         first = sid != self._loaded_sid
+        if self.watch_run:
+            # `0073`. The pane belongs to the page it was opened on; its loop stops.
+            self._watch_reset("", "", "")
         if first:
             self.loading, self.error = True, ""
             yield
@@ -1930,6 +2013,153 @@ class StudioState(rx.State):
             self._fail(e)
         finally:
             self._load_running()
+
+    # -- `0073`: watching a step. Every read is `Service.events_page` or `.follow_events`; the
+    # page only keeps the list under `WATCH_WINDOW`. Nothing here writes anything anywhere.
+
+    def _watch_reset(self, run: str, title: str, unit: str) -> None:
+        self._watch_token += 1
+        self.watch_run, self.watch_title, self.watch_unit = run, title, unit
+        self.watch_status, self.watch_note = "", ""
+        self.watch_events, self.watch_has_older, self.watch_has_newer = [], False, False
+        self.watch_following, self.watch_pending = False, 0
+        self.watch_open_seq, self.watch_open_text = 0, ""
+
+    def _watch_page(self, before: int | None = None) -> dict | None:
+        try:
+            return SERVICE.events_page(self.cwd, self.watch_unit, self.watch_run, before=before)
+        except Invalid as e:
+            self.watch_note = str(e)
+            return None
+
+    def _watch_take(self, fresh: list[WatchEvent]) -> None:
+        """New events, by `plan.md` step 7's rule: at the bottom, appended and the oldest
+        dropped past `WATCH_WINDOW`; reading older ones, appended while there is room and
+        counted in `watch_pending` once there is none. An event already shown is dropped: a
+        batch the follower yielded before *Về cuối* read the last page again is also in that
+        page (`review.md` F1)."""
+        last = self.watch_events[-1].seq if self.watch_events else 0
+        fresh = [e for e in fresh if e.seq > last]
+        if not fresh:
+            return
+        if self.watch_following:
+            kept = self.watch_events + fresh
+            if len(kept) > WATCH_WINDOW:
+                kept = kept[-WATCH_WINDOW:]
+                self.watch_has_older = True
+            self.watch_events = kept
+            return
+        # Rows past the last one shown were dropped: a new event appended would sit after a gap.
+        room = 0 if self.watch_has_newer else WATCH_WINDOW - len(self.watch_events)
+        if room > 0:
+            self.watch_events = self.watch_events + fresh[:room]
+        self.watch_pending += max(0, len(fresh) - max(room, 0))
+
+    @rx.event
+    def open_watch(self, run: str, title: str, unit: str = ""):
+        """R10. Open the pane on one step's `run`. A timeline row with no `run` opens it on
+        R13's line instead."""
+        self._watch_reset(run, title or run, unit or self.unit_id)
+        if not run:
+            self.watch_run = "-"
+            self.watch_note = NO_RUN_NOTE
+            return
+        return StudioState.watch_follow
+
+    @rx.event
+    def close_watch(self):
+        self._watch_reset("", "", "")
+
+    @rx.event
+    def toggle_watch(self, value: bool):
+        if not value:
+            self._watch_reset("", "", "")
+
+    @rx.event(background=True)
+    async def watch_follow(self):
+        """R10, R11. The last page, then every new event of a running step, gathered up to
+        `WATCH_GATHER` seconds. Reading the page first and following from its last `seq` is
+        safe: a running step's recorder holds every event, so nothing falls in between."""
+        async with self:
+            token, run = self._watch_token, self.watch_run
+            page = self._watch_page()
+            if page is None:
+                return
+            self.watch_events = _watch_events(page["events"])
+            self.watch_has_older = bool(page["has_older"])
+            self.watch_has_newer, self.watch_pending = False, 0
+            self.watch_status = str(page["status"])
+            self.watch_note = _watch_note(page)
+            self.watch_following = True
+            cwd, unit = self.cwd, self.watch_unit
+            last = self.watch_events[-1].seq if self.watch_events else 0
+        if page["status"] != "running":
+            return
+        try:
+            async for kind, value in SERVICE.follow_events(cwd, unit, run, after=last, gather=WATCH_GATHER):
+                async with self:
+                    if self._watch_token != token:
+                        return
+                    if kind == "events":
+                        self._watch_take(_watch_events(value))
+                        if value and value[-1].get("kind") == "end":
+                            self.watch_status = "ended"
+                    elif kind == "cut":
+                        # Fell `SUB_LIMIT` behind: start again from the last page.
+                        return StudioState.watch_follow
+                    else:
+                        self.watch_status = str(value.get("status") or "")
+                        self.watch_note = _watch_note(value)
+        except Invalid as e:
+            async with self:
+                if self._watch_token == token:
+                    self.watch_note = str(e)
+
+    @rx.event
+    def watch_older(self):
+        """R7, R10. The page before the first event shown; the pane stops following. A full
+        list drops its newest rows, and says so, for a step that has ended too
+        (`review.md` F2)."""
+        if not self.watch_events or not self.watch_has_older:
+            return
+        page = self._watch_page(before=self.watch_events[0].seq)
+        if page is None:
+            return
+        older = _watch_events(page["events"])
+        self.watch_following = False
+        kept = older + self.watch_events
+        if len(kept) > WATCH_WINDOW:
+            kept = kept[:WATCH_WINDOW]
+            self.watch_has_newer = True
+        self.watch_events = kept
+        self.watch_has_older = bool(page["has_older"])
+
+    @rx.event
+    def watch_live(self):
+        """*Về cuối*: the last page again, and following again."""
+        page = self._watch_page()
+        if page is None:
+            return
+        self.watch_events = _watch_events(page["events"])
+        self.watch_has_older = bool(page["has_older"])
+        self.watch_has_newer, self.watch_pending = False, 0
+        self.watch_following = True
+
+    @rx.event
+    def watch_expand(self, seq: int):
+        """R12 *Mở*: one event whole, as stored, in a var of its own."""
+        try:
+            page = SERVICE.events_page(self.cwd, self.watch_unit, self.watch_run, seq=int(seq))
+        except Invalid as e:
+            self.watch_note = str(e)
+            return
+        if page["events"]:
+            self.watch_open_seq = int(seq)
+            self.watch_open_text = events_mod.full_text(page["events"][0])
+
+    @rx.event
+    def watch_collapse(self):
+        self.watch_open_seq, self.watch_open_text = 0, ""
 
     # -- `0068`: updating the app. Every rule is `Updater`'s, behind `Service`; a refusal
     # arrives here as its words.

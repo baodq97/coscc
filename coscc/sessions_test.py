@@ -400,6 +400,53 @@ class TheSessionIdIsToldBeforeTheStepIsOver(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dict(items)["done"]["cost"]["turns"], 4)
 
 
+class ARecorderSeesEveryMessageAndChangesNothing(unittest.IsolatedAsyncioTestCase):
+    """`0073` step 4. A step with a recorder yields exactly what the same step without one
+    yields, and the recorder is handed every message. Chat has no handle and so none."""
+
+    MESSAGES = [
+        sdk.AssistantMessage(
+            content=[sdk.TextBlock(text="a"), sdk.ToolUseBlock(id="t", name="Read", input={})],
+            model="m", session_id="sid-r", message_id="m1",
+        ),
+        sdk.SystemMessage(subtype="init", data={}),
+        _result("sid-r"),
+    ]
+
+    class Hears:
+        def __init__(self, raises=False):
+            self.heard = []
+            self.raises = raises
+
+        def message(self, m):
+            self.heard.append(m)
+            if self.raises:
+                raise RuntimeError("the recorder broke")
+
+    async def _run(self, step):
+        s = Sessions(Config(workspaces=("/tmp",)))
+        self.addAsyncCleanup(s.close_all)
+        _FakeClient.messages = self.MESSAGES
+        with mock.patch("coscc.sessions.ClaudeSDKClient", _FakeClient):
+            items = [item async for item in s.stream("/tmp", "hi", step=step)]
+        return [(k, {x: y for x, y in p.items() if x != "duration_ms"} if isinstance(p, dict) else p)
+                for k, p in items]
+
+    async def test_the_same_items_with_and_without_one(self):
+        plain = await self._run(sessions.StepHandle())
+        hears = self.Hears()
+        handle = sessions.StepHandle()
+        handle.recorder = hears
+        self.assertEqual(plain, await self._run(handle))
+        self.assertEqual(hears.heard, self.MESSAGES)
+
+    async def test_one_that_raises_changes_nothing(self):
+        plain = await self._run(sessions.StepHandle())
+        handle = sessions.StepHandle()
+        handle.recorder = self.Hears(raises=True)
+        self.assertEqual(plain, await self._run(handle))
+
+
 class _CountingClient(_FakeClient):
     """Counts `disconnect`, and can hold `receive_response` open until released."""
 

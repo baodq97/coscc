@@ -361,6 +361,9 @@ class StepHandle:
     # `0076`. The step's own `COS_DATA_DIR`, set before the client is built and removed by
     # `stream` once the client is closed, however the step ended.
     scratch: Path | None = None
+    # `0073`. The step's `coscc/events.py` recorder, set by `Service.run_step`. `_stream`
+    # hands it every message before anything else reads it; chat has no handle, so none.
+    recorder: Any = None
 
     async def close(self) -> None:
         self.closed = True
@@ -787,6 +790,13 @@ class Sessions:
                 yield ("session", resolved)
             await live.client.query(text)
             async for message in live.client.receive_response():
+                if step is not None and step.recorder is not None:
+                    # `0073` R3, R5. Synchronous and swallowing: the kinds this yields, and
+                    # when, are what they were without it.
+                    try:
+                        step.recorder.message(message)
+                    except Exception:  # noqa: BLE001
+                        pass
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):

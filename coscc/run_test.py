@@ -118,15 +118,18 @@ class TheServerIsHeld(unittest.TestCase):
     """`0068` plan step 5. `main` keeps its own `uvicorn.Server`, registers it for the
     updater, and after `run()` returns installs only when a hand-off was left."""
 
-    def main_with(self, on_run):
+    def main_with(self, on_run, order=None):
         import contextlib
         import io
         from unittest import mock
 
-        from coscc import update
+        from coscc import events, update
+
+        order = [] if order is None else order
 
         class FakeServer:
             def __init__(self, config):
+                order.append("server")
                 self.config = config
                 self.should_exit = False
 
@@ -135,6 +138,9 @@ class TheServerIsHeld(unittest.TestCase):
 
         finished = []
         with contextlib.ExitStack() as stack:
+            # `0073`: never the real `cos.db` of whoever runs the tests.
+            stack.enter_context(mock.patch.object(
+                events, "purge_on_start", lambda config: order.append("purge") or (0, 0)))
             stack.enter_context(mock.patch("uvicorn.Server", FakeServer))
             stack.enter_context(mock.patch("uvicorn.Config", lambda *a, **k: (a, k)))
             stack.enter_context(mock.patch.object(run.frontend, "is_packaged", lambda: False))
@@ -154,6 +160,27 @@ class TheServerIsHeld(unittest.TestCase):
     def test_no_hand_off_means_main_just_returns(self):
         code, finished = self.main_with(lambda server: None)
         self.assertEqual((code, finished), (None, []))
+
+    def test_step_events_are_purged_before_the_server_is_built(self):
+        """`0073` R14: before the first request, and a purge that fails does not stop it."""
+        from unittest import mock
+
+        from coscc import events
+
+        order: list[str] = []
+        self.main_with(lambda server: None, order)
+        self.assertEqual(order, ["purge", "server"])
+
+        def fails(config):
+            raise RuntimeError("busy")
+
+        import contextlib
+        import io
+
+        err = io.StringIO()
+        with mock.patch.object(events, "purge_on_start", fails), contextlib.redirect_stderr(err):
+            run.purge_events(object())
+        self.assertIn("step events were not purged this start", err.getvalue())
 
     def test_uvicorn_serves_the_guarded_app_and_trusts_no_proxy_header(self):
         """`0070` step 4: the guard is the target, and `X-Forwarded-For` is never read."""

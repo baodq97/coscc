@@ -629,11 +629,19 @@ class Denials:
     def __init__(self) -> None:
         self.count = 0
         self.reasons: list[str] = []
+        # `0073`. Told of every refusal, with what was asked, when a step has a recorder.
+        # `KEEP` still bounds only `reasons`, so the `end` record's `denied` is unchanged.
+        self.listener: Any = None
 
-    def record(self, tool: str, reason: str) -> None:
+    def record(self, tool: str, reason: str, tool_input: Any = None) -> None:
         self.count += 1
         if len(self.reasons) < self.KEEP:
             self.reasons.append(f"{tool}: {reason}")
+        if self.listener is not None:
+            try:
+                self.listener(tool, tool_input, reason)
+            except Exception:  # noqa: BLE001 - `0073` R5: the recorder never reaches the gate
+                pass
 
 
 # `0037_board-sessions-run-without-claude-codes-system-prompt`. What a board step holding
@@ -663,7 +671,7 @@ def permission_gate(
     async def can_use_tool(tool: str, tool_input: dict, context: Any):
         reason = decide(grant, tool, tool_input or {}, workspace, unit_dir, read_also, lease)
         if reason:
-            denials.record(tool, reason)
+            denials.record(tool, reason, tool_input)
             return sdk.PermissionResultDeny(message=reason)
         return sdk.PermissionResultAllow()
 
@@ -993,6 +1001,10 @@ class Runner:
         # `0037`: the same condition that decides whether a gate and a tool list are sent.
         preset = CLAUDE_CODE_PRESET if grant.opens_anything else None
 
+        # `0073`. The step's recorder, when `Service.run_step` gave it one: its `run` goes into
+        # `start` and `end`, and it is closed -- everything on disk -- before `end` is written.
+        recorder = getattr(running.handle, "recorder", None) if running is not None else None
+
         if self.journal is not None:
             self.journal.started(
                 journal_key, unit, stage, mode,
@@ -1013,9 +1025,12 @@ class Runner:
                 **({"plan_drift": plan_drift} if plan_drift is not None else {}),
                 **({"shortlist": shortlist} if shortlist is not None else {}),
                 **pr_extra,
+                **({"run": recorder.run} if recorder is not None else {}),
             )
 
         denials = Denials()
+        if recorder is not None:
+            denials.listener = recorder.denied
         collected = ""
         terminal = ""
         session_id = ""
@@ -1236,6 +1251,14 @@ class Runner:
                 except Exception:
                     # The same rule as the attempt record: the `end` row never depends on it.
                     extra = {}
+            # `0073` R6. Not for an app going down: `_drive` writes what it can, and no `end`.
+            run_fields: dict[str, Any] = {}
+            if recorder is not None and not shutting_down:
+                try:
+                    lost = await recorder.close(outcome, detail)
+                except Exception:  # noqa: BLE001 - R5: how many is unknown, so all of them
+                    lost = max(1, int(getattr(recorder, "seq", 0) or 0))
+                run_fields = {"run": recorder.run, "events_lost": lost}
             if record:
                 self.journal.finished(
                     journal_key, unit, stage, outcome,
@@ -1253,6 +1276,7 @@ class Runner:
                     ),
                     **cost,
                     **extra,
+                    **run_fields,
                 )
             if pending is not None:
                 if not stop_came:

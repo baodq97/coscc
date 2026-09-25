@@ -478,6 +478,10 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 # `0004_no-setting-says-which-model-runs-a-stage` has neither: None.
                 "model": item.get("model"),
                 "model_source": item.get("model_source"),
+                # `0073`. The id of the step's events, and how many never reached disk. A run
+                # written before `0073`, or not from the board, has neither: None.
+                "run": item.get("run"),
+                "events_lost": None,
             }
             rows.append(row)
             open_runs[stage] = row
@@ -508,6 +512,8 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             # Without this a step that failed before its first billed turn reads on the
             # board as a run that cost nothing, rather than one nobody measured.
             row["reported"] = "cost_usd" in item
+            if "events_lost" in item:
+                row["events_lost"] = item.get("events_lost")
     return rows
 
 

@@ -87,6 +87,9 @@ class Running:
     # point is refused rather than honoured halfway.
     sealed: bool = False
     listeners: set = field(default_factory=set)
+    # `0073` R1. The id of this step's events, set by `Service.run_step` as it hands the step
+    # to `_drive`. Empty for a row made any other way.
+    run: str = ""
 
 
 class Registry:
@@ -123,6 +126,7 @@ class Registry:
                 "stage": r.stage,
                 "started_at": r.started_at,
                 "stopping": r.stop_requested,
+                "run": r.run,
             }
             for r in sorted(self._rows.values(), key=lambda r: r.started_at)
             if r.workspace == workspace

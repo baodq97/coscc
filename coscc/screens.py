@@ -44,6 +44,7 @@ from coscc.state import (
     Run,
     StudioState,
     Unit,
+    WatchEvent,
     Workspace,
 )
 
@@ -487,9 +488,27 @@ def _workspaces_screen() -> rx.Component:
 # --- board -------------------------------------------------------------------
 
 
-def _activity_line(line: rx.Var[Activity]) -> rx.Component:
+def _activity_line(line: rx.Var[Activity], unit_id=None) -> rx.Component:
     """`0051` R6. `running` and `ended, unknown` differ in colour, icon and words, so one
-    is never read as the other. `rebasing` looks like `running` without an agent."""
+    is never read as the other. `rebasing` looks like `running` without an agent.
+
+    `0073` R10: a board step's line opens the watch pane on its `run` rather than the unit."""
+    plain = _activity_body(line)
+    if unit_id is None:
+        return plain
+    return rx.cond(
+        line.run != "",
+        rx.box(
+            _activity_body(line, watchable=True),
+            on_click=P.open_watch(line.run, unit_id + " · " + line.stage, unit_id).stop_propagation,
+            role="button", aria_label="Xem step đang chạy", data_testid="card-watch",
+            cursor="pointer", width="100%",
+        ),
+        plain,
+    )
+
+
+def _activity_body(line: rx.Var[Activity], watchable: bool = False) -> rx.Component:
     unknown = line.label == "ended, unknown"
     return rx.hstack(
         rx.cond(
@@ -511,6 +530,7 @@ def _activity_line(line: rx.Var[Activity]) -> rx.Component:
             size="1",
             color=rx.cond(unknown, rx.color("gray", 10), rx.color("iris", 11)),
         ),
+        *([rx.icon("eye", size=13, color=rx.color("iris", 10))] if watchable else []),
         data_testid=rx.cond(unknown, "card-unknown-end", "card-running"),
         width="100%", align="center", spacing="2", margin_top="10px",
     )
@@ -558,7 +578,7 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
         rx.cond(unit.relations_text != "",
                 s.text(unit.relations_text, size="1", margin_top="7px", overflow_wrap="anywhere")),
         # `0051`. One line per session on this unit, from `Service.running` alone (R8).
-        rx.foreach(unit.live, _activity_line),
+        rx.foreach(unit.live, lambda line: _activity_line(line, unit.id)),
         id="unit-" + unit.id, data_testid="work-card", type="button",
         aria_label="Open " + unit.title, on_click=P.open_unit(unit.id),
         padding=rx.cond(P.density == "compact", "12px", "17px"),
@@ -668,6 +688,12 @@ def _running_steps() -> rx.Component:
                 s.badge(r.stage, "iris"),
                 s.text(r.started_at, size="1"),
                 rx.spacer(),
+                # `0073` R10. Watching changes nothing; Stop, beside it, is what acts.
+                rx.button(
+                    rx.icon("eye", size=13), "Xem",
+                    on_click=P.open_watch(r.run, r.unit + " · " + r.stage, r.unit),
+                    class_name="watch-step", variant="soft", size="1",
+                ),
                 rx.button(
                     rx.icon("square", size=13),
                     rx.cond(r.stopping, "Stopping", "Stop"),
@@ -1297,7 +1323,12 @@ def _run_row(run: rx.Var[Run]) -> rx.Component:
         rx.vstack(
             rx.hstack(rx.text(run.stage, size="2", weight="medium"),
                       s.badge(run.mode, "gray"), s.badge(run.outcome, run.color),
-                      spacing="2", wrap="wrap", align="center"),
+                      rx.spacer(),
+                      # `0073` R10, R13: a run from before `0073` opens the pane on its note.
+                      rx.button(rx.icon("eye", size=13), "Xem",
+                                on_click=P.open_watch(run.run, P.unit_id + " · " + run.stage, P.unit_id),
+                                class_name="watch-run", variant="soft", size="1"),
+                      spacing="2", wrap="wrap", align="center", width="100%"),
             s.text(run.started + " → " + run.ended, size="1",
                    font_family="ui-monospace, monospace"),
             s.text(run.tokens + " tokens / " + run.usd + " / session " + run.session_id,
@@ -1947,6 +1978,167 @@ def _detail_dialog() -> rx.Component:
     )
 
 
+# --- watching a step (`0073`) -------------------------------------------------
+
+# Two observers, and nothing else: the first row coming into view presses *older*, and a
+# list that was at its bottom before a change is put back there. Every rule about what the
+# list holds is `StudioState`'s; this only scrolls.
+#
+# Away from the bottom, the row being read stays where it was whatever changed the list:
+# the first row in view is remembered by its `data-seq` and offset on every scroll, and
+# brought back to that offset after every change. Rows are drawn by position, so a page
+# prepended, a full list dropping its newest rows (`review.md` F5) and a live batch
+# dropping its oldest while following (F6 a) all rewrite rows in place, and neither the
+# scroll height nor the row nodes say where the row went; the seq does. The anchor is
+# never spent on the first change, so a live batch landing between *older* and its page
+# does not leave the page to arrive with none (F6 b). *Older* pressed at the bottom
+# anchors too; *Về cuối* drops the anchor and goes to the bottom. `data-seq` is watched as
+# an attribute because a list that stays at `WATCH_WINDOW` rows changes no child at all.
+# The browser's own scroll anchoring is off on `#watch-list`, so this is the one thing
+# that moves it.
+_WATCH_JS = """
+(function () {
+  if (window.__coscc_watch) return;
+  window.__coscc_watch = true;
+  var atBottom = true, anchor = null, observed = null;
+  function rows(list) { return list.querySelectorAll(".watch-ev"); }
+  function mark(list) {
+    var all = rows(list), box = list.getBoundingClientRect();
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i].getBoundingClientRect();
+      if (r.bottom > box.top) { anchor = {seq: +all[i].dataset.seq, offset: r.top - box.top}; return; }
+    }
+    anchor = null;
+  }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      var older = document.getElementById("watch-older");
+      if (older && !older.disabled) older.click();
+    });
+  });
+  document.addEventListener("click", function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target : null;
+    var list = document.getElementById("watch-list");
+    if (!t || !list) return;
+    var older = t.closest("#watch-older");
+    if (older && !older.disabled) { atBottom = false; mark(list); }
+    else if (t.closest("#watch-live")) { atBottom = true; anchor = null; list.scrollTop = list.scrollHeight; }
+  }, true);
+  document.addEventListener("scroll", function (ev) {
+    var list = ev.target;
+    if (!list || list.id !== "watch-list") return;
+    atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    if (atBottom) anchor = null; else mark(list);
+  }, true);
+  new MutationObserver(function () {
+    var list = document.getElementById("watch-list");
+    if (!list) { atBottom = true; anchor = null; observed = null; return; }
+    var top = document.getElementById("watch-top");
+    if (top && top !== observed) {
+      if (observed) io.unobserve(observed);
+      io.observe(top);
+      observed = top;
+    }
+    if (anchor && !atBottom) {
+      // The row itself, or the oldest one still after it when it has left from the top.
+      var row = null, all = rows(list);
+      for (var i = 0; i < all.length && !row; i++) if (+all[i].dataset.seq >= anchor.seq) row = all[i];
+      if (row) {
+        list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top - anchor.offset;
+      }
+    } else if (atBottom) {
+      list.scrollTop = list.scrollHeight;
+    }
+  }).observe(document.documentElement,
+             {subtree: true, childList: true, attributes: true, attributeFilter: ["data-seq"]});
+})();
+"""
+
+_WATCH_COLOR = {"denied": "red", "result": "grass", "end": "iris", "turn": "amber", "tool_use": "blue"}
+
+
+def _watch_row(e: rx.Var[WatchEvent]) -> rx.Component:
+    """R10, R12. One event: when, kind, what it says, and its body collapsed unless opened."""
+    opened = P.watch_open_seq == e.seq
+    return rx.box(
+        rx.hstack(
+            s.text(e.when, size="1", font_family=_MONO),
+            rx.match(e.kind, *[(k, s.badge(k, c)) for k, c in _WATCH_COLOR.items()], s.badge(e.kind, "gray")),
+            rx.text(e.label, size="1", weight="medium", overflow_wrap="anywhere"),
+            rx.spacer(),
+            rx.cond(
+                e.collapsed,
+                rx.cond(
+                    opened,
+                    rx.button("Thu gọn", on_click=P.watch_collapse, size="1", variant="ghost",
+                              class_name="watch-collapse"),
+                    rx.button("Mở", on_click=P.watch_expand(e.seq), size="1", variant="ghost",
+                              class_name="watch-expand"),
+                ),
+            ),
+            width="100%", align="center", spacing="2", flex_wrap="wrap",
+        ),
+        rx.cond(
+            e.body != "",
+            rx.el.pre(
+                rx.cond(opened, P.watch_open_text, e.body),
+                class_name=rx.cond(opened, "watch-body watch-open", "watch-body"),
+                style={"white_space": "pre-wrap", "overflow_wrap": "anywhere", "margin": "4px 0 0",
+                       "font_size": "12px", "font_family": _MONO},
+            ),
+        ),
+        rx.cond(e.collapsed & ~opened, s.text("… đã thu gọn; bấm Mở để xem hết", size="1")),
+        rx.cond(e.truncated,
+                s.text("đã cắt khi lưu: chỉ giữ 64 000 ký tự đầu của " + e.original_length.to_string() + " ký tự",
+                       size="1", color=rx.color("amber", 11))),
+        rx.cond(e.persisted != "", s.text(e.persisted, size="1", color=rx.color("amber", 11))),
+        class_name="watch-ev", custom_attrs={"data-seq": e.seq, "data-at": e.at},
+        padding="8px 0", border_bottom=f"1px solid {s.LINE}", width="100%",
+    )
+
+
+def _watch_dialog() -> rx.Component:
+    """`0073` R10-R13. One step's events, oldest at the top; opens at the bottom."""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.hstack(
+                rx.dialog.title(P.watch_title, size="4", weight="medium"),
+                s.badge(rx.cond(P.watch_status != "", P.watch_status, "—"), "iris"),
+                rx.spacer(),
+                rx.dialog.close(s.icon_button("x", "Đóng khung xem")),
+                width="100%", align="center",
+            ),
+            rx.dialog.description(
+                "Chỉ xem: không mở gate nào, không chạy gì, không đổi step. Ai giữ mật khẩu hoặc "
+                "một session còn sống đọc được mọi lệnh, đường dẫn, suy nghĩ và đầu ra tool ở đây.",
+                size="1", margin_top="6px",
+            ),
+            rx.cond(P.watch_note != "", rx.callout(P.watch_note, id="watch-note", size="1",
+                                                   color_scheme="amber", margin_top="8px")),
+            rx.button("Tải sự kiện cũ hơn", id="watch-older", on_click=P.watch_older,
+                      disabled=~P.watch_has_older, variant="ghost", size="1", margin_top="8px"),
+            rx.box(
+                rx.box(id="watch-top", height="1px"),
+                rx.foreach(P.watch_events, _watch_row),
+                id="watch-list", max_height="62vh", overflow_y="auto", width="100%",
+                style={"overflow_anchor": "none"},
+            ),
+            rx.hstack(
+                rx.cond(P.watch_pending > 0,
+                        s.text(P.watch_pending.to_string() + " sự kiện mới", id="watch-pending", size="1")),
+                rx.cond(P.watch_has_newer,
+                        s.text("Các sự kiện mới hơn đã rời khung xem", id="watch-newer", size="1")),
+                rx.cond(P.watch_has_newer | (~P.watch_following & (P.watch_status == "running")),
+                        rx.button("Về cuối", id="watch-live", on_click=P.watch_live, size="1")),
+                spacing="3", align="center", margin_top="8px",
+            ),
+            id="watch-pane", max_width="min(960px, 96vw)", width="96vw",
+        ),
+        open=P.watch_run != "", on_open_change=P.toggle_watch,
+    )
+
+
 # --- the other dialogs -------------------------------------------------------
 
 
@@ -2114,8 +2306,9 @@ def index() -> rx.Component:
             width="100%", min_height="100dvh", align="start",
         ),
         _detail_dialog(), _workspace_dialog(), _remove_dialog(),
-        _command_dialog(), _mobile_dialog(),
+        _command_dialog(), _mobile_dialog(), _watch_dialog(),
         rx.script(_RECONNECT_JS),
+        rx.script(_WATCH_JS),
         # No `on_mount`: it runs again on every path change (`.cos/0056_*/spike.md ## U3`).
         # The first read is `StudioState.arrive`, every route's `on_load`.
         id="studio-shell", data_density=P.density,

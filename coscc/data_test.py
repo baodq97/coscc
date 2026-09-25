@@ -132,7 +132,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 conn.execute("DROP TABLE auth_sessions")
                 conn.execute("PRAGMA user_version=2")
 
-            self.assertEqual(data.version(), 3)
+            self.assertEqual(data.version(), SCHEMA_VERSION)
             with data.connect() as conn:
                 tables = {
                     row["name"]
@@ -140,6 +140,94 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 }
             self.assertEqual({"auth", "auth_sessions"} - tables, set())
             self.assertEqual(data.pref("density"), "compact")
+
+    def test_a_version_3_database_gains_the_event_tables_and_keeps_its_rows(self):
+        """`0073` step 2: 4 adds `step_runs` and `step_events`, and the number had to move --
+        at 3 `_prepare` would never run `_SCHEMA` on a database already at 3."""
+        self.assertEqual(SCHEMA_VERSION, 4)
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.set_pref("density", "compact")
+            data.auth_set_password("h", 1)
+            with data.connect() as conn:
+                conn.execute("DROP TABLE step_events")
+                conn.execute("DROP TABLE step_runs")
+                conn.execute("PRAGMA user_version=3")
+
+            self.assertEqual(data.version(), 4)
+            with data.connect() as conn:
+                tables = {
+                    row["name"]
+                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+            self.assertEqual({"step_runs", "step_events"} - tables, set())
+            self.assertEqual(data.pref("density"), "compact")
+            self.assertEqual(data.auth_password_hash(), "h")
+
+    def test_a_version_5_database_is_still_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.version()
+            with sqlite3.connect(data.db_path) as conn:
+                conn.execute("PRAGMA user_version=5")
+            with self.assertRaises(Incompatible):
+                data.version()
+
+
+class AStepsEvents(unittest.TestCase):
+    """`0073` R6, R7, R14: the two tables, as the recorder writes them and the service reads."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.data = Data(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def ev(self, run, seq, at=1000, kind="text", text="x"):
+        return {"run": run, "seq": seq, "at": at, "kind": kind, "text": text}
+
+    def test_events_are_counted_once_even_when_written_twice(self):
+        self.data.step_run_open("r", "/w", "/w/ws", "0001_a", "impl", 1000)
+        rows = [self.ev("r", n) for n in range(1, 4)]
+        self.assertEqual(self.data.step_events_add("r", rows), 3)
+        self.assertEqual(self.data.step_events_add("r", rows + [self.ev("r", 4)]), 1)
+        row = self.data.step_run("r")
+        self.assertEqual(row["events"], 4)
+        self.assertGreater(row["bytes"], 0)
+        self.assertIsNone(row["ended_at"])
+        self.data.step_run_close("r", 5000, 2)
+        row = self.data.step_run("r")
+        self.assertEqual((row["ended_at"], row["lost"]), (5000, 2))
+
+    def test_a_page_is_the_last_ones_below_before_oldest_first(self):
+        self.data.step_run_open("r", "/w", "/w/ws", "0001_a", "impl", 1000)
+        self.data.step_events_add("r", [self.ev("r", n) for n in range(1, 11)])
+        events, older = self.data.step_events_page("r", None, 3)
+        self.assertEqual([e["seq"] for e in events], [8, 9, 10])
+        self.assertTrue(older)
+        events, older = self.data.step_events_page("r", 3, 5)
+        self.assertEqual([e["seq"] for e in events], [1, 2])
+        self.assertFalse(older)
+        self.assertEqual(self.data.step_event("r", 7)["seq"], 7)
+        self.assertIsNone(self.data.step_event("r", 70))
+
+    def test_purge_takes_whole_runs_by_age_then_by_size_oldest_first(self):
+        day = 24 * 3600 * 1000
+        now = 100 * day
+        for run, started in (("old", now - 31 * day), ("mid", now - 2 * day), ("new", now - day)):
+            self.data.step_run_open(run, "/w", "/w/ws", "0001_a", "impl", started)
+            self.data.step_events_add(run, [self.ev(run, n, text="y" * 100) for n in range(1, 6)])
+        size = self.data.step_run("new")["bytes"]
+        runs, freed = self.data.step_events_purge(now - 30 * day, size, "2026-10-01T00:00:00+00:00")
+        self.assertEqual(runs, 2)
+        self.assertEqual(self.data.step_run("old")["purged_at"], "2026-10-01T00:00:00+00:00")
+        self.assertIsNotNone(self.data.step_run("mid")["purged_at"])
+        self.assertIsNone(self.data.step_run("new")["purged_at"])
+        self.assertEqual(self.data.step_events_page("old", None, 10), ([], False))
+        self.assertEqual(len(self.data.step_events_page("new", None, 10)[0]), 5)
+        self.assertEqual(freed, 2 * size)
+        self.assertEqual(self.data.step_events_purge(now - 30 * day, size, "later"), (0, 0))
 
     def test_opening_an_existing_database_writes_nothing(self):
         """The common path is one pragma read. A write on every open is a lock on every open."""
