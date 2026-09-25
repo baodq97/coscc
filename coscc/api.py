@@ -19,8 +19,9 @@ Reflex reserves `/ping/`, `/_event` and `/_upload`. Nothing here may use them.
 sees a request: without a live session only `GET /api/health` gets through. The guard also
 serves `/login`, `/setup` and `/logout` itself — they are not routes of this app, and
 nothing here may use them either. One password, one user: whoever holds it or a live
-session cookie can call every route below, and every name a body carries (`answered_by`,
-`by`, `stopped_by`, `recorded_by`) is still a word they typed, not an identity. Tests that
+session cookie can call every route below. A name a body carries (`answered_by`, `by`,
+`stopped_by`, `recorded_by`) is written as sent; since `0082` one left out or empty is
+written as `service.OWNER`, the fixed word `owner`. Neither is an identity. Tests that
 build this app on its own, as `api_test.py` does, drive it without the guard.
 """
 
@@ -230,8 +231,8 @@ def build(config: Config | None = None) -> FastAPI:
 
         Appends a `### Outcome` block under `intent.md`'s `## Answers` and writes nothing
         else. `result` is `đạt`, `trượt` or `không đo được`. **Whoever holds the password
-        or a live session can record `đạt` under any name**, and `measured_by` is a word
-        they typed too. No gate reads the block; the board shows
+        or a live session can record `đạt`**, as `owner` or under any name the body sends
+        (`0082`), and `measured_by` is a word they chose too. No gate reads the block; the board shows
         it as the ground for keeping or dropping a unit.
         """
         try:
