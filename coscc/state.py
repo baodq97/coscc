@@ -904,6 +904,8 @@ class StudioState(rx.State):
     watch_note: str = ""
     watch_events: list[WatchEvent] = []
     watch_has_older: bool = False
+    # Older pages pushed the newest rows out of the list; *Về cuối* brings them back.
+    watch_has_newer: bool = False
     # At the bottom and taking new events; off once older ones were loaded.
     watch_following: bool = False
     # New events not in the list because it was full while the person read older ones.
@@ -2019,7 +2021,7 @@ class StudioState(rx.State):
         self._watch_token += 1
         self.watch_run, self.watch_title, self.watch_unit = run, title, unit
         self.watch_status, self.watch_note = "", ""
-        self.watch_events, self.watch_has_older = [], False
+        self.watch_events, self.watch_has_older, self.watch_has_newer = [], False, False
         self.watch_following, self.watch_pending = False, 0
         self.watch_open_seq, self.watch_open_text = 0, ""
 
@@ -2047,7 +2049,8 @@ class StudioState(rx.State):
                 self.watch_has_older = True
             self.watch_events = kept
             return
-        room = WATCH_WINDOW - len(self.watch_events)
+        # Rows past the last one shown were dropped: a new event appended would sit after a gap.
+        room = 0 if self.watch_has_newer else WATCH_WINDOW - len(self.watch_events)
         if room > 0:
             self.watch_events = self.watch_events + fresh[:room]
         self.watch_pending += max(0, len(fresh) - max(room, 0))
@@ -2084,6 +2087,7 @@ class StudioState(rx.State):
                 return
             self.watch_events = _watch_events(page["events"])
             self.watch_has_older = bool(page["has_older"])
+            self.watch_has_newer, self.watch_pending = False, 0
             self.watch_status = str(page["status"])
             self.watch_note = _watch_note(page)
             self.watch_following = True
@@ -2113,7 +2117,9 @@ class StudioState(rx.State):
 
     @rx.event
     def watch_older(self):
-        """R7, R10. The page before the first event shown; the pane stops following."""
+        """R7, R10. The page before the first event shown; the pane stops following. A full
+        list drops its newest rows, and says so, for a step that has ended too
+        (`review.md` F2)."""
         if not self.watch_events or not self.watch_has_older:
             return
         page = self._watch_page(before=self.watch_events[0].seq)
@@ -2124,6 +2130,7 @@ class StudioState(rx.State):
         kept = older + self.watch_events
         if len(kept) > WATCH_WINDOW:
             kept = kept[:WATCH_WINDOW]
+            self.watch_has_newer = True
         self.watch_events = kept
         self.watch_has_older = bool(page["has_older"])
 
@@ -2135,7 +2142,7 @@ class StudioState(rx.State):
             return
         self.watch_events = _watch_events(page["events"])
         self.watch_has_older = bool(page["has_older"])
-        self.watch_pending = 0
+        self.watch_has_newer, self.watch_pending = False, 0
         self.watch_following = True
 
     @rx.event

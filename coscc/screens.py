@@ -2093,7 +2093,9 @@ def _watch_dialog() -> rx.Component:
             rx.hstack(
                 rx.cond(P.watch_pending > 0,
                         s.text(P.watch_pending.to_string() + " sự kiện mới", id="watch-pending", size="1")),
-                rx.cond(~P.watch_following & (P.watch_status == "running"),
+                rx.cond(P.watch_has_newer,
+                        s.text("Các sự kiện mới hơn đã rời khung xem", id="watch-newer", size="1")),
+                rx.cond(P.watch_has_newer | (~P.watch_following & (P.watch_status == "running")),
                         rx.button("Về cuối", id="watch-live", on_click=P.watch_live, size="1")),
                 spacing="3", align="center", margin_top="8px",
             ),

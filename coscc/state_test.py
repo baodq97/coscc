@@ -1694,6 +1694,44 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
 
         self.assertEqual(asyncio.run(go()), list(range(1, 216)))
 
+    def test_older_pages_past_the_window_say_newer_rows_left_and_about_to_the_end_returns(self):
+        """`review.md` F2: an ended step of 654 events, scrolled up twice. The newest rows
+        leave the list, the pane says so, a live batch is not appended after the gap, and
+        *Về cuối* reads the last page again, `end` included."""
+        import asyncio
+
+        from coscc import state as page
+
+        token = "state-test-watch-newer"
+
+        async def go():
+            manager, processor, fire = _processor(token)
+            async with processor:
+                async with manager.modify_state(_key(token)) as root:
+                    studio = await root.get_state(page.StudioState)
+                    studio.watch_run, studio.watch_unit = "r", "0009_x"
+                    studio.watch_events = [page.WatchEvent(seq=n) for n in range(455, 655)]
+                    studio.watch_has_older, studio.watch_status = True, "ended"
+                await fire("watch_older")
+                await fire("watch_older")
+                studio = await _studio(manager, token)
+                seqs, newer = [e.seq for e in studio.watch_events], studio.watch_has_newer
+                async with manager.modify_state(_key(token)) as root:
+                    studio = await root.get_state(page.StudioState)
+                    studio._watch_take([page.WatchEvent(seq=655)])
+                    pending = studio.watch_pending
+                await fire("watch_live")
+                studio = await _studio(manager, token)
+                return seqs, newer, pending, [e.seq for e in studio.watch_events], studio.watch_has_newer
+
+        with self.patches(654, []):
+            seqs, newer, pending, live, after = asyncio.run(go())
+        self.assertEqual(seqs, list(range(55, 455)))
+        self.assertTrue(newer)
+        self.assertEqual(pending, 1)
+        self.assertEqual(live, list(range(455, 655)))
+        self.assertFalse(after)
+
     def test_the_four_notes_read_as_r13_says(self):
         from coscc import state as page
 
