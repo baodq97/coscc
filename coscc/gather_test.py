@@ -213,19 +213,44 @@ class AGather(Fixture):
         self.assertEqual((s.prompts, self.rows(), self.store()), ([], [], written))
 
     def test_new_ids_start_above_every_id_the_store_holds_whatever_its_header_says(self):
-        # B's K5, under a header lost (read as Max id: K0) and under one edited down to K2.
+        # B's K5, under a header edited down to K2.
         held = entry(5, f"{B}/0001_a/spike.md ## U1", scope=f"workspace:{B}")
-        for head in ("", "# Knowledge\nVersion: 3. Gathered: never. Max id: K2.\n\n"):
-            with self.subTest(head=head):
-                knowledge.save(self.dir / knowledge.STORE, head + held + "\n")
-                refused = Replies(reply(entry(5, self.src)))
-                self.assertEqual(self.run_gather(refused), 1)
-                self.assertIn("from K6 upward", refused.prompts[0])
-                self.assertIn("K5 is new but not above the store's Max id K5", self.rows()[-1]["reason"])
-                self.assertEqual(self.run_gather(Replies(reply(entry(6, self.src)))), 0)
-                parsed = knowledge.parse(self.store())
-                self.assertEqual(([e["id"] for e in parsed["entries"]], parsed["header"]["max_id"]), ([5, 6], 6))
-                (self.dir / knowledge.SOURCES).unlink()
+        knowledge.save(self.dir / knowledge.STORE, "# Knowledge\nVersion: 3. Gathered: never. Max id: K2.\n\n" + held + "\n")
+        refused = Replies(reply(entry(5, self.src)))
+        self.assertEqual(self.run_gather(refused), 1)
+        self.assertIn("from K6 upward", refused.prompts[0])
+        self.assertIn("K5 is new but not above the store's Max id K5", self.rows()[-1]["reason"])
+        self.assertEqual(self.run_gather(Replies(reply(entry(6, self.src)))), 0)
+        parsed = knowledge.parse(self.store())
+        self.assertEqual(([e["id"] for e in parsed["entries"]], parsed["header"]["max_id"]), ([5, 6], 6))
+
+    def test_a_store_holding_entries_under_no_header_is_refused_before_a_session(self):
+        # K3 was given out and dropped; only the lost header knew, so K3 could be taken again.
+        written = entry(1, self.src) + "\n\n" + entry(2, self.src) + "\n"
+        knowledge.save(self.dir / knowledge.STORE, written)
+        s = Replies(reply(entry(3, self.src)))
+        with self.assertRaises(gather.Refused) as refused:
+            self.run_gather(s)
+        self.assertIn("no `Version: … Max id: K<n>.` line", str(refused.exception))
+        self.assertEqual((s.prompts, self.rows(), self.store()), ([], [], written))
+
+    def test_new_ids_start_above_every_id_a_gather_dropped_whatever_the_header_says(self):
+        self.run_gather(Replies(reply(entry(1, self.src) + "\n\n" + entry(2, self.src) + "\n\n" + entry(3, self.src))))
+        self.unit(A, "0002_b", review_md="# Review\n## Round 1\nF1 x\n")
+        self.assertEqual(self.run_gather(Replies(reply(
+            entry(1, self.src) + "\n\n" + entry(2, self.src), [{"id": "K3", "reason": "wrong"}]))), 0)
+        # A person edits the header down to K2, below the dropped K3.
+        knowledge.save(self.dir / knowledge.STORE, self.store().replace("Max id: K3.", "Max id: K2."))
+        self.unit(A, "0003_c", review_md="# Review\n## Round 1\nF1 y\n")
+        s = Replies(reply(entry(1, self.src) + "\n\n" + entry(2, self.src) + "\n\n" + entry(3, f"{A}/0003_c/review.md Round 1 F1")))
+        self.assertEqual(self.run_gather(s), 1)
+        self.assertIn("from K4 upward", s.prompts[0])
+        self.assertIn("K3 is new but not above the store's Max id K3", self.rows()[-1]["reason"])
+
+    def test_the_highest_dropped_id_counts_only_done_rows(self):
+        self.journal.append({"kind": gather.KIND, "outcome": "done", "dropped": [{"id": "K9", "reason": "x"}, "junk"]})
+        self.journal.append({"kind": gather.KIND, "outcome": "failed", "dropped": [{"id": "K40", "reason": "x"}]})
+        self.assertEqual(gather.dropped_max(self.journal), 9)
 
     def test_a_store_holding_an_id_twice_is_refused_before_a_session(self):
         knowledge.save(self.dir / knowledge.STORE, entry(3, self.src) + "\n\n"

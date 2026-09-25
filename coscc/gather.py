@@ -243,7 +243,35 @@ def read_store(directory: Path) -> tuple[str, dict[str, Any]]:
         raise Refused(
             f"{directory / knowledge.STORE} holds " + ", ".join(f"K{n}" for n in twice)
             + " more than once; an id names one entry (R7) — renumber or merge them by hand first")
+    if parsed["entries"] and not knowledge.has_header(text):
+        # The header is the one record of ids given out and since dropped; without it a new
+        # entry could take one of them again (R7).
+        raise Refused(
+            f"{directory / knowledge.STORE} holds entries but no `Version: … Max id: K<n>.` line, "
+            "so the ids given out before cannot be known — put it back by hand first")
     return text, parsed
+
+
+def dropped_max(journal: Any) -> int:
+    """The highest id a `done` knowledge row of the run log names as dropped, `0` for none.
+
+    A header edited below an id given out and since dropped cannot be caught from the store
+    alone; this catches the ids a gather dropped. Rows under another `COS_WORKING_DIR` are
+    not read, and an entry deleted by hand is in no row."""
+    try:
+        rows = journal.records(kind=KIND)
+    except Exception as e:  # noqa: BLE001 — refused before anything is spent
+        raise Refused(f"the run log cannot be read, so the ids dropped before are unknown: "
+                      f"{type(e).__name__}: {e}") from e
+    ids = [0]
+    for row in rows:
+        if row.get("outcome") != "done" or not isinstance(row.get("dropped"), list):
+            continue
+        for item in row["dropped"]:
+            m = re.fullmatch(r"K?(\d+)", str(item.get("id") or "").strip()) if isinstance(item, dict) else None
+            if m:
+                ids.append(int(m.group(1)))
+    return max(ids)
 
 
 def plan_of(data_dir: str | os.PathLike[str] | None, mode: str) -> dict[str, Any]:
@@ -296,9 +324,9 @@ async def gather(
         manifest = load_manifest(manifest_path)
         _, before = planned["store"]
         header = dict(before["header"])
-        # A header edited by hand, or lost (`parse` reads it as `Max id: K0`), is not the
-        # highest id the store holds; new ids start above both (R7).
-        header["max_id"] = max([header["max_id"]] + [e["id"] for e in before["entries"]])
+        # A header edited down by hand is not the highest id given out; new ids start above
+        # it, every id the store holds and every id a gather dropped (R7).
+        header["max_id"] = max([header["max_id"], dropped_max(journal)] + [e["id"] for e in before["entries"]])
         # `all` starts from nothing and keeps `Max id` (R7); `new` from the store as it is.
         entries = [] if mode == "all" else list(before["entries"])
         rebuilt = [{"id": f"K{e['id']}", "reason": REBUILT} for e in before["entries"]] if mode == "all" else []
