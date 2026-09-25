@@ -24,6 +24,7 @@ from __future__ import annotations
 import reflex as rx
 from reflex.style import set_color_mode
 
+from coscc import backlog
 from coscc import hold as hold_rules
 from coscc import models
 from coscc import studio as s
@@ -31,6 +32,7 @@ from coscc.state import (
     LANE_COLOR,
     NAVIGATION,
     Activity,
+    BacklogRow,
     Cell,
     Event,
     GrantRow,
@@ -544,6 +546,8 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
                     s.badge("outcome: " + unit.outcome_text, unit.outcome_color)),
             # `0045` R14. `cos.mjs`'s hold, never worked out on the page.
             rx.cond(unit.hold_state != "", s.badge(unit.hold_state, "amber")),
+            # `0074`. Its place in the shortlist; changes nothing about the run button.
+            rx.cond(unit.shortlist_rank > 0, s.badge("#" + unit.shortlist_rank.to_string(), "iris")),
             rx.spacer(),
             rx.center(rx.text(unit.owner, size="1", weight="medium"),
                       width="27px", height="27px", border_radius="50%",
@@ -828,6 +832,7 @@ def _board() -> rx.Component:
         s.heading("Work board", "From an idea to something real. One clear step at a time."),
         _update_panel(),
         rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
+        rx.cond(P.has_workspace, _backlog_panel(), rx.fragment()),
         _running_steps(),
         rx.flex(
             rx.input(rx.input.slot(rx.icon("search", size=15)), id="work-search",
@@ -1531,6 +1536,88 @@ def _hold_panel() -> rx.Component:
             ),
             width="100%", id="hold-panel",
         ),
+    )
+
+
+def _backlog_line(row: rx.Var[BacklogRow]) -> rx.Component:
+    return rx.box(
+        rx.hstack(
+            s.text("#" + row.rank.to_string(), size="1", min_width="28px"),
+            rx.button(row.unit, on_click=P.show_backlog_history(row.unit), variant="ghost", size="1",
+                      font_family="ui-monospace, monospace"),
+            s.badge("value " + row.value, "iris"),
+            s.badge("effort " + row.effort, "gray"),
+            rx.cond(row.drift != "", s.badge(row.drift, "amber")),
+            s.text(row.by, size="1"),
+            spacing="2", align="center", flex_wrap="wrap",
+        ),
+        rx.cond(row.basis != "", s.text(row.basis, size="1", line_height="1.6", overflow_wrap="anywhere")),
+        rx.cond(row.warnings != "", s.text("⚠ " + row.warnings, size="1", color=rx.color("amber", 11))),
+        rx.cond(row.agent_differs != "", s.text(row.agent_differs, size="1", overflow_wrap="anywhere")),
+        width="100%", padding="8px 0", border_bottom=f"1px solid {s.LINE}",
+    )
+
+
+def _backlog_panel() -> rx.Component:
+    """`0074`. The shortlist, the rest in computed order, and the three write forms.
+
+    Display only: nothing here reaches the run button, a gate or `next` (R15). The
+    proposal's warning stands above its button, always (R19).
+    """
+    field = lambda name, value, label, **kw: rx.input(  # noqa: E731
+        placeholder=label, value=value, on_change=lambda v: P.set_backlog_field(name, v),
+        aria_label=label, id=f"backlog-{name}", size="1", **kw,
+    )
+    return rx.el.details(
+        rx.el.summary(s.text("Backlog — shortlist, estimates and relations", size="2"), cursor="pointer"),
+        s.panel(
+            s.text(P.backlog_note, size="1"),
+            s.text(P.backlog_recorded, size="1", margin_top="4px"),
+            s.eyebrow("SHORTLIST"),
+            rx.foreach(P.backlog_rows, _backlog_line),
+            rx.foreach(P.backlog_warnings, lambda w: s.text("⚠ " + w, size="1", color=rx.color("amber", 11))),
+            s.eyebrow("THE REST, IN COMPUTED ORDER"),
+            rx.foreach(P.backlog_rest, _backlog_line),
+            rx.cond(P.backlog_unestimated.length() > 0,
+                    s.text("Chưa có ước lượng: " + P.backlog_unestimated.join(", "), size="1")),
+            rx.cond(
+                P.history_unit != "",
+                rx.box(s.eyebrow("HISTORY OF " + P.history_unit),
+                       rx.foreach(P.history_lines, lambda line: s.text(line, size="1", overflow_wrap="anywhere"))),
+            ),
+            field("backlog_by", P.backlog_by, "Your name", width="100%", margin_top="8px"),
+            rx.hstack(
+                field("shortlist_input", P.shortlist_input, "Shortlist: unit names in order, at most 7",
+                      flex="1"),
+                field("shortlist_reason", P.shortlist_reason, "Why, in one line", flex="1"),
+                rx.button("Take the first 7", on_click=P.fill_shortlist, size="1", variant="soft"),
+                rx.button("Save shortlist", on_click=P.save_shortlist, size="1", id="backlog-save-shortlist"),
+                width="100%", flex_wrap="wrap",
+            ),
+            rx.hstack(
+                field("est_unit", P.est_unit, "Unit"), field("est_value", P.est_value, "Value 1–5", width="90px"),
+                field("est_effort", P.est_effort, "S / M / L", width="80px"),
+                field("est_basis", P.est_basis, "Basis, your own words", flex="1"),
+                rx.button("Save estimate", on_click=P.save_estimate, size="1"),
+                width="100%", flex_wrap="wrap",
+            ),
+            rx.hstack(
+                field("rel_unit", P.rel_unit, "Unit"),
+                rx.select(list(backlog.RELATIONS), value=P.rel_type,
+                          on_change=lambda v: P.set_backlog_field("rel_type", v), size="1"),
+                field("rel_other", P.rel_other, "Other unit"),
+                rx.select(list(backlog.OPS), value=P.rel_op,
+                          on_change=lambda v: P.set_backlog_field("rel_op", v), size="1"),
+                field("rel_reason", P.rel_reason, "Why, in one line", flex="1"),
+                rx.button("Save relation", on_click=P.save_relation, size="1"),
+                width="100%", flex_wrap="wrap",
+            ),
+            s.text(P.propose_warning, size="1", line_height="1.7", margin_top="8px", id="backlog-propose-warning"),
+            rx.button(rx.icon("sparkles", size=14), "Propose estimates", on_click=P.propose_estimates,
+                      loading=P.proposing, disabled=P.proposing, size="1", variant="soft", id="backlog-propose"),
+            width="100%", id="backlog-panel",
+        ),
+        width="100%",
     )
 
 

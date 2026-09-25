@@ -239,6 +239,73 @@ class Unit:
     hold_by: str = ""
     hold_date: str = ""
     hold_moves: list[str] = dataclasses.field(default_factory=list)
+    # `0074`. The unit's place in the shortlist in effect, 0 when it has none. A label only.
+    shortlist_rank: int = 0
+
+
+@dataclasses.dataclass
+class BacklogRow:
+    """`0074`. One line of the Backlog panel, copied from `Service.board`'s `backlog`."""
+
+    rank: int = 0
+    unit: str = ""
+    value: str = ""
+    effort: str = ""
+    basis: str = ""
+    by: str = ""
+    drift: str = ""
+    warnings: str = ""
+    agent_differs: str = ""
+
+
+def _backlog_row(entry: dict, rank: int) -> BacklogRow:
+    est = entry.get("estimate") or {}
+    effort = str(est.get("effort") or "")
+    if est.get("effort_source") == "guess":
+        effort = f"{effort} (ước đoán)"
+    basis = " · ".join(x for x in (str(est.get("basis") or ""), str(est.get("effort_basis") or "")) if x)
+    other = entry.get("agent_differs") or {}
+    return BacklogRow(
+        rank=rank, unit=str(entry.get("unit") or ""),
+        value=str(est.get("value") or "—"), effort=effort or "—", basis=basis, by=str(est.get("by") or ""),
+        drift=(f"lệch — hạng tính được {entry.get('computed') or 'không có'}" if entry.get("drift") else ""),
+        warnings="; ".join(entry.get("warnings") or []),
+        agent_differs=(
+            f"agent đề xuất: value {other.get('value')}, effort {other.get('effort')} — {other.get('basis')}"
+            if other else ""
+        ),
+    )
+
+
+def backlog_view(data: dict) -> dict:
+    """`0074`. The panel's fields from the board's `backlog`; copies, decides nothing."""
+    b = data.get("backlog") or {}
+    cuts = b.get("terciles")
+    note = [f"{b.get('measured_count', 0)} unit finished có báo chi phí"]
+    if cuts:
+        note.append(
+            f"tercile chi phí ≤${cuts['cost_usd'][0]:.2f} S, ≤${cuts['cost_usd'][1]:.2f} M; "
+            f"lượt ≤{cuts['turns'][0]} S, ≤{cuts['turns'][1]} M"
+        )
+    if b.get("undiscriminating"):
+        note.append(
+            f"backlog có {len(b.get('backlog') or [])} unit, không quá 7: lúc này shortlist không phân biệt được gì"
+        )
+    record = b.get("shortlist_record") or {}
+    return {
+        "backlog_rows": [_backlog_row(e, int(e.get("rank") or 0)) for e in b.get("shortlist") or []],
+        "backlog_rest": [_backlog_row(e, int(e.get("computed") or 0)) for e in b.get("order") or []],
+        "backlog_unestimated": list(b.get("unestimated") or []),
+        "backlog_note": "; ".join(note),
+        "backlog_recorded": (
+            f"Ghi lần {record.get('n')} lúc {record.get('at')} bởi {record.get('by')}: {record.get('reason')}"
+            if record else "Chưa có shortlist nào được ghi."
+        ),
+        "backlog_warnings": [f"{w.get('unit')}: {w.get('text')}" for w in b.get("warnings") or []]
+        + list(b.get("problems") or []),
+        "backlog_suggested": list(b.get("suggested") or []),
+        "propose_warning": str(b.get("propose_warning") or ""),
+    }
 
 
 def _outcome_fields(label: dict | None) -> dict:
@@ -823,6 +890,32 @@ class StudioState(rx.State):
     hold_reason: str = ""
     hold_by: str = ""
     holding: bool = False
+    # `0074`. The Backlog panel, copied from `Service.board`'s `backlog` by `backlog_view`,
+    # and what a person types into it. `backlog_by` is a claim like `hold_by`.
+    backlog_rows: list[BacklogRow] = []
+    backlog_rest: list[BacklogRow] = []
+    backlog_unestimated: list[str] = []
+    backlog_note: str = ""
+    backlog_recorded: str = ""
+    backlog_warnings: list[str] = []
+    backlog_suggested: list[str] = []
+    propose_warning: str = ""
+    _backlog_history: dict = {}
+    history_unit: str = ""
+    history_lines: list[str] = []
+    backlog_by: str = ""
+    shortlist_input: str = ""
+    shortlist_reason: str = ""
+    est_unit: str = ""
+    est_value: str = ""
+    est_effort: str = ""
+    est_basis: str = ""
+    rel_unit: str = ""
+    rel_other: str = ""
+    rel_type: str = "liên quan"
+    rel_op: str = "add"
+    rel_reason: str = ""
+    proposing: bool = False
 
     # -- sessions
     conversations: list[Conversation] = []
@@ -1106,6 +1199,9 @@ class StudioState(rx.State):
             return
 
         self.stages = list(data["stages"])
+        for name, value in backlog_view(data).items():
+            setattr(self, name, value)
+        self._backlog_history = dict((data.get("backlog") or {}).get("history") or {})
         self.trees = {
             u["name"]: tree_line(u.get("worktree")) for u in data.get("units") or []
         }
@@ -1172,6 +1268,7 @@ class StudioState(rx.State):
                     **_outcome_fields(u.get("outcome_label")),
                     live=_activities(u["name"], self._running_read),
                     **_hold_fields(u),
+                    shortlist_rank=int((u.get("backlog") or {}).get("rank") or 0),
                 )
             )
         self.units = units
@@ -2114,6 +2211,80 @@ class StudioState(rx.State):
         await self._load_board()
         self._load_activity()
         yield StudioState.load_next
+
+    # -- backlog (`0074`). Every handler calls `SERVICE` and copies; none decides (R12, R15).
+
+    @rx.event
+    def set_backlog_field(self, name: str, value: str):
+        if name in ("backlog_by", "shortlist_input", "shortlist_reason", "est_unit", "est_value", "est_effort",
+                    "est_basis", "rel_unit", "rel_other", "rel_type", "rel_op", "rel_reason"):
+            setattr(self, name, value)
+
+    @rx.event
+    def fill_shortlist(self):
+        """R12. The first seven of the computed order, into the box. A person still saves it."""
+        self.shortlist_input = ", ".join(self.backlog_suggested)
+
+    @rx.event
+    def show_backlog_history(self, unit: str):
+        self.history_unit = unit
+        self.history_lines = [
+            (f"{h.get('at')} · {h.get('by')} · value {h.get('value')}, effort {h.get('effort')} — {h.get('basis')}"
+             if h.get("kind") == "estimate" else
+             f"{h.get('at')} · {h.get('by')} · {h.get('op')} {h.get('unit')} {h.get('type')} {h.get('other')} — {h.get('reason')}")
+            for h in self._backlog_history.get(unit) or []
+        ]
+
+    async def _backlog_write(self, call) -> None:
+        try:
+            await call
+        except Invalid as e:
+            self.notice = f"Not recorded: {e}"
+            return
+        self.notice = "Recorded in the run log. No gate reads it and nothing was started."
+        await self._load_board()
+
+    @rx.event
+    async def save_shortlist(self):
+        names = [n for n in self.shortlist_input.replace(",", " ").split() if n]
+        await self._backlog_write(SERVICE.record_shortlist(self.cwd, names, self.shortlist_reason, self.backlog_by))
+
+    @rx.event
+    async def save_estimate(self):
+        await self._backlog_write(SERVICE.record_estimate(
+            self.cwd, self.est_unit.strip(), self.est_value.strip(), self.est_effort.strip(), self.est_basis,
+            self.backlog_by,
+        ))
+
+    @rx.event
+    async def save_relation(self):
+        await self._backlog_write(SERVICE.record_relation(
+            self.cwd, self.rel_unit.strip(), self.rel_other.strip(), self.rel_type, self.rel_op, self.rel_reason,
+            self.backlog_by,
+        ))
+
+    @rx.event
+    async def propose_estimates(self):
+        """R17. Opens one paid session; the warning above the button says so (R19)."""
+        if self.proposing:
+            return
+        self.proposing = True
+        yield
+        done: dict = {}
+        try:
+            async for kind, payload in SERVICE.propose_estimates(self.cwd):
+                if kind == "done":
+                    done = payload.get("estimate") or {}
+        except Invalid as e:
+            self.notice = f"Not started: {e}"
+            return
+        finally:
+            self.proposing = False
+        self.notice = (
+            f"Proposal {done.get('outcome')}: {done.get('written', 0)} recorded, "
+            f"{len(done.get('rejected') or [])} refused" + (f" — {done['detail']}" if done.get("detail") else "")
+        )
+        await self._load_board()
 
     @rx.event
     def set_new_slug(self, value: str):
