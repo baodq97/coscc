@@ -21,6 +21,7 @@ that answers where those skills are, and a step whose rules it cannot find does 
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -1239,7 +1240,9 @@ class Runner:
                 **({"plan_drift": plan_drift} if plan_drift is not None else {}),
                 **({"shortlist": shortlist} if shortlist is not None else {}),
                 **pr_extra,
-                **({"run": recorder.run} if recorder is not None else {}),
+                # `0092` R5: whose step this is, so the next start can tell one this process
+                # still runs from one the app went down under.
+                **({"run": recorder.run, "pid": os.getpid()} if recorder is not None else {}),
             )
 
         denials = Denials()
@@ -1447,6 +1450,38 @@ class Runner:
             if watch and not shutting_down and spike_md is None:
                 # `0080` R6. Nothing wrote it: a Stop withheld it, or there was no file.
                 spike_md = "withheld" if outcome == "stopped" else "none"
+            # `0073` R6. Not for an app going down: `_drive` writes what it can, and no `end`.
+            # `0092` R1: closed before the attempt record rather than after it, so the turns
+            # it counts go into both.
+            run_fields: dict[str, Any] = {}
+            stored: int | None = None
+            stored_from = ""
+            if recorder is not None and not shutting_down:
+                try:
+                    lost = await recorder.close(outcome, detail)
+                except Exception:  # noqa: BLE001 - R5: how many is unknown, so all of them
+                    lost = max(1, int(getattr(recorder, "seq", 0) or 0))
+                run_fields = {"run": recorder.run, "events_lost": lost}
+                if outcome != "done":
+                    try:
+                        stored, stored_from = await recorder.stored_turns()
+                    except Exception:  # noqa: BLE001 - the `end` row never depends on it
+                        stored = None
+            # `0092` spec Design 2. A step that did not finish counts its turns from its
+            # events, and keeps the CLI's own count, when one came, as `cli_turns`. With no
+            # `ResultMessage` there is no `cost_usd` at all, never a zero (R2). `done` is
+            # written as it always was (R10).
+            cost_fields: dict[str, Any] = dict(cost)
+            if recorder is not None and not shutting_down and outcome != "done":
+                if isinstance(stored, int) and stored > 0:
+                    if cost:
+                        cost_fields["cli_turns"] = cost_fields.pop("turns", None)
+                    cost_fields["turns"] = stored
+                    if stored_from == "memory":
+                        cost_fields["turns_from"] = "memory"
+                if not cost and outcome != "stopped":
+                    # A Stop's `end` says this below, beside `stopped_by`, as it has since `0034`.
+                    cost_fields["cost_unknown"] = True
             # C6: an app going down writes neither record. No `end` is what an
             # interrupted step looks like, and the next start says nothing about it.
             record = self.journal is not None and not shutting_down
@@ -1463,7 +1498,7 @@ class Runner:
                         outcome=outcome,
                         terminal=terminal or None,
                         error=error,
-                        turns=cost.get("turns"),
+                        turns=cost_fields.get("turns"),
                         cost_usd=cost.get("cost_usd"),
                         session_id=session_id or None,
                         **fields,
@@ -1480,14 +1515,6 @@ class Runner:
                 except Exception:
                     # The same rule as the attempt record: the `end` row never depends on it.
                     extra = {}
-            # `0073` R6. Not for an app going down: `_drive` writes what it can, and no `end`.
-            run_fields: dict[str, Any] = {}
-            if recorder is not None and not shutting_down:
-                try:
-                    lost = await recorder.close(outcome, detail)
-                except Exception:  # noqa: BLE001 - R5: how many is unknown, so all of them
-                    lost = max(1, int(getattr(recorder, "seq", 0) or 0))
-                run_fields = {"run": recorder.run, "events_lost": lost}
             if record:
                 self.journal.finished(
                     journal_key, unit, stage, outcome,
@@ -1503,7 +1530,7 @@ class Runner:
                         if outcome == "stopped"
                         else {}
                     ),
-                    **cost,
+                    **cost_fields,
                     **extra,
                     **run_fields,
                     # `0080` R6: only a spike's `end` carries it.

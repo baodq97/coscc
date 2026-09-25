@@ -118,12 +118,12 @@ class TheServerIsHeld(unittest.TestCase):
     """`0068` plan step 5. `main` keeps its own `uvicorn.Server`, registers it for the
     updater, and after `run()` returns installs only when a hand-off was left."""
 
-    def main_with(self, on_run, order=None):
+    def main_with(self, on_run, order=None, recover=None):
         import contextlib
         import io
         from unittest import mock
 
-        from coscc import events, update
+        from coscc import events, recovery, update
 
         order = [] if order is None else order
 
@@ -141,6 +141,9 @@ class TheServerIsHeld(unittest.TestCase):
             # `0073`: never the real `cos.db` of whoever runs the tests.
             stack.enter_context(mock.patch.object(
                 events, "purge_on_start", lambda config: order.append("purge") or (0, 0)))
+            stack.enter_context(mock.patch.object(
+                recovery, "recover_on_start",
+                recover or (lambda config: order.append("recover") or 0)))
             stack.enter_context(mock.patch("uvicorn.Server", FakeServer))
             stack.enter_context(mock.patch("uvicorn.Config", lambda *a, **k: (a, k)))
             stack.enter_context(mock.patch.object(run.frontend, "is_packaged", lambda: False))
@@ -169,7 +172,7 @@ class TheServerIsHeld(unittest.TestCase):
 
         order: list[str] = []
         self.main_with(lambda server: None, order)
-        self.assertEqual(order, ["purge", "server"])
+        self.assertEqual(order, ["recover", "purge", "server"])
 
         def fails(config):
             raise RuntimeError("busy")
@@ -181,6 +184,34 @@ class TheServerIsHeld(unittest.TestCase):
         with mock.patch.object(events, "purge_on_start", fails), contextlib.redirect_stderr(err):
             run.purge_events(object())
         self.assertIn("step events were not purged this start", err.getvalue())
+
+    def test_a_recovery_that_fails_is_one_line_and_the_app_goes_on(self):
+        """`0092` R5: one line on stderr, and `main` still reaches the purge and the server."""
+        import contextlib
+        import io
+        from unittest import mock
+
+        from coscc import recovery
+
+        def fails(config):
+            raise RuntimeError("busy")
+
+        err = io.StringIO()
+        with mock.patch.object(recovery, "recover_on_start", fails), contextlib.redirect_stderr(err):
+            run.recover_steps(object())
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("were not ended this start: RuntimeError: busy", lines[0])
+
+        order: list[str] = []
+
+        def fails_in_order(config):
+            order.append("recover")
+            raise RuntimeError("busy")
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            code, _ = self.main_with(lambda server: None, order, recover=fails_in_order)
+        self.assertEqual((code, order), (None, ["recover", "purge", "server"]))
 
     def test_uvicorn_serves_the_guarded_app_and_trusts_no_proxy_header(self):
         """`0070` step 4: the guard is the target, and `X-Forwarded-For` is never read."""

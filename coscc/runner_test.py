@@ -11,6 +11,7 @@ what is worth testing cheaply; a real run belongs to `scripts/verify_0005.py`.
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import tempfile
 import unittest
@@ -2792,6 +2793,88 @@ class AStoppedStepEndsStopped(unittest.TestCase):
             self.assertEqual([r for r in journal.records() if r["kind"] == "attempt"], [])
 
 
+class ADeadStepKeepsItsTurns(unittest.TestCase):
+    """`0092` R1-R3. A step that dies after three turns ends `failed` or `exhausted` as before,
+    with the turns its recorder stored, and no `cost_usd` unless the CLI sent one."""
+
+    class Dies:
+        def __init__(self, then):
+            self.then = then
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            from claude_agent_sdk import AssistantMessage, TextBlock
+
+            for mid in ("m1", "m2", "m3"):
+                kw["step"].recorder.message(
+                    AssistantMessage(content=[TextBlock(mid)], model="m", message_id=mid)
+                )
+            yield ("session", "s-dead")
+            if isinstance(self.then, BaseException):
+                raise self.then
+            yield ("done", self.then)
+
+    def _run(self, then):
+        from coscc import events, steps
+        from coscc.data import Data
+
+        with tempfile.TemporaryDirectory() as d:
+            repo = _git_repo(Path(d))
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            data = Data(d)
+            journal = Journal(d, data)
+            running = steps.Registry().claim(d, UNIT, "impl")
+            running.handle.recorder = events.Recorder("r-dead", data, d, d, UNIT, "impl")
+
+            async def go():
+                return [ev async for ev in Runner(sessions=self.Dies(then), journal=journal).run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d,
+                    unit=UNIT, stage="impl", artifact="impl.md", stages=STAGES,
+                    mode="manual", cwd=str(repo), running=running,
+                )]
+
+            asyncio.run(go())
+            [start] = journal.records(d, UNIT, kind="start")
+            [attempt] = journal.records(d, UNIT, kind="attempt")
+            [end] = journal.records(d, UNIT, kind="end")
+            return start, attempt, end, data.step_turns("r-dead")
+
+    def _no_cost(self, end, attempt, stored):
+        self.assertEqual(end["outcome"], "failed")
+        self.assertEqual((end["turns"], stored), (3, 3))
+        self.assertIs(end["cost_unknown"], True)
+        self.assertNotIn("cost_usd", end)
+        self.assertNotIn("cli_turns", end)
+        self.assertNotIn("turns_from", end)
+        self.assertEqual(attempt["turns"], end["turns"])
+
+    def test_an_sdk_error_keeps_the_turns_and_claims_no_cost(self):
+        start, attempt, end, stored = self._run(RuntimeError("the stream broke"))
+        self._no_cost(end, attempt, stored)
+        self.assertEqual(start["pid"], os.getpid())
+        self.assertEqual(end["run"], "r-dead")
+        self.assertIn("the stream broke", end["detail"])
+
+    def test_a_killed_cli_is_the_same(self):
+        from claude_agent_sdk._errors import ProcessError
+
+        start, attempt, end, stored = self._run(
+            ProcessError("Command failed with exit code -9", exit_code=-9)
+        )
+        self._no_cost(end, attempt, stored)
+        self.assertIn("exit code -9", end["detail"])
+
+    def test_a_ceiling_keeps_the_clis_count_apart(self):
+        start, attempt, end, stored = self._run({
+            "session_id": "s-dead", "terminal_reason": "error_max_turns",
+            "cost": {"turns": 7, "cost_usd": 0.4},
+        })
+        self.assertEqual(end["outcome"], "exhausted")
+        self.assertEqual((end["turns"], end["cli_turns"], end["cost_usd"]), (3, 7, 0.4))
+        self.assertNotIn("cost_unknown", end)
+        self.assertEqual(attempt["turns"], 3)
+        self.assertEqual(attempt["cost_usd"], 0.4)
+
+
 class RecordingChangesNothing(unittest.TestCase):
     """`0073` R5. The same step with a recorder and without one: the same outcome, the same
     artifact, the same `start` and `end` but for `run` and `events_lost`. A recorder that
@@ -2812,7 +2895,7 @@ class RecordingChangesNothing(unittest.TestCase):
                 raise RuntimeError(name)
             return boom
 
-    IGNORED = ("at", "run", "events_lost", "session_id")
+    IGNORED = ("at", "run", "events_lost", "session_id", "pid")
 
     def _once(self, make_recorder):
         """`make_recorder(data)` gives the step's recorder; `None` runs it with no row at all."""

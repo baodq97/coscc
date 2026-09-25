@@ -30,6 +30,9 @@ directory, and four units in it, always the same, so a spec can name its address
                            (`0082` R19); one `plan` run of it, ended, in the run log
                            (`0089` R16), so `/`, `/activity` and its Timeline show a time
 
+The run log holds, since `0092`, a `spec` run that ended `done` for $0.52 and an `impl` run
+that ended `failed` after 109 turns with no known cost on `0002_open-question`, and an
+`impl` run on `0004_finished` that ended `failed` with neither (`seed_runs`),
 and one chat conversation in a temporary `CLAUDE_CONFIG_DIR`, titled `Backlog screen
 plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
 visible text as `<address slug>-<W>x<H>.txt`.
@@ -233,6 +236,22 @@ def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     journal.finished(key, "0004_finished", "plan", "done", session_id=str(uuid.uuid4()))
 
 
+def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
+    """`0092` spec Design, *Screens*: a run whose cost is unknown on two units and one whose
+    cost is known, written where the app reads its run log, under the key it reads by."""
+    from coscc.data import Data
+    from coscc.journal import Journal
+
+    journal, key = Journal(work, Data(data_dir)), str(proj.resolve())
+    journal.started(key, "0002_open-question", "spec", "manual")
+    journal.finished(key, "0002_open-question", "spec", "done", turns=4, cost_usd=0.52)
+    journal.started(key, "0002_open-question", "impl", "autonomous", run="capture-run-1")
+    journal.finished(key, "0002_open-question", "impl", "failed", run="capture-run-1", turns=109,
+                     cost_unknown=True, detail="ProcessError: Command failed with exit code -9")
+    journal.started(key, "0004_finished", "impl", "autonomous")
+    journal.finished(key, "0004_finished", "impl", "failed", cost_unknown=True)
+
+
 def shoot(browser, base: str, token: str, address: str, size: tuple[int, int], out: Path) -> tuple[Path, str, str, bool]:
     """One address at one size: the PNG, the URL it ended on, the visible text, and whether
     the image is the full page. Raises `RuntimeError` when the page is not the app's."""
@@ -371,6 +390,7 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                     return EXIT_BROKEN
                 try:
                     make_fixture(api, proj)
+                    seed_runs(work, data_dir, proj)
                 except RuntimeError as e:
                     print(str(e), file=sys.stderr)
                     return EXIT_BROKEN

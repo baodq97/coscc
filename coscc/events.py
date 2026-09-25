@@ -322,6 +322,20 @@ class Recorder:
             pass
         return self.lost
 
+    async def stored_turns(self) -> tuple[int | None, str]:
+        """`0092` R1. After `close`: the turns of this run as stored, and where the number came
+        from -- `"events"`, or `"memory"` when `cos.db` could not be read and the count held
+        here stands in for it. Never raises, bar a cancel."""
+        try:
+            n = await asyncio.wait_for(asyncio.to_thread(
+                self.data.step_turns, self.run, timeout=CLOSE_WAIT,
+            ), CLOSE_WAIT * 2)
+            return int(n), "events"
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - `Busy`, a timeout: the count in memory stands in
+            return (self.turns if isinstance(self.turns, int) else None), "memory"
+
     async def abandon(self) -> None:
         """The app is going down with the step running (spec C9): what can be written is, and
         no `end` -- the index row keeps `ended_at` empty, which reads `ended-unknown`."""

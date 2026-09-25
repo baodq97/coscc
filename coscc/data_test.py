@@ -229,6 +229,26 @@ class AStepsEvents(unittest.TestCase):
         self.assertEqual(freed, 2 * size)
         self.assertEqual(self.data.step_events_purge(now - 30 * day, size, "later"), (0, 0))
 
+    def test_turns_are_the_stored_turn_events_of_the_run(self):
+        """`0092` R1: three `turn`s and two `text`s count three; a run with nothing counts 0."""
+        self.data.step_run_open("r", "/w", "/w/ws", "0001_a", "impl", 1000)
+        kinds = ["turn", "text", "turn", "text", "turn"]
+        self.data.step_events_add("r", [self.ev("r", n, kind=k) for n, k in enumerate(kinds, 1)])
+        self.assertEqual(self.data.step_turns("r"), 3)
+        self.assertEqual(self.data.step_turns("nothing"), 0)
+
+    def test_open_runs_leave_out_the_closed_and_the_purged(self):
+        """`0092` R5: only a row nobody closed or purged, with its last event's `at`."""
+        for run, started in (("open", 1000), ("empty", 2000), ("closed", 3000), ("purged", 500)):
+            self.data.step_run_open(run, "/w", "/w/ws", "0001_a", "impl", started)
+        self.data.step_events_add("open", [self.ev("open", 1, at=1500), self.ev("open", 2, at=1700)])
+        self.data.step_run_close("closed", 3500, 0)
+        self.data.step_events_add("purged", [self.ev("purged", 1, at=600)])
+        self.data.step_events_purge(900, 10**9, "2026-10-01T00:00:00+00:00")
+        rows = self.data.step_runs_open()
+        self.assertEqual([(r["run"], r["last_at"]) for r in rows], [("open", 1700), ("empty", None)])
+        self.assertEqual(rows[0]["root"], "/w")
+
     def test_opening_an_existing_database_writes_nothing(self):
         """The common path is one pragma read. A write on every open is a lock on every open."""
         with tempfile.TemporaryDirectory() as d:
