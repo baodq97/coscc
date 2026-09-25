@@ -764,6 +764,14 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
         self.assertIn("không phân biệt", view["backlog_note"])
         self.assertEqual(view["propose_warning"], "paid")
 
+    def test_r9_a_relation_reads_from_both_sides(self):
+        from coscc.state import _relations_text
+
+        self.assertEqual(_relations_text([{"type": "thay thế", "other": "0010_y", "direction": "in"},
+                                          {"type": "trùng", "other": "0011_z", "direction": "out"}]),
+                         "bị thay thế bởi 0010_y; trùng 0011_z")
+        self.assertEqual(_relations_text(None), "")
+
     def test_the_card_carries_its_rank(self):
         import asyncio
         from unittest import mock

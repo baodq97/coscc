@@ -239,8 +239,10 @@ class Unit:
     hold_by: str = ""
     hold_date: str = ""
     hold_moves: list[str] = dataclasses.field(default_factory=list)
-    # `0074`. The unit's place in the shortlist in effect, 0 when it has none. A label only.
+    # `0074`. The unit's place in the shortlist in effect, 0 when it has none, and its
+    # relations in one line (R9). Labels only.
     shortlist_rank: int = 0
+    relations_text: str = ""
 
 
 @dataclasses.dataclass
@@ -274,6 +276,15 @@ def _backlog_row(entry: dict, rank: int) -> BacklogRow:
             f"agent đề xuất: value {other.get('value')}, effort {other.get('effort')} — {other.get('basis')}"
             if other else ""
         ),
+    )
+
+
+def _relations_text(relations: list | None) -> str:
+    """R9. `thay thế` and `phụ thuộc` read from the side they are on; the other two either way."""
+    words = {("thay thế", "in"): "bị thay thế bởi", ("phụ thuộc", "in"): "được cần bởi"}
+    return "; ".join(
+        f"{words.get((r.get('type'), r.get('direction')), r.get('type'))} {r.get('other')}"
+        for r in relations or []
     )
 
 
@@ -1269,6 +1280,7 @@ class StudioState(rx.State):
                     live=_activities(u["name"], self._running_read),
                     **_hold_fields(u),
                     shortlist_rank=int((u.get("backlog") or {}).get("rank") or 0),
+                    relations_text=_relations_text((u.get("backlog") or {}).get("relations")),
                 )
             )
         self.units = units

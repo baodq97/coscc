@@ -554,6 +554,9 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
                       background=rx.color("gray", 4), color=s.MUTED),
             width="100%", align="center", margin_top="18px",
         ),
+        # `0074` R9. Its relations, on both units' cards.
+        rx.cond(unit.relations_text != "",
+                s.text(unit.relations_text, size="1", margin_top="7px", overflow_wrap="anywhere")),
         # `0051`. One line per session on this unit, from `Service.running` alone (R8).
         rx.foreach(unit.live, _activity_line),
         id="unit-" + unit.id, data_testid="work-card", type="button",
