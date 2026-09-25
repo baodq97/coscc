@@ -710,6 +710,25 @@ class Data:
             ).fetchone()[0]
         return out
 
+    def step_turns(self, run: str, timeout: float | None = None) -> int:
+        """`0092` R1. How many `turn` events of `run` are stored: the step's turns, counted
+        from what reached disk rather than from what the recorder held in memory."""
+        with self.connect(timeout=timeout) as conn:
+            return int(conn.execute(
+                "SELECT COUNT(*) FROM step_events WHERE run = ? AND kind = 'turn'", (run,)
+            ).fetchone()[0])
+
+    def step_runs_open(self) -> list[dict[str, Any]]:
+        """`0092` R5. Every index row nobody closed and nobody purged, each with the `at` of
+        its last stored event as `last_at` (None when it has none), oldest first."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT r.*, (SELECT MAX(e.at) FROM step_events e WHERE e.run = r.run) AS last_at "
+                "FROM step_runs r WHERE r.ended_at IS NULL AND r.purged_at IS NULL "
+                "ORDER BY r.started_at, r.run"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def step_events_page(self, run: str, before: int | None, limit: int) -> tuple[list[dict[str, Any]], bool]:
         """The last `limit` events with `seq < before` (all of them when `before` is None),
         oldest first, and whether any older one is stored."""
