@@ -297,57 +297,91 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         from coscc.instructions_test import plant
         from coscc.runner import CLAUDE_CODE_PRESET
 
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as data:
             plant(Path(d))
             block = instructions.read(d).text
-            preset = _options(Config(), d, None, system_prompt=CLAUDE_CODE_PRESET)
-            bare = _options(Config(), d, None)
+            written = Path(data) / sessions.PROMPT_FILE
+            preset = _options(Config(), d, None, system_prompt=CLAUDE_CODE_PRESET, data_dir=data)
+            self.assertEqual(written.read_text(encoding="utf-8"), block)
+            written.unlink()
+            bare = _options(Config(), d, None, data_dir=data)
+            self.assertEqual(written.read_text(encoding="utf-8"), block)
         self.assertIn("CANARY-DOTCLAUDE", block)
-        self.assertEqual(
-            preset.system_prompt, {"type": "preset", "preset": "claude_code", "append": block}
-        )
-        self.assertEqual(bare.system_prompt, block)
+        # The preset itself stays bare; the block rides on the CLI's file flag.
+        self.assertEqual(preset.system_prompt, {"type": "preset", "preset": "claude_code"})
+        self.assertEqual(preset.extra_args, {"append-system-prompt-file": str(written)})
+        self.assertEqual(bare.system_prompt, {"type": "file", "path": str(written)})
+        self.assertEqual(bare.extra_args, {})
         # The module's constant is still bare.
         self.assertNotIn("append", CLAUDE_CODE_PRESET)
 
     def test_a_directory_with_no_instructions_leaves_the_prompt_as_it_was(self):
         from coscc.runner import CLAUDE_CODE_PRESET
 
-        self.assertIsNone(_options(Config(), "/p", None).system_prompt)
-        got = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET).system_prompt
-        self.assertNotIn("append", got)
+        with tempfile.TemporaryDirectory() as data:
+            self.assertIsNone(_options(Config(), "/p", None, data_dir=data).system_prompt)
+            got = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET, data_dir=data)
+            self.assertNotIn("append", got.system_prompt)
+            self.assertEqual(got.extra_args, {})
+            # Nothing is written when there is nothing to carry.
+            self.assertEqual(list(Path(data).iterdir()), [])
+
+    def test_instructions_past_the_argument_limit_never_reach_argv(self):
+        # `0088` review round 1, F1. Linux refuses one argument over `MAX_ARG_STRLEN`
+        # (32 pages, 128 KiB at 4 KiB pages) with `E2BIG`; a block four times that must
+        # leave argv no longer than it is without one.
+        from coscc.runner import CLAUDE_CODE_PRESET
+
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as data:
+            (Path(d) / "CLAUDE.md").write_text("x" * (512 * 1024) + "\nCANARY-BIG\n",
+                                                encoding="utf-8")
+            for prompt in (None, CLAUDE_CODE_PRESET):
+                with self.subTest(preset=prompt is not None):
+                    options = _options(Config(), d, None, system_prompt=prompt, data_dir=data)
+                    transport = SubprocessCLITransport(prompt="", options=options)
+                    transport._cli_path = "claude"
+                    argv = transport._build_command()
+                    self.assertLess(max(len(a) for a in argv), 4096)
+                    flag = "--append-system-prompt-file" if prompt else "--system-prompt-file"
+                    carried = Path(argv[argv.index(flag) + 1]).read_text(encoding="utf-8")
+                    self.assertTrue(carried.endswith("CANARY-BIG\n"))
+                    self.assertNotIn("--append-system-prompt", argv)
+                    self.assertNotIn("--system-prompt", argv)
 
     def test_every_shape_of_session_reaches_the_cli_with_no_source_and_no_mcp(self):
         # R1, R2 at the argv, the way `scripts/verify_0037.py` builds it: no tool, the read
-        # tools, a preset with an `append`, and a string system prompt.
+        # tools, a preset with the block appended, and the block as the whole prompt.
         from coscc import policy
         from coscc.instructions_test import plant
         from coscc.runner import CLAUDE_CODE_PRESET
 
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as data:
             plant(Path(d))
             shapes = {
                 "no tool": _options(Config(), "/p", None, tools=[]),
                 "read tools": _options(Config(), "/p", None, tools=list(policy.READ_TOOLS)),
-                "preset with append": _options(
-                    Config(), d, None, tools=["Read"], system_prompt=CLAUDE_CODE_PRESET
+                "preset with the block": _options(
+                    Config(), d, None, tools=["Read"], system_prompt=CLAUDE_CODE_PRESET,
+                    data_dir=data,
                 ),
-                "string": _options(Config(), d, None, tools=[]),
+                "the block alone": _options(Config(), d, None, tools=[], data_dir=data),
             }
-        for name, options in shapes.items():
-            transport = SubprocessCLITransport(prompt="", options=options)
-            transport._cli_path = "claude"
-            argv = transport._build_command()
-            self.assertIn("--setting-sources=", argv, name)
-            self.assertFalse(
-                [a for a in argv if a.startswith("--setting-sources=") and a != "--setting-sources="],
-                name,
-            )
-            self.assertIn("--strict-mcp-config", argv, name)
-        preset_argv = SubprocessCLITransport(prompt="", options=shapes["preset with append"])
-        preset_argv._cli_path = "claude"
-        argv = preset_argv._build_command()
-        self.assertIn("CANARY-ROOT", argv[argv.index("--append-system-prompt") + 1])
+            argvs = {}
+            for name, options in shapes.items():
+                transport = SubprocessCLITransport(prompt="", options=options)
+                transport._cli_path = "claude"
+                argv = argvs[name] = transport._build_command()
+                self.assertIn("--setting-sources=", argv, name)
+                self.assertFalse(
+                    [a for a in argv if a.startswith("--setting-sources=") and a != "--setting-sources="],
+                    name,
+                )
+                self.assertIn("--strict-mcp-config", argv, name)
+            for name, flag in (("preset with the block", "--append-system-prompt-file"),
+                               ("the block alone", "--system-prompt-file")):
+                argv = argvs[name]
+                carried = Path(argv[argv.index(flag) + 1]).read_text(encoding="utf-8")
+                self.assertIn("CANARY-ROOT", carried, name)
 
     # `0033`. Effort is chosen per stage and label; `_options` only carries it.
 

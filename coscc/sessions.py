@@ -102,6 +102,9 @@ def child_env(
 # What every throwaway data root starts with. `_drop` removes nothing without it.
 SCRATCH_PREFIX = "coscc-session-"
 
+# The project's instructions, in a session's data root, for the CLI to read (`0088`, F1).
+PROMPT_FILE = "project-instructions.md"
+
 
 def scratch_dir(app_root: Path) -> Path:
     """A new, empty data root for one session: `0700`, unguessable, in the OS temp dir.
@@ -487,9 +490,11 @@ def _options(
 
     Since `0088` no settings source is loaded, for any session, so the CLI reads nothing of
     the user's, the machine's or the project's own configuration. The project's
-    instructions come back through `coscc/instructions.py`: into the preset's `append`
-    when there is a preset, as the whole system prompt when there is not, and not at all
-    when `cwd` holds none -- the session is then exactly the one it was before.
+    instructions come back through `coscc/instructions.py`, written to `PROMPT_FILE` in
+    `data_dir`: appended to the preset when there is one (`--append-system-prompt-file`),
+    as the whole system prompt when there is not (`--system-prompt-file`), and not at all
+    when `cwd` holds none -- the session is then exactly the one it was before, and
+    nothing is written.
 
     `data_dir` is the session's own data root (`0076`); the database it protects is the
     one `config` names. Building a `Data` touches no disk.
@@ -544,10 +549,20 @@ def _options(
     project = instructions.read(cwd).text
     if system_prompt is not None:
         options.system_prompt = dict(system_prompt)
-        if project:
-            options.system_prompt["append"] = project
-    elif project:
-        options.system_prompt = project
+    if project:
+        # Through a file, never as a value in argv (`0088` review round 1, F1): the SDK
+        # passes a string or an `append` as one argument, and Linux refuses an `execve`
+        # whose single argument passes `MAX_ARG_STRLEN` (32 pages) with `E2BIG` -- every
+        # session in a workspace whose instructions grew past it would fail to start, with
+        # an error that names nothing of why. The file sits in the session's own data root,
+        # `0700`, removed with it.
+        path = Path(data_dir) / PROMPT_FILE
+        path.write_text(project, encoding="utf-8")
+        if system_prompt is not None:
+            # The SDK has no file form for a preset's `append`; the CLI has the flag.
+            options.extra_args["append-system-prompt-file"] = str(path)
+        else:
+            options.system_prompt = {"type": "file", "path": str(path)}
     if effort is not None:
         # `0033`: what `coscc/models.py` resolved for this stage and label. Unset, the
         # SDK's own default applies, as it did before.

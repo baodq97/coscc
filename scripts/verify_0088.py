@@ -12,12 +12,16 @@ project's own instructions in its system prompt instead. Three modes:
                    `--strict-mcp-config`.
                (b) R4: with `COS_TOOLS=Read,Bash`, `idea` and `intent` carry `--tools ""`, and
                    every other stage exactly its grant.
-               (c) R5, R7: on a canary fixture and on this checkout, the block reaches
-                   `--system-prompt` or `--append-system-prompt`, scoped rules as a line each.
+               (c) R5, R7: on a canary fixture and on this checkout, the block reaches the
+                   file `--system-prompt-file` or `--append-system-prompt-file` names, scoped
+                   rules as a line each, and none of it is in argv (review round 1, F1).
                (d) R6: `build_prompt`'s source is the same as at the merge-base with main.
-               (e) R9: one real CLI session, `ANTHROPIC_BASE_URL` pointed at a stand-in on
-                   127.0.0.1 through this process's environment, reaches the stand-in. The
-                   stand-in counts requests and answers 400; it writes nothing anywhere.
+               (e) R9 and F1: two real CLI sessions, one per file flag, `cwd` holding a
+                   `CLAUDE.md` past the kernel's one-argument limit, `ANTHROPIC_BASE_URL`
+                   pointed at a stand-in on 127.0.0.1 through this process's environment;
+                   each reaches the stand-in with the block's last line in a request body.
+                   The stand-in counts, asks each body that one question in memory, and
+                   answers 400; it writes nothing anywhere.
                (f) nothing under `~/.claude/` this proof reads changed while it ran.
                (g) `--measure` on fixture databases: pass, a violation, a missing stage.
     --paid     **spends real money**: four sessions on this machine's login.
@@ -331,6 +335,27 @@ def value_after(cmd: list[str], flag: str) -> str | None:
     return cmd[cmd.index(flag) + 1] if flag in cmd and cmd.index(flag) + 1 < len(cmd) else None
 
 
+PROMPT_FLAGS = ("--system-prompt-file", "--append-system-prompt-file")
+
+
+def carried(cmd: list[str]) -> dict[str, str]:
+    """What each file flag in `cmd` hands the CLI, read now: a step's data root goes with it."""
+    out: dict[str, str] = {}
+    for flag in PROMPT_FLAGS:
+        path = value_after(cmd, flag)
+        if path is not None:
+            try:
+                out[flag] = Path(path).read_text(encoding="utf-8")
+            except OSError as e:
+                out[flag] = f"<unreadable: {e}>"
+    return out
+
+
+def inline(cmd: list[str]) -> bool:
+    """Whether the block went into argv itself, as it did before review round 1, F1."""
+    return "--append-system-prompt" in cmd or bool(value_after(cmd, "--system-prompt"))
+
+
 def isolated(cmd: list[str]) -> bool:
     sources = [a for a in cmd if a.startswith("--setting-sources")]
     return sources == ["--setting-sources="] and "--strict-mcp-config" in cmd
@@ -348,12 +373,16 @@ def plant(root: Path) -> None:
                                      encoding="utf-8")
 
 
-def fake_client(seen: dict, current: dict):
+def fake_client(seen: dict, current: dict, texts: dict):
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     class FakeClient:
         def __init__(self, options):
             seen[current["label"]] = options
+            try:
+                texts[current["label"]] = carried(argv(options))
+            except Unanswerable:
+                pass  # `claims_abc` builds the argv again and says so
 
         async def connect(self):
             return None
@@ -381,8 +410,9 @@ def fake_client(seen: dict, current: dict):
     return FakeClient
 
 
-async def every_kind_of_session(tmp: Path) -> dict[str, object]:
-    """Options per label: the nine stages, `chat`, `gebo` and `estimate`."""
+async def every_kind_of_session(tmp: Path) -> tuple[dict[str, object], dict[str, dict]]:
+    """Options per label -- the nine stages, `chat`, `gebo` and `estimate` -- and what each
+    one's prompt files held when its client was built."""
     from coscc import integrate, policy
     from coscc import sessions as sessions_mod
     from coscc.config import Config
@@ -399,12 +429,13 @@ async def every_kind_of_session(tmp: Path) -> dict[str, object]:
     config = Config(workspaces=(str(ws),), tools=("Read", "Bash"), working_dir=str(tmp),
                     data_dir=str(tmp / "data"))
     seen: dict[str, object] = {}
+    texts: dict[str, dict] = {}
     current: dict = {"label": "", "dir": directory}
     live = sessions_mod.Sessions(config)
     live.membership = lambda _d: True
     runner = Runner(sessions=live, journal=Journal(str(ws), str(tmp / "data")))
     original = sessions_mod.ClaudeSDKClient
-    sessions_mod.ClaudeSDKClient = fake_client(seen, current)
+    sessions_mod.ClaudeSDKClient = fake_client(seen, current, texts)
     try:
         for stage in STAGES:
             current.update(label=stage, writes=not policy.grant_for(stage).app_writes_artifact)
@@ -433,7 +464,7 @@ async def every_kind_of_session(tmp: Path) -> dict[str, object]:
             pass
     finally:
         sessions_mod.ClaudeSDKClient = original
-    return seen
+    return seen, texts
 
 
 def claims_abc(tmp: Path) -> bool:
@@ -441,7 +472,7 @@ def claims_abc(tmp: Path) -> bool:
     from coscc import sessions as sessions_mod
     from coscc.config import Config
 
-    seen = asyncio.run(every_kind_of_session(tmp))
+    seen, texts = asyncio.run(every_kind_of_session(tmp))
     ok = True
     labels = STAGES + ["chat", "gebo", "estimate"]
     cmds: dict[str, list[str]] = {}
@@ -466,27 +497,31 @@ def claims_abc(tmp: Path) -> bool:
                       f"(b) {stage}: --tools is exactly its grant", f"{got!r} vs {sorted(want)}")
 
     block = instructions.read(tmp / "ws").text
-    for stage, flag in (("idea", "--system-prompt"), ("impl", "--append-system-prompt")):
-        text = value_after(cmds.get(stage, []), flag) or ""
+    for stage, flag in (("idea", "--system-prompt-file"), ("impl", "--append-system-prompt-file")):
+        text = texts.get(stage, {}).get(flag, "")
         ok &= say(
             text == block and all(c in text for c in ("CANARY-ROOT-0088", "CANARY-DOTCLAUDE-0088",
                                                       "CANARY-PLAIN-0088"))
             and "CANARY-SCOPED-0088" not in text and "CANARY-LOCAL-0088" not in text
-            and "- .claude/rules/scoped.md (paths: src/**)" in text,
-            f"(c) fixture, {stage}: {flag} is the block, the scoped rule a line, the local file absent",
+            and "- .claude/rules/scoped.md (paths: src/**)" in text
+            and not inline(cmds.get(stage, [])),
+            f"(c) fixture, {stage}: {flag} holds the block, the scoped rule a line, the local "
+            "file absent, and argv none of it",
             text[:200],
         )
-    for name, prompt, flag in (("tool-less", None, "--system-prompt"),
-                               ("preset", PRESET, "--append-system-prompt")):
+    for name, prompt, flag in (("tool-less", None, "--system-prompt-file"),
+                               ("preset", PRESET, "--append-system-prompt-file")):
         opts = sessions_mod._options(Config(), str(REPO), None, tools=[], system_prompt=prompt,
                                      data_dir=str(tmp))
-        text = value_after(argv(opts), flag) or ""
+        cmd = argv(opts)
+        text = carried(cmd).get(flag, "")
         ok &= say(
             "- .claude/rules/coscc-app.md (paths: " in text
             and "- .claude/rules/ui-standard.md (paths: " in text
             and "# The coscc app" not in text and "# The UI standard" not in text
-            and "## .claude/CLAUDE.md" in text,
-            f"(c) this checkout, {name}: {flag} carries .claude/CLAUDE.md and the two rules as lines only",
+            and "## .claude/CLAUDE.md" in text and not inline(cmd),
+            f"(c) this checkout, {name}: {flag} holds .claude/CLAUDE.md and the two rules as "
+            f"lines only ({len(text.encode())} bytes)",
             text[:200],
         )
     return ok
@@ -514,13 +549,27 @@ def claim_d() -> bool:
                f"(d) build_prompt is the same as at the merge-base {base[:10]}")
 
 
+# (e)'s block: past Linux's `MAX_ARG_STRLEN` (32 pages, 128 KiB at 4 KiB pages), ending in a
+# word the stand-in looks for. Review round 1, F1.
+BIG = 256 * 1024
+BIG_CANARY = b"CANARY-BIG-0088"
+
+
 class _Counting(http.server.BaseHTTPRequestHandler):
-    """Counts and refuses. Never logs: the CLI sends this machine's token in a header."""
+    """Counts and refuses. Never logs: the CLI sends this machine's token in a header.
+
+    The body is read, as HTTP needs, and asked one question in memory -- does it carry
+    `BIG_CANARY` -- then dropped. Nothing of a request is kept past that boolean.
+    """
 
     hits = 0
+    carrying = 0
 
     def _refuse(self) -> None:
         type(self).hits += 1
+        length = int(self.headers.get("content-length") or 0)
+        if length and BIG_CANARY in self.rfile.read(length):
+            type(self).carrying += 1
         body = b'{"type":"error","error":{"type":"invalid_request_error","message":"verify_0088"}}'
         self.send_response(400)
         self.send_header("content-type", "application/json")
@@ -552,11 +601,25 @@ def bundled_cli() -> str:
         raise Unanswerable(f"no Claude Code CLI: {type(e).__name__}: {e}")
 
 
+def argument_limit() -> str:
+    """Printed, not claimed: what this machine's `execve` does with one `BIG` argument --
+    the shape every session in a workspace this large had before review round 1, F1."""
+    try:
+        subprocess.run([sys.executable, "-c", "pass", "x" * BIG], check=False)
+    except OSError as e:
+        return f"refused, errno {e.errno} ({os.strerror(e.errno or 0)})"
+    return "accepted"
+
+
 def claim_e(tmp: Path) -> bool:
+    """R9, and F1: two real CLI sessions, one per way the block is carried, each with
+    `CLAUDE.md` past the argument limit, reach the stand-in with the block's last word."""
+    from coscc import policy
     from coscc import sessions as sessions_mod
     from coscc.config import Config
 
     bundled_cli()
+    print(f"  one {BIG // 1024} KiB argument to execve on this machine: {argument_limit()}")
     try:
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Counting)
     except OSError as e:
@@ -566,31 +629,52 @@ def claim_e(tmp: Path) -> bool:
     saved = dict(os.environ)
     cwd = tmp / "proxy"
     cwd.mkdir()
-    ended = ""
+    lines = [f"Filler line {i} of verify_0088, claim (e).\n" for i in range(BIG // 32)]
+    (cwd / "CLAUDE.md").write_text("".join(lines) + BIG_CANARY.decode() + "\n", encoding="utf-8")
+    size = (cwd / "CLAUDE.md").stat().st_size
+
+    async def deny(name, data, ctx):
+        from claude_agent_sdk import PermissionResultDeny
+
+        return PermissionResultDeny(message="verify_0088 refuses every call")
+
+    ok = True
     try:
         drop_session_env(("ANTHROPIC_BASE_URL",))
         os.environ["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{server.server_address[1]}"
-        live = sessions_mod.Sessions(Config(workspaces=(str(cwd),), data_dir=str(tmp / "data")))
-        live.membership = lambda _d: True
+        for name, extra in (
+            ("--system-prompt-file", {"tools": []}),
+            ("--append-system-prompt-file", {"tools": list(policy.READ_TOOLS),
+                                             "system_prompt": dict(PRESET), "can_use_tool": deny}),
+        ):
+            _Counting.hits = _Counting.carrying = 0
+            # One per session: each runs under its own `asyncio.run`.
+            live = sessions_mod.Sessions(
+                Config(workspaces=(str(cwd),), data_dir=str(tmp / "data"))
+            )
+            live.membership = lambda _d: True
 
-        async def go():
-            async for _ in live.stream(str(cwd), "Reply with OK.", None, tools=[],
-                                       step=sessions_mod.StepHandle()):
-                pass
+            async def go():
+                async for _ in live.stream(str(cwd), "Reply with OK.", None,
+                                           step=sessions_mod.StepHandle(), **extra):
+                    pass
 
-        try:
-            asyncio.run(asyncio.wait_for(go(), 120))
-            ended = "the session ended"
-        except Exception as e:  # noqa: BLE001 - how it ends is not the claim
-            ended = f"the session ended with {type(e).__name__}"
+            try:
+                asyncio.run(asyncio.wait_for(go(), 120))
+                ended = "the session ended"
+            except Exception as e:  # noqa: BLE001 - how it ends is not the claim
+                ended = f"the session ended with {type(e).__name__}"
+            ok &= say(_Counting.hits >= 1 and _Counting.carrying >= 1,
+                      f"(e) {name}, CLAUDE.md of {size} bytes: ANTHROPIC_BASE_URL from the app's "
+                      f"environment was used, {_Counting.hits} requests reached the stand-in, "
+                      f"{_Counting.carrying} carrying the block's last line ({ended})",
+                      f"{_Counting.hits} requests, {_Counting.carrying} carrying it ({ended})")
     finally:
         os.environ.clear()
         os.environ.update(saved)
         server.shutdown()
         server.server_close()
-    return say(_Counting.hits >= 1,
-               f"(e) ANTHROPIC_BASE_URL from the app's environment was used: {_Counting.hits} "
-               f"requests reached the stand-in ({ended})", f"{_Counting.hits} requests")
+    return ok
 
 
 def claim_g(tmp: Path) -> bool:
