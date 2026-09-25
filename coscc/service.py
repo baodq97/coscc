@@ -3337,9 +3337,10 @@ class Service:
 
     # -- the autopilot (`0043` R4–R10) ----------------------------------------
     #
-    # It holds no rule of the loop. Each pass reads the board, `next` for every unit, the
-    # run log and the settings; `coscc/autopilot.py` decides where to stop and what to
-    # start; what it starts goes through `run_step` and `integrate`, which ask the gate
+    # It holds no rule of the loop. Each pass reads the board, the run log, the settings and
+    # the workspace's last shortlist, and `next` for every unit on it and no other (`0104`);
+    # with no shortlist it asks nothing. `coscc/autopilot.py` decides where to stop and what
+    # to start; what it starts goes through `run_step` and `integrate`, which ask the gate
     # themselves. A refusal from them is a stop line, never a second way past the gate.
 
     def autopilot_start(self, cwd: str) -> None:
