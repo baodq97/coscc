@@ -79,6 +79,7 @@ class GeboThroughTheService(unittest.TestCase):
         self.service = Service(config, StandIn(self._no_act))
         made = asyncio.run(self.service.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
+        self.directory = directory
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
             (directory / name).write_text(f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8")
@@ -182,6 +183,21 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(self.service.usage(self.cwd)["per_unit"][self.unit]["cost_usd"], 0.25)
         self.service.unit_history(self.cwd, self.unit)
         self.service.activity(self.cwd)
+
+    def test_the_start_record_names_the_artifacts_it_pointed_at_and_the_build(self):
+        """`0094` R13, R16, review round 1 F7: Gebo's `start` as a board step's."""
+
+        async def act(tree, gate):
+            return "[needs-person] f.txt: both"
+
+        build = {"version": "9.9.9", "commit": "0123456789abcdef0123456789abcdef01234567"}
+        with mock.patch.object(self.service, "_app_identity", return_value=build):
+            self.integrate_with(act)
+        starts = [r for r in self.records("start") if r.get("stage") == "integrate"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["pointed"], ["intent.md", "spec.md", "plan.md", "impl.md"])
+        self.assertEqual((starts[0]["app_version"], starts[0]["app_commit"]), (build["version"], build["commit"]))
+        self.assertIn(f"- {self.directory.resolve() / 'plan.md'}", self.service.sessions.prompts[0])
 
     def test_a_rebase_left_stopped_is_aborted_by_the_app(self):
         async def act(tree, gate):
