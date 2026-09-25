@@ -887,6 +887,7 @@ class Runner:
         integration_note: str = "",
         plan_drift: dict[str, Any] | None = None,
         drift_note: str = "",
+        shortlist: dict[str, Any] | None = None,
         effort: str | None = None,
         effort_source: str = "",
         label_declared: str | None = None,
@@ -927,6 +928,10 @@ class Runner:
         `plan_drift` is what `service.py` worked out with `coscc/drift.py` for an `impl`
         step (`0042`); this module only carries it into the `start` record, and
         `drift_note` into the prompt. `None` leaves the record without the field.
+
+        `shortlist` (`0074` R14) is where the unit stood in the shortlist in effect, as
+        `service.run_step` read it with `backlog.stamp`; carried into `start` and nowhere else.
+        `None` leaves the record without the field.
 
         `watch` (`0039`) is the unit's worktree when `cwd` is a spike's throwaway directory.
         Writing is then held to `cwd` alone; the worktree and the unit are read only. Its
@@ -1006,6 +1011,7 @@ class Runner:
                 # empty one; a record written before `0037` has no field, read as `""`.
                 system_prompt="claude_code" if preset else "",
                 **({"plan_drift": plan_drift} if plan_drift is not None else {}),
+                **({"shortlist": shortlist} if shortlist is not None else {}),
                 **pr_extra,
             )
 

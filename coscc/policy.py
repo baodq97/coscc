@@ -210,6 +210,13 @@ SPIKE_WARNING = (
     "fails the step, and is not undone. Anywhere else, `~` included, it is not seen."
 )
 
+# `0074` R19. Said on the Backlog panel above the button, before it is pressed.
+ESTIMATE_WARNING = (
+    "Proposing estimates opens one paid session (1 turn, $2.00 ceiling) on the model of the "
+    "Settings row `estimate`. Whoever holds the password or a live session can press it, and "
+    "can rewrite any estimate, relation or the shortlist under any name they type."
+)
+
 # Only stages that appear here get anything. The rest — `idea`, `intent`, and any
 # stage invented later — falls through to `Grant()`. Keyed by stage alone since `0020`:
 # the mode a step is started in is recorded, and grants nothing.
@@ -341,6 +348,14 @@ GRANTS: dict[str, Grant] = {
         warning=INTEGRATE_WARNING,
         denied=INTEGRATE_DENIED,
         push_needs_lease=True,
+    ),
+    # `0074`. Not a stage either: the backlog's *Propose estimates* button, one session per
+    # press. No tools and no commands, like `idea` and `intent`; the app reads the reply.
+    # Ceilings chosen, not measured (`spec.md` C5): nobody has measured a prompt of ~70 units.
+    "estimate": Grant(
+        max_turns=1,
+        max_budget_usd=2.0,
+        warning=ESTIMATE_WARNING,
     ),
 }
 

@@ -316,7 +316,7 @@ class AStepRecordsTheCommitItRanOn(unittest.TestCase):
             yield ("chunk", "# Spec: x\nStatus: accepted.\n")
             yield ("done", {"session_id": "s-spec", "cost": {}})
 
-    def _start_record(self, d: str) -> dict:
+    def _start_record(self, d: str, **extra) -> dict:
         make_unit(Path(d), intent_md="Status: accepted.\nI")
         journal = Journal(d, d)
         r = Runner(sessions=self.Replies(), journal=journal)
@@ -324,7 +324,7 @@ class AStepRecordsTheCommitItRanOn(unittest.TestCase):
         async def go():
             async for _ in r.run(
                 workspace=d, directory=Path(d) / '.cos' / UNIT, journal_key=d, unit=UNIT,
-                stage="spec", artifact="spec.md", stages=STAGES, mode="manual",
+                stage="spec", artifact="spec.md", stages=STAGES, mode="manual", **extra,
             ):
                 pass
 
@@ -350,6 +350,14 @@ class AStepRecordsTheCommitItRanOn(unittest.TestCase):
     def test_a_step_outside_git_records_no_commit(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self._start_record(d)["head"], "")
+
+    def test_the_shortlist_stamp_is_carried_into_start_only_when_given(self):
+        """`0074` R14. The runner carries it; `service.run_step` works it out."""
+        stamp = {"rank": 2, "of": 5, "record": {"at": "t", "n": 3}}
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self._start_record(d, shortlist=stamp)["shortlist"], stamp)
+        with tempfile.TemporaryDirectory() as d:
+            self.assertNotIn("shortlist", self._start_record(d))
 
 
 class ThePromptNamesTheBaseWhenItMightBeStale(unittest.TestCase):

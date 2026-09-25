@@ -26,7 +26,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from coscc import agents
+from coscc import agents, backlog
 from coscc import board as board_reader
 from coscc import drift, fetches, gitops
 from coscc import harness, integrate
@@ -46,13 +46,16 @@ from coscc.journal import (
     Journal,
     add_cost,
     last_runs,
+    timelines_of,
     totals_of,
     zero_cost,
 )
 from coscc.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, grant_for, grant_for_step
 from coscc import labels, models
-from coscc.runner import SESSIONS_PER_STEP, STATUS_RE, RunError, Runner, describe_attempt
-from coscc.sessions import Sessions
+from coscc.runner import (
+    CEILING_MARKERS, SESSIONS_PER_STEP, STATUS_RE, Denials, RunError, Runner, describe_attempt, permission_gate,
+)
+from coscc.sessions import Sessions, StepHandle
 from coscc.store import BadName, Store, require_name
 from coscc import steps as steps_mod
 from coscc import units, updater as updater_mod, worktrees
@@ -518,17 +521,30 @@ class Service:
         modes: dict[tuple[str, str], str] = {}
         timelines: dict[str, list[dict[str, Any]]] = {}
         comments: list[dict[str, Any]] = []
+        ranking: list[dict[str, Any]] = []
         if journal is not None:
             try:
                 modes = journal.modes(key)
-                # One read for every unit's cost. Asking `totals` per unit re-scanned the
+                # One read for every unit's cost, comment attempts (`0021` D4) and, since
+                # `0074`, the backlog's records. Asking `totals` per unit re-scanned the
                 # working folder N times for the rows this already has.
-                timelines = journal.timelines(key)
-                # `0021` D4. One read for every unit's comment attempts, too.
-                comments = journal.records(key, kind="pr-comment")
+                rows = journal.records(key)
             except Busy as e:
                 raise Invalid(str(e)) from e
+            timelines = timelines_of(rows)
+            comments = [r for r in rows if r.get("kind") == "pr-comment"]
+            ranking = [r for r in rows if r.get("kind") in backlog.KINDS]
         _attach_comment_state(data["units"], comments)
+        # `0074`. Display only: nothing below reads it, and `next`/`blocked` are untouched.
+        data["backlog"] = {
+            **backlog.fold(data["units"], ranking, backlog.measured(timelines, data["units"])),
+            "propose_warning": grant_for("estimate").warning,
+        }
+        per_unit = data["backlog"].pop("per_unit")
+        for unit in data["units"]:
+            unit["backlog"] = per_unit.get(unit["name"]) or {
+                "rank": None, "value": None, "effort": None, "effort_source": None, "relations": [],
+            }
 
         for unit in data["units"]:
             unit_last_runs = last_runs(timelines.get(unit["name"], []))
@@ -1311,6 +1327,12 @@ class Service:
                         "plan_sha": None, "main_sha": None, "files": None,
                         "checked": False, "reason": str(e) or type(e).__name__,
                     }
+            # `0074` R14. Where the unit stood in the shortlist in effect as it started, for the
+            # outcome's measurement. Like `plan_drift`, nothing here may refuse the step.
+            try:
+                shortlist = backlog.stamp(journal.records(key, kind="shortlist"), unit)
+            except Exception as e:  # noqa: BLE001 — recorded as the reason
+                shortlist = {"rank": None, "of": None, "record": None, "error": str(e) or type(e).__name__}
             # `0041` R2. The unit's open pull request, for `pr` only, after the gate and before
             # any money is spent. One `gh pr list`, up to `integrate.GH_TIMEOUT`; a lookup that
             # fails still starts the step, and its prompt says so.
@@ -1360,6 +1382,7 @@ class Service:
                     integration_note=integration_note,
                     plan_drift=plan_drift,
                     drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
+                    shortlist=shortlist,
                     end_fields=end_fields,
                     pr_note=pr_note,
                     pr_before=pr_before,
@@ -1540,6 +1563,13 @@ class Service:
                 jobs.append({
                     "kind": "integration", "id": f"integration:{entry['workspace']}:{entry['unit']}",
                     "workspace": entry["workspace"], "unit": entry["unit"], "stage": "integrate",
+                    "started": entry["started"],
+                })
+            elif entry["stage"] == "estimate":
+                # `0074`. Waited for like an integration, never cut: its money is spent either way.
+                jobs.append({
+                    "kind": "integration", "id": f"estimate:{entry['workspace']}",
+                    "workspace": entry["workspace"], "unit": "", "stage": "estimate",
                     "started": entry["started"],
                 })
         for turn in self.sessions.in_flight():
@@ -2189,6 +2219,219 @@ class Service:
             if mark is not None:
                 self._release(key, unit, mark)
         return {"unit": unit, "from": from_, "to": to, "reason": reason, "by": by, "date": today, "effects": effects}
+
+    # -- backlog (`0074`) -----------------------------------------------------
+
+    async def _backlog_context(self, cwd: str) -> tuple[Journal, str, dict[str, Any]]:
+        """The run log, its key and one board read. The read is `node`, so it happens before
+        any transaction is opened (`plan.md` Risk 5): only the run log's part of a check is
+        read inside one."""
+        self._workspace_or_refuse(cwd)
+        journal = self._journal()
+        if journal is None:
+            raise Invalid("no working folder is set, so nothing can be recorded — set COS_WORKING_DIR")
+        try:
+            data = await board_reader.read(self._units_root(cwd))
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        return journal, self._journal_key(cwd), data
+
+    @staticmethod
+    def _append_checked(journal: Journal, record: dict[str, Any], check: Any) -> dict[str, Any]:
+        """`check(rows)` returns a refusal or `""`, on the rows read inside the transaction."""
+        def refuse(rows: list[dict[str, Any]]) -> None:
+            said = check(rows)
+            if said:
+                raise BadRecord(said)
+
+        try:
+            return journal.append_checked(record, backlog.KINDS, refuse)
+        except (BadRecord, Busy) as e:
+            raise Invalid(str(e)) from e
+
+    async def record_estimate(
+        self, cwd: str, unit: str, value: Any, effort: Any, basis: Any, by: Any,
+    ) -> dict[str, Any]:
+        """R2, R6, R7. A person's estimate: always a new record, never an edit of an old one."""
+        journal, key, data = await self._backlog_context(cwd)
+        if isinstance(value, str) and value.strip().isdigit():
+            value = int(value.strip())
+        if unit not in [u["name"] for u in data["units"] if backlog.in_backlog(u)]:
+            raise Invalid(f"{unit or 'that unit'} is not in the backlog")
+        said = backlog.check_estimate(value, effort, basis, by, agent=False)
+        if said:
+            raise Invalid(said)
+        record = {
+            "kind": "estimate-value", "workspace": key, "unit": unit, "value": value, "effort": effort,
+            "effort_source": "person", "similar": [], "basis": basis, "effort_basis": "", "by": by,
+        }
+        return {"recorded": self._append_checked(journal, record, lambda rows: "")}
+
+    async def record_relation(
+        self, cwd: str, unit: str, other: str, rtype: str, op: str, reason: str, by: str,
+    ) -> dict[str, Any]:
+        """R8. Add or remove one relation; checked against the ones in effect inside the write."""
+        journal, key, data = await self._backlog_context(cwd)
+        names = [u["name"] for u in data["units"]]
+        record = {"kind": "relation", "workspace": key, "unit": unit, "other": other, "type": rtype,
+                  "op": op, "reason": reason, "by": by}
+        return {"recorded": self._append_checked(journal, record, lambda rows: backlog.check_relation(
+            unit, other, rtype, op, reason, by, names, backlog.relations_of(rows),
+        ))}
+
+    async def record_shortlist(self, cwd: str, names: Any, reason: str, by: str) -> dict[str, Any]:
+        """R10, R12, R13. The whole list, by a person, as one new record."""
+        journal, key, data = await self._backlog_context(cwd)
+        for what, value in (("reason", reason), ("name", by)):
+            said = hold_rules._line_problem(what, value)
+            if said:
+                raise Invalid(said)
+        if backlog.is_agent(by):
+            raise Invalid(f"a person's name may not start with {backlog.AGENT_PREFIX!r}")
+        waiting = [u["name"] for u in data["units"] if backlog.in_backlog(u)]
+        record = {"kind": "shortlist", "workspace": key, "unit": "", "units": names, "reason": reason, "by": by}
+        return {"recorded": self._append_checked(journal, record, lambda rows: backlog.check_shortlist(
+            names, waiting, backlog.estimates_of(rows),
+        ))}
+
+    async def propose_estimates(self, cwd: str) -> AsyncIterator[tuple[str, Any]]:
+        """R17, R18. One paid session proposes estimates and relations for the whole backlog.
+
+        Refused before anything is spent while another proposal of this workspace runs: the
+        unit `""` in `_active`, which no real unit is ever called. Streams like `integrate`.
+        Writes `start`/`end` (stage `estimate`, unit `""`) so Activity counts the money, one
+        `estimate` record for the run, and each valid part of the reply through
+        `append_checked`. A reply over a ceiling or not JSON writes no estimate.
+        """
+        self._workspace_or_refuse(cwd)
+        self._refuse_while_updating()
+        journal = self._journal()
+        if journal is None:
+            raise Invalid("no working folder is set, so a proposal cannot be recorded — set COS_WORKING_DIR")
+        key = self._journal_key(cwd)
+        held = self._active.get((key, ""))
+        if held is not None:
+            raise Invalid(f"a proposal for this workspace is already running since {held.started_at}; wait for it to end")
+        mark = steps_mod.Mark("estimate", "estimate", "")
+        self._active[(key, "")] = mark
+        rid = self._mark_running(key, "", "estimate", "estimate")
+        started = ended = False
+        try:
+            try:
+                data = await board_reader.read(self._units_root(cwd))
+                rows = journal.records(key)
+            except Unavailable as e:
+                raise Invalid(str(e)) from e
+            except Busy as e:
+                raise Invalid(str(e)) from e
+            found = backlog.measured(timelines_of(rows), data["units"])
+            waiting = [u["name"] for u in data["units"] if backlog.in_backlog(u)]
+            if not waiting:
+                raise Invalid("the backlog is empty; there is nothing to estimate")
+            root = self._units_root(cwd)
+
+            def read(unit: str, name: str) -> str:
+                try:
+                    return (root / unit / name).read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    return ""
+
+            texts = [
+                {"unit": n, "idea": backlog.section(read(n, "idea.md"), "In their own words"),
+                 "problem": backlog.section(read(n, "intent.md"), "Problem"),
+                 "outcome": backlog.section(read(n, "intent.md"), "Proposed outcome")}
+                for n in waiting
+            ]
+            finished = [
+                {"unit": n, "title": backlog.title_of(read(n, "intent.md")), **f} for n, f in found.items()
+            ]
+            prompt = backlog.build_prompt(texts, finished)
+            grant = grant_for("estimate")
+            defaults, _ = models.load_defaults()
+            model, model_source, effort, effort_source = models.resolve(
+                models.ESTIMATE, None, self._model_overrides()[0], self._effort_overrides()[0], defaults,
+                self.config.model,
+            )
+            try:
+                journal.started(key, "", "estimate", "manual", prompt_chars=len(prompt), granted=[],
+                                max_turns=grant.max_turns, model=model, model_source=model_source,
+                                effort=effort, effort_source=effort_source)
+                started = True
+            except (BadRecord, Busy):
+                pass
+            reply, end, failure = "", {}, ""
+            try:
+                async for kind, payload in self.sessions.stream(
+                    cwd, prompt, None, max_turns=grant.max_turns, tools=[],
+                    # `tools=[]` still lets MCP tools through (`sessions.py`); the gate refuses them.
+                    can_use_tool=permission_gate(grant, cwd, Denials()),
+                    max_budget_usd=grant.max_budget_usd, step=StepHandle(),
+                    **({"model": model} if model is not None else {}),
+                    **({"effort": effort} if effort is not None else {}),
+                ):
+                    if kind == "chunk":
+                        reply += payload
+                        yield ("chunk", payload)
+                    elif kind == "session":
+                        end["session_id"] = str(payload)
+                    elif kind == "done":
+                        end.update(session_id=payload.get("session_id", end.get("session_id", "")),
+                                   cost=payload.get("cost") or {},
+                                   terminal_reason=str(payload.get("terminal_reason") or ""))
+            except Exception as e:  # noqa: BLE001 — recorded as the reason
+                failure = f"the session failed: {e}"
+            cost = end.get("cost") or {}
+            terminal = end.get("terminal_reason", "")
+            if not failure and any(m in terminal for m in CEILING_MARKERS):
+                failure = f"the session stopped at a ceiling ({terminal}); nothing was recorded"
+            session = end.get("session_id", "")
+            names = [u["name"] for u in data["units"]]
+            parsed = {"records": [], "rejected": [], "failed": failure or None}
+            if not failure:
+                parsed = backlog.parse_proposal(
+                    reply, waiting, names, found, session, backlog.relations_of(rows), workspace=key,
+                )
+            written, rejected = 0, list(parsed["rejected"])
+            for rec in parsed["records"]:
+                if rec["kind"] == "relation":
+                    check = (lambda rec: lambda live: backlog.check_relation(
+                        rec["unit"], rec["other"], rec["type"], "add", rec["reason"], rec["by"], names,
+                        backlog.relations_of(live), agent=True,
+                    ))(rec)
+                else:
+                    check = lambda live: ""  # noqa: E731
+                try:
+                    self._append_checked(journal, rec, check)
+                    written += 1
+                except Invalid as e:
+                    rejected.append({"unit": rec["unit"], "reason": str(e)})
+            outcome = "failed" if parsed["failed"] else "done"
+            try:
+                journal.finished(key, "", "estimate", outcome, session_id=session,
+                                 detail=parsed["failed"], **cost)
+                ended = True
+            except (BadRecord, Busy):
+                pass
+            summary = {
+                "kind": "estimate", "workspace": key, "unit": "", "stage": "estimate", "session_id": session,
+                "cost_usd": cost.get("cost_usd"), "turns": cost.get("turns"), "written": written,
+                "rejected": rejected, "outcome": outcome, "detail": parsed["failed"],
+            }
+            try:
+                summary = journal.append(summary)
+            except (BadRecord, Busy):
+                pass
+            yield ("done", {"estimate": summary})
+        finally:
+            if started and not ended:
+                try:
+                    journal.finished(key, "", "estimate", "cancelled", detail="the proposal ended before its reply was read")
+                except (BadRecord, Busy):
+                    pass
+            if self._active.get((key, "")) is mark:
+                del self._active[(key, "")]
+            self._running.pop(rid, None)
+            self.updater.job_ended()
 
     async def start_branch(self, cwd: str, unit: str) -> dict[str, Any]:
         """`0014` R4. Cut this unit's branch in the workspace and switch to it.

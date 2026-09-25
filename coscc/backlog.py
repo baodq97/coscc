@@ -39,12 +39,6 @@ VALUE_GOALS = ("bớt can thiệp tay", "bớt chi phí", "nỗi đau đã gặp
 KINDS = ("estimate-value", "relation", "shortlist", "estimate")
 AGENT_PREFIX = "agent:"
 
-PROPOSE_WARNING = (
-    "Proposing estimates opens one paid session (1 turn, $2.00 ceiling, the model of the "
-    "Settings row `estimate`). Whoever holds the password or a live session can press it, and "
-    "can rewrite every estimate, relation and the shortlist under any name."
-)
-
 
 def is_agent(by: str) -> bool:
     return str(by or "").startswith(AGENT_PREFIX)
@@ -537,6 +531,17 @@ def build_prompt(backlog_texts: list[dict[str, str]], finished_rows: list[dict[s
     for f in finished_rows:
         lines.append(f"- {f['unit']} — {f.get('title') or ''} — ${float(f['cost_usd']):.2f}, {f['turns']} turns")
     return "\n".join(lines) + "\n"
+
+
+def section(text: str, heading: str) -> str:
+    """The body under `## <heading>`, up to the next `## `; `""` when there is none."""
+    m = re.search(rf"^## {re.escape(heading)}[ \t]*\n(.*?)(?=^## |\Z)", text or "", re.MULTILINE | re.DOTALL)
+    return m.group(1).strip() if m else ""
+
+
+def title_of(text: str) -> str:
+    first = (text or "").strip().splitlines()[:1]
+    return first[0].lstrip("# ").strip() if first else ""
 
 
 _JSON_BLOCK = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
