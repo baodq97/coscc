@@ -1,6 +1,6 @@
 # Routes that write into a unit's artifacts
 
-Read this before changing `POST /api/units/answer`, `/outcome` or `/hold`, `coscc/hold.py`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or `/hold`, `coscc/hold.py`, `coscc/precedent.py`, `Service._append_answers`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
 - **`POST /api/units/answer` writes a stranger's words into a paid prompt.** Since `0016`
   it appends an answer to an artifact, and the next stage embeds that file. Since `0082` the
@@ -15,6 +15,27 @@ Read this before changing `POST /api/units/answer`, `/outcome` or `/hold`, `cosc
   and the `ship` gate counts a finding the review then marks `[answered]` as closed only
   when its block exists. A stranger's answer plus one agent's round is part of what opens
   a merge.
+- **`POST /api/units/precedent` puts an agent's words into a paid prompt as decided.** Since
+  `0044` it opens one paid session (Jera, grant `precedent`: no tools, one turn, $1.00
+  chosen, not measured) and appends each answer that survives `precedent.verdicts` through
+  `Service._append_answers`, the same path as a person's, headed `Answered by: Jera. …
+  Via: precedent.`. Whoever holds the password or a live session can press it, as often as
+  they like: `_take` stops only a second run on the same unit. What stands between Jera
+  and a later stage is the app's filter, and it cannot see everything:
+  - The category is Jera's word (`.cos/0044_*/spec.md` C2). A question about permissions
+    that Jera files as `other` is answered and written.
+  - The store is every answer in force in the workspace, Leif's included (C3), and the
+    *Decision preferences* text, all sent word for word; nothing checks either for a
+    company name (C4).
+  - The later stage is told which blocks are Jera's (`runner._jera_answers`, R15), and the
+    skills say to cite them as an inference; nothing checks that it does.
+  - The board read and the write share `_answer_lock`, and a question a person answered
+    while Jera ran is skipped, but the runner holds no such lock: a stage re-run that
+    renumbers `## Open questions` while Jera runs leaves its `### Câu N` on the wrong
+    question, and nothing says so (C6, the same window as below). `_take` keeps a step of
+    the same unit out in this process only.
+  - The whole store goes into one prompt, never cut; a store past the $1.00 ceiling is a
+    failed `end` row with the money spent and nothing written (C7).
 - **Re-running a prose stage keeps `## Answers` byte for byte; a reply's own attempt at
   one is dropped, silently.** Since `0025` the runner (`coscc/runner.py`: `answers_section`,
   `strip_answers`, `with_answers`) reads the section already on disk right before it
