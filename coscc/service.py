@@ -3489,9 +3489,12 @@ class Service:
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
                 return
             last: dict[str, dict[str, Any]] = {}
+            integrations: dict[str, dict[str, Any]] = {}
             for r in records:
                 if r.get("workspace") == key and r.get("kind") in ("end", "integration"):
                     last[str(r.get("unit") or "")] = r
+                    if r.get("kind") == "integration":
+                        integrations[str(r.get("unit") or "")] = r
 
             found: dict[str, dict[str, str]] = {}
             candidates: list[dict[str, Any]] = []
@@ -3509,7 +3512,8 @@ class Service:
                 stop = autopilot.stop_for(u, nxt, last.get(name), settings["autopilot_may_ship"])
                 stage = nxt.get("stage") or ""
                 # R10: a unit behind `main`, conflicting or red after integration is integrated
-                # first — never after a `pass`, which a rebase would close `ship` on.
+                # first — never after a `pass`, which a rebase would close `ship` on, and not
+                # again when CI is red on what the autopilot's own integration pushed.
                 info = u.get("integration") or {}
                 rounds = u.get("rounds") or []
                 if (
@@ -3517,7 +3521,7 @@ class Service:
                     and not (rounds and rounds[-1].get("verdict") == "pass")
                     and (stop is None or stop["kind"] == "f")
                 ):
-                    stop, stage = None, "integrate"
+                    stop, stage = autopilot.red_again(info, integrations.get(name)), "integrate"
                 if stop is not None:
                     found[name] = {"unit": name, **stop}
                     continue

@@ -83,6 +83,15 @@ class Stops(unittest.TestCase):
         theirs = {"kind": "integration", "outcome": "refused", "started_by": "person"}
         self.assertIsNone(ap.stop_for(unit(), nxt("review", "x"), theirs, True))
 
+    def test_e_red_again_after_the_autopilots_own_integration(self):
+        red = {"state": "red-after-integration"}
+        mine = {"kind": "integration", "outcome": "pushed", "started_by": "autopilot"}
+        self.assertEqual(ap.red_again(red, mine)["kind"], "e")
+        self.assertIsNone(ap.red_again(red, {**mine, "started_by": "person"}))
+        self.assertIsNone(ap.red_again(red, {"kind": "integration", "outcome": "pushed"}))
+        self.assertIsNone(ap.red_again({"state": "behind"}, mine))
+        self.assertIsNone(ap.red_again(None, None))
+
     def test_f_no_stage_and_not_ci(self):
         got = ap.stop_for(unit(), nxt("", "finish and accept plan.md"), None, True)
         self.assertEqual((got["kind"], got["reason"]), ("f", "finish and accept plan.md"))

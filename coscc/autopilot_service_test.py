@@ -306,6 +306,20 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0001_a", "integrate", "autopilot")])
         self.assertEqual(self.stops(), {"0002_b": "c"})
 
+    async def test_red_after_its_own_integration_is_not_integrated_again(self):
+        for unit in ("0001_a", "0002_b"):
+            self.add(unit, "impl", integration={"state": "red-after-integration"},
+                     rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
+        log = Journal(self.config.working_dir, self.config.data_dir)
+        for unit, by in (("0001_a", "autopilot"), ("0002_b", "person")):
+            log.append({
+                "kind": "integration", "workspace": self.key, "unit": unit, "stage": "integrate",
+                "outcome": "pushed", "mode": "agent", "started_by": by,
+            })
+        await self.pass_()
+        self.assertEqual(self.launched, [("0002_b", "integrate", "autopilot")])
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+
     async def test_ci_pending_is_quiet(self):
         self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", between_pr_and_ship=True)
         await self.pass_()
