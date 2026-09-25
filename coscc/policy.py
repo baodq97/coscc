@@ -296,13 +296,20 @@ GRANTS: dict[str, Grant] = {
     # from the reply. `beyond_reading` guards only `PROSE_STAGES`, which this is not, so
     # `policy_test` pins `git` out of `commands` instead (`spec.md` C2). Writing is held to
     # the session's `cwd`, a throwaway directory `service.run_step` makes and removes; the
-    # worktree and the unit are read through `read_also`. Ceilings chosen, not measured:
-    # the same as `spec` and `plan` (`intent.md ## Answers, câu 4`).
+    # worktree and the unit are read through `read_also`.
+    #
+    # `0080` R8. Ceilings chosen, not measured. The first ones were `spec`'s and `plan`'s,
+    # 40 turns / $4.0, and on 2026-09-24 and 2026-09-25 three spikes (`0070`, `0078`,
+    # `0053`) stopped at them without writing `spike.md`; spikes that finished were recorded
+    # at 36-44 turns (`0080` `intent.md ## Answers, câu 2`). The `turns` the app records is
+    # not the counter `max_turns` stops on (see `plan` above), so 80 doubles the ceiling
+    # that was hit, as `plan` went from 20 to 40. Those runs cost about $0.050-0.055 a
+    # turn, so 80 turns at $4 would make the budget the real limit; $8.0 is `impl`'s.
     "spike": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=SPIKE_COMMANDS,
-        max_turns=40,
-        max_budget_usd=4.0,
+        max_turns=80,
+        max_budget_usd=8.0,
         app_writes_artifact=True,
         warning=SPIKE_WARNING,
     ),
