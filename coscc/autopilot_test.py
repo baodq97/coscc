@@ -291,6 +291,21 @@ class Measuring(unittest.TestCase):
         rows = [r for r in self.rows() if r["stage"] != "impl"]
         self.assertEqual(ap.measure(rows, "w", day, day)["met"], ["0010_a"])
 
+    def test_jeras_lines_are_no_step(self):
+        """`0044`: a person's *Ask Jera* is no start, and its `end` does not decide R6 e."""
+        day = NOW.date().isoformat()
+        rows = [r for r in self.rows() if r["stage"] != "impl"]
+        jera = [
+            {"kind": "start", "workspace": "w", "unit": "0010_a", "stage": "precedent", "at": at(timedelta(minutes=m))}
+            for m in (5.5, 12.5)
+        ] + [{"kind": "end", "workspace": "w", "unit": "0010_a", "stage": "precedent", "outcome": "failed",
+              "at": at(timedelta(minutes=11.5))}]
+        rows = sorted(rows + jera, key=lambda r: r["at"])
+        got = ap.measure(rows, "w", day, day)
+        self.assertEqual(got["met"], ["0010_a"])
+        self.assertEqual(got["units"][0]["person"], 1)
+        self.assertEqual(ap.measure_days(jera, "w", day, day, 80.0)[0]["failed"], 0)
+
     def test_outside_the_dates_or_the_workspace_nothing_counts(self):
         self.assertEqual(ap.measure(self.rows(), "other", "2000-01-01", "2100-01-01")["units"], [])
         self.assertEqual(ap.measure(self.rows(), "w", "2000-01-01", "2000-01-02")["units"], [])

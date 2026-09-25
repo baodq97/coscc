@@ -3714,7 +3714,7 @@ class Service:
             last: dict[str, dict[str, Any]] = {}
             integrations: dict[str, dict[str, Any]] = {}
             for r in records:
-                if r.get("workspace") == key and r.get("kind") in ("end", "integration"):
+                if r.get("workspace") == key and r.get("kind") in ("end", "integration") and autopilot.is_step(r):
                     last[str(r.get("unit") or "")] = r
                     if r.get("kind") == "integration":
                         integrations[str(r.get("unit") or "")] = r

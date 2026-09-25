@@ -32,6 +32,10 @@ OPEN_FOR = timedelta(hours=24)
 # R8 b. The stages that write code, and so may not run beside another whose files overlap.
 CODE_STAGES = ("impl", "implement", "integrate")
 
+# `0044`: Jera writes `start` and `end` on the unit it answers for, under a stage that is none
+# of the loop's. Its lines are not the unit's last step (R6 e), a start, or a failed step.
+NOT_STEPS = ("precedent",)
+
 # R6, the one stop the spec adds beside them, and `0104` R3's empty shortlist.
 STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap", "shortlist")
 
@@ -53,6 +57,11 @@ _NUMBER = re.compile(r"^(\d+)")
 def is_ci_pending(said: str) -> bool:
     """R6: the gate or `next` is waiting on CI. Not a stop; R5 d asks again."""
     return CI_PENDING in (said or "")
+
+
+def is_step(record: dict[str, Any]) -> bool:
+    """False for a line of a session that is no stage of `cos.mjs`'s loop (`NOT_STEPS`)."""
+    return record.get("stage") not in NOT_STEPS
 
 
 def _stop(kind: str, reason: str) -> dict[str, str]:
@@ -379,7 +388,7 @@ def measure(
     """
     rows = [
         r for r in records
-        if r.get("workspace") == workspace and since <= spend.local_day(r.get("at")) <= until
+        if r.get("workspace") == workspace and since <= spend.local_day(r.get("at")) <= until and is_step(r)
     ]
     per_unit: dict[str, dict[str, Any]] = {}
     stopped: dict[str, str] = {}
@@ -520,7 +529,10 @@ def measure_days(
             if r.get("workspace") == workspace and spend.local_day(r.get("at")) == day
         ]
         integrations = sum(1 for r in here if r.get("kind") == "integration")
-        failed = sum(1 for r in here if r.get("kind") == "end" and r.get("outcome") in ("failed", "exhausted"))
+        failed = sum(
+            1 for r in here
+            if r.get("kind") == "end" and r.get("outcome") in ("failed", "exhausted") and is_step(r)
+        )
         starts = sum(1 for r in here if r.get("kind") == "start" and started_by(r) == "autopilot")
         money = spent_on(rows, day)
         spent = round(money["known"] + money["estimated"], 6)
