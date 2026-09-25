@@ -1700,6 +1700,34 @@ test('0061 R5: a severity lowered between rounds closes ship and says so', () =>
   assert.ok(g.need.includes('F1 is low in review round 2, but review round 1 rated it high — lowering a severity is not a fix: fix it on the branch, or keep it open'), g.need.join('\n'))
 })
 
+test('0078 R1: the pass round of 0050, with F4 its only open finding, opens ship', () => {
+  // F4 is copied from `0078 spike.md ## U1`, `F4 line verbatim:`, em dashes and all.
+  const text = round(1, 'pass', [
+    `- F1 [fixed ${FIX}] a.py:3 — low — x`,
+    `- F2 [fixed ${FIX}] a.py:3 — medium — x`,
+    `- F3 [fixed ${FIX}] a.py:3 — low — x`,
+    '- F4 [open] coscc/screens.py:646 — low — Còn hai docstring thuộc cùng loại với F3 mà `9243b7b` chưa sửa, vì vòng 3 không nêu tên chúng.',
+  ])
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', text) })
+  const g = checkGate(u, 'ship', { probe: greenProbe() })
+  assert.equal(g.ok, true, g.need.join('\n'))
+  assert.deepEqual(g.need, [])
+  assert.deepEqual(nonBlocking(u).map((f) => f.id), ['F4'])
+})
+
+test('0078 R2: a lowered finding is named once, on its own line, not among the findings not fixed', () => {
+  const ship = (text) => checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', text) }), 'ship', { probe: greenProbe() })
+  const lowered = 'F1 is low in review round 2, but review round 1 rated it high — lowering a severity is not a fix: fix it on the branch, or keep it open'
+  const a = ship(`${round(1, 'changes-requested', [rated('F1', 'high')])}\n${round(2, 'pass', [low('F1')])}`)
+  assert.equal(a.ok, false)
+  assert.ok(a.need.includes(lowered), a.need.join('\n'))
+  assert.equal(a.need.some((l) => l.includes('still has findings not fixed')), false, a.need.join('\n'))
+  const b = ship(`${round(1, 'changes-requested', [rated('F1', 'high'), rated('F2', 'medium')])}\n${round(2, 'pass', [low('F1'), rated('F2', 'medium')])}`)
+  assert.equal(b.ok, false)
+  assert.ok(b.need.includes(lowered), b.need.join('\n'))
+  assert.deepEqual(b.need.filter((l) => l.includes('still has findings not fixed')), ['review round 2 still has findings not fixed: F2 [open]'])
+})
+
 test('0061 R12: three counted rounds of prose severities, then a pass of lows: ship opens at the default limit', () => {
   const cr = [1, 2, 3].map((n) => round(n, 'changes-requested', ['- F1 [open] a.py:3 — Mức thấp — biên regex', '- F2 [open] a.py:9 — Mức thấp — y']))
   const text = `${cr.join('\n')}\n${round(4, 'pass', [low('F1'), low('F2')])}`
