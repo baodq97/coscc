@@ -1125,12 +1125,16 @@ class Runner:
                 base=base,
                 # Which system prompt the step ran on, so a measurement can pick the steps
                 # that ran after the fix by what they ran on rather than by a date — the
-                # board runs the installed copy, not this checkout. `""` is the SDK's
-                # empty one; a record written before `0037` has no field, read as `""`.
+                # board runs the installed copy, not this checkout. `""` means no preset,
+                # and nothing more: since `0088` a step without one whose `cwd` holds
+                # project instructions runs on those as its whole system prompt, and only
+                # `instructions` below says whether it did. A record written before `0037`
+                # has no field, read as `""`.
                 system_prompt="claude_code" if preset else "",
                 # `0088` R13. Which project files `_options` puts into the system prompt,
                 # whole or as a line of contents. Read again there, so a file edited in
-                # between is not seen here (spec C7).
+                # between is not seen here (spec C7). A record written before `0088` has
+                # no field: that step ran on a build that loaded every settings source.
                 instructions=instructions.read(cwd).record(),
                 **({"plan_drift": plan_drift} if plan_drift is not None else {}),
                 **({"shortlist": shortlist} if shortlist is not None else {}),
