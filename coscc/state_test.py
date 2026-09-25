@@ -1014,6 +1014,8 @@ class _Page:
             "running": counted("running", {"running": {}, "unknown_end": {}}),
             "running_steps": counted("running_steps", []),
             "timeline": counted("timeline", {"runs": []}),
+            "cost": counted("cost", {"recording": False}),
+            "unit_cost": counted("unit_cost", {"by_stage": [], "anomalies": [], "recording": True}),
             "artifact": counted("artifact", {"file": "impl.md", "exists": False, "text": ""}),
             "next_step": mock.AsyncMock(side_effect=page.Invalid("not asked in this test")),
         }.items():
@@ -1660,6 +1662,7 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
         page = SimpleNamespace(
             unit_id="0002_y", detail_tab="questions", run_log="x", error="e", notice="old",
             units=[], _load_timeline=lambda: None, _load_artifact=lambda: None,
+            _load_unit_cost=lambda: None,
         )
         state.StudioState._load_unit(page)
         self.assertEqual((page.unit_id, page.notice, page.error), ("0002_y", "", ""))
@@ -2202,6 +2205,88 @@ class SessionsAreReadWhereTheyAreShown(unittest.TestCase):
         with fake.patches():
             asyncio.run(go())
         self.assertEqual(seen, [0, 0, 1, 1, 1, 2, 3])
+
+
+class CostIsReadWhereItIsShown(unittest.TestCase):
+    """`0093` R12. `SERVICE.cost` is asked once per arrival at *Cost* and on no other screen;
+    `SERVICE.unit_cost` once per unit opened (R11)."""
+
+    def test_the_count_per_arrival(self):
+        import asyncio
+
+        fake = _Page()
+        token = "state-test-cost-read"
+        steps = [("/board?ws=a", "s1"), ("/activity?ws=a", "s1"), ("/cost?ws=a", "s1"),
+                 ("/board?ws=a", "s1"), ("/cost?ws=a", "s1"), ("/unit?ws=a&id=0009_x", "s1"),
+                 ("/cost/?ws=a", "s2")]  # a reload reads again
+        seen = []
+
+        async def go():
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            async with processor:
+                for address, sid in steps:
+                    await arrive(address, sid)
+                    seen.append((fake.calls["cost"], fake.calls["unit_cost"]))
+                await arrive("/sessions?ws=a", "s9")
+                await asyncio.sleep(0.15)
+
+        with fake.patches():
+            asyncio.run(go())
+        self.assertEqual([c for c, _ in seen], [0, 0, 1, 1, 2, 2, 3])
+        self.assertEqual([u for _, u in seen], [0, 0, 0, 0, 0, 1, 1])
+
+
+class CostRowsAreCopiedAndLabelled(unittest.TestCase):
+    """`0093` R4, R5, R10: money through `present.money`, unknown steps beside it, the
+    threshold in the measured cell, `No unit` for the empty key."""
+
+    def test_the_screen_reads_what_the_service_returned(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from coscc import state
+
+        data = {
+            "recording": True, "offset": "UTC+07:00",
+            "total": {"usd": 18.4, "steps": 5, "unknown": 2},
+            "by_unit": [{"key": "0001_a", "usd": 18.4, "steps": 3, "unknown": 0, "over": True},
+                        {"key": "", "usd": None, "steps": 2, "unknown": 2, "over": False}],
+            "by_stage": [], "by_day": [{"key": "2026-09-25", "usd": 0.00456, "steps": 5, "unknown": 2}],
+            "tokens": {"workspace": {"input_tokens": 25, "output_tokens": 75, "cache_read_tokens": 0,
+                                     "cache_creation_tokens": 0, "total": 100}, "by_stage": []},
+            "waste": [{"kind": "changes-requested", "count": 3, "usd": 2.0, "unknown": 0, "note": 1}],
+            "anomalies": [
+                {"kind": "over-budget", "unit": "0001_a", "stage": "", "ended": None, "value": 18.4, "limit": 15.0, "usd": 18.4},
+                {"kind": "reruns", "unit": "0001_a", "stage": "review", "ended": None, "value": 4, "limit": 3, "usd": 1.0},
+                {"kind": "tokens-per-turn", "unit": "", "stage": "impl", "ended": None, "value": 41200.0, "limit": 30000.0, "usd": None},
+                {"kind": "failed", "unit": "0001_a", "stage": "spec", "ended": None, "value": "exhausted", "limit": None, "usd": None},
+            ],
+        }
+        seen = {}
+
+        def cost(cwd, rounds):
+            seen["rounds"] = rounds
+            return data
+
+        page = SimpleNamespace(
+            cwd="/w", get_value=lambda name: {"0001_a": state.Unit(
+                id="0001_a", rounds=[state.Round(number=1, verdict="changes-requested")])},
+            _fail=lambda e: None)
+        with mock.patch.object(state, "SERVICE", SimpleNamespace(cost=cost)):
+            state.StudioState._load_cost(page)
+        self.assertEqual(seen["rounds"], {"0001_a": ["changes-requested"]})
+        self.assertEqual((page.cost_total_usd, page.cost_total_unknown, page.cost_offset),
+                         ("$18.40", "2 unknown", "UTC+07:00"))
+        self.assertEqual([(r.key, r.usd, r.unknown, r.over) for r in page.cost_units],
+                         [("0001_a", "$18.40", "", True), ("No unit", "—", "2 unknown", False)])
+        self.assertEqual(page.cost_days[0].usd, "$0.00456")
+        self.assertEqual((page.cost_tokens[0].input, page.cost_tokens[0].output), ("25 (25%)", "75 (75%)"))
+        self.assertEqual([(w.label, w.count, w.usd, w.sub) for w in page.cost_waste],
+                         [("Changes-requested rounds", "3", "$2.00", False), ("not recorded", "1", "not recorded", True)])
+        self.assertEqual([a.measured for a in page.cost_anomalies],
+                         ["$18.40 > $15", "4 runs > 3", "41,200 per turn > 3 × 10,000", "exhausted"])
+        self.assertEqual(page.cost_anomalies[2].unit, "No unit")
 
 
 class _ReadOnly(_Page):
