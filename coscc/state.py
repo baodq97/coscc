@@ -713,6 +713,8 @@ class GrantRow:
     budget: str = ""
     warning: str = ""
     consequence: str = ""
+    tool_list: list[str] = dataclasses.field(default_factory=list)
+    command_list: list[str] = dataclasses.field(default_factory=list)
 
 
 # --- formatting --------------------------------------------------------------
@@ -1314,6 +1316,8 @@ class StudioState(rx.State):
                 budget=f"${g['max_budget_usd']:.2f}",
                 warning=g["warning"],
                 consequence=str(g.get("consequence") or ""),
+                tool_list=list(g.get("tool_list") or []),
+                command_list=list(g.get("command_list") or []),
             )
             for g in data.get("grants") or []
         ]

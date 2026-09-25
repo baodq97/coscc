@@ -1642,6 +1642,12 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         for stage in ("pr:novel", "review:novel", "ship:novel"):
             self.assertNotIn(stage, stages)
 
+    def test_a_grants_tools_and_commands_are_also_lists(self):
+        """`0082` F2: the page lists them; the joined strings stay in the API as they were."""
+        for row in self.service.settings()["grants"]:
+            self.assertEqual(", ".join(row["tool_list"]) or "none", row["tools"], row["stage"])
+            self.assertEqual(", ".join(row["command_list"]) or "none", row["commands"], row["stage"])
+
 
 class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
     """`0033` R3, R4, R10. The label is read after the gate and picks the configuration;

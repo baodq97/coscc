@@ -1078,6 +1078,16 @@ def _knob_row(knob: rx.Var[Knob]) -> rx.Component:
     )
 
 
+def _name_list(label: str, names: rx.Var[list[str]]) -> rx.Component:
+    """One badge per tool or command, or "none"."""
+    return rx.flex(
+        s.text(label, size="1", weight="medium", width="80px", flex_shrink="0"),
+        rx.cond(names.length() == 0, s.text("none", size="1"),
+                rx.foreach(names, lambda n: s.badge(n, "gray"))),
+        gap="6px", wrap="wrap", align="center", width="100%", margin_bottom="6px",
+    )
+
+
 def _grant_row(grant: rx.Var[GrantRow]) -> rx.Component:
     return rx.box(
         rx.hstack(
@@ -1087,10 +1097,12 @@ def _grant_row(grant: rx.Var[GrantRow]) -> rx.Component:
             s.text("max " + grant.budget, size="1"),
             width="100%", align="center", wrap="wrap",
         ),
-        s.text("tools: " + grant.tools, size="1", margin_top="10px", overflow_wrap="anywhere"),
-        s.text("commands: " + grant.commands, size="1", margin_top="4px",
-               overflow_wrap="anywhere"),
         s.text(grant.consequence, size="1", margin_top="6px"),
+        # `0082` F2: a grant's tools and commands are lists (S5), shown only when opened, as
+        # the next-step panel's are (D72).
+        _details("grant-" + grant.stage, "What it may use",
+                 _name_list("Tools", grant.tool_list), _name_list("Commands", grant.command_list),
+                 margin_top="4px"),
         padding="16px 0", border_bottom=f"1px solid {s.LINE}", width="100%",
         data_testid="grant-row",
     )

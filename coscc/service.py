@@ -3344,6 +3344,9 @@ class Service:
                     "stage": name,
                     "tools": ", ".join(grant.tools) or "none",
                     "commands": ", ".join(grant.commands) or "none",
+                    # `0082` F2: the same, one item each, for the page to list (S5).
+                    "tool_list": list(grant.tools),
+                    "command_list": list(grant.commands),
                     "max_turns": grant.max_turns,
                     "max_budget_usd": grant.max_budget_usd,
                     "app_writes_artifact": grant.app_writes_artifact,

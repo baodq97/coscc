@@ -74,6 +74,13 @@ class ThePage(unittest.TestCase):
         self.assertIn("update-panel", _render(screens._settings()))
         self.assertIn("backlog-panel", _render(screens._backlog_screen()))
 
+    def test_f2_a_grants_tools_are_a_list_behind_details(self):
+        settings = _render(screens._settings())
+        self.assertNotIn("tools: ", settings)
+        self.assertNotIn("commands: ", settings)
+        self.assertIn("What it may use", settings)
+        self.assertIn("tool_list", settings)
+
 
 class TheIntegrationPanel(unittest.TestCase):
     def test_r13_a_zero_count_is_never_drawn(self):
