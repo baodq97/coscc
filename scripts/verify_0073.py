@@ -398,10 +398,10 @@ async def plain(tmp: Path) -> bool:
                 say(f"      {n}")
             ok &= claim(
                 gone["status"] == "purged"
-                and notes[0] == "không có luồng sự kiện: step này chạy trước 0073"
-                and notes[1].startswith("đã xoá (2026-09-25")
-                and notes[2].startswith("app dừng khi step đang chạy; không có sự kiện nào sau ")
-                and notes[3] == f"thiếu {lost} sự kiện",
+                and notes[0] == "no event stream: this step ran before events were recorded"
+                and notes[1].startswith("events purged (")
+                and notes[2].startswith("the app stopped while this step ran; no events after ")
+                and notes[3] == f"{lost} events missing",
                 "R13: the four notes, in the page's words",
             )
     finally:
@@ -644,7 +644,7 @@ def browser() -> int:
                         "F6 (a): reading a full list that follows, the row read stays put as live rows drop",
                         f"first row {top_before} -> {top_after}; seq {before[0]} at {before[1]:.0f}px -> "
                         f"{'gone' if after is None else f'{after[1]:.0f}px'}")
-            # (b) *older* pressed by hand while live batches still arrive, then *Về cuối*.
+            # (b) *older* pressed by hand while live batches still arrive, then *Jump to latest*.
             b.evaluate("window.__pause = true")
             before = b.evaluate(f"({WHERE})(null)")
             top_before = rows_now()[0]
@@ -664,7 +664,7 @@ def browser() -> int:
                                 f".map(r => +r.dataset.seq)) > {newest} + 50", timeout=30_000)
             b.wait_for_timeout(300)
             at_end = b.eval_on_selector("#watch-list", "l => l.scrollHeight - l.scrollTop - l.clientHeight")
-            ok &= claim(at_end < 40, "*Về cuối* brings B back to the bottom", f"{at_end:.0f}px from it")
+            ok &= claim(at_end < 40, "*Jump to latest* brings B back to the bottom", f"{at_end:.0f}px from it")
             b.evaluate("window.__pause = false")
             for _ in range(600):
                 if outcome.get("type") in ("done", "error"):
@@ -702,7 +702,7 @@ def browser() -> int:
             b.wait_for_selector(".watch-open", state="detached", timeout=30_000)
             again = len(row.locator(".watch-body").inner_text())
             ok &= claim(short <= 2000 < whole and again == short,
-                        "R12: collapsed, Mở shows the stored length, Thu gọn goes back", f"{short} {whole} {again}")
+                        "R12: collapsed, Expand shows the stored length, Collapse goes back", f"{short} {whole} {again}")
             # After `end`: reload, the unit's timeline, the step's row, and back to seq 1.
             b.goto(f"{base}/unit?ws={ws_name}&id={unit}&tab=timeline", wait_until="domcontentloaded", timeout=60_000)
             b.wait_for_selector(".watch-run", timeout=60_000)

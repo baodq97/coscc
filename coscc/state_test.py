@@ -1696,7 +1696,7 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
         self.assertEqual(asyncio.run(go()), (page.WATCH_WINDOW, 10, 400))
 
     def test_a_batch_already_in_the_last_page_is_not_shown_twice(self):
-        """`review.md` F1: *Về cuối* read the last page while a batch the follower had
+        """`review.md` F1: *Jump to latest* read the last page while a batch the follower had
         yielded waited for the state; applied after, it adds nothing it already shows."""
         import asyncio
 
@@ -1719,7 +1719,7 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
     def test_older_pages_past_the_window_say_newer_rows_left_and_about_to_the_end_returns(self):
         """`review.md` F2: an ended step of 654 events, scrolled up twice. The newest rows
         leave the list, the pane says so, a live batch is not appended after the gap, and
-        *Về cuối* reads the last page again, `end` included."""
+        *Jump to latest* reads the last page again, `end` included."""
         import asyncio
 
         from coscc import state as page
@@ -1755,15 +1755,22 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
         self.assertFalse(after)
 
     def test_the_four_notes_read_as_r13_says(self):
+        """`0073` R13's four notes, in English since `0089` R14 (S6)."""
         from coscc import state as page
+        from coscc.screens_test import VIETNAMESE
 
-        self.assertEqual(page.NO_RUN_NOTE, "không có luồng sự kiện: step này chạy trước 0073")
-        self.assertEqual(page._watch_note({"status": "purged", "purged_at": "2026-10-01"}), "đã xoá (2026-10-01)")
-        self.assertIn(
-            "app dừng khi step đang chạy; không có sự kiện nào sau ",
-            page._watch_note({"status": "ended-unknown", "last_at": 1_700_000_000_000}),
-        )
-        self.assertEqual(page._watch_note({"status": "ended", "events_lost": 3}), "thiếu 3 sự kiện")
+        self.assertEqual(page.NO_RUN_NOTE, "no event stream: this step ran before events were recorded")
+        purged = page._watch_note({"status": "purged", "purged_at": "2026-10-01T00:00:00+00:00"})
+        self.assertTrue(purged.startswith("events purged ("), purged)
+        self.assertNotIn("2026-10-01T", purged)
+        unknown = page._watch_note({"status": "ended-unknown", "last_at": 1_700_000_000_000})
+        self.assertIn("the app stopped while this step ran; no events after ", unknown)
+        none = page._watch_note({"status": "none"})
+        self.assertEqual(none, "no events were stored for this run")
+        lost = page._watch_note({"status": "ended", "events_lost": 3})
+        self.assertEqual(lost, "3 events missing")
+        for note in (page.NO_RUN_NOTE, purged, unknown, none, lost):
+            self.assertIsNone(VIETNAMESE.search(note), note)
 
 
 

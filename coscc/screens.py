@@ -1959,7 +1959,7 @@ def _detail_dialog() -> rx.Component:
 # scroll height nor the row nodes say where the row went; the seq does. The anchor is
 # never spent on the first change, so a live batch landing between *older* and its page
 # does not leave the page to arrive with none (F6 b). *Older* pressed at the bottom
-# anchors too; *Về cuối* drops the anchor and goes to the bottom. `data-seq` is watched as
+# anchors too; *Jump to latest* drops the anchor and goes to the bottom. `data-seq` is watched as
 # an attribute because a list that stays at `WATCH_WINDOW` rows changes no child at all.
 # The browser's own scroll anchoring is off on `#watch-list`, so this is the one thing
 # that moves it.
@@ -2038,9 +2038,9 @@ def _watch_row(e: rx.Var[WatchEvent]) -> rx.Component:
                 e.collapsed,
                 rx.cond(
                     opened,
-                    rx.button("Thu gọn", on_click=P.watch_collapse, size="1", variant="ghost",
+                    rx.button("Collapse", on_click=P.watch_collapse, size="1", variant="ghost",
                               class_name="watch-collapse"),
-                    rx.button("Mở", on_click=P.watch_expand(e.seq), size="1", variant="ghost",
+                    rx.button("Expand", on_click=P.watch_expand(e.seq), size="1", variant="ghost",
                               class_name="watch-expand"),
                 ),
             ),
@@ -2055,9 +2055,9 @@ def _watch_row(e: rx.Var[WatchEvent]) -> rx.Component:
                        "font_size": "12px", "font_family": _MONO},
             ),
         ),
-        rx.cond(e.collapsed & ~opened, s.text("… đã thu gọn; bấm Mở để xem hết", size="1")),
+        rx.cond(e.collapsed & ~opened, s.text("… collapsed; press Expand to see all", size="1")),
         rx.cond(e.truncated,
-                s.text("đã cắt khi lưu: chỉ giữ 64 000 ký tự đầu của " + e.original_length.to_string() + " ký tự",
+                s.text("cut when stored: kept the first 64 000 of " + e.original_length.to_string() + " characters",
                        size="1", color=rx.color("amber", 11))),
         rx.cond(e.persisted != "", s.text(e.persisted, size="1", color=rx.color("amber", 11))),
         class_name="watch-ev", custom_attrs={"data-seq": e.seq, "data-at": e.at},
@@ -2073,17 +2073,16 @@ def _watch_dialog() -> rx.Component:
                 rx.dialog.title(P.watch_title, size="4", weight="medium"),
                 s.badge(rx.cond(P.watch_status != "", P.watch_status, "—"), "iris"),
                 rx.spacer(),
-                rx.dialog.close(s.icon_button("x", "Đóng khung xem")),
+                rx.dialog.close(s.icon_button("x", "Close")),
                 width="100%", align="center",
             ),
             rx.dialog.description(
-                "Chỉ xem: không mở gate nào, không chạy gì, không đổi step. Ai giữ mật khẩu hoặc "
-                "một session còn sống đọc được mọi lệnh, đường dẫn, suy nghĩ và đầu ra tool ở đây.",
+                "This step's events, oldest first.",
                 size="1", margin_top="6px",
             ),
             rx.cond(P.watch_note != "", rx.callout(P.watch_note, id="watch-note", size="1",
                                                    color_scheme="amber", margin_top="8px")),
-            rx.button("Tải sự kiện cũ hơn", id="watch-older", on_click=P.watch_older,
+            rx.button("Load older events", id="watch-older", on_click=P.watch_older,
                       disabled=~P.watch_has_older, variant="ghost", size="1", margin_top="8px"),
             rx.box(
                 rx.box(id="watch-top", height="1px"),
@@ -2093,11 +2092,11 @@ def _watch_dialog() -> rx.Component:
             ),
             rx.hstack(
                 rx.cond(P.watch_pending > 0,
-                        s.text(P.watch_pending.to_string() + " sự kiện mới", id="watch-pending", size="1")),
+                        s.text(P.watch_pending.to_string() + " new events", id="watch-pending", size="1")),
                 rx.cond(P.watch_has_newer,
-                        s.text("Các sự kiện mới hơn đã rời khung xem", id="watch-newer", size="1")),
+                        s.text("Newer events have left this view", id="watch-newer", size="1")),
                 rx.cond(P.watch_has_newer | (~P.watch_following & (P.watch_status == "running")),
-                        rx.button("Về cuối", id="watch-live", on_click=P.watch_live, size="1")),
+                        rx.button("Jump to latest", id="watch-live", on_click=P.watch_live, size="1")),
                 spacing="3", align="center", margin_top="8px",
             ),
             id="watch-pane", max_width="min(960px, 96vw)", width="96vw",

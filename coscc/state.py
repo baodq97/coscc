@@ -643,8 +643,8 @@ WATCH_WINDOW = 400
 # Seconds the pane gathers new events before it sends them (`spike.md ## U3`).
 WATCH_GATHER = 0.5
 
-# `0073` R13, word for word.
-NO_RUN_NOTE = "không có luồng sự kiện: step này chạy trước 0073"
+# `0073` R13, in English since `0089` (S6): no longer R13's words (`.cos/0089_*/spec.md` C1).
+NO_RUN_NOTE = "no event stream: this step ran before events were recorded"
 
 
 def _watch_note(page: dict) -> str:
@@ -652,17 +652,17 @@ def _watch_note(page: dict) -> str:
     notes: list[str] = []
     status = page.get("status")
     if status == "purged":
-        notes.append(f"đã xoá ({page.get('purged_at') or ''})")
+        notes.append(f"events purged ({present.when(page.get('purged_at'))})")
     elif status == "ended-unknown":
         notes.append(
-            "app dừng khi step đang chạy; không có sự kiện nào sau "
-            + (events_mod.when(page.get("last_at")) if page.get("last_at") else "lúc bắt đầu")
+            "the app stopped while this step ran; no events after "
+            + (events_mod.when(page.get("last_at")) if page.get("last_at") else "the start")
         )
     elif status == "none":
-        notes.append("không có sự kiện nào được lưu cho lần chạy này")
+        notes.append("no events were stored for this run")
     lost = int(page.get("events_lost") or 0)
     if lost > 0:
-        notes.append(f"thiếu {lost} sự kiện")
+        notes.append(f"{lost} events missing")
     return " · ".join(notes)
 
 
@@ -999,7 +999,7 @@ class StudioState(rx.State):
     watch_note: str = ""
     watch_events: list[WatchEvent] = []
     watch_has_older: bool = False
-    # Older pages pushed the newest rows out of the list; *Về cuối* brings them back.
+    # Older pages pushed the newest rows out of the list; *Jump to latest* brings them back.
     watch_has_newer: bool = False
     # At the bottom and taking new events; off once older ones were loaded.
     watch_following: bool = False
@@ -2203,7 +2203,7 @@ class StudioState(rx.State):
         """New events, by `plan.md` step 7's rule: at the bottom, appended and the oldest
         dropped past `WATCH_WINDOW`; reading older ones, appended while there is room and
         counted in `watch_pending` once there is none. An event already shown is dropped: a
-        batch the follower yielded before *Về cuối* read the last page again is also in that
+        batch the follower yielded before *Jump to latest* read the last page again is also in that
         page (`review.md` F1)."""
         last = self.watch_events[-1].seq if self.watch_events else 0
         fresh = [e for e in fresh if e.seq > last]
@@ -2303,7 +2303,7 @@ class StudioState(rx.State):
 
     @rx.event
     def watch_live(self):
-        """*Về cuối*: the last page again, and following again."""
+        """*Jump to latest*: the last page again, and following again."""
         page = self._watch_page()
         if page is None:
             return

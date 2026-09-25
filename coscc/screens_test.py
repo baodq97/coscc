@@ -21,13 +21,6 @@ VIETNAMESE = re.compile(r"[àáạảãâầấậẩẫăằắặẳẵèéẹ
 # B empties this set; A may not add to it.
 LEFT_TO_B = {
     "đạt": "D23", "trượt": "D23", "không đo được": "D23",
-    "Thu gọn": "D62", "Mở": "D62", "… đã thu gọn; bấm Mở để xem hết": "D62",
-    "đã cắt khi lưu: chỉ giữ 64 000 ký tự đầu của ": "D62", " ký tự": "D62",
-    "Đóng khung xem": "D62",
-    "Chỉ xem: không mở gate nào, không chạy gì, không đổi step. Ai giữ mật khẩu hoặc "
-    "một session còn sống đọc được mọi lệnh, đường dẫn, suy nghĩ và đầu ra tool ở đây.": "D62",
-    "Tải sự kiện cũ hơn": "D62", " sự kiện mới": "D62", "Các sự kiện mới hơn đã rời khung xem": "D62",
-    "Về cuối": "D62",
 }
 
 
