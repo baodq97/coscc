@@ -126,6 +126,30 @@ class QuestionsAreCarriedFromTheScript(unittest.TestCase):
             [u] = run(board.read(d))["units"]
             self.assertEqual((u["open"], u["questions"], u["counted"]), (0, [], ""))
 
+    def test_who_answered_and_every_answer_in_force_are_copied(self):
+        """`0044`. `by` on each question and `answers` on the unit, from the joined answer
+        `cos.mjs` sent; the last block for a number is the one in force."""
+        text = self.TEXT + "\n### Câu 2\nAnswered by: Jera. Date: 2026-09-25. Via: precedent.\n\nKhông.\n"
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_q"
+            unit.mkdir(parents=True)
+            (unit / "intent.md").write_text(text, encoding="utf-8")
+            [u] = run(board.read(d))["units"]
+            self.assertEqual([q["by"] for q in u["questions"]], ["", "Jera", ""])
+            self.assertEqual(u["answers"], [{
+                "artifact": "intent.md", "n": 2, "question": "Two?", "by": "Jera", "date": "2026-09-25",
+                "via": "precedent", "text": "Không.",
+            }])
+
+    def test_an_older_script_sends_no_answers_and_no_names(self):
+        async def fake_run(argv, timeout):
+            return 0, ('{"stages": [], "units": [{"name": "0001_q", "questions": '
+                       '[{"artifact": "spec.md", "n": 1, "text": "x", "answered": true}]}]}'), ""
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
+            [u] = run(board.read(d))["units"]
+            self.assertEqual((u["answers"], u["questions"][0]["by"]), ([], ""))
+
 
 REVIEW_TWO_ROUNDS = (
     "# Review\nStatus: changes-requested.\n\n"
