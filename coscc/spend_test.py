@@ -6,11 +6,22 @@ spec's `## Design` §5, word for word, run on a `cos.db` this file writes.
 
 from __future__ import annotations
 
+import os
+import sqlite3
+import tempfile
+import time
 import unittest
 from datetime import timedelta, timezone
+from pathlib import Path
 from typing import Any
 
-from coscc import spend
+from coscc import present, spend
+from coscc.config import Config
+from coscc.data import DB_FILENAME
+from coscc.service import Service
+from coscc.sessions import Sessions
+
+REPO = str(Path(__file__).resolve().parent.parent)
 
 TZ = timezone(timedelta(hours=7))
 
@@ -191,6 +202,119 @@ class UnitStages(unittest.TestCase):
                          end("u", "spec"), end("v", "impl", cost_usd=9.0)], tz=TZ)
         self.assertEqual([(r["key"], r["usd"], r["steps"], r["unknown"]) for r in m["unit_stages"]["u"]],
                          [("impl", 3.0, 2, 0), ("spec", None, 1, 1)])
+
+
+# `0093` spec `## Design` §5, word for word; R11 adds `unit` and `stage`.
+BY_UNIT = ("SELECT SUM(json_extract(record, '$.cost_usd')) FROM runs "
+           "WHERE root = :root AND workspace = :ws AND kind = 'end' AND unit = :unit")
+BY_STAGE = ("SELECT SUM(json_extract(record, '$.cost_usd')) FROM runs "
+            "WHERE root = :root AND workspace = :ws AND kind = 'end' AND stage = :stage")
+BY_DAY = ("SELECT SUM(json_extract(record, '$.cost_usd')) FROM runs "
+          "WHERE root = :root AND workspace = :ws AND kind = 'end' AND date(at, 'localtime') = :day")
+BY_UNIT_STAGE = BY_UNIT + " AND stage = :stage"
+
+
+def _read_money(text: str) -> float:
+    return float(text.lstrip("$").replace(",", ""))
+
+
+class MatchesTheRunsTable(unittest.TestCase):
+    """R4, R11: every figure within 1% of SQLite's sum, `NULL` as `—`, midnight where SQLite puts it."""
+
+    def setUp(self):
+        self._tz = os.environ.get("TZ")
+        os.environ["TZ"] = "Asia/Ho_Chi_Minh"
+        time.tzset()
+        self.addCleanup(self._restore_tz)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "work").mkdir()
+        config = Config(workspaces=(REPO,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+        self.service = Service(config, Sessions(config))
+        self.db = root / "data" / DB_FILENAME
+
+    def _restore_tz(self):
+        if self._tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = self._tz
+        time.tzset()
+
+    def _write(self):
+        j = self.service._journal()
+        key = self.service._journal_key(REPO)
+        steps = [
+            ("0001_a", "spec", "done", "2026-09-23T03:00:00+00:00", {"cost_usd": 1.234567}),
+            ("0001_a", "plan", "done", "2026-09-24T16:59:59+00:00", {"cost_usd": 0.004561}),
+            ("0001_a", "impl", "failed", "2026-09-24T17:00:00+00:00", {}),
+            ("0002_b", "impl", "done", "2026-09-24T17:00:01+00:00", {"cost_usd": 12.5}),
+            ("0002_b", "impl", "exhausted", "2026-09-25T01:00:00+00:00", {"cost_usd": None}),
+            ("0003_c", "spec", "done", "2026-09-25T02:00:00+00:00", {"cost_usd": 0.0}),
+            ("0003_c", "review", "failed", "2026-09-25T03:00:00+00:00", {}),
+            ("", "estimate", "done", "2026-09-25T04:00:00+00:00", {"cost_usd": 0.0371}),
+        ]
+        for unit, stage, outcome, at, extra in steps:
+            j.started(key, unit, stage, "manual", at=at)
+            if outcome != "done":
+                j.attempted(key, unit, stage, at=at, cost_usd=3.0)
+            j.finished(key, unit, stage, outcome, at=at, **extra)
+        j.append({"kind": "estimate", "workspace": key, "unit": "", "stage": "estimate",
+                  "at": "2026-09-25T04:00:00+00:00", "cost_usd": 0.0371})
+
+    def _sql(self, conn, query, **params):
+        [(value,)] = conn.execute(query, params).fetchall()
+        return value
+
+    def _same(self, served, sql, where):
+        if sql is None:
+            self.assertIsNone(served, where)
+            self.assertEqual(present.money(served), "—", where)
+            return
+        self.assertIsNotNone(served, where)
+        self.assertLessEqual(abs(served - sql), 0.01 * abs(sql), where)
+        self.assertLessEqual(abs(_read_money(present.money(served)) - sql), 0.01 * abs(sql), where)
+
+    def test_every_unit_stage_and_day_matches_the_reference_queries(self):
+        self._write()
+        served = self.service.cost(REPO)
+        self.assertTrue(served["recording"])
+        conn = sqlite3.connect(self.db)
+        self.addCleanup(conn.close)
+        [(root, ws)] = conn.execute("SELECT DISTINCT root, workspace FROM runs").fetchall()
+        scope = {"root": root, "ws": ws}
+        ends = "FROM runs WHERE root = :root AND workspace = :ws AND kind = 'end'"
+
+        units = {r for (r,) in conn.execute(f"SELECT DISTINCT unit {ends}", scope)}
+        stages = {r for (r,) in conn.execute(f"SELECT DISTINCT stage {ends}", scope)}
+        days = {r for (r,) in conn.execute(f"SELECT DISTINCT date(at, 'localtime') {ends}", scope)}
+        self.assertEqual({r["key"] for r in served["by_unit"]}, units)
+        self.assertEqual({r["key"] for r in served["by_stage"]}, stages)
+        self.assertEqual({r["key"] for r in served["by_day"]}, days)
+        self.assertGreaterEqual((len(units), len(stages), len(days)), (3, 3, 2))
+
+        for row in served["by_unit"]:
+            self._same(row["usd"], self._sql(conn, BY_UNIT, unit=row["key"], **scope), row["key"])
+        for row in served["by_stage"]:
+            self._same(row["usd"], self._sql(conn, BY_STAGE, stage=row["key"], **scope), row["key"])
+        for row in served["by_day"]:
+            self._same(row["usd"], self._sql(conn, BY_DAY, day=row["key"], **scope), row["key"])
+        for unit in units:
+            found = self.service.unit_cost(REPO, unit)["by_stage"]
+            self.assertEqual({r["key"] for r in found}, {
+                s for (s,) in conn.execute(f"SELECT DISTINCT stage {ends} AND unit = :unit", {**scope, "unit": unit})})
+            for row in found:
+                self._same(row["usd"], self._sql(conn, BY_UNIT_STAGE, unit=unit, stage=row["key"], **scope),
+                           (unit, row["key"]))
+
+        # The two ends either side of local midnight fall on the days SQLite puts them on.
+        by_day = {r["key"]: r for r in served["by_day"]}
+        self.assertEqual(by_day["2026-09-24"]["usd"], 0.004561)
+        self.assertEqual(by_day["2026-09-25"]["unknown"], 3)
+        # An `attempt` and an `estimate` carry money and add none; `null` and absent are unknown.
+        self.assertEqual(served["total"]["usd"], round(1.234567 + 0.004561 + 12.5 + 0.0371, 6))
+        self.assertEqual(served["total"]["unknown"], 3)
+        self.assertEqual(served["offset"], "UTC+07:00")
 
 
 if __name__ == "__main__":

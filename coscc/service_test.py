@@ -378,6 +378,27 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         log.record(REPO, "0099_retired", "intent.md", "accepted")
         self.assertEqual(self.service.units_with_history(REPO)["units"], ["0099_retired"])
 
+    def test_0093_cost_and_unit_cost_read_the_run_log(self):
+        j = self.service._journal()
+        key = self.service._journal_key(REPO)
+        j.finished(key, "0001_a-problem", "spec", "done", cost_usd=2.0)
+        j.finished(key, "0001_a-problem", "spec", "failed")
+        j.finished(key, "0002_other", "plan", "done", cost_usd=20.0)
+        found = self.service.cost(REPO, {"0001_a-problem": ["changes-requested"]})
+        self.assertTrue(found["recording"])
+        self.assertEqual([(r["key"], r["usd"], r["over"]) for r in found["by_unit"]],
+                         [("0002_other", 20.0, True), ("0001_a-problem", 2.0, False)])
+        self.assertEqual(found["waste"][-1]["count"], 1)
+        mine = self.service.unit_cost(REPO, "0001_a-problem")
+        self.assertEqual([(r["key"], r["steps"], r["unknown"]) for r in mine["by_stage"]], [("spec", 2, 1)])
+        self.assertEqual([a["kind"] for a in mine["anomalies"]], ["failed"])
+
+    def test_0093_cost_with_no_working_folder_says_it_is_not_recording(self):
+        service = _service()
+        self.assertFalse(service.cost(REPO)["recording"])
+        self.assertEqual(service.unit_cost(REPO, "0001_a-problem"),
+                         {"by_stage": [], "anomalies": [], "recording": False})
+
     def test_the_gate_applies_to_both_reads(self):
         for call in (
             lambda: self.service.unit_history("/etc", "0001_a-problem"),

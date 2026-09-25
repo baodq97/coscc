@@ -31,7 +31,7 @@ from coscc import board as board_reader
 from coscc import drift, events, fetches, gitops
 from coscc import harness, integrate
 from coscc import hold as hold_rules
-from coscc import present, prcomment, prsync
+from coscc import present, prcomment, prsync, spend
 from coscc import sessions as reader
 from coscc.board import Unavailable
 from coscc.config import Config
@@ -3300,6 +3300,33 @@ class Service:
                 "cwd": cwd, "events": [], "total": {}, "per_unit": {}, "recording": False,
             }
         return {**self._events_of(cwd, rows, limit), **self._usage_of(cwd, rows)}
+
+    def cost(self, cwd: str, rounds: dict[str, list[str]] | None = None) -> dict[str, Any]:
+        """`0093`. Where this workspace's money went, from one read of its run log.
+
+        `rounds` is each unit's review verdicts, from the board read the page already has
+        (R9). Read only; no figure here is read by a gate (R13).
+        """
+        rows = self._records_or_none(cwd)
+        if rows is None:
+            return {"cwd": cwd, "recording": False}
+        return {**spend.model(rows, rounds), "recording": True}
+
+    def unit_cost(self, cwd: str, unit: str) -> dict[str, Any]:
+        """`0093` R11. One unit's cost by stage and its anomalies.
+
+        The whole log is read, not the unit's rows: a token-per-turn median is the
+        workspace's (spec `## Design` §1).
+        """
+        rows = self._records_or_none(cwd)
+        if rows is None:
+            return {"by_stage": [], "anomalies": [], "recording": False}
+        found = spend.model(rows)
+        return {
+            "by_stage": found["unit_stages"].get(unit, []),
+            "anomalies": [a for a in found["anomalies"] if a["unit"] == unit],
+            "recording": True,
+        }
 
     def settings(self) -> dict[str, Any]:
         """The safety posture, as something a screen can render. Read only.
