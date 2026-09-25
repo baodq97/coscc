@@ -3421,7 +3421,7 @@ class Service:
     def _autopilot_cap(self, records: list[dict[str, Any]], limit: float) -> dict[str, Any]:
         """R7's figures, for a pass and for the board: every workspace, every starter."""
         now = datetime.now().astimezone()
-        spent, unknown = autopilot.spent_today(records, now)
+        spent = autopilot.spent_today(records, now)
         active = {
             (k, unit): "integrate" if mark.kind == "integrate" else mark.stage
             for (k, unit), mark in self._active.items()
@@ -3434,8 +3434,10 @@ class Service:
                     active.setdefault((k, unit), stage)
         running = autopilot.reserved(records, now, [(k, unit, stage) for (k, unit), stage in active.items()])
         return {
-            "limit": limit, "spent": round(spent, 2), "running": round(running, 2),
-            "day": autopilot.today(now), "unknown": unknown,
+            "limit": limit, "spent": round(spent["known"] + spent["estimated"], 2),
+            "known": round(spent["known"], 2), "estimated": round(spent["estimated"], 2),
+            "estimated_count": spent["estimated_count"], "running": round(running, 2),
+            "day": autopilot.today(now),
         }
 
     def _autopilot_set_stops(
@@ -3547,13 +3549,12 @@ class Service:
             # counts against N for 24 hours.
             elsewhere = sum(1 for (k, unit) in autopilot.open_starts(records, now) if k == key and unit not in here)
             cap = self._autopilot_cap(records, settings["daily_cap_usd"])
-            room = None if cap["unknown"] else cap["limit"] - cap["spent"] - cap["running"]
+            room = cap["limit"] - cap["spent"] - cap["running"]
             picked = autopilot.pick(candidates, running, settings["max_parallel"] - elsewhere, room)
+            est = f" ({cap['estimated']:.2f} estimated)" if cap["estimated_count"] else ""
             for c in picked["capped"]:
                 found[c["unit"]] = {"unit": c["unit"], "kind": "cap", "reason": (
-                    f"a cost is unknown today, so the cap counts as reached ({cap['day']})"
-                    if cap["unknown"] else
-                    f"spent {cap['spent']:.2f} + running {cap['running']:.2f} + {c['stage']} "
+                    f"spent {cap['spent']:.2f}{est} + running {cap['running']:.2f} + {c['stage']} "
                     f"{c['need']:.2f} is over the cap of {cap['limit']:.2f} USD ({cap['day']})"
                 )}
             # R1: the switch may have been turned off while this pass read the board and

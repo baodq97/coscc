@@ -85,7 +85,7 @@ class TheAutopilotBlockIsCopied(unittest.TestCase):
             "on": True, "refused_because": "",
             "stops": [{"unit": "0010_a", "kind": "a", "reason": "open questions: spec.md question 2"},
                       {"unit": "", "kind": "cap", "reason": "over"}],
-            "cap": {"limit": 50.0, "spent": 3.5, "running": 4.0, "day": "2026-10-01", "unknown": False},
+            "cap": {"limit": 50.0, "spent": 3.5, "running": 4.0, "day": "2026-10-01"},
         })
         self.assertTrue(page.autopilot_on)
         self.assertEqual(page.autopilot_stops, [
@@ -93,6 +93,10 @@ class TheAutopilotBlockIsCopied(unittest.TestCase):
             AutopilotStop("the workspace", "Daily cap", "over"),
         ])
         self.assertEqual(page.autopilot_cap, "Today: 3.50 spent, 4.00 running, cap 50.00 USD")
+        StudioState._show_autopilot_block(page, {"on": True, "cap": {
+            "limit": 80.0, "spent": 68.0, "known": 20.0, "estimated": 48.0, "estimated_count": 5, "running": 0.0,
+        }})
+        self.assertEqual(page.autopilot_cap, "Today: 68.00 spent, 48.00 of it estimated, 0.00 running, cap 80.00 USD")
         StudioState._show_autopilot_block(page, {"on": False})
         self.assertEqual((page.autopilot_on, page.autopilot_stops, page.autopilot_cap), (False, [], ""))
 

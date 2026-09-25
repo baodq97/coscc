@@ -14,11 +14,11 @@ advice (`.claude/docs/not-built.md`).
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from coscc import labels, spend
-from coscc.policy import grant_for, grant_for_step
+from coscc.policy import GRANTS, NOVEL_CEILINGS, grant_for, grant_for_step
 
 # R2. Defaults, `intent.md ## Answers`, câu 2 and 3.
 DEFAULT_MAX_PARALLEL = 4
@@ -147,20 +147,10 @@ def today(now: datetime) -> str:
     return spend.local_day(now.isoformat())
 
 
-def spent_today(records: Iterable[dict[str, Any]], now: datetime) -> tuple[float, bool]:
-    """`(usd, unknown)`: every `end` of the machine's day, whoever started it, every
-    workspace. One `end` with no `cost_usd` makes `unknown` true, and `unknown` is the cap
-    reached (`intent.md ## Answers`, câu 10)."""
-    day = today(now)
-    usd, unknown = 0.0, False
-    for r in records:
-        if r.get("kind") != "end" or spend.local_day(r.get("at")) != day:
-            continue
-        if r.get("cost_usd") is None:
-            unknown = True
-        else:
-            usd += float(r["cost_usd"])
-    return round(usd, 6), unknown
+def spent_today(records: Iterable[dict[str, Any]], now: datetime) -> dict[str, Any]:
+    """`spent_on` the machine's day of `now`. An `end` with no `cost_usd` is counted at its
+    estimate, not as the cap reached (`0105`)."""
+    return spent_on(records, today(now))
 
 
 def reservation(stage: str) -> float:
@@ -172,6 +162,36 @@ def reservation(stage: str) -> float:
         grant_for_step(stage, None).max_budget_usd or 0.0,
         grant_for_step(stage, labels.NOVEL).max_budget_usd or 0.0,
     ))
+
+
+def estimate(stage: str) -> float:
+    """What an `end` of `stage` with no `cost_usd` is counted at (`0105`): its reservation,
+    or, for a stage no grant gives a budget, the largest budget in the grant table — read
+    here, never copied, so a dearer grant added later raises it too."""
+    own = reservation(stage)
+    if own > 0:
+        return own
+    return float(max(
+        [float(g.max_budget_usd or 0.0) for g in GRANTS.values()]
+        + [float(budget) for _, budget in NOVEL_CEILINGS.values()]
+    ))
+
+
+def spent_on(records: Iterable[dict[str, Any]], day: str) -> dict[str, Any]:
+    """`{known, estimated, estimated_count}`: every `end` of the machine's `day`, whoever
+    started it, every workspace. An `end` with no `cost_usd`, whatever its outcome, counts
+    at `estimate` of its stage (`0105`). An `integration` record is never added: a Gebo
+    session's cost is on its own `end`."""
+    known, estimated, count = 0.0, 0.0, 0
+    for r in records:
+        if r.get("kind") != "end" or spend.local_day(r.get("at")) != day:
+            continue
+        if r.get("cost_usd") is None:
+            estimated += estimate(str(r.get("stage") or ""))
+            count += 1
+        else:
+            known += float(r["cost_usd"])
+    return {"known": round(known, 6), "estimated": round(estimated, 6), "estimated_count": count}
 
 
 def open_starts(records: Iterable[dict[str, Any]], now: datetime) -> dict[tuple[str, str], dict[str, Any]]:
@@ -202,9 +222,10 @@ def reserved(
     return total
 
 
-def cap_allows(spent: float, unknown: bool, running: float, need: float, limit: float) -> bool:
-    """R7: spent + running + this step's reservation must fit under the limit."""
-    return not unknown and spent + running + need <= limit
+def cap_allows(spent: float, running: float, need: float, limit: float) -> bool:
+    """R7: spent (known and estimated) + running + this step's reservation must fit under
+    the limit."""
+    return spent + running + need <= limit
 
 
 # --- R8, which of the candidates run now --------------------------------------
@@ -234,13 +255,12 @@ def pick(
     candidates: Iterable[dict[str, Any]],
     running: Iterable[dict[str, Any]],
     max_parallel: int,
-    room: float | None,
+    room: float,
 ) -> dict[str, list[dict[str, Any]]]:
     """R8 a–f and R7 over the steps that could start, lowest unit number first.
 
     Each candidate and each running entry is `{unit, stage, files}`, and a candidate also
-    carries `need`, its reservation. `room` is the money left under the cap, `None` when it
-    is unknown. Returns `{"chosen": [...], "capped": [...]}`: what to start, and what the
+    carries `need`, its reservation. `room` is the money left under the cap. Returns `{"chosen": [...], "capped": [...]}`: what to start, and what the
     cap alone held back. What another rule held back is in neither; it waits its turn.
     """
     running = list(running)
@@ -260,7 +280,7 @@ def pick(
         ):
             continue
         need = float(c.get("need") or 0.0)
-        if room is None or need > room:
+        if need > room:
             capped.append(c)
             continue
         room -= need
@@ -334,3 +354,55 @@ def measure(
     units_ = sorted(per_unit.values(), key=lambda u: (unit_number(u["unit"]), u["unit"]))
     met = [u["unit"] for u in units_ if u["reached"] and u["autopilot"] and not u["outside"]]
     return {"workspace": workspace, "since": since, "until": until, "units": units_, "met": met}
+
+
+# The outcome of `0105`'s intent, per day: its four clauses.
+ENOUGH_INTEGRATIONS = 5
+
+
+def _local_midnight_utc(day: date) -> str:
+    return datetime(day.year, day.month, day.day).astimezone().astimezone(timezone.utc).isoformat()
+
+
+def measure_days(
+    records: Iterable[dict[str, Any]], workspace: str, since: str, until: str, cap: float,
+) -> list[dict[str, Any]]:
+    """`0105`. Per machine's day `since`..`until` inclusive: how many integrations and
+    failed steps `workspace` had, how many starts the autopilot made there, and the day's
+    spend over every workspace, since the cap is the app's. The spend is `spent_on`'s, no
+    second sum. `utc_from`/`utc_to` are that day's local midnights in UTC, since the intent
+    counts UTC days and the cap does not.
+
+    An `integration` record carries no cost field at all, so the intent's clause "at least
+    one integration with no `cost_usd`" holds whenever `enough_integrations` does.
+    """
+    rows = list(records)
+    out: list[dict[str, Any]] = []
+    d, last = date.fromisoformat(since), date.fromisoformat(until)
+    while d <= last:
+        day = d.isoformat()
+        here = [
+            r for r in rows
+            if r.get("workspace") == workspace and spend.local_day(r.get("at")) == day
+        ]
+        integrations = sum(1 for r in here if r.get("kind") == "integration")
+        failed = sum(1 for r in here if r.get("kind") == "end" and r.get("outcome") in ("failed", "exhausted"))
+        starts = sum(1 for r in here if r.get("kind") == "start" and started_by(r) == "autopilot")
+        money = spent_on(rows, day)
+        spent = round(money["known"] + money["estimated"], 6)
+        clauses = {
+            "enough_integrations": integrations >= ENOUGH_INTEGRATIONS,
+            "a_failure": failed >= 1,
+            "ran": starts >= 1,
+            "within": spent <= cap,
+        }
+        out.append({
+            "day": day,
+            "utc_from": _local_midnight_utc(d),
+            "utc_to": _local_midnight_utc(d + timedelta(days=1)),
+            "integrations": integrations, "failed": failed, "autopilot_starts": starts,
+            "known": money["known"], "estimated": money["estimated"], "spent": spent, "cap": cap,
+            **clauses, "met": all(clauses.values()),
+        })
+        d += timedelta(days=1)
+    return out

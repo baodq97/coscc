@@ -1581,8 +1581,9 @@ class StudioState(rx.State):
         cap = block.get("cap") or {}
         self.autopilot_cap = (
             "" if not cap else
-            f"Today: {cap.get('spent', 0):.2f} spent, {cap.get('running', 0):.2f} running, "
-            f"cap {cap.get('limit', 0):.2f} USD" + (" (a cost is unknown, so the cap counts as reached)" if cap.get("unknown") else "")
+            f"Today: {cap.get('spent', 0):.2f} spent, "
+            + (f"{cap.get('estimated', 0):.2f} of it estimated, " if cap.get("estimated_count") else "")
+            + f"{cap.get('running', 0):.2f} running, cap {cap.get('limit', 0):.2f} USD"
         )
 
     def _show_autopilot(self, data: dict) -> None:

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from coscc import autopilot as ap
+from coscc.policy import GRANTS, NOVEL_CEILINGS
 
 COS_MJS = Path(__file__).resolve().parent.parent / ".claude" / "scripts" / "cos.mjs"
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
@@ -110,29 +111,68 @@ class TheDaysMoney(unittest.TestCase):
             {"kind": "end", "at": at(-timedelta(minutes=5)), "cost_usd": 2.0, "workspace": "w2"},
             {"kind": "start", "at": at(), "workspace": "w1"},
         ]
-        self.assertEqual(ap.spent_today(rows, NOW), (3.5, False))
+        self.assertEqual(ap.spent_today(rows, NOW), {"known": 3.5, "estimated": 0.0, "estimated_count": 0})
 
-    def test_an_end_without_cost_is_the_cap_reached(self):
-        rows = [{"kind": "end", "at": at(), "cost_usd": 1.0}, {"kind": "end", "at": at()}]
-        spent, unknown = ap.spent_today(rows, NOW)
-        self.assertTrue(unknown)
-        self.assertFalse(ap.cap_allows(spent, unknown, 0.0, 0.0, 50.0))
+    def test_an_end_without_cost_is_not_the_cap_reached(self):
+        rows = [{"kind": "end", "at": at(), "cost_usd": 1.0}, {"kind": "end", "at": at(), "stage": "spec"}]
+        got = ap.spent_today(rows, NOW)
+        self.assertEqual((got["known"], got["estimated"]), (1.0, ap.estimate("spec")))
+        self.assertTrue(ap.cap_allows(got["known"] + got["estimated"], 0.0, 0.0, 50.0))
 
     def test_a_new_day_by_the_machines_clock_starts_again(self):
         local_midnight = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
         yesterday = (local_midnight - timedelta(seconds=1)).astimezone(timezone.utc).isoformat()
         rows = [{"kind": "end", "at": yesterday, "cost_usd": 49.0}, {"kind": "end", "at": yesterday}]
-        self.assertEqual(ap.spent_today(rows, NOW), (0.0, False))
+        self.assertEqual(ap.spent_today(rows, NOW), {"known": 0.0, "estimated": 0.0, "estimated_count": 0})
 
     def test_the_cap_fits_or_does_not(self):
-        self.assertTrue(ap.cap_allows(40.0, False, 2.0, 8.0, 50.0))
-        self.assertFalse(ap.cap_allows(40.0, False, 2.0, 8.01, 50.0))
+        self.assertTrue(ap.cap_allows(40.0, 2.0, 8.0, 50.0))
+        self.assertFalse(ap.cap_allows(40.0, 2.0, 8.01, 50.0))
+
+    def test_a_day_like_2026_09_25_fits_or_is_capped(self):
+        rows = [{"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"}] + [
+            {"kind": "end", "at": at(), "stage": "integrate", "outcome": "done"} for _ in range(4)
+        ]
+        estimated = ap.spent_on(rows, ap.today(NOW))["estimated"]
+        self.assertEqual(estimated, 48.0)
+        spec = {"unit": "0010_a", "stage": "spec", "files": None, "need": 4.0}
+        got = ap.pick([spec], [], 4, 80.0 - (20.0 + estimated) - 0.0)
+        self.assertEqual((got["chosen"], got["capped"]), ([spec], []))
+        got = ap.pick([spec], [], 4, 80.0 - (30.0 + estimated) - 0.0)
+        self.assertEqual((got["chosen"], got["capped"]), ([], [spec]))
 
     def test_a_reservation_is_the_largest_budget_a_label_can_give(self):
         self.assertEqual(ap.reservation("impl"), 16.0)
         self.assertEqual(ap.reservation("review"), 4.0)
         self.assertEqual(ap.reservation("integrate"), 8.0)
         self.assertEqual(ap.reservation("no-such-stage"), 0.0)
+
+    def test_an_end_without_cost_counts_its_stages_ceiling(self):
+        rows = [
+            {"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"},
+            {"kind": "end", "at": at(), "stage": "review", "outcome": "done"},
+            {"kind": "end", "at": at(), "stage": "integrate", "outcome": "done"},
+        ]
+        got = ap.spent_on(rows, ap.today(NOW))
+        self.assertEqual((got["known"], got["estimated"], got["estimated_count"]), (0.0, 16.0 + 4.0 + 8.0, 3))
+
+    def test_a_stage_without_a_ceiling_counts_the_tables_largest(self):
+        largest = max(
+            [g.max_budget_usd for g in GRANTS.values()] + [b for _, b in NOVEL_CEILINGS.values()]
+        )
+        self.assertGreater(largest, 0)
+        self.assertEqual(ap.estimate("intent"), largest)
+        self.assertEqual(ap.estimate("idea"), largest)
+        self.assertEqual(largest, 16.0)
+
+    def test_an_integration_record_is_never_added(self):
+        rows = [
+            {"kind": "end", "at": at(), "stage": "integrate", "cost_usd": 2.5},
+            {"kind": "integration", "at": at(), "mode": "agent"},
+            {"kind": "integration", "at": at(), "mode": "mechanical"},
+        ]
+        got = ap.spent_on(rows, ap.today(NOW))
+        self.assertEqual((got["known"], got["estimated"], got["estimated_count"]), (2.5, 0.0, 0))
 
     def test_an_open_start_counts_for_24_hours(self):
         rows = [
@@ -190,7 +230,7 @@ class Scheduling(unittest.TestCase):
         got = ap.pick([self.c("0010_a", "impl", {"a"}, 16.0), self.c("0011_b", "review", None, 2.0)], [], 4, 3.0)
         self.assertEqual([x["unit"] for x in got["chosen"]], ["0011_b"])
         self.assertEqual([x["unit"] for x in got["capped"]], ["0010_a"])
-        got = ap.pick([self.c("0011_b", "review", None, 2.0)], [], 4, None)
+        got = ap.pick([self.c("0011_b", "review", None, 2.0)], [], 4, -1.0)
         self.assertEqual((got["chosen"], len(got["capped"])), ([], 1))
 
     def test_files_of_keeps_paths_only(self):
@@ -242,6 +282,42 @@ class Measuring(unittest.TestCase):
     def test_outside_the_dates_or_the_workspace_nothing_counts(self):
         self.assertEqual(ap.measure(self.rows(), "other", "2000-01-01", "2100-01-01")["units"], [])
         self.assertEqual(ap.measure(self.rows(), "w", "2000-01-01", "2000-01-02")["units"], [])
+
+
+class MeasuredDays(unittest.TestCase):
+    def test_each_clause_of_the_outcome_per_day(self):
+        one, two = ap.today(NOW), ap.today(NOW + timedelta(days=1))
+
+        def r(kind, delta=timedelta(), workspace="w", **kw):
+            return {"kind": kind, "workspace": workspace, "unit": "0010_a", "at": at(delta), **kw}
+
+        tomorrow = timedelta(days=1)
+        rows = (
+            [r("integration", mode="mechanical") for _ in range(5)]
+            + [r("end", stage="impl", outcome="failed"),
+               r("start", stage="spec", started_by="autopilot"),
+               r("end", stage="spec", outcome="done", cost_usd=3.0),
+               r("end", workspace="other", stage="review", outcome="done", cost_usd=1.0)]
+            + [r("integration", tomorrow, mode="agent") for _ in range(4)]
+            + [r("end", tomorrow, stage="impl", outcome="exhausted", cost_usd=2.0),
+               r("start", tomorrow, stage="plan", started_by="autopilot")]
+        )
+        first, second = ap.measure_days(rows, "w", one, two, 80.0)
+        self.assertEqual((first["day"], second["day"]), (one, two))
+        self.assertEqual((first["integrations"], first["failed"], first["autopilot_starts"]), (5, 1, 1))
+        self.assertEqual(
+            [first[k] for k in ("enough_integrations", "a_failure", "ran", "within", "met")], [True] * 5,
+        )
+        money = ap.spent_on(rows, one)
+        self.assertEqual(first["spent"], money["known"] + money["estimated"])
+        self.assertEqual(first["spent"], 3.0 + 1.0 + ap.estimate("impl"))
+        self.assertEqual(second["integrations"], 4)
+        self.assertEqual(
+            [second[k] for k in ("enough_integrations", "a_failure", "ran", "within", "met")],
+            [False, True, True, True, False],
+        )
+        self.assertFalse(ap.measure_days(rows, "w", one, one, 19.99)[0]["within"])
+        self.assertEqual(first["utc_to"], second["utc_from"])
 
 
 if __name__ == "__main__":
