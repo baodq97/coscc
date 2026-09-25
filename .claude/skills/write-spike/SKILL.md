@@ -35,10 +35,38 @@ At a terminal, make one: `mktemp -d`, and work there.
 
 Never run `git`. Never write into the worktree, into `.cos/`, or into the unit's store.
 
+## The progress file
+
+A spike can run out of turns or budget before its last reply. Since `0080` it keeps what it
+has measured in a file as it goes, so that nothing measured is lost with the reply.
+
+1. Your first `Write`, before any probe, creates `spike.md` in your working directory,
+   with the whole header — `Spec: spec.md. Author: ᛈ Perthro. Round: <N>. Status:
+   accepted.` — and one `## U<n>` for every `U<n>` the spec carries.
+2. A question not yet measured holds prose only: what was run, what is still missing. No
+   line under it starts with `Verdict:`.
+3. The moment a `U<n>` is measured, write its `Verdict:` line and its fenced block into the
+   file, before you start the next one. Never write `Verdict: holds.` for a question you
+   have measured only in part.
+4. Your final reply is still the whole file, as `## Output` says.
+5. On a rerun, the previous spike is in your prompt. A `## U<n>` there that is complete —
+   `Verdict: holds.` and a fenced block — is copied verbatim into your first `Write` and
+   not measured again. Measure only the `U<n>` that `cos.mjs` reports missing. `Round:`
+   follows invariant 4.
+
+On the board this file is the app's fallback: when the step ends without a usable final
+reply — a ceiling, a reply with no `Status:` line, a session that broke — the app writes
+the unit's `spike.md` from it. It does not when a person pressed *Stop* or the worktree
+changed. `Status: accepted` on a file still missing a `U<n>` does not open `plan`:
+`cos.mjs` reads each `U<n>`, closes `plan` on the missing ones and offers `spike` again.
+
+At a terminal no app stands behind this file: nothing reads it, and the unit gets only the
+`spike.md` you write there yourself.
+
 ## Output
 
 One file, `spike.md`, in the unit's directory. On the board the app writes it from your
-reply.
+reply, or from your progress file when the reply cannot be used (*The progress file*).
 
 ````markdown
 # Spike: <title>

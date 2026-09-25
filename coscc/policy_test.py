@@ -730,7 +730,10 @@ class GeboReadsAnExplicitList(unittest.TestCase):
 
 
 class SpikeWritesOnlyItsScratch(unittest.TestCase):
-    """`0039` R10, R11: `spike` runs code, writes only its throwaway `cwd`, and never `git`."""
+    """`0039` R10, R11: `spike` runs code, writes only its throwaway `cwd`, and never `git`.
+
+    `0080` R8 raised its ceilings to 80 turns / $8.0, chosen, not measured.
+    """
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -751,7 +754,7 @@ class SpikeWritesOnlyItsScratch(unittest.TestCase):
 
     def test_the_grant_is_the_one_the_spec_names(self):
         self.assertEqual(self.G.tools, READ_TOOLS + policy.WRITE_TOOLS + policy.EXEC_TOOLS)
-        self.assertEqual((self.G.max_turns, self.G.max_budget_usd), (40, 4.0))
+        self.assertEqual((self.G.max_turns, self.G.max_budget_usd), (80, 8.0))
         self.assertTrue(self.G.app_writes_artifact)
         self.assertIn("arbitrary code", self.G.warning)
         self.assertNotIn("spike", policy.PROSE_STAGES)
