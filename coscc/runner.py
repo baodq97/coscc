@@ -766,6 +766,11 @@ def closing_round_problem(existing: str, reply: str, head: str) -> str | None:
     new = [r for r in _rounds(body) if _round_number(r) not in on_disk]
     if len(new) != 1:
         return f"it adds {len(new)} review rounds, not one"
+    # The number `closing_prompt` was given. `merge_review` keeps any number not on disk,
+    # and a round skipped or reused closes `ship` for good ("renumbered", `cos.mjs`).
+    number = max(on_disk, default=0) + 1
+    if _round_number(new[0]) != number:
+        return f"{new[0].splitlines()[0]} is not ## Round {number}, the next round"
     meta = _round_meta(new[0])
     if meta is None or meta[1] != "incomplete":
         return f"{new[0].splitlines()[0]} does not open with Verdict: incomplete"

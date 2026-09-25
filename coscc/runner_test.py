@@ -3253,6 +3253,11 @@ class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):
     def test_the_shape_r4_names_is_accepted(self):
         self.assertIsNone(self.problem(incomplete_reply(self.HEAD)))
         self.assertIsNone(self.problem("```\n" + incomplete_reply(self.HEAD) + "```\n"))
+        self.assertIsNone(self.problem(incomplete_reply(self.HEAD, number=1), existing=""))
+
+    def test_only_the_round_after_the_last_one_on_disk(self):
+        # Round 5 on one round would be written, and `ship` would call it renumbered for good.
+        self.assertIn("## Round 2", self.problem(incomplete_reply(self.HEAD, number=5)))
 
     def test_everything_else_is_refused(self):
         for why, reply in (
@@ -3262,8 +3267,7 @@ class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):
             ("out of order", incomplete_reply(self.HEAD, sections=("Findings", "Reviewed so far", "What was not reviewed"))),
             ("header", incomplete_reply(self.HEAD, status="changes-requested")),
             ("another head", incomplete_reply("c" * 40)),
-            ("two rounds", incomplete_reply(self.HEAD) + "\n" + incomplete_reply(self.HEAD, number=3).split("\n\n", 1)[1]),
-            ("no round", "# Review: x\nStatus: draft.\n"),
+            ("two rounds", incomplete_reply(self.HEAD) + "\n" + incomplete_reply(self.HEAD, number=3).split("\n\n", 1)[1]),            ("no round", "# Review: x\nStatus: draft.\n"),
             ("no status", "Tôi hết lượt."),
         ):
             with self.subTest(why=why):
