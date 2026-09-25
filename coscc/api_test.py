@@ -14,6 +14,7 @@ from unittest import mock
 import claude_agent_sdk as sdk
 import httpx
 
+from coscc import update
 from coscc.api import build
 from coscc.config import Config
 
@@ -1170,7 +1171,7 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
     async def test_status_says_what_runs_and_why_there_is_no_button(self):
         body = (await self.client.get("/api/update")).json()
         self.assertEqual(body["shape"], "unavailable")
-        self.assertIn("cập nhật không khả dụng ở cách cài này", body["reason"])
+        self.assertIn(update.UNAVAILABLE, body["reason"])
         self.assertTrue(body["version"])
 
     async def test_every_post_is_409_where_updates_are_unavailable(self):
@@ -1210,7 +1211,7 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
             with self.subTest(path=path):
                 r = await self.client.post(path, json=body)
                 self.assertEqual(r.status_code, 503, r.text)
-                self.assertIn("đang cập nhật", r.json()["error"])
+                self.assertIn("update is being applied", r.json()["error"])
 
     async def test_a_stale_cut_list_is_refused_with_the_fresh_one(self):
         self.as_a_service()

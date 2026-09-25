@@ -128,14 +128,19 @@ class NothingThereIsNothingSent(unittest.TestCase):
 
 
 class ThisCheckout(unittest.TestCase):
-    """R7 on the repository itself: its two rules are scoped and stay out of the block."""
+    """R7 on the repository itself: its rules are scoped and stay out of the block."""
 
-    def test_both_rules_are_contents_lines_only(self):
-        got = instructions.read(Path(__file__).parents[1])
-        self.assertEqual(
-            got.scoped, (".claude/rules/coscc-app.md", ".claude/rules/ui-standard.md")
-        )
-        self.assertIn(".claude/CLAUDE.md", got.verbatim)
+    def test_every_rule_is_a_contents_line_only(self):
+        # `0094` split `coscc-app.md` into one rule per area; every one of them is scoped.
+        root = Path(__file__).parents[1]
+        got = instructions.read(root)
+        rules = tuple(sorted(
+            p.relative_to(root).as_posix() for p in (root / ".claude" / "rules").rglob("*.md")
+        ))
+        self.assertEqual(got.scoped, rules)
+        self.assertIn(".claude/rules/coscc-app.md", got.scoped)
+        self.assertIn(".claude/rules/ui-standard.md", got.scoped)
+        self.assertEqual(got.verbatim, (".claude/CLAUDE.md",))
         self.assertIn("coscc/screens.py", got.text)
         self.assertNotIn("# The UI standard", got.text)
         self.assertNotIn("# The coscc app", got.text)

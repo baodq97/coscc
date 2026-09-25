@@ -494,6 +494,18 @@ class Service:
         """
         return str(Path(cwd).expanduser().resolve())
 
+    def _app_identity(self) -> dict[str, str]:
+        """`0094` R13: the running build's version and commit, for a step's `start` row.
+
+        `Updater.me` is `update.identity`, computed once and kept. Anything failing is two
+        empty strings, which `verify_0094 --measure` counts apart; it never stops a step.
+        """
+        try:
+            me = self.updater.me()
+            return {"version": str(me.get("version") or ""), "commit": str(me.get("commit") or "")}
+        except Exception:  # noqa: BLE001 — a record field, never a reason to refuse a step
+            return {"version": "", "commit": ""}
+
     def _units_root(self, cwd: str) -> Path:
         """Where this workspace's units live. One question, asked of one module.
 
@@ -989,25 +1001,28 @@ class Service:
         root = Path(cwd).expanduser().resolve()
         rel = await self._related(root, unit, data, head_before, origin_sha)
         units_root = self._units_root(cwd)
+        # `0094` R14: by path; Gebo reads what it needs of them (`integrate.read_paths`).
         own = {}
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            path = directory / name
+            path = Path(directory).resolve() / name
             if path.exists():
-                own[name] = path.read_text(encoding="utf-8", errors="replace")
+                own[name] = path
         try:
             skill = harness.read_skill("integrate")
         except harness.MissingRules as e:
             raise Invalid(f"the integrate skill could not be read: {e}") from e
         prompt = integrate.build_prompt(
             skill=skill, unit=unit, branch=branch, pr=pr, state=info["state"], reason=info.get("reason", ""),
-            head_before=head_before, origin_sha=origin_sha, rel=rel, units_root=units_root, own_artifacts=own,
+            head_before=head_before, origin_sha=origin_sha, rel=rel, units_root=units_root, own_paths=own,
             refused_update=refused_update,
         )
         grant = grant_for("integrate")
         model, model_source = self._model_for("impl")
+        app = self._app_identity()
         try:
             journal.started(key, unit, "integrate", "manual", prompt_chars=len(prompt), granted=list(grant.tools),
-                            max_turns=grant.max_turns, head=head_before, model=model, model_source=model_source)
+                            max_turns=grant.max_turns, head=head_before, model=model, model_source=model_source,
+                            pointed=list(own), app_version=app["version"], app_commit=app["commit"])
         except (BadRecord, Busy):
             pass
         end: dict[str, Any] = {}
@@ -1352,7 +1367,7 @@ class Service:
                 # "no pull request" (`0055` review F2); the `start` record still gets `""`.
                 pr_note = integrate.describe_pr_lookup(lookup)
                 pr_before = None if lookup.get("state") == "unknown" else lookup.get("url", "")
-            runner = Runner(self.sessions, journal)
+            runner = Runner(self.sessions, journal, app=self._app_identity())
             # `0034` R11. The registry is what the page lists and what a Stop finds; the mark
             # taken above is what everything else asks. The same start time for both, and no
             # `await` between the listing and the phase (`0050` R3).
@@ -1438,7 +1453,7 @@ class Service:
 
     def _never_driven(self, running: steps_mod.Running, mark: steps_mod.Mark, rid: str) -> None:
         """`0050` review round 2, F2. A task cancelled before its first turn -- a Stop queued
-        ahead of it, or "áp dụng ngay" -- never enters `_drive`, so its `finally` never runs.
+        ahead of it, or "apply now" -- never enters `_drive`, so its `finally` never runs.
         That `finally` is the only thing that frees the mark once the step is handed over, so
         a mark still held when the task is done means the body never ran: give back what it
         would have, and tell the reader instead of leaving it waiting."""
@@ -1556,7 +1571,7 @@ class Service:
         return await self._stop_running(self._journal_key(cwd), unit, name)
 
     async def _stop_running(self, key: str, unit: str, by: str) -> dict[str, Any]:
-        """The Stop itself, shared with `0068`'s "áp dụng ngay" so a step it cuts ends the
+        """The Stop itself, shared with `0068`'s "apply now" so a step it cuts ends the
         same way: an `end` record with `stopped` and `stopped_by`, or none for a step
         cancelled before its first turn."""
         try:

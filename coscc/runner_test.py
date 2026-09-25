@@ -27,6 +27,7 @@ from coscc.runner import (
     answers_section,
     build_prompt,
     check_reply,
+    compose_prompt,
     describe_attempt,
     merge_review,
     skill_for,
@@ -61,16 +62,32 @@ class ThePromptCarriesTheStageBefore(unittest.TestCase):
             self.assertEqual(included, ["intent.md", "spec.md"])
 
     def test_it_reaches_back_past_a_stage_that_was_never_written(self):
-        # `impl` follows `plan`, but if `plan.md` is absent the nearest earlier artifact is
-        # what the step has to work from — silently sending nothing would be worse.
+        # `plan` follows `spike`, but a unit with no spike has no `spike.md`: the nearest
+        # earlier artifact is what the step has to work from — silently sending nothing
+        # would be worse. Until `0094` this was `impl` reaching past a missing `plan.md`.
         with tempfile.TemporaryDirectory() as d:
             make_unit(
                 Path(d),
                 intent_md="Status: accepted.\nINTENT",
                 spec_md="Status: accepted.\nSPEC-IS-NEAREST",
             )
-            _, included = build_prompt(d, Path(d) / '.cos' / UNIT, UNIT, "impl", STAGES, "impl.md")
+            _, included = build_prompt(d, Path(d) / '.cos' / UNIT, UNIT, "plan", STAGES, "plan.md")
             self.assertEqual(included, ["intent.md", "spec.md"])
+
+    def test_impl_without_a_plan_carries_nothing_and_names_what_there_is(self):
+        # `0094` R14: `impl` carries `plan.md` alone; with none, it reaches back to nothing and
+        # names `intent.md` and `spec.md` by path instead.
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(
+                Path(d),
+                intent_md="Status: accepted.\nINTENT",
+                spec_md="Status: accepted.\nSPEC-IS-NEAREST",
+            )
+            prompt, included, pointed = compose_prompt(
+                d, Path(d) / '.cos' / UNIT, UNIT, "impl", STAGES, "impl.md")
+            self.assertEqual(included, [])
+            self.assertEqual(pointed, ["intent.md", "spec.md"])
+            self.assertNotIn("SPEC-IS-NEAREST", prompt)
 
     def test_the_first_stage_has_nothing_before_it_and_says_so(self):
         with tempfile.TemporaryDirectory() as d:
@@ -429,14 +446,15 @@ class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
 
         def spy(*args, **kwargs):
             # Called again with the same arguments, before the step writes its artifact.
-            again, _ = build_prompt(*args, **kwargs)
+            # `compose_prompt` since `0094`: `build_prompt` is its wrapper.
+            again, _, _ = compose_prompt(*args, **kwargs)
             built.append(again)
-            return build_prompt(*args, **kwargs)
+            return compose_prompt(*args, **kwargs)
 
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), idea_md="Status: accepted.\nI")
             (Path(d) / "CLAUDE.md").write_text("PROJECT\n", encoding="utf-8")
-            with mock.patch.object(runner_mod, "build_prompt", spy):
+            with mock.patch.object(runner_mod, "compose_prompt", spy):
                 self._run(d, replies, stage="intent")
         self.assertEqual(len(built), 1)
         self.assertEqual(replies.prompt.encode("utf-8"), built[0].encode("utf-8"))
@@ -509,9 +527,10 @@ class AStepRecordsTheBaseItRanOn(unittest.TestCase):
 class ThePromptNamesTheFilesMainChanged(unittest.TestCase):
     """`0042` plan step 4. `drift.describe` builds the text; this module only places it."""
 
-    def test_the_section_sits_after_the_base_and_before_the_intent(self):
+    def test_the_section_sits_after_the_base_and_before_the_plan(self):
+        # `0094` R14: `impl` names `intent.md` by path, so the plan is what follows here.
         with tempfile.TemporaryDirectory() as d:
-            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
             prompt, _ = build_prompt(
                 d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md",
                 base_note="This step ran on origin/main at abc1234, which may be stale: reason.",
@@ -519,9 +538,9 @@ class ThePromptNamesTheFilesMainChanged(unittest.TestCase):
             )
             base = prompt.index("# The base this step runs on")
             here = prompt.index("# The files main changed since the plan")
-            intent = prompt.index("# The intent this work is authorised by")
+            plan = prompt.index("# The plan it follows")
             self.assertLess(base, here)
-            self.assertLess(here, intent)
+            self.assertLess(here, plan)
             self.assertLess(here, prompt.index("# Your task"))
             self.assertIn("- `src/a.py`", prompt)
 
@@ -1053,7 +1072,8 @@ class AnAnswerReachesTheStageThatReadsItsArtifact(unittest.TestCase):
             prompt, included = build_prompt(
                 d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md"
             )
-            self.assertEqual(included, ["intent.md", "plan.md"])
+            # `0094` R14: `intent.md` and `spec.md` are named by path, not carried.
+            self.assertEqual(included, ["plan.md"])
             self.assertNotIn("ANSWER-TOO-LATE-0016", prompt)
 
 
@@ -1160,7 +1180,7 @@ class ARerunSeesItsOwnAnswers(unittest.TestCase):
             )
             self.assertNotIn(self.BLOCK_HEADING, prompt)
             self.assertNotIn("IMPL-SHOULD-NOT-APPEAR-0025", prompt)
-            self.assertEqual(included, ["intent.md", "plan.md"])
+            self.assertEqual(included, ["plan.md"])  # `0094` R14
 
 
 class AFixRoundCarriesTheFindings(unittest.TestCase):
@@ -1188,10 +1208,16 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
         )
 
     def test_impl_sees_the_findings_when_changes_were_requested(self):
+        # `0094` R14: the open findings are carried, the whole file only named.
         with tempfile.TemporaryDirectory() as d:
             prompt, included = self.prompt(d, "changes-requested")
+            _, _, pointed = compose_prompt(
+                d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md", writes_own=True)
             self.assertIn("FINDING-ONE-MARKER", prompt)
-            self.assertIn("review.md", included)
+            self.assertIn("Status: changes-requested", prompt)
+            self.assertIn("review-findings", included)
+            self.assertNotIn("review.md", included)
+            self.assertIn("review.md", pointed)
 
     def test_impl_is_told_to_push_the_fix(self):
         """`0024`. `cos.mjs next` offers `review` only once a fix reaches the pull request,
@@ -1204,7 +1230,7 @@ class AFixRoundCarriesTheFindings(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             prompt, included = self.prompt(d, "accepted")
             self.assertNotIn("FINDING-ONE-MARKER", prompt)
-            self.assertNotIn("review.md", included)
+            self.assertNotIn("review-findings", included)
 
     def test_a_passed_review_quoting_the_status_further_down_is_not_sent_back(self):
         # Round 2 of 0015's review, F6: the old pattern matched `Status: changes-requested`
@@ -1563,19 +1589,22 @@ class RerunningKeepsTheAnswers(unittest.TestCase):
 class TheReviewSeesWhatWasMeasured(unittest.TestCase):
     """`0015` round 2: a finding stayed open because `impl.md` never reached the review."""
 
-    def test_impl_md_is_in_the_review_prompt(self):
+    def test_impl_md_is_named_in_the_review_prompt(self):
+        # `0094` R14: by its absolute path, for the review to `Read`; no longer carried.
         with tempfile.TemporaryDirectory() as d:
-            make_unit(
+            directory = make_unit(
                 Path(d),
                 intent_md="Status: accepted.\nI",
                 impl_md="Status: accepted.\nMEASURED-MARKER",
                 pr_md="Status: accepted.\nP",
             )
-            prompt, included = build_prompt(
-                d, Path(d) / ".cos" / UNIT, UNIT, "review", STAGES, "review.md"
+            prompt, included, pointed = compose_prompt(
+                d, directory, UNIT, "review", STAGES, "review.md"
             )
-            self.assertIn("MEASURED-MARKER", prompt)
-            self.assertIn("impl.md", included)
+            self.assertNotIn("MEASURED-MARKER", prompt)
+            self.assertIn(f"- {directory.resolve() / 'impl.md'}\n", prompt)
+            self.assertIn("impl.md", pointed)
+            self.assertNotIn("impl.md", included)
 
 
 class AStepWorksInItsUnitsWorktree(unittest.TestCase):
@@ -2841,3 +2870,273 @@ class RecordingChangesNothing(unittest.TestCase):
         self.assertEqual(len(heard), 7)
         self.assertEqual(heard[6], ("Bash", {"command": "6"}, "no"))
         self.assertEqual((denials.count, len(denials.reasons)), (7, Denials.KEEP))
+
+
+# `0094` plan step 4. One unit holding every artifact, each prose one carrying `## Answers`,
+# and a review sent back with two rounds: the fixture the prompts below are built from.
+_ANSWERED = (
+    "Author: t. Status: accepted.\n\n## Open questions\n\n1. Q-{name}?\n\n"
+    "## Answers\n\n### Câu 1\nAnswered by: P. Date: 2026-09-25. Via: product.\n\nA-{name}\n"
+)
+_REVIEW_TWO_ROUNDS = (
+    "# Review: x\nPR: pr.md. Concluded by: agent. Status: changes-requested.\n\n"
+    "## Round 1\n\nReviewed: abc1234. Verdict: changes-requested.\n\n### Findings\n\n"
+    "- F1 [open] a.py:1 — high — ROUND-ONE-F1\n"
+    "- F2 [open] b.py:2 — low — ROUND-ONE-F2\n\n"
+    "## Round 2\n\nReviewed: def5678. Verdict: changes-requested.\n\n### Findings\n\n"
+    "- F1 [fixed 1111111] a.py:1 — high — ROUND-TWO-F1-FIXED\n"
+    "- F2 [answered] b.py:2 — low — ROUND-TWO-F2-ANSWERED\n"
+    "- F3 [open] c.py:3 — high — ROUND-TWO-F3-OPEN\n"
+    "  CONTINUATION-OF-F3\n"
+    "- F4 [needs-person] d.py:4 — medium — ROUND-TWO-F4-PERSON\n"
+)
+
+
+def _golden_unit(root: Path) -> Path:
+    files = {f"{s}_md": _ANSWERED.format(name=s.upper()) for s in ("idea", "intent", "spec", "plan")}
+    files.update(
+        spike_md="# Spike: x\nSpec: spec.md. Status: accepted. Round: 1.\n\nSPIKE-BODY\n",
+        impl_md="# Impl: x\nStatus: accepted.\n\nIMPL-BODY\n",
+        pr_md="# PR: x\nPR: https://github.com/o/r/pull/9. Status: accepted.\n\nPR-BODY\n",
+        review_md=_REVIEW_TWO_ROUNDS,
+        ship_md="# Ship: x\nStatus: draft.\n\nSHIP-BODY\n",
+    )
+    return make_unit(root, **files)
+
+
+def _golden_prompt(stage: str) -> str:
+    """The prompt `stage` gets on `_golden_unit`, the rules replaced by a marker and the
+    temporary root by `<ROOT>`, so the text is the same on every machine and every run."""
+    from coscc import runner as runner_mod
+
+    with tempfile.TemporaryDirectory() as d:
+        directory = _golden_unit(Path(d))
+        grant = policy.grant_for_step(stage, "routine")
+        with mock.patch.object(runner_mod, "skill_for", lambda s: f"RULES-FOR-{s}"):
+            prompt, included = build_prompt(
+                d, directory, UNIT, stage, STAGES, f"{stage}.md",
+                writes_own=not grant.app_writes_artifact,
+                gate_said=f"open: {stage} may proceed",
+                head="0123456789abcdef0123456789abcdef01234567",
+                base_note="BASE-NOTE", last_attempt="LAST-ATTEMPT",
+                integration_note="# INTEGRATION\n\nINTEGRATION-NOTE",
+                drift_note="DRIFT-NOTE", worktree="/wt" if stage == "spike" else "",
+                pr_note="# PR-NOTE\n\nPR-LOOKUP",
+                ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
+            )
+        text = prompt + "\n\nINCLUDED: " + ",".join(included)
+        for root in sorted({d, str(Path(d).resolve())}, key=len, reverse=True):
+            text = text.replace(root, "<ROOT>")
+        return text
+
+
+class TheStagesThatReadWholeInputsKeepTheirPrompt(unittest.TestCase):
+    """`0094` plan step 4: `idea`, `intent`, `spec`, `spike` and `plan` are outside R14, so
+    their prompt is the one `build_prompt` made before `0094`, byte for byte. The digests
+    were taken from `_golden_prompt` on `fc409f3`, before `coscc/runner.py` changed. A later
+    unit that changes one of these prompts on purpose takes the new digest and says so."""
+
+    BEFORE = {
+        "idea": "0c27fc9c6020fb374fe896790542fd129ae2ed134c74f7ab10a21174ac06b7c1",
+        "intent": "ac89642b9f7a4d14c366728124f9b3a08dc48707f512b00372ebac71d59e36c0",
+        "spec": "3846c352c9beee851d1b520f5124ba5f97e1ec34bf1d19b352da2afe710dce07",
+        "spike": "e1fcb244a461bb7573eb184a80fc5cdf187add7432dbc3024bd38d578655b6fd",
+        "plan": "1ee0ad89c88554fab29f4e23c833b10b63e2a366a185f588b5f6eba71b3787ab",
+    }
+
+    def test_byte_for_byte(self):
+        import hashlib
+
+        for stage, digest in self.BEFORE.items():
+            with self.subTest(stage=stage):
+                text = _golden_prompt(stage)
+                self.assertNotIn("# The unit's files", text)
+                self.assertEqual(hashlib.sha256(text.encode("utf-8")).hexdigest(), digest)
+
+
+class OpenFindings(unittest.TestCase):
+    """`0094` plan step 3: the header, the last round's number and what it left open."""
+
+    def test_the_last_round_only_and_its_open_findings(self):
+        from coscc.runner import open_findings
+
+        header, number, findings = open_findings(_REVIEW_TWO_ROUNDS)
+        self.assertEqual(header, "PR: pr.md. Concluded by: agent. Status: changes-requested.")
+        self.assertEqual(number, 2)
+        self.assertEqual(findings, (
+            "- F2 [answered] b.py:2 — low — ROUND-TWO-F2-ANSWERED\n"
+            "- F3 [open] c.py:3 — high — ROUND-TWO-F3-OPEN\n"
+            "  CONTINUATION-OF-F3\n"
+            "- F4 [needs-person] d.py:4 — medium — ROUND-TWO-F4-PERSON"
+        ))
+
+    def test_only_fixed_with_a_sha_is_left_out(self):
+        # Review round 1 F6: `cos.mjs` counts `[answered]` closed only with a block under
+        # `## Answers`, and `[fixed]` only with a sha, so both stay in the prompt.
+        from coscc.runner import open_findings
+
+        text = (
+            "# Review: x\nStatus: changes-requested.\n\n## Round 1\n\n"
+            "- F1 [fixed abc1234] a — high — GONE-1\n  GONE-1-MORE\n"
+            "- F2 [answered] b — low — KEPT-2\n"
+            "- F3 [claim-rejected] c — high — KEPT-3\n"
+            "- F4 [who knows] d — high — KEPT-4\n"
+            "- F5 [fixed] e — high — KEPT-5\n"
+            "- F6 [Fixed 0123456789abcdef0123456789abcdef01234567] f — low — GONE-6\n"
+        )
+        _, _, findings = open_findings(text)
+        self.assertNotIn("GONE", findings)
+        for kept in ("KEPT-2", "KEPT-3", "KEPT-4", "KEPT-5"):
+            self.assertIn(kept, findings)
+
+    def test_no_round_reads_the_file_below_its_header_up_to_answers(self):
+        from coscc.runner import open_findings
+
+        text = (
+            "# Review: x\nPR: pr.md. Status: changes-requested.\n\n## Findings\n\n"
+            "- F1 [open] a.py:3 — high — ONE\n\n## Answers\n\n- F9 [open] not a finding\n"
+        )
+        header, number, findings = open_findings(text)
+        self.assertEqual(header, "PR: pr.md. Status: changes-requested.")
+        self.assertIsNone(number)
+        self.assertEqual(findings, "- F1 [open] a.py:3 — high — ONE")
+
+    def test_a_status_quoted_in_a_round_is_not_the_header(self):
+        from coscc.runner import open_findings
+
+        text = (
+            "# Review: x\nPR: pr.md. Status: accepted.\n\n## Round 1\n\n"
+            "The header read\nStatus: changes-requested.\n\n- F1 [open] a — low — L\n"
+        )
+        header, number, _ = open_findings(text)
+        self.assertEqual(header, "PR: pr.md. Status: accepted.")
+        self.assertEqual(number, 1)
+
+
+class ThePointingStagesNameTheirFiles(unittest.TestCase):
+    """`0094` R14, R16: what each of the four stages carries whole and what it names."""
+
+    WANT = {
+        # stage: (included artifacts, pointed)
+        "impl": (["plan.md", "review-findings"],
+                 ["idea.md", "intent.md", "spec.md", "spike.md", "impl.md", "pr.md", "review.md", "ship.md"]),
+        "pr": ([], ["idea.md", "intent.md", "spec.md", "spike.md", "plan.md", "impl.md", "pr.md",
+                    "review.md", "ship.md"]),
+        "ship": (["pr.md"], ["idea.md", "intent.md", "spec.md", "spike.md", "plan.md", "impl.md",
+                             "review.md", "ship.md"]),
+        "review": (["review-findings"], ["idea.md", "intent.md", "spec.md", "spike.md", "plan.md",
+                                         "impl.md", "pr.md", "review.md", "ship.md"]),
+    }
+
+    def build(self, d, stage):
+        directory = _golden_unit(Path(d))
+        grant = policy.grant_for_step(stage, "routine")
+        return directory, compose_prompt(
+            d, directory, UNIT, stage, STAGES, f"{stage}.md",
+            writes_own=not grant.app_writes_artifact, head="a" * 40,
+        )
+
+    def test_included_and_pointed(self):
+        for stage, (artifacts, names) in self.WANT.items():
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
+                directory, (prompt, included, pointed) = self.build(d, stage)
+                self.assertEqual([i for i in included if i.endswith(".md") or i == "review-findings"],
+                                 artifacts)
+                self.assertEqual(pointed, names)
+                block = prompt.split("# The unit's files\n\n")[1].split("\n\n---\n\n")[0]
+                for name in names:
+                    self.assertIn(f"- {directory.resolve() / name}\n", block)
+                for name in (a for a in artifacts if a.endswith(".md")):
+                    self.assertIn(f"- {directory.resolve() / name} (above)\n", block)
+                self.assertLess(prompt.index("# The unit's files"), prompt.index("# Your task"))
+                self.assertIn(
+                    "Read one when your rules or your task need it.", block)
+
+    def test_no_pointing_stage_carries_the_intent_or_an_earlier_round(self):
+        for stage in self.WANT:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
+                _, (prompt, _, _) = self.build(d, stage)
+                self.assertNotIn("A-INTENT", prompt)
+                self.assertNotIn("ROUND-ONE-F1", prompt)
+                self.assertNotIn("IMPL-BODY", prompt)
+
+    def test_review_is_still_told_not_to_copy_the_rounds(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, (prompt, _, _) = self.build(d, "review")
+            self.assertIn("rounds up to Round 2", prompt)
+            self.assertIn("Do not copy them into your reply", prompt)
+            self.assertIn("ROUND-TWO-F3-OPEN", prompt)
+            self.assertNotIn("ROUND-TWO-F1-FIXED", prompt)
+
+    def test_ship_carries_the_pull_request_it_merges(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, (prompt, _, _) = self.build(d, "ship")
+            self.assertIn("# The pr it follows", prompt)
+            self.assertIn("https://github.com/o/r/pull/9", prompt)
+
+
+class EveryPathAPromptNamesCanBeRead(unittest.TestCase):
+    """`0094` R15: a path replaces an artifact only where the step's grant may `Read` it.
+    Red the day a grant of these four stages can no longer read its own unit's folder."""
+
+    def test_decide_allows_read_of_every_named_path(self):
+        from coscc.runner import _POINTING
+
+        # `implement` is `cos.mjs`'s alias for `impl` and has no rules of its own to build from.
+        for stage in sorted(_POINTING - {"implement"}):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
+                directory = _golden_unit(Path(d) / "store")
+                tree = Path(d) / "worktree"
+                tree.mkdir()
+                grant = policy.grant_for_step(stage, "routine")
+                prompt, _, pointed = compose_prompt(
+                    str(tree), directory, UNIT, stage, STAGES, f"{stage}.md",
+                    writes_own=not grant.app_writes_artifact,
+                )
+                self.assertTrue(pointed)
+                block = prompt.split("# The unit's files\n\n")[1].split("\n\n")[0]
+                paths = [line[2:].removesuffix(" (above)") for line in block.splitlines()]
+                self.assertEqual(len(paths), 9)
+                cwd = str(directory) if stage == "ship" else str(tree)
+                for p in paths:
+                    self.assertEqual(
+                        decide(grant, "Read", {"file_path": p}, cwd, str(directory)), "", p)
+
+
+class TheStartRecordSaysWhatRanAndWhatWasNamed(unittest.TestCase):
+    """`0094` R13, R16."""
+
+    class Probe:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **_):
+            yield ("chunk", "x")
+            yield ("done", {"session_id": "s", "cost": {}})
+
+    def start(self, d, stage, app):
+        directory = _golden_unit(Path(d))
+        journal = Journal(d, d)
+        r = Runner(self.Probe(), journal, app=app)
+
+        async def go():
+            async for _ in r.run(
+                workspace=d, directory=directory, journal_key=d, unit=UNIT, stage=stage,
+                artifact=f"{stage}.md", stages=STAGES, mode="manual",
+            ):
+                pass
+
+        asyncio.run(go())
+        return journal.records(d, kind="start")[-1]
+
+    def test_the_build_and_the_pointed_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            start = self.start(d, "review", {"version": "0.12.0", "commit": "c" * 40})
+            self.assertEqual((start["app_version"], start["app_commit"]), ("0.12.0", "c" * 40))
+            self.assertIn("impl.md", start["pointed"])
+            self.assertIn("review-findings", start["included"])
+            self.assertNotIn("review.md", start["included"])
+
+    def test_a_runner_given_no_build_writes_neither_field(self):
+        with tempfile.TemporaryDirectory() as d:
+            start = self.start(d, "spec", None)
+            self.assertNotIn("app_version", start)
+            self.assertNotIn("app_commit", start)
+            self.assertEqual(start["pointed"], [])

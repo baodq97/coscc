@@ -1511,6 +1511,32 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self._run("spec")
         self.assertEqual(self._start()["model_source"], "default")
 
+    def test_the_start_record_names_the_build_that_ran_it(self):
+        # `0094` R13, R16: three fields more, and none of the ones already there is lost.
+        from unittest import mock
+
+        with mock.patch.object(self.service.updater, "me",
+                               lambda: {"version": "9.8.7", "commit": "d" * 40, "shape": "x"}):
+            self._run("spec")
+        start = self._start()
+        self.assertEqual((start["app_version"], start["app_commit"]), ("9.8.7", "d" * 40))
+        self.assertEqual(start["pointed"], [])
+        for kept in ("included", "prompt_chars", "granted", "max_turns", "head", "model",
+                     "model_source", "base", "system_prompt", "instructions"):
+            self.assertIn(kept, start)
+
+    def test_a_build_that_cannot_be_read_is_two_empty_strings_and_the_step_runs(self):
+        from unittest import mock
+
+        def broken():
+            raise OSError("no identity")
+
+        with mock.patch.object(self.service.updater, "me", broken):
+            self._run("spec")
+        start = self._start()
+        self.assertEqual((start["app_version"], start["app_commit"]), ("", ""))
+        self.assertEqual(self.probe.models, ["claude-opus-5-5[1m]"])
+
     def test_bad_names_and_empty_models_are_invalid(self):
         for name, model in (("bogus", "m"), ("spec", "  "), ("spec", 3), ("", "m"), (None, "m")):
             with self.assertRaises(Invalid, msg=(name, model)):

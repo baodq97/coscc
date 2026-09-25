@@ -987,7 +987,7 @@ class StudioState(rx.State):
     watch_open_text: str = ""
     _watch_token: int = 0
 
-    # -- `0068`: the *Cập nhật* panel. Every field is copied from `Service.update_status`,
+    # -- `0068`: the *Update* panel. Every field is copied from `Service.update_status`,
     # re-read on load, on every screen change and on every `poll_running` ask; the page
     # decides nothing about an update. `update_pending` is what Run and Send warn on (R9).
     upd_version: str = ""
@@ -1012,7 +1012,7 @@ class StudioState(rx.State):
     update_warning: str = ""
     # A name typed to apply, cancel or build. Never stored, like `stop_by`.
     update_by: str = ""
-    # R10's confirmation: what "áp dụng ngay" would cut, and the token of that list.
+    # R10's confirmation: what "apply now" would cut, and the token of that list.
     cut_open: bool = False
     cut_channel: str = ""
     cut_items: list[str] = []
@@ -2300,7 +2300,9 @@ class StudioState(rx.State):
     def _load_update(self) -> None:
         u = SERVICE.update_status()
         self.upd_version = str(u.get("version") or "")
-        self.upd_commit = str(u.get("commit_label") or "")
+        # S3: a full SHA stays in `/api/update`; the card shows the short one.
+        commit = str(u.get("commit") or "")
+        self.upd_commit = commit[:7] if commit else str(u.get("commit_label") or "")
         self.upd_available = u.get("shape") == "service"
         self.upd_reason = str(u.get("reason") or "")
         self.upd_state = str(u.get("state") or "")
@@ -2342,7 +2344,7 @@ class StudioState(rx.State):
 
     @rx.event
     def show_cut_list(self, channel: str):
-        """R10: what "áp dụng ngay" would cut, shown before anything is cut."""
+        """R10: what "apply now" would cut, shown before anything is cut."""
         try:
             listing = SERVICE.update_cut_list()
         except Invalid as e:

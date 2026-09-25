@@ -221,7 +221,7 @@ class ApplyNowCutsWhatItListed(_Base):
         u = self.make()
         listing = u.cut_list()
         actions = {i["kind"]: i["action"] for i in listing["items"]}
-        self.assertEqual(actions, {"step": "sẽ bị dừng", "chat": "sẽ bị dừng", "integration": "sẽ chờ"})
+        self.assertEqual(actions, {"step": "will be stopped", "chat": "will be stopped", "integration": "will wait"})
         status = await u.apply("release", "now", "an", listing["token"])
         self.assertEqual([(j["kind"], by) for j, by in self.service.cut], [("step", "an"), ("chat", "an")])
         cuts = [r for r in self.service.rows if r["event"] == "cut"]
@@ -326,7 +326,7 @@ class TheSequence(_Base):
         u = self.make_real()
         status = u.status()
         self.assertEqual(status["release"]["state"], "blocked")
-        self.assertIn("không có đường quay về", status["release"]["reason"])
+        self.assertIn("no way back", status["release"]["reason"])
         with self.assertRaises(updater.Refused):
             await u.apply("release", "wait", "an")
         self.assertIsNone(u._apply_task)
@@ -358,7 +358,7 @@ class TheSequence(_Base):
         u = self.make(record_apply=False)  # the real trial, with a `uv` that is not there
         await self.run_apply(u)
         self.assertEqual(u.state, "idle")
-        self.assertIn("cài thử", u.error["message"])
+        self.assertIn("trial install", u.error["message"])
         self.assertIn("tool install", u.error["log_tail"])
         self.assertFalse(self.server.should_exit)
         self.assertEqual(list((self.root / "tmp").iterdir()), [])
@@ -374,7 +374,7 @@ class TheSequence(_Base):
         u = self.make_real(begin_a_step)
         await self.run_apply(u)
         self.assertEqual(u.state, "pending")
-        self.assertIn("trong lúc chạy thử", u.pending["reason"])
+        self.assertIn("during the trial", u.pending["reason"])
         self.assertFalse(u.window)
         self.assertFalse(self.server.should_exit)
 
@@ -491,7 +491,7 @@ class TheChecker(_Base):
     def test_a_checksum_that_does_not_match_is_an_error_and_nothing_is_kept(self):
         u = self.checker(self.opener_for(wheel=b"swapped"))
         u.check_once()
-        self.assertEqual((u.release["state"], u.release["reason"]), ("error", "lỗi checksum"))
+        self.assertEqual((u.release["state"], u.release["reason"]), ("error", "checksum mismatch"))
         self.assertEqual(self.service.events(), ["found", "checksum-failed"])
         self.assertEqual(list((self.root / "release").glob("*.whl")), [])
 

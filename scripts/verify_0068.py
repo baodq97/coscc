@@ -12,7 +12,7 @@ fake `uv` (a shell script) where one is run, and the app driven in-process over 
 one with its version lowered to `0.0.0`), installs the older into a temporary uv tool
 directory, writes a fake `coscc.service`, and plays systemd itself: it starts `coscc` with
 `INVOCATION_ID` set and starts it again 2 s after every non-zero exit. A browser then
-presses *Áp dụng* and must see the newer version within 120 s without a reload. It needs
+presses *Apply* and must see the newer version within 120 s without a reload. It needs
 `uv`, `git`, `node`, chromium and the network (the trial install resolves dependencies).
 
 Exit 0 every claim held, 1 one did not, 2 the environment could not answer. The intent's
@@ -197,8 +197,8 @@ async def run_plain(root: Path) -> bool:
     u._check_tag = yes
     u.check_once()
     release_dir = u.root / "release"
-    ok &= say(u.release.get("reason") == "lỗi checksum" and not list(release_dir.glob("*.whl")),
-              "(b) R5 a checksum that does not match is deleted and the channel says lỗi checksum", str(u.release))
+    ok &= say(u.release.get("reason") == "checksum mismatch" and not list(release_dir.glob("*.whl")),
+              "(b) R5 a checksum that does not match is deleted and the channel says checksum mismatch", str(u.release))
     files[base + name] = b"real bytes"
     u.check_once()
     ok &= say(u.release.get("state") == "ready" and u.release.get("version") == "0.13.0"
@@ -254,7 +254,7 @@ async def run_plain(root: Path) -> bool:
                               "kind": "rebase", "turns": None, "cost_usd": None}
     listing = (await client.get("/api/update/cut-list")).json()
     actions = sorted((i["kind"], i["action"]) for i in listing["items"])
-    ok &= say(actions == [("integration", "sẽ chờ"), ("step", "sẽ bị dừng")],
+    ok &= say(actions == [("integration", "will wait"), ("step", "will be stopped")],
               "(d) R10 the cut list names the step to stop and the integration to wait for", str(actions))
     stale = await client.post("/api/update/apply", json={**plain, "mode": "now", "token": "stale"})
     ok &= say(stale.status_code == 409 and stale.json()["cut_list"]["token"] == listing["token"]
@@ -317,7 +317,7 @@ async def run_plain(root: Path) -> bool:
     u._me["uv"] = str(uv)
     await u.apply("release", "wait", "Proof")
     await u._apply_task
-    ok &= say(bool(u.error) and "cài thử" in u.error["message"] and "install failed" in u.error["log_tail"]
+    ok &= say(bool(u.error) and "trial install" in u.error["message"] and "install failed" in u.error["log_tail"]
               and not server.should_exit, "(f) R12 step 2 a trial that fails stops and shows its log", str(u.error)[:300])
     shutil.rmtree(u.root / "release")
     _wheel(u.root / "release", "0.13.0")
@@ -331,7 +331,7 @@ async def run_plain(root: Path) -> bool:
     u._trial = trial_then_a_job
     await u.apply("release", "wait", "Proof")
     await u._apply_task
-    ok &= say(u.state == "pending" and "trong lúc chạy thử" in (u.pending or {}).get("reason", "")
+    ok &= say(u.state == "pending" and "during the trial" in (u.pending or {}).get("reason", "")
               and not server.should_exit and not u.window,
               "(f) R12 step 2 passes on a server answering 200, and step 3 goes back to waiting when work began",
               f"{u.state} {u.error}")
@@ -489,7 +489,7 @@ def run_restart(root: Path) -> int:
             panel.wait_for(timeout=30000)
             text = panel.inner_text()
             va_sha7 = va_version.split("+g", 1)[1]
-            shown_commit = any(w.startswith(va_sha7) and len(w) == 40 for w in text.split())
+            shown_commit = va_sha7[:7] in text.split()
             ok &= say(va_version in text and shown_commit and "ready " + vb_version in text,
                       "--restart the panel shows vA with its commit, and the local channel ready", text[:400])
             page.fill("#update-by", "Proof")

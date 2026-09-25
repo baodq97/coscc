@@ -58,8 +58,8 @@ BUILD_STAMP = _HERE / "_build.json"
 
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
 _PUBLIC = re.compile(r"(\d+)\.(\d+)\.(\d+)")
-UNKNOWN_COMMIT = "commit không rõ"
-UNAVAILABLE = "cập nhật không khả dụng ở cách cài này"
+UNKNOWN_COMMIT = "commit unknown"
+UNAVAILABLE = "updates are not available for this install"
 
 
 def now() -> str:
@@ -140,26 +140,26 @@ def service_shape(
     prefix = sys.prefix if prefix is None else prefix
     executable = os.path.abspath(sys.argv[0]) if executable is None else executable
     if not packaged:
-        return "unavailable", "đây không phải bản cài đóng gói (chạy từ checkout)", {}
+        return "unavailable", "not a packaged install (running from a checkout)", {}
     if not config.invocation_id:
-        return "unavailable", "tiến trình không chạy như một systemd service (không có INVOCATION_ID)", {}
+        return "unavailable", "not running as a systemd service (no INVOCATION_ID)", {}
     unit = unit_file(config)
     try:
         text = unit.read_text(encoding="utf-8") if unit else ""
     except OSError:
         text = ""
     if not text:
-        return "unavailable", f"không có unit file {unit or 'coscc.service'}", {}
+        return "unavailable", f"no unit file {unit or 'coscc.service'}", {}
     starts = _unit_lines(text, "ExecStart")
     if not starts or os.path.realpath(starts[-1].split()[0]) != os.path.realpath(executable):
-        return "unavailable", f"ExecStart= của {unit} không trỏ tới {executable}", {}
+        return "unavailable", f"ExecStart= of {unit} does not point at {executable}", {}
     if "on-failure" not in _unit_lines(text, "Restart"):
-        return "unavailable", f"{unit} không có Restart=on-failure, nên thoát để cập nhật sẽ không lên lại", {}
+        return "unavailable", f"{unit} has no Restart=on-failure, so exiting to update would not come back", {}
     if not (Path(prefix) / "uv-receipt.toml").is_file():
-        return "unavailable", f"venv {prefix} không phải một uv tool (không có uv-receipt.toml)", {}
+        return "unavailable", f"venv {prefix} is not a uv tool (no uv-receipt.toml)", {}
     uv = find_uv(config.uv_candidates)
     if uv is None:
-        return "unavailable", "không tìm thấy uv (PATH, UV_INSTALL_DIR, XDG_BIN_HOME, ~/.local/bin, ~/.cargo/bin)", {}
+        return "unavailable", "no uv found (PATH, UV_INSTALL_DIR, XDG_BIN_HOME, ~/.local/bin, ~/.cargo/bin)", {}
     return "service", "", {
         "uv": uv,
         "tool_dir": str(Path(prefix).parent),
@@ -314,7 +314,7 @@ def fetch_into(
         return {"state": "error", "reason": f"{type(e).__name__}: {e}"}
     if want is None or want != got:
         _unlink(part_wheel, part_sums)
-        return {"state": "checksum", "reason": f"sha256 của {name} không khớp SHA256SUMS", "sha256": got}
+        return {"state": "checksum", "reason": f"the sha256 of {name} does not match SHA256SUMS", "sha256": got}
     os.replace(part_sums, channel_dir / SUMS)
     os.replace(part_wheel, channel_dir / name)
     for old in channel_dir.glob("*.whl"):

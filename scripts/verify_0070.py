@@ -31,7 +31,7 @@ It reads the setup token off the app's stderr, and then, twice — once through
 `127.0.0.1`, once through this machine's first non-loopback address, each in a fresh
 browser context — walks what a person walks: `/` sends it to `/setup` (the first time) or
 `/login`; the form lets it in; the board renders and its `/_event` socket opens and
-receives; *Đăng xuất* lands on `/login`; `/` sends it to `/login` again. On the first pass it
+receives; *Log out* lands on `/login`; `/` sends it to `/login` again. On the first pass it
 also backdates the session two hours and opens one more `/_event` socket from the page, with
 no HTTP request in between, to see whether the browser keeps the cookie the `101` renews.
 
@@ -529,7 +529,7 @@ def _walk_in(browser, base: str, served: Served, first: bool, root: Path) -> boo
         try:
             page.wait_for_selector("#logout")
         except Exception:
-            return say(False, f"{where} the board renders with its Đăng xuất button",
+            return say(False, f"{where} the board renders with its Log out button",
                        page.inner_text("body")[:200])
         deadline = time.monotonic() + PAGE_TIMEOUT_MS / 1000
         while time.monotonic() < deadline and not received:
@@ -543,7 +543,7 @@ def _walk_in(browser, base: str, served: Served, first: bool, root: Path) -> boo
 
         with page.expect_navigation():
             page.click("#logout")
-        ok &= say(_path(page.url) == "/login", f"{where} R7 Đăng xuất lands on /login", page.url)
+        ok &= say(_path(page.url) == "/login", f"{where} R7 Log out lands on /login", page.url)
         page.goto(base + "/")
         ok &= say(_path(page.url) == "/login", f"{where} R7 after logging out, / is /login again",
                   page.url)

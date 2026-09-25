@@ -768,7 +768,7 @@ def build(config: Config | None = None) -> FastAPI:
     # -- `0068`: updating the app --------------------------------------------
     #
     # Behind the password like every route here: whoever holds it or a live session can
-    # apply an update, cut running work with "áp dụng ngay", cancel a wait or start a local
+    # apply an update, cut running work with "apply now", cancel a wait or start a local
     # build. What they cannot do is choose what gets installed. A body is read for
     # `channel`, `mode`, `by` and `token` only; a URL, a path, a version or a ref in it is
     # never read (R15), as `POST /api/workspaces` ignores a working folder sent to it.
