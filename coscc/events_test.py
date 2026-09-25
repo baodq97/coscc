@@ -198,6 +198,26 @@ class TheDisk(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(row["ended_at"])
         self.assertEqual(row["events"], 2)
 
+    async def test_stored_turns_count_what_reached_disk(self):
+        """`0092` R1: three message ids, three turns, read from `step_events`."""
+        rec = recorder(self.data)
+        rec.start()
+        for mid in ("m1", "m2", "m2", "m3"):
+            rec.message(assistant(mid, TextBlock(mid)))
+        await rec.close("failed", "why")
+        self.assertEqual(await rec.stored_turns(), (3, "events"))
+
+    async def test_stored_turns_fall_back_to_memory_when_the_disk_cannot_answer(self):
+        rec = recorder(self.data)
+        for mid in ("m1", "m2", "m3"):
+            rec.message(assistant(mid, TextBlock(mid)))
+        await rec.close("failed", "why")
+        with mock.patch.object(self.data, "step_turns", side_effect=Busy("held")):
+            self.assertEqual(await rec.stored_turns(), (3, "memory"))
+        rec.turns = mock.Mock()  # a stand-in's count: never written into an `end`
+        with mock.patch.object(self.data, "step_turns", side_effect=Busy("held")):
+            self.assertEqual(await rec.stored_turns(), (None, "memory"))
+
 
 class Collapsing(unittest.TestCase):
     def test_long_bodies_are_collapsed_and_short_ones_are_not(self):
