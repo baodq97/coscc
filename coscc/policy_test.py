@@ -90,7 +90,7 @@ class OneGrantPerStage(unittest.TestCase):
                         max_budget_usd=3.0, app_writes_artifact=False,
                         warning=policy.PR_WARNING, denied=policy.PR_DENIED,
                         push_no_force=True),  # `0041` R3; the ceilings are R6's, unchanged
-            "review": Grant(tools=READ_TOOLS, max_turns=20, max_budget_usd=2.0),
+            "review": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0),  # `0085` R1
             "ship": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
                           max_budget_usd=3.0, app_writes_artifact=False,
                           warning=policy.SHIP_WARNING),

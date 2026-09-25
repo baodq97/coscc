@@ -284,9 +284,7 @@ GRANTS: dict[str, Grant] = {
     # been a git repository, and only `plan` — which could read — caught it.
     #
     # No write tools and no commands: the app still writes `spec.md` from the reply.
-    # Both ceilings are copied from `plan` above, not measured for `spec`. `review` below
-    # keeps 20 turns and $2.00 although its comment says "the same ceilings as `plan`";
-    # that mismatch predates `0020` and is not this unit's to settle (`0020` R6).
+    # Both ceilings are copied from `plan` above, not measured for `spec`.
     "spec": Grant(
         tools=READ_TOOLS,
         max_turns=40,
@@ -330,9 +328,14 @@ GRANTS: dict[str, Grant] = {
     # `0015` plan, Risk 3, and a later unit.
     "review": Grant(
         tools=READ_TOOLS,
-        # Chosen, not measured; the same ceilings as `plan`.
-        max_turns=20,
-        max_budget_usd=2.0,
+        # `0085` R1. Chosen, not measured: 20/$2.0 was `plan`'s ceiling before it went to
+        # 40/$4.0, and five review sessions on 2026-09-25 stopped at it without writing a
+        # round (`0085` `intent.md ## Answers, câu 4`). A review that still stops at it
+        # gets one closing turn from the app (`runner.Runner.run`), which this budget does
+        # not bound: the CLI compares the session's whole cost, after the turn has run
+        # (`0085` `spike.md ## U2`, point 3).
+        max_turns=40,
+        max_budget_usd=4.0,
     ),
     # `0015`: `ship` merges, so it needs what `pr` has. Its ceilings are copied from `pr`,
     # chosen rather than measured.
