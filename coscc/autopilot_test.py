@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from coscc import autopilot as ap
+from coscc.policy import GRANTS, NOVEL_CEILINGS
 
 COS_MJS = Path(__file__).resolve().parent.parent / ".claude" / "scripts" / "cos.mjs"
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
@@ -133,6 +134,33 @@ class TheDaysMoney(unittest.TestCase):
         self.assertEqual(ap.reservation("review"), 4.0)
         self.assertEqual(ap.reservation("integrate"), 8.0)
         self.assertEqual(ap.reservation("no-such-stage"), 0.0)
+
+    def test_an_end_without_cost_counts_its_stages_ceiling(self):
+        rows = [
+            {"kind": "end", "at": at(), "stage": "impl", "outcome": "failed"},
+            {"kind": "end", "at": at(), "stage": "review", "outcome": "done"},
+            {"kind": "end", "at": at(), "stage": "integrate", "outcome": "done"},
+        ]
+        got = ap.spent_on(rows, ap.today(NOW))
+        self.assertEqual((got["known"], got["estimated"], got["estimated_count"]), (0.0, 16.0 + 4.0 + 8.0, 3))
+
+    def test_a_stage_without_a_ceiling_counts_the_tables_largest(self):
+        largest = max(
+            [g.max_budget_usd for g in GRANTS.values()] + [b for _, b in NOVEL_CEILINGS.values()]
+        )
+        self.assertGreater(largest, 0)
+        self.assertEqual(ap.estimate("intent"), largest)
+        self.assertEqual(ap.estimate("idea"), largest)
+        self.assertEqual(largest, 16.0)
+
+    def test_an_integration_record_is_never_added(self):
+        rows = [
+            {"kind": "end", "at": at(), "stage": "integrate", "cost_usd": 2.5},
+            {"kind": "integration", "at": at(), "mode": "agent"},
+            {"kind": "integration", "at": at(), "mode": "mechanical"},
+        ]
+        got = ap.spent_on(rows, ap.today(NOW))
+        self.assertEqual((got["known"], got["estimated"], got["estimated_count"]), (2.5, 0.0, 0))
 
     def test_an_open_start_counts_for_24_hours(self):
         rows = [

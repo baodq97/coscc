@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from coscc import labels, spend
-from coscc.policy import grant_for, grant_for_step
+from coscc.policy import GRANTS, NOVEL_CEILINGS, grant_for, grant_for_step
 
 # R2. Defaults, `intent.md ## Answers`, câu 2 and 3.
 DEFAULT_MAX_PARALLEL = 4
@@ -172,6 +172,36 @@ def reservation(stage: str) -> float:
         grant_for_step(stage, None).max_budget_usd or 0.0,
         grant_for_step(stage, labels.NOVEL).max_budget_usd or 0.0,
     ))
+
+
+def estimate(stage: str) -> float:
+    """What an `end` of `stage` with no `cost_usd` is counted at (`0105`): its reservation,
+    or, for a stage no grant gives a budget, the largest budget in the grant table — read
+    here, never copied, so a dearer grant added later raises it too."""
+    own = reservation(stage)
+    if own > 0:
+        return own
+    return float(max(
+        [float(g.max_budget_usd or 0.0) for g in GRANTS.values()]
+        + [float(budget) for _, budget in NOVEL_CEILINGS.values()]
+    ))
+
+
+def spent_on(records: Iterable[dict[str, Any]], day: str) -> dict[str, Any]:
+    """`{known, estimated, estimated_count}`: every `end` of the machine's `day`, whoever
+    started it, every workspace. An `end` with no `cost_usd`, whatever its outcome, counts
+    at `estimate` of its stage (`0105`). An `integration` record is never added: a Gebo
+    session's cost is on its own `end`."""
+    known, estimated, count = 0.0, 0.0, 0
+    for r in records:
+        if r.get("kind") != "end" or spend.local_day(r.get("at")) != day:
+            continue
+        if r.get("cost_usd") is None:
+            estimated += estimate(str(r.get("stage") or ""))
+            count += 1
+        else:
+            known += float(r["cost_usd"])
+    return {"known": round(known, 6), "estimated": round(estimated, 6), "estimated_count": count}
 
 
 def open_starts(records: Iterable[dict[str, Any]], now: datetime) -> dict[tuple[str, str], dict[str, Any]]:
