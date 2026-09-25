@@ -26,9 +26,10 @@ from coscc.units import BadUnit
 # A spelling, not a rule: which move is allowed is still read off `hold_moves`.
 HEADS = {"paused": "Paused", "dropped": "Dropped", "active": "Resumed"}
 
+# `0082` D48: one sentence. What else a drop leaves is in `.claude/CLAUDE.md`.
 DROP_WARNING = (
     "Dropping closes this unit's open pull request with this machine's gh login and "
-    "removes its worktree. The remote branch is kept."
+    "removes its worktree; the remote branch is kept."
 )
 
 

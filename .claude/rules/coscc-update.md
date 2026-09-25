@@ -25,7 +25,7 @@ paths:
   - A new version that passes the trial and still fails to start is not rolled back by
     anything; the update's log holds the command, and restoring `updates/cos.db.bak` loses
     what the new version wrote (C1, C8).
-  - The trace is the `update` rows in the run log (workspace `""`, `by` a typed name) and
+  - The trace is the `update` rows in the run log (workspace `""`, `by` `owner` from the board since `0082`) and
     `<COS_DATA_DIR>/updates/logs/`. The password is what stands in front;
     `COS_HOST=127.0.0.1` still narrows who can try it.
 - **The trial logs in.** It clears the password on its copy of `cos.db` with

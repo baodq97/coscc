@@ -31,7 +31,7 @@ from coscc import board as board_reader
 from coscc import drift, events, fetches, gitops
 from coscc import harness, integrate
 from coscc import hold as hold_rules
-from coscc import prcomment, prsync
+from coscc import present, prcomment, prsync
 from coscc import sessions as reader
 from coscc.board import Unavailable
 from coscc.config import Config
@@ -248,7 +248,110 @@ def outcome_label(outcome: dict[str, Any] | None, today: date, finished: bool = 
         "note": outcome.get("note"),
         "invalid": int(outcome.get("invalid") or 0),
         "form": bool(finished),
+        # `0082` D22: what the page shows. `text` and `kind` stay as they were for the API.
+        "label": present.OUTCOME_LABEL[kind],
+        "hint_label": MISSED_HINT_LABEL if kind == "missed" else "",
     }
+
+
+# `0082` R3, `spec.md ## Answers, câu 1`. The word every record that used to carry a typed
+# name gets when the request names nobody. It is not an identity: the one password of
+# `0070` names nobody, so this says only that someone holding it or a live session acted.
+OWNER = "owner"
+
+# `0082` D22. `MISSED_HINT` in the page's language; the stored word is unchanged.
+MISSED_HINT_LABEL = "Consider dropping or redoing it."
+
+# `0082` R8, `spec.md ## Answers, câu 5`. The one sentence the page keeps beside each action
+# whose effect costs money or leaves this machine. The full warnings stay in `policy.py`,
+# in the API under their old fields, and in `.claude/rules/coscc-app.md`.
+CONSEQUENCE = {
+    "run": "Runs a real Claude session and spends account quota.",
+    "pr": "Pushes and opens a pull request with this machine's gh login, and spends quota.",
+    "ship": "Merges the pull request with this machine's gh login, and spends quota.",
+    "integrate": "Rebases this pull request with this machine's gh login; a conflict opens a paid session.",
+    "estimate": "Opens one paid session that proposes estimates.",
+    "drop": "Closes this unit's open pull request with this machine's gh login.",
+    "apply-now": "Stops every running step and chat turn, then restarts the app.",
+}
+
+
+def consequence(stage: str) -> str:
+    """The sentence for running `stage`, `CONSEQUENCE["run"]` when it has none of its own."""
+    return CONSEQUENCE.get(stage, CONSEQUENCE["run"])
+
+
+def answerable(unit: dict[str, Any]) -> bool:
+    """`0082` R11. Whether the board invites an answer on this unit: not once it is finished,
+    closed or dropped. The answer route itself is unchanged."""
+    action = str(unit.get("next") or "")
+    dropped = (unit.get("hold") or {}).get("state") == "dropped"
+    return not (action == "finished" or action.startswith("closed") or dropped)
+
+
+def attention_reason(unit: dict[str, Any]) -> str:
+    """`0082` R12. What a unit in *Needs you* waits on, `""` for any other unit.
+
+    Which units are in that lane is still `state._lane`'s rule, unchanged; this repeats its
+    condition only to say nothing about a unit outside it."""
+    action = str(unit.get("next") or "")
+    rows = unit.get("stages") or []
+    if unit.get("phase") == "pre-intent" or action == "finished" or action.startswith("closed"):
+        return ""
+    if not (unit.get("problems") or any(r.get("status") in ("draft", "changes-requested") for r in rows)):
+        return ""
+    waiting = any(not p.get("answered") for p in unit.get("person_findings") or [])
+    if unit.get("problems") or waiting or action.startswith("waiting"):
+        return "Needs a person"
+    draft = next((r for r in rows if r.get("status") == "draft"), None)
+    if draft is not None:
+        return f"Accept {draft.get('stage')}.md"
+    return "Changes requested"
+
+
+# `0082` R9. The release channel's state in plain words; `{v}` is the offered version.
+_RELEASE_LINE = {
+    "ready": "Version {v} is ready to apply.",
+    "up-to-date": "This is the latest release.",
+    "off": "Release checks are off.",
+    "unavailable": "Releases could not be checked.",
+    "downloading": "Downloading version {v}.",
+    "error": "The last download failed.",
+    "blocked": "Updates are held after a failed update.",
+}
+_LOCAL_LINE = {
+    "unconfigured": "Local builds are not set up.",
+    "ready": "A local build ({v}) is ready to apply.",
+    "building": "A local build is running.",
+    "error": "The last local build failed.",
+    "blocked": "Local builds are held after a failed update.",
+}
+
+
+def update_words(status: dict[str, Any]) -> dict[str, Any]:
+    """`0082` R9. What the Updates section says and which buttons it shows, from
+    `Updater.status`. A button that could not be used is not listed; nothing names an
+    environment variable."""
+    if status.get("shape") != "service":
+        return {"line": "Updates apply only to an install made by install.sh.", "local_line": "", "actions": []}
+    state = status.get("state") or ""
+    if state == "applying":
+        return {"line": "Updating now.", "local_line": "", "actions": []}
+    release, local = status.get("release") or {}, status.get("local") or {}
+    rs, ls = release.get("state") or "", local.get("state") or ""
+    line = _RELEASE_LINE.get(rs, "").format(v=release.get("version") or "")
+    local_line = _LOCAL_LINE.get(ls, "").format(v=local.get("version") or "")
+    actions: list[str] = []
+    if state == "pending":
+        line = "An update waits for the running work to finish."
+        actions.append("cancel")
+    else:
+        for channel, ready in (("release", rs == "ready"), ("local", ls == "ready")):
+            if ready:
+                actions += [f"apply-{channel}", f"now-{channel}"]
+    if ls not in ("unconfigured", "building", "blocked", ""):
+        actions.append("build-local")
+    return {"line": line, "local_line": local_line, "actions": actions}
 
 
 @dataclass
@@ -555,6 +658,7 @@ class Service:
         data["backlog"] = {
             **backlog.fold(data["units"], ranking, backlog.measured(timelines, data["units"])),
             "propose_warning": grant_for("estimate").warning,
+            "propose_consequence": CONSEQUENCE["estimate"],
         }
         per_unit = data["backlog"].pop("per_unit")
         for unit in data["units"]:
@@ -574,6 +678,7 @@ class Service:
                 # a step will be allowed to do has to be readable before it is started.
                 row["grants"] = list(grant.tools)
                 row["warning"] = grant.warning
+                row["consequence"] = consequence(row["stage"])
                 # `0019` plan step 6 / `spec.md` R5. From the same `timelines` read above —
                 # no second scan of the run log. `status` (and the lanes) stays read from
                 # the artifact alone (C6); this is a second, separate field.
@@ -586,6 +691,9 @@ class Service:
             unit["outcome_label"] = outcome_label(
                 unit.get("outcome"), date.today(), finished=unit.get("next") == "finished"
             )
+            # `0082` R11, R12. Decided here so the page only shows them.
+            unit["answerable"] = answerable(unit)
+            unit["attention_reason"] = attention_reason(unit)
 
         await self._attach_worktrees(cwd, data["units"])
         await self._attach_integration(cwd, data["units"], journal, key)
@@ -802,6 +910,7 @@ class Service:
                 u.get("rounds") or [], review_status, gebo or fallback, grant_for("integrate").warning,
                 fallback=fallback,
             ),
+            "consequence": CONSEQUENCE["integrate"],
         }
 
     async def integrate(self, cwd: str, unit: str) -> AsyncIterator[tuple[str, Any]]:
@@ -1565,9 +1674,7 @@ class Service:
         and closes no gate, and starts nothing.
         """
         self._workspace_or_refuse(cwd)
-        name = (by or "").strip()
-        if not name:
-            raise Invalid("a name is required to stop a step")
+        name = (by or "").strip() or OWNER
         return await self._stop_running(self._journal_key(cwd), unit, name)
 
     async def _stop_running(self, key: str, unit: str, by: str) -> dict[str, Any]:
@@ -1791,7 +1898,9 @@ class Service:
         return False
 
     def update_status(self) -> dict[str, Any]:
-        return self.updater.status()
+        """`Updater.status`, unchanged, with `0082` R9's `line`, `local_line` and `actions`."""
+        status = self.updater.status()
+        return {**status, **update_words(status)}
 
     def update_cut_list(self) -> dict[str, Any]:
         try:
@@ -1801,19 +1910,19 @@ class Service:
 
     async def update_apply(self, channel: str, mode: str, by: str, token: str) -> dict[str, Any]:
         try:
-            return await self.updater.apply(channel, mode, by, token)
+            return await self.updater.apply(channel, mode, (by or "").strip() or OWNER, token)
         except updater_mod.Refused as e:
             raise _as_invalid(e) from e
 
     def update_cancel(self, by: str) -> dict[str, Any]:
         try:
-            return self.updater.cancel(by)
+            return self.updater.cancel((by or "").strip() or OWNER)
         except updater_mod.Refused as e:
             raise _as_invalid(e) from e
 
     def update_build_local(self, by: str) -> dict[str, Any]:
         try:
-            return self.updater.build_local(by)
+            return self.updater.build_local((by or "").strip() or OWNER)
         except updater_mod.Refused as e:
             raise _as_invalid(e) from e
 
@@ -2097,7 +2206,7 @@ class Service:
         Unlike a numbered answer, that block is read by `cos.mjs next` and the `ship` gate.
         """
         self._workspace_or_refuse(cwd)
-        name = str(answered_by or "").strip()
+        name = str(answered_by or "").strip() or OWNER
         text = str(answer or "").strip("\n")
         async with self._answer_lock:
             try:
@@ -2230,7 +2339,7 @@ class Service:
         has a login, so both are claims. `source` is not checked against anything.
         """
         self._workspace_or_refuse(cwd)
-        name = str(recorded_by or "").strip()
+        name = str(recorded_by or "").strip() or OWNER
         measurer = str(measured_by or "").strip()
         word = str(result or "").strip()
         src = str(source or "").strip()
@@ -2353,7 +2462,7 @@ class Service:
             raise Invalid("name a work unit")
         to = str(to or "").strip()
         reason = str(reason or "").strip()
-        by = str(by or "").strip()
+        by = str(by or "").strip() or OWNER
         directory = self._unit_dir(cwd, unit)
         key = self._journal_key(cwd)
         # No `await` between the check and the take: the same mark `run_step` and
@@ -2453,6 +2562,7 @@ class Service:
         self, cwd: str, unit: str, value: Any, effort: Any, basis: Any, by: Any,
     ) -> dict[str, Any]:
         """R2, R6, R7. A person's estimate: always a new record, never an edit of an old one."""
+        by = str(by or "").strip() or OWNER
         journal, key, data = await self._backlog_context(cwd)
         if isinstance(value, str) and value.strip().isdigit():
             value = int(value.strip())
@@ -2471,6 +2581,7 @@ class Service:
         self, cwd: str, unit: str, other: str, rtype: str, op: str, reason: str, by: str,
     ) -> dict[str, Any]:
         """R8. Add or remove one relation; checked against the ones in effect inside the write."""
+        by = str(by or "").strip() or OWNER
         journal, key, data = await self._backlog_context(cwd)
         names = [u["name"] for u in data["units"]]
         record = {"kind": "relation", "workspace": key, "unit": unit, "other": other, "type": rtype,
@@ -2481,6 +2592,7 @@ class Service:
 
     async def record_shortlist(self, cwd: str, names: Any, reason: str, by: str) -> dict[str, Any]:
         """R10, R12, R13. The whole list, by a person, as one new record."""
+        by = str(by or "").strip() or OWNER
         journal, key, data = await self._backlog_context(cwd)
         for what, value in (("reason", reason), ("name", by)):
             said = hold_rules._line_problem(what, value)
@@ -3202,29 +3314,25 @@ class Service:
                     "name": "tools",
                     "value": ", ".join(c.effective_tools()) or "none",
                     "on": bool(c.effective_tools()),
-                    "detail": "Chat sessions are created with this tool list. Empty means "
-                              "chat only — a session with no tools cannot write a file.",
+                    "detail": "The tools a chat session gets; none means chat only.",
                 },
                 {
                     "name": "allow_write_and_exec",
                     "value": "on" if c.allow_write_and_exec else "off",
                     "on": c.allow_write_and_exec,
-                    "detail": "While off, no write or exec tool survives into a session, "
-                              "whatever the tool list says.",
+                    "detail": "While off, no chat session can write files or run commands.",
                 },
                 {
                     "name": "bypass_permissions",
                     "value": "on" if c.bypass_permissions else "off",
                     "on": c.bypass_permissions,
-                    "detail": "Off, and not settable over HTTP. The only way in is the "
-                              "environment this process was started with.",
+                    "detail": "Set only by the environment the app started with.",
                 },
                 {
                     "name": "resume_foreign_sessions",
                     "value": "on" if c.resume_foreign_sessions else "off",
                     "on": c.resume_foreign_sessions,
-                    "detail": "Off because it is untested, not because it is dangerous. "
-                              "The app resumes only what it created.",
+                    "detail": "The app resumes only the sessions it created.",
                 },
             ],
             # The board's own grants, from `policy.py` rather than from the config. They
@@ -3236,10 +3344,14 @@ class Service:
                     "stage": name,
                     "tools": ", ".join(grant.tools) or "none",
                     "commands": ", ".join(grant.commands) or "none",
+                    # `0082` F2: the same, one item each, for the page to list (S5).
+                    "tool_list": list(grant.tools),
+                    "command_list": list(grant.commands),
                     "max_turns": grant.max_turns,
                     "max_budget_usd": grant.max_budget_usd,
                     "app_writes_artifact": grant.app_writes_artifact,
                     "warning": grant.warning,
+                    "consequence": consequence(name),
                 }
                 for stage, own in sorted(GRANTS.items())
                 for name, grant in (

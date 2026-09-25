@@ -92,7 +92,7 @@ RUNS = 3                  # loads per fixture; the median is chosen, not measure
 LONG_MESSAGE = 74650      # the 72.9 KiB prompt `idea.md` found in `messages`
 PAGE_TIMEOUT_MS = 120_000
 SIZE = {"width": 1440, "height": 900}
-LANES = ("Planned", "In progress", "Needs review", "Complete")
+LANES = ("Planned", "In progress", "Needs you", "Complete")
 UNIT = re.compile(r"^(\d{4})_(.+)$")
 MARK = "_rx_state_"
 

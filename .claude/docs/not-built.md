@@ -27,10 +27,12 @@ Read this before adding a route, a button or a grant, and before copying this ha
   app has one place where a person answers an item under `## Open questions`: the
   *Questions* tab, or `POST /api/units/answer`. It appends a block under `## Answers` and
   a row to the run log, and that is all — no gate reads it and no stage runs because of it;
-  the next stage finds it in its prompt when somebody presses the button. `Answered by:`
-  is a name the person typed, not an identity. Since `0070` there is one master password
-  and it names nobody: whoever holds it or a live session cookie can answer under any
-  name, and the next stage will read it as a person's decision.
+  the next stage finds it in its prompt when somebody presses the button. Since `0082` the
+  board asks no name: `Answered by:` is `owner`, a fixed word the app writes for whoever
+  holds the password or a live session. It is not an identity and does not say who
+  answered. The route still takes a name sent with the request and writes that instead, so
+  a script can write any name. Since `0070` there is one master password and it names
+  nobody, and the next stage will read the answer as a person's decision.
   One kind of answer is read by more than a prompt. Since `0028` a finding the last review
   round marked `[needs-person]` is answered as `F<n>` into `review.md`, as a `### F<n>`
   block: `cos.mjs next` reads it to offer `review` again once every such finding has one,
@@ -71,27 +73,29 @@ Read this before adding a route, a button or a grant, and before copying this ha
 - **Stopping a step is not an approval, and anyone holding the password can do it.** Since
   `0034` the board lists the steps running in a workspace, each with a *Stop* button
   (`POST /api/board/stop`). A stopped step ends `stopped` in the run log with
-  `stopped_by`, a name the person typed rather than an identity; it writes no artifact,
-  opens and closes no gate, and starts nothing. What it had already committed or pushed
-  stays. A step stopped before its first turn ran nothing and leaves no line in the run
-  log at all. Whoever holds the password or a live session can stop anyone's step under
-  any name.
+  `stopped_by`: `owner` since `0082`, a fixed word and not an identity, or whatever name
+  the request carried; it writes no artifact, opens and closes no gate, and starts nothing.
+  What it had already committed or pushed stays. A step stopped before its first turn ran
+  nothing and leaves no line in the run log at all. Whoever holds the password or a live
+  session can stop anyone's step.
 - **A hold is not an approval, and it starts nothing.** Since `0045` the board can pause,
-  drop or resume a unit (`POST /api/units/hold`), with one line of reason and a typed name.
+  drop or resume a unit (`POST /api/units/hold`), with one line of reason; the block's name
+  is `owner` since `0082` (`stopped_by` above says what that word is and is not).
   It appends a block under `intent.md ## Answers` and a `hold` row to the run log; `cos.mjs`
   then offers the unit no stage and closes every gate on it. Resuming runs nothing either.
   Dropping also closes the unit's open pull request **with this machine's `gh` login** and
   removes its worktree; the remote and local branches stay. Whoever holds the password or
-  a live session can pause every unit, or drop one and close its pull request, under any
-  name. A move is refused while a step or an
+  a live session can pause every unit, or drop one and close its pull request. A move is
+  refused while a step or an
   integration of that unit runs — but only one this process started; a chat, a terminal or
   a second app is not seen.
 - **An update is not an approval, and anyone holding the password can press it.** Since
   `0068` an install made by `install.sh` updates itself from the Board
   (`POST /api/update/apply`, `/cancel`, `/build-local`). Applying can stop every running
-  step and chat turn of this process when the person chooses "apply now", and restarts
+  step and chat turn of this process when the person chooses *Apply now*, and restarts
   the process; the local build runs upstream `main`'s build scripts under this user.
-  Whoever holds the password or a live session can do all of it under any name. The only constraint is what gets installed: a wheel from
+  Whoever holds the password or a live session can do all of it; the run log's `by` says
+  `owner` since `0082`, not who. The only constraint is what gets installed: a wheel from
   `github.com/baodq97/coscc` checked against its release's `SHA256SUMS`, or one this
   machine built from `origin/main`, and no request carries a URL, path, version or ref.
   Nothing in the repository enforces that constraint beyond the app's own code: a
@@ -103,7 +107,8 @@ Read this before adding a route, a button or a grant, and before copying this ha
   (`liên quan`, `trùng`, `thay thế`, `phụ thuộc`), a computed order, and a shortlist of at
   most seven that a person writes. All of it is rows in the app's run log, not artifacts; no
   gate, no `next` and no run button reads any of it, and `cos.mjs` does not know it exists.
-  `by` is a name the person typed; an agent's estimate says `agent:<session>`, and a
+  `by` is `owner` since `0082` (a fixed word, not an identity; older rows keep the name
+  someone typed); an agent's estimate says `agent:<session>`, and a
   person's estimate wins over an agent's whichever came later. *Propose estimates* opens one paid session under the grant
   `estimate`. Each board step's `start` row records where its unit stood in the shortlist,
   so `verify_0074 --measure` can tell afterwards whether work was taken from it.
@@ -132,8 +137,8 @@ Read this before adding a route, a button or a grant, and before copying this ha
   `/api`, the static files, paths that do not exist — is refused without a live session;
   only `/api/health`, `/login`, and `/setup` until a password is set, answer.
   `coscc/auth.py` is that door, and it is one master password for one user: it proves
-  someone holds the password, not who they are, so every typed name above is still only a
-  word. The default bind is still `0.0.0.0` and the app serves plain HTTP, so off loopback
+  someone holds the password, not who they are, so every `owner` above — and every name a
+  request carries or an older row kept — is still only a word. The default bind is still `0.0.0.0` and the app serves plain HTTP, so off loopback
   the password, the cookie and the setup token cross the network readable until someone
   puts TLS in front. The setup token sits in the service's journal, readable by the `adm`
   and `systemd-journal` groups until the password is set. `coscc reset-password`, at a

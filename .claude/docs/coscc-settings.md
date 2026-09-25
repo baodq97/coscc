@@ -25,7 +25,8 @@ Read this before changing `POST /api/settings/*`, `coscc/models.py`, `POST /api/
   The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
 - **`POST /api/backlog/*` writes the backlog's order, and `propose` opens a paid session, for
   whoever holds the password.** Since `0074`. `estimate`, `relation` and `shortlist` each
-  append one run-log row (`estimate-value`, `relation`, `shortlist`) under a typed `by`; a
+  append one run-log row (`estimate-value`, `relation`, `shortlist`) with `by` — `owner` from
+  the board since `0082`, or a name the request carried; a
   person's name may not start with `agent:`, but a hand-edited row in `cos.db` can, and the
   board then takes it for an agent's (`plan.md` Risk 9). `propose` opens one session on the
   model of the Settings row `estimate` — no tools, 1 turn, $2.0, all chosen, and nobody has

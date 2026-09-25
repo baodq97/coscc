@@ -666,9 +666,11 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_an_empty_answer_is_refused(self):  # (d)
         await self.refused(answer="   \n  ")
 
-    async def test_an_answer_with_no_name_is_refused(self):  # (e)
-        await self.refused(answered_by="  ")
+    async def test_an_answer_with_no_name_is_recorded_as_owner(self):  # (e), `0082` R3
         await self.refused(answered_by="A\nStatus: rejected")
+        got = await self.post(answered_by="  ")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(got.json()["answered_by"], "owner")
 
     async def test_a_closed_unit_is_refused(self):  # (f)
         self.intent.write_text(QUESTIONS.replace("Status: accepted", "Status: rejected"), encoding="utf-8")
@@ -778,12 +780,18 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_refusal_is_400_and_writes_nothing(self):
         before = self.intent.read_bytes()
-        for over in ({"to": "active"}, {"reason": ""}, {"by": ""}, {"to": "sideways"}, {"cwd": "/etc"}):
+        for over in ({"to": "active"}, {"reason": ""}, {"to": "sideways"}, {"cwd": "/etc"}):
             got = await self.hold(**over)
             self.assertEqual(got.status_code, 400, over)
         got = await self.client.post("/api/units/hold", content=b"nope")
         self.assertEqual(got.status_code, 400)
         self.assertEqual(self.intent.read_bytes(), before)
+
+    async def test_no_name_is_recorded_as_owner(self):
+        """`0082` R3: what `{"by": ""}` was refused for until then."""
+        got = await self.hold(by="")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertIn("owner", self.intent.read_text(encoding="utf-8").split("## Answers", 1)[1])
 
 
 _ROUND_0028 = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"

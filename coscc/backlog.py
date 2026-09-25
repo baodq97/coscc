@@ -312,9 +312,10 @@ def computed_order(
         status = statuses.get(other, "missing")
         if status == "finished":
             continue
-        why = {"dropped": "đã dropped", "rejected": "đã bị từ chối", "backlog": "chưa có ước lượng",
-               "missing": "không có trong store"}.get(status, "không nằm trong backlog")
-        warnings.append({"unit": r["unit"], "text": f"phụ thuộc {other}, nhưng {other} {why}; bỏ qua khi xếp"})
+        # `0082` D32: the app's own words, in English (S6).
+        why = {"dropped": "is dropped", "rejected": "was rejected", "backlog": "has no estimate",
+               "missing": "is not in the store"}.get(status, "is not in the backlog")
+        warnings.append({"unit": r["unit"], "text": f"depends on {other}, but {other} {why}; ignored in the order"})
     key = {n: _sort_key(estimated[n], numbers.get(n)) for n in estimated}
     order: list[str] = []
     left = dict(needs)
@@ -323,7 +324,7 @@ def computed_order(
         if not ready:
             rest = sorted(left, key=key.__getitem__)
             for n in rest:
-                warnings.append({"unit": n, "text": "nằm trong một chu trình phụ thuộc; xếp cuối"})
+                warnings.append({"unit": n, "text": "is in a dependency cycle; placed last"})
             order.extend(rest)
             break
         best = min(ready, key=key.__getitem__)
@@ -367,16 +368,16 @@ def _warnings_for(
     for r in relations:
         unit, other, rtype = r["unit"], r["other"], r["type"]
         if rtype == "thay thế" and other in pos:
-            out[other].append(f"bị {unit} thay thế")
+            out[other].append(f"replaced by {unit}")
         elif rtype == "trùng" and unit in pos and other in pos:
-            out[unit].append(f"trùng với {other}, cũng trong shortlist")
-            out[other].append(f"trùng với {unit}, cũng trong shortlist")
+            out[unit].append(f"duplicates {other}, also in the shortlist")
+            out[other].append(f"duplicates {unit}, also in the shortlist")
         elif rtype == "phụ thuộc" and unit in pos:
             status = statuses.get(other, "missing")
             if status in ("dropped", "rejected"):
-                out[unit].append(f"phụ thuộc {other}, đã {'dropped' if status == 'dropped' else 'bị từ chối'}")
+                out[unit].append(f"depends on {other}, which {'is dropped' if status == 'dropped' else 'was rejected'}")
             elif status == "backlog" and pos.get(other, len(shortlist)) > pos[unit]:
-                out[unit].append(f"phụ thuộc {other}, không đứng trước nó trong shortlist")
+                out[unit].append(f"depends on {other}, which is not before it in the shortlist")
     return out
 
 
@@ -423,7 +424,7 @@ def fold(
             "computed": computed,
             "drift": computed != i + 1,
             "in_backlog": n in waiting,
-            "warnings": warned.get(n, []) + ([] if n in waiting else ["không còn trong backlog"]),
+            "warnings": warned.get(n, []) + ([] if n in waiting else ["no longer in the backlog"]),
         })
     rest = [
         {"unit": n, "computed": rank_of[n], "estimate": _brief(estimated[n]),

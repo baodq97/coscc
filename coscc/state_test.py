@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import ast
 import unittest
+
+from coscc import present
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent / "state.py"
@@ -105,7 +107,7 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
         from coscc.state import _lane
 
         unit = self._fresh("started") | {"problems": ["no intent.md — every unit opens with one"]}
-        self.assertEqual(_lane(unit), "Needs review")
+        self.assertEqual(_lane(unit), "Needs you")
 
     def test_a_review_that_asked_for_changes_needs_review(self):
         """`0015`: the review found something and the unit waits on a fix."""
@@ -117,7 +119,7 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
             row["status"] = "accepted" if row["stage"] not in ("review", "ship") else "not started"
             if row["stage"] == "review":
                 row["status"] = "changes-requested"
-        self.assertEqual(_lane(unit), "Needs review")
+        self.assertEqual(_lane(unit), "Needs you")
         self.assertIn("changes-requested", STATUS_COLOR)
 
 
@@ -168,7 +170,7 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
 
         _, through_board = self._both()
         self.assertGreater(through_board["open"], 0)
-        self.assertNotEqual(_lane(through_board), "Needs review")
+        self.assertNotEqual(_lane(through_board), "Needs you")
 
 
 class PostingARoundLocksTheButtonWhileItRuns(unittest.TestCase):
@@ -555,7 +557,7 @@ class ACardShowsWhatServiceRunningSaid(unittest.TestCase):
         from coscc.state import _activities
 
         [a] = _activities("0009_x", self.READ)
-        self.assertEqual((a.label, a.agent, a.stage, a.started), ("running", "ᚢ Uruz", "impl", "2026-09-24T01:00:00+00:00"))
+        self.assertEqual((a.label, a.agent, a.stage, a.started), ("running", "ᚢ Uruz", "impl", present.when("2026-09-24T01:00:00+00:00")))
 
     def test_unknown_turns_and_cost_are_empty_not_zero(self):
         from coscc.state import _activities
@@ -762,16 +764,31 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
 
         view = backlog_view(self.BOARD)
         [row] = view["backlog_rows"]
-        self.assertEqual((row.unit, row.value, row.effort, row.warnings), ("0009_x", "4", "S (ước đoán)", "bị 0010_y thay thế"))
-        self.assertIn("không phân biệt", view["backlog_note"])
+        self.assertEqual((row.unit, row.value, row.effort, row.warnings), ("0009_x", "4", "S (guess)", "bị 0010_y thay thế"))
+        self.assertEqual(row.by, "agent")  # `0082` D68: the session id stays in the API
+        self.assertIn("picks nothing out", view["backlog_note"])
         self.assertEqual(view["propose_warning"], "paid")
+
+    def test_f3_no_saved_shortlist_leaves_the_empty_row_to_say_so(self):
+        from coscc.state import backlog_view
+
+        board = {**self.BOARD, "backlog": {**self.BOARD["backlog"], "shortlist": [], "shortlist_record": None}}
+        view = backlog_view(board)
+        self.assertEqual(view["backlog_recorded"], "")
+
+    def test_f4_the_rest_carries_its_computed_place_or_none(self):
+        from coscc.state import backlog_view
+
+        order = [{"unit": "0011_z", "computed": 2, "estimate": {"value": 3, "effort": "M"}, "agent_differs": None}]
+        view = backlog_view({**self.BOARD, "backlog": {**self.BOARD["backlog"], "order": order}})
+        self.assertEqual([(r.unit, r.rank) for r in view["backlog_rest"]], [("0011_z", 2), ("0010_y", 0)])
 
     def test_r9_a_relation_reads_from_both_sides(self):
         from coscc.state import _relations_text
 
         self.assertEqual(_relations_text([{"type": "thay thế", "other": "0010_y", "direction": "in"},
                                           {"type": "trùng", "other": "0011_z", "direction": "out"}]),
-                         "bị thay thế bởi 0010_y; trùng 0011_z")
+                         "replaced by 0010_y; duplicates 0011_z")
         self.assertEqual(_relations_text(None), "")
 
     def test_the_card_carries_its_rank(self):
@@ -1381,14 +1398,14 @@ class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
 
         page = SimpleNamespace(
             cwd="/w", unit_id="0001_x", outcome_result="đạt", outcome_measured_by="agent",
-            outcome_source="", outcome_reason="", outcome_note="", answer_by="Phong",
+            outcome_source="", outcome_reason="", outcome_note="",
             recording_outcome=False, notice="", _load_board=never,
         )
         with mock.patch.object(state, "SERVICE", SimpleNamespace(record_outcome=refuse)):
             asyncio.run(state.StudioState.record_outcome.fn(page))
         self.assertEqual(page.notice, "đạt needs a source: where the figure it rests on came from")
         self.assertFalse(page.recording_outcome)
-        self.assertEqual(refuse.args, ("/w", "0001_x", "đạt", "agent", "", "", "", "Phong"))
+        self.assertEqual(refuse.args, ("/w", "0001_x", "đạt", "agent", "", "", "", ""))
 
 
 class AnsweringAlwaysSaysSomething(unittest.TestCase):
@@ -1406,7 +1423,7 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
 
         page = SimpleNamespace(
             cwd="/w", unit_id="0001_x", answer_target="intent.md#1", answer_text="yes",
-            answer_by="Phong", answering_key="", notice="old notice", error="old error",
+            answering_key="", notice="old notice", error="old error",
             reloaded=False, _load_board=loaded, _load_artifact=lambda: None,
         )
         page._fail = lambda e: state.StudioState._fail(page, e)
@@ -1482,11 +1499,10 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
         async def never_reload():
             raise AssertionError("a refused answer must not reload the board")
 
-        page = self.page(answer_by="", _load_board=never_reload)
+        page = self.page(_load_board=never_reload)
         self.press(page, "intent.md#1", refuse)
         self.assertEqual(page.error, "say who is answering, on one line")
-        self.assertEqual((page.answer_target, page.answer_text, page.answer_by),
-                         ("intent.md#1", "yes", ""))
+        self.assertEqual((page.answer_target, page.answer_text), ("intent.md#1", "yes"))
         self.assertEqual(page.notice, "")
         self.assertEqual(page.answering_key, "")
 
@@ -1519,7 +1535,7 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
         self.press(page, "review.md#F2", answer)
         self.assertIn("Answered finding F2 of review.md", page.notice)
         self.assertEqual(page.error, "")
-        self.assertEqual(answer.args, ("/w", "0001_x", "review.md", "F2", "yes", "Phong"))
+        self.assertEqual(answer.args, ("/w", "0001_x", "review.md", "F2", "yes", ""))
         self.assertEqual((page.answer_target, page.answer_text), ("", ""))
         self.assertTrue(page.reloaded)
 
@@ -1900,7 +1916,7 @@ class TheIdListsAnswerAsTheCardListsDid(unittest.TestCase):
                 rows = [u for u in rows if q in u.id.lower() or q in u.title.lower()]
             if focus == "Autonomous":
                 rows = [u for u in rows if u.mode == "autonomous"]
-            elif focus == "Needs review":
+            elif focus == "Needs you":
                 rows = [u for u in rows if u.needs_attention]
             return rows
 
@@ -1912,7 +1928,7 @@ class TheIdListsAnswerAsTheCardListsDid(unittest.TestCase):
 
         cv = StudioState.computed_vars
         for query, focus in [("", "All work"), ("going", "All work"), ("", "Autonomous"),
-                             ("", "Needs review"), ("000", "Needs review"), ("nothing", "All work")]:
+                             ("", "Needs you"), ("000", "Needs you"), ("nothing", "All work")]:
             page = SimpleNamespace(cards=cards, query=query, focus=focus, command_query=query)
             page.shown_ids = cv["shown_ids"].fget(page)
             old = visible(query, focus)
