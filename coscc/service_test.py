@@ -3399,3 +3399,139 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
         self.assertEqual([(j["stage"], j["unit"]) for j in jobs], [("precedent", self.asked)])
         self.assertEqual(running[self.asked][0]["agent"]["name"], "Jera")
         self.assertEqual((self.sessions.calls, self.service._active), (1, {}))
+
+
+class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
+    """`0090` plan step 4. `run_step` reads the store once, only with `COS_KNOWLEDGE` on and
+    only for `spec`, `spike` and `plan`, and hands `Runner.run` what applies. The gate, the
+    worktree and the runner are stand-ins: what is checked is the kwargs `Runner.run` gets."""
+
+    ALL = ("idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        (self.repo / ".git").mkdir(parents=True)
+        self.data = self.root / "data"
+        self.seen: list[dict] = []
+
+    def service(self, on: bool) -> Service:
+        config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
+                        data_dir=str(self.data), knowledge=on)
+        service = Service(config, Sessions(config))
+        self.unit = create_sync(service, str(self.repo), "a-problem", "words")["unit"]
+        return service
+
+    def write_store(self, *scopes: str) -> None:
+        from coscc import knowledge
+
+        blocks = [
+            f"## K{n}\nScope: {scope}\nSource: proj-000000000000/0001_a/spike.md ## U1\nMeasured: 2026-09-25\nFact {n}."
+            for n, scope in enumerate(scopes, 1)
+        ]
+        text = f"# Knowledge\nVersion: 1. Gathered: 2026-09-27T00:00:00Z. Max id: K{len(scopes)}.\n\n" + "\n\n".join(blocks) + "\n"
+        knowledge.save(knowledge.path_of(str(self.data)) / knowledge.STORE, text)
+
+    def kwargs_of(self, service: Service, stage: str) -> dict:
+        from coscc import board as board_reader
+        from coscc import integrate
+        from coscc import service as service_mod
+        from coscc.runner import RunError
+
+        seen = self.seen
+
+        class StandIn:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def run(self, **kw):
+                seen.append(kw)
+                raise RunError("a stand-in runner")
+                yield  # pragma: no cover
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, f"open: {stage} may proceed"
+
+        async def tree(*a, **kw):
+            return {"path": str(self.repo), "branch": "feat/a-problem", "base": None}
+
+        async def no_pr(*a, **kw):
+            return {"state": "none", "url": ""}
+
+        async def go():
+            async for _ in service.run_step(str(self.repo), self.unit, stage):
+                pass
+
+        before = len(self.seen)
+        with mock.patch.object(board_reader, "gate", open_gate), \
+                mock.patch.object(service_mod, "Runner", StandIn), \
+                mock.patch.object(service, "_worktree", tree), \
+                mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \
+                mock.patch.object(integrate, "pr_for_branch", no_pr):
+            with self.assertRaises(Invalid) as refused:
+                asyncio.run(go())
+        # The step reached `Runner.run`, rather than being refused before it.
+        self.assertEqual(len(self.seen), before + 1, str(refused.exception))
+        return self.seen[-1]
+
+    def test_off_nothing_is_read_and_no_key_is_handed_on(self):
+        from coscc import knowledge
+
+        service = self.service(False)
+        self.write_store("tool:x")
+        with mock.patch.object(knowledge, "load", side_effect=AssertionError("read with the flag off")):
+            for stage in self.ALL:
+                with self.subTest(stage=stage):
+                    kw = self.kwargs_of(service, stage)
+                    self.assertNotIn("knowledge", kw)
+                    self.assertNotIn("knowledge_record", kw)
+
+    def test_on_spec_spike_and_plan_get_the_entries_of_this_workspace(self):
+        from coscc import knowledge
+
+        service = self.service(True)
+        self.write_store("tool:x", "workspace:elsewhere-0123456789ab")
+        for stage in knowledge.STAGES:
+            with self.subTest(stage=stage):
+                kw = self.kwargs_of(service, stage)
+                self.assertIn("Fact 1.", kw["knowledge"])
+                self.assertNotIn("Fact 2.", kw["knowledge"])
+                self.assertEqual(kw["knowledge_record"]["entries"], 1)
+                self.assertEqual(kw["knowledge_record"]["version"], knowledge.version_of(kw["knowledge"]))
+
+    def test_on_no_other_stage_gets_a_key(self):
+        service = self.service(True)
+        self.write_store("tool:x")
+        for stage in ("idea", "intent", "impl", "pr", "review", "ship"):
+            with self.subTest(stage=stage):
+                kw = self.kwargs_of(service, stage)
+                self.assertNotIn("knowledge", kw)
+                self.assertNotIn("knowledge_record", kw)
+
+    def test_on_with_nothing_applicable_is_an_empty_section_and_zero_entries(self):
+        service = self.service(True)
+        self.write_store("workspace:elsewhere-0123456789ab")
+        kw = self.kwargs_of(service, "spec")
+        self.assertEqual(kw["knowledge"], "")
+        self.assertEqual(kw["knowledge_record"]["entries"], 0)
+        self.assertNotIn("error", kw["knowledge_record"])
+
+    def test_settings_does_not_list_the_gathering_grant(self):
+        """Spec *Design*: no screen changes, so `/settings` lists the grants it listed before."""
+        from coscc import policy
+
+        stages = [r["stage"] for r in self.service(False).settings()["grants"]]
+        self.assertNotIn("knowledge", stages)
+        self.assertEqual(
+            [s for s in stages if ":" not in s],
+            sorted(set(policy.GRANTS) - policy.TERMINAL_ONLY),
+        )
+
+    def test_on_a_store_that_cannot_be_read_still_runs_the_step(self):
+        service = self.service(True)
+        kw = self.kwargs_of(service, "plan")  # no store written at all
+        self.assertEqual(kw["knowledge"], "")
+        self.assertEqual((kw["knowledge_record"]["entries"], kw["knowledge_record"]["bytes"]), (0, 0))
+        self.assertIn("FileNotFoundError", kw["knowledge_record"]["error"])
