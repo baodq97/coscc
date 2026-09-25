@@ -151,6 +151,18 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
                 j.finished("w", "0009_x", stage, "done")
             self.assertEqual([r["stage"] for r in j.timeline("w", "0009_x")], ["intent", "spec", "plan"])
 
+    def test_a_row_carries_its_run_and_what_was_lost_and_an_older_one_none(self):
+        # `0073` spec Design 7: the only change to the timeline.
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "spec", "manual")
+            j.finished("w", "0009_x", "spec", "done")
+            j.started("w", "0009_x", "plan", "manual", run="r-1")
+            j.finished("w", "0009_x", "plan", "done", run="r-1", events_lost=3)
+            before, after = j.timeline("w", "0009_x")
+            self.assertEqual((before["run"], before["events_lost"]), (None, None))
+            self.assertEqual((after["run"], after["events_lost"]), ("r-1", 3))
+
 
 class OpenStartsAreTheRunsNobodyEnded(unittest.TestCase):
     """`0051` plan step 2."""
