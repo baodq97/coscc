@@ -203,6 +203,7 @@ def build_prompt(
     drift_note: str = "",
     worktree: str = "",
     pr_note: str = "",
+    ceilings: tuple[int, float] | None = None,
 ) -> tuple[str, list[str]]:
     """The prompt for one step, and the list of artifacts that went into it (`spec.md` R4).
 
@@ -296,9 +297,17 @@ def build_prompt(
         included.append("spike.md")
         parts.append(f"# The previous spike\n\n{spike}")
     if stage == "spike":
+        scratch = Path(workspace).expanduser().resolve()
+        # `0080` R2. `ceilings` is the grant `Runner.run` holds, so no second number is
+        # written by hand; `None` (a caller that has no grant) leaves the sentence out.
+        within = (
+            f"This step has {ceilings[0]} turns and ${ceilings[1]:.2f}. "
+            if ceilings is not None
+            else ""
+        )
         parts.append(
             "# Where you work\n\n"
-            f"Your working directory is `{Path(workspace).expanduser().resolve()}`, a "
+            f"Your working directory is `{scratch}`, a "
             "throwaway directory the app deletes when this step ends. Write probe code "
             "there and nowhere else.\n\n"
             + (
@@ -308,6 +317,11 @@ def build_prompt(
                 if worktree
                 else "No worktree was named for this step."
             )
+            + "\n\n"
+            f"Your progress file is `{scratch / PROGRESS_FILE}` (the rules' *The progress "
+            f"file*). {within}If this step ends without a usable final reply — a turn or "
+            "budget ceiling, a reply with no `Status:` line, a session that broke — the app "
+            "writes `spike.md` from this file."
         )
 
     # `spec.md` R7. A prose stage re-run against an artifact that already carries
@@ -868,6 +882,94 @@ def describe_tree_change(before: tuple[str, str], after: tuple[str, str]) -> str
     return ", ".join(parts)
 
 
+def _write_artifact(directory: Path, artifact: str, text: str) -> None:
+    """Write an artifact the app writes, from `text`, or raise the reason it is not one.
+
+    `0080` spec *Design* 3: one check and one write, for a step's reply and for a spike's
+    progress file alike. Synchronous on purpose -- see the comment where `Runner.run` calls it.
+    """
+    # `0025` `spec.md` R1-R6. The reply's own `## Answers`, if it has one, is never what
+    # reaches disk (R3) -- only the section already there is, and it is read as late as
+    # this module ever reads anything: right here, after every `await` in this step has
+    # already happened, not at the step's start (R6). Nothing between this read and the
+    # write below can yield, so a block a person appended while the step ran is still on
+    # disk when this runs and is carried through untouched.
+    body = strip_answers(check_reply(text))
+    # `check_reply` looked at the whole reply, the reply's own `## Answers` included. A
+    # `Status:` line that lived only there has just been cut, and the gate reads nothing
+    # below the header anyway, so ask again of what will actually be written (`0025`
+    # review round 1, F1).
+    if not STATUS_RE.search(body):
+        raise RunError(
+            "the reply carries no `Status:` line above its own `## Answers`, "
+            "so the gate could not read it"
+        )
+    target = directory / artifact
+    try:
+        raw = target.read_bytes()
+    except FileNotFoundError:
+        raw = b""
+    section = answers_section(raw)
+    above = raw[: len(raw) - len(section)] if section is not None else raw
+    if artifact == "review.md":
+        # `merge_review` never sees the Answers section, so its own rounds regex has
+        # nothing of that shape to (not) swallow (spec.md Design). Its refusals are
+        # unchanged: a reply that rewrites an earlier round, or adds none, still raises
+        # before anything below is written (R4, R5).
+        body = merge_review(above.decode("utf-8", errors="replace"), body)
+    target.write_bytes(with_answers(body, section))
+
+
+# `0080` R1, R3. The file a spike keeps in its `cwd` as it measures, read when its reply is
+# not an artifact. The same name as the unit's, so the skill names one file.
+PROGRESS_FILE = "spike.md"
+
+
+async def _from_progress(
+    cwd: str,
+    watch: str,
+    before: tuple[str, str] | None,
+    running: steps.Running | None,
+    tree_changed: bool,
+    directory: Path,
+    artifact: str,
+) -> tuple[str, str]:
+    """`0080` R3, R5. Write a spike's artifact from its progress file, when nothing forbids it.
+
+    Returns one of `0080` R6's values -- `withheld`, `none`, `unusable` or `progress` -- and
+    a sentence for `detail` (`""` for none). Called only for a spike whose reply was not
+    written; `outcome` is not this function's to change.
+    """
+    # R5: a Stop, or a worktree the spike changed, writes nothing from any source.
+    if (running is not None and running.stop_requested) or tree_changed:
+        return "withheld", ""
+    # The same check the reply's road makes, made again: the session is over, but the
+    # first reading may have failed, and a reply that failed before it was reached never
+    # compared the two.
+    if before is None:
+        return "withheld", "spike.md not written from the progress file: the worktree's state was not read before the step"
+    try:
+        changed = describe_tree_change(before, await _tree_state(watch))
+    except RunError as e:
+        return "withheld", f"spike.md not written from the progress file: {e}"
+    if changed:
+        return "withheld", f"spike.md not written from the progress file: the worktree changed during spike: {changed}"
+    # `0034`. From here a Stop is refused, exactly as on the reply's road.
+    if not steps.seal(running):
+        return "withheld", ""
+    progress = Path(cwd) / PROGRESS_FILE
+    try:
+        text = progress.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return "none", ""
+    try:
+        # No `await` from the seal to the write: the rule the reply's road keeps.
+        _write_artifact(directory, artifact, text)
+    except RunError as e:
+        return "unusable", f"the progress file was not an artifact: {e}"
+    return "progress", "spike.md written from the progress file"
+
+
 class Runner:
     """Runs one step. Owns no state of its own beyond what it was handed."""
 
@@ -992,6 +1094,7 @@ class Runner:
             drift_note=drift_note,
             worktree=watch or "",
             pr_note=pr_note,
+            ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
@@ -1047,6 +1150,11 @@ class Runner:
         # `0034`. Set when the task is cancelled with no Stop behind it: the app is going
         # down, and no `end` is what says so.
         shutting_down = False
+        # `0080` R6. Where a spike's `spike.md` came from, for its `end` row; only a step
+        # with `watch` carries it. `None` until something decides it.
+        spike_md: str | None = None
+        before: tuple[str, str] | None = None
+        tree_changed = False
 
         def stopped() -> bool:
             return running is not None and running.stop_requested
@@ -1118,44 +1226,22 @@ class Runner:
                 # it was meant only to read must leave no `spike.md` saying it measured.
                 changed = describe_tree_change(before, await _tree_state(watch))
                 if changed:
+                    spike_md, tree_changed = "withheld", True
                     raise RunError(f"the worktree changed during spike: {changed}")
 
             # `0034`. Nothing of the artifact has been read or written yet. From here on a
             # Stop is refused; before here, one that already came ends the step unwritten.
             if not steps.seal(running):
+                if watch:
+                    spike_md = "withheld"
                 raise _Stopped()
             if grant.app_writes_artifact:
-                # `0025` `spec.md` R1-R6. The reply's own `## Answers`, if it has one, is
-                # never what reaches disk (R3) -- only the section already there is, and
-                # it is read as late as this module ever reads anything: right here,
-                # after every `await` in this step has already happened, not at the
-                # step's start (R6). Nothing between this read and the write below can
-                # yield, so a block a person appended while the step ran is still on
-                # disk when this runs and is carried through untouched.
-                body = strip_answers(check_reply(collected))
-                # `check_reply` looked at the whole reply, the reply's own `## Answers`
-                # included. A `Status:` line that lived only there has just been cut, and
-                # the gate reads nothing below the header anyway, so ask again of what
-                # will actually be written (`0025` review round 1, F1).
-                if not STATUS_RE.search(body):
-                    raise RunError(
-                        "the reply carries no `Status:` line above its own `## Answers`, "
-                        "so the gate could not read it"
-                    )
-                target = directory / artifact
-                try:
-                    raw = target.read_bytes()
-                except FileNotFoundError:
-                    raw = b""
-                section = answers_section(raw)
-                above = raw[: len(raw) - len(section)] if section is not None else raw
-                if artifact == "review.md":
-                    # `merge_review` never sees the Answers section, so its own rounds
-                    # regex has nothing of that shape to (not) swallow (spec.md Design).
-                    # Its refusals are unchanged: a reply that rewrites an earlier round,
-                    # or adds none, still raises before anything below is written (R4, R5).
-                    body = merge_review(above.decode("utf-8", errors="replace"), body)
-                target.write_bytes(with_answers(body, section))
+                # Synchronous, so nothing yields between reading the `## Answers` already
+                # on disk and writing the artifact over it.
+                _write_artifact(directory, artifact, collected)
+                if watch:
+                    # `0080` R4: the reply was written, so the progress file is never read.
+                    spike_md = "reply"
             else:
                 # The session had the tools to write it. Believing it did, rather than
                 # looking, is how a step reports success for a file that is not there.
@@ -1203,6 +1289,34 @@ class Runner:
                 # would hide that the work may be half finished.
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         finally:
+            # `0080` R3. A spike whose reply was not written gets its progress file read
+            # here, before `service.run_step` removes `cwd`. Here and not in the `except`
+            # branches: an exception raised inside one -- a Stop's cancel landing on an
+            # `await` -- is not caught by its siblings, and would leave with no `end`.
+            # Wrapped the way `snapshot` is below; `outcome` is never changed (R6).
+            progress_pending: BaseException | None = None
+            if watch and not shutting_down and outcome in ("failed", "exhausted") and spike_md is None:
+                try:
+                    spike_md, said = await _from_progress(
+                        cwd, watch, before, running, tree_changed, directory, artifact
+                    )
+                    if said:
+                        detail = f"{detail}\n--- {said} ---" if detail else said
+                except asyncio.CancelledError as e:
+                    if stopped():
+                        task = asyncio.current_task()
+                        if task is not None:
+                            task.uncancel()
+                        spike_md = "withheld"
+                    else:
+                        # The app going down: no `end`, and the cancel goes on once the
+                        # rest of this block has done what it does for one.
+                        shutting_down = True
+                        progress_pending = e
+                except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
+                    spike_md = "unusable"
+                    said = f"the progress file was not read: {type(e).__name__}: {e}"
+                    detail = f"{detail}\n--- {said} ---" if detail else said
             # `0034` review round 1, F2. The outcome is decided here, so the door closes
             # here: a Stop that arrives while the attempt record is captured below is
             # refused (`Finishing`) rather than told "stopped" and logged as something
@@ -1218,6 +1332,9 @@ class Runner:
                     # No `ResultMessage` came back, so nothing was billed that this app
                     # saw. Absent, not zero: `spec.md` R8.
                     cost = {}
+            if watch and not shutting_down and spike_md is None:
+                # `0080` R6. Nothing wrote it: a Stop withheld it, or there was no file.
+                spike_md = "withheld" if outcome == "stopped" else "none"
             # C6: an app going down writes neither record. No `end` is what an
             # interrupted step looks like, and the next start says nothing about it.
             record = self.journal is not None and not shutting_down
@@ -1277,7 +1394,11 @@ class Runner:
                     **cost,
                     **extra,
                     **run_fields,
+                    # `0080` R6: only a spike's `end` carries it.
+                    **({"spike_md": spike_md} if watch else {}),
                 )
+            if progress_pending is not None:
+                raise progress_pending
             if pending is not None:
                 if not stop_came:
                     raise pending

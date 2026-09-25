@@ -2194,6 +2194,63 @@ class ThePlanAndTheSpecReadTheSpike(unittest.TestCase):
             self.assertIn("`/the/tree`", prompt)
             self.assertIn("Reply with the file's complete contents", prompt)
 
+    def test_the_spike_prompt_names_its_progress_file_and_its_ceilings(self):
+        # `0080` R2: the numbers are the grant's, not a second copy.
+        g = grant_for("spike")
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d)
+            prompt, _ = build_prompt(
+                d, directory, UNIT, "spike", STAGES, "spike.md", worktree="/the/tree",
+                ceilings=(g.max_turns, g.max_budget_usd),
+            )
+            self.assertIn(f"`{Path(d).resolve() / 'spike.md'}`", prompt)
+            self.assertIn(f"{g.max_turns} turns", prompt)
+            self.assertIn(f"${g.max_budget_usd:.2f}", prompt)
+            self.assertIn("the app writes `spike.md` from this file", prompt)
+
+    def test_no_other_stage_prompt_changes_by_a_byte(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d, spike_md="Status: accepted.\nR")
+            for stage in STAGES:
+                if stage == "spike":
+                    continue
+                artifact = f"{stage}.md"
+                self.assertEqual(
+                    build_prompt(d, directory, UNIT, stage, STAGES, artifact, ceilings=(80, 8.0)),
+                    build_prompt(d, directory, UNIT, stage, STAGES, artifact),
+                    stage,
+                )
+
+    def test_the_step_hands_the_grants_ceilings_to_the_prompt(self):
+        g = grant_for("spike")
+        seen = []
+
+        class Fake:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                seen.append((text, max_turns, kw.get("max_budget_usd")))
+                yield ("chunk", SPIKE_REPLY)
+                yield ("done", {"session_id": "s", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as scratch:
+            directory = self.unit(d)
+            r = Runner(sessions=Fake(), journal=None)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=d, directory=directory, journal_key=d, unit=UNIT,
+                    stage="spike", artifact="spike.md", stages=STAGES, mode="autonomous",
+                    cwd=scratch,
+                )]
+
+            asyncio.run(go())
+        [(text, turns, budget)] = seen
+        self.assertEqual((turns, budget), (g.max_turns, g.max_budget_usd))
+        self.assertIn(f"This step has {g.max_turns} turns and ${g.max_budget_usd:.2f}.", text)
+
+    def test_the_spike_skill_carries_the_progress_file(self):
+        # `0080` R1. Red too when a stale `coscc/_harness/` hides `.claude/`.
+        self.assertIn("## The progress file", skill_for("spike"))
+
 
 class ASpikeThatTouchesTheWorktreeFails(unittest.TestCase):
     """`0039` R11, R13: the spike writes its scratch; a change to the worktree fails it."""
@@ -2257,6 +2314,180 @@ class ASpikeThatTouchesTheWorktreeFails(unittest.TestCase):
         self.assertEqual(final["outcome"], "failed")
         self.assertFalse(written)
         self.assertIn("HEAD ", final["error"])
+
+
+PROGRESS = (
+    "# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Round: 1. Status: accepted.\n\n"
+    "## U1\n\nVerdict: holds.\n\n```\n$ python -c 'print(1)'\n1\n```\n\n"
+    "## U2\n\nĐã chạy probe đầu; còn thiếu phép đo thứ hai.\n"
+)
+
+
+class ASpikeLeavesWhatItMeasured(unittest.TestCase):
+    """`0080` R3-R6, R11: a spike whose reply is not an artifact gets `spike.md` from the
+    progress file it kept in `cwd`, unless a Stop or a changed worktree withholds it, and
+    its `end` row says which source wrote it."""
+
+    def run_spike(self, progress=PROGRESS, reply="Tôi hết lượt ở U2.", terminal="max_turns",
+                  touch=None, raise_after=None, answers=None, running=None):
+        class Fake:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                if progress is not None:
+                    (Path(cwd) / "spike.md").write_text(progress, encoding="utf-8")
+                if touch is not None:
+                    touch(tree)
+                if raise_after is not None:
+                    raise raise_after
+                if running is not None:
+                    # A Stop that came before the seal, with no cancel behind it.
+                    running.stop_requested, running.stopped_by = True, "Lan"
+                yield ("chunk", reply)
+                yield ("done", {"session_id": "s-spike", "terminal_reason": terminal,
+                                "cost": {"turns": 81, "cost_usd": 4.5}})
+
+        with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as scratch:
+            tree = _git_repo(Path(ws))
+            directory = make_unit(Path(ws) / "store", intent_md="Status: accepted.\nI",
+                                  spec_md="Status: accepted.\nS")
+            if answers is not None:
+                (directory / "spike.md").write_text(answers, encoding="utf-8")
+            journal = Journal(ws, ws)
+            r = Runner(sessions=Fake(), journal=journal)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=ws, directory=directory, journal_key=ws, unit=UNIT,
+                    stage="spike", artifact="spike.md", stages=STAGES, mode="autonomous",
+                    cwd=scratch, watch=str(tree),
+                    **({"running": running} if running is not None else {}),
+                )]
+
+            _, final = asyncio.run(go())[-1]
+            target = directory / "spike.md"
+            written = target.read_bytes() if target.exists() else None
+            [end] = [x for x in journal.records() if x["kind"] == "end"]
+            attempts = [x for x in journal.records() if x["kind"] == "attempt"]
+            return final, written, end, attempts
+
+    def test_a_the_ceiling_writes_spike_md_from_the_progress_file(self):
+        final, written, end, attempts = self.run_spike()
+        self.assertEqual(written, PROGRESS.encode("utf-8"))
+        self.assertEqual(final["outcome"], "exhausted")
+        self.assertEqual((end["outcome"], end["spike_md"]), ("exhausted", "progress"))
+        self.assertIsNone(end["artifact"])
+        self.assertIn("spike.md written from the progress file", end["detail"])
+        self.assertEqual(len(attempts), 1)
+
+    def test_b_a_changed_worktree_withholds_it(self):
+        final, written, end, _ = self.run_spike(touch=lambda tree: (tree / "probe.py").write_text("x"))
+        self.assertIsNone(written)
+        self.assertEqual(end["spike_md"], "withheld")
+        self.assertIn("the worktree changed during spike", final["error"])
+
+    def test_c_a_stop_before_the_seal_withholds_it(self):
+        from coscc import steps
+
+        running = steps.Running(workspace="w", unit=UNIT, stage="spike", started_at="t")
+        final, written, end, _ = self.run_spike(running=running)
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["outcome"]), ("stopped", "stopped"))
+        self.assertEqual(end["spike_md"], "withheld")
+
+    def test_c_a_stop_during_the_session_withholds_it(self):
+        from coscc import steps
+
+        release = asyncio.Event()
+
+        class Waits:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                (Path(cwd) / "spike.md").write_text(PROGRESS, encoding="utf-8")
+                yield ("chunk", "đang đo ")
+                await release.wait()
+                yield ("done", {"session_id": "s", "terminal_reason": "max_turns", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as scratch:
+            tree = _git_repo(Path(ws))
+            directory = make_unit(Path(ws) / "store", intent_md="Status: accepted.\nI",
+                                  spec_md="Status: accepted.\nS")
+            registry = steps.Registry()
+            running = registry.claim(ws, UNIT, "spike")
+            journal = Journal(ws, ws)
+            r = Runner(sessions=Waits(), journal=journal)
+
+            async def go():
+                out = []
+
+                async def drive():
+                    async for item in r.run(
+                        workspace=ws, directory=directory, journal_key=ws, unit=UNIT,
+                        stage="spike", artifact="spike.md", stages=STAGES, mode="manual",
+                        cwd=scratch, watch=str(tree), running=running,
+                    ):
+                        out.append(item)
+
+                running.task = asyncio.create_task(drive())
+                while not out:
+                    await asyncio.sleep(0)
+                await AStoppedStepEndsStopped.stop(registry, running, None)
+                await running.task
+                return out
+
+            out = asyncio.run(go())
+            self.assertEqual(out[-1][1]["outcome"], "stopped")
+            self.assertFalse((directory / "spike.md").exists())
+            [end] = [x for x in journal.records() if x["kind"] == "end"]
+            self.assertEqual((end["outcome"], end["spike_md"]), ("stopped", "withheld"))
+
+    def test_d_no_progress_file_is_none(self):
+        final, written, end, _ = self.run_spike(progress=None)
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "none"))
+
+    def test_e_a_progress_file_with_no_status_is_unusable(self):
+        final, written, end, _ = self.run_spike(progress="# Spike: x\n\n## U1\n\nChưa đo.\n")
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "unusable"))
+        self.assertIn("the progress file was not an artifact", end["detail"])
+
+    def test_f_a_usable_reply_wins_over_the_progress_file(self):
+        final, written, end, attempts = self.run_spike(reply=SPIKE_REPLY, terminal="success")
+        self.assertEqual(written, SPIKE_REPLY.encode("utf-8"))
+        self.assertEqual((final["outcome"], end["spike_md"]), ("done", "reply"))
+        self.assertEqual(attempts, [])
+
+    def test_g_the_answers_on_disk_stay_byte_for_byte(self):
+        section = "## Answers\n\n### Câu 1\nAnswered by: Lan. Date: 2026-09-25. Via: product.\n\nCó.\n"
+        final, written, end, _ = self.run_spike(answers=SPIKE_REPLY + "\n" + section)
+        self.assertEqual(end["spike_md"], "progress")
+        self.assertEqual(answers_section(written), answers_section((SPIKE_REPLY + "\n" + section).encode("utf-8")))
+        self.assertTrue(written.startswith(PROGRESS.encode("utf-8")))
+
+    def test_a_session_that_broke_after_writing_it_is_progress(self):
+        final, written, end, _ = self.run_spike(raise_after=RuntimeError("the stream broke"), terminal="")
+        self.assertEqual(written, PROGRESS.encode("utf-8"))
+        self.assertEqual((final["outcome"], end["spike_md"]), ("failed", "progress"))
+
+    def test_another_stages_end_carries_no_spike_md(self):
+        class Fake:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "# Plan: x\nStatus: accepted.\n")
+                yield ("done", {"session_id": "s", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS")
+            journal = Journal(d, d)
+            r = Runner(sessions=Fake(), journal=journal)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d, unit=UNIT,
+                    stage="plan", artifact="plan.md", stages=STAGES, mode="autonomous",
+                )]
+
+            asyncio.run(go())
+            [end] = [x for x in journal.records() if x["kind"] == "end"]
+            self.assertEqual(end["outcome"], "done")
+            self.assertNotIn("spike_md", end)
 
 
 class AStoppedStepEndsStopped(unittest.TestCase):

@@ -2226,6 +2226,25 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
                             "## U1\n\nVerdict: holds.\n\n```\n$ x\n1\n```\n")
             yield ("done", {"session_id": "sess-spike", "cost": {}})
 
+    class RunsOut:
+        """`0080` R3: keeps its progress file in `cwd`, then stops at the turn ceiling."""
+
+        PROGRESS = ("# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Round: 1. Status: accepted.\n\n"
+                    "## U1\n\nVerdict: holds.\n\n```\n$ x\n1\n```\n")
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            (Path(cwd) / "spike.md").write_text(self.PROGRESS, encoding="utf-8")
+            yield ("chunk", "Tôi hết lượt.")
+            yield ("done", {"session_id": "sess-spike", "terminal_reason": "max_turns", "cost": {}})
+
+    def test_the_progress_file_is_read_before_the_scratch_is_removed(self):
+        service = self._service(self.RunsOut())
+        out = self._run(service)
+        self.assertEqual(out[-1][1]["outcome"], "exhausted", out[-1])
+        written = Path(service._unit_dir(str(self.repo), self.unit)) / "spike.md"
+        self.assertEqual(written.read_text(encoding="utf-8"), self.RunsOut.PROGRESS)
+        self.assertFalse(self.scratch.exists())
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
