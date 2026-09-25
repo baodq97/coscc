@@ -360,7 +360,7 @@ class Scripted(_Base):
         self.assertEqual((self.launched, stop["kind"]), ([], "cap"))
         self.assertIn("estimated", stop["reason"])
         self.assertNotIn("cost_usd", stop["reason"])
-        self.assertNotIn("counts as reached", stop["reason"])
+        self.assertNotIn("reached", stop["reason"])
 
     async def test_the_cap_block_carries_the_estimate(self):
         log = Journal(self.config.working_dir, self.config.data_dir)
