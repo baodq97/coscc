@@ -399,6 +399,69 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         default = sdk.ClaudeAgentOptions().effort
         self.assertEqual(_options(Config(), "/p", None).effort, default)
 
+    # `0091`. One screenshot is one stdout line; every session gets the same ceiling on it.
+
+    def test_the_installed_sdk_has_a_max_buffer_size_field(self):
+        # R4. Known only from the SDK's own source, so the installed one is asked.
+        import dataclasses
+
+        fields = {f.name for f in dataclasses.fields(sdk.ClaudeAgentOptions)}
+        self.assertIn("max_buffer_size", fields)
+
+    def test_every_combination_carries_the_buffer(self):
+        # R1, R4: whatever the caller asks for, the ceiling is the same.
+        import itertools
+
+        from coscc.runner import CLAUDE_CODE_PRESET
+
+        def gate(name, data, ctx):  # never called
+            raise AssertionError("not called")
+
+        self.assertEqual(sessions.MAX_BUFFER, 33_554_432)
+        for tools, can_use_tool, prompt, effort, budget in itertools.product(
+            (None, [], ["Read"]),
+            (None, gate),
+            (None, CLAUDE_CODE_PRESET),
+            (None, "high"),
+            (None, 1.0),
+        ):
+            with self.subTest(tools=tools, gate=can_use_tool is not None,
+                              preset=prompt is not None, effort=effort, budget=budget):
+                options = _options(
+                    Config(), "/p", None, tools=tools, can_use_tool=can_use_tool,
+                    system_prompt=prompt, effort=effort, max_budget_usd=budget,
+                )
+                self.assertEqual(options.max_buffer_size, sessions.MAX_BUFFER)
+
+    def test_options_are_built_only_in_one_place(self):
+        # R4. Chat, a board step, Gebo and an estimate all reach the SDK through
+        # `_options`; a second `ClaudeAgentOptions(` anywhere else in the package would be
+        # a session without the ceiling. `_harness/` and `_web/` are built, not committed.
+        import ast
+
+        package = Path(sessions.__file__).parent
+        found = []
+        for path in sorted(package.rglob("*.py")):
+            relative = path.relative_to(package)
+            if path.name.endswith("_test.py") or relative.parts[0] in ("_harness", "_web"):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+                if name == "ClaudeAgentOptions":
+                    found.append((relative, node.lineno, tree))
+        self.assertEqual(len(found), 1, [(str(r), n) for r, n, _ in found])
+        relative, line, tree = found[0]
+        self.assertEqual(relative, Path("sessions.py"))
+        builder = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_options"
+        )
+        self.assertTrue(builder.lineno <= line <= builder.end_lineno)
+
 
 class GuardsRefuseBeforeSpendingQuota(unittest.IsolatedAsyncioTestCase):
     async def test_a_directory_outside_the_workspaces_is_refused(self):
@@ -830,6 +893,47 @@ class ACliThatOutlastsTheSdksCloseIsStillEnded(unittest.IsolatedAsyncioTestCase)
             await sessions.StepHandle(client=Client()).close()
             await asyncio.wait_for(process.wait(), 2)
             self.assertEqual(process.returncode, -9)
+
+
+class AScreenshotLineReachesTheStep(unittest.IsolatedAsyncioTestCase):
+    """`0091`. The SDK's real transport, given what `_options` builds, and a CLI that
+    prints one JSON line of a chosen length and exits -- it answers no initialize, and the
+    transport reads the line anyway (`spike.md ## U1` (c)). Run `c58b7e48` died on a line
+    past the SDK's default of 1 048 576."""
+
+    async def _read(self, length):
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = Path(tmp) / "claude"
+            cli.write_text(
+                f"#!{sys.executable}\n"
+                "import sys\n"
+                "head = '{\"type\":\"user\",\"pad\":\"'\n"
+                "tail = '\"}'\n"
+                f"sys.stdout.write(head + 'A' * ({length} - len(head) - len(tail)) + tail + '\\n')\n"
+                "sys.stdout.flush()\n"
+            )
+            cli.chmod(0o755)
+            options = _options(Config(), tmp, None, data_dir=tmp)
+            options.cli_path = str(cli)
+            transport = SubprocessCLITransport(prompt="", options=options)
+            try:
+                with mock.patch.dict(os.environ, {"CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"}):
+                    await transport.connect()
+                return [message async for message in transport.read_messages()]
+            finally:
+                await transport.close()
+
+    async def test_a_line_eight_times_the_old_ceiling_is_one_message(self):
+        # R2.
+        messages = await self._read(8_388_608)
+        self.assertEqual([m["type"] for m in messages], ["user"])
+
+    async def test_a_line_past_the_ceiling_still_raises(self):
+        # R3: the ceiling reached the transport, and there still is one. The default would
+        # raise here too, so the error must name this ceiling.
+        with self.assertRaises(sdk.CLIJSONDecodeError) as raised:
+            await self._read(sessions.MAX_BUFFER + 1)
+        self.assertIn(f"maximum buffer size of {sessions.MAX_BUFFER} ", str(raised.exception))
 
 
 class AStepsClientIsClosedWhenTheStepEnds(unittest.IsolatedAsyncioTestCase):
