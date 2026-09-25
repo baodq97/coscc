@@ -241,11 +241,12 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 200)
         return {row["name"]: row for row in r.json()["rows"]}
 
-    async def test_fourteen_rows_with_nothing_configured(self):
-        # `0033` R9 and `0039`: nine stages, a `:novel` row for each of the four after `plan`, chat.
+    async def test_fifteen_rows_with_nothing_configured(self):
+        # `0033` R9 and `0039`: nine stages, a `:novel` row for each of the four after `plan`,
+        # `estimate` (`0074`), chat.
         rows = await self.rows()
-        self.assertEqual(len(rows), 14)
-        self.assertEqual(list(rows)[-1], "chat")
+        self.assertEqual(len(rows), 15)
+        self.assertEqual(list(rows)[-2:], ["estimate", "chat"])
         self.assertEqual(rows["impl"]["source"], "default")
         self.assertEqual((rows["impl:novel"]["effort"], rows["impl:novel"]["effort_source"]), ("high", "default"))
 
@@ -1162,3 +1163,57 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(paths), 5)
         for p in paths:
             self.assertFalse(p.startswith(("/ping/", "/_event", "/_upload")), p)
+
+
+class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0074`. Each route is 200 on a valid body and 400 on a refusal; what is refused is
+    `backlog.py`'s and `Service`'s decision, tested there."""
+
+    async def asyncSetUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        (root / "work" / "proj").mkdir(parents=True)
+        self.cwd = str(root / "work" / "proj")
+        self.app = build(
+            Config(workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+        )
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
+        post = lambda slug: self.client.post("/api/units", json={"cwd": self.cwd, "slug": slug, "brief": "x"})  # noqa: E731
+        self.a = (await post("one-problem")).json()["unit"]
+        self.b = (await post("two-problem")).json()["unit"]
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_estimate_relation_and_shortlist(self):
+        est = {"cwd": self.cwd, "unit": self.a, "value": 3, "effort": "M", "basis": "x", "by": "Leif"}
+        self.assertEqual((await self.client.post("/api/backlog/estimate", json=est)).status_code, 200)
+        bad = await self.client.post("/api/backlog/estimate", json={**est, "value": 0})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("value", bad.json()["error"])
+        rel = {"cwd": self.cwd, "unit": self.a, "other": self.b, "type": "trùng", "op": "add", "reason": "r", "by": "L"}
+        self.assertEqual((await self.client.post("/api/backlog/relation", json=rel)).status_code, 200)
+        self.assertEqual((await self.client.post("/api/backlog/relation", json=rel)).status_code, 400)
+        short = {"cwd": self.cwd, "units": [self.a], "reason": "r", "by": "L"}
+        self.assertEqual((await self.client.post("/api/backlog/shortlist", json=short)).status_code, 200)
+        self.assertEqual(
+            (await self.client.post("/api/backlog/shortlist", json={**short, "units": [self.b]})).status_code, 400
+        )
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        self.assertEqual([e["unit"] for e in board["backlog"]["shortlist"]], [self.a])
+        self.assertTrue(board["backlog"]["propose_warning"])
+        self.assertEqual((await self.client.post("/api/backlog/shortlist", content=b"nope")).status_code, 400)
+
+    async def test_propose_streams_and_a_refusal_is_a_400(self):
+        class Replies:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "not json")
+                yield ("done", {"session_id": "s", "cost": {"cost_usd": 0.01}})
+
+        self.app.state.service.sessions = Replies()
+        got = await self.client.post("/api/backlog/propose", json={"cwd": self.cwd})
+        self.assertEqual(got.status_code, 200)
+        last = json.loads(got.text.strip().splitlines()[-1])
+        self.assertEqual((last["type"], last["estimate"]["outcome"]), ("done", "failed"))
+        self.assertEqual((await self.client.post("/api/backlog/propose", json={"cwd": "/nope"})).status_code, 400)

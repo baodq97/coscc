@@ -282,6 +282,104 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    async def _object(request: Request) -> dict[str, Any] | JSONResponse:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        return body if isinstance(body, dict) else _bad("send a JSON object")
+
+    @api.post("/api/backlog/estimate")
+    async def backlog_estimate(request: Request) -> Any:
+        """`0074` R2, R6. A person's estimate: `{cwd, unit, value, effort, basis, by}`.
+
+        A new `estimate-value` row in the run log; no file is written and no gate reads it.
+        Whoever holds the password or a live session can write one under any name; the
+        default bind is `0.0.0.0`.
+        """
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        try:
+            return await service.record_estimate(
+                str(body.get("cwd") or ""), str(body.get("unit") or ""), body.get("value"),
+                body.get("effort"), body.get("basis"), body.get("by"),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/backlog/relation")
+    async def backlog_relation(request: Request) -> Any:
+        """`0074` R8. Add or remove one relation: `{cwd, unit, other, type, op, reason, by}`.
+
+        A `relation` row in the run log, nothing else. Behind the password like every route;
+        the default bind is `0.0.0.0`.
+        """
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        try:
+            return await service.record_relation(
+                *(str(body.get(k) or "") for k in ("cwd", "unit", "other", "type", "op", "reason", "by"))
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/backlog/shortlist")
+    async def backlog_shortlist(request: Request) -> Any:
+        """`0074` R10, R12. The whole shortlist, in order: `{cwd, units, reason, by}`.
+
+        A `shortlist` row in the run log; every later board step's `start` row reads it
+        (R14). Nothing runs because of it, and no gate or `next` reads it. Whoever holds the
+        password or a live session can rewrite it under any name; the default bind is `0.0.0.0`.
+        """
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        try:
+            return await service.record_shortlist(
+                str(body.get("cwd") or ""), body.get("units"), str(body.get("reason") or ""),
+                str(body.get("by") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/backlog/propose")
+    async def backlog_propose(request: Request) -> Any:
+        """`0074` R17, R18. **Opens one paid session** proposing estimates: `{cwd}`. Streams
+        NDJSON like `/api/board/run`. Whoever holds the password or a live session can press
+        it; the default bind is `0.0.0.0`. A second press while one runs is a 400.
+        """
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        stream = service.propose_estimates(str(body.get("cwd") or ""))
+        try:
+            first = await stream.__anext__()
+        except Updating as e:
+            return _bad(str(e), 503)
+        except Invalid as e:
+            return _bad(str(e))
+        except StopAsyncIteration:
+            return _bad("the proposal produced nothing")
+
+        async def lines() -> AsyncIterator[bytes]:
+            def out(obj: dict[str, Any]) -> bytes:
+                return json.dumps(obj).encode() + b"\n"
+
+            try:
+                for kind, payload in (first,):
+                    yield out({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
+                async for kind, payload in stream:
+                    if kind == "chunk":
+                        yield out({"type": "chunk", "text": payload})
+                    else:
+                        yield out({"type": "done", **payload})
+            except Exception as e:
+                yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
     @api.post("/api/units/review-comment")
     async def post_review_comment(request: Request) -> Any:
         """`0021` R8, R9. Post one review round to the unit's pull request, once.
