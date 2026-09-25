@@ -117,6 +117,35 @@ it happens anyway — `main` moved and the merge was refused as out of date — 
 rebase, wait for green, append another round that reviews the new head (carrying every
 finding forward), then `ship`. The earlier pass stays in the history as it was written.
 
+## Screens
+
+This applies when the branch changes a file listed under `paths:` in
+`.claude/rules/ui-standard.md` — a **UI unit** (`0083`). The rules are in that file, `S1` to
+`S8`; this section says only what the round must do with them.
+
+1. Open `.screens/manifest.json` in the worktree, then open **every** PNG it lists with
+   `Read`. Compare each against the standard.
+2. Write a `### Screens` section in the round. Its first line is exactly
+   `Taken at: <the manifest's head>. Standard: .claude/rules/ui-standard.md. Looked at by: <which agent session>, from screenshots.`
+   — the word "agent" is required, because it was an agent looking at screenshots and not
+   a person, and nothing here may read as though a person approved the screens. Then one
+   line per image: `- <path>.png — <W>×<H> — <address> — <what you saw>`.
+3. Each violation is an ordinary finding under `### Findings`, and the first word after its
+   severity is the rule's id: `- F3 [open] coscc/screens.py:120 — medium — S3 the card shows a full sha`.
+   Such a finding **always blocks, even when rated `low`** — a screen that breaks the
+   standard is something the person sees wrong.
+4. These are `high` findings and the round ends `changes-requested`: no manifest or no
+   image; a manifest whose `head` is older than the branch's last commit touching a UI
+   file; a hit in the manifest's `hits` that `impl.md ## Screens` does not explain.
+5. Under `### What was not reviewed`, name the screens that can only be reached by an
+   action (a running step, a dialog opened by a button) — the screenshots do not show them.
+
+The `ship` gate reads the words of the passing round's `### Screens`, never the images: that
+the first line has this shape and says "agent", names this standard, lists at least one
+`.png`, and that `Taken at` is an ancestor of `Reviewed` with no UI file changed between.
+Nothing checks that the images were opened. Writing the section without opening them is
+exactly the failure this stage exists to prevent.
+
 ## Output
 
 One file, `review.md`, in the unit's directory. The header line is rewritten each round to
@@ -145,8 +174,16 @@ Reviewed: <40-hex sha>. Verdict: pass.
 - F1 [fixed <sha of the fix>] path/to/file.py:12 — high — what was wrong
 - F2 [open] path/to/other.py:40 — low — what is still wrong, and does not block
 
+### Screens
+
+Taken at: <the manifest's head>. Standard: .claude/rules/ui-standard.md. Looked at by: <agent session, which one>, from screenshots.
+
+- .screens/board-1440x900.png — 1440×900 — /board — no violation
+
 ### What was not reviewed
 ```
+
+`### Screens` only on a UI unit (`## Screens` above).
 
 `Status` is `draft`, `changes-requested`, `accepted` or `rejected`. `accepted` is a pass.
 `rejected` closes the unit; `changes-requested` does not.
