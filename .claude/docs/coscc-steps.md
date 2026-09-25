@@ -63,3 +63,15 @@ Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/boa
   and a person may read that as dead and press run again. An `ended, unknown` row stops
   showing when the unit's next `start` is written or after 24 hours; nothing writes an
   `end` for it. A step started at a terminal has no entry either. The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
+- **A review that hits its ceiling spends one more turn, past its budget.** Since `0085`,
+  `Runner.run` reopens an exhausted `review` whose reply could not be written, on the same
+  session with no tools and `max_turns=1` (`runner._closing_turn`), before `end` is
+  written. The step is sealed first, so a Stop is refused for up to `CLOSING_TIMEOUT`
+  (180 s, chosen). `max_budget_usd` does not bound that turn: the CLI compares the whole
+  session's cost after the turn ran (`.cos/0085_*/spike.md ## U2`), and one after a
+  13-turn session cost $0.57 on its own. `end` carries it as `closing.cost_usd`, and
+  `cost_usd` is the session's whole total. The turn runs under a handle with no recorder,
+  so the watch pane never shows it. Whatever it writes is the session's own words, as an
+  `incomplete` round of `review.md`; when it writes nothing, the paths the run's
+  `tool_use` events name go into the next review's prompt (`journal.failed_attempts`),
+  never into the file.
