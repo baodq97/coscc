@@ -303,8 +303,9 @@ GRANTS: dict[str, Grant] = {
     # `0053`) stopped at them without writing `spike.md`; spikes that finished were recorded
     # at 36-44 turns (`0080` `intent.md ## Answers, câu 2`). The `turns` the app records is
     # not the counter `max_turns` stops on (see `plan` above), so 80 doubles the ceiling
-    # that was hit, as `plan` went from 20 to 40. Those runs cost about $0.050-0.055 a
-    # turn, so 80 turns at $4 would make the budget the real limit; $8.0 is `impl`'s.
+    # that was hit, as `plan` went from 20 to 40. The seven runs that answer lists cost
+    # $0.032-0.055 a recorded turn ($1.33/41 to $2.03/37), so 80 turns would be about
+    # $2.6-4.4, and $4 would stop the dearer ones before the turn ceiling; $8.0 is `impl`'s.
     "spike": Grant(
         tools=READ_TOOLS + WRITE_TOOLS + EXEC_TOOLS,
         commands=SPIKE_COMMANDS,
