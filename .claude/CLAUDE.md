@@ -93,7 +93,10 @@ The order per unit, and the reason it cannot be reordered:
    an `[open]` `low` does not block: a round whose remaining findings are all `low` passes,
    `ship` merges with them open, and `ship.md` lists them. The severity is an agent's
    word — one that rated a real problem `low` from the first round lets it merge, and
-   only a person reading the pull request would see it.
+   only a person reading the pull request would see it. Since `0083` a unit whose branch
+   changes a file `.claude/rules/ui-standard.md` lists also needs a `### Screens` section in
+   its passing round, and a finding naming a rule of that standard (`S<n>`) blocks even
+   when `low`.
 8. `ship`: only once `cos.mjs gate <unit> ship` exits 0, `gh pr merge --squash --delete-branch`
    with `--match-head-commit` set to the head the gate names. Every push resets the required checks — including the commit recording the pass — so
    the merge may first be refused with `2 of 2 required status checks are expected`: wait.
@@ -241,6 +244,15 @@ a `review` gate that never opens.
   Gebo or a step at a terminal records nothing here. A step another copy of the app runs on
   the same data root writes into the same tables, but only that copy can follow it live;
   this one reads it as `ended-unknown` until it ends.
+- **A screenshot is not a person's look.** Since `0083` a unit whose branch changes a file
+  listed under `paths:` in `.claude/rules/ui-standard.md` cannot ship until its passing
+  review round carries `### Screens`: `impl` takes the screenshots with
+  `scripts/capture_screens.py`, and the one who looks at them is the `review` agent, reading
+  the PNGs — not a person. The gate reads the words in `review.md`, never the images: a
+  round can write the section without opening one, `Taken at` is impl's word passed on by
+  review, and impl chose which screens to take. The originator took that trade
+  (`.cos/0083_*/intent.md ## Answers, câu 1`); they still see the screens when they use the
+  board, and what they dislike comes back as an idea.
 - **A login that knows who you are.** Since `0070` every route — the page, its socket,
   `/api`, the static files, paths that do not exist — is refused without a live session;
   only `/api/health`, `/login`, and `/setup` until a password is set, answer.
@@ -280,3 +292,9 @@ Copy `.claude/`. That is the whole harness, and nothing lands in the host reposi
 tree. Claude Code loads `.claude/CLAUDE.md` as project instructions, so no import, symlink
 or root file is needed. Then put that repository's real build and test commands under
 `## Commands`, and rebuild the two legs named above by hand.
+
+`.claude/rules/ui-standard.md` comes with it, and its `paths:` list is coscc's files. Kept
+as it is, the `ship` gate stays closed on any unit touching those paths until a review
+records screenshots — and the command that takes them, `scripts/capture_screens.py`, sits
+outside `.claude/` and does not come along. Point the list at your own screens and write a
+capture command, or delete the file: without it the `ship` gate is what it was before `0083`.

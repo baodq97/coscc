@@ -18,6 +18,7 @@ uv sync                                     # after a fresh clone
 uv run coscc-build                          # build the page; never `reflex export`
 COS_WORKING_DIR=~/projects uv run coscc     # then http://127.0.0.1:8790
 uv run coscc reset-password                 # forgot the master password: clears it and every session
+uv run python scripts/capture_screens.py /board /settings   # a UI unit's screenshots, into .screens/
 ```
 
 **Start it with `coscc`, not `reflex run`.** Reflex's dev mode serves the page from a vite
@@ -513,6 +514,16 @@ no commands, one turn, no budget.
   asks `/api/workspaces` for `200` without a cookie, so the first update from the board
   past `0070` always fails its trial: that release is installed with `curl … | sh`.
 
+- **`scripts/capture_screens.py` overwrites `<repo>/.web`, then builds it back.** Since
+  `0083`. `coscc.run` always serves `<repo>/.web`, so the bundle it builds for its own port
+  (18783) replaces the checkout's (`.cos/0083_*/spike.md ## U2`). When the old one was
+  current for this environment's `COS_HOST`/`COS_PORT`, it is rebuilt at the end and the
+  last line says so; interrupted, or a failed rebuild, leaves every proof that needs the
+  default bundle at exit 2 until `uv run coscc-build`. Its screenshots are what `review`
+  looks at, as an agent reading PNGs, not a person; the `ship` gate reads only the words of
+  `review.md ### Screens`, never the images (`.claude/CLAUDE.md`, *A screenshot is not a
+  person's look*).
+
 ## The proofs, and what each one costs
 
 | | |
@@ -555,6 +566,8 @@ no commands, one turn, no budget.
 | `verify_0073.py` | plain: no session, no quota, no network; temporary data root, a workspace that is not a git checkout, only `ClaudeSDKClient` in `coscc.sessions` replaced by a scripted client, the app driven in-process over ASGI. Needs `node`; missing is exit 2. R1–R9, R13–R15; integrate is not run (it needs `git` and `gh`). `--browser` starts `coscc.run` on `COS_PORT` (18773) with the same kind of client and a password and two sessions written into a temporary root, and drives chrome through two contexts that share no cookie: needs the port free and a bundle built for it (`COS_HOST=127.0.0.1 COS_PORT=18773 uv run coscc-build`). R11's latency is read from each seq's first appearance in the DOM, added or rewritten in place, so it covers a list at `WATCH_WINDOW` too; rows that arrive while B reads older ones are counted, not timed. F5 and F6 measure the scroll position on loopback, where F6 (b)'s race (a live batch landing between *older* and its page) is exercised but was not seen to happen. Does not measure the intent's outcome — a person's two-browser trial before 2026-10-15 |
 | `verify_0074.py` | plain: no session, no quota, no network; temporary data root, the session replaced, the app driven in-process over ASGI. Needs `node`; missing is exit 2. R15 runs `cos.mjs gate` for every stage and `next` for every fixture unit before and after the three kinds of record. `--measure` reads `<COS_DATA_DIR>/cos.db` (`mode=ro`) and this unit's `ship.md` under `<COS_DATA_DIR>/units/*/.cos/`, and writes only to `<COS_DATA_DIR>/measurements/`; no merge line, or the 14-day window still open, is exit 2. Run it at a terminal: inside a step it reads a scratch data root (`0076`). It does not print the `lệch` count of each shortlist in use: that needs the board as it stood then |
 | `verify_0076.py` | plain: no session, no quota, no network; a temporary `HOME` whose `~/.cos` plays the running app, a child process standing in for a step with the environment `sessions.child_env` builds. Needs `httpx` and `coscc` importable; either missing is exit 2. `--suite` runs `npm test` in a session's environment with the `cos.db` `from_env` names protected, and reads that database (`mode=ro`) before and after: **run it at a terminal**, a step is not to read the real one. Does not measure the intent's outcome — a real `impl` step from the board on a branch that raises the schema, before 2026-10-31 |
+| `capture_screens.py` | not a proof: the screenshots a UI unit's `impl` takes (`0083`). Browser, port 18783 on `127.0.0.1` (chosen) must be free; no session, no quota, no network; temporary data root, bare-directory remote, a fake `gh`, four fixture units. Builds a bundle for its port when none is current and rebuilds the checkout's afterwards, about 26 s more (`.cos/0083_*/spike.md ## U2`); the whole run measured 50.5 s there. Writes only `.screens/` |
+| `verify_0083.py` | plain: no session, no quota, no network; temporary directory, a git repository with a bare-directory remote, a fake `gh` and a `git` shim that logs argv, both first on `PATH`. Needs `node`, `git`, `uv` and a merge-base with `origin/main` (R12 runs the `cos.mjs` there); any missing is exit 2. Claim (g) imports `capture_screens.scan`. `--measure [--today YYYY-MM-DD]` reads this checkout's `origin/main` and `<COS_DATA_DIR>/units/*/.cos/` through `cos.mjs status --json`, and writes only to `<COS_DATA_DIR>/measurements/`; no merge line yet or before 2026-12-01 is exit 2. Run it at a terminal (`0076`) |
 | `verify_stage_models.py` | no session, no quota, no network; temporary data root, `COS_MODEL` removed, a fake `gh` first on `PATH`. Needs `node`, `uv` and `git`; any missing is exit 2. Drives `StudioState`'s handlers as `verify_0024` does. `--paid` **spends real money**: since `0031_shipped-model-defaults-cap-every-stage-at-200k` it calls `claude -p` once per distinct id `coscc/models.json` ships (currently two: `claude-opus-5-5[1m]` and `claude-sonnet-5[1m]`) and requires `modelUsage[...].contextWindow` to read 1000000 for each. No `claude` on `PATH`, or a login that does not work, is exit 2; the CLI reporting an error for that model id is exit 1 |
 | `verify_state_it_describes.py` | browser, needs `COS_PORT` free; no session, no quota, no network. The remote is a bare directory in a temp folder. Proof of the store's `0001_product-describes-a-state-it-is-not-in`, not of `.cos/0001_*` — hence the name. Since `0070` it meets the login page and was not rewritten (C7) |
 
