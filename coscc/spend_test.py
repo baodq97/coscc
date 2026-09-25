@@ -306,7 +306,9 @@ class MatchesTheRunsTable(unittest.TestCase):
         self.assertEqual({r["key"] for r in served["by_unit"]}, units)
         self.assertEqual({r["key"] for r in served["by_stage"]}, stages)
         self.assertEqual({r["key"] for r in served["by_day"]}, days)
-        self.assertGreaterEqual((len(units), len(stages), len(days)), (3, 3, 2))
+        self.assertGreaterEqual(len(units), 3)
+        self.assertGreaterEqual(len(stages), 3)
+        self.assertGreaterEqual(len(days), 2)
 
         for row in served["by_unit"]:
             self._same(row["usd"], self._sql(conn, BY_UNIT, unit=row["key"], **scope), row["key"])
