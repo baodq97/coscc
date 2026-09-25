@@ -1589,10 +1589,13 @@ def _backlog_screen() -> rx.Component:
             s.section_head("Shortlist",
                            rx.button("Take the first 7", on_click=P.fill_shortlist, size="1", variant="soft")),
             rx.cond(P.backlog_note != "", s.text(P.backlog_note, size="1")),
-            s.text(P.backlog_recorded, size="1", margin_bottom="8px"),
+            rx.cond(P.backlog_recorded != "", s.text(P.backlog_recorded, size="1", margin_bottom="8px")),
             head,
             rx.foreach(P.backlog_rows, lambda r: _backlog_row(r, True)),
-            rx.cond(P.backlog_rows.length() == 0, s.text("No unit is on the saved shortlist.", size="1", padding="10px 0")),
+            # `0082` F3: one sentence for an empty shortlist, whether or not one was ever saved.
+            rx.cond(P.backlog_rows.length() == 0,
+                    s.text(rx.cond(P.backlog_recorded != "", "No unit is on the saved shortlist.",
+                                   "No shortlist saved yet."), size="1", padding="10px 0")),
             rx.hstack(
                 s.text(P.shortlist_draft.length().to_string() + " of 7 chosen", size="1"),
                 rx.input(placeholder="Why this order", value=P.shortlist_reason, size="1", flex="1",

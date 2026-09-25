@@ -389,7 +389,7 @@ def backlog_view(data: dict) -> dict:
         "backlog_note": note,
         "backlog_recorded": (
             f"Saved {present.when(record.get('at'))} by {record.get('by')}: {record.get('reason')}"
-            if record else "No shortlist saved yet."
+            if record else ""
         ),
         "backlog_warnings": [f"{w.get('unit')}: {w.get('text')}" for w in b.get("warnings") or []]
         + list(b.get("problems") or []),

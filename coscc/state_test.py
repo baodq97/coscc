@@ -769,6 +769,13 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
         self.assertIn("picks nothing out", view["backlog_note"])
         self.assertEqual(view["propose_warning"], "paid")
 
+    def test_f3_no_saved_shortlist_leaves_the_empty_row_to_say_so(self):
+        from coscc.state import backlog_view
+
+        board = {**self.BOARD, "backlog": {**self.BOARD["backlog"], "shortlist": [], "shortlist_record": None}}
+        view = backlog_view(board)
+        self.assertEqual(view["backlog_recorded"], "")
+
     def test_r9_a_relation_reads_from_both_sides(self):
         from coscc.state import _relations_text
 
