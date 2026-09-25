@@ -2114,3 +2114,49 @@ test('0085 R8 d: a draft whose last round is not incomplete is still finished by
   // An incomplete round under any other header is not the closing turn's.
   assert.doesNotMatch(nextStep(reviewOfRounds('changes-requested', [cr(1), incompleteRound(2)]), { probe: greenProbe() }).action, /is incomplete/)
 })
+
+// --- 0044: an answer Jera gave opens nothing a person's does not ------------------------
+
+const specWith = (by, via) =>
+  `# Spec: x\nIntent: intent.md. Author: t. Status: accepted.\n\n## Open questions\n\n1. a?\n2. b?\n\n## Answers\n` +
+  `\n### Câu 1\nAnswered by: ${by}. Date: 2026-09-25. Via: ${via}.\n\nyes\n` +
+  `\n### Câu 2\nAnswered by: ${by}. Date: 2026-09-25. Via: ${via}.\n\nno\n`
+
+test('0044 R14: gate and next answer the same whether a person or Jera answered', () => {
+  const files = (by, via) => ({
+    'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n\n## Open questions\n\n1. c?\n' +
+      `\n## Answers\n\n### Câu 1\nAnswered by: ${by}. Date: 2026-09-25. Via: ${via}.\n\nc\n`,
+    'spec.md': specWith(by, via),
+  })
+  for (const more of [{}, { 'plan.md': '# P\nStatus: accepted.\n' }]) {
+    const person = questionTree({ ...files('owner', 'product'), ...more }).u
+    const jera = questionTree({ ...files('Jera', 'precedent'), ...more }).u
+    assert.equal(jera.artifacts['spec.md'].questions.every((q) => q.answered && q.answer.by === 'Jera'), true)
+    for (const stage of [...STAGE_NAMES, 'implement']) {
+      assert.deepEqual(checkGate(jera, stage), checkGate(person, stage), stage)
+      assert.deepEqual(checkGate(jera, stage, { probe: greenProbe() }), checkGate(person, stage, { probe: greenProbe() }), stage)
+    }
+    assert.deepEqual(nextAction(jera), nextAction(person))
+    assert.deepEqual(nextStep(jera, { probe: greenProbe() }), nextStep(person, { probe: greenProbe() }))
+  }
+})
+
+test('0044 R14: a Jera block in spec.md does not change what a review waits on', () => {
+  const build = (spec) => questionTree({
+    'intent.md': '# I\nAuthor: t. Type: fix. Status: accepted.\n',
+    'spec.md': spec,
+    'plan.md': '# P\nStatus: accepted.\n',
+    'impl.md': implText(),
+    'pr.md': '# PR\nPR: https://github.com/o/r/pull/7. Status: accepted.\n',
+    'review.md': `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3()}`,
+  }).u
+  const person = build(specWith('owner', 'product'))
+  const jera = build(specWith('Jera', 'precedent'))
+  assert.deepEqual(jera.personFindings, person.personFindings)
+  assert.deepEqual(nextStep(jera, { probe: greenProbe() }).waiting, ['F2', 'F3'])
+  assert.deepEqual(nextStep(jera, { probe: greenProbe() }), nextStep(person, { probe: greenProbe() }))
+  assert.deepEqual(nextAction(jera), nextAction(person))
+  for (const stage of STAGE_NAMES) {
+    assert.deepEqual(checkGate(jera, stage, { probe: greenProbe() }), checkGate(person, stage, { probe: greenProbe() }), stage)
+  }
+})
