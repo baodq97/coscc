@@ -451,6 +451,26 @@ def _cumulative(message: Any) -> dict[str, float]:
     return total
 
 
+# The longest single line of the CLI's stdout a session may receive (`0091`). Left unset,
+# the SDK's `_DEFAULT_MAX_BUFFER_SIZE` of 1 048 576 applies, and a `Read` of an image
+# arrives as one line: on 2026-09-25 run `c58b7e48` of `0082`'s `impl` read
+# `.screens/settings-1440x900.png` -- 504 656 bytes, 1440x4298 -- and died on
+# `CLIJSONDecodeError`, five commits in, with no `tool_result`. Since `0083` every UI unit's
+# `impl` and `review` must open such images.
+#
+# The SDK compares `len()` of a `str`, so this counts characters, not bytes; for JSON
+# carrying base64 the two agree (`0091` `spike.md ## U1`). Nothing is allocated up front:
+# the transport keeps the pieces of the line it has, and RSS grew the same 152 KiB with a
+# 1 MiB cap and a 16 MiB one (`spike.md ## U3`), so a large cap costs nothing until a line
+# that long arrives.
+#
+# 32 MiB is chosen, not measured. What a line weighs against the file it carries is known
+# only from below -- more than 2.08 times (`spike.md ## U2`) -- so this holds that
+# screenshot unless the CLI multiplies it by more than about 66 (`spec.md` C1). A longer
+# line still ends the session exactly as before.
+MAX_BUFFER = 32 * 1024 * 1024
+
+
 def _options(
     config: Config,
     cwd: str,
@@ -536,6 +556,8 @@ def _options(
         # puts it verbatim into the next stage's
         # prompt. An answer reading `@~/.ssh/id_rsa` would have put the key there.
         verbatim_prompts=True,
+        # `0091`. One screenshot is one line; see `MAX_BUFFER`.
+        max_buffer_size=MAX_BUFFER,
     )
     if can_use_tool is not None:
         # The second layer, and the one that matters. Eleven MCP tools were measured
