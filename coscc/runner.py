@@ -416,6 +416,41 @@ def compose_prompt(
                 f"{findings or '(no finding is left open)'}"
             )
 
+    # `0085` R10. The last round is one the app's closing turn wrote for a review that ran
+    # out of turns. The next review goes on from it rather than starting again: its three
+    # sections verbatim, and what the last full round before it left open.
+    if stage == "review":
+        review = _read(directory / "review.md")
+        found = list(_ROUND_RE.finditer(review or ""))
+        last = found[-1].group(0).rstrip() if found else ""
+        meta = _round_meta(last) if last else None
+        if meta is not None and meta[1] == "incomplete":
+            number = _round_number(last)
+            start = last.find(INCOMPLETE_SECTIONS[0])
+            sections = last[start:] if start != -1 else last
+            earlier = [r for r in _rounds(review[: found[-1].start()])
+                       if (_round_meta(r) or ("", ""))[1] != "incomplete"]
+            carried = ""
+            if earlier:
+                _, full, left = open_findings(review[: found[-1].start()])
+                carried = (
+                    f"\n\nThe findings Round {full}, the last full round, left open:\n\n"
+                    f"{left or '(no finding is left open)'}"
+                )
+            included.append("review-incomplete")
+            parts.append(
+                "# The incomplete round\n\n"
+                f"Round {number} is incomplete: the review before this one ran out of turns, "
+                "and the app asked it, with no tools left, to write down where it stood. Go "
+                "on from it. Read what it lists under *What was not reviewed* first, then "
+                f"write Round {number + 1} as a full round for the commit named below. Carry "
+                f"forward every finding of Round {number} and of every earlier round, with "
+                "its id: the `ship` gate stays closed on a round that drops one. Never write "
+                "`Verdict: incomplete` yourself; only the app's closing turn writes it.\n\n"
+                f"Round {number}, from its first section on, verbatim:\n\n{sections}"
+                f"{carried}"
+            )
+
     # `spec.md` R7, `review`'s own copy. Placed here rather than with the other stages'
     # above so it reads after *The rounds so far*, which it is about: a person can answer
     # under `## Answers` while a review is at `changes-requested`, and the next review
@@ -656,6 +691,94 @@ def open_findings(text: str) -> tuple[str, int | None, str]:
         if keeping:
             kept.append(line)
     return header, number, "\n".join(kept)
+
+
+# `0085` R4. The three sections of a round the closing turn writes, in this order.
+INCOMPLETE_SECTIONS = ("### Reviewed so far", "### Findings", "### What was not reviewed")
+# A round's first non-blank line as `cos.mjs` `ROUND_META` reads it.
+_ROUND_META_RE = re.compile(
+    r"^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*(pass|changes-requested|needs-person|incomplete)\.?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _round_meta(section: str) -> tuple[str, str] | None:
+    """A round's `(reviewed, verdict)`, lower-cased, or `None` when `cos.mjs` could not read it."""
+    for line in section.splitlines()[1:]:
+        if line.strip():
+            m = _ROUND_META_RE.match(line.strip())
+            return (m.group(1).lower(), m.group(2).lower()) if m else None
+    return None
+
+
+def _headings_in_order(section: str, headings: tuple[str, ...]) -> bool:
+    lines = [line.rstrip() for line in section.splitlines()]
+    at = 0
+    for heading in headings:
+        try:
+            at = lines.index(heading, at) + 1
+        except ValueError:
+            return False
+    return True
+
+
+def closing_prompt(head: str, number: int) -> str:
+    """`0085` R2, R4. What the app sends when it reopens a review that ran out of turns.
+
+    Opens as the prompt `spike.md ## U1` measured did. English: an instruction to the model.
+    """
+    return (
+        "You have run out of turns. You have no tools now; do not try to call one. Write "
+        "down what this review has established so far, so the next review can go on from "
+        "it instead of starting again.\n\n"
+        "Reply with the title, the header line and one new round only, and nothing else — "
+        "no preamble, no code fence. The earlier rounds of `review.md` are the app's to "
+        "keep; do not copy them. Exactly this shape:\n\n"
+        "- The header line carries `Status: draft.`\n"
+        f"- Then `## Round {number}`.\n"
+        f"- Its first line is exactly `Reviewed: {head}. Verdict: incomplete.`\n"
+        "- Then three sections, in this order: `### Reviewed so far` (every file you "
+        "opened and what you concluded about it), `### Findings` (every finding you have, "
+        "in the usual `- F<k> [open] path:line — severity — text` form, and every finding "
+        "an earlier round raised, carried forward with its id and label), and "
+        "`### What was not reviewed` (what you did not reach, and what to read first).\n\n"
+        "Never write `Verdict: pass` or `Verdict: changes-requested` here: a round the app "
+        "cannot read as incomplete is not written at all."
+    )
+
+
+def closing_round_problem(existing: str, reply: str, head: str) -> str | None:
+    """`0085` R4, R5. `None` when `reply` is a closing turn's round the app may write,
+    else why not.
+
+    Only an incomplete round, under a `draft` header — the one shape `cos.mjs` reads as
+    "review again" rather than as a verdict. A full round from the closing turn is refused:
+    it would open or close `ship` on a review that did not finish. `merge_review` still
+    decides the rest when the round is written.
+    """
+    try:
+        body = check_reply(reply)
+    except RunError as e:
+        return str(e)
+    if _header_status(body) != "draft":
+        return f"its header is {_header_status(body) or 'unreadable'}, not draft"
+    on_disk = {_round_number(r) for r in _rounds(existing)}
+    new = [r for r in _rounds(body) if _round_number(r) not in on_disk]
+    if len(new) != 1:
+        return f"it adds {len(new)} review rounds, not one"
+    # The number `closing_prompt` was given. `merge_review` keeps any number not on disk,
+    # and a round skipped or reused closes `ship` for good ("renumbered", `cos.mjs`).
+    number = max(on_disk, default=0) + 1
+    if _round_number(new[0]) != number:
+        return f"{new[0].splitlines()[0]} is not ## Round {number}, the next round"
+    meta = _round_meta(new[0])
+    if meta is None or meta[1] != "incomplete":
+        return f"{new[0].splitlines()[0]} does not open with Verdict: incomplete"
+    if meta[0] != (head or "").lower():
+        return f"{new[0].splitlines()[0]} names {meta[0]}, not the head this step ran on, {head}"
+    if not _headings_in_order(new[0], INCOMPLETE_SECTIONS):
+        return f"{new[0].splitlines()[0]} lacks {', '.join(INCOMPLETE_SECTIONS)}, in that order"
+    return None
 
 
 # How much of an unusable reply to keep beside the reason it was refused. Long enough to
@@ -926,6 +1049,34 @@ def describe_attempt(found: dict[str, Any]) -> str:
                 f"{_fmt_num(e.get('turns'), ' turns')}, cost {_fmt_num(e.get('cost_usd'), ' USD')}"
             )
 
+    # `0085` R11. A review that ran out of turns and left no round: what it had opened, read
+    # from its events by `Journal.failed_attempts`. Nothing of it is in `review.md`.
+    opened = found.get("opened")
+    if opened is not None:
+        lines.append("")
+        lines.append(
+            "That review ran out of turns, and "
+            + ("the closing turn the app gave it wrote no round" if opened.get("closing")
+               else "the app could not give it a closing turn")
+            + ": `review.md` holds nothing from it."
+        )
+        if opened.get("purged"):
+            lines.append(
+                "Which files it opened is not known: its recorded events have been purged."
+            )
+        elif opened.get("error"):
+            lines.append(
+                f"Which files it opened could not be read from its events: {opened['error']}"
+            )
+        elif opened.get("paths"):
+            lines.append(
+                "It opened these files, but no conclusion about any of them was written "
+                "down. Read them again where you need to; do not take them as reviewed:"
+            )
+            lines.extend(f"- {p}" for p in opened["paths"])
+        else:
+            lines.append("Its recorded events name no file it opened.")
+
     return "\n".join(lines)
 
 
@@ -1011,6 +1162,45 @@ def _write_artifact(directory: Path, artifact: str, text: str) -> None:
 # `0080` R1, R3. The file a spike keeps in its `cwd` as it measures, read when its reply is
 # not an artifact. The same name as the unit's, so the skill names one file.
 PROGRESS_FILE = "spike.md"
+
+
+# `0085` R2. How long the closing turn may take. Chosen, not measured: `spike.md ## U1`
+# measured 9.8 s, and the longest closing turn `## U2` measured took 25.5 s.
+CLOSING_TIMEOUT = 180.0
+
+
+async def _closing_turn(
+    sessions: Sessions,
+    cwd: str,
+    prompt: str,
+    session_id: str,
+    denials: Denials,
+    **kw: Any,
+) -> tuple[str, dict[str, Any] | None]:
+    """`0085` R2. The reply of one more turn on a review's own session, and its `done`.
+
+    In the shape `spike.md ## U1` measured: the same session id, a new handle, no tools, a
+    callback that refuses every call, one turn. A new handle has no recorder, so nothing of
+    this turn reaches the step's live view (spec C5).
+    """
+
+    async def deny_all(tool: str, tool_input: dict, context: Any):
+        reason = "the closing turn holds no tools"
+        denials.record(tool, reason, tool_input)
+        return sdk.PermissionResultDeny(message=reason)
+
+    text, done = "", None
+    async for kind, payload in sessions.stream(
+        cwd, prompt, session_id, max_turns=1, can_use_tool=deny_all, tools=[],
+        step=sessions_mod.StepHandle(), **kw,
+    ):
+        if kind == "chunk":
+            text += payload
+        elif kind == "tool":
+            text = ""
+        elif kind == "done":
+            done = payload
+    return text, done
 
 
 async def _from_progress(
@@ -1267,6 +1457,10 @@ class Runner:
         # `0080` R6. Where a spike's `spike.md` came from, for its `end` row; only a step
         # with `watch` carries it. `None` until something decides it.
         spike_md: str | None = None
+        # `0085` R6. What reached `review.md`, for a review's `end` row: `round`, `incomplete`
+        # (the closing turn's), `none` or `withheld`. `closing` is set only when that turn ran.
+        review_md: str | None = None
+        closing: dict[str, Any] | None = None
         before: tuple[str, str] | None = None
         tree_changed = False
 
@@ -1349,6 +1543,8 @@ class Runner:
             if not steps.seal(running):
                 if watch:
                     spike_md = "withheld"
+                if stage == "review":
+                    review_md = "withheld"
                 raise _Stopped()
             if grant.app_writes_artifact:
                 # Synchronous, so nothing yields between reading the `## Answers` already
@@ -1357,6 +1553,8 @@ class Runner:
                 if watch:
                     # `0080` R4: the reply was written, so the progress file is never read.
                     spike_md = "reply"
+                if stage == "review":
+                    review_md = "round"
             else:
                 # The session had the tools to write it. Believing it did, rather than
                 # looking, is how a step reports success for a file that is not there.
@@ -1432,6 +1630,83 @@ class Runner:
                     spike_md = "unusable"
                     said = f"the progress file was not read: {type(e).__name__}: {e}"
                     detail = f"{detail}\n--- {said} ---" if detail else said
+            # `0085` R2. A review that ran out of turns before its reply could be written gets
+            # one closing turn on its own session, asking for an incomplete round. Here, for
+            # the reason the progress file is read here, and wrapped the same way: `outcome`
+            # stays `exhausted` (R6) and the `end` row never depends on this.
+            #
+            # Sealed first, as the reply's road is: from here a Stop is refused, so the turn
+            # cannot be cut halfway; `CLOSING_TIMEOUT` is what bounds it instead. The budget
+            # does not: the CLI compares the whole session's cost, after the turn has run
+            # (`spike.md ## U2`, point 3; spec C1).
+            closing_pending: BaseException | None = None
+            if (
+                stage == "review" and grant.app_writes_artifact and not shutting_down
+                and outcome == "exhausted" and review_md is None
+                and session_id and head and not stopped()
+            ):
+                said = ""
+                try:
+                    if not steps.seal(running):
+                        review_md = "withheld"
+                    else:
+                        number = max((_round_number(r) for r in _rounds(_read(directory / artifact))), default=0) + 1
+                        reply, done = await asyncio.wait_for(
+                            _closing_turn(
+                                self.sessions, cwd, closing_prompt(head, number), session_id, denials,
+                                max_budget_usd=grant.max_budget_usd or None,
+                                **({"workspace": workspace} if cwd != workspace else {}),
+                                **({"model": model} if model is not None else {}),
+                                **({"effort": effort} if effort is not None else {}),
+                                **({"system_prompt": dict(preset)} if preset else {}),
+                            ),
+                            CLOSING_TIMEOUT,
+                        )
+                        after = str((done or {}).get("terminal_reason") or "")
+                        if after:
+                            # R7. A `ResultMessage` came back. Its cost is the whole session's
+                            # (`spike.md ## U2`, point 2), so it replaces the main one rather
+                            # than adding to it, and the turn's own share is the difference.
+                            total = ((done or {}).get("cost") or {}).get("cost_usd")
+                            before_usd = cost.get("cost_usd")
+                            closing = {
+                                "terminal": after,
+                                "turns": ((done or {}).get("cost") or {}).get("turns"),
+                                "cost_usd": (
+                                    round(total - before_usd, 6)
+                                    if total is not None and before_usd is not None
+                                    else None
+                                ),
+                            }
+                            if total is not None:
+                                cost = {**cost, "cost_usd": total}
+                        else:
+                            closing = {"cost_unknown": True}
+                        # R5, judged on the text, never on `after`. No `await` from here to
+                        # the write, the rule the reply's road keeps.
+                        problem = closing_round_problem(_read(directory / artifact), reply, head)
+                        if problem:
+                            review_md, said = "none", f"review.md: the closing turn's reply was not written: {problem}"
+                        else:
+                            try:
+                                _write_artifact(directory, artifact, reply)
+                                review_md, said = "incomplete", f"review.md: Round {number} incomplete, written by the closing turn"
+                            except RunError as e:
+                                review_md, said = "none", f"review.md: the closing turn's reply was not written: {e}"
+                except asyncio.CancelledError as e:
+                    if stopped():
+                        task = asyncio.current_task()
+                        if task is not None:
+                            task.uncancel()
+                        review_md = "withheld"
+                    else:
+                        shutting_down = True
+                        closing_pending = e
+                except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
+                    closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
+                    review_md, said = "none", f"review.md: the closing turn failed: {type(e).__name__}: {e}"
+                if said:
+                    detail = f"{detail}\n--- {said} ---" if detail else said
             # `0034` review round 1, F2. The outcome is decided here, so the door closes
             # here: a Stop that arrives while the attempt record is captured below is
             # refused (`Finishing`) rather than told "stopped" and logged as something
@@ -1450,6 +1725,9 @@ class Runner:
             if watch and not shutting_down and spike_md is None:
                 # `0080` R6. Nothing wrote it: a Stop withheld it, or there was no file.
                 spike_md = "withheld" if outcome == "stopped" else "none"
+            if stage == "review" and not shutting_down and review_md is None:
+                # `0085` R6, the same way.
+                review_md = "withheld" if outcome == "stopped" else "none"
             # `0073` R6. Not for an app going down: `_drive` writes what it can, and no `end`.
             # `0092` R1: closed before the attempt record rather than after it, so the turns
             # it counts go into both.
@@ -1535,9 +1813,14 @@ class Runner:
                     **run_fields,
                     # `0080` R6: only a spike's `end` carries it.
                     **({"spike_md": spike_md} if watch else {}),
+                    # `0085` R6: only a review's; `closing` only when that turn ran.
+                    **({"review_md": review_md} if stage == "review" else {}),
+                    **({"closing": closing} if closing is not None else {}),
                 )
             if progress_pending is not None:
                 raise progress_pending
+            if closing_pending is not None:
+                raise closing_pending
             if pending is not None:
                 if not stop_came:
                     raise pending

@@ -718,6 +718,16 @@ class Data:
                 "SELECT COUNT(*) FROM step_events WHERE run = ? AND kind = 'turn'", (run,)
             ).fetchone()[0])
 
+    def step_tool_uses(self, run: str, timeout: float | None = None) -> list[dict[str, Any]]:
+        """`0085` R11. Every stored `tool_use` event of `run`, oldest first: what a step that
+        wrote nothing had opened, for the next run's prompt."""
+        with self.connect(timeout=timeout) as conn:
+            rows = conn.execute(
+                "SELECT event FROM step_events WHERE run = ? AND kind = 'tool_use' ORDER BY seq",
+                (run,),
+            ).fetchall()
+        return [json.loads(r["event"]) for r in rows]
+
     def step_runs_open(self) -> list[dict[str, Any]]:
         """`0092` R5. Every index row nobody closed and nobody purged, each with the `at` of
         its last stored event as `last_at` (None when it has none), oldest first."""

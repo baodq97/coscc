@@ -362,7 +362,9 @@ export function prText(text) {
 const ROUND_HEAD = /^## Round (\d+)\s*$/
 // `needs-person` since `0028`: every finding left open is one the review confirmed a person
 // must act on. The header stays `changes-requested`; the unit is not finished.
-const ROUND_META = /^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*(pass|changes-requested|needs-person)\.?\s*$/i
+// `incomplete` since `0085`: the app's closing turn wrote it for a review that ran out of
+// turns, under a `draft` header. It asks for another review, not for a fix.
+const ROUND_META = /^Reviewed:\s*([0-9a-f]{7,40})\.?\s+Verdict:\s*(pass|changes-requested|needs-person|incomplete)\.?\s*$/i
 // The labels a finding may carry besides `open` and `fixed <sha>` (`0028`): the review
 // accepted impl's claim that a person must act (`needs-person`), rejected it
 // (`claim-rejected`), or closed the finding on a person's answer in `review.md ## Answers`
@@ -381,7 +383,7 @@ const SCREENS_SHOT = /^- `?(\S+?\.png)`?\s+—\s+(\d+)\s*[×x]\s*(\d+)\s+—\s+`
 
 // `review.md` is a list of rounds, each `## Round N`, never rewritten once written: a
 // re-review appends a round. Each round opens with `Reviewed: <sha>. Verdict: pass|
-// changes-requested|needs-person.` (`ROUND_META`) and lists its findings under
+// changes-requested|needs-person|incomplete.` (`ROUND_META`) and lists its findings under
 // `### Findings`, one per line, each labelled `[open]`, `[fixed <sha>]`, or one of
 // `PERSON_LABELS` (`[needs-person]`, `[claim-rejected]`, `[answered]`, since `0028`). Any
 // other label is `unreadable`, which the `ship` gate treats as not closed. Reading stops
@@ -820,6 +822,14 @@ function decide(unit, limit) {
       return { blocked: true, action: s.hint, stage: s.name, why: 'missing' }
     }
     if (status === 'rejected') return { blocked: false, action: `closed — ${s.name} rejected`, stage: '', why: 'rejected' }
+    // `0085` R8: a review that ran out of turns left a round the app's closing turn wrote.
+    // That is not a draft to finish by hand: another review goes on from it, unless the
+    // rounds before it already used the limit (R9 keeps the floor for exactly that).
+    if (s.file === 'review.md' && incompleteDraft(unit)) {
+      const used = roundsUsed(unit)
+      if (used >= limit) return { blocked: true, action: needsAPerson(used, limit), stage: '', why: 'needs-person' }
+      return { blocked: true, action: `review round ${lastRound(unit).n} is incomplete — write-review again`, stage: 'review', why: 'review-incomplete' }
+    }
     if (status === 'draft') return { blocked: true, action: `finish and accept ${s.file}`, stage: '', why: 'draft' }
     // Not closed and not done: the work goes back to the branch, then to another round.
     if (status === 'changes-requested') {
@@ -861,6 +871,8 @@ function decide(unit, limit) {
 
 const reviewOf = (unit) => unit.artifacts['review.md']?.review?.rounds ?? []
 const lastRound = (unit) => reviewOf(unit).at(-1) ?? null
+// `0085`: the header a closing turn leaves, over the round it wrote.
+const incompleteDraft = (unit) => statusOf(unit, 'review.md') === 'draft' && lastRound(unit)?.verdict === 'incomplete'
 
 // Rounds that ended asking for changes. A `changes-requested` header whose rounds carry no
 // readable verdict still counts as one, so a malformed round cannot buy another.
@@ -868,11 +880,18 @@ const lastRound = (unit) => reviewOf(unit).at(-1) ?? null
 // A `needs-person` round is not counted (`0028` spec R5): it stopped for a person, it did
 // not ask impl for anything. So the floor of one is waived once any round reads
 // `needs-person` — otherwise a unit whose only round is that one would be charged for it.
+//
+// An `incomplete` round is not counted either (`0085` R9), for the same reason, and `asked`
+// already leaves it out. But it turns the header to `draft`, and the header is what kept the
+// floor for a round whose verdict could not be read; so a `draft` whose last round is
+// `incomplete` keeps the floor while a full round before it reads no verdict.
 function roundsUsed(unit) {
   const rounds = reviewOf(unit)
   const asked = rounds.filter((r) => r.verdict === 'changes-requested').length
   const waived = rounds.some((r) => r.verdict === 'needs-person')
-  return Math.max(asked, statusOf(unit, 'review.md') === 'changes-requested' && !waived ? 1 : 0)
+  const floor = statusOf(unit, 'review.md') === 'changes-requested' ||
+    (incompleteDraft(unit) && rounds.some((r) => r.verdict === null))
+  return Math.max(asked, floor && !waived ? 1 : 0)
 }
 
 // The ids a person answered under `review.md ## Answers`. Units built in memory by a test
@@ -1115,7 +1134,7 @@ function reviewNeeds(unit, probe, limit, said = {}) {
   const need = []
   const pr = unit.artifacts['pr.md']?.pr ?? null
   if (!pr) need.push('pr.md names no pull request — the pr stage opens one and writes PR: <url>')
-  if (statusOf(unit, 'review.md') === 'changes-requested' && roundsUsed(unit) >= limit) {
+  if ((statusOf(unit, 'review.md') === 'changes-requested' || incompleteDraft(unit)) && roundsUsed(unit) >= limit) {
     need.push(needsAPerson(roundsUsed(unit), limit))
   }
   if (need.length || !pr) return need
@@ -1379,6 +1398,8 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   if (why === 'awaits-person') return next
   // `0028` (b): every finding awaiting a person has an answer; a review reads them.
   if (why === 'person-answered') return onReview([next.action])
+  // `0085` R8: a review ran out of turns; the next one goes on from its round, CI permitting.
+  if (why === 'review-incomplete') return onReview([next.action])
 
   if (why === 'changes-requested') {
     // `0028` (c): every open finding is one impl claims needs a person. Only a review may

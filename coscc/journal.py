@@ -455,7 +455,43 @@ class Journal:
             earlier.append(_brief(r))
         earlier.reverse()
 
-        return {"attempt": attempt, "latest": _brief(seq[last]), "earlier": earlier}
+        found = {"attempt": attempt, "latest": _brief(seq[last]), "earlier": earlier}
+        latest = seq[last]
+        # `0085` R11. A review that ran out of turns and whose closing turn wrote nothing left
+        # no round; what it had opened is kept in its events, never in `review.md`. A round
+        # the app wrote later leaves a newer `end`, so this stops being the latest. `closing`
+        # says whether a closing turn ran at all: none does with no session id or no head.
+        if (
+            stage == "review" and latest.get("outcome") == "exhausted"
+            and latest.get("review_md") == "none" and latest.get("run")
+        ):
+            found["opened"] = {**self._opened(str(latest["run"]), timeout), "closing": "closing" in latest}
+        return found
+
+    def _opened(self, run: str, timeout: float | None) -> dict[str, Any]:
+        """The paths `run`'s `tool_use` events named, `{"purged": True}` when its events are
+        gone, or `{"error": ...}`: a reason to show, never one to refuse the step for."""
+        try:
+            row = self.data.step_run(run)
+            if row is None or row.get("purged_at"):
+                return {"purged": True}
+            paths: list[str] = []
+            for event in self.data.step_tool_uses(run, timeout=timeout):
+                given = event.get("input")
+                if isinstance(given, str):
+                    # `events._cut` keeps a long `input` as the start of its JSON.
+                    try:
+                        given = json.loads(given)
+                    except ValueError:
+                        continue
+                if not isinstance(given, dict):
+                    continue
+                path = given.get("file_path") or given.get("path") or given.get("pattern")
+                if isinstance(path, str) and path and path not in paths:
+                    paths.append(path)
+            return {"paths": paths}
+        except Exception as e:  # noqa: BLE001 - `Busy` included: the step still runs
+            return {"error": f"{type(e).__name__}: {e}"}
 
 
 def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:

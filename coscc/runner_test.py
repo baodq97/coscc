@@ -3223,3 +3223,323 @@ class TheStartRecordSaysWhatRanAndWhatWasNamed(unittest.TestCase):
             self.assertNotIn("app_version", start)
             self.assertNotIn("app_commit", start)
             self.assertEqual(start["pointed"], [])
+
+
+# --- `0085`: a review that runs out of turns --------------------------------------------
+
+REVIEW_R1 = (
+    "# Review: x\nSpec: spec.md. Author: t. Status: changes-requested.\n\n"
+    "## Round 1\n\nReviewed: " + "a" * 40 + ". Verdict: changes-requested.\n\n"
+    "### Findings\n\n- F1 [open] a.py:3 — high — x\n"
+)
+
+
+def incomplete_reply(head: str, number: int = 2, verdict: str = "incomplete",
+                     status: str = "draft", sections=("Reviewed so far", "Findings", "What was not reviewed")) -> str:
+    body = "".join(f"### {s}\n\n- {s.lower()}\n\n" for s in sections)
+    return (f"# Review: x\nSpec: spec.md. Author: t. Status: {status}.\n\n"
+            f"## Round {number}\n\nReviewed: {head}. Verdict: {verdict}.\n\n{body}")
+
+
+class AClosingRoundIsCheckedBeforeItIsWritten(unittest.TestCase):
+    """`0085` R4, R5: only an incomplete round, under `draft`, for the head the step ran on."""
+
+    HEAD = "b" * 40
+
+    def problem(self, reply, existing=REVIEW_R1):
+        from coscc.runner import closing_round_problem
+        return closing_round_problem(existing, reply, self.HEAD)
+
+    def test_the_shape_r4_names_is_accepted(self):
+        self.assertIsNone(self.problem(incomplete_reply(self.HEAD)))
+        self.assertIsNone(self.problem("```\n" + incomplete_reply(self.HEAD) + "```\n"))
+        self.assertIsNone(self.problem(incomplete_reply(self.HEAD, number=1), existing=""))
+
+    def test_only_the_round_after_the_last_one_on_disk(self):
+        # Round 5 on one round would be written, and `ship` would call it renumbered for good.
+        self.assertIn("## Round 2", self.problem(incomplete_reply(self.HEAD, number=5)))
+
+    def test_everything_else_is_refused(self):
+        for why, reply in (
+            ("pass", incomplete_reply(self.HEAD, verdict="pass")),
+            ("changes-requested", incomplete_reply(self.HEAD, verdict="changes-requested")),
+            ("a section missing", incomplete_reply(self.HEAD, sections=("Reviewed so far", "Findings"))),
+            ("out of order", incomplete_reply(self.HEAD, sections=("Findings", "Reviewed so far", "What was not reviewed"))),
+            ("header", incomplete_reply(self.HEAD, status="changes-requested")),
+            ("another head", incomplete_reply("c" * 40)),
+            ("two rounds", incomplete_reply(self.HEAD) + "\n" + incomplete_reply(self.HEAD, number=3).split("\n\n", 1)[1]),            ("no round", "# Review: x\nStatus: draft.\n"),
+            ("no status", "Tôi hết lượt."),
+        ):
+            with self.subTest(why=why):
+                self.assertIsNotNone(self.problem(reply))
+
+
+class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
+    """`0085` R2, R4-R7: one more turn on the same session, with no tools, when a review's
+    reply could not be written because it hit its ceiling."""
+
+    class Closes:
+        def __init__(self, first="Tôi hết lượt.", terminal="max_turns", closing=None,
+                     closing_terminal="completed", closing_cost=1.40, raises=None, waits=False,
+                     stop=None):
+            self.calls = []
+            self.first, self.terminal = first, terminal
+            self.closing, self.closing_terminal, self.closing_cost = closing, closing_terminal, closing_cost
+            self.raises, self.waits, self.stop = raises, waits, stop
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            import re
+            self.calls.append({"text": text, "session_id": session_id, "max_turns": max_turns, **kw})
+            if len(self.calls) == 1:
+                if self.stop is not None:
+                    self.stop.stop_requested, self.stop.stopped_by = True, "Lan"
+                yield ("chunk", self.first)
+                yield ("done", {"session_id": "s1", "terminal_reason": self.terminal,
+                                "cost": {"turns": 41, "cost_usd": 1.00}})
+                return
+            if self.raises is not None:
+                raise self.raises
+            if self.waits:
+                await asyncio.Event().wait()
+            head = re.search(r"Reviewed: ([0-9a-f]{40})\. Verdict: incomplete", text).group(1)
+            yield ("chunk", self.closing(head) if self.closing else incomplete_reply(head))
+            yield ("done", {"session_id": "s1", "terminal_reason": self.closing_terminal,
+                            "cost": {"turns": 1, "cost_usd": self.closing_cost}}
+                   if self.closing_terminal else {"session_id": "s1", "cost": {}})
+
+    def run_review(self, sessions, stage="review", git=True, act=None, stop=False):
+        from coscc import steps
+
+        with tempfile.TemporaryDirectory() as ws:
+            tree = _git_repo(Path(ws)) if git else Path(ws)
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tree, capture_output=True,
+                                  text=True).stdout.strip() if git else ""
+            directory = make_unit(Path(ws) / "store", intent_md="Status: accepted.\nI",
+                                  plan_md="Status: accepted.\nP", impl_md="Status: accepted.\nI",
+                                  pr_md="Status: accepted.\nP", review_md=REVIEW_R1)
+            registry = steps.Registry()
+            running = registry.claim(ws, UNIT, stage)
+            if stop:
+                sessions.stop = running
+            journal = Journal(ws, ws)
+            r = Runner(sessions=sessions, journal=journal)
+            artifact = f"{stage}.md"
+
+            async def go():
+                out = []
+
+                async def drive():
+                    async for item in r.run(
+                        workspace=ws, directory=directory, journal_key=ws, unit=UNIT,
+                        stage=stage, artifact=artifact, stages=STAGES, mode="manual",
+                        cwd=str(tree), running=running,
+                    ):
+                        out.append(item)
+
+                running.task = asyncio.create_task(drive())
+                if act is not None:
+                    await act(running, sessions)
+                try:
+                    await running.task
+                except asyncio.CancelledError:
+                    out.append(("cancelled", None))
+                return out
+
+            out = asyncio.run(go())
+            ends = [x for x in journal.records() if x["kind"] == "end"]
+            return out, ends, (directory / "review.md").read_text(encoding="utf-8"), head, running
+
+    def test_a_turn_ceiling_reopens_the_session_once_with_no_tools(self):
+        sessions = self.Closes()
+        out, [end], review, head, running = self.run_review(sessions)
+        self.assertEqual(len(sessions.calls), 2)
+        first, closing = sessions.calls
+        self.assertIsNone(first["session_id"])
+        self.assertIs(first["step"], running.handle)
+        self.assertEqual(closing["session_id"], "s1")
+        self.assertEqual(closing["tools"], [])
+        self.assertEqual(closing["max_turns"], 1)
+        self.assertTrue(callable(closing["can_use_tool"]))
+        self.assertIsNot(closing["step"], running.handle)
+        self.assertIsNone(closing["step"].recorder)
+        self.assertIn(f"Reviewed: {head}. Verdict: incomplete.", closing["text"])
+        self.assertIn("## Round 2", closing["text"])
+        # R4: the round is appended, and everything above it is byte for byte what it was.
+        self.assertTrue(review.startswith("# Review: x\nSpec: spec.md. Author: t. Status: draft."))
+        self.assertIn(REVIEW_R1.split("\n\n", 1)[1].rstrip(), review)
+        self.assertIn(f"## Round 2\n\nReviewed: {head}. Verdict: incomplete.", review)
+        # R6, R7.
+        self.assertEqual(out[-1][1]["outcome"], "exhausted")
+        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "incomplete"))
+        self.assertEqual(end["cost_usd"], 1.4)
+        self.assertEqual(end["closing"], {"terminal": "completed", "turns": 1, "cost_usd": 0.4})
+        self.assertIn("review.md: Round 2 incomplete, written by the closing turn", end["detail"])
+
+    def test_the_closing_turn_denies_every_tool_and_counts_it(self):
+        sessions = self.Closes()
+        self.run_review(sessions)
+        gate = sessions.calls[1]["can_use_tool"]
+        verdict = asyncio.run(gate("Read", {"file_path": "/etc/passwd"}, None))
+        self.assertEqual(type(verdict).__name__, "PermissionResultDeny")
+
+    def test_a_budget_ceiling_on_the_closing_turn_still_writes_a_round(self):
+        # `spike.md ## U2`, point 3: judged on the text, never on how the turn ended.
+        _, [end], review, _, _ = self.run_review(self.Closes(terminal="budget_exhausted",
+                                                             closing_terminal="budget_exhausted"))
+        self.assertEqual(end["review_md"], "incomplete")
+        self.assertEqual(end["closing"]["terminal"], "budget_exhausted")
+        self.assertIn("Verdict: incomplete.", review)
+
+    def test_a_review_that_finished_gets_no_closing_turn(self):
+        sessions = self.Closes(first=incomplete_reply("a" * 40, verdict="pass", status="accepted"),
+                               terminal="success")
+        _, [end], _, _, _ = self.run_review(sessions)
+        self.assertEqual(len(sessions.calls), 1)
+        self.assertEqual((end["outcome"], end["review_md"]), ("done", "round"))
+        self.assertNotIn("closing", end)
+
+    def test_a_stop_gets_no_closing_turn(self):
+        sessions = self.Closes()
+        _, [end], review, _, _ = self.run_review(sessions, stop=True)
+        self.assertEqual(len(sessions.calls), 1)
+        self.assertEqual((end["outcome"], end["review_md"]), ("stopped", "withheld"))
+        self.assertEqual(review, REVIEW_R1)
+
+    def test_another_stage_gets_no_closing_turn(self):
+        sessions = self.Closes()
+        _, [end], _, _, _ = self.run_review(sessions, stage="plan")
+        self.assertEqual(len(sessions.calls), 1)
+        self.assertEqual(end["outcome"], "exhausted")
+        self.assertNotIn("review_md", end)
+        self.assertNotIn("closing", end)
+
+    def test_no_head_gets_no_closing_turn(self):
+        sessions = self.Closes()
+        _, [end], review, _, _ = self.run_review(sessions, git=False)
+        self.assertEqual(len(sessions.calls), 1)
+        self.assertEqual(end["review_md"], "none")
+        self.assertEqual(review, REVIEW_R1)
+
+    def test_a_full_round_from_the_closing_turn_is_not_written(self):
+        sessions = self.Closes(closing=lambda head: incomplete_reply(head, verdict="pass"))
+        _, [end], review, _, _ = self.run_review(sessions)
+        self.assertEqual(review, REVIEW_R1)
+        self.assertEqual(end["review_md"], "none")
+        self.assertIn("closing", end)
+        self.assertIn("does not open with Verdict: incomplete", end["detail"])
+
+    def test_a_closing_turn_that_breaks_still_leaves_an_end(self):
+        sessions = self.Closes(raises=RuntimeError("the CLI died"))
+        _, [end], review, _, _ = self.run_review(sessions)
+        self.assertEqual(review, REVIEW_R1)
+        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "none"))
+        self.assertTrue(end["closing"]["cost_unknown"])
+        self.assertEqual(end["cost_usd"], 1.0)
+
+    def test_a_closing_turn_with_no_result_keeps_the_main_cost(self):
+        _, [end], _, _, _ = self.run_review(self.Closes(closing_terminal=""))
+        self.assertEqual(end["review_md"], "incomplete")
+        self.assertEqual(end["closing"], {"cost_unknown": True})
+        self.assertEqual(end["cost_usd"], 1.0)
+
+    def test_a_closing_turn_that_hangs_is_cut_at_the_timeout(self):
+        with mock.patch("coscc.runner.CLOSING_TIMEOUT", 0.05):
+            _, [end], review, _, _ = self.run_review(self.Closes(waits=True))
+        self.assertEqual(end["review_md"], "none")
+        self.assertTrue(end["closing"]["cost_unknown"])
+        self.assertEqual(review, REVIEW_R1)
+
+    def test_the_app_going_down_during_the_closing_turn_writes_no_end(self):
+        async def cancel_in_closing(running, sessions):
+            while len(sessions.calls) < 2:
+                await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            running.task.cancel()
+
+        out, ends, review, _, _ = self.run_review(self.Closes(waits=True), act=cancel_in_closing)
+        self.assertEqual(out[-1], ("cancelled", None))
+        self.assertEqual(ends, [])
+        self.assertEqual(review, REVIEW_R1)
+
+
+class TheNextReviewGoesOnFromAnIncompleteRound(unittest.TestCase):
+    """`0085` R10."""
+
+    def prompt(self, review):
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP",
+                                  impl_md="Status: accepted.\nI", pr_md="Status: accepted.\nP", review_md=review)
+            prompt, included, _ = compose_prompt(d, directory, UNIT, "review", STAGES, "review.md",
+                                                 head="b" * 40)
+            return prompt, included, directory
+
+    def test_an_incomplete_last_round_is_carried_verbatim(self):
+        incomplete = incomplete_reply("b" * 40).split("\n\n", 1)[1]
+        prompt, included, _ = self.prompt(REVIEW_R1.replace("changes-requested.\n\n", "draft.\n\n", 1) + "\n" + incomplete)
+        self.assertIn("review-incomplete", included)
+        block = prompt.split("# The incomplete round\n\n")[1].split("\n\n---\n\n")[0]
+        self.assertIn(incomplete[incomplete.index("### Reviewed so far"):].rstrip(), block)
+        self.assertIn("write Round 3 as a full round", block)
+        self.assertIn("Never write `Verdict: incomplete` yourself", block)
+        # The last full round's open findings come with it.
+        self.assertIn("The findings Round 1, the last full round, left open", block)
+        self.assertIn("- F1 [open] a.py:3 — high — x", block)
+
+    def test_an_incomplete_first_round_has_no_full_round_to_carry(self):
+        only = "# Review: x\nStatus: draft.\n\n" + incomplete_reply("b" * 40, number=1).split("\n\n", 1)[1]
+        prompt, included, _ = self.prompt(only)
+        self.assertIn("review-incomplete", included)
+        self.assertNotIn("the last full round", prompt)
+
+    def test_any_other_last_round_adds_nothing(self):
+        prompt, included, _ = self.prompt(REVIEW_R1)
+        self.assertNotIn("review-incomplete", included)
+        self.assertNotIn("# The incomplete round", prompt)
+
+    def test_the_unit_files_it_names_can_still_be_read(self):
+        incomplete = incomplete_reply("b" * 40).split("\n\n", 1)[1]
+        with tempfile.TemporaryDirectory() as d:
+            directory = _golden_unit(Path(d) / "store")
+            (directory / "review.md").write_text(REVIEW_R1 + "\n" + incomplete, encoding="utf-8")
+            tree = Path(d) / "worktree"
+            tree.mkdir()
+            grant = policy.grant_for_step("review", "routine")
+            prompt, included, _ = compose_prompt(str(tree), directory, UNIT, "review", STAGES, "review.md")
+            self.assertIn("review-incomplete", included)
+            block = prompt.split("# The unit's files\n\n")[1].split("\n\n")[0]
+            for line in block.splitlines():
+                p = line[2:].removesuffix(" (above)")
+                self.assertEqual(decide(grant, "Read", {"file_path": p}, str(tree), str(directory)), "", p)
+
+
+class ThePromptSaysWhatAReviewThatWroteNothingOpened(unittest.TestCase):
+    """`0085` R11, as `describe_attempt` renders it."""
+
+    LATEST = {"at": "t0", "outcome": "exhausted", "turns": 41, "cost_usd": 4.1}
+
+    def render(self, opened):
+        return describe_attempt({"attempt": None, "latest": self.LATEST, "earlier": [], "opened": opened})
+
+    def test_the_paths_are_listed_as_opened_not_reviewed(self):
+        text = self.render({"paths": ["/w/coscc/x.py", "/w/coscc/y.py"], "closing": True})
+        self.assertIn("- /w/coscc/x.py", text)
+        self.assertIn("- /w/coscc/y.py", text)
+        self.assertIn("no conclusion about any of them was written", text)
+        self.assertIn("the closing turn the app gave it wrote no round", text)
+        self.assertIn("`review.md` holds nothing from it", text)
+
+    def test_a_closing_turn_that_never_ran_is_not_told_of(self):
+        # Review F2: no session id or no head, so the app gave it none.
+        text = self.render({"paths": ["/w/coscc/x.py"], "closing": False})
+        self.assertNotIn("the closing turn the app gave it", text)
+        self.assertIn("the app could not give it a closing turn", text)
+
+    def test_purged_events_are_said_to_be_purged(self):
+        self.assertIn("its recorded events have been purged", self.render({"purged": True}))
+
+    def test_an_unreadable_log_is_said_to_be_unreadable(self):
+        self.assertIn("could not be read from its events: Busy: locked", self.render({"error": "Busy: locked"}))
+
+    def test_no_opened_key_adds_nothing(self):
+        text = describe_attempt({"attempt": None, "latest": self.LATEST, "earlier": []})
+        self.assertNotIn("closing turn", text)

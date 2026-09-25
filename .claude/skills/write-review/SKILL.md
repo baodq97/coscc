@@ -46,6 +46,16 @@ rewritten or removed.
 5. If every finding not closed is one that does not block: `Verdict: pass`, header
    `Status: accepted`. That is what opens `ship`.
 
+**A round the app wrote as `incomplete`.** Since `0085`, a review run from the board that
+hits its turn or budget ceiling before its reply is written gets one closing turn with no
+tools, and the app writes what it says as a round with `Verdict: incomplete` under
+`Status: draft`: `### Reviewed so far`, `### Findings`, `### What was not reviewed`. That
+round asks for another review, not for a fix, and is never counted against
+`COS_REVIEW_ROUNDS`. When the last round is one, read its *What was not reviewed* first,
+then write round N+1 as a full round for the head you are handed now, carrying forward
+every finding of the incomplete round and of every earlier one. Never write
+`Verdict: incomplete` yourself: only the app's closing turn does.
+
 **Severity, and what blocks.** Since `0061` every finding carries `high`, `medium` or
 `low` between two em dashes (`—`, U+2014) right after its location:
 `- F2 [open] path/to/file.py:40 — low — what`. `cos.mjs` reads only that token. A hyphen,
@@ -196,7 +206,8 @@ Taken at: <the manifest's head>. Standard: .claude/rules/ui-standard.md. Looked 
    outside `.cos/<unit>/` closes the gate, because nobody reviewed it. `needs-person` only
    when every blocking finding not closed is `[needs-person]`; a round that says so while
    a blocking one is `[open]`, `[claim-rejected]` or unbacked `[answered]` is read as
-   `changes-requested`.
+   `changes-requested`. `cos.mjs` also reads `incomplete`, which only the app's closing
+   turn writes (*The loop*); a review session never does.
 2. **Rounds are numbered 1, 2, 3… with no gap.** A renumbered history is refused.
 3. **Every finding is one line under `### Findings`: `- F<k>` and one of five labels —
    `[open]`, `[fixed <sha>]`, `[needs-person]`, `[claim-rejected]`, `[answered]` — then
