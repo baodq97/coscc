@@ -247,6 +247,66 @@ class Unit:
 
 
 @dataclasses.dataclass
+class Card:
+    """`0053` R7. One card: only what a card, a List row, *Pick up where you left off*, a
+    Usage row and the command palette draw. The page receives this list once; the whole
+    `Unit` of the one unit open is `current_unit`, and every other `Unit` stays on the server
+    (`_full`). Each field is copied from that `Unit` by `_card`."""
+
+    id: str = ""
+    title: str = ""
+    summary: str = ""
+    lane: str = ""
+    stage: str = ""
+    color: str = "gray"
+    mode: str = "manual"
+    owner: str = "You"
+    progress: int = 0
+    tokens: str = ""
+    usd: str = ""
+    token_count: int = 0
+    # The card shows a badge, not the text; the text is the dialog's (`current_unit`).
+    has_problem: bool = False
+    open_questions: int = 0
+    integration_state: str = ""
+    integrate_button: bool = False
+    outcome_text: str = ""
+    outcome_color: str = "gray"
+    hold_state: str = ""
+    shortlist_rank: int = 0
+    relations_text: str = ""
+    live: list[Activity] = dataclasses.field(default_factory=list)
+
+
+def _card(u: Unit) -> Card:
+    """`0053`. A `Unit` as its card. Copies; decides nothing."""
+    return Card(
+        id=u.id, title=u.title, summary=u.summary, lane=u.lane, stage=u.stage, color=u.color,
+        mode=u.mode, owner=u.owner, progress=u.progress, tokens=u.tokens, usd=u.usd,
+        token_count=u.token_count, has_problem=u.problems != "", open_questions=u.open_questions,
+        integration_state=u.integration_state, integrate_button=u.integrate_button,
+        outcome_text=u.outcome_text, outcome_color=u.outcome_color, hold_state=u.hold_state,
+        shortlist_rank=u.shortlist_rank, relations_text=u.relations_text, live=list(u.live),
+    )
+
+
+@dataclasses.dataclass
+class UsageRow:
+    """`0053` R11. One line of *Usage by work unit*."""
+
+    id: str = ""
+    title: str = ""
+    tokens: str = ""
+    usd: str = ""
+    token_count: int = 0
+
+
+# `0053` R10. A chat message longer than this many characters is sent cut to it, with a
+# button to fetch the rest. Chosen, not measured; `spec.md ## Answers, câu 1` accepted it.
+MESSAGE_CUT = 4000
+
+
+@dataclasses.dataclass
 class BacklogRow:
     """`0074`. One line of the Backlog panel, copied from `Service.board`'s `backlog`."""
 
@@ -492,6 +552,8 @@ def _integration_fields(info: dict | None) -> dict:
 class Message:
     role: str = ""
     text: str = ""
+    # `0053` R10. How many characters of `text` were not sent, 0 when it is whole.
+    cut: int = 0
 
 
 @dataclasses.dataclass
@@ -849,7 +911,16 @@ class StudioState(rx.State):
 
     # -- board
     stages: list[str] = []
-    units: list[Unit] = []
+    # `0053`. Every unit of the last board read, whole, keyed by id in board order. Backend
+    # only: the page gets `cards` and, for the one unit open, `current_unit`. Always
+    # assigned a new dict, never changed in place (`spike.md ## U3` measured only that).
+    _full: dict[str, Unit] = {}
+    # `0053` R7, R8. The one list of cards the page receives; lanes, List, Dropped, the
+    # palette and Overview all filter it on the page.
+    cards: list[Card] = []
+    # `0053` R7. The open unit, whole, copied from `_full` by `_set_current` — never by a
+    # computed var walking a list the page would then receive too.
+    current_unit: Unit = Unit()
     board_note: str = ""
     # Set only when the board is empty (`0001_product-describes-a-state-it-is-not-in` R6):
     # the store the board read, the host repository, and how many units the host's own
@@ -872,11 +943,12 @@ class StudioState(rx.State):
     starting: bool = False
     branch: str = ""
     # `0017`. Per unit: where its worktree is and what preparing it said, as one line.
-    trees: dict[str, str] = {}
+    # Backend only since `0053`: the page reads the open unit's line, `unit_tree`.
+    _trees: dict[str, str] = {}
 
     @rx.var
     def unit_tree(self) -> str:
-        return self.trees.get(self.unit_id, "")
+        return self._trees.get(self.unit_id, "")
 
     # -- one unit
     unit_id: str = ""
@@ -1010,7 +1082,13 @@ class StudioState(rx.State):
     # -- sessions
     conversations: list[Conversation] = []
     session_id: str = ""
+    # `0053` R10. What the page shows: each message of `_history`, in the same order, cut
+    # to `MESSAGE_CUT` characters; `open_message` puts one back whole.
     messages: list[Message] = []
+    _history: list[Message] = []
+    # `0053` R9. The workspace the conversation list was last read for, `""` when none:
+    # Sessions reads it on arrival only when this differs from `cwd`.
+    _sessions_cwd: str = ""
     prompt: str = ""
     sending: bool = False
 
@@ -1067,55 +1145,53 @@ class StudioState(rx.State):
             return self.workspaces
         return [w for w in self.workspaces if q in w.name.lower() or q in w.label.lower()]
 
+    # `0053` R8. The lanes, the List, Dropped, the palette and Overview each filter `cards`
+    # on the page by one of the lists of ids below: a list of cards per lane would send
+    # every card again (`spike.md ## U2`). Order is always `cards`' order.
+
     @rx.var
-    def visible_units(self) -> list[Unit]:
+    def shown_ids(self) -> list[str]:
         q = self.query.strip().lower()
         # `0045` (`spec.md ## Answers, câu 1`). A dropped unit leaves the four lanes for the
         # collapsed group at the foot of the board; a paused one stays in its lane.
-        rows = [u for u in self.units if u.hold_state != "dropped"]
+        rows = [c for c in self.cards if c.hold_state != "dropped"]
         if q:
-            rows = [u for u in rows if q in u.id.lower() or q in u.title.lower()]
+            rows = [c for c in rows if q in c.id.lower() or q in c.title.lower()]
         if self.focus == "Autonomous":
-            rows = [u for u in rows if u.mode == "autonomous"]
+            rows = [c for c in rows if c.mode == "autonomous"]
         elif self.focus == "Needs review":
-            rows = [u for u in rows if u.needs_attention]
-        return rows
+            # `Unit.needs_attention` is set from exactly this (`_load_board`).
+            rows = [c for c in rows if c.lane == "Needs review"]
+        return [c.id for c in rows]
 
     @rx.var
-    def planned(self) -> list[Unit]:
-        return [u for u in self.visible_units if u.lane == "Planned"]
+    def lane_counts(self) -> dict[str, int]:
+        """How many shown cards each lane holds, for its count and its *Nothing here*."""
+        shown = set(self.shown_ids)
+        counts = {name: 0 for name in LANE_COLOR}
+        for c in self.cards:
+            if c.id in shown:
+                counts[c.lane] = counts.get(c.lane, 0) + 1
+        return counts
 
     @rx.var
-    def in_progress(self) -> list[Unit]:
-        return [u for u in self.visible_units if u.lane == "In progress"]
-
-    @rx.var
-    def needs_review(self) -> list[Unit]:
-        return [u for u in self.visible_units if u.lane == "Needs review"]
-
-    @rx.var
-    def complete(self) -> list[Unit]:
-        return [u for u in self.visible_units if u.lane == "Complete"]
+    def resume_id(self) -> str:
+        """*Pick up where you left off*: the first shown card in progress, `""` if none."""
+        shown = set(self.shown_ids)
+        return next((c.id for c in self.cards if c.id in shown and c.lane == "In progress"), "")
 
     @rx.var
     def active_count(self) -> int:
-        return len([u for u in self.units if u.lane == "In progress"])
+        return len([c for c in self.cards if c.lane == "In progress"])
 
     @rx.var
     def attention_count(self) -> int:
-        return len([u for u in self.units if u.needs_attention and u.hold_state != "dropped"])
+        return len([c for c in self.cards if c.lane == "Needs review" and c.hold_state != "dropped"])
 
     @rx.var
-    def dropped_units(self) -> list[Unit]:
-        """`0045`. The units `cos.mjs` reads as dropped, for the collapsed group."""
-        return [u for u in self.units if u.hold_state == "dropped"]
-
-    @rx.var
-    def current_unit(self) -> Unit:
-        for u in self.units:
-            if u.id == self.unit_id:
-                return u
-        return Unit()
+    def dropped_count(self) -> int:
+        """`0045`. How many units `cos.mjs` reads as dropped, for the collapsed group."""
+        return len([c for c in self.cards if c.hold_state == "dropped"])
 
     @rx.var
     def ws_name(self) -> str:
@@ -1126,12 +1202,12 @@ class StudioState(rx.State):
     def unit_missing(self) -> bool:
         """`0056` R9. An address named a unit this workspace's board does not list."""
         return (self.unit_id != "" and not self.loading
-                and not any(u.id == self.unit_id for u in self.units))
+                and not any(c.id == self.unit_id for c in self.cards))
 
     @rx.var
     def unit_dropped(self) -> bool:
         """`0056` R11. The open unit is dropped, so the dialog offers nothing that writes."""
-        return any(u.id == self.unit_id and u.hold_state == "dropped" for u in self.units)
+        return self.current_unit.hold_state == "dropped"
 
     @rx.var
     def board_href(self) -> str:
@@ -1165,20 +1241,24 @@ class StudioState(rx.State):
         return self.run_log != "" and self.log_unit == self.unit_id
 
     @rx.var
-    def command_units(self) -> list[Unit]:
+    def command_ids(self) -> list[str]:
         q = self.command_query.strip().lower()
         if not q:
-            return self.units[:5]
-        return [u for u in self.units if q in u.title.lower() or q in u.id.lower()][:6]
+            return [c.id for c in self.cards[:5]]
+        return [c.id for c in self.cards if q in c.title.lower() or q in c.id.lower()][:6]
 
     @rx.var
-    def usage_rows(self) -> list[Unit]:
-        return [u for u in self.units if u.token_count > 0]
+    def usage_rows(self) -> list[UsageRow]:
+        """`0053` R11. Only while *Activity & usage* is shown; nothing elsewhere."""
+        if self.screen != "activity":
+            return []
+        return [UsageRow(id=c.id, title=c.title, tokens=c.tokens, usd=c.usd,
+                         token_count=c.token_count) for c in self.cards if c.token_count > 0]
 
     @rx.var
     def usage_scale(self) -> int:
         """The bar scale, taken from the largest real value rather than from a guess."""
-        return max([u.token_count for u in self.units] + [1])
+        return max([c.token_count for c in self.cards] + [1])
 
     # -- plumbing ------------------------------------------------------------
 
@@ -1269,8 +1349,15 @@ class StudioState(rx.State):
         except Invalid:
             self.running_steps = []
 
+    def _set_current(self) -> None:
+        """`0053`. `current_unit` from `_full` for `unit_id`: its own copy, so nothing shares
+        an object with `_full`. Called wherever either of the two changes."""
+        found = self.get_value("_full").get(self.unit_id)
+        self.current_unit = dataclasses.replace(found) if found is not None else Unit()
+
     async def _load_board(self) -> None:
-        self.units, self.stages, self.board_note = [], [], ""
+        self._full, self.cards, self.stages, self.board_note = {}, [], [], ""
+        self._set_current()
         self.empty_store, self.empty_host, self.empty_host_units = "", "", 0
         self.branch = ""
         self._load_running()
@@ -1292,7 +1379,7 @@ class StudioState(rx.State):
         for name, value in backlog_view(data).items():
             setattr(self, name, value)
         self._backlog_history = dict((data.get("backlog") or {}).get("history") or {})
-        self.trees = {
+        self._trees = {
             u["name"]: tree_line(u.get("worktree")) for u in data.get("units") or []
         }
         self.recording = bool(data["recording"])
@@ -1362,18 +1449,32 @@ class StudioState(rx.State):
                     relations_text=_relations_text((u.get("backlog") or {}).get("relations")),
                 )
             )
-        self.units = units
+        self._full = {u.id: u for u in units}
+        self.cards = [_card(u) for u in units]
+        self._set_current()
 
     def _apply_running(self, read: dict) -> None:
-        """`0051` R3. Put one `Service.running` answer on every card. Decides nothing."""
+        """`0051` R3. Put one `Service.running` answer on every card. Decides nothing.
+
+        `0053` C4: the cards are sent again only when a card's `live` changed, and the open
+        unit only when its own did — an ask that changes nothing sends neither."""
         self._running_read = read
-        for unit in self.units:
-            unit.live = _activities(unit.id, read)
-        # Reflex sends a list whose items were changed in place only if the list is set.
-        self.units = list(self.units)
+        full, moved = {}, set()
+        for key, unit in self.get_value("_full").items():
+            live = _activities(key, read)
+            if live != unit.live:
+                unit = dataclasses.replace(unit, live=live)
+                moved.add(key)
+            full[key] = unit
+        if not moved:
+            return
+        self._full = full
+        self.cards = [_card(u) for u in full.values()]
+        if self.unit_id in moved:
+            self._set_current()
 
     def _load_sessions(self) -> None:
-        self.conversations, self.messages = [], []
+        self.conversations, self.messages, self._history = [], [], []
         if not self.cwd:
             self.session_id = ""
             return
@@ -1382,6 +1483,7 @@ class StudioState(rx.State):
         except Invalid as e:
             self._fail(e)
             return
+        self._sessions_cwd = self.cwd
         rows = [
             Conversation(
                 id=row["session_id"],
@@ -1406,7 +1508,7 @@ class StudioState(rx.State):
 
     def _load_history(self) -> None:
         if not (self.cwd and self.session_id):
-            self.messages = []
+            self.messages, self._history = [], []
             return
         try:
             data = SERVICE.history(self.cwd, self.session_id)
@@ -1423,7 +1525,11 @@ class StudioState(rx.State):
         # and this app keeps no other copy of it.
         if not rows and self.messages:
             return
-        self.messages = rows
+        self._history = rows
+        self.messages = [
+            Message(role=m.role, text=m.text[:MESSAGE_CUT], cut=max(len(m.text) - MESSAGE_CUT, 0))
+            for m in rows
+        ]
 
     def _load_activity(self) -> None:
         self.events = []
@@ -1531,7 +1637,7 @@ class StudioState(rx.State):
     async def _load_rest(self) -> None:
         await self._load_models()
         await self._load_board()
-        self._load_sessions()
+        # `0053` R9: no Sessions here. `arrive` reads them when Sessions is where it lands.
         self._load_activity()
         self._load_update()
 
@@ -1582,6 +1688,8 @@ class StudioState(rx.State):
             self._watch_reset("", "", "")
         if first:
             self.loading, self.error = True, ""
+            # `0053` R9. A new page reads Sessions again when it gets there, as before.
+            self._sessions_cwd = ""
             yield
             self._load_base()
 
@@ -1613,13 +1721,14 @@ class StudioState(rx.State):
             self.mobile_open = self.command_open = False
         if moved_ws and not first:
             self.session_id, self.query, self.error = "", "", ""
-        # While a workspace's board is read, `units` is still the last one's: a dialog open
+        # While a workspace's board is read, `cards` is still the last one's: a dialog open
         # over it would show that list's unit, or "not a unit", under this workspace's name.
         # So the unit opens once its own board is in (`0056` review round 1, F1).
         reading = first or moved_ws
         self.unit_id, self.detail_tab = ("", "overview") if reading else (unit, tab)
+        self._set_current()
         if reading:
-            # `_load_board` empties `units` before its first await: a read cut short there
+            # `_load_board` empties `cards` before its first await: a read cut short there
             # must leave nothing recorded as read, or going back finds no move and an empty
             # board (`0056` review round 2, F5).
             self._read_cwd = self._read_unit = ""
@@ -1639,12 +1748,18 @@ class StudioState(rx.State):
                 self._running_read = {}
             yield
             await self._load_board()
-            self._load_sessions()
+            # `0053` R9. What Sessions showed was the last workspace's; it is read again
+            # only if Sessions is where this arrival lands, just below.
+            self.conversations, self.messages, self._history = [], [], []
+            self._sessions_cwd = ""
             self._load_activity()
         elif (moved_unit and not unit) or (moved_screen and not moved_unit):
             self._load_update()
+        if self.screen == "sessions" and self._sessions_cwd != cwd:
+            self._load_sessions()
         self._read_cwd = cwd
         self.unit_id, self.detail_tab = unit, tab
+        self._set_current()
         # A unit is read after whatever the arrival read, which R16 does not list: a pasted
         # link or a reload at `/unit` would otherwise open a dialog with no timeline or
         # artifact (R4, R5). None of it calls `SERVICE.board` (R17).
@@ -2592,7 +2707,7 @@ class StudioState(rx.State):
             said += (f" Preparing it failed: `{prepared.get('command')}` exited "
                      f"{prepared.get('exit_code')} — impl will not run until it succeeds.")
         self.notice = said
-        self.trees = {**self.trees, self.unit_id: tree_line(
+        self._trees = {**self._trees, self.unit_id: tree_line(
             {"path": cut["worktree"], "branch": cut["branch"], "prepare": prepared})}
 
     async def set_mode(self, value: str | list[str]):
@@ -2693,9 +2808,22 @@ class StudioState(rx.State):
             self.notice = "Choose a workspace first."
             return
         self.session_id = ""
-        self.messages = []
+        self.messages, self._history = [], []
         self.prompt = ""
         self.notice = "New conversation. It is saved once you send the first message."
+
+    @rx.event
+    def open_message(self, index: int):
+        """`0053` R10. Show one cut message whole, from the copy `_load_history` kept.
+
+        Messages `send` adds are never cut and come after every message of `_history`, so
+        an index into `messages` below its length is the same message there."""
+        full = self.get_value("_history")
+        shown = list(self.get_value("messages"))
+        if not (0 <= index < len(full) and index < len(shown)):
+            return
+        shown[index] = Message(role=full[index].role, text=full[index].text, cut=0)
+        self.messages = shown
 
     @rx.event
     def set_prompt(self, value: str):

@@ -158,7 +158,7 @@ class Page:
             s = await root.get_state(self.studio)
             return {
                 "cwd": s.cwd, "screen": s.screen, "error": s.error,
-                "cards": {u.id: [(a.label, a.stage, a.agent) for a in u.live] for u in s.units},
+                "cards": {u.id: [(a.label, a.stage, a.agent) for a in u.live] for u in s.cards},
             }
 
 

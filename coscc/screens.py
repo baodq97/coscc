@@ -37,13 +37,13 @@ from coscc.state import (
     Event,
     GrantRow,
     Knob,
+    Card,
     ModelRow,
     Message,
     Question,
     Round,
     Run,
     StudioState,
-    Unit,
     WatchEvent,
     Workspace,
 )
@@ -337,8 +337,9 @@ def _overview() -> rx.Component:
             s.panel(
                 s.section_head("Pick up where you left off", s.badge("IN MOTION", "iris")),
                 rx.cond(
-                    P.in_progress.length() > 0,
-                    rx.foreach(P.in_progress[:1], lambda u: rx.vstack(
+                    P.resume_id != "",
+                    # `0053` R8: the one card `resume_id` names, picked out of `cards`.
+                    rx.foreach(P.cards, lambda u: rx.cond(u.id == P.resume_id, rx.vstack(
                         s.text(u.id, size="1", font_family="ui-monospace, monospace"),
                         rx.heading(u.title, size="6", weight="medium", letter_spacing="-0.025em"),
                         s.text("Next: " + u.summary, max_width="460px", line_height="1.75"),
@@ -355,7 +356,7 @@ def _overview() -> rx.Component:
                             s.badge(u.mode, "gray"), width="100%", margin_top="12px", wrap="wrap",
                         ),
                         spacing="3", width="100%", align="start",
-                    )),
+                    ), rx.fragment())),
                     s.text("Nothing is in progress in this workspace."),
                 ),
                 background=f"linear-gradient(135deg, {rx.color('iris', 2)}, {s.SURFACE})",
@@ -536,7 +537,7 @@ def _activity_body(line: rx.Var[Activity], watchable: bool = False) -> rx.Compon
     )
 
 
-def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
+def _unit_card(unit: rx.Var[Card]) -> rx.Component:
     return rx.el.button(
         rx.hstack(
             s.text(unit.id, size="1", font_family="ui-monospace, monospace"),
@@ -551,7 +552,7 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
                display=rx.cond(P.density == "compact", "none", "block")),
         rx.hstack(
             s.badge(unit.stage, unit.color),
-            rx.cond(unit.problems != "", s.badge("problem", "red")),
+            rx.cond(unit.has_problem, s.badge("problem", "red")),
             # `0016` R8. A number, not a lane: an open question does not stop the loop.
             rx.cond(unit.open_questions > 0,
                     s.badge(unit.open_questions.to_string() + " waiting on you", "amber")),
@@ -591,16 +592,20 @@ def _unit_card(unit: rx.Var[Unit]) -> rx.Component:
     )
 
 
-def _lane(title: str, items, color: str) -> rx.Component:
+def _lane(title: str, color: str) -> rx.Component:
+    count = P.lane_counts[title]
     return rx.vstack(
         rx.hstack(
             rx.box(width="7px", height="7px", border_radius="50%", background=rx.color(color, 9)),
             rx.text(title, size="2", weight="medium"),
-            s.text(items.length().to_string(), size="1"),
+            s.text(count.to_string(), size="1"),
             rx.spacer(), width="100%", align="center", padding="2px 4px 8px",
         ),
-        rx.foreach(items, _unit_card),
-        rx.cond(items.length() == 0,
+        # `0053` R8: every lane walks the one `cards` list and draws its own shown ones
+        # (`spike.md ## U2`), so no card reaches the page twice.
+        rx.foreach(P.cards, lambda c: rx.cond(
+            (c.lane == title) & P.shown_ids.contains(c.id), _unit_card(c), rx.fragment())),
+        rx.cond(count == 0,
                 rx.center(s.text("Nothing here", size="1", text_align="center"),
                           padding="26px 10px", border=f"1px dashed {s.LINE}",
                           border_radius="10px", width="100%")),
@@ -890,29 +895,24 @@ def _board() -> rx.Component:
             width="100%", align="center", gap="12px", wrap="wrap",
         ),
         rx.cond(
-            P.units.length() == 0,
+            P.cards.length() == 0,
             _empty_board(),
             rx.cond(
-                P.visible_units.length() == 0,
+                P.shown_ids.length() == 0,
                 s.panel(rx.heading("No matching work", size="4"),
                         s.text("Try a different search or choose All work.", margin_top="8px")),
                 rx.cond(
                     P.board_view == "Board",
                     rx.grid(
                         *(
-                            _lane(name, units, LANE_COLOR[name])
-                            for name, units in (
-                                ("Planned", P.planned),
-                                ("In progress", P.in_progress),
-                                ("Needs review", P.needs_review),
-                                ("Complete", P.complete),
-                            )
+                            _lane(name, LANE_COLOR[name])
+                            for name in ("Planned", "In progress", "Needs review", "Complete")
                         ),
                         columns=rx.breakpoints(initial="1", sm="2", lg="4"),
                         gap="12px", width="100%", align_items="start", id="board-grid",
                     ),
                     s.panel(
-                        rx.foreach(P.visible_units, lambda u: rx.button(
+                        rx.foreach(P.cards, lambda u: rx.cond(P.shown_ids.contains(u.id), rx.button(
                             s.text(u.id, size="1", min_width="110px",
                                    font_family="ui-monospace, monospace"),
                             rx.text(u.title, size="2", weight="medium", text_align="left"),
@@ -920,7 +920,7 @@ def _board() -> rx.Component:
                             on_click=P.open_unit(u.id), variant="ghost", color_scheme="gray",
                             width="100%", height="auto", padding="15px 8px", flex_wrap="wrap",
                             justify_content="flex-start", border_bottom=f"1px solid {s.LINE}",
-                        )),
+                        ), rx.fragment())),
                         id="board-list",
                     ),
                 ),
@@ -940,7 +940,7 @@ def _board() -> rx.Component:
 # --- sessions ----------------------------------------------------------------
 
 
-def _message(message: rx.Var[Message]) -> rx.Component:
+def _message(message: rx.Var[Message], index: rx.Var[int]) -> rx.Component:
     is_user = message.role == "user"
     return rx.hstack(
         s.mark(rx.cond(is_user, "ME", "AI"), "gray", "30px"),
@@ -948,6 +948,16 @@ def _message(message: rx.Var[Message]) -> rx.Component:
             rx.text(rx.cond(is_user, "You", "Claude"), size="2", weight="medium"),
             rx.text(message.text, size="2", white_space="pre-wrap", line_height="1.9",
                     overflow_wrap="anywhere"),
+            # `0053` R10. The rest of a long message comes down only when asked for.
+            rx.cond(
+                message.cut > 0,
+                rx.hstack(
+                    s.text("… " + message.cut.to_string() + " more characters", size="1"),
+                    rx.button("Show full message", on_click=P.open_message(index),
+                              size="1", variant="soft", data_testid="message-open"),
+                    spacing="3", align="center", wrap="wrap",
+                ),
+            ),
             spacing="2", width="100%", min_width="0",
         ),
         width="100%", align="start", spacing="3", padding="18px 0",
@@ -1001,7 +1011,7 @@ def _sessions() -> rx.Component:
                     border_bottom=f"1px solid {s.LINE}", wrap="wrap",
                 ),
                 rx.box(
-                    rx.foreach(P.messages, _message),
+                    rx.foreach(P.messages, lambda m, i: _message(m, i)),
                     rx.cond(P.messages.length() == 0,
                             s.text("Say something to start. The session is created on the "
                                    "first message and saved by the SDK, not by this app.")),
@@ -1658,14 +1668,15 @@ def _backlog_panel() -> rx.Component:
 def _dropped_group() -> rx.Component:
     """`0045` (`spec.md ## Answers, câu 1`). Dropped units, collapsed at the foot of the board."""
     return rx.cond(
-        P.dropped_units.length() > 0,
+        P.dropped_count > 0,
         rx.el.details(
             rx.el.summary(
-                s.text("Dropped (" + P.dropped_units.length().to_string() + ")", size="2"),
+                s.text("Dropped (" + P.dropped_count.to_string() + ")", size="2"),
                 cursor="pointer",
             ),
             rx.grid(
-                rx.foreach(P.dropped_units, _unit_card),
+                rx.foreach(P.cards, lambda c: rx.cond(
+                    c.hold_state == "dropped", _unit_card(c), rx.fragment())),
                 columns=rx.breakpoints(initial="1", sm="2", lg="4"),
                 gap="12px", width="100%", margin_top="12px",
             ),
@@ -2231,12 +2242,12 @@ def _command_dialog() -> rx.Component:
                                   justify_content="flex-start"),
                     ) for key, label, icon in NAVIGATION
                 ],
-                rx.foreach(P.command_units, lambda u: rx.button(
+                rx.foreach(P.cards, lambda u: rx.cond(P.command_ids.contains(u.id), rx.button(
                     rx.icon("file-text", size=16), u.title, on_click=P.open_unit(u.id),
                     variant="ghost", color_scheme="gray", width="100%",
                     justify_content="flex-start", height="auto", padding="10px",
                     white_space="normal",
-                )),
+                ), rx.fragment())),
                 spacing="2", width="100%",
             ),
             rx.dialog.close(rx.button("Close", variant="soft", color_scheme="gray",
