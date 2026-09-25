@@ -385,7 +385,20 @@ GRANTS: dict[str, Grant] = {
         max_budget_usd=1.0,
         warning=PRECEDENT_WARNING,
     ),
+    # `0090`. Not a stage either: one batch of `coscc knowledge gather`, a command run at a
+    # terminal that no route, button or autopilot starts (`spec.md` R9). No tools, no
+    # commands, one turn; the app checks the reply and writes the store (`coscc/gather.py`).
+    # $2.00 is chosen, not measured: nobody has measured a batch of 64 KiB of sources, and
+    # the CLI checks it after the turn has run (`0085` `spike.md ## U2`), so a batch can pass it.
+    "knowledge": Grant(
+        max_turns=1,
+        max_budget_usd=2.0,
+    ),
 }
+
+# `0090` spec, *Design*: no screen changes. The grants of commands run only at a terminal,
+# which `Service.settings` leaves off the page's list of what the board's steps may use.
+TERMINAL_ONLY = frozenset({"knowledge"})
 
 # `0062`. The ceilings a step gets when its plan's label is `novel` (`coscc/labels.py`),
 # as `(max_turns, max_budget_usd)`; everything else about the grant stays the stage's own.

@@ -32,6 +32,7 @@ from coscc import gitops, harness, instructions, steps
 from coscc.integrate import check_started_by
 from coscc import sessions as sessions_mod
 from coscc.journal import Journal
+from coscc.knowledge import STAGES as KNOWLEDGE_STAGES
 from coscc.policy import Grant, beyond_reading, decide, grant_for_step, is_prose_stage
 from coscc.sessions import Refused, Sessions
 
@@ -200,6 +201,16 @@ JERA_ADVICE = (
     "same question from a person replaces it."
 )
 
+# `0090` R3, spec Design 1. The same words after every section of the store, so a test can
+# look for one fixed string.
+KNOWLEDGE_ADVICE = (
+    "Each entry above is what an earlier unit measured, with its source and the date it was "
+    "measured: a measurement, not a guarantee. When you rely on one, cite it as "
+    "`knowledge K<n>` instead of measuring it again. When the work in front of you "
+    "contradicts an entry, say so under `## Concerns`, or in the spike's verdict, rather "
+    "than quietly picking one side."
+)
+
 
 def _jera_answers(directory: Path, names: list[str]) -> str:
     """`# Answers an agent gave`, listing every `<artifact> ### Câu N` block Jera wrote in
@@ -267,6 +278,7 @@ def compose_prompt(
     worktree: str = "",
     pr_note: str = "",
     ceilings: tuple[int, float] | None = None,
+    knowledge: str = "",
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole (`spec.md` R4), and
     the ones it names by path only (`0094` R16).
@@ -388,6 +400,13 @@ def compose_prompt(
             "budget ceiling, a reply with no `Status:` line, a session that broke — the app "
             "writes `spike.md` from this file."
         )
+
+    # `0090` R3. The slice of the store `service.run_step` read for this workspace, already
+    # capped (`knowledge.slice_for`); this only places it. `""` -- the flag off, or nothing
+    # applies -- adds not one byte (R2).
+    if knowledge and stage in KNOWLEDGE_STAGES:
+        included.append("knowledge")
+        parts.append(f"# What earlier units measured\n\n{knowledge}\n\n{KNOWLEDGE_ADVICE}")
 
     # `spec.md` R7. A prose stage re-run against an artifact that already carries
     # `## Answers` is one of `intent.md ## Affected users and systems`' "later stages" too:
@@ -1342,6 +1361,8 @@ class Runner:
         pr_before: str | None = None,
         running: steps.Running | None = None,
         started_by: str = "person",
+        knowledge: str = "",
+        knowledge_record: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -1395,6 +1416,10 @@ class Runner:
 
         `started_by` (`0043` R3) is `person` or `autopilot`, written into `start` and nowhere
         else; anything else is a `ValueError` before anything is read.
+
+        `knowledge` and `knowledge_record` are `0090` R3/R4's: the slice of the store
+        `service.run_step` read, for the prompt, and its `{version, entries, bytes}`, for
+        `start`. `None` leaves the record without the field, which is what the flag off is.
         """
         check_started_by(started_by)
         grant = grant_for_step(stage, label)
@@ -1432,6 +1457,7 @@ class Runner:
             worktree=watch or "",
             pr_note=pr_note,
             ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
+            knowledge=knowledge,
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
@@ -1483,6 +1509,8 @@ class Runner:
                 instructions=instructions.read(cwd).record(),
                 **({"plan_drift": plan_drift} if plan_drift is not None else {}),
                 **({"shortlist": shortlist} if shortlist is not None else {}),
+                # `0090` R4. Beside `model`, and only when the flag was on for this stage.
+                **({"knowledge": knowledge_record} if knowledge_record is not None else {}),
                 **pr_extra,
                 # `0092` R5: whose step this is, so the next start can tell one this process
                 # still runs from one the app went down under.

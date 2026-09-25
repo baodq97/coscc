@@ -30,7 +30,7 @@ from typing import Any, AsyncIterator
 from coscc import agents, autopilot, backlog
 from coscc import board as board_reader
 from coscc import drift, events, fetches, gitops
-from coscc import harness, integrate
+from coscc import harness, integrate, knowledge
 from coscc import hold as hold_rules
 from coscc import present, prcomment, prsync, spend
 from coscc import precedent as precedent_mod
@@ -52,7 +52,7 @@ from coscc.journal import (
     totals_of,
     zero_cost,
 )
-from coscc.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, grant_for, grant_for_step
+from coscc.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, TERMINAL_ONLY, grant_for, grant_for_step
 from coscc import labels, models
 from coscc.run import LOOPBACK
 from coscc.runner import (
@@ -1557,6 +1557,13 @@ class Service:
                 # "no pull request" (`0055` review F2); the `start` record still gets `""`.
                 pr_note = integrate.describe_pr_lookup(lookup)
                 pr_before = None if lookup.get("state") == "unknown" else lookup.get("url", "")
+            # `0090` R1-R4. The store, read once, only with the flag on and only for the stages
+            # that receive it; off, nothing is read and `Runner.run` is handed no key at all, so
+            # its prompt and its `start` record are what they were (R2). A store that cannot be
+            # read never refuses the step (`knowledge.for_step`).
+            knowledge_kw: dict[str, Any] = {}
+            if self.config.knowledge and stage in knowledge.STAGES:
+                knowledge_kw = knowledge.for_step(self.config.data_dir, units.slot(cwd))
             runner = Runner(self.sessions, journal, app=self._app_identity())
             # `0034` R11. The registry is what the page lists and what a Stop finds; the mark
             # taken above is what everything else asks. The same start time for both, and no
@@ -1607,6 +1614,7 @@ class Service:
                     end_fields=end_fields,
                     pr_note=pr_note,
                     pr_before=pr_before,
+                    **knowledge_kw,
                     **config,
                     # Only named for a spike, so a stand-in `run` without it keeps working.
                     **({"watch": work} if scratch is not None else {}),
@@ -4057,6 +4065,7 @@ class Service:
                     "consequence": consequence(name),
                 }
                 for stage, own in sorted(GRANTS.items())
+                if stage not in TERMINAL_ONLY
                 for name, grant in (
                     [(stage, own)]
                     + ([(f"{stage}:{labels.NOVEL}", grant_for_step(stage, labels.NOVEL))]

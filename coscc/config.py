@@ -91,6 +91,10 @@ class Config:
     # The workspace whose `origin/main` the *Build local* button builds (R6). Unset means
     # no button. Set in the env file, never by a request.
     update_local_from: str | None = None
+    # `.cos/0090_agents-relearn-what-earlier-units-already-knew` R1. On, `spec`, `spike`
+    # and `plan` carry what earlier units measured (`coscc/knowledge.py`). Off, every
+    # prompt and every `start` record is what it was before (R2). Only the env file sets it.
+    knowledge: bool = False
     # The next five are read without the `COS_` prefix, because they are not this app's
     # settings: they are what systemd and a login shell hand every process. `invocation_id`
     # is systemd's `INVOCATION_ID`, the second of R2's six conditions.
@@ -213,6 +217,7 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         model=e.get(_ENV_PREFIX + "MODEL") or None,
         update_check=_flag(e, "UPDATE_CHECK", True),
         update_local_from=_dir(e, "UPDATE_LOCAL_FROM"),
+        knowledge=_flag(e, "KNOWLEDGE", False),
         invocation_id=(e.get("INVOCATION_ID") or "").strip() or None,
         config_home=_config_home(e),
         uv_candidates=_uv_candidates(e),

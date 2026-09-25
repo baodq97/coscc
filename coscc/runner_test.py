@@ -3598,3 +3598,84 @@ class ThePromptSaysWhatAReviewThatWroteNothingOpened(unittest.TestCase):
     def test_no_opened_key_adds_nothing(self):
         text = describe_attempt({"attempt": None, "latest": self.LATEST, "earlier": []})
         self.assertNotIn("closing turn", text)
+
+
+class WhatEarlierUnitsMeasured(unittest.TestCase):
+    """`0090` plan step 3. `service.run_step` reads the store; this module only places what it
+    is handed, and with nothing handed not one byte of any prompt changes (R2)."""
+
+    ANSWERS = "\n\n## Open questions\n\n1. a?\n\n## Answers\n\n### Câu 1\nAnswered by: o. Date: 2026-09-26. Via: product.\n\nyes\n"
+    SECTION = "## K1\nScope: tool:x\nSource: s-000000000000/0001_a/spike.md ## U1\nMeasured: 2026-09-25\nA fact."
+
+    def unit(self, d: str) -> Path:
+        return make_unit(
+            Path(d), idea_md="Status: accepted.\nIDEA", intent_md="Status: accepted.\nINTENT",
+            spec_md="Status: accepted.\nSPEC" + self.ANSWERS, spike_md="Status: accepted.\nSPIKE" + self.ANSWERS,
+            plan_md="Status: accepted.\nPLAN" + self.ANSWERS, review_md="Status: changes-requested.\nREVIEW",
+        )
+
+    @staticmethod
+    def rules(stage: str) -> str:
+        """`implement` is an alias with no skill file of its own in this checkout; the rest
+        read their real rules, which both sides of each comparison share."""
+        return "RULES for implement" if stage == "implement" else skill_for(stage)
+
+    def test_no_knowledge_is_every_prompt_byte_for_byte(self):
+        from coscc import runner
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(runner, "skill_for", self.rules):
+            directory = self.unit(d)
+            for stage in STAGES + ["implement"]:
+                with self.subTest(stage=stage):
+                    args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
+                    without = compose_prompt(*args)
+                    self.assertEqual(compose_prompt(*args, knowledge=""), without)
+                    self.assertNotIn("What earlier units measured", without[0])
+                    self.assertNotIn("knowledge", without[1])
+
+    def test_spec_spike_and_plan_carry_it_once_between_what_they_follow_and_their_answers(self):
+        import re
+
+        from coscc.runner import KNOWLEDGE_ADVICE
+
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d)
+            for stage in ("spec", "spike", "plan"):
+                with self.subTest(stage=stage):
+                    prompt, included, _ = compose_prompt(
+                        d, directory, UNIT, stage, STAGES, f"{stage}.md", knowledge=self.SECTION)
+                    self.assertEqual(prompt.count("# What earlier units measured"), 1)
+                    here = prompt.index("# What earlier units measured")
+                    follows = [m.start() for m in re.finditer(r"^# The \w+ it follows$", prompt, re.M)]
+                    self.assertTrue(follows)
+                    self.assertLess(max(follows), here)
+                    if stage == "spike":
+                        # Not a prose stage: it writes its own artifact and gets no answers block.
+                        self.assertLess(prompt.index("# Where you work"), here)
+                    else:
+                        self.assertLess(here, prompt.index("# The answers already given to this artifact"))
+                    self.assertIn(f"# What earlier units measured\n\n{self.SECTION}\n\n{KNOWLEDGE_ADVICE}", prompt)
+                    self.assertIn("knowledge", included)
+
+    def test_no_other_stage_carries_it_even_when_handed_it(self):
+        from coscc import runner
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(runner, "skill_for", self.rules):
+            directory = self.unit(d)
+            for stage in ("idea", "intent", "impl", "implement", "pr", "review", "ship"):
+                with self.subTest(stage=stage):
+                    args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
+                    self.assertEqual(compose_prompt(*args, knowledge=self.SECTION), compose_prompt(*args))
+
+
+class AStepRecordsTheKnowledgeItCarried(AStepRecordsTheBaseItRanOn):
+    """`0090` R2, R4: the record handed in is the record written, and none is no field."""
+
+    def test_no_record_handed_in_leaves_no_field(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertNotIn("knowledge", self._start_record(d))
+
+    def test_the_record_handed_in_is_the_record_written(self):
+        record = {"version": "abc", "entries": 0, "bytes": 0}
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self._start_record(d, knowledge_record=record)["knowledge"], record)
