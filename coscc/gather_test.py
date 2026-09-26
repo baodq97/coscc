@@ -17,8 +17,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from unittest import mock
-
 from coscc import admit, gather, knowledge, units
 from coscc.admit_test import lock, make_repo
 from coscc.journal import Journal
@@ -394,11 +392,11 @@ class AGather(Fixture):
 
 class AllRebuilds(Fixture):
     # Batch 1 is B's (`other-` sorts first), batch 2 A's, which is given the tool entry K8.
-    B_SRC = f"{B}/0001_a/spike.md ## U1"
-    A_SRC = f"{A}/0001_a/spike.md ## U1"
-
     def setUp(self):
         super().setUp()
+        # Here, not on the class: `A` and `B` are set by `setUpModule`, after import.
+        self.B_SRC = f"{B}/0001_a/spike.md ## U1"
+        self.A_SRC = f"{A}/0001_a/spike.md ## U1"
         self.unit(A, "0001_a", spike_md="# Spike\n## U1\nA measured x\n")
         self.unit(B, "0001_a", spike_md="# Spike\n## U1\nB measured y\n")
         old = knowledge.render({"version": 3, "gathered": "2026-09-01T00:00:00Z", "max_id": 7},
