@@ -157,6 +157,12 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             # An older `cos.mjs` sends no `stage`, which reads as the empty string.
             "next_stage": str((u.get("next") or {}).get("stage") or ""),
             "blocked": bool((u.get("next") or {}).get("blocked")),
+            # `0100`. The stage whose column the unit sits in, and which rule of `decide`
+            # answered `next` — both as `cos.mjs` decided them, so the board keeps no copy
+            # of the loop and never reads the English of `next` back. An older `cos.mjs`
+            # sends neither, which reads as the empty string.
+            "at": str(u.get("at") or ""),
+            "why": str((u.get("next") or {}).get("why") or ""),
             "problems": u.get("problems") or [],
             # `pre-intent` or `started`, decided by `cos.mjs` `readUnit`. Copied through for
             # the same reason as `next`: the lane reads it rather than guessing it from
