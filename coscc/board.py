@@ -353,6 +353,41 @@ async def next_step(
     }
 
 
+async def screens(
+    units_root: str | Path, unit: str, repo: str | Path, timeout: float = GATE_TIMEOUT
+) -> dict[str, Any]:
+    """Ask `cos.mjs screens` whether `unit`'s screenshots in `repo` must be taken again.
+
+    `0111` R1. `repo` is the unit's worktree, the checkout its `.screens/manifest.json` and
+    its branch are in. Returns `{unit, ui, manifest, rewritten, retake, why}` as `cos.mjs`
+    printed it; whether to retake is its rule, not this module's. Any exit but 0 is misuse
+    and raises `Unavailable` with what it said, as `next_step` does. It asks `git` in `repo`
+    only, never `gh`, so it has `GATE_TIMEOUT` for the same reason the gate does.
+    """
+    path = Path(units_root)
+    script = harness.script()
+    if not script.exists():
+        raise Unavailable(f"the harness script is missing: {script}")
+
+    try:
+        argv = [str(script), "--root", str(path), "screens", unit,
+                "--repo", str(Path(repo).expanduser().resolve())]
+        code, out_text, err_text = await _run(argv, timeout)
+    except (OSError, ValueError) as e:
+        raise Unavailable(
+            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
+        ) from e
+    except asyncio.TimeoutError:
+        raise Unavailable(f"asking about the screenshots timed out after {timeout:.0f}s") from None
+
+    if code != 0:
+        raise Unavailable((err_text or out_text).strip() or f"the harness script exited {code}")
+    try:
+        return json.loads(out_text)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise Unavailable(f"the harness script did not return JSON: {e}") from e
+
+
 async def pr_text(units_root: str | Path, unit: str, timeout: float = TIMEOUT) -> dict[str, Any]:
     """Ask `cos.mjs pr-text` for the title and body `unit`'s `pr.md` puts on its pull request.
 

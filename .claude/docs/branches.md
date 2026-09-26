@@ -13,6 +13,13 @@ round, not after a pass: a rebase rewrites the reviewed commit, the `ship` gate 
 closes, and another round is needed. A round that passes does not count toward
 `COS_REVIEW_ROUNDS`, so that round costs time and nothing else.
 
+A rebase before a round no longer spends that round on a UI unit's screenshots alone
+(`0111`). The rebase leaves `.screens/manifest.json` naming a head that is gone; before a
+board `review` step, `cos.mjs screens <unit> --repo <tree>` says so, and the app takes them
+again on the addresses `impl` chose, or refuses the step when that fails. At a terminal
+nothing does it for you: `write-review`, *Screens*, says what the one running the round
+does first.
+
 ## Review, in full (step 7)
 
 A separate agent session appends a round to `review.md`. Findings open means

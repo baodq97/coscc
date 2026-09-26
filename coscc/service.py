@@ -32,7 +32,7 @@ from coscc import board as board_reader
 from coscc import drift, events, fetches, gitops
 from coscc import harness, integrate, knowledge
 from coscc import hold as hold_rules
-from coscc import present, prcomment, priorfindings, prsync, spend
+from coscc import present, prcomment, priorfindings, prsync, retake, spend
 from coscc import precedent as precedent_mod
 from coscc import sessions as reader
 from coscc.board import Unavailable
@@ -77,6 +77,10 @@ BRANCH_TRUNK = gitops.TRUNK
 
 # `0054` R6. The longest note a rerun takes, in characters. Chosen by the spec, not measured.
 RERUN_NOTE_MAX = 4000
+
+# `0111` R5. What the page says when a retake of the screenshots refuses `review`: one
+# sentence, no commit, path or log line (S1, S3, S6). The rest is in the `screens` record.
+RETAKE_REFUSED = "The screenshots could not be taken again after the branch was rewritten, so review did not start."
 
 
 def _answers_kept(path: Path, before: bytes) -> bool:
@@ -524,6 +528,13 @@ class Service:
     # round run one after the other and the second finds the first's marker. One process
     # only, like `pull` (`.claude/rules/coscc-app.md`).
     _comment_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    # `0111` R3. Held across one retake of a unit's screenshots, for the whole app: every
+    # capture binds `127.0.0.1:18783` (`scripts/capture_screens.py:112`), so two at once fail.
+    # A capture a session runs does not take it (spec C1). One process only, like `pull`.
+    _screens_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    # `0111` review round 1, F3. The retake running now, if any, `{workspace, unit, started}`
+    # by an id that never leaves this process: read only by `_update_jobs`.
+    _retakes: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
     # `0017` R8. Per workspace, created on first use.
     _create_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     # `0035` R12. `(journal key, unit)` for every step, integration or hold holding its unit
@@ -1706,6 +1717,13 @@ class Service:
                 if not prepared.get("ok"):
                     raise Invalid(worktrees.describe_failure(prepared))
 
+            # `0111` R1-R7. A UI unit whose branch was rewritten since `impl` took its
+            # screenshots has them taken again, here, before any money is spent; a retake that
+            # fails refuses the step, and no round is spent on a stale manifest.
+            screens_note = ""
+            if stage == "review" and tree is not None:
+                screens_note = await self._retake_screens(cwd, key, journal, unit, work, started_by)
+
             directory = self._unit_dir(cwd, unit)
             mode = journal.modes(key).get((unit, stage), "manual")
             # `0021` D3. The rounds `review.md` held before this step, so that the ones it adds
@@ -1847,6 +1865,7 @@ class Service:
                     base_note=describe_base(base),
                     last_attempt=describe_attempt(failed) if failed else "",
                     integration_note=integration_note,
+                    screens_note=screens_note,
                     plan_drift=plan_drift,
                     drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
                     shortlist=shortlist,
@@ -1893,6 +1912,55 @@ class Service:
                     return
         finally:
             running.listeners.discard(queue)
+
+    async def _retake_screens(
+        self, cwd: str, key: str, journal: Journal, unit: str, work: str, started_by: str,
+    ) -> str:
+        """`0111`. Ask `cos.mjs screens`; when it says to, take the screenshots again under
+        `_screens_lock`, judge the result (R4) and record it (R6). Returns the section for the
+        `review` prompt (R7), `""` when nothing was taken. A retake that fails raises
+        `Invalid` with `RETAKE_REFUSED`; what went wrong is only in its record (R5). No tracked
+        file is put back; `.screens/` is, by `retake.take` (review round 1, F1)."""
+        try:
+            asked = await board_reader.screens(self._units_root(cwd), unit, work)
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        if not asked.get("retake"):
+            return ""
+        old = asked.get("manifest") or {}
+        addresses = [str(a) for a in old.get("addresses") or []]
+        async with self._screens_lock:
+            # Review round 1, F3. Asked again past the lock, which another retake may have held
+            # for minutes; from here to the end of `take` a pending update waits for it.
+            self._refuse_while_updating()
+            rid = uuid.uuid4().hex
+            self._retakes[rid] = {"workspace": key, "unit": unit, "started": _now()}
+            started = datetime.now().timestamp()
+            try:
+                result = await retake.take(Path(work), addresses, data_dir=self.config.data_dir)
+            except asyncio.CancelledError:
+                # A client that went away, or the app going down: the group is killed, and
+                # the record still says a retake was begun and did not finish.
+                gone = {"code": None, "seconds": round(datetime.now().timestamp() - started, 1)}
+                try:
+                    journal.append(retake.record(key, unit, old, gone, False, "cancelled before it finished", started_by))
+                except (BadRecord, Busy):
+                    pass
+                raise
+            finally:
+                self._retakes.pop(rid, None)
+                self.updater.job_ended()
+        ok, detail = retake.judge(result)
+        try:
+            journal.append(retake.record(key, unit, old, result, ok, detail, started_by))
+        except (BadRecord, Busy) as e:
+            # Review round 1, F2: only a retake that was taken may say it was.
+            if not ok:
+                raise Invalid(RETAKE_REFUSED) from e
+            raise Invalid(f"the screenshots were taken again, but the run log could not record it: {e}") from e
+        if not ok:
+            raise Invalid(RETAKE_REFUSED)
+        return retake.describe_for_review(old, result.get("manifest_after") or {})
 
     def _never_driven(self, running: steps_mod.Running, mark: steps_mod.Mark, rid: str) -> None:
         """`0050` review round 2, F2. A task cancelled before its first turn -- a Stop queued
@@ -2231,6 +2299,14 @@ class Service:
                     "workspace": entry["workspace"], "unit": "", "stage": "estimate",
                     "started": entry["started"],
                 })
+        for entry in self._retakes.values():
+            # `0111` review round 1, F3. Waited for like an integration, never cut: no Stop
+            # reaches it, and `retake.take` puts `.screens/` back only if it gets to.
+            jobs.append({
+                "kind": "integration", "id": f"screens:{entry['workspace']}:{entry['unit']}",
+                "workspace": entry["workspace"], "unit": entry["unit"], "stage": "screens",
+                "started": entry["started"],
+            })
         for turn in self.sessions.in_flight():
             jobs.append({"kind": "chat", "id": f"chat:{turn['id']}", "turn": turn["id"],
                          "session_id": turn["session_id"], "workspace": turn["workspace"],
@@ -4008,7 +4084,7 @@ class Service:
                 return
             data = await self.board(cwd)
             try:
-                records = journal.records(kinds=("start", "end", "integration", "shortlist", "answer"))
+                records = journal.records(kinds=("start", "end", "integration", "shortlist", "answer", "screens"))
             except Busy as e:
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
                 return
@@ -4024,7 +4100,8 @@ class Service:
             last: dict[str, dict[str, Any]] = {}
             integrations: dict[str, dict[str, Any]] = {}
             for r in records:
-                if r.get("workspace") == key and r.get("kind") in ("end", "integration") and autopilot.is_step(r):
+                # `0111`: a retake of the screenshots that failed is the unit's last word too.
+                if r.get("workspace") == key and r.get("kind") in ("end", "integration", "screens") and autopilot.is_step(r):
                     last[str(r.get("unit") or "")] = r
                     if r.get("kind") == "integration":
                         integrations[str(r.get("unit") or "")] = r
@@ -4235,6 +4312,8 @@ class Service:
                 "effects": [e for e in r.get("effects") or [] if isinstance(e, dict)],
             }
             for r in rows
+            # `0111` R6: a retake of the screenshots is recorded, and shown on no screen.
+            if r.get("kind") != "screens"
         ]
         events.reverse()
         return {"cwd": cwd, "events": events[:limit], "recording": True}

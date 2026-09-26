@@ -148,6 +148,17 @@ This applies when the branch changes a file listed under `paths:` in
    image; a manifest whose `head` is older than the branch's last commit touching a UI
    file; a manifest with `dirty: true`, whose screens may not be `head`'s; a hit in the
    manifest's `hits` that `impl.md ## Screens` does not explain.
+   - **After a rewrite, the app took them again** (`0111`). When your prompt carries *The
+     screenshots, taken again*, the branch was rebased after `impl`'s screenshots and the
+     app ran `scripts/capture_screens.py` again, on the addresses `impl` chose, before this
+     round. A hit in that new manifest counts as explained when `impl.md ## Screens`
+     explains a hit with the same `address`, `size` and `kind`; do not compare `snippet`,
+     whose `/tmp` paths change on every run. Every other `high` above still applies.
+   - **At a terminal, nothing takes them again for you.** If the manifest's `head` is not an
+     ancestor of the head you review (`git merge-base --is-ancestor <head> HEAD` exits
+     non-zero), run `uv run python scripts/capture_screens.py <the manifest's addresses>`
+     yourself before writing the round, and review what it wrote. A stale manifest after a
+     rebase is not a finding.
 5. Under `### What was not reviewed`, name the screens that can only be reached by an
    action (a running step, a dialog opened by a button) — the screenshots do not show them.
 

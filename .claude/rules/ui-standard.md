@@ -78,7 +78,8 @@ A violation looks like: a greyed *Run* with no sentence saying what it waits for
 - **Who takes the screenshots.** The `impl` of a unit that changes a file listed above,
   with `uv run python scripts/capture_screens.py <address>...`, after its last commit that
   touches such a file. It writes PNGs and a `manifest.json` into `.screens/`, which git
-  ignores.
+  ignores. Since `0111`, also the app, before a `review` step, when the branch's head was
+  rewritten after `impl` took them: the same command, with the addresses `impl` chose.
 - **Who looks.** The `review` agent, by opening each PNG with `Read`. It is an agent looking
   at screenshots, not a person, and its `### Screens` section says so.
 - **What the gate reads.** The `ship` gate reads the words of the last passing round's

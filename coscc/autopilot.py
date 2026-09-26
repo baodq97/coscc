@@ -42,6 +42,8 @@ STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap", "shortlist", "reruns", "full"
 
 # `0104` R6. Why a unit ranked higher on the shortlist was passed over, and nothing else.
 REASONS = ("held", "finished", "closed", "stop", "ci", "running", "overlap", "ship-busy", "missing")
+# `0111`. The stop `e` of a unit whose screenshots could not be taken again before `review`.
+SCREENS_FAILED = "the screenshots could not be taken again before review"
 # `0104` R3. The workspace's stop line when there is no shortlist to follow.
 NO_SHORTLIST = "Nothing is on the shortlist, so the autopilot starts nothing."
 
@@ -78,7 +80,7 @@ def stop_for(
     """The first of R6's stops that holds for one unit, as `{kind, reason}`, or `None`.
 
     `unit_row` is the unit as `Service.board` has it; `nxt` is `Service.next_step`'s answer;
-    `last` the unit's latest `end` or `integration` record, or `None`. `None` back means no
+    `last` the unit's latest `end`, `integration` or `screens` (`0111`) record, or `None`. `None` back means no
     stop, which is not the same as something to run: a finished, rejected or held unit, and
     one waiting on CI, have neither.
     """
@@ -120,6 +122,10 @@ def stop_for(
     ):
         detail = str(last.get("detail") or "")
         return _stop("e", f"the last integration was {outcome}" + (f": {detail}" if detail else ""))
+    # `0111`: the screenshots could not be taken again before `review`, which did not start.
+    # No retry, as above: a person runs it again, and a retake that is taken lifts the stop.
+    if kind == "screens" and outcome == "failed":
+        return _stop("e", SCREENS_FAILED)
 
     # c. `ship`, while the workspace has not allowed it.
     if stage == "ship" and not may_ship:

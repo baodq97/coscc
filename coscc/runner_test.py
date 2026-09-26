@@ -4058,3 +4058,57 @@ class AStepRecordsThePriorFindingsItCarried(AStepRecordsTheBaseItRanOn):
         record = {"bytes": 0, "lines": 0, "units": 0, "dropped": 0}
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self._start_record(d, prior_findings_record=record)["prior_findings"], record)
+
+
+class TheScreenshotsTakenAgain(unittest.TestCase):
+    """`0111` R7. `service.run_step` builds the section after a retake; this module places it
+    for `review` only, after the integration's, and every other prompt is what it was."""
+
+    NOTE = "# The screenshots, taken again\n\nSCREENS-MARKER"
+
+    def test_review_carries_it_after_the_integration_and_says_so(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = _golden_unit(Path(d))
+            prompt, included, _ = compose_prompt(
+                d, directory, UNIT, "review", STAGES, "review.md",
+                integration_note="# INTEGRATION\n\nINTEGRATION-NOTE", screens_note=self.NOTE,
+            )
+        self.assertEqual(prompt.count("SCREENS-MARKER"), 1)
+        self.assertLess(prompt.index("INTEGRATION-NOTE"), prompt.index("SCREENS-MARKER"))
+        self.assertLess(prompt.index("SCREENS-MARKER"), prompt.index("# Your task"))
+        self.assertIn("screens", included)
+
+    def test_no_other_stage_carries_it_and_none_handed_is_no_byte(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = _golden_unit(Path(d))
+            for stage in STAGES:
+                with self.subTest(stage=stage):
+                    args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
+                    handed = compose_prompt(*args, screens_note=self.NOTE)
+                    if stage == "review":
+                        self.assertEqual(compose_prompt(*args, screens_note=""), compose_prompt(*args))
+                    else:
+                        self.assertEqual(handed, compose_prompt(*args))
+
+    def test_runner_run_hands_it_to_the_prompt(self):
+        seen = []
+
+        class Replies:
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                seen.append(text)
+                yield ("chunk", "# Review: x\nStatus: changes-requested.\n\n## Round 1\n\nReviewed: abc1234. Verdict: changes-requested.\n")
+                yield ("done", {"session_id": "s-review", "cost": {}})
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+
+            async def go():
+                async for _ in Runner(sessions=Replies(), journal=journal).run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d, unit=UNIT,
+                    stage="review", artifact="review.md", stages=STAGES, mode="manual", screens_note=self.NOTE,
+                ):
+                    pass
+
+            asyncio.run(go())
+        self.assertIn("SCREENS-MARKER", seen[0])
