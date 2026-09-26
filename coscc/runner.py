@@ -317,6 +317,7 @@ def compose_prompt(
     base_note: str = "",
     last_attempt: str = "",
     integration_note: str = "",
+    screens_note: str = "",
     drift_note: str = "",
     worktree: str = "",
     pr_note: str = "",
@@ -617,6 +618,12 @@ def compose_prompt(
     if integration_note and stage == "review":
         included.append("integration")
         parts.append(integration_note.rstrip())
+
+    # `0111` R7. Only for `review`, and only when `service.run_step` took the screenshots
+    # again before it; `retake.describe_for_review` built it, heading included.
+    if screens_note and stage == "review":
+        included.append("screens")
+        parts.append(screens_note.rstrip())
 
     # `0041` R2. Only for `pr`; `service.run_step` looked the pull request up and
     # `integrate.describe_pr_lookup` built the block, heading included.
@@ -1499,6 +1506,7 @@ class Runner:
         base_note: str = "",
         last_attempt: str = "",
         integration_note: str = "",
+        screens_note: str = "",
         plan_drift: dict[str, Any] | None = None,
         drift_note: str = "",
         shortlist: dict[str, Any] | None = None,
@@ -1618,6 +1626,7 @@ class Runner:
             base_note=base_note,
             last_attempt=last_attempt,
             integration_note=integration_note,
+            screens_note=screens_note,
             drift_note=drift_note,
             worktree=watch or "",
             pr_note=pr_note,
