@@ -1328,7 +1328,7 @@ async def _closing_turn(
         if kind == "chunk":
             text += payload
         elif kind == "tool":
-            text = ""
+            text = _after_tool(text)
         elif kind == "done":
             done = payload
     return text, done
@@ -1585,6 +1585,8 @@ class Runner:
         if recorder is not None:
             denials.listener = recorder.denied
         collected = ""
+        # `0099` R5: how many pieces of text, blank ones aside, the session said.
+        blocks = 0
         terminal = ""
         session_id = ""
         cost: dict[str, Any] = {}
@@ -1646,6 +1648,8 @@ class Runner:
             ):
                 if kind == "chunk":
                     collected += payload
+                    if payload.strip():
+                        blocks += 1
                     yield ("chunk", payload)
                 elif kind == "session":
                     # `0019` plan step 5. The one place this app learns a session id
@@ -1653,23 +1657,18 @@ class Runner:
                     # note on why only `chunk` may cross this boundary as itself.
                     session_id = str(payload)
                 elif kind == "tool":
-                    # Everything said before a tool call was said on the way to using it.
-                    # For a stage whose artifact the app writes, that text is narration and
-                    # the artifact is what comes after the last one.
-                    #
-                    # This cost nothing while no prose stage had tools. `plan` got `Read`,
-                    # `Glob` and `Grep` on 2026-09-23 to fix a different defect, and from
-                    # that hour every `plan.md` the board produced began with the step
-                    # thinking out loud -- glued to the heading, so the file no longer
-                    # opened with `# Plan:` and the `Status:` line was no longer the second.
-                    # Measured on `0016_no-human-in-the-loop`: two sentences ahead of the
-                    # title. `cos.mjs` still parsed it, because it looks for `Status:`
-                    # anywhere, which is why this corrupted quietly instead of failing.
+                    # Kept, and ended on a line of its own: what comes after a tool call is
+                    # the next piece. `plan` got `Read`, `Glob` and `Grep` on 2026-09-23,
+                    # and its narration before a tool call began to open every `plan.md`
+                    # (`0016_no-human-in-the-loop`). Dropping all text before the last call
+                    # fixed that, and lost the head of any artifact written in pieces
+                    # (`0099`, measured on `0085`'s plan). `_write_artifact` now drops what
+                    # comes before the artifact's last title line instead.
                     #
                     # Not forwarded. `coscc/api.py:227-231` treats every kind that is not
                     # `chunk` as the terminal `done` row, so a third kind reaching it would
                     # arrive at the client as a malformed `done`.
-                    collected = ""
+                    collected = _after_tool(collected)
                 else:
                     session_id = payload.get("session_id", "")
                     cost = payload.get("cost", {}) or {}
@@ -1695,7 +1694,7 @@ class Runner:
             if grant.app_writes_artifact:
                 # Synchronous, so nothing yields between reading the `## Answers` already
                 # on disk and writing the artifact over it.
-                _write_artifact(directory, artifact, collected)
+                _write_artifact(directory, artifact, collected, blocks=blocks)
                 if watch:
                     # `0080` R4: the reply was written, so the progress file is never read.
                     spike_md = "reply"

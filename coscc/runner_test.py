@@ -1130,6 +1130,80 @@ class NarrationBeforeAToolCallIsNotTheArtifact(unittest.TestCase):
             self.assertEqual([k for k, _ in items if k not in ("chunk", "done")], [])
 
 
+class AnAnswerInPiecesIsWrittenWhole(unittest.TestCase):
+    """`0099` R1, R4, R5, R8. `0085`'s `plan.md` came back as its last piece alone: the
+    session wrote the title and the head, called a tool, wrote more, called another, and
+    only what followed the last call reached the file."""
+
+    HEAD = ("# Plan: 0085 again\nIntent: intent.md. Spec: spec.md. Author: t. Status: accepted. "
+            "Impl: routine.\n\n## Files that change\n\nPHẦN-ĐẦU\n")
+    UNTITLED = "## Files that change\n\nPHẦN-ĐẦU\n"
+    TAIL = "Lượt chốt (closing turn) không chạy… PHẦN-ĐUÔI\n"
+
+    class Pieces:
+        def __init__(self, first, blank=False, terminal="success"):
+            self.first, self.blank, self.terminal = first, blank, terminal
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", self.first)
+            if self.blank:
+                yield ("chunk", "  ")
+            yield ("tool", "Read")
+            yield ("chunk", "PHẦN-GIỮA")
+            yield ("tool", "Grep")
+            yield ("chunk", AnAnswerInPiecesIsWrittenWhole.TAIL)
+            yield ("done", {"session_id": "s-85", "terminal_reason": self.terminal, "cost": {}})
+
+    def go(self, sessions, existing=None):
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS")
+            if existing is not None:
+                (directory / "plan.md").write_bytes(existing)
+            journal = Journal(d, d)
+            runner = Runner(sessions, journal)
+
+            async def run():
+                return [item async for item in runner.run(
+                    workspace=d, directory=directory, journal_key=d, unit=UNIT, stage="plan",
+                    artifact="plan.md", stages=STAGES, mode="autonomous",
+                )]
+
+            out = asyncio.run(run())
+            target = directory / "plan.md"
+            [end] = [r for r in journal.records() if r["kind"] == "end"]
+            return out[-1][1], end, target.read_bytes() if target.exists() else None
+
+    def test_every_piece_after_the_title_is_written_in_order(self):
+        final, _, written = self.go(self.Pieces(self.HEAD))
+        self.assertEqual(final["outcome"], "done")
+        text = written.decode("utf-8")
+        self.assertTrue(text.startswith("# Plan:"), text[:80])
+        self.assertLess(text.index("PHẦN-ĐẦU"), text.index("PHẦN-GIỮA"))
+        self.assertLess(text.index("PHẦN-GIỮA"), text.index("PHẦN-ĐUÔI"))
+        self.assertIn("PHẦN-GIỮA\nLượt chốt", text, "a piece that ends mid-line gets its own line")
+
+    def test_an_answer_without_its_head_fails_and_says_why(self):
+        final, end, written = self.go(self.Pieces(self.UNTITLED, blank=True))
+        self.assertEqual(final["outcome"], "failed")
+        first = end["detail"].splitlines()[0]
+        for part in ("plan.md", "title", "`Status:`", "3 blocks"):
+            self.assertIn(part, first)
+        self.assertIsNone(written)
+
+    def test_an_answer_without_its_head_leaves_the_file_byte_for_byte(self):
+        existing = ("# Plan: x\nIntent: i. Status: draft.\n\nCŨ\n\n## Answers\n\n"
+                    "### Câu 1\nAnswered by: Lan. Date: 2026-09-26. Via: product.\n\ncó\n").encode("utf-8")
+        final, _, written = self.go(self.Pieces(self.UNTITLED, blank=True), existing=existing)
+        self.assertEqual(final["outcome"], "failed")
+        self.assertEqual(written, existing)
+
+    def test_at_the_ceiling_it_is_exhausted_never_done(self):
+        final, end, written = self.go(self.Pieces(self.UNTITLED, blank=True, terminal="max_turns"))
+        self.assertEqual((final["outcome"], end["outcome"]), ("exhausted", "exhausted"))
+        self.assertIn("plan.md lacks its opening", end["detail"])
+        self.assertIsNone(written)
+
+
 class AnAnswerReachesTheStageThatReadsItsArtifact(unittest.TestCase):
     """`0016` R5. An answer appended under `## Answers` is in the file, so it is in the
     prompt of whichever stage embeds that file, and only that one (`0016` plan, Risks 4)."""
