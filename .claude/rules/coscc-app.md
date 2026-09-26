@@ -64,9 +64,9 @@ locked position: no tools, no commands, one turn, no budget.
   connection**, before `PRAGMA journal_mode=WAL`; reversed, it fails now and then with
   `database is locked`. Every read-modify-write is wrapped in `BEGIN IMMEDIATE`. No test
   catches the ordering; it only goes flaky.
-- **The board's lanes must not use the harness's `blocked` flag.** `cos.mjs` returns
-  `blocked: true` for every unfinished unit, so that mapping puts all of them in *Needs
-  review* and empties the other three. `state.py` reads lanes off artifact statuses.
+- **A card's state must not use the harness's `blocked` flag.** `cos.mjs` returns
+  `blocked: true` for every unfinished unit. `service.unit_state` reads `next.why`, and
+  the column is `cos.mjs`'s `at` (`0100`).
 - **The five prose stages get no write tools and no commands, in any mode.** `plan`,
   `review` and `spec` may read, in every mode, inside the read boundary. A session that
   cannot write a file needs the app to write its artifact from the reply. Since `0082` the
