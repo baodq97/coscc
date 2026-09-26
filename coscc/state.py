@@ -1465,10 +1465,12 @@ class StudioState(rx.State):
 
     @rx.var
     def group_counts(self) -> dict[str, int]:
-        """`0100` R8. How many units each collapsed group holds, whatever the filter."""
+        """`0100` R8. How many shown cards each collapsed group holds: the search and the
+        filter narrow a group as they narrow a column (review F2)."""
         counts = {name: 0 for name in COLLAPSED_STATES}
+        shown = set(self.shown_ids)
         for c in self.cards:
-            if c.state in counts:
+            if c.id in shown and c.state in counts:
                 counts[c.state] += 1
         return counts
 

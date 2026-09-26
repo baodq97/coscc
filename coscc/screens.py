@@ -1901,7 +1901,8 @@ def _backlog_screen() -> rx.Component:
 
 def _collapsed_groups() -> rx.Component:
     """`0100` R8 (`intent.md ## Answers, câu 4`). Done, paused and dropped units, each in a
-    closed group with its count at the foot of the board; a group of none is not drawn."""
+    closed group with its count at the foot of the board; a group of none is not drawn. The
+    search and the filter leave in a group what they leave in the List (review F2)."""
     return rx.vstack(
         *(_collapsed_group(state, label) for state, label in
           (("done", "Done"), ("paused", "Paused"), ("dropped", "Dropped"))),
@@ -1918,7 +1919,8 @@ def _collapsed_group(state: str, label: str) -> rx.Component:
                           cursor="pointer"),
             rx.grid(
                 rx.foreach(P.cards, lambda c: rx.cond(
-                    c.state == state, _unit_card(c, grouped=True), rx.fragment())),
+                    (c.state == state) & P.shown_ids.contains(c.id),
+                    _unit_card(c, grouped=True), rx.fragment())),
                 columns=rx.breakpoints(initial="1", sm="2", lg="4"),
                 gap="12px", width="100%", margin_top="12px",
             ),

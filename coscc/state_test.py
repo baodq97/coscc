@@ -377,6 +377,13 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
         page.shown_ids = cv["shown_ids"].fget(page)
         self.assertEqual(cv["board_ids"].fget(page), ["c"])
         self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "paused": 1, "dropped": 1})
+        # Review F2: a group holds only what the search and the filter leave.
+        page.query = "b"
+        page.shown_ids = cv["shown_ids"].fget(page)
+        self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "paused": 1, "dropped": 0})
+        page.query, page.focus = "", "Needs you"
+        page.shown_ids = cv["shown_ids"].fget(page)
+        self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "paused": 0, "dropped": 0})
 
     def test_the_handler_calls_hold_and_no_step(self):
         tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
