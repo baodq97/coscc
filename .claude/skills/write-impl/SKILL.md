@@ -64,6 +64,14 @@ since the commit the plan was written on, each with the `git diff` command that 
 When the section says the app could not check, nothing is known either way: read the plan's
 citations against the tree as it is.
 
+## When earlier reviews named the plan's files
+
+A step started from the coscc board may carry a section *What earlier reviews said about
+these files*. Each line in it is a finding an earlier unit's review raised on a file this
+plan's `## Files that change` names, prefixed with that unit and round. Before you push the
+branch, check whether your change repeats any of them. They are not requirements and do not
+change the plan.
+
 ## Screens
 
 This applies when the branch changes a file listed under `paths:` in

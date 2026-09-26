@@ -3996,3 +3996,65 @@ class AStepRecordsTheKnowledgeItCarried(AStepRecordsTheBaseItRanOn):
         record = {"version": "abc", "entries": 0, "bytes": 0}
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self._start_record(d, knowledge_record=record)["knowledge"], record)
+
+
+class WhatEarlierReviewsSaid(unittest.TestCase):
+    """`0110` plan step 3. `service.run_step` builds the section; this module places it for
+    `impl` only, and every other stage's prompt is what it was, byte for byte (R9)."""
+
+    SECTION = "- 0054 Round 1 F3 [open] coscc/service.py:1842 — medium — PRIOR-MARKER"
+
+    unit = WhatEarlierUnitsMeasured.unit
+    ANSWERS = WhatEarlierUnitsMeasured.ANSWERS
+    rules = staticmethod(WhatEarlierUnitsMeasured.rules)
+
+    def test_no_stage_but_impl_carries_it_even_when_handed_it(self):
+        from coscc import runner
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(runner, "skill_for", self.rules):
+            directory = self.unit(d)
+            for stage in [s for s in STAGES if s != "impl"]:
+                with self.subTest(stage=stage):
+                    args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
+                    self.assertEqual(compose_prompt(*args, prior_findings=self.SECTION), compose_prompt(*args))
+            args = (d, directory, UNIT, "implement", STAGES, "implement.md")
+            self.assertIn("PRIOR-MARKER", compose_prompt(*args, prior_findings=self.SECTION)[0])
+
+    def test_nothing_handed_is_the_impl_prompt_byte_for_byte(self):
+        from coscc.runner import PRIOR_FINDINGS_HEADING
+
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d)
+            args = (d, directory, UNIT, "impl", STAGES, "impl.md")
+            without = compose_prompt(*args)
+            self.assertEqual(compose_prompt(*args, prior_findings=""), without)
+            # `write-impl` names the section in its prose (R8); the heading is not there.
+            self.assertNotIn(PRIOR_FINDINGS_HEADING, without[0])
+            self.assertNotIn("prior-findings", without[1])
+
+    def test_impl_carries_it_once_after_the_plan_and_before_the_review_that_sent_it_back(self):
+        from coscc.runner import PRIOR_FINDINGS_ADVICE, PRIOR_FINDINGS_HEADING
+
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d)
+            prompt, included, _ = compose_prompt(
+                d, directory, UNIT, "impl", STAGES, "impl.md", prior_findings=self.SECTION)
+            self.assertEqual(prompt.count(PRIOR_FINDINGS_HEADING), 1)
+            here = prompt.index(PRIOR_FINDINGS_HEADING)
+            self.assertLess(prompt.index("# The plan it follows"), here)
+            self.assertLess(here, prompt.index("# The review that sent this back"))
+            self.assertIn(f"{PRIOR_FINDINGS_HEADING}\n\n{self.SECTION}\n\n{PRIOR_FINDINGS_ADVICE}", prompt)
+            self.assertIn("prior-findings", included)
+
+
+class AStepRecordsThePriorFindingsItCarried(AStepRecordsTheBaseItRanOn):
+    """`0110` R7: the record handed in is the record written, and none is no field."""
+
+    def test_no_record_handed_in_leaves_no_field(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertNotIn("prior_findings", self._start_record(d))
+
+    def test_the_record_handed_in_is_the_record_written(self):
+        record = {"bytes": 0, "lines": 0, "units": 0, "dropped": 0}
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self._start_record(d, prior_findings_record=record)["prior_findings"], record)
