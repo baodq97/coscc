@@ -73,7 +73,9 @@ def open_db(data_root: str | Path) -> sqlite3.Connection:
     return sqlite3.connect(f"file:{db}?mode=ro", uri=True)
 
 
-def pairs(conn: sqlite3.Connection, workspace: str, since: str | None, until: str | None) -> list[dict[str, Any]]:
+def pairs(
+    conn: sqlite3.Connection, workspace: str, since: str | None, until: str | None
+) -> list[dict[str, Any]]:
     """`{unit, start, end}` for every `impl` step of `workspace` whose time is in the window."""
     rows = conn.execute(
         "SELECT at, root, unit, stage, kind, record FROM runs "
