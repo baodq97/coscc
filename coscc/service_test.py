@@ -3540,6 +3540,68 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
         self.assertIn("FileNotFoundError", kw["knowledge_record"]["error"])
 
 
+class RunStepHandsOnWhatEarlierReviewsSaid(RunStepHandsOnTheKnowledgeStore):
+    """`0110` plan step 4. `run_step` hands an `impl` step the finding lines of the units the
+    board it read reports finished, for the files its plan names, and every other stage no
+    key. The same stand-ins as the knowledge store's; the tests of that class run here too."""
+
+    PLAN = "# Plan: x\nStatus: accepted.\n\n## Files that change\n\n- `coscc/service.py`.\n"
+
+    def shipped(self, service: Service, review: str) -> str:
+        """A second unit the board reads as finished, whose `review.md` is `review`."""
+        other = create_sync(service, str(self.repo), "an-earlier-problem", "words")["unit"]
+        d = units.unit_dir(str(self.repo), other, str(self.data))
+        for name in ("intent", "spec"):
+            (d / f"{name}.md").write_text(f"# {name}\nStatus: accepted.\n", encoding="utf-8")
+        (d / "plan.md").write_text("# Plan\nStatus: done.\n", encoding="utf-8")
+        (d / "review.md").write_text(review, encoding="utf-8")
+        return other
+
+    def plan(self, text: str) -> None:
+        (units.unit_dir(str(self.repo), self.unit, str(self.data)) / "plan.md").write_text(text, encoding="utf-8")
+
+    def test_impl_gets_the_lines_of_a_finished_units_review_naming_a_file_of_the_plan(self):
+        service = self.service(False)
+        other = self.shipped(service, "# Review\nStatus: accepted.\n\n## Round 1\n\n"
+                                      "- F1 [fixed abc] coscc/service.py:9 — high — PRIOR-MARKER\n")
+        self.plan(self.PLAN)
+        kw = self.kwargs_of(service, "impl")
+        self.assertEqual(kw["prior_findings"],
+                         f"- {other[:4]} Round 1 F1 [fixed abc] coscc/service.py:9 — high — PRIOR-MARKER")
+        self.assertGreaterEqual(kw["prior_findings_record"]["lines"], 1)
+        self.assertNotIn("error", kw["prior_findings_record"])
+
+    def test_a_plan_without_the_section_is_an_empty_section_and_zero_bytes(self):
+        service = self.service(False)
+        self.shipped(service, "## Round 1\n\n- F1 [open] coscc/service.py:9 — high — x\n")
+        self.plan("# Plan: x\nStatus: accepted.\n")
+        kw = self.kwargs_of(service, "impl")
+        self.assertEqual(kw["prior_findings"], "")
+        self.assertEqual(kw["prior_findings_record"], {"bytes": 0, "lines": 0, "units": 0, "dropped": 0})
+
+    def test_no_other_stage_gets_a_key(self):
+        service = self.service(False)
+        self.shipped(service, "## Round 1\n\n- F1 [open] coscc/service.py:9 — high — x\n")
+        self.plan(self.PLAN)
+        for stage in ("plan", "pr", "review", "ship"):
+            with self.subTest(stage=stage):
+                kw = self.kwargs_of(service, stage)
+                self.assertNotIn("prior_findings", kw)
+                self.assertNotIn("prior_findings_record", kw)
+
+    def test_a_review_that_cannot_be_read_still_runs_the_step(self):
+        service = self.service(False)
+        other = self.shipped(service, "")
+        # Not UTF-8: `cos.mjs` still reads the board, `priorfindings` cannot read the file.
+        (units.unit_dir(str(self.repo), other, str(self.data)) / "review.md").write_bytes(
+            b"## Round 1\n\n- F1 [open] coscc/service.py:9 \xff\n"
+        )
+        self.plan(self.PLAN)
+        kw = self.kwargs_of(service, "impl")
+        self.assertEqual(kw["prior_findings"], "")
+        self.assertIn("UnicodeDecodeError", kw["prior_findings_record"]["error"])
+
+
 class TheStateOfAUnit(unittest.TestCase):
     """`0100` R3, R5, R13. One state per unit, the first rule that matches deciding it."""
 

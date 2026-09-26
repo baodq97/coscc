@@ -32,7 +32,7 @@ from coscc import board as board_reader
 from coscc import drift, events, fetches, gitops
 from coscc import harness, integrate, knowledge
 from coscc import hold as hold_rules
-from coscc import present, prcomment, prsync, spend
+from coscc import present, prcomment, priorfindings, prsync, spend
 from coscc import precedent as precedent_mod
 from coscc import sessions as reader
 from coscc.board import Unavailable
@@ -1747,6 +1747,17 @@ class Service:
                         "plan_sha": None, "main_sha": None, "files": None,
                         "checked": False, "reason": str(e) or type(e).__name__,
                     }
+            # `0110` R6/R7. What the reviews of the units the board above read as finished said
+            # about the files the plan names, for `impl` only; every other stage is handed no
+            # key. Like `plan_drift`, nothing in `for_step` may refuse the step.
+            prior_kw: dict[str, Any] = {}
+            if stage in ("impl", "implement"):
+                prior_kw = priorfindings.for_step(
+                    units.cos_dir(cwd, self.config.data_dir),
+                    [u["name"] for u in data["units"] if u.get("next") == "finished"],
+                    directory / "plan.md",
+                    unit,
+                )
             # `0074` R14. Where the unit stood in the shortlist in effect as it started, for the
             # outcome's measurement. Like `plan_drift`, nothing here may refuse the step.
             try:
@@ -1840,6 +1851,7 @@ class Service:
                     pr_note=pr_note,
                     pr_before=pr_before,
                     **knowledge_kw,
+                    **prior_kw,
                     **config,
                     # Only named for a spike, so a stand-in `run` without it keeps working.
                     **({"watch": work} if scratch is not None else {}),
