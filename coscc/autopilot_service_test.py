@@ -199,6 +199,61 @@ class OnTheRealLoop(_Base):
         self.assertEqual(self.service.autopilot_resume(), [self.ws])
         self.assertIn(self.key, self.service._autopilot_tasks)
 
+    # --- `0106`, an answered draft runs again ------------------------------------
+
+    def answers(self) -> list[dict]:
+        return Journal(self.config.working_dir, self.config.data_dir).records(kind="answer")
+
+    async def test_r4_each_block_writes_an_answer_record_and_only_the_last_completes(self):
+        unit = await self.unit("asked", "Status: draft.\n\n## Open questions\n\n1. Một?\n2. Hai?")
+        await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+        self.assertEqual([r["completes"] for r in self.answers()], [False])
+        await self.service.answer(self.ws, unit, "intent.md", 2, "hai", "")
+        first, last = self.answers()
+        self.assertEqual(
+            {k: last[k] for k in ("unit", "stage", "artifact", "question", "via", "status", "completes",
+                                  "autopilot", "shortlisted", "held")},
+            {"unit": unit, "stage": "intent", "artifact": "intent.md", "question": 2, "via": "product",
+             "status": "draft", "completes": True, "autopilot": False, "shortlisted": False, "held": False},
+        )
+        self.assertEqual(last["workspace"], self.key)
+        self.assertEqual(self.starts(), [])
+
+    async def test_r6_the_last_answer_runs_the_draft_again_in_the_pass_it_wakes(self):
+        self.service.sessions = _Intents()
+        unit = await self.unit("rerun", "Status: draft.\n\n## Open questions\n\n1. Một?")
+        self.listed(unit)
+        self.service.set_autopilot(self.ws, "autopilot", True)
+        await self.settled()
+        self.assertEqual(self.starts(), [])
+        [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
+        self.assertEqual(stop["kind"], "a")
+        # The loop's next poll is 300 s away: only the pass the answer wakes can start it.
+        await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.until(lambda: self.starts(), "the rerun's start")
+        await self.settled()
+        self.assertEqual([(s["stage"], s["started_by"]) for s in self.starts()], [("intent", "autopilot")])
+        picks = Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-pick")
+        self.assertEqual([(p["unit"], p["stage"]) for p in picks], [(unit, "intent")])
+        [answer] = self.answers()
+        self.assertEqual((answer["completes"], answer["autopilot"], answer["shortlisted"]), (True, True, True))
+        # The rerun kept the answer, and the draft it wrote asks nothing, so it is not run again.
+        text = (self.service._unit_dir(self.ws, unit) / "intent.md").read_text(encoding="utf-8")
+        self.assertIn("### Câu 1", text)
+        found = autopilot.measure_reruns(
+            Journal(self.config.working_dir, self.config.data_dir).records(), self.key, "2000-01-01", "2999-12-31",
+        )
+        self.assertEqual(([c["class"] for c in found["cases"]], found["met"]), (["on-time"], True))
+
+
+class _Intents:
+    """A session that rewrites `intent.md` as a draft with no open questions."""
+
+    async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+        yield ("chunk", "# Intent: x\nAuthor: proof. Type: fix. Status: draft.\n\n## Problem\n\nx\n")
+        yield ("done", {"session_id": "s1", "terminal_reason": "success",
+                        "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.01}})
+
 
 class Scripted(_Base):
     """The board, `next` and the step itself replaced, so each rule is set up on its own."""
@@ -569,6 +624,83 @@ class Scripted(_Base):
         self.listed()
         await self.pass_()
         self.assertEqual(self.stops(), {"0002_b": "f"})
+
+    # --- `0106`, an answered draft runs again ------------------------------------
+
+    def add_rerun(self, name, stage="intent"):
+        self.add(name, "", action=f"finish and accept {stage}.md",
+                 stages=[{"stage": stage, "file": f"{stage}.md", "status": "draft"}])
+        self.nexts[name]["rerun"] = stage
+
+    async def test_r2_a_rerun_is_picked_like_any_step_and_in_rank(self):
+        self.add_rerun("0001_a")
+        self.add("0002_b", "spec")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "intent", "autopilot"), ("0002_b", "spec", "autopilot")])
+        self.assertEqual([(p["unit"], p["stage"]) for p in self.picks()], [("0001_a", "intent"), ("0002_b", "spec")])
+        self.assertEqual(self.stops(), {})
+
+    async def test_r2_off_the_shortlist_it_is_not_asked(self):
+        self.add_rerun("0001_a")
+        self.add("0002_b", "spec")
+        self.listed("0002_b")
+        await self.pass_()
+        self.assertEqual((self.asked, [u for u, _, _ in self.launched]), (["0002_b"], ["0002_b"]))
+
+    async def test_r2_a_closed_gate_is_still_a_stop_f(self):
+        async def refused(cwd, unit, stage, started_by="person"):
+            raise Invalid("blocked: idea.md is draft")
+            yield  # pragma: no cover
+
+        self.service.run_step = refused
+        self.add_rerun("0001_a")
+        await self.pass_()
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"],
+                         {"unit": "0001_a", "kind": "f", "reason": "blocked: idea.md is draft"})
+
+    async def test_r3_two_reruns_after_answers_stop_it(self):
+        log = Journal(self.config.working_dir, self.config.data_dir)
+        for kind in ("start", "answer", "start", "answer", "start", "answer"):
+            log.append({"kind": kind, "workspace": self.key, "unit": "0001_a", "stage": "spec", "started_by": "person"})
+        self.add_rerun("0001_a", "spec")
+        self.add("0002_b", "spec")
+        await self.pass_()
+        self.assertEqual((self.picks()[0]["unit"], [u for u, _, _ in self.launched]), ("0002_b", ["0002_b"]))
+        self.assertEqual(self.stops(), {"0001_a": "reruns"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+                         "spec.md was run again 2 times after its answers; a person decides the next run.")
+        self.assertEqual(self.picks()[0]["passed"][0]["reason"], "stop")
+
+    async def test_r3_one_rerun_before_still_runs(self):
+        log = Journal(self.config.working_dir, self.config.data_dir)
+        for kind in ("start", "answer", "start", "answer"):
+            log.append({"kind": kind, "workspace": self.key, "unit": "0001_a", "stage": "intent"})
+        self.add_rerun("0001_a")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "intent", "autopilot")])
+
+    async def test_r5_held_back_by_max_parallel_it_says_full(self):
+        self.one_at_a_time()
+        self.add("0001_a", "spec")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "spec", "autopilot")])
+        self.add_rerun("0002_b")
+        self.add("0003_c", "spec")
+        self.listed()
+        await self.pass_()
+        self.assertEqual(len(self.launched), 1)
+        # Only the rerun says so; an ordinary candidate held back the same way still does not.
+        self.assertEqual(self.stops(), {"0002_b": "full"})
+        self.assertIn("1 steps are already running", self.service._autopilot_stops[self.key]["0002_b"]["reason"])
+        self.release.set()
+        await self.settled()
+        self.release.clear()
+        del self.units["0001_a"]
+        await self.pass_()
+        self.assertEqual(self.launched[1], ("0002_b", "intent", "autopilot"))
+        self.assertEqual(self.stops(), {})
+        logged = Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-stop")
+        self.assertEqual([(r["unit"], r["stop"]) for r in logged], [("0002_b", "full"), ("0002_b", "")])
 
 
 class ResumedAtStartUp(unittest.TestCase):
