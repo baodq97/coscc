@@ -4062,12 +4062,16 @@ class Service:
                 ):
                     stop, stage = autopilot.red_again(info, integrations.get(name)), "integrate"
                 # `0106` R2, R3: a draft whose questions are all answered runs again, at most
-                # `MAX_RERUNS` times. Before `reason`, which raises on no stage and no stop.
+                # `MAX_RERUNS` times, and only on an answer given since its last run; with none,
+                # it is the stop `f` it was before `0106`. Before `reason`, which raises on no
+                # stage and no stop.
                 rerun = False
                 if stop is None and not stage and nxt.get("rerun"):
                     if autopilot.reruns_of(records, key, name, nxt["rerun"]) >= autopilot.MAX_RERUNS:
                         artifact = next((s["file"] for s in u.get("stages") or [] if s["stage"] == nxt["rerun"]), nxt["rerun"])
                         stop = autopilot.rerun_stop(artifact)
+                    elif not autopilot.answered_since_start(records, key, name, nxt["rerun"]):
+                        stop = autopilot.stop_for(u, {**nxt, "rerun": ""}, last.get(name), settings["autopilot_may_ship"])
                     else:
                         stage, rerun = nxt["rerun"], True
                 reason = ("running", here[name]) if name in here else autopilot.reason_for(nxt, stage, stop)

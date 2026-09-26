@@ -245,12 +245,33 @@ class OnTheRealLoop(_Base):
         )
         self.assertEqual(([c["class"] for c in found["cases"]], found["met"]), (["on-time"], True))
 
+    async def test_r3_a_rerun_that_keeps_its_answered_question_is_not_run_again(self):
+        # The draft the rerun writes still asks question 1, which the kept block answers, so
+        # `next` says `rerun` again with no new answer behind it (review.md F2).
+        self.service.sessions = _Intents("\n## Open questions\n\n1. Một?\n")
+        unit = await self.unit("kept", "Status: draft.\n\n## Open questions\n\n1. Một?")
+        self.listed(unit)
+        self.service.set_autopilot(self.ws, "autopilot", True)
+        await self.settled()
+        await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.until(lambda: self.starts(), "the rerun's start")
+        await self.settled()
+        self.assertEqual((await self.service.next_step(self.ws, unit))["rerun"], "intent")
+        await self.service._autopilot_pass(self.key)
+        await self.settled()
+        self.assertEqual([(s["stage"], s["started_by"]) for s in self.starts()], [("intent", "autopilot")])
+        [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
+        self.assertEqual((stop["unit"], stop["kind"], stop["reason"]), (unit, "f", "finish and accept intent.md"))
+
 
 class _Intents:
-    """A session that rewrites `intent.md` as a draft with no open questions."""
+    """A session that rewrites `intent.md` as a draft, with no open questions unless `asks`."""
+
+    def __init__(self, asks: str = ""):
+        self.asks = asks
 
     async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-        yield ("chunk", "# Intent: x\nAuthor: proof. Type: fix. Status: draft.\n\n## Problem\n\nx\n")
+        yield ("chunk", "# Intent: x\nAuthor: proof. Type: fix. Status: draft.\n\n## Problem\n\nx\n" + self.asks)
         yield ("done", {"session_id": "s1", "terminal_reason": "success",
                         "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.01}})
 
@@ -627,10 +648,14 @@ class Scripted(_Base):
 
     # --- `0106`, an answered draft runs again ------------------------------------
 
-    def add_rerun(self, name, stage="intent"):
+    def add_rerun(self, name, stage="intent", *before):
+        """`next` says `rerun: stage`, after `before`'s records and then one `answer`."""
         self.add(name, "", action=f"finish and accept {stage}.md",
                  stages=[{"stage": stage, "file": f"{stage}.md", "status": "draft"}])
         self.nexts[name]["rerun"] = stage
+        log = Journal(self.config.working_dir, self.config.data_dir)
+        for kind in (*before, "answer"):
+            log.append({"kind": kind, "workspace": self.key, "unit": name, "stage": stage, "started_by": "person"})
 
     async def test_r2_a_rerun_is_picked_like_any_step_and_in_rank(self):
         self.add_rerun("0001_a")
@@ -659,10 +684,7 @@ class Scripted(_Base):
                          {"unit": "0001_a", "kind": "f", "reason": "blocked: idea.md is draft"})
 
     async def test_r3_two_reruns_after_answers_stop_it(self):
-        log = Journal(self.config.working_dir, self.config.data_dir)
-        for kind in ("start", "answer", "start", "answer", "start", "answer"):
-            log.append({"kind": kind, "workspace": self.key, "unit": "0001_a", "stage": "spec", "started_by": "person"})
-        self.add_rerun("0001_a", "spec")
+        self.add_rerun("0001_a", "spec", "start", "answer", "start", "answer", "start")
         self.add("0002_b", "spec")
         await self.pass_()
         self.assertEqual((self.picks()[0]["unit"], [u for u, _, _ in self.launched]), ("0002_b", ["0002_b"]))
@@ -672,12 +694,29 @@ class Scripted(_Base):
         self.assertEqual(self.picks()[0]["passed"][0]["reason"], "stop")
 
     async def test_r3_one_rerun_before_still_runs(self):
-        log = Journal(self.config.working_dir, self.config.data_dir)
-        for kind in ("start", "answer", "start", "answer"):
-            log.append({"kind": kind, "workspace": self.key, "unit": "0001_a", "stage": "intent"})
-        self.add_rerun("0001_a")
+        self.add_rerun("0001_a", "intent", "start", "answer", "start")
         await self.pass_()
         self.assertEqual(self.launched, [("0001_a", "intent", "autopilot")])
+
+    async def test_r3_no_answer_since_the_last_run_is_the_stop_f(self):
+        # `start, answer, start`: the rerun ended `draft` still read as answered (review.md F2).
+        self.add_rerun("0001_a", "intent", "start")
+        Journal(self.config.working_dir, self.config.data_dir).append(
+            {"kind": "start", "workspace": self.key, "unit": "0001_a", "stage": "intent", "started_by": "autopilot"})
+        self.add("0002_b", "spec")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0002_b", "spec", "autopilot")])
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"],
+                         {"unit": "0001_a", "kind": "f", "reason": "finish and accept intent.md"})
+        await self.pass_()
+        self.assertEqual(len(self.launched), 1)
+
+    async def test_r3_an_answered_draft_with_no_answer_record_is_the_stop_f(self):
+        self.add_rerun("0001_a")
+        Journal(self.config.working_dir, self.config.data_dir).append(
+            {"kind": "start", "workspace": self.key, "unit": "0001_a", "stage": "intent", "started_by": "person"})
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "f"}))
 
     async def test_r5_held_back_by_max_parallel_it_says_full(self):
         self.one_at_a_time()

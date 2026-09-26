@@ -9,9 +9,10 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or 
   or a live session can put text there that a stage will read as a person's decision. The
   only trace is the file and an `outputs` row with `actor = human:<name>` — `human:owner`
   from the board. Since `0106` every block, a person's or Jera's, also leaves an `answer`
-  record in `runs`; it starts nothing, but the autopilot counts it toward the two times a
-  draft may run again after its answers (`autopilot.reruns_of`), and a record lost to a busy
-  run log is not counted.
+  record in `runs`; it starts nothing, but the autopilot runs a draft again only on one
+  written since the stage's last `start` (`autopilot.answered_since_start`), and counts it
+  toward the two times it may (`autopilot.reruns_of`). A record lost to a busy run log is not
+  counted, and an answer given before `0106` shipped left none.
   The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it. Since `0028` it also takes `question: "F<n>"` with
   `artifact: "review.md"` for a finding `cos.mjs` lists in `personFindings`, and that block
   does more than reach a prompt: `next` offers `review` once every such finding has one,

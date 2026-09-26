@@ -533,6 +533,17 @@ class Reruns(unittest.TestCase):
         rows = [row("start", started_by="person"), row("answer"), row("start", started_by="autopilot")]
         self.assertEqual(ap.reruns_of(rows, "w", "0001_a", "intent"), 1)
 
+    def test_only_an_answer_after_the_last_start_is_new(self):
+        self.assertTrue(ap.answered_since_start([row("start"), row("answer")], "w", "0001_a", "intent"))
+        self.assertTrue(ap.answered_since_start([row("answer")], "w", "0001_a", "intent"))
+        # A rerun that ended `draft` still read as answered: no new answer, whatever `reruns_of` says.
+        rows = [row("start"), row("answer"), row("start")]
+        self.assertFalse(ap.answered_since_start(rows, "w", "0001_a", "intent"))
+        self.assertEqual(ap.reruns_of(rows, "w", "0001_a", "intent"), 1)
+        self.assertFalse(ap.answered_since_start([row("start")], "w", "0001_a", "intent"))
+        others = [row("start"), row("answer", unit="0002_b"), row("answer", stage="spec"), row("answer", workspace="other")]
+        self.assertFalse(ap.answered_since_start(others, "w", "0001_a", "intent"))
+
     def test_completes_only_on_the_last_question_of_a_rerun_stage(self):
         qs = [{"artifact": "intent.md", "n": 1, "answered": True}, {"artifact": "intent.md", "n": 2, "answered": False}]
         u = self.board_row(qs)

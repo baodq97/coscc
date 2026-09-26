@@ -126,7 +126,7 @@ def stop_for(
         return _stop("c", "ship waits for a person: the autopilot may not ship in this workspace")
 
     # `0106` R2: a draft whose questions are all answered is a stage to run again, not a
-    # stop. Whether it may be is the pass's to say (`reruns_of`).
+    # stop. Whether it may be is the pass's to say (`reruns_of`, `answered_since_start`).
     if not stage and nxt.get("rerun"):
         return None
     # f. Nothing to run, and not because CI is still running.
@@ -392,6 +392,22 @@ def reruns_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stag
                 count += 1
             started, answered = True, False
     return count
+
+
+def answered_since_start(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> bool:
+    """R3. Whether an `answer` record of `stage` on `unit` came after its last `start`. A run
+    again that ends `draft` keeps its answered questions' numbers (`runner._ANSWERS_ADVICE`),
+    so `cos.mjs next` can say `rerun` with no new answer behind it; without this, `reruns_of`
+    would stay where it was and the autopilot would run it again on every pass."""
+    fresh = False
+    for r in records:
+        if r.get("workspace") != workspace or r.get("unit") != unit or r.get("stage") != stage:
+            continue
+        if r.get("kind") == "answer":
+            fresh = True
+        elif r.get("kind") == "start":
+            fresh = False
+    return fresh
 
 
 def answer_completes(unit_row: dict[str, Any], artifact: str, answered: Iterable[Any]) -> bool:
