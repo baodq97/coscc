@@ -12,7 +12,7 @@ import {
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
   parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking, prText,
   UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe, stageAt,
-  aboveAnswers, parseReruns, RERUNNABLE,
+  aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -2578,4 +2578,135 @@ test('0106 R1: status --json and nextAction never carry rerun', () => {
   const { root, u } = answeredTree({ 'intent.md': DRAFT_INTENT + answerBlock(1, 'A', 'x') + answerBlock(2, 'A', 'y') })
   assert.equal('rerun' in nextAction(u), false)
   assert.equal(cli('--root', root, 'status', '--json').stdout.includes('rerun'), false)
+})
+
+// --- `0111`: a rebase no longer leaves review with stale screenshots -------------
+
+const OLD = 'c'.repeat(40)
+const MANIFEST = { head: OLD, dirty: false, addresses: ['/board'], hits: [{ address: '/board', size: '1440x900', kind: 'path', snippet: '/tmp/x' }], shots: [] }
+// A probe for `screensAnswer`: the branch changes `files`, `.screens/manifest.json` reads
+// `manifest`, and the manifest's head is no longer an ancestor of `HEAD` unless `ancestor`.
+const answerProbe = ({ files = ['coscc/screens.py'], manifest = MANIFEST, ancestor = 1, ui = UI, git = {} } = {}) => {
+  const calls = []
+  return {
+    calls,
+    ui: () => ui,
+    manifest: () => manifest,
+    git: (...args) => {
+      const key = args.join(' ')
+      calls.push(key)
+      if (key in git) return git[key]
+      if (key === 'diff --name-only origin/main...HEAD') return ok(files.join('\n'))
+      if (key === `merge-base --is-ancestor ${OLD} HEAD`) return { code: ancestor, out: '', err: '' }
+      return ok()
+    },
+  }
+}
+
+test('0111 R1, R2: a UI unit whose clean manifest names a rewritten head is taken again', () => {
+  assert.deepEqual(screensAnswer(unit({}), answerProbe()), {
+    unit: '0001_x', ui: ['coscc/screens.py'],
+    manifest: { head: OLD, dirty: false, addresses: ['/board'], hits: MANIFEST.hits },
+    rewritten: true, retake: true, why: '',
+  })
+  // A commit gone from the object store is rewritten too: git exits 128, not 1.
+  assert.equal(screensAnswer(unit({}), answerProbe({ ancestor: 128 })).retake, true)
+})
+
+test('0111 R2: each condition, broken once, is no retake and says which', () => {
+  const said = (opts) => {
+    const a = screensAnswer(unit({}), answerProbe(opts))
+    assert.equal(a.retake, false)
+    return a
+  }
+  assert.match(said({ files: ['coscc/runner.py'] }).why, /changes no file the UI standard counts as a screen/)
+  assert.match(said({ manifest: null }).why, /no readable \.screens\/manifest\.json/)
+  assert.equal(said({ manifest: null }).manifest, null)
+  assert.match(said({ manifest: [1, 2] }).why, /no readable/)
+  assert.match(said({ manifest: { ...MANIFEST, addresses: [] } }).why, /lists no addresses/)
+  assert.match(said({ manifest: { ...MANIFEST, addresses: undefined } }).why, /lists no addresses/)
+  assert.match(said({ manifest: { ...MANIFEST, dirty: true } }).why, /uncommitted changes/)
+  assert.match(said({ manifest: { ...MANIFEST, dirty: undefined } }).why, /uncommitted changes/)
+  const kept = said({ ancestor: 0 })
+  assert.equal(kept.rewritten, false)
+  assert.match(kept.why, new RegExp(`head ${OLD} is still an ancestor of HEAD`))
+  // A head that is no commit name is not handed to git at all.
+  const odd = answerProbe({ manifest: { ...MANIFEST, head: '--output=/tmp/x' } })
+  const a = screensAnswer(unit({}), odd)
+  assert.equal(a.retake, false)
+  assert.match(a.why, /names no commit/)
+  assert.equal(odd.calls.some((c) => c.startsWith('merge-base')), false)
+})
+
+test('0111 R1: no standard, or one with no globs, is ui [] and asks git no diff', () => {
+  for (const ui of [null, { path: UI_STANDARD, globs: [] }]) {
+    const probe = answerProbe({ ui })
+    const a = screensAnswer(unit({}), probe)
+    assert.deepEqual([a.ui, a.retake], [[], false])
+    assert.equal(probe.calls.some((c) => c.startsWith('diff')), false)
+  }
+})
+
+test('0111 R1: git that cannot diff is no retake, and why is its error; main alone is enough', () => {
+  const fail = { code: 128, out: '', err: 'fatal: bad revision' }
+  const a = screensAnswer(unit({}), answerProbe({ git: { 'diff --name-only origin/main...HEAD': fail, 'diff --name-only main...HEAD': fail } }))
+  assert.deepEqual([a.ui, a.retake], [[], false])
+  assert.match(a.why, /cannot tell whether 0001_x changes a screen: .*fatal: bad revision/)
+  const local = screensAnswer(unit({}), answerProbe({ git: { 'diff --name-only origin/main...HEAD': fail, 'diff --name-only main...HEAD': ok('coscc/screens.py\n') } }))
+  assert.equal(local.retake, true)
+})
+
+test('0111 R9: screensAnswer and the ship gate leave out the same files', () => {
+  // The unit's own `.cos/` files are left out of both, even when a glob takes them.
+  const globs = { path: UI_STANDARD, globs: ['**/*.py'] }
+  assert.deepEqual(screensAnswer(unit({}), answerProbe({ files: ['.cos/0001_x/x.py'], ui: globs })).ui, [])
+  const g = checkGate(passed(), 'ship', { probe: uiProbe(['.cos/0001_x/x.py'], {}, globs) })
+  assert.deepEqual(g, checkGate(passed(), 'ship', { probe: greenProbe() }))
+  assert.equal(typeof screensNeeds, 'function')
+})
+
+test('0111 R1: cos.mjs screens, on a real repository', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cos-0111-'))
+  const store = join(root, 'store')
+  const repo = join(root, 'repo')
+  mkdirSync(join(store, '.cos', '0001_x'), { recursive: true })
+  writeFileSync(join(store, '.cos', '0001_x', 'intent.md'), '# I\nType: fix. Status: accepted.\n')
+  mkdirSync(join(repo, '.claude', 'rules'), { recursive: true })
+  mkdirSync(join(repo, 'coscc'), { recursive: true })
+  const sh = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8' })
+    assert.equal(r.status, 0, r.stderr)
+    return r.stdout.trim()
+  }
+  sh('init', '-q', '-b', 'main')
+  writeFileSync(join(repo, UI_STANDARD), '---\npaths:\n  - "coscc/screens.py"\n---\n')
+  writeFileSync(join(repo, '.gitignore'), '.screens/\n')
+  sh('add', '.')
+  sh('commit', '-q', '-m', 'first')
+  sh('switch', '-q', '-c', 'fix/x')
+  writeFileSync(join(repo, 'coscc', 'screens.py'), '# a screen\n')
+  sh('add', '.')
+  sh('commit', '-q', '-m', 'a screen')
+  const taken = sh('rev-parse', 'HEAD')
+  sh('commit', '-q', '--amend', '-m', 'a screen, rewritten')
+  mkdirSync(join(repo, '.screens'))
+  writeFileSync(join(repo, '.screens', 'manifest.json'), JSON.stringify({ ...MANIFEST, head: taken }))
+
+  const run = (...args) => cli('--root', store, ...args)
+  const out = run('screens', '0001_x', '--repo', repo)
+  assert.equal(out.status, 0, out.stderr)
+  const a = JSON.parse(out.stdout)
+  assert.deepEqual([a.ui, a.manifest.head, a.rewritten, a.retake, a.why], [['coscc/screens.py'], taken, true, true, ''])
+  // Taken again at HEAD: nothing to do.
+  writeFileSync(join(repo, '.screens', 'manifest.json'), JSON.stringify({ ...MANIFEST, head: sh('rev-parse', 'HEAD') }))
+  assert.equal(JSON.parse(run('screens', '0001_x', '--repo', repo).stdout).retake, false)
+  // Misuse is exit 2.
+  assert.equal(run('screens').status, 2)
+  assert.equal(run('screens', '0002_none', '--repo', repo).status, 2)
+  assert.equal(run('screens', '../x', '--repo', repo).status, 2)
+  const bare = run('screens', '0001_x')
+  assert.equal(bare.status, 2)
+  assert.match(bare.stderr, /pass --repo/)
+  // It writes nothing into the store.
+  assert.equal(readdirSync(join(store, '.cos', '0001_x')).join(','), 'intent.md')
 })

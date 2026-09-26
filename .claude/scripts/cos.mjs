@@ -1184,20 +1184,9 @@ export function screensProblems(screens, standardPath) {
 // standard, or one with no globs, it asks nothing at all; for a unit that changes no screen
 // it asks one `git diff`. `said.screens` sends `nextStep` to another review round — except
 // when git could not say which files changed, which another round would not cure.
-function screensNeeds(unit, probe, last, said) {
-  const standard = probe.ui?.() ?? null
-  if (!standard || !standard.globs.length) return []
-  // Three dots: from the merge-base, in one command. The gate does not fetch (spec C7).
-  let diff = probe.git('diff', '--name-only', `origin/main...${said.head}`)
-  if (diff.code !== 0) {
-    const local = probe.git('diff', '--name-only', `main...${said.head}`)
-    if (local.code !== 0) {
-      return [`cannot tell whether ${unit.name} changes a screen: git could not diff origin/main...${said.head} (${diff.err.trim()}) nor main...${said.head} (${local.err.trim()}) — the gate does not fetch`]
-    }
-    diff = local
-  }
-  const own = `.cos/${unit.name}/`
-  const changed = uiFiles(diff.out.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith(own)), standard.globs)
+export function screensNeeds(unit, probe, last, said) {
+  const { changed, standard, error } = uiChanged(unit, probe, said.head)
+  if (error) return [error]
   if (!changed.length) return []
   const why = `this unit changes ${changed.join(', ')}, which ${standard.path} counts as screens`
   const need = screensProblems(last.screens, standard.path).map((p) => `review round ${last.n} passed, but ${p} — ${why}`)
@@ -1219,7 +1208,58 @@ function screensNeeds(unit, probe, last, said) {
   return need
 }
 
+// The files among what `head` changed since it left the trunk that the standard counts as
+// screens: `{ changed, standard }`, or `{ error }` when git could not say. `changed` is `[]`
+// with no standard, or one with no globs, and then git is not asked. Shared by `screensNeeds`
+// and `screensAnswer` (`0111`), so there is one comparison and not two.
+function uiChanged(unit, probe, head) {
+  const standard = probe.ui?.() ?? null
+  if (!standard || !standard.globs.length) return { changed: [], standard }
+  // Three dots: from the merge-base, in one command. The gate does not fetch (spec C7).
+  let diff = probe.git('diff', '--name-only', `origin/main...${head}`)
+  if (diff.code !== 0) {
+    const local = probe.git('diff', '--name-only', `main...${head}`)
+    if (local.code !== 0) {
+      return { error: `cannot tell whether ${unit.name} changes a screen: git could not diff origin/main...${head} (${diff.err.trim()}) nor main...${head} (${local.err.trim()}) — the gate does not fetch` }
+    }
+    diff = local
+  }
+  const own = `.cos/${unit.name}/`
+  return { changed: uiFiles(diff.out.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith(own)), standard.globs), standard }
+}
+
+// `0111` R1, R2. Whether the app should take a UI unit's screenshots again before `review`:
+// the screens the branch changes, what `.screens/manifest.json` says, and whether its `head`
+// is still an ancestor of `HEAD`. `retake` only when the unit changes a screen, the manifest
+// lists addresses, was taken on a clean tree, and its head was rewritten away (a rebase, by
+// anyone). `why` names the first of those that does not hold, or is `''`. Reads only; no
+// gate is opened or closed by it.
+export function screensAnswer(unit, probe) {
+  const { changed, error } = uiChanged(unit, probe, 'HEAD')
+  const read = probe.manifest?.() ?? null
+  const manifest = read && typeof read === 'object' && !Array.isArray(read)
+    ? { head: read.head ?? null, dirty: read.dirty ?? null, addresses: read.addresses ?? null, hits: Array.isArray(read.hits) ? read.hits : [] }
+    : null
+  // A head that is no commit name is not handed to git as an argument.
+  const named = typeof manifest?.head === 'string' && /^[0-9a-f]{7,40}$/.test(manifest.head)
+  // Exit non-zero also when the commit is gone from the object store: rewritten all the same.
+  const rewritten = named && probe.git('merge-base', '--is-ancestor', manifest.head, 'HEAD').code !== 0
+  const addressed = Array.isArray(manifest?.addresses) && manifest.addresses.length > 0 && manifest.addresses.every((a) => typeof a === 'string')
+  const why = error
+    ?? (!changed.length ? 'this unit changes no file the UI standard counts as a screen'
+      : !manifest ? 'there is no readable .screens/manifest.json in this checkout'
+      : !addressed ? 'the manifest lists no addresses'
+      : manifest.dirty !== false ? 'the manifest was taken on a tree with uncommitted changes'
+      : !named ? 'the manifest names no commit'
+      : !rewritten ? `the manifest's head ${manifest.head} is still an ancestor of HEAD`
+      : '')
+  return { unit: unit.name, ui: changed ?? [], manifest, rewritten, retake: why === '', why }
+}
+
 // --- what the gate asks git and gh -------------------------------------------
+
+// Where `scripts/capture_screens.py` writes its manifest, relative to the repository.
+export const SCREENS_MANIFEST = '.screens/manifest.json'
 
 // The two questions `review` and `ship` ask outside `.cos/`. Every other gate reads files
 // only. Injected so the rules can be tested without a repository or a network; the default
@@ -1238,7 +1278,16 @@ export function makeProbe(repoDir) {
     if (!existsSync(path)) return null
     return { path: UI_STANDARD, globs: parseStandard(readFileSync(path, 'utf8')) }
   }
-  return { git: (...args) => run('git', args), gh: (...args) => run('gh', args), ui }
+  // `0111`: what `scripts/capture_screens.py` last wrote in that repository, or `null` with no
+  // file there or one that is not JSON.
+  const manifest = () => {
+    try {
+      return JSON.parse(readFileSync(join(repoDir, SCREENS_MANIFEST), 'utf8'))
+    } catch {
+      return null
+    }
+  }
+  return { git: (...args) => run('git', args), gh: (...args) => run('gh', args), ui, manifest }
 }
 
 // `review` may begin only on an open pull request whose required checks are green
@@ -2032,6 +2081,32 @@ function cmdRerun(unitName, stage, cosDir, limit, today = localDate()) {
   return 0
 }
 
+// `0111`. Whether the app should take a UI unit's screenshots again before `review`, as one
+// line of JSON: `screensAnswer`'s. Exit 0 whatever it says; exit 2 is misuse — no unit named,
+// no such unit, or `--root` with no `--repo`, since the store has no `.screens/` and no git.
+// Reads git and one file; writes nothing, and opens or closes no gate.
+function cmdScreens(unitName, cosDir, repoDir) {
+  if (!unitName) {
+    console.error('usage: cos.mjs screens <NNNN_slug> [--repo <dir>]')
+    return 2
+  }
+  if (!UNIT_RE.test(unitName)) {
+    console.error(`Invalid unit name "${unitName}": expected NNNN_slug.`)
+    return 2
+  }
+  const dir = join(cosDir, unitName)
+  if (!existsSync(dir)) {
+    console.error(`No such work unit: ${unitName}`)
+    return 2
+  }
+  if (!repoDir) {
+    console.error('screens needs the checkout its screenshots are in — pass --repo <dir>')
+    return 2
+  }
+  console.log(JSON.stringify(screensAnswer(readUnit(dir, unitName), makeProbe(repoDir))))
+  return 0
+}
+
 // Today on this machine's calendar, `YYYY-MM-DD` — the date the app's own blocks carry.
 function localDate(d = new Date()) {
   const pad = (n) => String(n).padStart(2, '0')
@@ -2123,6 +2198,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     'unit-branch': () => cmdUnitBranch(rest[0], cosDir),
     'pr-text': () => cmdPrText(rest[0], cosDir),
     rerun: () => cmdRerun(rest[0], rest[1], cosDir, limit),
+    screens: () => cmdScreens(rest[0], cosDir, repoDir),
     'check-branch': () => cmdCheckBranch(rest[0]),
     'check-tag': () => cmdCheckTag(rest[0]),
     'check-version': () => cmdCheckVersion(),
@@ -2131,7 +2207,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!run) {
     console.error('usage: cos.mjs [--root <dir>] <command>')
     console.error('  reading a .cos/ (these take --root):')
-    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>]')
+    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>]')
     console.error('  describing this checkout (these do not):')
     console.error('    check-branch [name] | check-tag <tag> | check-version')
     process.exit(2)
@@ -2158,9 +2234,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
 
   // `--repo` names where the `review` and `ship` gates ask git and gh, and `next`, which
-  // asks the same questions. Nothing else asks.
-  if (repoArg !== null && cmd !== 'gate' && cmd !== 'next') {
-    console.error(`--repo applies only to \`gate\` and \`next\`, not to \`${cmd}\`.`)
+  // asks the same questions, and where `screens` (`0111`) reads the manifest. Nothing else asks.
+  if (repoArg !== null && cmd !== 'gate' && cmd !== 'next' && cmd !== 'screens') {
+    console.error(`--repo applies only to \`gate\` and \`next\`, and to \`screens\`, not to \`${cmd}\`.`)
     process.exit(2)
   }
 
