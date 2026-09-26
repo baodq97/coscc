@@ -23,8 +23,8 @@ from coscc import events as events_mod
 from coscc import fetches, gitops, harness, units, worktrees
 from coscc.config import Config
 from coscc.service import (
-    STAGE_FILES, STATE_COLOR, STATE_LABEL, Invalid, Service, describe_base, outcome_label, shown_state,
-    step_cwd, unit_state,
+    STAGE_FILES, STATE_COLOR, STATE_LABEL, Invalid, Service, attention_reason, describe_base, outcome_label,
+    reason_beside, shown_state, step_cwd, unit_state,
 )
 from coscc.sessions import Live, Sessions
 
@@ -3642,3 +3642,25 @@ class TheStateOfAUnit(unittest.TestCase):
         failed = {"head": "a", "error": "gh: not logged in", "at": "t"}
         self.assertEqual(unit_state(window, None, failed)["ci"], {"read": False, "red": [], "at": "t"})
         self.assertIsNone(unit_state(self._unit(), None, None)["ci"], "no line outside the window")
+
+    def test_the_dialog_shows_no_reason_its_state_contradicts(self):
+        """Review F1. A unit with `problems` is `Error` (C3), yet `attention_reason` still
+        reads "Needs a person"; a dropped unit with a draft still reads "Accept <stage>.md"."""
+        broken = self._unit(problems=["plan.md: no Status line"])
+        self.assertEqual(attention_reason(broken), "Needs a person")
+        state = unit_state(broken, None, None)["state"]
+        self.assertEqual(state, "error")
+        self.assertEqual(reason_beside(attention_reason(broken), state), "")
+        self.assertEqual(reason_beside("Needs a person", "running"), "")
+
+        dropped = self._unit(why="dropped", hold={"state": "dropped"},
+                             stages=[{"stage": "intent", "status": "accepted"}, {"stage": "spec", "status": "draft"}])
+        self.assertEqual(attention_reason(dropped), "Accept spec.md")
+        self.assertEqual(reason_beside(attention_reason(dropped), unit_state(dropped, None, None)["state"]), "")
+        for state in ("done", "paused"):
+            self.assertEqual(reason_beside("Changes requested", state), "")
+
+        # Where they agree, the words are `0082`'s, unchanged (R12).
+        self.assertEqual(reason_beside("Needs a person", "needs-you"), "Needs a person")
+        self.assertEqual(reason_beside("Accept plan.md", "ready"), "Accept plan.md")
+        self.assertEqual(reason_beside("Changes requested", "ready"), "Changes requested")

@@ -2011,9 +2011,10 @@ def _detail_dialog() -> rx.Component:
                     s.text(P.current_unit.id, size="1",
                            font_family="ui-monospace, monospace"),
                     s.badge(P.current_unit.state_label, P.current_unit.state_color),
-                    # `0082` R12, `0100` C3: what a unit waits on, beside its state.
-                    rx.cond(P.current_unit.attention_reason != "",
-                            s.badge(P.current_unit.attention_reason, "amber")),
+                    # `0082` R12, `0100` C3: what a unit waits on, beside its state, where
+                    # the service finds the two agree (review F1).
+                    rx.cond(P.current_unit.state_reason != "",
+                            s.badge(P.current_unit.state_reason, "amber")),
                     rx.spacer(),
                     rx.dialog.close(s.icon_button("x", "Close work detail")),
                     width="100%", align="center",

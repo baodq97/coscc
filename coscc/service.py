@@ -333,7 +333,8 @@ def attention_reason(unit: dict[str, Any]) -> str:
 
     Its condition is the rule of the lane *Needs you* had until `0100`, kept so the words
     stay those `0082` wrote (`0100` R12). The board's state is `unit_state`'s, not this;
-    since `0100` this shows in the unit's dialog beside it (spec C3)."""
+    since `0100` this shows in the unit's dialog beside it (spec C3), through
+    `reason_beside`."""
     action = str(unit.get("next") or "")
     rows = unit.get("stages") or []
     if unit.get("phase") == "pre-intent" or action == "finished" or action.startswith("closed"):
@@ -436,6 +437,16 @@ def shown_state(decided: dict[str, Any], running_rows: list[dict[str, Any]] | No
     if running_rows and decided.get("state") not in COLLAPSED_STATES:
         return _state("running")
     return decided
+
+
+def reason_beside(reason: str, state: str) -> str:
+    """`0100` review F1. `attention_reason` as the dialog shows it beside the state shown,
+    `""` where the two would disagree: any reason beside a collapsed state, and "Needs a
+    person" beside any state but *Needs you* (`intent.md ## Constraints`). Its words stay
+    those `0082` wrote (R12)."""
+    if state in COLLAPSED_STATES or (reason == "Needs a person" and state != "needs-you"):
+        return ""
+    return reason
 
 
 # `0082` R9. The release channel's state in plain words; `{v}` is the offered version.

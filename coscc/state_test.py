@@ -161,6 +161,23 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
         unit = self._fresh("started") | {"problems": ["no intent.md — every unit opens with one"]}
         self.assertEqual(unit_state(unit, None, None)["state"], "error")
 
+    def test_the_dialog_of_a_unit_with_problems_does_not_say_it_needs_a_person(self):
+        """`0100` review F1. The dialog's header draws `state_reason`, never the raw
+        `attention_reason`, which calls this unit "Needs a person" beside `Error`."""
+        from coscc.service import attention_reason, unit_state
+        from coscc.state import Unit, _shown
+
+        unit = self._fresh("started") | {"problems": ["no intent.md — every unit opens with one"]}
+        decided = unit_state(unit, None, None)
+        page = Unit(id=unit["name"], attention_reason=attention_reason(unit), decided_state=decided["state"],
+                    decided_label=decided["label"], decided_color=decided["color"])
+        self.assertEqual(page.attention_reason, "Needs a person")
+        self.assertEqual(_shown(page, {})["state"], "error")
+        self.assertEqual(_shown(page, {})["state_reason"], "")
+        screens = (Path(__file__).parent / "screens.py").read_text(encoding="utf-8")
+        self.assertNotIn("current_unit.attention_reason", screens)
+        self.assertIn("current_unit.state_reason", screens)
+
     def test_a_review_that_asked_for_changes_is_ready(self):
         """`0015`, `0100` C6: the unit waits on a fix a step makes, not on a person."""
         from coscc.service import unit_state

@@ -31,7 +31,9 @@ from coscc import events as events_mod
 from coscc import place, present, spend
 from coscc.api import build
 from coscc.journal import COST_USD, TOKEN_FIELDS
-from coscc.service import COLLAPSED_STATES, Invalid, StaleCutList, describe_base, shown_state
+from coscc.service import (
+    COLLAPSED_STATES, Invalid, StaleCutList, describe_base, reason_beside, shown_state,
+)
 
 API = build()
 SERVICE = API.state.service
@@ -260,12 +262,14 @@ class Unit:
     attention_reason: str = ""
     # `0100` R2, R3. The stage whose column the unit sits in, as `cos.mjs` sent it, and the
     # state shown: `Service.board`'s decision (`decided_*`), with `Running` laid over it by
-    # `service.shown_state` alone (Design 5). `ci_line` is the dialog's CI line (R7).
+    # `service.shown_state` alone (Design 5). `ci_line` is the dialog's CI line (R7), and
+    # `state_reason` the `attention_reason` its header shows beside the state (review F1).
     at: str = ""
     state: str = ""
     state_label: str = ""
     state_color: str = "gray"
     ci_line: str = ""
+    state_reason: str = ""
     decided_state: str = ""
     decided_label: str = ""
     decided_color: str = "gray"
@@ -339,7 +343,8 @@ def _shown(u: Unit, read: dict) -> dict:
         {"state": u.decided_state, "label": u.decided_label, "color": u.decided_color},
         (read.get("running") or {}).get(u.id),
     )
-    return {"state": shown["state"], "state_label": shown["label"], "state_color": shown["color"]}
+    return {"state": shown["state"], "state_label": shown["label"], "state_color": shown["color"],
+            "state_reason": reason_beside(u.attention_reason, shown["state"])}
 
 
 @dataclasses.dataclass
