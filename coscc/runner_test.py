@@ -2758,7 +2758,8 @@ class AStoppedStepEndsStopped(unittest.TestCase):
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.steps.append(kw.get("step"))
-            yield ("chunk", "thinking ")
+            # Its own line: since `0099` narration run into the title is no artifact.
+            yield ("chunk", "thinking\n")
             await self.release.wait()
             yield ("chunk", self.reply)
             yield ("done", {"session_id": "s-1", "terminal_reason": "success",
@@ -3570,6 +3571,41 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertEqual(out[-1], ("cancelled", None))
         self.assertEqual(ends, [])
         self.assertEqual(review, REVIEW_R1)
+
+
+class TheOtherTwoWritesAreCheckedTheSame(unittest.TestCase):
+    """`0099` R4, R6: a spike's progress file and a review's closing turn are held to the
+    opening a reply is, and an opening that fails writes nothing."""
+
+    def test_a_progress_file_with_no_title_is_unusable(self):
+        untitled = PROGRESS.split("\n", 1)[1]
+        final, written, end, _ = ASpikeLeavesWhatItMeasured.run_spike(self, progress=untitled)
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "unusable"))
+        self.assertIn("spike.md lacks its opening: no `# Spike:` title", end["detail"])
+
+    def test_a_closing_round_with_no_title_is_not_written(self):
+        def untitled(head):
+            return incomplete_reply(head).split("\n", 1)[1]
+
+        closes = AReviewThatRunsOutGetsAClosingTurn.Closes(closing=untitled)
+        _, [end], review, _, _ = AReviewThatRunsOutGetsAClosingTurn.run_review(self, closes)
+        self.assertEqual(review, REVIEW_R1)
+        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "none"))
+        self.assertIn("review.md lacks its opening: no `# Review:` title", end["detail"])
+
+    def test_a_refused_write_leaves_the_file_and_its_answers_byte_for_byte(self):
+        from coscc.runner import _write_artifact
+
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d))
+            before = ("# Plan: x\nIntent: i. Status: draft.\n\nBODY\n\n## Answers\n\n"
+                      "### Câu 1\nAnswered by: Lan. Date: 2026-09-26. Via: product.\n\ncó\n").encode("utf-8")
+            (directory / "plan.md").write_bytes(before)
+            with self.assertRaises(RunError) as caught:
+                _write_artifact(directory, "plan.md", "## Files that change\n\nStatus: accepted.\n", blocks=2)
+            self.assertIn("(the session replied in 2 blocks)", str(caught.exception))
+            self.assertEqual((directory / "plan.md").read_bytes(), before)
 
 
 class TheNextReviewGoesOnFromAnIncompleteRound(unittest.TestCase):

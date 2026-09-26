@@ -34,7 +34,8 @@ class _Replies:
     async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
         self.calls += 1
         status = "accepted" if self.calls <= self.accepted else "draft"
-        yield ("chunk", "# Title: x\n")
+        # `0099`: the title of the stage that asked. The first step here is always `spec`.
+        yield ("chunk", "# Spec: x\n" if self.calls == 1 else "# Plan: x\n")
         await asyncio.wait_for(self.release.wait(), 20)
         yield ("chunk", f"Author: proof. Status: {status}.\n")
         yield ("done", {"session_id": f"s{self.calls}", "terminal_reason": "success",

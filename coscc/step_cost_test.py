@@ -48,7 +48,8 @@ class Dies:
 
     async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
         _turns(kw["step"].recorder)
-        yield ("chunk", "thinking ")
+        # Its own line: since `0099` narration run into the title is no artifact.
+        yield ("chunk", "thinking\n")
         if self.then == "wait":
             await self.release.wait()
             return

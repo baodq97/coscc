@@ -1246,11 +1246,14 @@ def describe_tree_change(before: tuple[str, str], after: tuple[str, str]) -> str
     return ", ".join(parts)
 
 
-def _write_artifact(directory: Path, artifact: str, text: str) -> None:
+def _write_artifact(directory: Path, artifact: str, text: str, blocks: int | None = None) -> None:
     """Write an artifact the app writes, from `text`, or raise the reason it is not one.
 
-    `0080` spec *Design* 3: one check and one write, for a step's reply and for a spike's
-    progress file alike. Synchronous on purpose -- see the comment where `Runner.run` calls it.
+    `0080` spec *Design* 3: one check and one write, for a step's reply, a spike's progress
+    file and a review's closing turn alike. `text` is everything the session said; the
+    artifact is what follows its last title line (`0099` R1). `blocks`, when given, is how
+    many pieces the session said it in, for the reason (R5). Synchronous on purpose -- see
+    the comment where `Runner.run` calls it.
     """
     # `0025` `spec.md` R1-R6. The reply's own `## Answers`, if it has one, is never what
     # reaches disk (R3) -- only the section already there is, and it is read as late as
@@ -1258,16 +1261,14 @@ def _write_artifact(directory: Path, artifact: str, text: str) -> None:
     # already happened, not at the step's start (R6). Nothing between this read and the
     # write below can yield, so a block a person appended while the step ran is still on
     # disk when this runs and is carried through untouched.
-    body = strip_answers(check_reply(text))
-    # `check_reply` looked at the whole reply, the reply's own `## Answers` included. A
-    # `Status:` line that lived only there has just been cut, and the gate reads nothing
-    # below the header anyway, so ask again of what will actually be written (`0025`
-    # review round 1, F1).
-    if not STATUS_RE.search(body):
-        raise RunError(
-            "the reply carries no `Status:` line above its own `## Answers`, "
-            "so the gate could not read it"
-        )
+    body = strip_answers(from_title(_unfence(text), artifact) + "\n")
+    # `0099` R3, R4. Asked of what will be written, below the reply's own `## Answers`
+    # cut, and before the file is even read: a refusal leaves it byte for byte. Until
+    # `0099` this asked for a `Status:` anywhere, and a file that lost its first piece
+    # passed on one its body happened to quote.
+    problem = opening_problem(body, artifact)
+    if problem:
+        raise RunError(opening_reason(artifact, problem, blocks))
     target = directory / artifact
     try:
         raw = target.read_bytes()
@@ -1281,6 +1282,11 @@ def _write_artifact(directory: Path, artifact: str, text: str) -> None:
         # unchanged: a reply that rewrites an earlier round, or adds none, still raises
         # before anything below is written (R4, R5).
         body = merge_review(above.decode("utf-8", errors="replace"), body)
+        # R3 asks it of the merged text. Its header is the reply's, so this answers as the
+        # check above did; asked again so what reaches disk is what was checked.
+        problem = opening_problem(body, artifact)
+        if problem:
+            raise RunError(opening_reason(artifact, problem, blocks))
     target.write_bytes(with_answers(body, section))
 
 
