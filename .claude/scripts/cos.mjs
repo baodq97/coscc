@@ -634,6 +634,25 @@ export function parseSpike(text) {
   return { round: round ? Number(round[1]) : null, items }
 }
 
+// `0112` R5: the review round a `ship.md` was written against — `Round: <n>` on the header
+// line that carries `Status:` — and, from `## What went out`, the first line opening
+// `Refused:` at column 0: what `gh` said when it would not merge. Either is `null` when
+// absent, which is every `ship.md` written before `0112`.
+export function parseShip(text) {
+  const lines = text.split(/\r?\n/)
+  const stop = lines.findIndex((l) => l.trimEnd() === '## Answers')
+  const own = stop === -1 ? lines : lines.slice(0, stop)
+  const first = own.findIndex((l) => l.startsWith('## '))
+  const header = (first === -1 ? own : own.slice(0, first)).find((l) => /\bStatus:/.test(l))
+  const round = header?.match(/\bRound:\s*(\d+)/)
+  const out = section(own.join('\n'), 'What went out') ?? []
+  const refused = out.find((l) => l.startsWith('Refused:'))
+  return {
+    round: round ? Number(round[1]) : null,
+    refused: refused ? refused.slice('Refused:'.length).trim() || null : null,
+  }
+}
+
 // How many `spec → spike` rounds may end with a question that does not hold before the
 // loop needs a person (`0039` spec, Answers, Câu 3). A choice, not a measurement.
 export const SPIKE_ROUNDS = 2
@@ -701,6 +720,12 @@ export function readUnit(dir, name) {
       }
     }
     if (file === 'spike.md') unit.artifacts[file].spike = parseSpike(text)
+    // `0112` R5: attached only when it says something, as `unmeasured` above, so that
+    // `status --json` of every `ship.md` written before it stays what it was.
+    if (file === 'ship.md') {
+      const ship = parseShip(text)
+      if (ship.round !== null || ship.refused !== null) unit.artifacts[file].ship = ship
+    }
     // Read after `spec.md` and `spike.md`, which `STAGES` puts before it. Only when `spike`
     // is required: a plan may mention `spike.md` without needing one — this unit's does.
     if (file === 'plan.md' && required(unit, SPIKE)) unit.artifacts[file].citesSpike = text.includes('spike.md')
@@ -866,7 +891,7 @@ function spikeNeeds(unit) {
 // which stage runs. A `changes-requested` review is the case that matters — its action
 // names two stages, and only the branch can say which one is due. `nextStep` below asks it.
 export function nextAction(unit, limit = REVIEW_ROUNDS) {
-  const { why, rerun, ...next } = decide(unit, limit)
+  const { why, rerun, file, ...next } = decide(unit, limit)
   return next
 }
 
@@ -945,7 +970,8 @@ function decide(unit, limit) {
       // the autopilot reads `rerun`, deciding for itself whether it may.
       const questions = unit.artifacts[s.file]?.questions ?? []
       const answered = RERUN_STAGES.includes(s.name) && questions.length > 0 && questions.every((q) => q.answered)
-      return { blocked: true, action: `finish and accept ${s.file}`, stage: '', why: 'draft', ...(answered ? { rerun: s.name } : {}) }
+      // `file` (`0112` R6) is for `nextStep`, which tells a `ship.md` draft from the rest.
+      return { blocked: true, action: `finish and accept ${s.file}`, stage: '', why: 'draft', file: s.file, ...(answered ? { rerun: s.name } : {}) }
     }
     // Not closed and not done: the work goes back to the branch, then to another round.
     if (status === 'changes-requested') {
@@ -1439,6 +1465,18 @@ function shipNeeds(unit, probe, said = {}) {
     }
   }
   if (need.length) return need
+  // `0112` R3: after `moved`, so a head already rebased goes to review rather than here. A
+  // pull request behind `origin/main` is one GitHub refuses to merge; the gate says so first,
+  // off the ref as it is — it does not fetch, the autopilot does (R4). No `origin/main`
+  // here, no opinion: GitHub still decides.
+  const trunk = 'refs/remotes/origin/main'
+  if (probe.git('rev-parse', '--verify', '--quiet', trunk).code === 0 && probe.git('merge-base', '--is-ancestor', trunk, said.head).code !== 0) {
+    const count = probe.git('rev-list', '--count', `${said.head}..${trunk}`)
+    const k = count.code === 0 ? Number(count.out.trim()) : null
+    if (k !== null) said.behind = k
+    const by = k !== null ? `${k} commit(s)` : `an unknown number of commits (git said: ${(count.err || count.out).trim() || `exit ${count.code}`})`
+    return [`#${pr.number} is ${by} behind origin/main — integrate, then review again; a round that passes does not count toward the limit`]
+  }
   return screensNeeds(unit, probe, last, said)
 }
 
@@ -1539,7 +1577,7 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
 // This names a stage; it opens nothing. A caller still asks `checkGate` before running it.
 export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   const base = decide(unit, limit)
-  const { why, ...next } = base
+  const { why, file, ...next } = base
   const none = (action) => ({ blocked: true, action, stage: '' })
   const onReview = (prefix) => {
     const g = evaluate(unit, 'review', { probe, limit })
@@ -1563,6 +1601,24 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     // `0083` R10: a UI unit whose pass lacks current screenshots is cured the same way.
     if (g.said.moved || g.said.screens) return onReview(g.need)
     return none(g.need.join('; '))
+  }
+
+  // `0112` R6: a `ship.md` left `draft` by a merge that did not happen. Reached only once
+  // `review.md` is accepted, so the last round passed. A draft that names no `Round` was
+  // written before `0112` and stops as it always did (c). One written against an older round
+  // than the last is a missing `ship.md` again (a). One written against the last round (b)
+  // asks the gate: moved goes to review (R2), closed says why (R3), and open means the
+  // merge was refused for something the gate cannot see, so the unit stops and says what.
+  // `>` joins `=`: only a round removed makes it larger, and the gate refuses that.
+  if (why === 'draft' && file === 'ship.md') {
+    const ship = unit.artifacts['ship.md']?.ship ?? null
+    const last = lastRound(unit)
+    if (ship?.round == null || !last) return next
+    const g = evaluate(unit, 'ship', { probe, limit })
+    if (g.said.moved || g.said.screens) return onReview(g.need)
+    if (!g.ok) return none(g.need.join('; '))
+    if (ship.round < last.n) return { blocked: true, action: `write-ship — merge with --match-head-commit ${g.said.head}`, stage: 'ship' }
+    return none(`ship was refused: ${ship.refused ?? 'ship.md names no refusal'} — finish and accept ship.md`)
   }
 
   // `0028` (a): a person is awaited. Files alone settle it, so no probe is asked.
@@ -1800,9 +1856,10 @@ function cmdStatus(json, cosDir, limit) {
   const units = readAll(cosDir)
   // `0100` R4: `status` carries `why` as well, so the board reads which rule answered
   // rather than the English of `action`. `next` still prints `nextAction`, without it.
-  // `rerun` (`0106`) is for `next` and the autopilot only, so `status` drops it.
+  // `rerun` (`0106`) is for `next` and the autopilot only, so `status` drops it; `file`
+  // (`0112`) is for `nextStep` alone.
   const rows = units.map((u) => {
-    const { rerun, ...next } = decide(u, limit)
+    const { rerun, file, ...next } = decide(u, limit)
     return { ...u, next, at: stageAt(u, next), betweenPrAndShip: betweenPrAndShip(u, limit) }
   })
 

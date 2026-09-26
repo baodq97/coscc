@@ -12,7 +12,7 @@ import {
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
   parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking, prText,
   UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe, stageAt,
-  aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds,
+  aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -2709,4 +2709,124 @@ test('0111 R1: cos.mjs screens, on a real repository', () => {
   assert.match(bare.stderr, /pass --repo/)
   // It writes nothing into the store.
   assert.equal(readdirSync(join(store, '.cos', '0001_x')).join(','), 'intent.md')
+})
+
+// --- 0112: a passed unit behind main, and the ship.md a refused merge leaves ------------
+
+const SHIP_OLD = '# Ship: x\nReview: review.md. Author: A. Status: draft.\n\n## What went out\n\nNothing merged.\n'
+const shipDraft = (n, refused = 'the head branch is not up to date with the base branch') =>
+  `# Ship: x\nReview: review.md. Round: ${n}. Author: A. Status: draft.\n\n## What went out\n\nNothing merged.\n${refused === null ? '' : `Refused: ${refused}\n`}\n## What is still open\n\nRefused: not this one\n`
+// What `readUnit` attaches, without a directory.
+const shipArt = (text) => {
+  const ship = parseShip(text)
+  return { ...art(parseStatus(text)), ...(ship.round !== null || ship.refused !== null ? { ship } : {}) }
+}
+const TRUNK = 'refs/remotes/origin/main'
+const behindBy = (k, git = {}) => greenProbe(undefined, {
+  [`merge-base --is-ancestor ${TRUNK} ${SHA}`]: { code: 1, out: '', err: '' },
+  [`rev-list --count ${SHA}..${TRUNK}`]: ok(`${k}\n`),
+  ...git,
+})
+
+test('0112 R5: parseShip reads Round from the header and the first Refused line of What went out', () => {
+  assert.deepEqual(parseShip(shipDraft(2)), { round: 2, refused: 'the head branch is not up to date with the base branch' })
+  assert.deepEqual(parseShip(shipDraft(3, null)), { round: 3, refused: null })
+  assert.deepEqual(parseShip(SHIP_OLD), { round: null, refused: null })
+  // Indented is not the line.
+  assert.equal(parseShip('# S\nReview: review.md. Round: 1. Status: draft.\n\n## What went out\n\n  Refused: no\n').refused, null)
+})
+
+test('0112 R5: readUnit attaches ship only to a ship.md that says something', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cos-0112-'))
+  const dir = join(root, '0001_x')
+  mkdirSync(dir)
+  writeFileSync(join(dir, 'ship.md'), shipDraft(1))
+  assert.deepEqual(readUnit(dir, '0001_x').artifacts['ship.md'].ship, { round: 1, refused: 'the head branch is not up to date with the base branch' })
+  writeFileSync(join(dir, 'ship.md'), SHIP_OLD)
+  assert.equal('ship' in readUnit(dir, '0001_x').artifacts['ship.md'], false)
+})
+
+test('0112 R3: a pull request behind origin/main closes ship, says by how much, and names no full sha', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })
+  const g = checkGate(u, 'ship', { probe: behindBy(3) })
+  assert.equal(g.ok, false)
+  assert.match(g.need[0], /#7 is 3 commit\(s\) behind origin\/main — integrate, then review again/)
+  assert.doesNotMatch(g.need.join('\n'), /[0-9a-f]{40}/)
+  // A count git cannot give still closes the gate, with git's words.
+  const unknown = behindBy(0, { [`rev-list --count ${SHA}..${TRUNK}`]: { code: 128, out: '', err: 'bad revision' } })
+  assert.match(checkGate(u, 'ship', { probe: unknown }).need[0], /unknown number of commits \(git said: bad revision\) behind origin\/main/)
+})
+
+test('0112 R3: no origin/main here, or origin/main an ancestor of the head: ship opens as before', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })
+  const noTrunk = behindBy(3, { [`rev-parse --verify --quiet ${TRUNK}`]: { code: 1, out: '', err: '' } })
+  assert.deepEqual(checkGate(u, 'ship', { probe: noTrunk }), { ok: true, need: [], head: SHA })
+  assert.deepEqual(checkGate(u, 'ship', { probe: greenProbe() }), { ok: true, need: [], head: SHA })
+})
+
+test('0112 R3: a head already rebased goes to review, not to the behind reason', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })
+  const n = nextStep(u, { probe: behindBy(2, { [`merge-base --is-ancestor ${SHA} refs/heads/feat/x`]: { code: 1, out: '', err: '' } }) })
+  assert.equal(n.stage, 'review')
+  const behind = nextStep(u, { probe: behindBy(2) })
+  assert.equal(behind.stage, '')
+  assert.match(behind.action, /2 commit\(s\) behind origin\/main/)
+})
+
+test('0112 R6 a: a draft ship.md from an older round is a missing one: ship, review, or the gate\'s reason', () => {
+  const REB = 'd'.repeat(40)
+  const text = `${round(1, 'pass')}\n${round(2, 'pass').replace(SHA, REB)}`
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', text), 'ship.md': shipArt(shipDraft(1)) })
+  const at = (git) => greenProbe(undefined, git, { state: 'OPEN', headRefOid: REB })
+  assert.deepEqual(nextStep(u, { probe: at({}) }), { blocked: true, action: `write-ship — merge with --match-head-commit ${REB}`, stage: 'ship' })
+  assert.equal(nextStep(u, { probe: at({ [`diff --name-only ${REB}..${REB}`]: ok('src/a.py') }) }).stage, 'review')
+  const behind = at({
+    [`merge-base --is-ancestor ${TRUNK} ${REB}`]: { code: 1, out: '', err: '' },
+    [`rev-list --count ${REB}..${TRUNK}`]: ok('1'),
+  })
+  const n = nextStep(u, { probe: behind })
+  assert.equal(n.stage, '')
+  assert.match(n.action, /1 commit\(s\) behind origin\/main/)
+})
+
+test('0112 R6 b: a draft ship.md from the last round asks the gate, and an open one stops on the Refused line', () => {
+  const u = (refused) => branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')), 'ship.md': shipArt(shipDraft(1, refused)) })
+  // Behind: the R3 reason, which the autopilot integrates on (R1).
+  const behind = nextStep(u(), { probe: behindBy(4) })
+  assert.equal(behind.stage, '')
+  assert.match(behind.action, /4 commit\(s\) behind origin\/main — integrate, then review again/)
+  // Rebased since: another round (R2).
+  const rebased = behindBy(0, { [`merge-base --is-ancestor ${SHA} refs/heads/feat/x`]: { code: 1, out: '', err: '' } })
+  assert.equal(nextStep(u(), { probe: rebased }).stage, 'review')
+  // Open: refused for something the gate cannot see, and the stop says what.
+  const open = nextStep(u('you do not have permission to merge'), { probe: greenProbe() })
+  assert.deepEqual(open, { blocked: true, action: 'ship was refused: you do not have permission to merge — finish and accept ship.md', stage: '' })
+  assert.match(nextStep(u(null), { probe: greenProbe() }).action, /ship was refused: ship\.md names no refusal/)
+})
+
+test('0112 R6 c: a draft ship.md with no Round stops as it always did', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')), 'ship.md': shipArt(SHIP_OLD) })
+  assert.deepEqual(nextStep(u, { probe: behindBy(4) }), { blocked: true, action: 'finish and accept ship.md', stage: '' })
+  assert.deepEqual(nextAction(u), { blocked: true, action: 'finish and accept ship.md', stage: '' })
+})
+
+test('0112 R2: a pass, then a rebase, with no ship.md, is review — not a draft stop', () => {
+  const REB = 'd'.repeat(40)
+  const notAncestor = { code: 1, out: '', err: '' }
+  const afterRebase = greenProbe(undefined, {
+    [`merge-base --is-ancestor ${SHA} refs/heads/feat/x`]: notAncestor,
+    [`merge-base --is-ancestor ${SHA} refs/remotes/origin/feat/x`]: notAncestor,
+    [`merge-base --is-ancestor ${SHA} ${REB}`]: notAncestor,
+  }, { state: 'OPEN', headRefOid: REB })
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })
+  const n = nextStep(u, { probe: afterRebase })
+  assert.equal(n.stage, 'review')
+  assert.doesNotMatch(n.action, /finish and accept/)
+})
+
+test('0112 R6: status --json, nextAction and nextStep never carry file', () => {
+  const { root, u } = answeredTree({ 'intent.md': DRAFT_INTENT })
+  assert.equal('file' in nextAction(u), false)
+  assert.equal('file' in nextStep(u), false)
+  assert.equal(JSON.parse(cli('--root', root, 'status', '--json').stdout).units[0].next.file, undefined)
 })
