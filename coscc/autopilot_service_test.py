@@ -143,6 +143,21 @@ class OnTheRealLoop(_Base):
         self.assertEqual((stop["unit"], stop["kind"]), (unit, "a"))
         self.assertIn("intent.md question 1", stop["reason"])
 
+    async def test_a_note_under_open_questions_does_not_stop_it(self):
+        """`0109`: a bullet and a numbered line with no `?` are notes, so (a) never fires."""
+        self.service.sessions = _Replies(accepted=1)
+        unit = await self.unit("notes", "Status: accepted.\n\n## Open questions\n\n"
+                               "Không còn câu hỏi mở.\n\n- Câu 1 là hạn.\n"
+                               "7. Người khởi xướng vẫn nên đọc lại file này.")
+        self.listed(unit)
+        self.service.set_autopilot(self.ws, "autopilot", True)
+        await self.until(lambda: len(self.starts()) >= 2, "two steps")
+        await self.settled()
+        self.assertEqual(self.starts()[0]["stage"], "spec")
+        self.assertEqual(self.starts()[0]["started_by"], "autopilot")
+        [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
+        self.assertEqual((stop["unit"], stop["kind"]), (unit, "f"))
+
     async def test_e_a_failed_step_is_not_run_again(self):
         self.service.sessions = _Replies(accepted=5)
         unit = await self.unit("failed")
