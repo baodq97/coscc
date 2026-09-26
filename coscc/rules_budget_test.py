@@ -27,7 +27,7 @@ CLAUDE_MAX = 8_000
 APP_MAX = 12_000
 AREA_MAX = 8_000
 
-APP_PATHS = ["coscc/**", "coscc/**/*", "rxconfig.py", "scripts/verify_*.py"]
+APP_PATHS = ["coscc/**", "coscc/**/*", "rxconfig.py", "scripts/*.py"]
 
 # R7: files nearly every unit passes through. A rule scoped to one of them would be read by
 # nearly every step, which is what tier 2 already is. The spec's list, not measured.

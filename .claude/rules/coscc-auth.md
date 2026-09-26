@@ -12,7 +12,7 @@ paths:
   the guard into `api_transformer` lets Reflex answer `OPTIONS` without it. `auth.EXEMPT`
   (`coscc/auth.py:58`) is the whole list of what answers without a session (`/api/health`,
   `/login`, and `/setup` while no password is stored); anything else, a route added later
-  included, is refused, and `coscc/auth_test.py` plus `scripts/verify_0070.py` count that.
+  included, is refused; `coscc/auth_test.py` counts that.
 - **What no test sees.**
   - `proxy_headers=False` in `coscc/run.py`, so behind a proxy every client shares one
     failure count and a stranger can lock the owner out for up to an hour
@@ -29,7 +29,7 @@ paths:
   - A page it lets through goes out `Cache-Control: no-cache`: without it chromium reused a
     cached `index.html` after logout, a board whose socket the guard refused, and never
     reached `/login`.
-- `verify_0070.py --browser` is the one proof that opens chromium behind the guard, on
-  loopback and off it — not behind a proxy, and not on the installed service.
+- `scripts/e2e.py` opens chromium behind the guard on loopback only — not off it, not behind
+  a proxy, and not on the installed service.
 - The default bind is `0.0.0.0` and the app serves plain HTTP; `COS_HOST=127.0.0.1` is the
   loopback posture. `coscc reset-password` is the only way back from a forgotten password.
