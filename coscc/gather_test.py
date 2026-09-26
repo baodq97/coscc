@@ -465,6 +465,22 @@ class AllRebuilds(Fixture):
         self.assertEqual(self.manifest(), {})
         self.assertEqual([r["outcome"] for r in self.rows()], ["done", "failed", "failed", "failed"])
 
+    def test_a_failed_new_says_the_batches_before_it_are_kept(self):
+        # `0107` review F2: "nothing written" was true of the batch, not of the run.
+        def failed() -> str:
+            return [line for line in self.said if " failed, " in line][-1]
+
+        self.assertEqual(self.run_gather(Replies(self.refused(), self.refused(), self.refused()), "new"), 1)
+        self.assertTrue(failed().startswith("batch 1/2 failed, nothing of it written: "), failed())
+        self.assertEqual(self.manifest(), {})
+        # `new` keeps the old store, so batch 1 has to hand K7 back beside its own K8.
+        keep = reply(entry(7, self.A_SRC) + "\n\n" + entry(8, self.B_SRC))
+        s = Replies(keep, self.refused(), self.refused(), self.refused())
+        self.assertEqual(self.run_gather(s, "new"), 1)
+        self.assertTrue(failed().startswith(
+            "batch 2/2 failed, nothing of it written, the batches before it are kept: "), failed())
+        self.assertEqual(list(self.manifest()), [f"{B}/0001_a/spike.md"])
+
     def test_a_second_all_resumes_at_the_batch_that_failed(self):
         self.half_done()
         s = Replies(self.batch_two())

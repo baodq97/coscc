@@ -599,8 +599,9 @@ async def gather(
                 # Only a reply that read and was refused is repaired; a broken session or a
                 # reply with no JSON fails the batch as it did (`0107` spec Design 1).
                 if not reasons or attempt > REPAIRS:
-                    kept = "the batches before it are kept" if mode == "all" else "nothing written"
-                    say(f"batch {i}/{len(parts)} failed, {kept}: {reason}")
+                    # Either mode has saved every batch before this one (`0107` review F2).
+                    kept = ", the batches before it are kept" if i > 1 else ""
+                    say(f"batch {i}/{len(parts)} failed, nothing of it written{kept}: {reason}")
                     if not reason.startswith("the session") and reply:
                         say(f"the reply ended: {reply[-2000:]}")
                     return 1
