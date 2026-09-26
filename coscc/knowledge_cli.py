@@ -2,7 +2,8 @@
 
 Reached from `coscc/run.py` alone, imported there lazily, like `reset-password`. No route,
 button or autopilot pass reaches this module (`knowledge_cli_test.py` holds that), so the
-one command here that spends quota, `gather --yes`, needs a shell on this machine.
+one command here that spends quota, `gather --yes`, needs a shell on this machine. `check`
+(`0108` R10) spends nothing and writes nothing.
 
 Exit codes: 0 done, 1 failed with a reason, 2 misuse or refused.
 """
@@ -13,13 +14,14 @@ import asyncio
 import sys
 from typing import Callable
 
-from coscc import gather, knowledge, measure
+from coscc import admit, gather, knowledge, measure
 
 USAGE = (
     "usage: coscc knowledge gather [--all] [--yes] [--model M]\n"
     "       coscc knowledge baseline [--workspace SLOT]\n"
     "       coscc knowledge measure [--workspace SLOT]\n"
-    "       coscc knowledge show"
+    "       coscc knowledge show\n"
+    "       coscc knowledge check"
 )
 
 
@@ -79,8 +81,12 @@ def _gather(config, opts: dict[str, str | bool], say: Callable[[str], None]) -> 
         # Like Jera: a batch that spent and could not be recorded is money nobody can count.
         say("coscc knowledge gather: no working folder is set, so nothing it spends can be recorded — set COS_WORKING_DIR")
         return 2
+    from coscc.journal import Journal
+
+    # Before the plan, so a dry run refuses a run log or a git it cannot read too (`0108` R12).
+    journal = Journal(config.working_dir, config.data_dir)
     try:
-        planned = gather.plan_of(config.data_dir, mode)
+        planned = gather.plan_of(config.data_dir, mode, journal)
     except gather.Refused as e:
         say(f"coscc knowledge gather: {e}")
         return 2
@@ -96,11 +102,9 @@ def _gather(config, opts: dict[str, str | bool], say: Callable[[str], None]) -> 
         return 0
     if not parts:
         return 0
-    from coscc.journal import Journal
     from coscc.sessions import Sessions
 
     model = opts.get("--model") or config.model
-    journal = Journal(config.working_dir, config.data_dir)
     try:
         return asyncio.run(gather.gather(config.data_dir, journal, Sessions(config), model, mode, say))
     except gather.Refused as e:
@@ -128,6 +132,9 @@ def main(argv: list[str], say: Callable[[str], None] | None = None) -> int:
         if command == "show":
             _options(rest, set(), set())
             return show(from_env().data_dir, say)
+        if command == "check":
+            _options(rest, set(), set())
+            return admit.check(from_env().data_dir, say)
         raise _Misuse(f"unrecognised command {command!r}")
     except _Misuse as e:
         print(f"coscc knowledge: {e}\n{USAGE}", file=sys.stderr)

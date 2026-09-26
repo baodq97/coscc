@@ -19,7 +19,6 @@ import hashlib
 import os
 import re
 import tempfile
-from datetime import date
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -53,8 +52,7 @@ _ANCHORS = {
     "spike.md": re.compile(r"^## U\d+$"),
     "review.md": re.compile(r"^Round \d+(?: F\d+)?$"),
 }
-_MEASURED = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_FIELDS = ("Scope:", "Source:", "Measured:")
+_FIELDS = ("Scope:", "Source:", "Ref:", "Measured:")
 
 
 def path_of(data_dir: str | os.PathLike[str] | None) -> Path:
@@ -67,14 +65,17 @@ def empty_header() -> dict[str, Any]:
 
 
 def _entry(n: int, lines: list[str]) -> tuple[dict[str, Any] | None, str]:
-    """One `## K<n>` block, or `None` and why it cannot be read."""
-    scope, sources, measured, statement = "", [], "", []
+    """One `## K<n>` block, or `None` and why it cannot be read. A block with no `Ref:`
+    reads: a person editing by hand may leave it out, and `coscc/admit.py` drops it."""
+    scope, sources, refs, measured, statement = "", [], [], "", []
     for line in lines[1:]:
         s = line.strip()
         if s.startswith("Scope:"):
             scope = s[len("Scope:"):].strip()
         elif s.startswith("Source:"):
             sources.append(s[len("Source:"):].strip())
+        elif s.startswith("Ref:"):
+            refs.append(s[len("Ref:"):].strip())
         elif s.startswith("Measured:"):
             measured = s[len("Measured:"):].strip()
         elif s:
@@ -87,9 +88,21 @@ def _entry(n: int, lines: list[str]) -> tuple[dict[str, Any] | None, str]:
         return None, f"K{n} has no statement"
     text = "\n".join(lines).rstrip()
     return {
-        "id": n, "scope": scope, "sources": sources, "measured": measured,
+        "id": n, "scope": scope, "sources": sources, "refs": refs, "measured": measured,
         "statement": " ".join(statement), "text": text,
     }, ""
+
+
+def format_entry(e: dict[str, Any]) -> str:
+    """The block of an entry from its fields, in the grammar's order. `coscc/admit.py` sets
+    `text` to this once it has written the date and the version (`0108` R1, R4)."""
+    lines = [f"## K{e['id']}", f"Scope: {e['scope']}"]
+    lines += [f"Source: {s}" for s in e["sources"]]
+    lines += [f"Ref: {r}" for r in e.get("refs") or []]
+    if e.get("measured"):
+        lines.append(f"Measured: {e['measured']}")
+    lines.append(e["statement"])
+    return "\n".join(lines)
 
 
 def parse(text: str) -> dict[str, Any]:
@@ -228,6 +241,11 @@ def _drop_id(item: dict[str, Any]) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def date_of(e: dict[str, Any], dates: dict[str, str]) -> str:
+    """`0108` R3: the latest date of the sources an entry cites, `""` when none has one."""
+    return max((dates.get(label_of(s), "") for s in e["sources"]), default="")
+
+
 def validate(
     old_slice: str,
     new_text: str,
@@ -236,6 +254,7 @@ def validate(
     slot: str,
     max_id: int,
     others: Iterable[dict[str, Any]] = (),
+    dates: dict[str, str] | None = None,
 ) -> list[str]:
     """`spec.md` R13. Every reason `new_text` may not replace `old_slice`; `[]` is a pass.
 
@@ -243,7 +262,11 @@ def validate(
     gave back, `dropped` its `[{id, reason, merged_into?}]`, `batch_sources` the labels it
     read, `slot` the batch's workspace and `max_id` the store header's. `others` are the
     entries of the store it was not given — other workspaces' — so the cap is checked for
-    what each of them would receive too, and no new entry takes one of their ids (R7)."""
+    what each of them would receive too, and no new entry takes one of their ids (R7).
+
+    `0108`: a `Measured:` the session wrote is not read — the code writes it (R1). With
+    `dates`, label to `YYYY-MM-DD`, an entry merged into one whose sources are older is a
+    reason (R3); without it that is not checked, and `coscc/gather.py` always passes it."""
     others = list(others)
     old = parse(old_slice)["entries"]
     new = parse(new_text)
@@ -275,13 +298,8 @@ def validate(
                 reasons.append(f"{k}'s source {s!r} {problem}")
             elif label_of(s) not in known:
                 reasons.append(f"{k} cites {label_of(s)}, which is neither in the store nor in this batch")
-        if not _MEASURED.match(e["measured"]):
-            reasons.append(f"{k} has Measured: {e['measured']!r}, not YYYY-MM-DD")
-        else:
-            try:
-                date.fromisoformat(e["measured"])
-            except ValueError:
-                reasons.append(f"{k} has Measured: {e['measured']!r}, which is not a date")
+        if e["scope"].startswith("tool:") and e["refs"]:
+            reasons.append(f"{k} is a tool: entry and carries Ref:")
         if len(e["text"].encode("utf-8")) > ENTRY_BYTES:
             reasons.append(f"{k} is {len(e['text'].encode('utf-8'))} bytes, over {ENTRY_BYTES}")
 
@@ -301,6 +319,16 @@ def validate(
     for n in old_ids:
         if n not in seen and n not in named:
             reasons.append(f"K{n} is gone and not in the dropped list")
+    if dates is not None:
+        kept = {e["id"]: e for e in new["entries"]}
+        for n, item in sorted(named.items()):
+            into = _drop_id({"id": item.get("merged_into")}) if item.get("merged_into") else None
+            if n not in old_ids or into not in kept:
+                continue
+            was, now = date_of(old_ids[n], dates), date_of(kept[into], dates)
+            if not now or now < was:
+                reasons.append(f"K{n} is merged into K{into}, whose sources ({now or 'no date'}) "
+                               f"are older than K{n}'s ({was or 'no date'})")
 
     size = len(entries_text(new["entries"]).encode("utf-8"))
     if size > CAP_BYTES:

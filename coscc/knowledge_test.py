@@ -67,6 +67,24 @@ class ParseAndRender(unittest.TestCase):
         self.assertFalse(knowledge.has_header(entry(1)))
         self.assertFalse(knowledge.has_header(entry(1) + "\nVersion: 1. Gathered: x. Max id: K1.\n"))
 
+    def test_a_ref_is_read_in_order_and_a_block_without_one_reads(self):
+        block = entry(4, scope=f"workspace:{SLOT}").replace(
+            "\nMeasured:", "\nRef: coscc/gather.py::batches\nRef: coscc/admit.py\nMeasured:")
+        [e] = knowledge.parse(store(block, max_id=4))["entries"]
+        self.assertEqual(e["refs"], ["coscc/gather.py::batches", "coscc/admit.py"])
+        [bare] = knowledge.parse(store(entry(5), max_id=5))["entries"]
+        self.assertEqual(bare["refs"], [])
+
+    def test_an_entry_formatted_from_its_fields_goes_round(self):
+        block = entry(4, scope=f"workspace:{SLOT}").replace(
+            "\nMeasured:", "\nSource: x-0123456789ab/0001_a/review.md Round 1\nRef: a.py::f\nMeasured:")
+        [e] = knowledge.parse(block)["entries"]
+        self.assertEqual(knowledge.format_entry(e), block)
+        [again] = knowledge.parse(knowledge.format_entry(e))["entries"]
+        self.assertEqual({k: again[k] for k in ("id", "scope", "sources", "refs", "measured", "statement")},
+                         {k: e[k] for k in ("id", "scope", "sources", "refs", "measured", "statement")})
+        self.assertNotIn("Measured:", knowledge.format_entry({**e, "measured": ""}))
+
     def test_an_empty_or_headerless_text_reads(self):
         self.assertEqual(knowledge.parse(""), {"header": knowledge.empty_header(), "entries": [], "skipped": []})
         self.assertEqual([e["id"] for e in knowledge.parse(entry(3))["entries"]], [3])
@@ -167,10 +185,33 @@ class TheCheckOfAGatheredStore(unittest.TestCase):
         new = self.OLD + "\n\n" + entry(3, scope=f"workspace:{OTHER}")
         self.assertTrue(any(f"workspace:{OTHER}" in r for r in self.check(new)))
 
-    def test_a_date_not_in_iso_form(self):
+    def test_a_models_measured_is_ignored(self):
+        # `0108` R1: the code writes the date, so what the session wrote is not a reason.
         for bad in ("25/09/2026", "2026-9-25", "2026-13-01"):
             with self.subTest(measured=bad):
-                self.assertTrue(any("Measured" in r for r in self.check(self.OLD + "\n\n" + entry(3, measured=bad))))
+                self.assertEqual(self.check(self.OLD + "\n\n" + entry(3, measured=bad)), [])
+
+    def test_a_tool_entry_carrying_a_ref(self):
+        tool = entry(3).replace("\nMeasured:", "\nRef: coscc/gather.py\nMeasured:")
+        self.assertIn("K3 is a tool: entry and carries Ref:", self.check(self.OLD + "\n\n" + tool))
+        ws = entry(3, scope=f"workspace:{SLOT}").replace("\nMeasured:", "\nRef: coscc/gather.py\nMeasured:")
+        self.assertEqual(self.check(self.OLD + "\n\n" + ws), [])
+
+    def test_a_merge_into_an_older_entry(self):
+        # `0108` R3: K2 cites a source newer than K1's, so it may not be merged into K1.
+        old = entry(1) + "\n\n" + entry(2, source=f"{SLOT}/0090_b-unit/review.md Round 1")
+        merged = [{"id": "K2", "reason": "same", "merged_into": "K1"}]
+        dates = {f"{SLOT}/0088_a-unit/spike.md": "2026-09-23", f"{SLOT}/0090_b-unit/review.md": "2026-09-25"}
+        reasons = self.check(entry(1), dropped=merged, old=old, dates=dates)
+        self.assertTrue(any("K2" in r and "K1" in r and "older" in r for r in reasons), reasons)
+        # Without dates R3 is not checked.
+        self.assertEqual(self.check(entry(1), dropped=merged, old=old), [])
+
+    def test_a_merge_into_an_entry_of_the_same_date(self):
+        old = entry(1) + "\n\n" + entry(2, source=f"{SLOT}/0090_b-unit/review.md Round 1")
+        merged = [{"id": "K2", "reason": "same", "merged_into": "K1"}]
+        dates = {f"{SLOT}/0088_a-unit/spike.md": "2026-09-25", f"{SLOT}/0090_b-unit/review.md": "2026-09-25"}
+        self.assertEqual(self.check(entry(1), dropped=merged, old=old, dates=dates), [])
 
     def test_one_entry_over_its_own_ceiling(self):
         reasons = self.check(self.OLD + "\n\n" + entry(3, statement="w" * ENTRY_BYTES))

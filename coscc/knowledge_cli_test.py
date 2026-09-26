@@ -6,12 +6,15 @@ import ast
 import contextlib
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import gather, knowledge, knowledge_cli
+from coscc import admit, gather, knowledge, knowledge_cli, units
+from coscc.admit_test import lock, make_repo
+from coscc.journal import Journal
 
 REPO = Path(__file__).resolve().parents[1]
 SLOT = "proj-aaaaaaaaaaaa"
@@ -39,7 +42,7 @@ class Fixture(unittest.TestCase):
 class Misuse(Fixture):
     def test_an_unknown_command_or_flag_is_2_with_the_usage(self):
         for argv in ([], ["forget"], ["gather", "--everything"], ["show", "x"], ["baseline", "--workspace"],
-                     ["gather", "--all", "--all"]):
+                     ["gather", "--all", "--all"], ["check", "--all"]):
             with self.subTest(argv=argv):
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err):
@@ -102,6 +105,87 @@ class Show(Fixture):
         self.assertIn(f"{SLOT}: 2 apply, 2 carried", out)
 
 
+class Check(Fixture):
+    """`0108` R10, on a real repository whose `main` pins `claude-agent-sdk` 0.2.159."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo = make_repo(self.root / "proj", ("2026-09-20T00:00:00+00:00", {
+            ".python-version": "3.14\n", "uv.lock": lock(**{"claude-agent-sdk": "0.2.159"}),
+            "coscc/gather.py": "def batches():\n    pass\n"}))
+        self.slot = units.slot(self.repo)
+        Journal(self.root, self.data).finished(str(self.repo), "0001_a", "spike", "done")
+        self.src = f"{self.slot}/0001_a/spike.md ## U1"
+
+    def store(self, *blocks: tuple[str, str]) -> Path:
+        """`(scope, ref)` per entry, K1 upward; `ref` only on a `workspace:` entry."""
+        text = "# Knowledge\nVersion: 1. Gathered: x. Max id: K9.\n\n" + "\n\n".join(
+            f"## K{n}\nScope: {scope}\nSource: {self.src}\n" + (f"Ref: {ref}\n" if ref else "")
+            + "Measured: 2026-09-25\nA fact."
+            for n, (scope, ref) in enumerate(blocks, 1)) + "\n"
+        path = knowledge.path_of(str(self.data)) / knowledge.STORE
+        knowledge.save(path, text)
+        return path
+
+    def test_every_entry_passing_is_0(self):
+        self.store(("tool:claude-agent-sdk 0.2.159", ""), ("tool:python 3.14", ""),
+                   (f"workspace:{self.slot}", "coscc/gather.py::batches"))
+        self.assertEqual(self.run_cli("check"), 0, self.said)
+        out = "\n".join(self.said)
+        sha = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "main"], capture_output=True, text=True).stdout
+        self.assertIn(f"main of {self.slot}: {sha[:12]} 2026-09-20T00:00:00Z", out)
+        self.assertIn("K1 tool:claude-agent-sdk 0.2.159: pass", out)
+        self.assertIn(f"K3 workspace:{self.slot}: pass", out)
+        self.assertIn("tool: 2/3 = 67% (needs >= 50%)", out)
+        self.assertRegex(out, r"checked on \d{4}-\d{2}-\d{2}")
+
+    def test_a_version_main_no_longer_has_is_1(self):
+        self.store(("tool:claude-agent-sdk 0.2.158", ""))
+        self.assertEqual(self.run_cli("check"), 1)
+        self.assertIn(f"K1 tool:claude-agent-sdk 0.2.158: fail: version 0.2.158, main has 0.2.159 in {self.slot}",
+                      self.said)
+
+    def test_a_tool_with_no_pin_or_no_version_is_1(self):
+        self.store(("tool:gh 2.0", ""), ("tool:python", ""))
+        self.assertEqual(self.run_cli("check"), 1)
+        self.assertIn(f"K1 tool:gh 2.0: fail: no pin in {self.slot}", self.said)
+        self.assertIn("K2 tool:python: fail: cannot be checked", self.said)
+
+    def test_a_missing_ref_is_1(self):
+        self.store(("tool:python 3.14", ""), (f"workspace:{self.slot}", "coscc/gather.py::gather"))
+        self.assertEqual(self.run_cli("check"), 1)
+        self.assertIn(f"K2 workspace:{self.slot}: fail: ref missing: coscc/gather.py::gather", self.said)
+
+    def test_one_tool_entry_in_three_is_1(self):
+        ws = (f"workspace:{self.slot}", "coscc/gather.py")
+        self.store(("tool:python 3.14", ""), ws, ws)
+        self.assertEqual(self.run_cli("check"), 1)
+        self.assertIn("tool: 1/3 = 33% (needs >= 50%)", self.said)
+
+    def test_an_empty_store_is_1(self):
+        self.store()
+        self.assertEqual(self.run_cli("check"), 1)
+        self.assertIn("tool: 0/0 = 0% (needs >= 50%)", self.said)
+
+    def test_no_store_is_2(self):
+        self.assertEqual(self.run_cli("check"), 2)
+        self.assertIn("the store cannot be read", self.said[-1])
+
+    def test_no_git_is_2(self):
+        self.store(("tool:python 3.14", ""))
+        with mock.patch.object(admit, "_git", side_effect=admit.GitError("no git")):
+            self.assertEqual(self.run_cli("check"), 2)
+
+    def test_it_writes_nothing(self):
+        path = self.store(("tool:python 3.14", ""), (f"workspace:{self.slot}", "coscc/gather.py::gone"))
+        db = self.data / "cos.db"
+        before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in (path, db)]
+        rows = Journal(self.root, self.data).records()
+        self.assertEqual(self.run_cli("check"), 1)
+        self.assertEqual([(p.read_bytes(), p.stat().st_mtime_ns) for p in (path, db)], before)
+        self.assertEqual(Journal(self.root, self.data).records(), rows)
+
+
 class BaselineAndMeasure(Fixture):
     def test_measure_with_no_baseline_is_refused(self):
         self.assertEqual(self.run_cli("measure"), 2)
@@ -115,7 +199,7 @@ class OnlyATerminalReachesIt(unittest.TestCase):
     """R9: no route, no autopilot pass and no service call imports what gathers or measures.
     Read from the source, because a route added later is exactly what this is for."""
 
-    FORBIDDEN = {"gather", "knowledge_cli", "measure"}
+    FORBIDDEN = {"gather", "knowledge_cli", "measure", "admit"}
 
     def imported(self, path: Path) -> set[str]:
         names: set[str] = set()
@@ -137,7 +221,8 @@ class OnlyATerminalReachesIt(unittest.TestCase):
     def test_the_check_would_see_one(self):
         with tempfile.TemporaryDirectory() as d:
             probe = Path(d) / "probe.py"
-            probe.write_text("from coscc import gather\nimport coscc.measure\nfrom coscc.knowledge_cli import main\n")
+            probe.write_text("from coscc import gather\nimport coscc.measure\nfrom coscc.knowledge_cli import main\n"
+                             "from coscc.admit import check\n")
             self.assertEqual(self.imported(probe) & self.FORBIDDEN, self.FORBIDDEN)
 
 
