@@ -662,7 +662,8 @@ def _start_unit() -> rx.Component:
 
 
 def _running_steps() -> rx.Component:
-    """`0034` R6, R13. Every step running in this workspace, one Stop each.
+    """`0034` R6, R13. Every step running in this workspace, one Stop each, and every
+    integration, with none (`0114` R1).
 
     The list is the service's, re-read on each board load and after each Stop; nothing
     refreshes it on a timer. No name is asked (`0082` R3): `stopped_by` records `owner`.
