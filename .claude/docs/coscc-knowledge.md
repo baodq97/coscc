@@ -37,6 +37,21 @@ source the session was given. It cannot tell a wrong entry from a right one (`sp
 a wrong entry now reaches every `spec`, `spike` and `plan`. The way back is to unset
 `COS_KNOWLEDGE` and restart; the store stays where it is and nothing reads it.
 
+Since `0108`, `coscc/admit.py` writes each entry's date and version and drops the rest into
+the batch's `dropped`; `coscc knowledge check` reads the store against `main`.
+
+- `check` checks that what an entry points at exists — a pinned version, a path, a name in
+  a file — never that its sentence is still true. An entry about a file that still exists
+  passes whatever it says of it.
+- A tool no workspace pins in `.python-version` or `uv.lock` — `gh`, `git`, the Claude Code
+  CLI, a model id — cannot enter the store: every such entry is dropped `unpinned`.
+- The version is what `main` declared on the day of the newest source, not what ran; a unit
+  that raised a dependency on its own branch is recorded at the old one.
+- The "not measured" markers are eleven fixed phrases (`admit.MARKERS`); a source saying the
+  same in other words is not caught.
+- `check` reads the run log of every `COS_WORKING_DIR`, `gather` only its own, and both read
+  the local `main`, which may be behind `origin/main`; `check` prints the sha it read.
+
 ## The order, after the unit ships
 
 1. `coscc knowledge baseline` — before the flag. `measure` refuses a baseline written after
@@ -44,6 +59,9 @@ a wrong entry now reaches every `spec`, `spike` and `plan`. The way back is to u
 2. `coscc knowledge gather --all`, which spends nothing and prints batches and the ceiling.
 3. `coscc knowledge gather --all --yes`.
 4. `COS_KNOWLEDGE=1` in the service's env file, then restart.
+5. `coscc knowledge check`: 0 every entry passes and at least half are `tool:`. Run it again
+   before 2026-10-02 and after every raise of `reflex` or `claude-agent-sdk`: an entry pinned
+   at the old version fails, and the way back is another `gather`.
 
 The later the flag goes on, the more units ran `spec` without it and are left out as mixed
 (`spec.md` C8). `measure` reads the deadline, 2026-10-16, as a UTC day.
