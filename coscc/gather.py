@@ -549,6 +549,8 @@ async def gather(
             old_slice = knowledge.entries_text(sorted(mine, key=lambda e: e["id"]))
             prompt = build_prompt(slot, header["max_id"], old_slice, batch, planned["dates"])
             say(f"batch {i}/{len(parts)}: {slot}, {len(batch)} source(s)")
+            # What every session of this batch reported, repairs included, for its "done" line.
+            paid_batch, unpaid_batch = 0.0, 0
             for attempt in range(1, REPAIRS + 2):
                 # `0107` R7: no session opens that could take the run past what it printed.
                 if spent + grant.max_budget_usd > ceiling:
@@ -560,6 +562,10 @@ async def gather(
                 costs = _costs(end)
                 paid = costs.get("cost_usd")
                 spent += float(paid) if isinstance(paid, (int, float)) else float(grant.max_budget_usd)
+                if isinstance(paid, (int, float)):
+                    paid_batch += float(paid)
+                else:
+                    unpaid_batch += 1
                 store, dropped, reason, reasons = "", [], failure, []
                 if not reason:
                     store, dropped, reason = read_reply(reply)
@@ -612,7 +618,9 @@ async def gather(
                 progress = {**progress, "done": {**progress["done"], **{s["label"]: s["sha"] for s in batch}},
                             "rebuilt_recorded": True}
                 save_progress(progress_path, progress)
-            say(f"batch {i}/{len(parts)} done: {len(entries)} entries, cost {row.get('cost_usd', 'unknown')}")
+            unpaid = f", and {unpaid_batch} that reported no cost" if unpaid_batch else ""
+            say(f"batch {i}/{len(parts)} done: {len(entries)} entries, {attempt} session(s), "
+                f"cost ${paid_batch:.2f}{unpaid}; ${spent:.2f} counted against the ${ceiling:.2f} printed")
 
         if mode == "all":
             return finish(progress, header["version"], len(entries))

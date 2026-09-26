@@ -530,6 +530,21 @@ class AllRebuilds(Fixture):
         self.assertTrue(all(r["mode"] == "all" and r["resumed"] is False for r in rows))
         self.assertIn("batch 1/2: refused, repair 1/2: ", "\n".join(self.said))
 
+    def test_a_batch_that_was_repaired_says_what_all_its_sessions_cost(self):
+        s = Replies(reply(sized(8, 8858, self.B_SRC)), self.batch_one(), self.batch_two())
+        self.assertEqual(self.run_gather(s, "all"), 0)
+        done = [line for line in self.said if " done: " in line]
+        self.assertEqual(done, [
+            "batch 1/2 done: 1 entries, 2 session(s), cost $0.50; $0.50 counted against the $4.00 printed",
+            "batch 2/2 done: 2 entries, 1 session(s), cost $0.25; $0.75 counted against the $4.00 printed",
+        ])
+
+    def test_a_batch_line_names_the_sessions_that_reported_no_cost(self):
+        s = Replies(self.batch_one(), self.batch_two(), cost=None)
+        self.assertEqual(self.run_gather(s, "all"), 0)
+        self.assertIn("batch 1/2 done: 1 entries, 1 session(s), cost $0.00, and 1 that reported no cost; "
+                      "$2.00 counted against the $4.00 printed", self.said)
+
     def test_the_repair_prompt_carries_the_reasons_and_the_bytes_and_no_source(self):
         s = Replies(reply(sized(8, 8858, self.B_SRC)), self.batch_one(), self.batch_two())
         self.run_gather(s, "all")
