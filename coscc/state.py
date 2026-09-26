@@ -30,7 +30,7 @@ from coscc import events as events_mod
 from coscc import place, present, spend
 from coscc.api import build
 from coscc.journal import COST_USD, TOKEN_FIELDS
-from coscc.service import Invalid, StaleCutList, describe_base
+from coscc.service import COLLAPSED_STATES, Invalid, StaleCutList, describe_base, shown_state
 
 API = build()
 SERVICE = API.state.service
@@ -267,6 +267,17 @@ class Unit:
     # what a unit in *Needs you* waits on.
     answerable: bool = True
     attention_reason: str = ""
+    # `0100` R2, R3. The stage whose column the unit sits in, as `cos.mjs` sent it, and the
+    # state shown: `Service.board`'s decision (`decided_*`), with `Running` laid over it by
+    # `service.shown_state` alone (Design 5). `ci_line` is the dialog's CI line (R7).
+    at: str = ""
+    state: str = ""
+    state_label: str = ""
+    state_color: str = "gray"
+    ci_line: str = ""
+    decided_state: str = ""
+    decided_label: str = ""
+    decided_color: str = "gray"
 
 
 @dataclasses.dataclass
@@ -301,6 +312,10 @@ class Card:
     live: list[Activity] = dataclasses.field(default_factory=list)
     answerable: bool = True
     attention_reason: str = ""
+    at: str = ""
+    state: str = ""
+    state_label: str = ""
+    state_color: str = "gray"
 
 
 def _card(u: Unit) -> Card:
@@ -313,7 +328,31 @@ def _card(u: Unit) -> Card:
         outcome_text=u.outcome_text, outcome_color=u.outcome_color, hold_state=u.hold_state,
         shortlist_rank=u.shortlist_rank, relations_text=u.relations_text, live=list(u.live),
         answerable=u.answerable, attention_reason=u.attention_reason,
+        at=u.at, state=u.state, state_label=u.state_label, state_color=u.state_color,
     )
+
+
+def _ci_line(ci: dict | None) -> str:
+    """`0100` R7. The service's CI answer as one line, `""` where it gives none. The time
+    is for a reader (S4); no SHA (S3)."""
+    if not ci:
+        return ""
+    read = " · read " + present.when(ci.get("at")) if ci.get("read") else ""
+    if ci.get("red"):
+        return "CI is red: " + ", ".join(ci["red"]) + read
+    if ci.get("read"):
+        return "CI is not red" + read
+    return "CI has not been read"
+
+
+def _shown(u: Unit, read: dict) -> dict:
+    """`0100` Design 5. The `state*` fields of `u` under one `Service.running` answer: the
+    service's own choice between its two answers, never one made here."""
+    shown = shown_state(
+        {"state": u.decided_state, "label": u.decided_label, "color": u.decided_color},
+        (read.get("running") or {}).get(u.id),
+    )
+    return {"state": shown["state"], "state_label": shown["label"], "state_color": shown["color"]}
 
 
 @dataclasses.dataclass
@@ -1461,6 +1500,33 @@ class StudioState(rx.State):
         return len([c for c in self.cards if c.hold_state == "dropped"])
 
     @rx.var
+    def board_ids(self) -> list[str]:
+        """`0100` R8. The shown cards the stage columns draw: every one outside the three
+        collapsed groups."""
+        shown = set(self.shown_ids)
+        return [c.id for c in self.cards if c.id in shown and c.state not in COLLAPSED_STATES]
+
+    @rx.var
+    def stage_counts(self) -> dict[str, int]:
+        """`0100` R1. How many cards each stage's column holds, keyed by the stages the board
+        read returned, for its count and its *Nothing here*."""
+        counts = {name: 0 for name in self.stages}
+        board = set(self.board_ids)
+        for c in self.cards:
+            if c.id in board:
+                counts[c.at] = counts.get(c.at, 0) + 1
+        return counts
+
+    @rx.var
+    def group_counts(self) -> dict[str, int]:
+        """`0100` R8. How many units each collapsed group holds, whatever the filter."""
+        counts = {name: 0 for name in COLLAPSED_STATES}
+        for c in self.cards:
+            if c.state in counts:
+                counts[c.state] += 1
+        return counts
+
+    @rx.var
     def ws_name(self) -> str:
         """`0056` R8. What `ws=` carries: the workspace's name, never its path."""
         return next((w.name for w in self.workspaces if w.id == self.cwd), "")
@@ -1742,6 +1808,7 @@ class StudioState(rx.State):
             nxt = next((c for c in cells if c.stage == (u.get("next_stage") or "")), None)
             mode = nxt.mode if nxt is not None else "manual"
             waiting, asked = _questions(u)
+            decided = u.get("state") or {}
             units.append(
                 Unit(
                     id=u["name"],
@@ -1771,8 +1838,14 @@ class StudioState(rx.State):
                     relations_text=_relations_text((u.get("backlog") or {}).get("relations")),
                     answerable=bool(u.get("answerable", True)),
                     attention_reason=str(u.get("attention_reason") or ""),
+                    at=str(u.get("at") or ""),
+                    ci_line=_ci_line(decided.get("ci")),
+                    decided_state=str(decided.get("state") or ""),
+                    decided_label=str(decided.get("label") or ""),
+                    decided_color=str(decided.get("color") or "gray"),
                 )
             )
+        units = [dataclasses.replace(u, **_shown(u, self._running_read)) for u in units]
         self._full = {u.id: u for u in units}
         self.cards = [_card(u) for u in units]
         self._set_current()
@@ -1781,13 +1854,14 @@ class StudioState(rx.State):
         """`0051` R3. Put one `Service.running` answer on every card. Decides nothing.
 
         `0053` C4: the cards are sent again only when a card's `live` changed, and the open
-        unit only when its own did — an ask that changes nothing sends neither."""
+        unit only when its own did — an ask that changes nothing sends neither. `0100`: a
+        state that `Running` starts or stops covering is a change the same way."""
         self._running_read = read
         full, moved = {}, set()
         for key, unit in self.get_value("_full").items():
-            live = _activities(key, read)
-            if live != unit.live:
-                unit = dataclasses.replace(unit, live=live)
+            live, shown = _activities(key, read), _shown(unit, read)
+            if live != unit.live or shown["state"] != unit.state:
+                unit = dataclasses.replace(unit, live=live, **shown)
                 moved.add(key)
             full[key] = unit
         if not moved:
