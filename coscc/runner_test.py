@@ -622,6 +622,72 @@ class AStepRecordsTheBaseItRanOn(unittest.TestCase):
             self.assertIsNone(self._start_record(d)["base"])
 
 
+class AStageRunAgainIsToldWhy(unittest.TestCase):
+    """`0054` R7. A stage a person ran again from the board is told so, with their note, and
+    a stage nobody ran again gets the prompt and the `start` record it got before."""
+
+    HEADING = "# Why this stage runs again"
+    PLAN = "# Plan: x\nStatus: accepted.\n\n1. PLAN-BODY-0054\n"
+    ANSWERS = "\n## Answers\n\n### Câu 1\nAnswered by: A. Date: 2026-09-26. Via: product.\n\nANSWER-0054\n"
+
+    def _unit(self, d: str) -> Path:
+        return make_unit(
+            Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS",
+            plan_md=self.PLAN + self.ANSWERS, pr_md="# PR: x\nStatus: accepted.\n\nPR-BODY-0054\n",
+        )
+
+    def _prompt(self, d: str, stage: str, **kw) -> str:
+        return compose_prompt(d, self._unit(d), UNIT, stage, STAGES, f"{stage}.md",
+                              writes_own=stage == "pr", **kw)[0]
+
+    def test_without_rerun_not_one_byte_changes(self):
+        with tempfile.TemporaryDirectory() as d:
+            for stage in ("intent", "spec", "plan", "pr"):
+                self.assertEqual(self._prompt(d, stage, rerun=False, rerun_note="x"), self._prompt(d, stage))
+                self.assertNotIn(self.HEADING, self._prompt(d, stage))
+
+    def test_the_note_reaches_the_prompt_verbatim_before_the_task(self):
+        note = "NOTE-0054: tách bước 3\n  giữ nguyên thụt lề"
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self._prompt(d, "plan", rerun=True, rerun_note=note)
+            self.assertIn(note, prompt)
+            self.assertIn("recorded as `owner`", prompt)
+            self.assertIn("not a decision anyone approved", prompt)
+            self.assertLess(prompt.index(self.HEADING), prompt.index("# Your task"))
+
+    def test_no_note_says_so(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self._prompt(d, "spec", rerun=True, rerun_note="  ")
+            self.assertIn("No note was given: rewrite it on what changed since", prompt)
+
+    def test_plan_carries_its_text_above_answers(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self._prompt(d, "plan", rerun=True)
+            section = prompt[prompt.index(self.HEADING):prompt.index("# Your task")]
+            self.assertIn("PLAN-BODY-0054", section)
+            self.assertNotIn("ANSWER-0054", section)
+            self.assertNotIn("\n## Answers\n", section)
+
+    def test_pr_does_not_repeat_pr_md(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self._prompt(d, "pr", rerun=True, rerun_note="n")
+            self.assertIn(self.HEADING, prompt)
+            self.assertNotIn("PR-BODY-0054", prompt)
+
+    def test_the_start_record_carries_the_rerun_and_nothing_otherwise(self):
+        records = AStepRecordsTheBaseItRanOn()
+        with tempfile.TemporaryDirectory() as d:
+            plain = records._start_record(d)
+        with tempfile.TemporaryDirectory() as d:
+            unasked = records._start_record(d, rerun=False, rerun_note="x")
+        with tempfile.TemporaryDirectory() as d:
+            rerun = records._start_record(d, rerun=True, rerun_note="NOTE")
+        self.assertNotIn("rerun", plain)
+        self.assertEqual(set(unasked), set(plain))
+        self.assertEqual(unasked["prompt_chars"], plain["prompt_chars"])
+        self.assertEqual((rerun["rerun"], rerun["rerun_note"]), (True, "NOTE"))
+
+
 class ThePromptNamesTheFilesMainChanged(unittest.TestCase):
     """`0042` plan step 4. `drift.describe` builds the text; this module only places it."""
 

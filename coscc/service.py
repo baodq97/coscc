@@ -56,7 +56,8 @@ from coscc.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, TERMINAL_ONLY, gr
 from coscc import labels, models
 from coscc.run import LOOPBACK
 from coscc.runner import (
-    CEILING_MARKERS, SESSIONS_PER_STEP, STATUS_RE, Denials, RunError, Runner, describe_attempt, permission_gate,
+    CEILING_MARKERS, SESSIONS_PER_STEP, STATUS_RE, Denials, RunError, Runner, answers_section, describe_attempt,
+    permission_gate,
 )
 from coscc.sessions import Sessions, StepHandle
 from coscc.store import BadName, Store, require_name
@@ -73,6 +74,19 @@ STAGE_FILES = ("idea", "intent", "spec", "plan", "impl", "pr", "review", "ship")
 # request fields — a caller cannot point the fetch at another remote or another branch.
 BRANCH_REMOTE = "origin"
 BRANCH_TRUNK = gitops.TRUNK
+
+# `0054` R6. The longest note a rerun takes, in characters. Chosen by the spec, not measured.
+RERUN_NOTE_MAX = 4000
+
+
+def _answers_kept(path: Path, before: bytes) -> bool:
+    """`0054` R8. Whether `path` still ends with the `## Answers` section it had, `before`,
+    byte for byte. A `pr` step writes `pr.md` itself, so nothing else guards that section."""
+    try:
+        return path.read_bytes().endswith(before)
+    except OSError:
+        return False
+
 
 # `0051` spec, answer 4: an `ended, unknown` row stops being shown this long after it began,
 # unless a later `start` of the same unit retired it first.
@@ -1511,6 +1525,23 @@ class Service:
             "waiting": list(found.get("waiting") or []),
         }
 
+    async def rerun_offers(self, cwd: str, unit: str) -> dict[str, Any]:
+        """`0054` R1, R2. The accepted stages `unit` may run again, each with the stages that
+        then run again after it -- `cos.mjs rerun`'s answer, copied: `{unit, offers: [{stage,
+        later}], why}`. Files only: no worktree is opened and no `gh` is asked. Nothing here
+        chooses a stage."""
+        self._workspace_or_refuse(cwd)
+        if not unit:
+            raise Invalid("name a work unit")
+        self._unit_dir(cwd, unit)
+        try:
+            found = await board_reader.rerun(self._units_root(cwd), unit)
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        if "error" in found:
+            raise Invalid(str(found["error"]))
+        return found
+
     async def set_mode(self, cwd: str, unit: str, stage: str, mode: str) -> dict[str, Any]:
         """Choose how one step runs. Validated against the board, not against a second list."""
         self._workspace_or_refuse(cwd)
@@ -1541,6 +1572,7 @@ class Service:
 
     async def run_step(
         self, cwd: str, unit: str, stage: str, started_by: str = "person",
+        rerun: bool = False, note: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Run one step of one unit, streaming the reply as it arrives.
 
@@ -1550,6 +1582,11 @@ class Service:
 
         `started_by` (`0043` R3) is `autopilot` only when the autopilot calls this; no route
         passes it, so a request cannot say it is the autopilot.
+
+        `rerun` (`0054` R6) runs an accepted stage again, with a person's `note`. Whether the
+        stage may, and the `### Rerun` block appended to `intent.md` before the session
+        starts, are `cos.mjs rerun`'s. Refused for the autopilot and for a note over
+        `RERUN_NOTE_MAX`; an empty note is not refused (`spec.md ## Answers, câu 2`).
         """
         try:
             integrate.check_started_by(started_by)
@@ -1590,6 +1627,23 @@ class Service:
             held = found.get("hold")
             if held:
                 raise Invalid(f"{unit} is {held.get('state')}: {held.get('reason')} — nothing runs on it")
+
+            # `0054` R6. Before a worktree is opened or the gate asked. Whether `stage` may run
+            # again, and the block that says so, are `cos.mjs`'s; its refusal is passed on.
+            note = str(note or "").strip()
+            rerun_block = ""
+            if rerun:
+                if started_by != "person":
+                    raise Invalid("a stage is run again only by a person, from the board, never by the autopilot")
+                if len(note) > RERUN_NOTE_MAX:
+                    raise Invalid(f"the note is {len(note)} characters, over the {RERUN_NOTE_MAX} a rerun takes")
+                try:
+                    asked = await board_reader.rerun(self._units_root(cwd), unit, stage)
+                except Unavailable as e:
+                    raise Invalid(str(e)) from e
+                if "error" in asked:
+                    raise Invalid(str(asked["error"]))
+                rerun_block = str(asked.get("block") or "")
 
             # `.claude/CLAUDE.md` invariant 2: *"Ask `cos.mjs gate` before a stage and stop
             # when it exits non-zero."* Until 2026-09-23 this app did neither. It read the
@@ -1716,6 +1770,22 @@ class Service:
             knowledge_kw: dict[str, Any] = {}
             if self.config.knowledge and stage in knowledge.STAGES:
                 knowledge_kw = knowledge.for_step(self.config.data_dir, units.slot(cwd))
+            # `0054` R3, R8. After the last refusal that reads nothing more, before any money
+            # is spent. `pr.md`'s `## Answers` is read first: the `pr` session writes that file
+            # itself, so only a comparison afterwards can tell whether the section survived.
+            answers_before: bytes | None = None
+            if rerun:
+                if stage == "pr":
+                    try:
+                        answers_before = answers_section((directory / "pr.md").read_bytes())
+                    except OSError:
+                        answers_before = None
+                await self._append_to_answers(directory / "intent.md", "\n" + rerun_block, "a rerun")
+            if answers_before is not None:
+                kept_from = answers_before
+
+                async def end_fields() -> dict[str, Any]:
+                    return {"answers_kept": _answers_kept(directory / "pr.md", kept_from)}
             runner = Runner(self.sessions, journal, app=self._app_identity())
             # `0034` R11. The registry is what the page lists and what a Stop finds; the mark
             # taken above is what everything else asks. The same start time for both, and no
@@ -1772,7 +1842,10 @@ class Service:
                     **({"watch": work} if scratch is not None else {}),
                     # The same: `Runner.run` writes `person` when it is not named.
                     **({"started_by": started_by} if started_by != "person" else {}),
+                    # `0054`. The same again: only a rerun names them.
+                    **({"rerun": True, "rerun_note": note} if rerun else {}),
                 ),
+                answers_before=answers_before,
             ))
             running.task.add_done_callback(
                 lambda _task: self._never_driven(running, mark, rid)
@@ -1826,12 +1899,16 @@ class Service:
         self, running: steps_mod.Running, mark: steps_mod.Mark, runner: Runner, cwd: str, unit: str, stage: str,
         artifact: str, directory: Path, tree: dict[str, Any] | None, base: dict[str, Any] | None,
         rounds_before: set[Any] | None, rid: str, scratch: Path | None, kwargs: dict[str, Any],
+        answers_before: bytes | None = None,
     ) -> None:
         """One board step, start to end, as its own task (`0034`).
 
         What `run_step` used to do inline, unchanged, except that every item goes to the
         step's listeners with `put_nowait` -- this never waits on a reader -- and that a
         `stopped` step records no transition, cleans nothing and posts nothing (R9).
+
+        `answers_before` (`0054` R8) is `pr.md`'s `## Answers` as a `pr` rerun found it; a
+        `done` that no longer ends with it says `answers_lost`.
         """
 
         def tell(item: tuple[str, Any]) -> None:
@@ -1871,6 +1948,11 @@ class Service:
                             "done",
                             {**item[1], "pr_sync": await self._sync_pr(cwd, unit, kwargs.get("pr_before"))},
                         )
+                    if (
+                        answers_before is not None and item[1].get("outcome") == "done"
+                        and not _answers_kept(directory / artifact, answers_before)
+                    ):
+                        item = ("done", {**item[1], "answers_lost": True})
                     told_done = True
                 tell(item)
         except RunError as e:
@@ -2765,6 +2847,38 @@ class Service:
             "date": today,
         }
 
+    async def _append_to_answers(self, path: Path, block: str, what: str) -> None:
+        """Append `block` to the end of `path`, under its `## Answers`, opening that section
+        when the file has none -- the one way the app writes into an artifact a stage wrote,
+        never rewriting a byte above it. `0045`'s hold wrote this way first; `0054`'s
+        `### Rerun` block does too. Under `_answer_lock`, so two appends never interleave.
+        `what` names the block in the refusal when a section follows `## Answers`, where an
+        appended block would not be read at all."""
+        name = path.name
+        async with self._answer_lock:
+            try:
+                existing = path.read_text(encoding="utf-8")
+            except OSError as e:
+                raise Invalid(f"could not read {name}: {e}") from e
+            lines = existing.splitlines()
+            heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
+            if heading is not None and any(l.startswith("## ") for l in lines[heading + 1:]):
+                raise Invalid(
+                    f"{name} has a section after its ## Answers, so a block appended at "
+                    f"the end would not be read as {what}"
+                )
+            text = ""
+            if existing and not existing.endswith("\n"):
+                text += "\n"
+            if heading is None:
+                text += "\n## Answers\n"
+            text += block
+            try:
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(text)
+            except OSError as e:
+                raise Invalid(f"could not write {name}: {e}") from e
+
     async def hold(self, cwd: str, unit: str, to: str, reason: str, by: str) -> dict[str, Any]:
         """`0045`. A person pauses, drops or resumes a unit (`to`: paused, dropped, active).
 
@@ -2808,30 +2922,9 @@ class Service:
             assert found is not None
             from_ = (found.get("hold") or {}).get("state") or "active"
             today = date.today().isoformat()
-            path = directory / "intent.md"
-            async with self._answer_lock:
-                try:
-                    existing = path.read_text(encoding="utf-8")
-                except OSError as e:
-                    raise Invalid(f"could not read intent.md: {e}") from e
-                lines = existing.splitlines()
-                heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
-                if heading is not None and any(l.startswith("## ") for l in lines[heading + 1:]):
-                    raise Invalid(
-                        "intent.md has a section after its ## Answers, so a block appended at "
-                        "the end would not be read as a hold"
-                    )
-                text = ""
-                if existing and not existing.endswith("\n"):
-                    text += "\n"
-                if heading is None:
-                    text += "\n## Answers\n"
-                text += hold_rules.block(to, by, today, reason)
-                try:
-                    with path.open("a", encoding="utf-8") as f:
-                        f.write(text)
-                except OSError as e:
-                    raise Invalid(f"could not write intent.md: {e}") from e
+            await self._append_to_answers(
+                directory / "intent.md", hold_rules.block(to, by, today, reason), "a hold"
+            )
 
             effects: list[dict[str, str]] = []
             if to == "dropped":

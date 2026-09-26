@@ -1440,3 +1440,27 @@ class NoRequestIsTheAutopilot(unittest.IsolatedAsyncioTestCase):
         for _, args, kwargs in called:
             self.assertNotIn("started_by", kwargs)
             self.assertNotIn("autopilot", args)
+
+
+class ARerunIsReadOffTheBodyOnlyWhenItSaysTrue(unittest.IsolatedAsyncioTestCase):
+    """`0054` R6. `POST /api/board/run` passes `rerun` and `note` on only when the body's
+    `rerun` is `true` itself; any other body calls `run_step` exactly as it did before."""
+
+    async def test_rerun_and_note_are_passed_on_and_nothing_otherwise(self):
+        app = build(_tmp_config(self))
+        called: list[tuple] = []
+
+        async def run_step(*args, **kwargs):
+            called.append((args, kwargs))
+            yield ("done", {"outcome": "done"})
+
+        app.state.service.run_step = run_step
+        base = {"cwd": "/tmp", "unit": "0001_a", "stage": "pr"}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+            for body in (base, {**base, "rerun": "true", "note": "n"}, {**base, "rerun": True, "note": "ghi chú"}):
+                self.assertEqual((await client.post("/api/board/run", json=body)).status_code, 200)
+        self.assertEqual(called, [
+            (("/tmp", "0001_a", "pr"), {}),
+            (("/tmp", "0001_a", "pr"), {}),
+            (("/tmp", "0001_a", "pr"), {"rerun": True, "note": "ghi chú"}),
+        ])

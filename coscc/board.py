@@ -381,6 +381,41 @@ async def pr_text(units_root: str | Path, unit: str, timeout: float = TIMEOUT) -
         raise Unavailable(f"the harness script did not return JSON: {e}") from e
 
 
+async def rerun(
+    units_root: str | Path, unit: str, stage: str | None = None, timeout: float = TIMEOUT
+) -> dict[str, Any]:
+    """Ask `cos.mjs rerun` which accepted stages of `unit` may run again, or -- with `stage`
+    -- for the `### Rerun` block to append before running it.
+
+    `0054` R1, R3. The rule and the block are both `cos.mjs`'s; nothing here reads or
+    hashes an artifact. Returns `{unit, offers, why}` without `stage`, `{unit, stage, later,
+    block}` with one, and `{"error": <what cos.mjs said>, "code": n}` when it exits non-zero
+    -- exit 1 is "not offered", an answer rather than a failure, as `pr_text`'s is. Reads
+    files only, so it takes no `--repo`. Raises `Unavailable` as `read` does.
+    """
+    path = Path(units_root)
+    script = harness.script()
+    if not script.exists():
+        raise Unavailable(f"the harness script is missing: {script}")
+
+    try:
+        argv = [str(script), "--root", str(path), "rerun", unit] + ([stage] if stage else [])
+        code, out_text, err_text = await _run(argv, timeout)
+    except (OSError, ValueError) as e:
+        raise Unavailable(
+            f"could not run node: {e} — PATH was {_child_env()['PATH']}"
+        ) from e
+    except asyncio.TimeoutError:
+        raise Unavailable(f"asking what may run again timed out after {timeout:.0f}s") from None
+
+    if code != 0:
+        return {"error": (err_text or out_text).strip() or f"the harness script exited {code}", "code": code}
+    try:
+        return json.loads(out_text)
+    except (json.JSONDecodeError, ValueError) as e:
+        raise Unavailable(f"the harness script did not return JSON: {e}") from e
+
+
 def _answer_of(unit: dict[str, Any], artifact: str, n: Any) -> dict[str, Any] | None:
     for q in ((unit.get("artifacts") or {}).get(artifact) or {}).get("questions") or []:
         if isinstance(q, dict) and q.get("n") == n and isinstance(q.get("answer"), dict):
