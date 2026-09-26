@@ -3715,6 +3715,59 @@ class TheOtherTwoWritesAreCheckedTheSame(unittest.TestCase):
             self.assertEqual((directory / "plan.md").read_bytes(), before)
 
 
+class AnAnswerCutAtItsCeilingIsNotWritten(unittest.TestCase):
+    """`0099` review round 1, F2. A session that wrote a title and a header, called a tool
+    and ran out of turns left a draft, or the first of its pieces. Only what it said after
+    its last tool call is taken, as before `0099`."""
+
+    class Cut:
+        def __init__(self, *said, terminal="max_turns"):
+            self.said, self.terminal = said, terminal
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            for kind, payload in self.said:
+                yield (kind, payload)
+            yield ("done", {"session_id": "s-1", "terminal_reason": self.terminal, "cost": {}})
+
+    class DraftsThenRunsOut(AReviewThatRunsOutGetsAClosingTurn.Closes):
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            async for kind, payload in super().stream(cwd, text, session_id, max_turns, **kw):
+                yield (kind, payload)
+                if kind == "chunk" and len(self.calls) == 1:
+                    yield ("tool", "Read")
+
+    def test_a_titled_piece_before_the_last_tool_call_is_not_written(self):
+        cut = self.Cut(("chunk", AnAnswerInPiecesIsWrittenWhole.HEAD), ("tool", "Read"))
+        final, end, written = AnAnswerInPiecesIsWrittenWhole.go(self, cut)
+        self.assertEqual((final["outcome"], end["outcome"]), ("exhausted", "exhausted"))
+        # Nothing followed the last call, so the reason is the one `main` gave.
+        self.assertIn("the session returned nothing", end["detail"].splitlines()[0])
+        self.assertIsNone(written)
+
+    def test_the_same_pieces_below_the_ceiling_are_written(self):
+        cut = self.Cut(("chunk", AnAnswerInPiecesIsWrittenWhole.HEAD), ("tool", "Read"),
+                       ("chunk", "PHẦN-ĐUÔI\n"), terminal="success")
+        final, _, written = AnAnswerInPiecesIsWrittenWhole.go(self, cut)
+        self.assertEqual(final["outcome"], "done")
+        self.assertIn("PHẦN-ĐẦU\nPHẦN-ĐUÔI\n", written.decode("utf-8"))
+
+    def test_a_whole_answer_after_the_last_tool_call_is_still_written(self):
+        cut = self.Cut(("chunk", "Đọc thêm."), ("tool", "Read"),
+                       ("chunk", AnAnswerInPiecesIsWrittenWhole.HEAD))
+        final, _, written = AnAnswerInPiecesIsWrittenWhole.go(self, cut)
+        self.assertEqual(final["outcome"], "exhausted")
+        self.assertEqual(written.decode("utf-8"), AnAnswerInPiecesIsWrittenWhole.HEAD)
+
+    def test_a_drafted_round_leaves_the_review_its_closing_turn(self):
+        draft = incomplete_reply("c" * 40, verdict="pass", status="accepted")
+        sessions = self.DraftsThenRunsOut(first=draft)
+        _, [end], review, head, _ = AReviewThatRunsOutGetsAClosingTurn.run_review(self, sessions)
+        self.assertEqual(len(sessions.calls), 2)
+        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "incomplete"))
+        self.assertNotIn("Verdict: pass", review)
+        self.assertIn(f"## Round 2\n\nReviewed: {head}. Verdict: incomplete.", review)
+
+
 class TheNextReviewGoesOnFromAnIncompleteRound(unittest.TestCase):
     """`0085` R10."""
 

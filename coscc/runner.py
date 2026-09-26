@@ -1275,8 +1275,9 @@ def _write_artifact(directory: Path, artifact: str, text: str, blocks: int | Non
     """Write an artifact the app writes, from `text`, or raise the reason it is not one.
 
     `0080` spec *Design* 3: one check and one write, for a step's reply, a spike's progress
-    file and a review's closing turn alike. `text` is everything the session said; the
-    artifact is what follows its last title line (`0099` R1). `blocks`, when given, is how
+    file and a review's closing turn alike. `text` is everything the session said, or at its
+    ceiling what it said after its last tool call; the artifact is what follows its last
+    title line (`0099` R1). `blocks`, when given, is how
     many pieces the session said it in, for the reason (R5). Synchronous on purpose -- see
     the comment where `Runner.run` calls it.
     """
@@ -1720,7 +1721,13 @@ class Runner:
             if grant.app_writes_artifact:
                 # Synchronous, so nothing yields between reading the `## Answers` already
                 # on disk and writing the artifact over it.
-                _write_artifact(directory, artifact, _joined(pieces, artifact), blocks=blocks)
+                #
+                # Review round 1, F2. A session stopped at its ceiling was cut off, so a
+                # title it wrote before its last tool call is a draft or a first piece, and
+                # its header may well say `accepted`. Only what it said after that call is
+                # taken, as before `0099`; nothing else leaves a review its closing turn.
+                taken = pieces[-1:] if _hit_ceiling(terminal) else pieces
+                _write_artifact(directory, artifact, _joined(taken, artifact), blocks=blocks)
                 if watch:
                     # `0080` R4: the reply was written, so the progress file is never read.
                     spike_md = "reply"
