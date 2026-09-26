@@ -2,7 +2,8 @@
 
 Reached from `coscc/run.py` alone, imported there lazily, like `reset-password`. No route,
 button or autopilot pass reaches this module (`knowledge_cli_test.py` holds that), so the
-one command here that spends quota, `gather --yes`, needs a shell on this machine.
+one command here that spends quota, `gather --yes`, needs a shell on this machine. `check`
+(`0108` R10) spends nothing and writes nothing.
 
 Exit codes: 0 done, 1 failed with a reason, 2 misuse or refused.
 """
@@ -13,13 +14,14 @@ import asyncio
 import sys
 from typing import Callable
 
-from coscc import gather, knowledge, measure
+from coscc import admit, gather, knowledge, measure
 
 USAGE = (
     "usage: coscc knowledge gather [--all] [--yes] [--model M]\n"
     "       coscc knowledge baseline [--workspace SLOT]\n"
     "       coscc knowledge measure [--workspace SLOT]\n"
-    "       coscc knowledge show"
+    "       coscc knowledge show\n"
+    "       coscc knowledge check"
 )
 
 
@@ -130,6 +132,9 @@ def main(argv: list[str], say: Callable[[str], None] | None = None) -> int:
         if command == "show":
             _options(rest, set(), set())
             return show(from_env().data_dir, say)
+        if command == "check":
+            _options(rest, set(), set())
+            return admit.check(from_env().data_dir, say)
         raise _Misuse(f"unrecognised command {command!r}")
     except _Misuse as e:
         print(f"coscc knowledge: {e}\n{USAGE}", file=sys.stderr)
