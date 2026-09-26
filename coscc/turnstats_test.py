@@ -56,6 +56,22 @@ class Fixture(unittest.TestCase):
                     (run, seq, kind),
                 )
 
+    def calls(self, run: str, *events: dict) -> None:
+        with Data(self.data).connect() as conn:
+            for seq, event in enumerate(events):
+                conn.execute(
+                    "INSERT INTO step_events (run, seq, at, kind, event, bytes) VALUES (?, ?, 0, ?, ?, 2)",
+                    (run, seq, event["kind"], json.dumps(event)),
+                )
+
+    @staticmethod
+    def use(i: str, name: str, **tool_input) -> dict:
+        return {"kind": "tool_use", "id": i, "name": name, "input": tool_input}
+
+    @staticmethod
+    def result(i: str, content, **extra) -> dict:
+        return {"kind": "tool_result", "tool_use_id": i, "content": content, **extra}
+
     def review(self, unit: str, text: str) -> None:
         d = units.cos_dir(self.key, self.data) / unit
         d.mkdir(parents=True, exist_ok=True)
@@ -148,6 +164,61 @@ class TheEvents(Fixture):
         self.assertEqual((f["carried_plan_map"], f["carried_commands"]), (1, 1))
 
 
+class TheFilesTouched(Fixture):
+    FILES = ["coscc/service.py", "coscc/state.py"]
+
+    def files(self, first: int = 20, since: str = "2026-09-24") -> dict:
+        return turnstats.measure(str(self.ws), self.data, since, None, self.FILES, first)
+
+    def test_a_read_and_a_grep_on_the_file_touch_it_from_any_worktree(self):
+        self.step("2026-09-24T10:00:00", "0001_a", turns=10, run="r1")
+        self.calls("r1",
+                   self.use("a", "Read", file_path="/w/one/coscc/service.py"),
+                   self.result("a", "x" * 30),
+                   self.use("b", "Grep", pattern="def", path="/w/two/coscc/state.py"),
+                   self.result("b", "hit"),
+                   self.use("c", "Read", file_path="/w/one/coscc/service_test.py"),
+                   self.result("c", "y" * 999))
+        self.step("2026-09-24T11:00:00", "0002_b", turns=30, run="r2")
+        self.calls("r2",
+                   self.use("d", "Read", file_path="/elsewhere/coscc/service.py"),
+                   self.result("d", [{"type": "text", "text": "z" * 10}, {"type": "text", "text": "z" * 40}]))
+        f = self.files()
+        self.assertEqual((f["touched_steps"], f["touched_n"]), (2, 2))
+        self.assertEqual(f["touched_turns_mean"], 20)
+        self.assertEqual(f["touched_reads_greps_mean"], 1.5)
+        self.assertEqual(f["touched_read_chars_mean"], 40)
+
+    def test_a_grep_on_a_directory_or_on_nothing_does_not_touch(self):
+        self.step("2026-09-24T10:00:00", "0001_a", turns=10, run="r1")
+        self.calls("r1",
+                   self.use("a", "Grep", pattern="def", path="/w/coscc"),
+                   self.use("b", "Grep", pattern="coscc/service.py"),
+                   self.use("c", "Bash", command="cat coscc/service.py"))
+        f = self.files()
+        self.assertEqual((f["touched_steps"], f["touched_turns_mean"], f["touched_read_chars_mean"]), (0, None, None))
+
+    def test_the_means_are_over_the_first_touched_steps(self):
+        for n, turns in enumerate((10, 20, 90)):
+            run = f"r{n}"
+            self.step(f"2026-09-24T1{n}:00:00", f"000{n}_x", turns=turns, run=run)
+            self.calls(run, self.use("a", "Read", file_path="/w/coscc/state.py"), self.result("a", "q"))
+        f = self.files(first=2)
+        self.assertEqual((f["touched_steps"], f["touched_n"], f["touched_turns_mean"]), (3, 2, 15))
+
+    def test_a_cut_or_persisted_result_counts_what_it_was_before(self):
+        self.step("2026-09-24T10:00:00", "0001_a", turns=1, run="r1")
+        self.calls("r1",
+                   self.use("a", "Read", file_path="/w/coscc/service.py"),
+                   self.result("a", "x" * 5, truncated=True, length=1000, truncated_fields=["content"]),
+                   self.use("b", "Read", file_path="/w/coscc/service.py"),
+                   self.result("b", "x" * 5, persisted_size=3000))
+        self.assertEqual(self.files()["touched_read_chars_mean"], 2000)
+
+    def test_without_files_there_are_no_touched_fields(self):
+        self.assertNotIn("touched_steps", self.measure())
+
+
 class TheCommand(Fixture):
     def main(self, *args: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
@@ -160,6 +231,13 @@ class TheCommand(Fixture):
         code, out, _ = self.main("--since", "2026-09-24")
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out)["steps"], 1)
+
+    def test_files_and_first_reach_the_fields(self):
+        self.step("2026-09-24T10:00:00", "0001_a", turns=4, run="r1")
+        self.calls("r1", self.use("a", "Read", file_path="/w/coscc/runner.py"))
+        code, out, _ = self.main("--since", "2026-09-24", "--files", "coscc/runner.py", "--first", "5")
+        self.assertEqual(code, 0)
+        self.assertEqual((json.loads(out)["touched_steps"], json.loads(out)["touched_turns_mean"]), (1, 4))
 
     def test_outcome_holds(self):
         self.step("2026-09-24T10:00:00", "0001_a", turns=40, cost_usd=1.0, duration_ms=10)
