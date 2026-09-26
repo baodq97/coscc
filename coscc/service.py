@@ -532,6 +532,9 @@ class Service:
     # capture binds `127.0.0.1:18783` (`scripts/capture_screens.py:112`), so two at once fail.
     # A capture a session runs does not take it (spec C1). One process only, like `pull`.
     _screens_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    # `0111` review round 1, F3. The retake running now, if any, `{workspace, unit, started}`
+    # by an id that never leaves this process: read only by `_update_jobs`.
+    _retakes: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
     # `0017` R8. Per workspace, created on first use.
     _create_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     # `0035` R12. `(journal key, unit)` for every step, integration or hold holding its unit
@@ -1927,6 +1930,11 @@ class Service:
         old = asked.get("manifest") or {}
         addresses = [str(a) for a in old.get("addresses") or []]
         async with self._screens_lock:
+            # Review round 1, F3. Asked again past the lock, which another retake may have held
+            # for minutes; from here to the end of `take` a pending update waits for it.
+            self._refuse_while_updating()
+            rid = uuid.uuid4().hex
+            self._retakes[rid] = {"workspace": key, "unit": unit, "started": _now()}
             started = datetime.now().timestamp()
             try:
                 result = await retake.take(Path(work), addresses, data_dir=self.config.data_dir)
@@ -1939,6 +1947,9 @@ class Service:
                 except (BadRecord, Busy):
                     pass
                 raise
+            finally:
+                self._retakes.pop(rid, None)
+                self.updater.job_ended()
         ok, detail = retake.judge(result)
         try:
             journal.append(retake.record(key, unit, old, result, ok, detail, started_by))
@@ -2288,6 +2299,14 @@ class Service:
                     "workspace": entry["workspace"], "unit": "", "stage": "estimate",
                     "started": entry["started"],
                 })
+        for entry in self._retakes.values():
+            # `0111` review round 1, F3. Waited for like an integration, never cut: no Stop
+            # reaches it, and `retake.take` puts `.screens/` back only if it gets to.
+            jobs.append({
+                "kind": "integration", "id": f"screens:{entry['workspace']}:{entry['unit']}",
+                "workspace": entry["workspace"], "unit": entry["unit"], "stage": "screens",
+                "started": entry["started"],
+            })
         for turn in self.sessions.in_flight():
             jobs.append({"kind": "chat", "id": f"chat:{turn['id']}", "turn": turn["id"],
                          "session_id": turn["session_id"], "workspace": turn["workspace"],

@@ -3887,6 +3887,50 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(unittest.TestCase):
                                  "manifest_after": self.NEW, "status_before": "", "status_after": ""})
         self.assertIn("taken again, but the run log could not record it", said)
 
+    def test_a_pending_update_waits_for_a_retake(self):
+        # Review round 1, F3: listed as a job while it runs, never cut, gone once it ends.
+        from coscc import board as board_reader
+        from coscc import retake
+
+        during: list[list[dict]] = []
+
+        async def asked(*a, **kw):
+            return {"retake": True, "manifest": self.OLD}
+
+        async def take(tree, addresses, **kw):
+            during.append(self.service._update_jobs())
+            return {"code": 0, "seconds": 0.1, "tail": "", "head_before_run": "b" * 40,
+                    "manifest_after": self.NEW, "status_before": "", "status_after": ""}
+
+        with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take), \
+                mock.patch.object(self.service.updater, "job_ended") as ended:
+            asyncio.run(self.service._retake_screens(
+                str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
+        [[job]] = during
+        self.assertEqual((job["kind"], job["unit"], job["stage"]), ("integration", self.unit, "screens"))
+        self.assertEqual(self.service._update_jobs(), [])
+        ended.assert_called_once()
+
+    def test_no_retake_begins_while_an_update_is_applied(self):
+        from coscc import board as board_reader
+        from coscc import retake
+
+        taken: list[str] = []
+
+        async def asked(*a, **kw):
+            return {"retake": True, "manifest": self.OLD}
+
+        async def take(tree, addresses, **kw):
+            taken.append(tree)
+            return {}
+
+        self.service.updater.window = True
+        with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take):
+            with self.assertRaises(Invalid):
+                asyncio.run(self.service._retake_screens(
+                    str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
+        self.assertEqual((taken, self.service._update_jobs()), ([], []))
+
     def test_two_retakes_never_run_at_once(self):
         from coscc import board as board_reader
         from coscc import retake

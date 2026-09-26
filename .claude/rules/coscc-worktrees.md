@@ -58,6 +58,7 @@ paths:
   this process's environment less `__REFLEX_*`, for up to `retake.RETAKE_TIMEOUT` (300 s,
   chosen, not measured) under one lock for the whole app, so other units' reviews wait.
   - *Stop* does not reach it: the step is not running yet, and the unit's mark is held.
+    *Apply* waits for it like an integration (`_update_jobs`), and "apply now" never cuts it.
   - Port 18783 is shared with every `impl` session's capture, which the lock does not cover;
     one of those running at the same time refuses the review, and the autopilot stops at `e`.
   - A failed retake puts `.screens/` back as it was, so the next review retakes from the
