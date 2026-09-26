@@ -877,12 +877,8 @@ def _with_reply(reason: str, collected: str) -> str:
     return f"{reason}\n--- what the session replied{more} ---\n{kept}"
 
 
-def check_reply(text: str) -> str:
-    """The reply, ready to be written, or a reason it is not an artifact.
-
-    Refusing here rather than writing and letting the gate complain later keeps a
-    half-formed file from ever reaching the directory a human reads.
-    """
+def _unfence(text: str) -> str:
+    """The reply stripped, and out of the fence it came wrapped in, if it came in one."""
     body = (text or "").strip()
     if not body:
         raise RunError("the session returned nothing")
@@ -892,9 +888,71 @@ def check_reply(text: str) -> str:
         lines = body.splitlines()
         if len(lines) >= 2 and lines[-1].strip().startswith("```"):
             body = "\n".join(lines[1:-1]).strip()
+    return body
+
+
+def check_reply(text: str) -> str:
+    """The reply, ready to be written, or a reason it is not an artifact.
+
+    Refusing here rather than writing and letting the gate complain later keeps a
+    half-formed file from ever reaching the directory a human reads. Since `0099` the
+    write path asks `opening_problem` instead; `closing_round_problem` still asks this.
+    """
+    body = _unfence(text)
     if not STATUS_RE.search(body):
         raise RunError("the reply carries no `Status:` line, so the gate could not read it")
     return body + "\n"
+
+
+def _title(artifact: str) -> str:
+    """`# Plan:` for `plan.md`: how every `write-*` skill's template opens its file."""
+    return "# " + Path(artifact).stem.capitalize() + ":"
+
+
+def from_title(text: str, artifact: str) -> str:
+    """`0099` R1, R2, R9. `text` from its last title line outside a code fence, or all of it.
+
+    The last, not the first: a session that drafts the whole artifact, reads again and
+    writes it anew has made the draft narration before the one that counts.
+    """
+    title = _title(artifact)
+    fenced, start = False, None
+    at = 0
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        elif not fenced and line.startswith(title):
+            start = at
+        at += len(line)
+    return text if start is None else text[start:]
+
+
+def opening_problem(text: str, artifact: str) -> str | None:
+    """`0099` R3. `None` when `text` opens with its title and a `Status:` header, else what
+    it lacks. Nothing else of the template is checked.
+    """
+    lines = text.splitlines()
+    first = lines[0] if lines else ""
+    header = next((line for line in lines[1:] if line.strip()), "")
+    missing = []
+    if not first.startswith(_title(artifact)):
+        missing.append(f"no `{_title(artifact)}` title")
+    if not HEADER_STATUS_RE.search(header):
+        missing.append("no `Status:` line in its header")
+    return " and ".join(missing) or None
+
+
+def opening_reason(artifact: str, problem: str, blocks: int | None) -> str:
+    """`0099` R5. English, as every other reason in this module is (spec C4)."""
+    reason = f"{artifact} lacks its opening: {problem}"
+    if blocks is not None:
+        reason += f" (the session replied in {blocks} block{'s' if blocks != 1 else ''})"
+    return reason
+
+
+def _after_tool(text: str) -> str:
+    """`0099` spec *Design* 1, C2. The text so far, ending a line before the next piece."""
+    return text if not text or text.endswith("\n") else text + "\n"
 
 
 # How the SDK says a turn ran out of room. `terminal_reason` is the field that carries it;
