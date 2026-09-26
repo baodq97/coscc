@@ -23,16 +23,41 @@ from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent / "state.py"
 
+
+def _split_from(name: str) -> list[Path]:
+    """`0095`: `<name>.py` and the `<name>_*.py` modules it was split into, tests left out."""
+    here = Path(__file__).resolve().parent
+    return [here / f"{name}.py"] + [
+        p for p in sorted(here.glob(f"{name}_*.py")) if not p.name.endswith("_test.py")
+    ]
+
+
+def _source_text(name: str = "state") -> str:
+    return "\n".join(p.read_text(encoding="utf-8") for p in _split_from(name))
+
 # Names assigned on `self` that are not page state. Kept short and explicit: anything added
 # here stops being checked, so each entry should be something that is plainly not a var.
 NOT_A_VAR = {"membership"}
 
 
 def _state_class(tree: ast.Module) -> ast.ClassDef:
+    """`StudioState` as one class: its own body, then the body of every `rx.State` mixin it
+    inherits from a `state_*.py` module (`0095`), so a walk sees every var and handler."""
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name == "StudioState":
-            return node
-    raise AssertionError("StudioState is not in state.py any more")
+            break
+    else:
+        raise AssertionError("StudioState is not in state.py any more")
+    body = list(node.body)
+    for path in _split_from("state")[1:]:
+        for other in ast.parse(path.read_text(encoding="utf-8"), filename=str(path)).body:
+            if isinstance(other, ast.ClassDef) and any(
+                k.arg == "mixin" for k in other.keywords
+            ):
+                body += other.body
+    whole = ast.ClassDef(name=node.name, bases=node.bases, keywords=node.keywords, body=body,
+                         decorator_list=node.decorator_list, type_params=[])
+    return ast.copy_location(whole, node)
 
 
 class EveryVarAHandlerSetsIsDeclared(unittest.TestCase):
@@ -174,7 +199,7 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
         self.assertEqual(page.attention_reason, "Needs a person")
         self.assertEqual(_shown(page, {})["state"], "error")
         self.assertEqual(_shown(page, {})["state_reason"], "")
-        screens = (Path(__file__).parent / "screens.py").read_text(encoding="utf-8")
+        screens = _source_text("screens")
         self.assertNotIn("current_unit.attention_reason", screens)
         self.assertIn("current_unit.state_reason", screens)
 
@@ -279,7 +304,9 @@ class PostingARoundLocksTheButtonWhileItRuns(unittest.TestCase):
             for n in state.body
             if isinstance(n, ast.AsyncFunctionDef) and n.name == "post_review_comment"
         ]
-        first = next(s for s in handler.body if not isinstance(s, ast.Expr) or not isinstance(s.value, ast.Constant))
+        # `0095`: a mixin's handler imports `SERVICE` in its body first; an import does nothing.
+        first = next(s for s in handler.body
+                     if not isinstance(s, (ast.Expr, ast.ImportFrom)) or isinstance(s, ast.Expr) and not isinstance(s.value, ast.Constant))
         self.assertIsInstance(first, ast.If)
         self.assertIn("posting_round", ast.unparse(first.test))
         self.assertIsInstance(first.body[0], ast.Return)
@@ -807,7 +834,8 @@ class ACardShowsWhatServiceRunningSaid(unittest.TestCase):
         tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
         state = _state_class(tree)
         methods = {n.name: n for n in state.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-        functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        functions = {n.name: n for p in _split_from("state")
+                     for n in ast.parse(p.read_text(encoding="utf-8")).body if isinstance(n, ast.FunctionDef)}
         for fn in (functions["_activities"], methods["_apply_running"], methods["poll_running"]):
             with self.subTest(fn=fn.name):
                 self.assertNotIn("self.running", ast.unparse(fn))
@@ -2331,7 +2359,7 @@ class ARunningAskSendsTheCardsOnlyWhenOneChanged(unittest.TestCase):
         ])
 
     def test_the_source_never_changes_full_in_place(self):
-        self.assertNotIn("self._full[", SOURCE.read_text(encoding="utf-8"))
+        self.assertNotIn("self._full[", _source_text())
 
 
 class UsageIsSentOnlyOnItsScreen(unittest.TestCase):

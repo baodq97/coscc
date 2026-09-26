@@ -19,7 +19,8 @@ meaning in a wheel, where the two travel in the same file and cannot drift. That
 why no packaged fingerprint was built; `plan.md` records the decision.
 
 **What the fingerprint covers, and what it cannot.** The compiled bundle is decided by the
-component tree in `coscc/screens.py`, its state, the shared theme and presentation
+component tree in `coscc/screens.py`, its state in `coscc/state.py` (with the modules
+each was split into, `0095`), the shared theme and presentation
 modules, `rxconfig.py` (which bakes in the backend address), and the Reflex version that
 compiled it. Those inputs are fingerprinted. Anything else
 that could change the output — a plugin, an environment variable read during the build —
@@ -48,6 +49,14 @@ _SOURCES = (
     "coscc/studio.py",
     "coscc/screens.py",
     "coscc/state.py",
+    # `0095`: the modules `state.py` was split into. `build_test` fails when one is missing.
+    "coscc/state_views.py",
+    "coscc/state_workspaces.py",
+    "coscc/state_watch.py",
+    "coscc/state_update.py",
+    "coscc/state_answers.py",
+    "coscc/state_backlog.py",
+    "coscc/state_rerun.py",
     "rxconfig.py",
 )
 

@@ -132,8 +132,25 @@ class WhatTheFingerprintCovers(unittest.TestCase):
             set(build._SOURCES), {
                 "coscc/coscc.py", "coscc/ui.py", "coscc/studio.py",
                 "coscc/screens.py", "coscc/state.py", "rxconfig.py",
-            }
+            } | set(self.split_modules())
         )
+
+    @staticmethod
+    def split_modules() -> list[str]:
+        """`0095`: the modules `screens.py` and `state.py` were split into, tests left out."""
+        repo = Path(__file__).resolve().parent.parent
+        return [
+            f"coscc/{p.name}"
+            for name in ("screens", "state")
+            for p in sorted((repo / "coscc").glob(f"{name}_*.py"))
+            if not p.name.endswith("_test.py")
+        ]
+
+    def test_every_module_the_page_was_split_into_is_hashed(self):
+        """A module left out would change the page while the fingerprint says "current"."""
+        split = self.split_modules()
+        self.assertIn("coscc/state_views.py", split)
+        self.assertEqual([m for m in split if m not in build._SOURCES], [])
 
     def test_a_missing_source_file_is_recorded_not_ignored(self):
         with tempfile.TemporaryDirectory() as d:
