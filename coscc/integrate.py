@@ -132,6 +132,48 @@ def origin_note(origin_sha: str, fetch: dict | None) -> str:
     return f"{ref} ({how})"
 
 
+def cut_integration(records: list[dict], unit: str, running: bool) -> dict | None:
+    """`0114` R3: the `start` of an integration this unit's run log opened and never closed.
+
+    `records` are the unit's, oldest first. `{at, head}` of its last `start` of `integrate`
+    when no `end` and no `integration` came after it and nothing runs for the unit in this
+    process (`running`); `None` otherwise. Only Gebo's road writes a `start`.
+    """
+    if running:
+        return None
+    cut = None
+    for r in records:
+        if r.get("unit") != unit:
+            continue
+        kind = r.get("kind")
+        if kind == "start" and r.get("stage") == "integrate":
+            cut = {"at": str(r.get("at") or ""), "head": str(r.get("head") or "")}
+        elif kind in ("end", "integration"):
+            cut = None
+    return cut
+
+
+def relation(local: str, pr: str, local_in_pr: bool | None, pr_in_local: bool | None) -> str:
+    """`0114` R5: how the local head stands to the pull request's head.
+
+    `local_in_pr` and `pr_in_local` are `gitops.is_ancestor`'s answers, `None` when git could
+    not give one. `""` then, since nothing is known.
+    """
+    if local and local == pr:
+        return "same"
+    if local_in_pr is None or pr_in_local is None:
+        return ""
+    if local_in_pr:
+        return "behind"
+    if pr_in_local:
+        return "ahead"
+    return "diverged"
+
+
+# `0114` R6: the relations that go the completion road, whatever the unit's state.
+COMPLETION = ("ahead", "diverged")
+
+
 def refusal(
     *,
     in_window: bool,
@@ -142,11 +184,17 @@ def refusal(
     pr_head: str,
     state: str,
     origin: str = "",
+    relation: str = "",
+    relation_said: str = "",
 ) -> str:
     """R12: the first condition that does not hold, in the spec's order, or `""`.
 
     `origin` is `origin_note`'s sentence; a `current` unit is then said to be current
     against it (`0052` R4). The sentence still begins `the unit is current`.
+
+    `0114` R5: `relation` is how the two heads stand when they differ. `ahead` or `diverged`
+    is the completion road, which runs in every state; anything else is still refused, with
+    git's words (`relation_said`) when it could not tell.
     """
     if not in_window:
         return "this unit is not between pr and ship with an open pull request"
@@ -164,9 +212,11 @@ def refusal(
         # `unknown` too. Said as that, not as a head mismatch against "none".
         return f"the pull request's head could not be read, so the unit is {state or 'unknown'}: nothing to integrate"
     if not local_head or local_head != pr_head:
+        if local_head and relation in COMPLETION:
+            return ""
         return (
             f"the local head ({local_head[:7] or 'none'}) is not the pull request's head "
-            f"({pr_head[:7] or 'none'})"
+            f"({pr_head[:7] or 'none'})" + (f": {relation_said}" if relation_said else "")
         )
     if state not in BUTTON_STATES:
         if state == "current" and origin:
@@ -304,6 +354,7 @@ def record(
     merge_state: str = "",
     update_branch: dict | None = None,
     started_by: str = "person",
+    completion: dict | None = None,
 ) -> dict[str, Any]:
     """R9: the one record every integration leaves, whatever happened.
 
@@ -314,6 +365,9 @@ def record(
 
     `0043` R3: `started_by` is always written too; a record from before `0043` has none,
     which reads as `person`.
+
+    `0114` R8: `completion` is `{relation, local_head, cut}` when the local head was not the
+    pull request's, or `None`; always written, like the keys of `0052`.
     """
     if outcome not in OUTCOMES:
         raise ValueError(f"outcome must be one of {', '.join(OUTCOMES)}, got {outcome!r}")
@@ -340,6 +394,18 @@ def record(
             if update_branch else None
         ),
         "started_by": started_by,
+        "completion": _completion_of(completion),
+    }
+
+
+def _completion_of(completion: dict | None) -> dict | None:
+    if not completion:
+        return None
+    cut = completion.get("cut")
+    return {
+        "relation": str(completion.get("relation") or ""),
+        "local_head": str(completion.get("local_head") or ""),
+        "cut": {"at": str(cut.get("at") or ""), "head": str(cut.get("head") or "")} if cut else None,
     }
 
 
@@ -361,9 +427,21 @@ def outcome_of_session(head_before: str, head_now: str, reply: str) -> str:
 
 
 def describe_for_review(rec: dict[str, Any]) -> str:
-    """R10: the section the next `review` prompt carries."""
-    who = "the app, mechanically" if rec.get("mode") == "mechanical" else "an agent session (Gebo)"
+    """R10: the section the next `review` prompt carries.
+
+    `0114` R8: a completion says what it pushed — local commits nobody had pushed — and
+    that the app opened the session for it, not a person."""
     body = json.dumps(rec, ensure_ascii=False, indent=2)
+    if str((rec.get("completion") or {}).get("relation") or "") in COMPLETION:
+        return (
+            "# An integration since the last round\n\n"
+            "The app opened an agent session (Gebo) to push local commits on this branch that "
+            "had never been pushed — not a person, and this is no one's approval. The head you "
+            "review is the one it pushed. Read what those commits changed with the same care as "
+            "any other change. Its record, verbatim:\n\n"
+            f"```json\n{body}\n```\n"
+        )
+    who = "the app, mechanically" if rec.get("mode") == "mechanical" else "an agent session (Gebo)"
     return (
         "# An integration since the last round\n\n"
         f"The branch was rebased onto `origin/main` by {who} — not by a person, and no "
@@ -388,6 +466,7 @@ def build_prompt(
     units_root: Path,
     own_paths: dict[str, Path],
     refused_update: dict | None = None,
+    completion: dict | None = None,
 ) -> str:
     """Gebo's prompt: its rules, what is wrong, where to start, and whose intent to read.
 
@@ -395,6 +474,9 @@ def build_prompt(
 
     `refused_update` (`0052`): the `{code, said}` of the app's own `update-branch`, when
     that refusal is why this session was opened.
+
+    `completion` (`0114` R6): `{relation, local_head, cut}` when the tree holds commits the
+    pull request does not. The session then pushes them, or says why not, and nothing else.
 
     The app does not rebase to find the conflicting files first (`plan.md` step 7): that
     would write to the tree before the session began, and R12 wants it clean.
@@ -415,6 +497,8 @@ def build_prompt(
             "That may be a conflict that shows only when rebasing, or something else: a "
             "login, the network, a permission. The app cannot tell which from the exit code."
         )
+    if completion is not None:
+        parts.append(_completion_section(completion, branch, head_before))
     parts.append("\n# Units merged into main since the branch was cut, touching the same files\n")
     if rel.get("merged"):
         for m in rel["merged"]:
@@ -442,6 +526,41 @@ def build_prompt(
     if own_paths:
         parts.append("\nRead one when resolving a conflict needs what the unit meant.")
     return "\n".join(parts) + "\n"
+
+
+def _completion_section(completion: dict, branch: str, pr_head: str) -> str:
+    """`0114` R6: what the completion road asks of Gebo, and all it allows."""
+    local = str(completion.get("local_head") or "")
+    how = str(completion.get("relation") or "")
+    lines = [
+        "\n# Commits that were never pushed\n",
+        f"This tree's head is `{local}`; the pull request's head is `{pr_head}`. Relation: `{how}`.",
+    ]
+    cut = completion.get("cut")
+    if cut:
+        lines.append(
+            f"An earlier integration of this unit began at {cut.get('at')} on head "
+            f"`{cut.get('head')}` and never ended."
+        )
+        if cut.get("head") != pr_head:
+            lines.append("The pull request's head has changed since that integration was cut.")
+    if how == "ahead":
+        lines.append(
+            f"`{local}` holds the pull request's head and adds to it. Push it with the one push "
+            "allowed above, and nothing else."
+        )
+    else:
+        lines.append(
+            f"Compare the two with `git range-diff origin/main {pr_head} {local}`. Push `{local}` "
+            "with the one push allowed above only when every difference is context a new base "
+            "brought. When any commit changes in anything else, push nothing and end with one "
+            "`[needs-person]` line naming each such commit."
+        )
+    lines.append(
+        f"Do not rebase, commit or reset: this road pushes `{local}` as it is, on `{branch}`, "
+        "or nothing."
+    )
+    return "\n".join(lines)
 
 
 # --- gh ----------------------------------------------------------------------
