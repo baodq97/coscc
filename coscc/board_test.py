@@ -667,3 +667,84 @@ class ThePrTextIsCopiedFromTheScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", no_node):
             with self.assertRaises(Unavailable):
                 run(board.pr_text(tmp, "0001_a"))
+
+
+class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
+    """`0111` R1. `board.screens` runs the app's `cos.mjs screens` against a real git
+    repository and store, and hands back what it printed."""
+
+    def _repo(self, tmp: str) -> tuple[Path, Path, str]:
+        store, repo = Path(tmp) / "store", Path(tmp) / "repo"
+        (store / ".cos" / "0001_x").mkdir(parents=True)
+        (store / ".cos" / "0001_x" / "intent.md").write_text("# I\nType: fix. Status: accepted.\n")
+        (repo / ".claude" / "rules").mkdir(parents=True)
+        (repo / "coscc").mkdir()
+
+        def git(*args: str) -> str:
+            return subprocess.run(
+                ["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid",
+                 "-c", "commit.gpgsign=false", *args],
+                cwd=repo, check=True, capture_output=True, text=True,
+            ).stdout.strip()
+
+        git("init", "-q", "-b", "main")
+        (repo / ".claude" / "rules" / "ui-standard.md").write_text('---\npaths:\n  - "coscc/screens.py"\n---\n')
+        (repo / ".gitignore").write_text(".screens/\n")
+        git("add", ".")
+        git("commit", "-q", "-m", "first")
+        git("switch", "-q", "-c", "fix/x")
+        (repo / "coscc" / "screens.py").write_text("# a screen\n")
+        git("add", ".")
+        git("commit", "-q", "-m", "a screen")
+        taken = git("rev-parse", "HEAD")
+        git("commit", "-q", "--amend", "-m", "a screen, rewritten")
+        (repo / ".screens").mkdir()
+        return store, repo, taken
+
+    def test_a_rewritten_head_is_a_retake_with_the_manifest_carried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store, repo, taken = self._repo(tmp)
+            hits = [{"address": "/board", "size": "390x844", "kind": "path", "snippet": "/tmp/x"}]
+            (repo / ".screens" / "manifest.json").write_text(json.dumps(
+                {"head": taken, "dirty": False, "addresses": ["/board"], "hits": hits}
+            ))
+            got = run(board.screens(store, "0001_x", repo))
+        self.assertEqual(got, {
+            "unit": "0001_x", "ui": ["coscc/screens.py"],
+            "manifest": {"head": taken, "dirty": False, "addresses": ["/board"], "hits": hits},
+            "rewritten": True, "retake": True, "why": "",
+        })
+
+    def test_no_manifest_is_no_retake_and_says_why(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store, repo, _ = self._repo(tmp)
+            got = run(board.screens(store, "0001_x", repo))
+        self.assertFalse(got["retake"])
+        self.assertIsNone(got["manifest"])
+        self.assertIn("manifest.json", got["why"])
+
+    def test_the_repo_is_passed_as_repo_with_the_gate_timeout(self):
+        seen = {}
+
+        async def fake_run(argv, timeout):
+            seen["argv"], seen["timeout"] = argv, timeout
+            return 0, '{"retake": false}', ""
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
+            run(board.screens(tmp, "0001_x", tmp))
+        argv = seen["argv"]
+        self.assertEqual(argv[argv.index("screens") + 1], "0001_x")
+        self.assertEqual(argv[argv.index("--repo") + 1], str(Path(tmp).resolve()))
+        self.assertEqual(seen["timeout"], board.GATE_TIMEOUT)
+
+    def test_misuse_and_no_node_are_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(Unavailable):
+                run(board.screens(tmp, "0009_not-here", tmp))
+
+        async def no_node(argv, timeout):
+            raise FileNotFoundError("node")
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", no_node):
+            with self.assertRaises(Unavailable):
+                run(board.screens(tmp, "0001_x", tmp))
