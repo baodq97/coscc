@@ -1172,6 +1172,11 @@ class Service:
         failed fetch goes on with the ref it has and says so. It also reads GitHub's
         `mergeStateStatus`, only to record it. A mechanical road whose `update-branch`
         exits non-zero opens Gebo with that code and gh's words.
+
+        `0114`: a rebase left in progress by an integration this run log shows cut is
+        aborted first (R4). A local head that is not the pull request's is read against it
+        (R5): `behind` follows it with no session; `ahead` or `diverged` opens Gebo to push
+        what was never pushed, in every state (R6).
         """
         try:
             integrate.check_started_by(started_by)
@@ -1198,7 +1203,7 @@ class Service:
         info = None
         pr = (found.get("pr") or {}).get("number")
         # Spread into every record this press writes (`0052` R5; `started_by`, `0043` R3).
-        seen: dict[str, Any] = {"fetch": None, "merge_state": "", "started_by": started_by}
+        seen: dict[str, Any] = {"fetch": None, "merge_state": "", "started_by": started_by, "completion": None}
         if found.get("between_pr_and_ship") and found.get("pr"):
             try:
                 seen["fetch"] = await fetches.fetch(root, BRANCH_REMOTE, BRANCH_TRUNK)
@@ -1228,7 +1233,13 @@ class Service:
             tree_found = None
         tree = Path(tree_found["path"]) if tree_found else None
 
+        # `0114` R4: what the app did to the tree before deciding, at the head of every
+        # record this press writes.
+        before: list[str] = []
+
         def write(rec: dict[str, Any]) -> dict[str, Any]:
+            if before:
+                rec = {**rec, "detail": "; ".join(before + ([rec["detail"]] if rec.get("detail") else []))}
             try:
                 return journal.append(rec)
             except (BadRecord, Busy):
@@ -1236,6 +1247,20 @@ class Service:
 
         lock = self._integrate_locks.setdefault(key, asyncio.Lock())
         async with lock:
+            busy = self._busy(key, unit)
+            cut = None
+            if not busy and tree is not None:
+                try:
+                    here = any(e["workspace"] == key and e["unit"] == unit for e in self._running.values())
+                    cut = integrate.cut_integration(journal.records(key, unit=unit), unit, here)
+                except Busy:
+                    cut = None
+                try:
+                    if cut is not None and await gitops.rebase_in_progress(tree):
+                        await gitops.abort_rebase(tree)
+                        before.append(f"an integration cut at {cut['at']} left a rebase in progress; the app aborted it")
+                except GitError as e:
+                    before.append(f"could not abort the rebase an integration cut at {cut['at']} left: {e}")
             clean = on_branch = None
             local_head = ""
             if tree is not None:
@@ -1245,10 +1270,31 @@ class Service:
                     local_head, _ = await gitops.head_and_branch(tree)
                 except GitError:
                     clean = on_branch = None
+            how, how_said = "", ""
+            if clean is True and on_branch is True and pr_head and local_head and local_head != pr_head:
+                answers: list[bool | None] = []
+                for ancestor, descendant in ((local_head, pr_head), (pr_head, local_head)):
+                    try:
+                        answers.append(await gitops.is_ancestor(tree, ancestor, descendant))
+                    except GitError as e:
+                        answers.append(None)
+                        how_said = how_said or str(e)
+                how = integrate.relation(local_head, pr_head, *answers)
+                was = local_head
+                if how == "behind":
+                    try:
+                        await gitops.reset_branch_to(tree, branch, local_head, pr_head)
+                        local_head = pr_head
+                        before.append(f"the local branch followed the pull request's head from {was[:7]} to {pr_head[:7]}")
+                    except GitError as e:
+                        how, how_said = "", str(e)
+                if how and how != "same":
+                    seen["completion"] = {"relation": how, "local_head": was, "cut": cut}
             reason = integrate.refusal(
-                in_window=info is not None, busy=self._busy(key, unit),
+                in_window=info is not None, busy=busy,
                 clean=clean, branch_ok=on_branch, local_head=local_head, pr_head=pr_head, state=state,
                 origin=integrate.origin_note(origin_sha, seen["fetch"]),
+                relation=how, relation_said=how_said,
             )
             if reason:
                 write(integrate.record(
@@ -1258,18 +1304,21 @@ class Service:
                 ))
                 raise Invalid(reason)
             mark = self._take(key, unit, "integrate")
+            # `0114` R6: commits never pushed go to Gebo whatever the state.
+            completing = how in integrate.COMPLETION
             # `0051` spec, answer 1: Gebo shows as running under its agent name; a mechanical
             # rebase has no agent and shows as rebasing. The same condition as below.
-            rid = self._mark_running(key, unit, "integrate", "rebase" if state == "behind" else "gebo")
+            rid = self._mark_running(
+                key, unit, "integrate", "rebase" if state == "behind" and not completing else "gebo")
         try:
             assert tree is not None
             refused_update = None
-            if state == "behind":
+            if state == "behind" and not completing:
                 rec, refused_update = await self._integrate_mechanical(
                     key, unit, int(pr), tree, branch, pr_head, origin_sha, seen,
                 )
                 if rec is not None:
-                    write(rec)
+                    rec = write(rec)
                     yield ("done", {"integration": rec})
                     return
                 # `0052`, spec answer 1: GitHub refused the rebase, and the press agreed to
@@ -1278,6 +1327,7 @@ class Service:
             async for item in self._integrate_gebo(
                 cwd, key, unit, directory, found, data, info, int(pr), tree, branch, pr_head, origin_sha,
                 journal, write, seen, refused_update,
+                completion=seen["completion"] if completing else None,
             ):
                 yield item
         finally:
@@ -1354,11 +1404,15 @@ class Service:
         data: dict[str, Any], info: dict[str, Any], pr: int, tree: Path, branch: str,
         head_before: str, origin_sha: str, journal: Journal, write: Any,
         seen: dict[str, Any], refused_update: dict[str, Any] | None = None,
+        completion: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """R5–R8. One Gebo session; the outcome is read from GitHub afterwards.
 
         `refused_update`: the `update-branch` refusal that opened it (`0052`), carried into
         the prompt and the press's one record.
+
+        `completion` (`0114` R6, R7): the local head to push as it is. A pull request that
+        ends on any other head is `failed`, whoever pushed it.
         """
         root = Path(cwd).expanduser().resolve()
         rel = await self._related(root, unit, data, head_before, origin_sha)
@@ -1376,7 +1430,7 @@ class Service:
         prompt = integrate.build_prompt(
             skill=skill, unit=unit, branch=branch, pr=pr, state=info["state"], reason=info.get("reason", ""),
             head_before=head_before, origin_sha=origin_sha, rel=rel, units_root=units_root, own_paths=own,
-            refused_update=refused_update,
+            refused_update=refused_update, completion=completion,
         )
         grant = grant_for("integrate")
         model, model_source = self._model_for("impl")
@@ -1437,6 +1491,13 @@ class Service:
                     details.append(f"the local branch was moved to {head_now[:7]}")
                 except GitError as e:
                     details.append(f"the local branch was not moved: {e}")
+        # `0114` R7: the completion road pushes the local head as it was, or nothing.
+        if completion is not None and outcome == "pushed" and head_now != completion["local_head"]:
+            outcome = "failed"
+            details.append(
+                f"the pull request's head moved to {head_now[:7]}, not to the local head "
+                f"{str(completion['local_head'])[:7]} this completion was to push"
+            )
         try:
             journal.finished(
                 key, unit, "integrate", "done" if outcome in ("pushed", "needs-person") else "failed",
