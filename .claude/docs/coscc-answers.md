@@ -1,6 +1,6 @@
 # Routes that write into a unit's artifacts
 
-Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or `/hold`, `coscc/hold.py`, `coscc/precedent.py`, `Service._append_answers`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or `/hold`, `POST /api/board/run`'s `rerun`, `coscc/hold.py`, `coscc/precedent.py`, `Service._append_answers` or `_append_to_answers`, `cos.mjs rerun`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
 - **`POST /api/units/answer` writes a stranger's words into a paid prompt.** Since `0016`
   it appends an answer to an artifact, and the next stage embeds that file. Since `0082` the
@@ -86,3 +86,30 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or 
   `impl`'s `prepare` and `pr`'s `gh pr list`, a stretch whose length is unmeasured. A step
   in that phase is not on `/api/board/steps` and has no *Stop*, so the only thing to do is
   wait; the refusal says so and says since when.
+- **`POST /api/board/run` with `rerun: true` makes every later artifact stale.** Since
+  `0054`. For a stage `cos.mjs rerun <unit>` offers — `intent`, `spec`, `spike`, `plan` or
+  `pr`, accepted, on a unit neither finished, held nor closed, its gate open —
+  `Service.run_step` appends the `### Rerun` block `cos.mjs rerun <unit> <stage>` composed
+  under `intent.md ## Answers` through `_append_to_answers` (the path `hold` writes by),
+  after the gate and before the session. The block is `Requested by: owner. Date: …. Via:
+  product.`, `Stage: <s>.`, and one `Stale: <file> sha256:<hex>` for the stage's artifact
+  and each later one on disk: the hash of the text above that file's `## Answers`, trailing
+  whitespace dropped. `cos.mjs` reads an artifact as stale while it still hashes to that
+  value: `next` offers its stage before any later one, and every later gate is closed
+  naming it — rerun `pr`, and `ship` stays closed until a new review round. An answer
+  appended since changes nothing; only the stage writing its own text again does.
+  `review.md` counts only while `accepted`, `spike.md` only while the spec still names a
+  `U<n>`. The block names nobody: `owner` is S7's fixed word, and anyone with the password
+  or a live session can make a unit's every later stage run, and cost, again with one
+  press. The note is never in the block; it reaches the stage's prompt verbatim under
+  *Why this stage runs again* and the `start` row as `rerun_note` (up to 4000 characters,
+  chosen; empty allowed, `spec.md ## Answers, câu 2`). The autopilot is refused a rerun,
+  but not what follows one: on a shortlisted unit it runs the stale stages after it as it
+  runs any `next`. A block appended while the session then fails leaves the stage stale
+  with no run, and `next` offers it again. A rerun that writes its artifact byte for byte
+  as before leaves it stale, and `next` offers it again, unmeasured (spec C2). An older
+  `cos.mjs` — a repository that copied `.claude/` before `0054` — reads no block, sees
+  every artifact accepted, and may open `ship` at a terminal (spec C1). A `pr` rerun
+  writes `pr.md` itself, so the app reads its `## Answers` first and says so in the step's
+  `done` and in `end` (`answers_kept: false`) when that section is no longer the file's
+  tail; nothing restores it.

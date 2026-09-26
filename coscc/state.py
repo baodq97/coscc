@@ -1254,6 +1254,14 @@ class StudioState(rx.State):
     # `load_next`, from `_run_waiting`. Non-empty means the button offers nothing and the
     # page points at the Questions tab instead.
     run_waiting: list[str] = []
+    # `0054` R9. The accepted stages `cos.mjs rerun` says may run again, and for each the
+    # stages that then run again after it (R2). Set only by `load_next`, from
+    # `SERVICE.rerun_offers`; nothing here works either out. The rest is what a person chose.
+    rerun_stages: list[str] = []
+    rerun_later: dict[str, list[str]] = {}
+    rerun_stage: str = ""
+    rerun_note: str = ""
+    rerun_confirming: bool = False
 
     # -- answering a question (`0016`). One text box is live at a time: typing into a
     # question's box makes it the target, and the box of every other question reads empty.
@@ -1514,6 +1522,11 @@ class StudioState(rx.State):
     def next_stage(self) -> str:
         """The stage the run button would run: the one `cos.mjs next` named (`0024`)."""
         return self.run_stage
+
+    @rx.var
+    def rerun_after(self) -> list[str]:
+        """`0054` R2. The stages that run again after the chosen one, as `cos.mjs` listed them."""
+        return self.rerun_later.get(self.rerun_stage, [])
 
     @rx.var
     def next_cell(self) -> Cell:
@@ -2529,6 +2542,10 @@ class StudioState(rx.State):
             self.run_stage = ""
             self.run_waiting = []
             self.run_said = "Asking cos.mjs what comes next…"
+            self.rerun_stages, self.rerun_confirming = [], False
+            if self._asked != unit:
+                # A note written for another unit is not this one's.
+                self.rerun_note = ""
         if not (unit and cwd):
             async with self:
                 self.run_said = ""
@@ -2539,12 +2556,24 @@ class StudioState(rx.State):
             waiting = _run_waiting(found)
         except Invalid as e:
             stage, said = "", str(e)
+        # `0054` R1. Files only, after `next` has answered; a refusal offers nothing.
+        try:
+            offers = list((await SERVICE.rerun_offers(cwd, unit)).get("offers") or [])
+        except Invalid:
+            offers = []
+        later = {str(o.get("stage") or ""): [str(x) for x in o.get("later") or []] for o in offers}
         async with self:
             # A unit opened while this was asking is not the unit this answer is about.
             if self.unit_id == unit and self.cwd == cwd:
                 self.run_stage, self.run_said = stage, said
                 self.run_waiting = waiting
                 self._asked = unit
+                self.rerun_stages, self.rerun_later = list(later), later
+                self.rerun_confirming = False
+                # The last one offered, the nearest the unit stands: the one that makes the
+                # fewest later stages run again. Only a starting value for the select.
+                if self.rerun_stage not in later:
+                    self.rerun_stage = self.rerun_stages[-1] if self.rerun_stages else ""
 
     @rx.event
     def toggle_detail(self, value: bool):
@@ -3305,6 +3334,73 @@ class StudioState(rx.State):
                 self._load_activity()
         # `0024`. The stage that ran is behind the unit now; ask again what is next. This
         # names a stage and runs nothing — a person still presses the button (R5).
+        return StudioState.load_next
+
+    # -- running an accepted stage again (`0054` R9) -----------------------------
+
+    @rx.event
+    def set_rerun_stage(self, value: str):
+        self.rerun_stage = str(value)
+        self.rerun_confirming = False
+
+    @rx.event
+    def set_rerun_note(self, value: str):
+        self.rerun_note = str(value)
+
+    @rx.event
+    def ask_rerun(self):
+        """The confirmation line first; nothing runs until *Rerun … — spends quota*."""
+        self.rerun_confirming = True
+
+    @rx.event
+    def cancel_rerun(self):
+        self.rerun_confirming = False
+
+    @rx.event(background=True)
+    async def run_rerun(self):
+        """Run the chosen stage again with the note, streaming what comes back, as `run_step`
+        does. Whether it may run is the service's: every refusal is its `Invalid`."""
+        async with self:
+            unit, stage, cwd, note = self.unit_id, self.rerun_stage, self.cwd, self.rerun_note
+            self.rerun_confirming = False
+            if not (unit and stage and cwd):
+                self.notice = "Choose a stage to run again."
+                return
+            self.run_log = ""
+            self.log_unit = unit
+            self.error = ""
+
+        listed = False
+        try:
+            async for kind, payload in SERVICE.run_step(cwd, unit, stage, rerun=True, note=note):
+                async with self:
+                    if not listed:
+                        listed = True
+                        self.rerun_note = ""
+                        self._load_running()
+                    if kind == "chunk" and self.log_unit == unit:
+                        self.run_log += payload
+                    elif kind == "done" and isinstance(payload, dict):
+                        if payload.get("error"):
+                            self.error = payload["error"]
+                        outcome = payload.get("outcome") or ""
+                        written = payload.get("artifact") or ""
+                        self.notice = f"{stage} {outcome}" + (f" — wrote {written}" if written else "")
+                        # `0054` R8: the service found `pr.md` without its `## Answers`.
+                        if payload.get("answers_lost"):
+                            self.notice += " The session removed the answers pr.md carried."
+                        stale = describe_base(payload.get("base"))
+                        if stale:
+                            self.notice += " " + stale
+        except Invalid as e:
+            async with self:
+                self._fail(e)
+        finally:
+            async with self:
+                await self._load_board()
+                self._load_timeline()
+                self._load_artifact()
+                self._load_activity()
         return StudioState.load_next
 
     # -- sessions ------------------------------------------------------------
