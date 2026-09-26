@@ -439,7 +439,10 @@ def unit_state(
         or (unit.get("integration") or {}).get("state") == "red-after-integration"
     ):
         return _state("error", ci=line if red else None)
-    if unit.get("between_pr_and_ship") and why == "missing":
+    # `0054`. A `review` or `ship` made stale by a rerun waits on CI as a missing one does
+    # (`cos.mjs` `nextStep`); a stale `pr.md` in the window is a stage to run, not a wait.
+    due = why == "missing" or (why == "stale" and unit.get("at") in ("review", "ship"))
+    if unit.get("between_pr_and_ship") and due:
         return _state("awaiting", ci=line or {"read": False, "red": [], "at": ""})
     return _state("ready")
 

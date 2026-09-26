@@ -3630,6 +3630,15 @@ class TheStateOfAUnit(unittest.TestCase):
         self.assertEqual(self._is(self._unit(at="plan"), {"stage": "spec", "outcome": "failed"}), "ready")
         self.assertEqual(self._is(self._unit(at="plan"), {"stage": "plan", "outcome": "stopped"}), "ready")
 
+    def test_a_stale_review_or_ship_in_the_window_is_awaiting_with_its_ci_line(self):
+        """`0054` review F3. A rerun of `pr` leaves `review.md` stale; `next` sends it down
+        the missing review's wait on CI, so the card and the dialog say so too."""
+        for at in ("review", "ship"):
+            got = unit_state(self._unit(at=at, why="stale", between_pr_and_ship=True), None, None)
+            self.assertEqual((got["state"], got["ci"]), ("awaiting", {"read": False, "red": [], "at": ""}), at)
+        # A stale `pr.md` is `pr` to run again, not a wait.
+        self.assertEqual(self._is(self._unit(at="pr", why="stale", between_pr_and_ship=True)), "ready")
+
     def test_changes_requested_in_the_window_is_ready(self):
         """C6. It waits on an `impl`, not on CI."""
         self.assertEqual(self._is(self._unit(at="review", why="changes-requested", between_pr_and_ship=True)), "ready")

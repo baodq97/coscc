@@ -135,6 +135,13 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.assertTrue(nxt["action"].startswith("review.md is stale"), nxt["action"])
         # `pr` was written again, so it is no longer offered by the run button.
         self.assertNotIn("pr.md is stale", nxt["action"])
+        # Review F3. The card reads the stale review as the wait on CI a missing one is.
+        row = next(u for u in self.ask(board_reader.read(self.store))["units"] if u["name"] == self.unit)
+        self.assertEqual((row["at"], row["why"], row["between_pr_and_ship"]), ("review", "stale", True))
+        # The fixture's `intent.md` leaves Câu 1 open, and *Needs you* is tried first.
+        self.assertEqual(service_mod.unit_state(row, None, None)["state"], "needs-you")
+        got = service_mod.unit_state({**row, "open": 0}, None, None)
+        self.assertEqual((got["state"], got["ci"]), ("awaiting", {"read": False, "red": [], "at": ""}))
 
     def test_the_prompt_the_runner_builds_carries_the_note(self):
         from coscc.runner import compose_prompt
