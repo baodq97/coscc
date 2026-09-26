@@ -5,7 +5,8 @@ Plain: no session, no quota, no network. A temporary `cos.db` whose `runs` rows 
 by `coscc.journal.Journal` itself, with its clock patched, and `--measure` run on it. Each
 case prints PASS or FAIL:
 
-- no `ship` `done` of `0110` yet → `chưa merge`, exit 2;
+- no `ship` `done` of `0110` yet, or only one another stage followed → `chưa merge`, exit 2;
+  after a refused one, the merge is the last;
 - 10 units after the merge at ≤ $7.00 → `đạt`, exit 0; over → `không đạt`, exit 1;
 - 9 units → `chưa đủ mẫu (n=9)`, exit 2;
 - R7 counts a `start` of `impl` whose `prior_findings` carries no `error`;
@@ -24,8 +25,8 @@ case prints PASS or FAIL:
 - `baseline` (R2): units with an `end` `ship` `done` in [`BASELINE_FROM`, `BASELINE_TO`],
   both ends included, and at least one `impl` `done` (`spike.md ## U1`). Exit 0 only when
   n, the mean, the distribution and the reruns are exactly `BASELINE`'s; 1 otherwise.
-- `result` (R1): the merge is the `at` of the first `end` `ship` `done` of a unit named
-  `0110_*`. Scored: units with an `end` `ship` `done` after it and at or before
+- `result` (R1): the merge is the `at` of the last `end` `ship` `done` of a unit named
+  `0110_*` that no `start` of another of its stages follows (`merge_of`). Scored: units with an `end` `ship` `done` after it and at or before
   `RESULT_TO`, whose first `start` of `impl` is after it, with at least one `impl` `done`
   (`spec.md ## Answers, câu 2`). `tham khảo`, not scored: the same without the condition on
   the first `start`. The last line is `đạt` (exit 0), `không đạt` (exit 1) or
@@ -122,6 +123,21 @@ def per_unit(rows: list[dict]) -> dict[str, dict]:
     return units
 
 
+def merge_of(rows: list[dict]) -> datetime | None:
+    """When `0110` merged: its last `end` `ship` `done` that no `start` of another of its
+    stages follows. A `ship` step ends `done` with the merge refused too — `0110`'s own did,
+    at 2026-09-26T08:55:59Z, `BEHIND` — and the loop then starts `review` again."""
+    merge = None
+    for r in rows:
+        if not str(r.get("unit") or "").startswith(UNIT_PREFIX):
+            continue
+        if r.get("kind") == "end" and r.get("stage") == "ship" and r.get("outcome") == "done":
+            merge = _when(r.get("at"))
+        elif r.get("kind") == "start" and r.get("stage") != "ship":
+            merge = None
+    return merge
+
+
 def shipped_in(units: dict[str, dict], after: datetime, until: datetime, inclusive: bool) -> list[str]:
     """Units with a `ship` `done` in the window and at least one `impl` `done`."""
     def inside(t: datetime) -> bool:
@@ -165,7 +181,8 @@ def measure(root: Path, workspace: str, window: str) -> int:
     if not db.is_file():
         say(f"no {db}")
         return EXIT_ENV
-    units = per_unit(records(db, workspace))
+    rows = records(db, workspace)
+    units = per_unit(rows)
 
     if window == "baseline":
         names = shipped_in(units, _when(BASELINE_FROM), _when(BASELINE_TO), inclusive=True)
@@ -180,11 +197,10 @@ def measure(root: Path, workspace: str, window: str) -> int:
         say(f"không khớp R2: muốn {BASELINE}, được {got}")
         return EXIT_BROKEN
 
-    merges = sorted(t for n, u in units.items() if n.startswith(UNIT_PREFIX) for t in u["ships"])
-    if not merges:
+    merge, until = merge_of(rows), _when(RESULT_TO)
+    if merge is None:
         say("chưa merge")
         return EXIT_ENV
-    merge, until = merges[0], _when(RESULT_TO)
     literal = shipped_in(units, merge, until, inclusive=False)
     scored = [n for n in literal if units[n]["first_impl"] and units[n]["first_impl"] > merge]
     s = summary(units, scored)
@@ -270,8 +286,14 @@ def _run(build, window: str) -> tuple[int, list[str]]:
 MERGE = datetime(2026, 9, 28, tzinfo=timezone.utc)
 
 
-def _after(n: int, cost: float, early: bool = False, errors: int = 0):
+def _after(n: int, cost: float, early: bool = False, errors: int = 0, refused: bool = False):
     def build(f: _Fixture) -> None:
+        if refused:
+            # A `ship` of `0110` that ended `done` with the merge refused, then a unit whose
+            # first `impl` ran between it and the real merge: scored under neither.
+            f.unit(MERGE - timedelta(hours=3), "0110_x", 1, 5.0, 2.0)
+            f.unit(MERGE - timedelta(hours=2), "0250_between", 1, 1.0, 1.0, ship=False)
+            f.unit(MERGE + timedelta(hours=1), "0250_between", 1, 1.0, 1.0)
         if early:
             # Its first `impl` before the merge, its `ship` after it.
             f.unit(MERGE - timedelta(hours=2), "0200_early", 1, 50.0, 0.0, ship=False)
@@ -290,6 +312,18 @@ def prove() -> int:
     code, lines = _run(lambda f: f.unit(MERGE, "0200_u", 1, 5.0, 2.0), "result")
     ok &= claim(code == EXIT_ENV and lines[-1:] == ["chưa merge"], "no 0110 ship → chưa merge, exit 2",
                 f"exit {code}, {lines[-1:]}")
+
+    def refused(f: _Fixture) -> None:
+        f.unit(MERGE, "0110_x", 1, 5.0, 2.0)
+        f.row(MERGE + timedelta(hours=1), "0110_x", "review", "start")
+    code, lines = _run(refused, "result")
+    ok &= claim(code == EXIT_ENV and lines[-1:] == ["chưa merge"],
+                "a 0110 ship done that review follows → chưa merge, exit 2", f"exit {code}, {lines[-1:]}")
+    code, lines = _run(_after(10, 6.50, refused=True), "result")
+    scored = next((x for x in lines if x.startswith("kết luận")), "")
+    ok &= claim(code == EXIT_PASS and "n 10;" in scored
+                and any((MERGE - timedelta(minutes=1)).isoformat() in x for x in lines),
+                "the merge is the last 0110 ship done, not a refused one before it", f"exit {code}, {lines}")
     code, lines = _run(_after(10, 6.50), "result")
     ok &= claim(code == EXIT_PASS and lines[-1] == "đạt", "10 units at $6.50 → đạt, exit 0",
                 f"exit {code}, {lines}")
