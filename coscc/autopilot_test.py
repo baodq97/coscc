@@ -571,6 +571,7 @@ class Reruns(unittest.TestCase):
         full = ap.full_stop("spec", 3)
         self.assertEqual(full["kind"], "full")
         self.assertIn("3 steps are already running", full["reason"])
+        self.assertIn(": 1 step is already running,", ap.full_stop("spec", 1)["reason"])
         for stop in (ap.rerun_stop("intent.md"), full):
             self.assertIn(stop["kind"], ap.STOP_KINDS)
 

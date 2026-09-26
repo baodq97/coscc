@@ -730,7 +730,8 @@ class Scripted(_Base):
         self.assertEqual(len(self.launched), 1)
         # Only the rerun says so; an ordinary candidate held back the same way still does not.
         self.assertEqual(self.stops(), {"0002_b": "full"})
-        self.assertIn("1 steps are already running", self.service._autopilot_stops[self.key]["0002_b"]["reason"])
+        self.assertEqual(self.service._autopilot_stops[self.key]["0002_b"]["reason"],
+                         "intent waits to run again: 1 step is already running, the most this workspace allows.")
         self.release.set()
         await self.settled()
         self.release.clear()

@@ -429,7 +429,8 @@ def rerun_stop(artifact: str) -> dict[str, str]:
 
 def full_stop(stage: str, max_parallel: int) -> dict[str, str]:
     """R5: a run again that `max_parallel` alone held back. Not a wait for a person."""
-    return _stop("full", f"{stage} waits to run again: {max_parallel} steps are already running, the most this workspace allows.")
+    running = "1 step is" if max_parallel == 1 else f"{max_parallel} steps are"
+    return _stop("full", f"{stage} waits to run again: {running} already running, the most this workspace allows.")
 
 
 # --- R11, what the intent's outcome is measured by ----------------------------
