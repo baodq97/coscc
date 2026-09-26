@@ -63,13 +63,15 @@ BASELINE_UNITS = {SONNET: ("0031_", "0032_", "0025_"), OPUS: ("0019_",)}
 OPUS_BASELINE_DAY = "2026-09-24"
 
 # What `coscc/runner.py` says when it refuses a prose stage's reply (`check_reply`,
-# `merge_review` and the Answers re-check). Matched by prefix on `end.detail`.
+# `merge_review` and the Answers re-check). Matched by prefix on `end.detail`. Since `0099`
+# the opening check's reason starts with the artifact's name, so it is matched by `OPENING`.
 REFUSALS = (
     "the session returned nothing",
     "the reply carries no `Status:` line",
     "the reply adds no review round",
     "the reply changes an earlier review round",
 )
+OPENING = " lacks its opening: "
 
 # The fixed task the intent measured on 2026-09-24.
 PAID_TASK = (
@@ -285,7 +287,7 @@ def run_measure() -> int:
     print("\nprose stages on the preset (not in the verdict):")
     for r, s in zip(prose, [s for s in steps if s["stage"] in ("spec", "plan", "review")
                             and prompt_of(s) == "claude_code"]):
-        refused = r["detail"].startswith(REFUSALS)
+        refused = r["detail"].startswith(REFUSALS) or OPENING in r["detail"].split("\n", 1)[0]
         print(f"  {s['unit']} {s['stage']} {r['outcome']}"
               f"{'  <-- REPLY REFUSED: ' + r['detail'][:120] if refused else ''}")
     if not prose:
