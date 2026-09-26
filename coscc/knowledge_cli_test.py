@@ -84,6 +84,55 @@ class Gather(Fixture):
             self.assertEqual(self.run_cli("gather", "--all"), 2)
         self.assertIn("K1 has no Scope:", self.said[-1])
 
+    def unfinished(self) -> Path:
+        """`0107` R4's state, written by hand: SLOT's source passed, another slot's has not."""
+        self.a_source()
+        d = self.data / "units" / "other-bbbbbbbbbbbb" / ".cos" / "0001_a"
+        d.mkdir(parents=True)
+        (d / "spike.md").write_text("# Spike\n## U1\ny\n", encoding="utf-8")
+        passed = {s["label"]: s["sha"] for s in gather.sources(str(self.data)) if s["slot"] == SLOT}
+        path = knowledge.path_of(str(self.data)) / gather.PROGRESS
+        gather.save_progress(path, {"started": "t", "done": passed, "rebuilt_recorded": True})
+        return path
+
+    def test_without_yes_an_unfinished_all_says_what_is_left(self):
+        path = self.unfinished()
+        with mock.patch.object(gather, "gather", side_effect=AssertionError("ran")), \
+                mock.patch("coscc.sessions.Sessions", side_effect=AssertionError("a session")):
+            self.assertEqual(self.run_cli("gather", "--all"), 0)
+        self.assertEqual(self.said[0], f"an unfinished --all ({path}): 1 source(s) passed; 1 batch(es) left, at most $2.00")
+        self.assertIn("nothing was run: add --yes", self.said[-1])
+
+    def test_new_is_refused_while_an_all_is_unfinished(self):
+        path = self.unfinished()
+        for argv in (["gather"], ["gather", "--yes"]):
+            with self.subTest(argv=argv):
+                with mock.patch.object(gather, "gather", side_effect=AssertionError("ran")), \
+                        mock.patch("coscc.sessions.Sessions", side_effect=AssertionError("a session")):
+                    self.assertEqual(self.run_cli(*argv), 2)
+                self.assertIn(str(path), self.said[-1])
+
+    def test_a_progress_record_that_does_not_read_fails_before_anything_is_spent(self):
+        path = self.unfinished()
+        path.write_text("{not json", encoding="utf-8")
+        with mock.patch.object(gather, "gather", side_effect=AssertionError("ran")):
+            self.assertEqual(self.run_cli("gather", "--all", "--yes"), 1)
+        self.assertIn(str(path), self.said[-1])
+
+    def test_with_yes_a_resume_with_nothing_left_still_runs_to_finish(self):
+        path = self.unfinished()
+        every = {s["label"]: s["sha"] for s in gather.sources(str(self.data))}
+        gather.save_progress(path, {"started": "t", "done": every, "rebuilt_recorded": True})
+        seen = {}
+
+        async def fake(data_dir, journal, sessions, model, mode, say):
+            seen.update(mode=mode)
+            return 0
+
+        with mock.patch.object(gather, "gather", fake):
+            self.assertEqual(self.run_cli("gather", "--all", "--yes"), 0)
+        self.assertEqual(seen, {"mode": "all"})
+
 
 class Show(Fixture):
     def test_no_store_yet(self):
