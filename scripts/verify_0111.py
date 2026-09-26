@@ -181,7 +181,8 @@ def screens_needs(tree: Path, unit: str, head: str) -> str:
     script = (
         f"import {{ screensNeeds, makeProbe, parseReview }} from {json.dumps(COS.as_uri())}\n"
         f"const last = parseReview({json.dumps(text)}).rounds.at(-1)\n"
-        f"console.log(JSON.stringify(screensNeeds({{ name: {json.dumps(unit)} }}, makeProbe({json.dumps(str(tree))}), last, {{}})))\n"
+        # `said.head` is the pull request's head `shipNeeds` checked; here, the branch's.
+        f"console.log(JSON.stringify(screensNeeds({{ name: {json.dumps(unit)} }}, makeProbe({json.dumps(str(tree))}), last, {{ head: {json.dumps(head)} }})))\n"
     )
     out = run("node", "--input-type=module", "-e", script, cwd=tree)
     return out.stdout.strip() if out.returncode == 0 else f"node exited {out.returncode}: {out.stderr.strip()[-400:]}"
@@ -268,6 +269,7 @@ def through_the_service(tmp: Path) -> bool:
         before, calls = len(screens_records(data)), len(stand.calls)
         _, raised = step()
         added = screens_records(data)[before:]
+        say(f"     ({case}) the retake took {[r.get('seconds') for r in added]} s")
         got = manifest(tree).get("head", "")
         ok &= claim(got == new, f"({case}) the manifest's head is the rebased head {new[:7]}",
                     f"it is {got[:7] or 'missing'}; run_step raised {raised!r}")
@@ -288,6 +290,7 @@ def through_the_service(tmp: Path) -> bool:
         held.listen(1)
         _, raised = step()
     added = screens_records(data)[before:]
+    say(f"     (c) the retake took {[r.get('seconds') for r in added]} s, and said {raised}")
     ok &= claim(isinstance(raised, Invalid), "(c) with the port held, run_step refuses the step", f"raised {raised!r}")
     ok &= claim(len(stand.calls) == calls, "(c) the review session was not started")
     ok &= claim([r.get("outcome") for r in added] == ["failed"],
@@ -383,7 +386,7 @@ def measure(root: Path, workspace: str, since: datetime, until: datetime) -> int
         if found == []:
             say("  no open high finding")
     say(f"{cases} review round(s) asked for changes after a pushed integration, "
-        f"{since.date()} to {until.date()}: count the findings above that are only about a stale manifest; the target is 0")
+        f"{since.astimezone().date()} to {until.astimezone().date()}: count the findings above that are only about a stale manifest; the target is 0")
     return EXIT_PASS
 
 
