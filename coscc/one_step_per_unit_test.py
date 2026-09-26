@@ -274,7 +274,7 @@ class TheMarkIsAlwaysReturned(_OneUnit):
         def broken(base):
             raise RuntimeError("stand-in: describing the base broke")
 
-        with mock.patch("coscc.service.describe_base", broken):
+        with mock.patch("coscc.service_steps.describe_base", broken):
             with self.assertRaises(RuntimeError):
                 async for _ in self.service.run_step(self.ws, self.unit, "spec"):
                     pass

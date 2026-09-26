@@ -33,7 +33,7 @@ paths:
   handed the head in its prompt instead (`build_prompt`, *The commit you are reviewing*).
   The prompts of `impl`, `pr`, `ship`, `review` and Gebo name the unit's artifacts by path
   and rely on this boundary letting them `Read` the unit's folder; narrowing it turns
-  `coscc/runner_test.py` `EveryPathAPromptNamesCanBeRead` red, which is the point.
+  `coscc/runner_prompt_test.py` `EveryPathAPromptNamesCanBeRead` red, which is the point.
 - **A redirect may write under `/tmp`, outside the write boundary.** `check_command` reads a
   line as bash does and lets a redirect write to `/dev/null`, to another descriptor, or below
   `/tmp/<a directory whose name carries the unit's NNNN_slug>/` — for `impl`, `pr` and

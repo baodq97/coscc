@@ -47,7 +47,7 @@ paths:
     an `impl` re-run on a tree already on its branch measures against the last fetch, and
     `plan_drift.main_sha` in the `start` record says which. That preparation reuses a
     recent fetch, so a merge landing just before `impl` starts is not in the diff either
-    (`coscc/service_test.py`,
+    (`coscc/service_steps_test.py`,
     `test_a_merge_under_thirty_seconds_after_the_plans_fetch_is_not_seen`).
   - Anything that fails — no `done` run of `plan`, no section, a commit the tree lacks — is
     `checked: false` with a reason, never an empty list, and never stops the step. A step

@@ -7,7 +7,7 @@ Plain: no session, no quota, no network. Each claim prints PASS or FAIL:
   condition fails, 2 where a stage has too few steps after, and 2 without `--min-version`.
 - R6, R7, R10, R11: `coscc.rules_budget_test`, in a child process.
 - R13, R16: the `start` row carries `app_version`, `app_commit` and `pointed`
-  (`coscc.runner_test`, `coscc.service_test`), in a child process.
+  (`coscc.runner_test`, `coscc.service_models_test`), in a child process.
 - R14, R15: what the prompts of `impl`, `pr`, `ship`, `review` and Gebo carry and name,
   and that every path they name may be `Read` under the step's grant, in a child process.
 
@@ -341,19 +341,19 @@ def prove() -> int:
     ok &= unittests(
         "R13, R16",
         "coscc.runner_test.TheStartRecordSaysWhatRanAndWhatWasNamed",
-        "coscc.service_test.AStageRunsOnTheModelSettingsNames.test_the_start_record_names_the_build_that_ran_it",
-        "coscc.service_test.AStageRunsOnTheModelSettingsNames."
+        "coscc.service_models_test.AStageRunsOnTheModelSettingsNames.test_the_start_record_names_the_build_that_ran_it",
+        "coscc.service_models_test.AStageRunsOnTheModelSettingsNames."
         "test_a_build_that_cannot_be_read_is_two_empty_strings_and_the_step_runs",
         "coscc.integrate_service_test.GeboThroughTheService."
         "test_the_start_record_names_the_artifacts_it_pointed_at_and_the_build",
     )
     ok &= unittests(
         "R14, R15",
-        "coscc.runner_test.ThePointingStagesNameTheirFiles",
-        "coscc.runner_test.EveryPathAPromptNamesCanBeRead",
-        "coscc.runner_test.OpenFindings",
-        "coscc.runner_test.AFixRoundCarriesTheFindings",
-        "coscc.runner_test.TheStagesThatReadWholeInputsKeepTheirPrompt",
+        "coscc.runner_prompt_test.ThePointingStagesNameTheirFiles",
+        "coscc.runner_prompt_test.EveryPathAPromptNamesCanBeRead",
+        "coscc.runner_review_test.OpenFindings",
+        "coscc.runner_prompt_test.AFixRoundCarriesTheFindings",
+        "coscc.runner_prompt_test.TheStagesThatReadWholeInputsKeepTheirPrompt",
         "coscc.integrate_test.ThePrompt",
     )
     say("PASS — every claim holds." if ok else "FAIL — a claim did not hold.")

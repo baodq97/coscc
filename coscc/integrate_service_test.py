@@ -785,7 +785,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.asked(), 2)
         # CI_REFRESH later by the service's clock: asked again, the answer still shown.
         later = (datetime.now(timezone.utc) + timedelta(seconds=service_mod.CI_REFRESH + 1)).isoformat(timespec="seconds")
-        with mock.patch.object(service_mod, "_now", return_value=later):
+        with mock.patch("coscc.service_steps._now", return_value=later):
             u = await self.read()
         self.assertTrue(u["state"]["ci"]["read"])
         await self.settle()
