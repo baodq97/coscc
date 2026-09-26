@@ -866,9 +866,13 @@ function spikeNeeds(unit) {
 // which stage runs. A `changes-requested` review is the case that matters — its action
 // names two stages, and only the branch can say which one is due. `nextStep` below asks it.
 export function nextAction(unit, limit = REVIEW_ROUNDS) {
-  const { why, ...next } = decide(unit, limit)
+  const { why, rerun, ...next } = decide(unit, limit)
   return next
 }
+
+// `0106` R1: the stages whose draft can stop on open questions, and so the only ones `next`
+// may name as `rerun`.
+const RERUN_STAGES = ['intent', 'spec', 'spike', 'plan']
 
 // `nextAction`, plus `why`: which rule answered, so `nextStep` refines the answer without
 // reading the English of `action` back.
@@ -935,7 +939,14 @@ function decide(unit, limit) {
       if (used >= limit) return { blocked: true, action: needsAPerson(used, limit), stage: '', why: 'needs-person' }
       return { blocked: true, action: `review round ${lastRound(unit).n} is incomplete — write-review again`, stage: 'review', why: 'review-incomplete' }
     }
-    if (status === 'draft') return { blocked: true, action: `finish and accept ${s.file}`, stage: '', why: 'draft' }
+    if (status === 'draft') {
+      // `0106` R1: every question the draft asked has an answer, so running its stage again
+      // is what finishes it. `stage` stays `''` — the run button does not offer it — and only
+      // the autopilot reads `rerun`, deciding for itself whether it may.
+      const questions = unit.artifacts[s.file]?.questions ?? []
+      const answered = RERUN_STAGES.includes(s.name) && questions.length > 0 && questions.every((q) => q.answered)
+      return { blocked: true, action: `finish and accept ${s.file}`, stage: '', why: 'draft', ...(answered ? { rerun: s.name } : {}) }
+    }
     // Not closed and not done: the work goes back to the branch, then to another round.
     if (status === 'changes-requested') {
       const used = roundsUsed(unit)
@@ -1740,8 +1751,9 @@ function cmdStatus(json, cosDir, limit) {
   const units = readAll(cosDir)
   // `0100` R4: `status` carries `why` as well, so the board reads which rule answered
   // rather than the English of `action`. `next` still prints `nextAction`, without it.
+  // `rerun` (`0106`) is for `next` and the autopilot only, so `status` drops it.
   const rows = units.map((u) => {
-    const next = decide(u, limit)
+    const { rerun, ...next } = decide(u, limit)
     return { ...u, next, at: stageAt(u, next), betweenPrAndShip: betweenPrAndShip(u, limit) }
   })
 
@@ -1790,11 +1802,12 @@ function cmdNext(unitName, cosDir, repoDir, limit) {
   }
   const probe = repoDir ? makeProbe(repoDir) : null
   const unit = readUnit(dir, unitName)
-  const { stage, action, blocked, waiting } = nextStep(unit, { probe, limit })
+  const { stage, action, blocked, waiting, rerun } = nextStep(unit, { probe, limit })
   // `waiting` only when a person is awaited (`0028`), `hold` only when the unit is held
-  // (`0045`), so every other answer is unchanged.
+  // (`0045`), `rerun` only when a draft's questions are all answered (`0106`), so every
+  // other answer is unchanged.
   const hold = unit.hold ? { hold: unit.hold } : {}
-  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...hold }))
+  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...hold, ...(rerun ? { rerun } : {}) }))
   return 0
 }
 

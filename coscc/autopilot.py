@@ -36,8 +36,9 @@ CODE_STAGES = ("impl", "implement", "integrate")
 # of the loop's. Its lines are not the unit's last step (R6 e), a start, or a failed step.
 NOT_STEPS = ("precedent",)
 
-# R6, the one stop the spec adds beside them, and `0104` R3's empty shortlist.
-STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap", "shortlist")
+# R6, the one stop the spec adds beside them, `0104` R3's empty shortlist, and `0106` R3's
+# and R5's: a draft run again as often as it may, and one waiting for a free place.
+STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap", "shortlist", "reruns", "full")
 
 # `0104` R6. Why a unit ranked higher on the shortlist was passed over, and nothing else.
 REASONS = ("held", "finished", "closed", "stop", "ci", "running", "overlap", "ship-busy", "missing")
@@ -124,6 +125,10 @@ def stop_for(
     if stage == "ship" and not may_ship:
         return _stop("c", "ship waits for a person: the autopilot may not ship in this workspace")
 
+    # `0106` R2: a draft whose questions are all answered is a stage to run again, not a
+    # stop. Whether it may be is the pass's to say (`reruns_of`, `answered_since_start`).
+    if not stage and nxt.get("rerun"):
+        return None
     # f. Nothing to run, and not because CI is still running.
     if not stage and not is_ci_pending(action):
         return _stop("f", action or "cos.mjs next named no stage")
@@ -363,6 +368,71 @@ def passed_for(
     return out
 
 
+# --- `0106`, a draft whose questions are all answered -------------------------
+
+# R3. How often one artifact runs again after its answers before a person decides the next
+# run (`intent.md ## Answers`, câu 4).
+MAX_RERUNS = 2
+# R1. The stages `cos.mjs next` may name as `rerun`; `answer_completes` reads only these.
+RERUN_STAGES = ("intent", "spec", "spike", "plan")
+
+
+def reruns_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
+    """R3. How many `start`s of `stage` on `unit` followed an earlier one with at least one
+    `answer` record of the same unit and stage between them. Whoever started either step
+    counts (`intent.md ## Answers`, câu 7), so `started_by` is not read."""
+    count, started, answered = 0, False, False
+    for r in records:
+        if r.get("workspace") != workspace or r.get("unit") != unit or r.get("stage") != stage:
+            continue
+        if r.get("kind") == "answer":
+            answered = True
+        elif r.get("kind") == "start":
+            if started and answered:
+                count += 1
+            started, answered = True, False
+    return count
+
+
+def answered_since_start(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> bool:
+    """R3. Whether an `answer` record of `stage` on `unit` came after its last `start`. A run
+    again that ends `draft` keeps its answered questions' numbers (`runner._ANSWERS_ADVICE`),
+    so `cos.mjs next` can say `rerun` with no new answer behind it; without this, `reruns_of`
+    would stay where it was and the autopilot would run it again on every pass."""
+    fresh = False
+    for r in records:
+        if r.get("workspace") != workspace or r.get("unit") != unit or r.get("stage") != stage:
+            continue
+        if r.get("kind") == "answer":
+            fresh = True
+        elif r.get("kind") == "start":
+            fresh = False
+    return fresh
+
+
+def answer_completes(unit_row: dict[str, Any], artifact: str, answered: Iterable[Any]) -> bool:
+    """R4. Whether `artifact`, one of `RERUN_STAGES`'s, has no numbered question left
+    unanswered: each is answered on the board read `unit_row` came from, or its number is in
+    `answered`, the blocks written since that read up to and including this one."""
+    stage = next((s.get("stage") for s in unit_row.get("stages") or [] if s.get("file") == artifact), "")
+    if stage not in RERUN_STAGES:
+        return False
+    given = set(answered)
+    asked = [q for q in unit_row.get("questions") or [] if q.get("artifact") == artifact]
+    return bool(asked) and all(q.get("answered") or q.get("n") in given for q in asked)
+
+
+def rerun_stop(artifact: str) -> dict[str, str]:
+    """R3: the draft has run again `MAX_RERUNS` times after its answers."""
+    return _stop("reruns", f"{artifact} was run again {MAX_RERUNS} times after its answers; a person decides the next run.")
+
+
+def full_stop(stage: str, max_parallel: int) -> dict[str, str]:
+    """R5: a run again that `max_parallel` alone held back. Not a wait for a person."""
+    running = "1 step is" if max_parallel == 1 else f"{max_parallel} steps are"
+    return _stop("full", f"{stage} waits to run again: {running} already running, the most this workspace allows.")
+
+
 # --- R11, what the intent's outcome is measured by ----------------------------
 
 # The stages before `intent` is accepted, and those that are not a unit's stage at all.
@@ -552,3 +622,79 @@ def measure_days(
         })
         d += timedelta(days=1)
     return out
+
+
+# `0106` R7. The intent's deadlines, in seconds: the next pass, which `POLL_SECONDS` stands in
+# for (spec C3), and ten minutes when `max_parallel` held the run back.
+ON_TIME = 300.0
+ON_TIME_FULL = 600.0
+# What `next` says of a draft; a stop `f` in other words is the gate's refusal.
+FINISH = "finish and accept"
+# The classes that count against the intent's outcome.
+_MISSED = ("late", "cap", "none")
+
+
+def _rerun_class(answer: dict[str, Any], later: list[dict[str, Any]]) -> tuple[str, float | None]:
+    """One case of `measure_reruns`: its class and, when the stage was reached, the seconds
+    from the answer to the first pick or start of it."""
+    stage = answer.get("stage")
+    at = _moment(answer.get("at"))
+    full = False
+    for i, r in enumerate(later):
+        kind = r.get("kind")
+        if kind == "autopilot-stop":
+            stop = str(r.get("stop") or "")
+            if stop in ("", "full"):
+                full = full or stop == "full"
+                continue
+            if stop == "reruns":
+                return "reruns", None
+            if stop == "f" and not str(r.get("reason") or "").startswith(FINISH):
+                return "gate", None
+            if stop == "cap":
+                return "cap", None
+            return f"stop:{stop}", None
+        if kind not in ("autopilot-pick", "start") or r.get("stage") != stage:
+            continue
+        moment = _moment(r.get("at"))
+        after = (moment - at).total_seconds() if moment and at else None
+        if after is not None and (after <= ON_TIME or (full and after <= ON_TIME_FULL)):
+            return "on-time", after
+        if kind == "autopilot-pick":
+            for s in later[i + 1:]:
+                if s.get("kind") == "start" and s.get("stage") == stage:
+                    break
+                if s.get("kind") == "autopilot-stop" and s.get("stop") == "f":
+                    return "gate", after
+        return "late", after
+    return "none", None
+
+
+def measure_reruns(
+    records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
+) -> dict[str, Any]:
+    """`0106` R7. Every `answer` record of `workspace` over the machine's days `since`..`until`
+    that finished the questions of a `draft` of a shortlisted unit while the autopilot was on,
+    each classed by what the unit's records after it show first.
+
+    `on-time`, `held`, `reruns` and `gate` meet the intent; `late`, `cap`, `stop:<kind>` and
+    `none` miss it. `met` is `None` when there is no case, which is not met (`intent.md`).
+    """
+    rows = [r for r in records if r.get("workspace") == workspace]
+    cases: list[dict[str, Any]] = []
+    for i, r in enumerate(rows):
+        if r.get("kind") != "answer" or not since <= spend.local_day(r.get("at")) <= until:
+            continue
+        if not (r.get("completes") and r.get("autopilot") and r.get("shortlisted")) or r.get("status") != "draft":
+            continue
+        unit = r.get("unit")
+        if r.get("held"):
+            found, after = "held", None
+        else:
+            found, after = _rerun_class(r, [x for x in rows[i + 1:] if x.get("unit") == unit])
+        cases.append({
+            "unit": unit, "stage": r.get("stage"), "artifact": r.get("artifact"),
+            "question": r.get("question"), "at": r.get("at"), "class": found, "after": after,
+        })
+    met = None if not cases else not any(c["class"] in _MISSED or c["class"].startswith("stop:") for c in cases)
+    return {"workspace": workspace, "since": since, "until": until, "cases": cases, "met": met}

@@ -2526,3 +2526,56 @@ test('0054: rerun refuses a stage it does not offer, an unknown one, and --repo'
   assert.equal(repo.status, 2)
   assert.match(repo.stderr, /--repo applies only to `gate` and `next`/)
 })
+
+// --- 0106: a draft whose questions are all answered names its stage as `rerun` ---
+
+const DRAFT_INTENT = '# Intent: x\nType: feat. Status: draft.\n\n## Open questions\n\n1. Một?\n2. Hai?\n\n## Answers\n'
+
+function answeredTree(files) {
+  const { root, u } = questionTree(files)
+  const next = () => JSON.parse(cli('--root', root, 'next', '0001_q').stdout)
+  return { root, u, next }
+}
+
+test('0106 R1: a draft intent with every question answered is rerun: intent, and nothing else changes', () => {
+  const { next } = answeredTree({ 'intent.md': DRAFT_INTENT + answerBlock(1, 'A', 'x') + answerBlock(2, 'A', 'y') })
+  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept intent.md', blocked: true, rerun: 'intent' })
+})
+
+test('0106 R1: one question left unanswered is no rerun', () => {
+  const { u, next } = answeredTree({ 'intent.md': DRAFT_INTENT + answerBlock(1, 'A', 'x') })
+  assert.equal('rerun' in next(), false)
+  assert.equal(nextStep(u).rerun, undefined)
+})
+
+test('0106 R1: a held unit is no rerun, even with every question answered', () => {
+  const { next } = answeredTree({ 'intent.md': DRAFT_INTENT + answerBlock(1, 'A', 'x') + answerBlock(2, 'A', 'y') + holdBlock('Paused', 'chờ') })
+  const n = next()
+  assert.equal(n.hold.state, 'paused')
+  assert.equal('rerun' in n, false)
+})
+
+test('0106 R1: a draft with no questions, or a draft impl, is no rerun', () => {
+  assert.equal('rerun' in answeredTree({ 'intent.md': '# I\nType: feat. Status: draft.\n' }).next(), false)
+  const impl = answeredTree({
+    'intent.md': '# I\nType: feat. Status: accepted.\n',
+    'spec.md': '# S\nStatus: accepted.\n',
+    'plan.md': '# P\nStatus: accepted.\n',
+    'impl.md': '# Impl\nStatus: draft.\n\n## Open questions\n\n1. Một?\n\n## Answers\n' + answerBlock(1, 'A', 'x'),
+  })
+  assert.equal('rerun' in impl.next(), false)
+})
+
+test('0106 R1: a spec draft answered in full is rerun: spec', () => {
+  const { u } = answeredTree({
+    'intent.md': '# I\nType: feat. Status: accepted.\n',
+    'spec.md': '# S\nStatus: draft.\n\n## Open questions\n\n1. Một?\n\n## Answers\n' + answerBlock(1, 'A', 'x'),
+  })
+  assert.equal(nextStep(u).rerun, 'spec')
+})
+
+test('0106 R1: status --json and nextAction never carry rerun', () => {
+  const { root, u } = answeredTree({ 'intent.md': DRAFT_INTENT + answerBlock(1, 'A', 'x') + answerBlock(2, 'A', 'y') })
+  assert.equal('rerun' in nextAction(u), false)
+  assert.equal(cli('--root', root, 'status', '--json').stdout.includes('rerun'), false)
+})

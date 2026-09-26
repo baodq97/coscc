@@ -1526,6 +1526,9 @@ class Service:
             **{k: found[k] for k in ("stage", "action", "blocked")},
             # `0028`. The findings a person is awaited on, copied from `cos.mjs next`.
             "waiting": list(found.get("waiting") or []),
+            # `0106`. The stage a fully answered draft would run again; only the autopilot
+            # reads it.
+            "rerun": str(found.get("rerun") or ""),
         }
 
     async def rerun_offers(self, cwd: str, unit: str) -> dict[str, Any]:
@@ -2556,7 +2559,8 @@ class Service:
         nothing here parses `## Open questions` a second time (R7).
 
         Not an approval, and it starts nothing itself; with the autopilot on, the pass it
-        nudges may start the next stage (`0043`). `answered_by` is whatever name the caller
+        nudges may start the next stage (`0043`), or run again a draft this answer finished
+        (`0106`). `answered_by` is whatever name the caller
         typed: no route in this app has a login, so it is a claim, not an identity.
 
         `0028`: `question` may be `"F<n>"`, a finding `cos.mjs` lists in the unit's
@@ -2651,7 +2655,41 @@ class Service:
                 except (OSError, BadTransition, Busy):
                     pass
 
+        self._journal_answers(cwd, unit, found, written, via)
         return {"written": written, "skipped": skipped, "date": today}
+
+    def _journal_answers(
+        self, cwd: str, unit: str, found: dict[str, Any], written: list[dict[str, Any]], via: str,
+    ) -> None:
+        """`0106` R4. One `answer` record per block written, so the run log can tell which
+        answer finished a draft's questions (`completes`) and what the autopilot then did.
+        It starts nothing. Never raises, like the `outputs` row above it."""
+        journal = self._journal()
+        if journal is None or not written:
+            return
+        key = self._journal_key(cwd)
+        try:
+            listed, _ = backlog.shortlist_of(journal.records(workspace=key, kind="shortlist"))
+            on = bool(self._autopilot_values(key)["autopilot"])
+        except (Busy, OSError):
+            return
+        stages = {s["file"]: s for s in found.get("stages") or []}
+        given: dict[str, set[Any]] = {}
+        for w in written:
+            artifact = w["artifact"]
+            given.setdefault(artifact, set()).add(w["question"])
+            row = stages.get(artifact) or {}
+            try:
+                journal.append({
+                    "kind": "answer", "workspace": key, "unit": unit, "stage": row.get("stage", ""),
+                    "artifact": artifact, "question": w["question"], "via": via,
+                    "status": row.get("status", ""),
+                    "completes": autopilot.answer_completes(found, artifact, given[artifact]),
+                    "autopilot": on, "shortlisted": unit in ((listed or {}).get("units") or []),
+                    "held": bool(found.get("hold")),
+                })
+            except (BadRecord, Busy):
+                pass
 
     def _append_one(
         self, cwd: str, unit: str, found: dict[str, Any], artifact: str, question: Any, text: str,
@@ -3970,7 +4008,7 @@ class Service:
                 return
             data = await self.board(cwd)
             try:
-                records = journal.records(kinds=("start", "end", "integration", "shortlist"))
+                records = journal.records(kinds=("start", "end", "integration", "shortlist", "answer"))
             except Busy as e:
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
                 return
@@ -4023,6 +4061,19 @@ class Service:
                     and (stop is None or stop["kind"] == "f")
                 ):
                     stop, stage = autopilot.red_again(info, integrations.get(name)), "integrate"
+                # `0106` R2, R3: a draft whose questions are all answered runs again, at most
+                # `MAX_RERUNS` times, and only on an answer given since its last run; with none,
+                # it is the stop `f` it was before `0106`. Before `reason`, which raises on no
+                # stage and no stop.
+                rerun = False
+                if stop is None and not stage and nxt.get("rerun"):
+                    if autopilot.reruns_of(records, key, name, nxt["rerun"]) >= autopilot.MAX_RERUNS:
+                        artifact = next((s["file"] for s in u.get("stages") or [] if s["stage"] == nxt["rerun"]), nxt["rerun"])
+                        stop = autopilot.rerun_stop(artifact)
+                    elif not autopilot.answered_since_start(records, key, name, nxt["rerun"]):
+                        stop = autopilot.stop_for(u, {**nxt, "rerun": ""}, last.get(name), settings["autopilot_may_ship"])
+                    else:
+                        stage, rerun = nxt["rerun"], True
                 reason = ("running", here[name]) if name in here else autopilot.reason_for(nxt, stage, stop)
                 if reason is not None:
                     reasons[name] = reason
@@ -4034,6 +4085,7 @@ class Service:
                 files = self._autopilot_files(cwd, name) if stage in autopilot.CODE_STAGES else None
                 candidates.append({
                     "unit": name, "stage": stage, "files": files, "need": autopilot.reservation(stage), "rank": rank,
+                    "rerun": rerun,
                 })
 
             for r in running:
@@ -4054,6 +4106,13 @@ class Service:
                     f"{c['need']:.2f} is over the cap of {cap['limit']:.2f} USD ({cap['day']})"
                 )}
                 reasons[c["unit"]] = autopilot.reason_for({}, c["stage"], found[c["unit"]])
+            # `0106` R5: a run again that `max_parallel` alone held back says so. Any other
+            # candidate held back that way still says nothing, as before.
+            left = {c["unit"] for c in picked["chosen"] + picked["capped"]} | set(picked["held"])
+            for c in candidates:
+                if c["rerun"] and c["unit"] not in left:
+                    found[c["unit"]] = {"unit": c["unit"], **autopilot.full_stop(c["stage"], settings["max_parallel"])}
+                    reasons[c["unit"]] = autopilot.reason_for({}, c["stage"], found[c["unit"]])
             # Raises before anything is recorded or started when a unit above one chosen has no
             # reason; `_autopilot_guarded` shows it as a stop line.
             passed = autopilot.passed_for(names, [c["unit"] for c in picked["chosen"]], reasons)

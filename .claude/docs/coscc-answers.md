@@ -8,7 +8,11 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or 
   identity; a request that carries a name still has it written. Whoever holds the password
   or a live session can put text there that a stage will read as a person's decision. The
   only trace is the file and an `outputs` row with `actor = human:<name>` — `human:owner`
-  from the board.
+  from the board. Since `0106` every block, a person's or Jera's, also leaves an `answer`
+  record in `runs`; it starts nothing, but the autopilot runs a draft again only on one
+  written since the stage's last `start` (`autopilot.answered_since_start`), and counts it
+  toward the two times it may (`autopilot.reruns_of`). A record lost to a busy run log is not
+  counted, and an answer given before `0106` shipped left none.
   The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it. Since `0028` it also takes `question: "F<n>"` with
   `artifact: "review.md"` for a finding `cos.mjs` lists in `personFindings`, and that block
   does more than reach a prompt: `next` offers `review` once every such finding has one,
@@ -38,7 +42,9 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or 
     failed `end` row with the money spent and nothing written (C7).
   - With the workspace's autopilot on and the unit on its shortlist, a Jera answer that
     clears the last open question lets the autopilot's next pass, at most
-    `autopilot.POLL_SECONDS` (300 s) later, start the next stage on it unpressed.
+    `autopilot.POLL_SECONDS` (300 s) later, start the next stage on it unpressed — or,
+    when the artifact is a `draft` of `intent`, `spec`, `spike` or `plan`, run that stage
+    again (`0106`).
     `precedent` does not call `_autopilot_nudge`, which only delays that. The autopilot
     reads past Jera's own `start`/`end` rows (`autopilot.is_step`), so a Jera run neither
     lifts nor sets the stop on a failed step.

@@ -347,6 +347,9 @@ async def next_step(
         "waiting": [str(x) for x in data.get("waiting") or []],
         # `0045`. Present only when the unit is held; its absence reads as None.
         "hold": data.get("hold") or None,
+        # `0106`. Present only when a draft's questions are all answered; its absence reads
+        # as "". Only the autopilot reads it; the run button follows `stage`.
+        "rerun": str(data.get("rerun") or ""),
     }
 
 
