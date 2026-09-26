@@ -1914,7 +1914,8 @@ def _collapsed_group(state: str, label: str) -> rx.Component:
     return rx.cond(
         count > 0,
         rx.el.details(
-            rx.el.summary(s.text(label + " (" + count.to_string() + ")", size="2"), cursor="pointer"),
+            rx.el.summary(s.text(label + " (" + count.to_string() + ")", size="2", as_="span"),
+                          cursor="pointer"),
             rx.grid(
                 rx.foreach(P.cards, lambda c: rx.cond(
                     c.state == state, _unit_card(c, grouped=True), rx.fragment())),
