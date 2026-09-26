@@ -22,7 +22,10 @@ from unittest import mock
 from coscc import events as events_mod
 from coscc import fetches, gitops, harness, units, worktrees
 from coscc.config import Config
-from coscc.service import STAGE_FILES, Invalid, Service, describe_base, outcome_label, step_cwd
+from coscc.service import (
+    STAGE_FILES, STATE_COLOR, STATE_LABEL, Invalid, Service, describe_base, outcome_label, shown_state,
+    step_cwd, unit_state,
+)
 from coscc.sessions import Live, Sessions
 
 REPO = str(Path(__file__).resolve().parent.parent)
@@ -3535,3 +3538,107 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
         self.assertEqual(kw["knowledge"], "")
         self.assertEqual((kw["knowledge_record"]["entries"], kw["knowledge_record"]["bytes"]), (0, 0))
         self.assertIn("FileNotFoundError", kw["knowledge_record"]["error"])
+
+
+class TheStateOfAUnit(unittest.TestCase):
+    """`0100` R3, R5, R13. One state per unit, the first rule that matches deciding it."""
+
+    @staticmethod
+    def _unit(**kw) -> dict:
+        base = {
+            "name": "0001_x", "why": "missing", "at": "plan", "open": 0, "problems": [],
+            "hold": None, "between_pr_and_ship": False, "integration": None,
+            "stages": [{"stage": "intent", "status": "accepted"}],
+        }
+        return {**base, **kw}
+
+    def _is(self, unit: dict, last_end=None, ci=None) -> str:
+        return unit_state(unit, last_end, ci)["state"]
+
+    def test_every_state_has_a_case_and_its_own_label_and_colour(self):
+        cases = {
+            "done": self._unit(why="finished"),
+            "dropped": self._unit(why="dropped", hold={"state": "dropped"}),
+            "paused": self._unit(why="paused", hold={"state": "paused"}),
+            "needs-you": self._unit(open=2),
+            "error": self._unit(problems=["plan.md: no Status line"]),
+            "awaiting": self._unit(at="review", between_pr_and_ship=True),
+            "ready": self._unit(),
+        }
+        for want, unit in cases.items():
+            got = unit_state(unit, None, None)
+            self.assertEqual(got["state"], want, want)
+            self.assertEqual((got["label"], got["color"]), (STATE_LABEL[want], STATE_COLOR[want]))
+        running = shown_state(unit_state(self._unit(), None, None), [{"stage": "plan"}])
+        self.assertEqual((running["state"], running["label"]), ("running", "Running"))
+        self.assertEqual(sorted(STATE_LABEL), sorted(STATE_COLOR))
+        self.assertEqual(len(set(STATE_COLOR.values())), len(STATE_COLOR), "no two states share a colour")
+
+    def test_no_state_reads_as_approval(self):
+        for label in STATE_LABEL.values():
+            self.assertNotIn("Approved", label)
+            self.assertNotIn("Accepted", label)
+
+    def test_a_rejected_unit_is_dropped_and_names_the_stage(self):
+        unit = self._unit(why="rejected", stages=[
+            {"stage": "intent", "status": "accepted"}, {"stage": "spec", "status": "rejected"},
+        ])
+        got = unit_state(unit, None, None)
+        self.assertEqual((got["state"], got["label"]), ("dropped", "Dropped — spec rejected"))
+
+    def test_each_pair_of_neighbouring_rules_goes_to_the_earlier_one(self):
+        # 1/2: finished and dropped at once.
+        self.assertEqual(self._is(self._unit(why="finished", hold={"state": "dropped"})), "done")
+        # 2/3: rejected with a pause still on file.
+        self.assertEqual(self._is(self._unit(why="rejected", hold={"state": "paused"})), "dropped")
+        # 3/4: a paused unit with a session listed is still paused.
+        paused = unit_state(self._unit(why="paused", hold={"state": "paused"}), None, None)
+        self.assertEqual(shown_state(paused, [{"stage": "plan"}])["state"], "paused")
+        # 4/5: a running unit with an open question is running.
+        asking = unit_state(self._unit(open=1), None, None)
+        self.assertEqual(shown_state(asking, [{"stage": "plan"}])["state"], "running")
+        self.assertEqual(shown_state(asking, [])["state"], "needs-you")
+        # 5/6: an open question beats an error (C1).
+        self.assertEqual(self._is(self._unit(open=1, problems=["x"])), "needs-you")
+        self.assertEqual(self._is(self._unit(why="awaits-person", problems=["x"])), "needs-you")
+        # 6/7: an error in the pr→ship window.
+        self.assertEqual(
+            self._is(self._unit(at="review", between_pr_and_ship=True, problems=["x"])), "error"
+        )
+        # 7/8: in the window and missing is awaiting, not ready.
+        self.assertEqual(self._is(self._unit(at="review", between_pr_and_ship=True)), "awaiting")
+
+    def test_each_cause_of_error(self):
+        # (a)
+        self.assertEqual(self._is(self._unit(problems=["x"])), "error")
+        self.assertEqual(self._is(self._unit(why="unreadable")), "error")
+        # (b)
+        self.assertEqual(self._is(self._unit(), {"stage": "plan", "outcome": "failed"}), "error")
+        self.assertEqual(self._is(self._unit(), {"stage": "plan", "outcome": "exhausted"}), "error")
+        # (c)
+        window = self._unit(at="review", between_pr_and_ship=True)
+        self.assertEqual(self._is({**window, "integration": {"state": "red-after-integration"}}), "error")
+        # (d)
+        ci = {"head": "a", "checks": [{"name": "tests", "bucket": "fail"}], "at": "2026-09-26T00:00:00+00:00"}
+        got = unit_state(window, None, ci)
+        self.assertEqual(got["state"], "error")
+        self.assertEqual(got["ci"], {"read": True, "red": ["tests"], "at": "2026-09-26T00:00:00+00:00"})
+        cancelled = {**ci, "checks": [{"name": "lint", "bucket": "cancel"}]}
+        self.assertEqual(self._is(window, None, cancelled), "error")
+
+    def test_a_failure_at_another_stage_or_a_stop_is_not_an_error(self):
+        self.assertEqual(self._is(self._unit(at="plan"), {"stage": "spec", "outcome": "failed"}), "ready")
+        self.assertEqual(self._is(self._unit(at="plan"), {"stage": "plan", "outcome": "stopped"}), "ready")
+
+    def test_changes_requested_in_the_window_is_ready(self):
+        """C6. It waits on an `impl`, not on CI."""
+        self.assertEqual(self._is(self._unit(at="review", why="changes-requested", between_pr_and_ship=True)), "ready")
+
+    def test_the_ci_line_says_read_not_red_or_not_read(self):
+        window = self._unit(at="review", between_pr_and_ship=True)
+        self.assertEqual(unit_state(window, None, None)["ci"], {"read": False, "red": [], "at": ""})
+        green = {"head": "a", "checks": [{"name": "tests", "bucket": "pass"}], "at": "t"}
+        self.assertEqual(unit_state(window, None, green)["ci"], {"read": True, "red": [], "at": "t"})
+        failed = {"head": "a", "error": "gh: not logged in", "at": "t"}
+        self.assertEqual(unit_state(window, None, failed)["ci"], {"read": False, "red": [], "at": "t"})
+        self.assertIsNone(unit_state(self._unit(), None, None)["ci"], "no line outside the window")

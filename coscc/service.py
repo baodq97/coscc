@@ -348,6 +348,95 @@ def attention_reason(unit: dict[str, Any]) -> str:
     return "Changes requested"
 
 
+# `0100` R3, R9. The eight states and their labels, in the order their rules are tried. No
+# label reads as approval (R13): `Done` comes from `next.why = finished` alone.
+STATE_LABEL = {
+    "done": "Done",
+    "dropped": "Dropped",
+    "paused": "Paused",
+    "running": "Running",
+    "needs-you": "Needs you",
+    "error": "Error",
+    "awaiting": "Awaiting CI/merge",
+    "ready": "Ready",
+}
+# One colour per state, none shared, in place of the lane colours.
+STATE_COLOR = {
+    "done": "grass",
+    "dropped": "bronze",
+    "paused": "plum",
+    "running": "iris",
+    "needs-you": "amber",
+    "error": "red",
+    "awaiting": "cyan",
+    "ready": "gray",
+}
+# The states the board folds into a closed group at its foot rather than a stage column (R8).
+COLLAPSED_STATES = ("done", "paused", "dropped")
+
+# `0100` R6. Seconds a held CI answer is trusted before a board read asks `gh` again, in the
+# background. Chosen, not measured.
+CI_REFRESH = 60.0
+
+
+def _state(state: str, label: str = "", ci: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {"state": state, "label": label or STATE_LABEL[state], "color": STATE_COLOR[state], "ci": ci}
+
+
+def unit_state(
+    unit: dict[str, Any], last_end: dict[str, Any] | None, ci: dict[str, Any] | None
+) -> dict[str, Any]:
+    """`0100` R3, R5. The one state `Service.board` decides for a unit: rules 1–3 and 5–8.
+
+    `unit` is the board's dict with `integration` attached; `last_end` the unit's latest
+    ended run-log row, from the read `board` already made; `ci` the held answer of
+    `integrate.required_checks` for the pull request's head as it is now, or None. Rule 4,
+    `Running`, is the page's to lay over this (`shown_state`). `ci` in the answer is what
+    the dialog's CI line says (R7), None where there is no line to show.
+    """
+    why = str(unit.get("why") or "")
+    hold = (unit.get("hold") or {}).get("state")
+    if why == "finished":
+        return _state("done")
+    if hold == "dropped" or why == "rejected":
+        if why == "rejected":
+            stage = next((r.get("stage") for r in unit.get("stages") or [] if r.get("status") == "rejected"), "")
+            return _state("dropped", f"Dropped — {stage} rejected")
+        return _state("dropped")
+    if hold == "paused":
+        return _state("paused")
+    if int(unit.get("open") or 0) > 0 or why in ("needs-person", "awaits-person"):
+        return _state("needs-you")
+    # R5(d). The buckets `integrate.classify` reads as red (`coscc/integrate.py:52`). A held
+    # answer that is `gh`'s error has no `checks`, and reads as not read (R7).
+    red = [str(c.get("name") or "") for c in (ci or {}).get("checks") or [] if c.get("bucket") in ("fail", "cancel")]
+    line = None
+    if ci is not None:
+        line = {"read": "checks" in ci, "red": red, "at": str(ci.get("at") or "")}
+    failed = (
+        last_end is not None
+        and last_end.get("outcome") in ("failed", "exhausted")
+        and last_end.get("stage") == unit.get("at")
+    )
+    if (
+        unit.get("problems") or why == "unreadable" or failed or red
+        or (unit.get("integration") or {}).get("state") == "red-after-integration"
+    ):
+        return _state("error", ci=line if red else None)
+    if unit.get("between_pr_and_ship") and why == "missing":
+        return _state("awaiting", ci=line or {"read": False, "red": [], "at": ""})
+    return _state("ready")
+
+
+def shown_state(decided: dict[str, Any], running_rows: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """`0100` Design 5. Rule 4: `Running` while `Service.running` lists a session of the unit,
+    below rules 1–3 and above the rest. `running_rows` is that answer's `running` entry for
+    the unit — never `unknown_end` (spec, Out of scope)."""
+    if running_rows and decided.get("state") not in COLLAPSED_STATES:
+        return _state("running")
+    return decided
+
+
 # `0082` R9. The release channel's state in plain words; `{v}` is the offered version.
 _RELEASE_LINE = {
     "ready": "Version {v} is ready to apply.",
@@ -418,6 +507,11 @@ class Service:
     # integration, keyed by an id that never leaves this process. Added and removed beside
     # `_active`, read only by `running`. Display only: `_active` still does the refusing.
     _running: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
+    # `0100` R6. By `(journal key, unit)`: the last answer of `integrate.required_checks`,
+    # `{head, checks | error, at}`, and the one background ask running for it. Memory only,
+    # gone on a restart, and never waited on by a board read. One process only, like `pull`.
+    _ci: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
+    _ci_asks: dict[tuple[str, str], asyncio.Task] = field(default_factory=dict, init=False, repr=False)
     # `0034`. The board steps running now, each as its own task, so a reader that goes
     # away does not take the step with it and a Stop has something to cancel.
     steps: steps_mod.Registry = field(default_factory=lambda: steps_mod.Registry(), init=False, repr=False)
@@ -752,7 +846,11 @@ class Service:
             unit["attention_reason"] = attention_reason(unit)
 
         await self._attach_worktrees(cwd, data["units"])
-        await self._attach_integration(cwd, data["units"], journal, key)
+        asks = await self._attach_integration(cwd, data["units"], journal, key)
+        for unit in data["units"]:
+            # `0100` R3. From the timelines read above: no second scan of the run log.
+            ended = [r for r in timelines.get(unit["name"], []) if r.get("ended") is not None]
+            unit["state"] = unit_state(unit, ended[-1] if ended else None, unit.pop("ci_held", None))
 
         data["recording"] = journal is not None
         # `0043` R9. Display only: the page shows it and decides nothing from it.
@@ -771,6 +869,8 @@ class Service:
                 "host": units.key(cwd),
                 "host_units": units.host_unit_count(cwd),
             }
+        # `0100` R6. Started last and never awaited: their answers count from the next read.
+        self._ask_ci(asks)
         return data
 
     def _mark_running(self, key: str, unit: str, stage: str, kind: str) -> str:
@@ -881,29 +981,69 @@ class Service:
 
     async def _attach_integration(
         self, cwd: str, units_: list[dict[str, Any]], journal: Journal | None, key: str
-    ) -> None:
+    ) -> list[tuple[tuple[str, str], str, int, str]]:
         """R1/R2. Give every unit `integration: {...}` when it sits in the window, else None.
 
         **Reads only.** One `gh pr list` for the workspace (up to `integrate.GH_TIMEOUT`),
         `git` counts against the `origin/main` the last fetch brought — no fetch here — and
         `gh pr checks` only for a unit whose head is the one its last integration pushed.
         Nothing here writes a record, calls `update-branch` or opens a session.
+
+        `0100` R6. Also gives each unit in the window `ci_held`, the held CI answer when it
+        is for the head `gh pr list` just returned, and returns the CI asks `board` starts
+        once it has answered: `(slot, tree, pr number, head)` for each unit with no answer
+        for that head, or one older than `CI_REFRESH`, and no ask already running.
         """
         for u in units_:
             u["integration"] = None
         window = [u for u in units_ if u.get("between_pr_and_ship") and u.get("pr")]
         if not window:
-            return
+            return []
         root = Path(cwd).expanduser().resolve()
         last = self._last_integrations(journal, key)
         try:
             prs: list[dict[str, Any]] | str = await integrate.open_prs(str(root))
         except integrate.IntegrateError as e:
             prs = str(e)
+        asks: list[tuple[tuple[str, str], str, int, str]] = []
+        oldest = datetime.fromisoformat(_now()) - timedelta(seconds=CI_REFRESH)
         for u in window:
             info = await self._integration_of(root, u, prs, last.get(u["name"]))
             if info is not None:
                 u["integration"] = info
+            number = (u.get("pr") or {}).get("number")
+            row = next((r for r in prs if r.get("number") == number), None) if isinstance(prs, list) else None
+            if row is None:
+                continue
+            slot, head = (key, u["name"]), str(row.get("headRefOid") or "")
+            held = self._ci.get(slot)
+            if held is not None and held.get("head") == head:
+                u["ci_held"] = held
+            if slot in self._ci_asks:
+                continue
+            if held is None or held.get("head") != head or not _younger_than(held.get("at") or "", oldest):
+                asks.append((slot, str(root), int(number), head))
+        return asks
+
+    def _ask_ci(self, asks: list[tuple[tuple[str, str], str, int, str]]) -> None:
+        """`0100` R6. One background `gh pr checks` per ask, none awaited. Its answer, or
+        `gh`'s error, is held with the time it was read, so an error is not asked again
+        before `CI_REFRESH` either. Writes no run-log record."""
+        for slot, tree, number, head in asks:
+            if slot in self._ci_asks:
+                continue
+
+            async def ask(slot=slot, tree=tree, number=number, head=head) -> None:
+                try:
+                    answer: dict[str, Any] = {"checks": await integrate.required_checks(tree, number)}
+                except integrate.IntegrateError as e:
+                    answer = {"error": str(e)}
+                self._ci[slot] = {"head": head, **answer, "at": _now()}
+
+            task = asyncio.get_running_loop().create_task(ask())
+            self._ci_asks[slot] = task
+            # Removed however it ends — cancelled included — or the unit is never asked again.
+            task.add_done_callback(lambda t, slot=slot: self._ci_asks.pop(slot, None) if self._ci_asks.get(slot) is t else None)
 
     @staticmethod
     def _last_integrations(journal: Journal | None, key: str) -> dict[str, dict[str, Any]]:
@@ -2036,6 +2176,9 @@ class Service:
         for key in list(self._autopilot_tasks):
             self.autopilot_stop(key)
         for t in list(self._autopilot_pending):
+            t.cancel()
+        # `0100` R6. A CI ask holds nothing worth waiting for.
+        for t in list(self._ci_asks.values()):
             t.cancel()
         tasks = [r.task for r in self.steps.all() if r.task is not None and not r.task.done()]
         for t in tasks:

@@ -46,7 +46,9 @@ paths:
   pushed. Offline, every such unit reads `unknown` and the board waits out the timeout.
   Unmeasured. The counts use the `origin/main` of the last fetch; the read does not fetch. A
   `current` unit has the *Integrate* button too, since only a press fetches; pressed on a
-  unit that is really current, it leaves a `refused` row.
+  unit that is really current, it leaves a `refused` row. After the read, such a unit may
+  start one background `gh pr checks` for its state badge (`0100`): one per unit at a time,
+  no oftener than `CI_REFRESH` per head, never awaited by the board.
 - **Every `pr` step costs one `gh pr list` before the session starts,** under this machine's
   `gh` login, up to `GH_TIMEOUT`. Offline or logged out, the step still runs and its prompt
   says the lookup failed. The `pr` grant refuses `git rebase`, `git merge`, `git pull`,
