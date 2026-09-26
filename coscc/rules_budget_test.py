@@ -70,6 +70,23 @@ class TheScopes(unittest.TestCase):
                     self.assertTrue((REPO / p).is_file(), p)
 
 
+class TheUiStandardFollowsTheSplit(unittest.TestCase):
+    """`0095`: `screens.py`, `state.py` and `service.py` were split into modules of their own.
+    A module the UI standard does not name is code it is not loaded for, and a unit that
+    changes only that module is not a UI unit to `coscc/board.py`."""
+
+    def test_every_module_they_were_split_into_is_named(self):
+        named = set(scoped_patterns(UI.read_text(encoding="utf-8")))
+        split = [
+            f"coscc/{p.name}"
+            for name in ("screens", "state", "service")
+            for p in sorted((REPO / "coscc").glob(f"{name}_*.py"))
+            if not p.name.endswith("_test.py")
+        ]
+        self.assertIn("coscc/state_views.py", split)
+        self.assertEqual([m for m in split if m not in named], [])
+
+
 class EveryDocIsPointedTo(unittest.TestCase):
     """R10: tier 4 is reached only by a pointer, so a pointer must lead somewhere and every
     document must have one."""
