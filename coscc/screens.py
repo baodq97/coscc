@@ -2193,11 +2193,12 @@ def _detail_dialog() -> rx.Component:
                             ),
                             s.text("No stage is ready to run; the line above says why."),
                         ),
-                        rx.cond(~P.unit_dropped & P.recording & (P.rerun_stages.length() > 0),
-                                _rerun_panel()),
                         # `0100` R7. What the board last heard from CI, and when.
                         rx.cond(P.current_unit.ci_line != "",
                                 s.text(P.current_unit.ci_line, id="unit-ci-line", size="2")),
+                        # `0054` review F2. Below the CI line, which belongs to the next step.
+                        rx.cond(~P.unit_dropped & P.recording & (P.rerun_stages.length() > 0),
+                                _rerun_panel()),
                         rx.cond(~P.unit_dropped, _integration_panel()),
                         rx.cond(~P.unit_dropped, _outcome_panel()),
                         _unit_cost(),
