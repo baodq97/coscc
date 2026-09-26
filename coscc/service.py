@@ -1526,6 +1526,9 @@ class Service:
             **{k: found[k] for k in ("stage", "action", "blocked")},
             # `0028`. The findings a person is awaited on, copied from `cos.mjs next`.
             "waiting": list(found.get("waiting") or []),
+            # `0106`. The stage a fully answered draft would run again; only the autopilot
+            # reads it.
+            "rerun": str(found.get("rerun") or ""),
         }
 
     async def rerun_offers(self, cwd: str, unit: str) -> dict[str, Any]:

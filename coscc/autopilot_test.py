@@ -481,6 +481,145 @@ class MeasuringOrder(unittest.TestCase):
         self.assertEqual(ap.measure_order(clean_log(3), "other", self.until())["steps"], 0)
 
 
+def row(kind, unit="0001_a", stage="intent", seconds=0, workspace="w", **kw):
+    return {"kind": kind, "workspace": workspace, "unit": unit, "stage": stage,
+            "at": at(timedelta(seconds=seconds)), **kw}
+
+
+def answer_row(seconds=0, unit="0001_a", stage="intent", **kw):
+    fields = {"artifact": f"{stage}.md", "question": 2, "via": "product", "status": "draft",
+              "completes": True, "autopilot": True, "shortlisted": True, "held": False, **kw}
+    return row("answer", unit, stage, seconds, **fields)
+
+
+def stop_row(stop, seconds=0, unit="0001_a", reason=""):
+    return row("autopilot-stop", unit, "", seconds, stop=stop, reason=reason)
+
+
+class Reruns(unittest.TestCase):
+    """`0106` R2–R5: a draft answered in full is a step, at most `MAX_RERUNS` times."""
+
+    def board_row(self, questions):
+        return {"name": "0001_a", "questions": questions, "stages": [
+            {"stage": "intent", "file": "intent.md"}, {"stage": "spec", "file": "spec.md"},
+            {"stage": "impl", "file": "impl.md"}, {"stage": "review", "file": "review.md"},
+        ]}
+
+    def test_a_rerun_is_no_stop_f(self):
+        rerun = {**nxt("", "finish and accept intent.md"), "rerun": "intent"}
+        self.assertIsNone(ap.stop_for(unit(), rerun, None, False))
+        self.assertEqual(ap.stop_for(unit(), nxt("", "finish and accept intent.md"), None, False)["kind"], "f")
+
+    def test_a_to_e_are_still_asked_first(self):
+        rerun = {**nxt("", "finish and accept intent.md"), "rerun": "intent"}
+        qs = [{"artifact": "intent.md", "n": 1, "answered": False, "counted": True}]
+        self.assertEqual(ap.stop_for(unit(qs), rerun, None, False)["kind"], "a")
+        failed = {"kind": "end", "stage": "intent", "outcome": "failed"}
+        self.assertEqual(ap.stop_for(unit(), rerun, failed, False)["kind"], "e")
+
+    def test_two_reruns_after_answers(self):
+        rows = [row("start"), row("answer"), row("start"), row("answer"), row("start"), row("answer")]
+        self.assertEqual(ap.reruns_of(rows, "w", "0001_a", "intent"), 2)
+
+    def test_no_answer_between_is_no_rerun(self):
+        self.assertEqual(ap.reruns_of([row("start"), row("start")], "w", "0001_a", "intent"), 0)
+
+    def test_another_units_or_stages_answer_is_not_counted(self):
+        rows = [row("start"), row("answer", unit="0002_b"), row("answer", stage="spec"),
+                row("answer", workspace="other"), row("start")]
+        self.assertEqual(ap.reruns_of(rows, "w", "0001_a", "intent"), 0)
+
+    def test_whoever_started_counts(self):
+        rows = [row("start", started_by="person"), row("answer"), row("start", started_by="autopilot")]
+        self.assertEqual(ap.reruns_of(rows, "w", "0001_a", "intent"), 1)
+
+    def test_completes_only_on_the_last_question_of_a_rerun_stage(self):
+        qs = [{"artifact": "intent.md", "n": 1, "answered": True}, {"artifact": "intent.md", "n": 2, "answered": False}]
+        u = self.board_row(qs)
+        self.assertTrue(ap.answer_completes(u, "intent.md", {2}))
+        self.assertFalse(ap.answer_completes(u, "intent.md", set()))
+        self.assertFalse(ap.answer_completes(self.board_row([]), "intent.md", {1}))
+
+    def test_completes_counts_every_block_of_one_write(self):
+        qs = [{"artifact": "spec.md", "n": 1, "answered": False}, {"artifact": "spec.md", "n": 2, "answered": False}]
+        u = self.board_row(qs)
+        self.assertFalse(ap.answer_completes(u, "spec.md", {1}))
+        self.assertTrue(ap.answer_completes(u, "spec.md", {1, 2}))
+
+    def test_impl_and_review_never_complete(self):
+        qs = [{"artifact": "impl.md", "n": 1, "answered": True}, {"artifact": "review.md", "n": 1, "answered": True}]
+        u = self.board_row(qs)
+        self.assertFalse(ap.answer_completes(u, "impl.md", {1}))
+        self.assertFalse(ap.answer_completes(u, "review.md", {"F1"}))
+
+    def test_the_two_stop_lines(self):
+        self.assertEqual(ap.rerun_stop("intent.md"), {
+            "kind": "reruns",
+            "reason": "intent.md was run again 2 times after its answers; a person decides the next run.",
+        })
+        full = ap.full_stop("spec", 3)
+        self.assertEqual(full["kind"], "full")
+        self.assertIn("3 steps are already running", full["reason"])
+        for stop in (ap.rerun_stop("intent.md"), full):
+            self.assertIn(stop["kind"], ap.STOP_KINDS)
+
+
+class MeasuringReruns(unittest.TestCase):
+    """`0106` R7: one sample log per class."""
+
+    def measure(self, rows):
+        return ap.measure_reruns(rows, "w", ap.today(NOW - timedelta(days=1)), ap.today(NOW + timedelta(days=1)))
+
+    def one(self, rows):
+        got = self.measure(rows)
+        self.assertEqual(len(got["cases"]), 1, got)
+        return got["cases"][0]["class"], got["met"]
+
+    def test_no_case_is_not_measured(self):
+        self.assertIsNone(self.measure([])["met"])
+        not_a_case = [answer_row(completes=False), answer_row(autopilot=False), answer_row(shortlisted=False),
+                      answer_row(status="accepted")]
+        self.assertIsNone(self.measure(not_a_case)["met"])
+
+    def test_on_time(self):
+        rows = [answer_row(), stop_row(""), row("autopilot-pick", seconds=1), row("start", seconds=2)]
+        self.assertEqual(self.one(rows), ("on-time", True))
+
+    def test_on_time_within_ten_minutes_when_full(self):
+        rows = [answer_row(), stop_row("full", 1), row("autopilot-pick", seconds=550)]
+        self.assertEqual(self.one(rows), ("on-time", True))
+        self.assertEqual(self.one([answer_row(), row("autopilot-pick", seconds=550)]), ("late", False))
+
+    def test_late(self):
+        self.assertEqual(self.one([answer_row(), row("start", seconds=700), stop_row("full", 800)]), ("late", False))
+
+    def test_held(self):
+        self.assertEqual(self.one([answer_row(held=True)]), ("held", True))
+
+    def test_reruns(self):
+        self.assertEqual(self.one([answer_row(), stop_row("reruns", 1)]), ("reruns", True))
+
+    def test_gate(self):
+        self.assertEqual(self.one([answer_row(), stop_row("f", 1, reason="intent: idea.md is draft")]), ("gate", True))
+        late_pick = [answer_row(), row("autopilot-pick", seconds=900), stop_row("f", 901, reason="closed")]
+        self.assertEqual(self.one(late_pick), ("gate", True))
+
+    def test_cap(self):
+        self.assertEqual(self.one([answer_row(), stop_row("cap", 1)]), ("cap", False))
+
+    def test_another_stop(self):
+        self.assertEqual(self.one([answer_row(), stop_row("f", 1, reason="finish and accept intent.md")]), ("stop:f", False))
+        self.assertEqual(self.one([answer_row(), stop_row("a", 1)]), ("stop:a", False))
+
+    def test_none(self):
+        self.assertEqual(self.one([answer_row(), row("start", unit="0002_b", seconds=1), row("start", stage="spec", seconds=2)]), ("none", False))
+
+    def test_the_window(self):
+        old = answer_row(seconds=-3 * 86400)
+        self.assertIsNone(self.measure([old])["met"])
+        self.assertIsNone(ap.measure_reruns([answer_row()], "other", "2026-01-01", "2026-12-31")["met"])
+
+
 class VerifyScript(unittest.TestCase):
     """`scripts/verify_0104.py`'s exit codes, on a run log written through `Journal`."""
 
@@ -506,6 +645,39 @@ class VerifyScript(unittest.TestCase):
     def test_ten_clean_steps_is_0(self):
         done = self.run_script(clean_log(10))
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_no_cos_db_is_2(self):
+        self.assertEqual(self.run_script(None).returncode, 2)
+
+
+class VerifyReruns(unittest.TestCase):
+    """`scripts/verify_0106.py`'s exit codes, on a run log written through `Journal`."""
+
+    def run_script(self, rows):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "data"
+            if rows is not None:
+                log = Journal(str(Path(tmp) / "work"), str(data))
+                for r in rows:
+                    log.append(r)
+            env = {**os.environ, "COS_DATA_DIR": str(data)}
+            return subprocess.run(
+                [sys.executable, str(SCRIPTS / "verify_0106.py"), "--workspace", "w", "--until", "2099-12-31"],
+                env=env, capture_output=True, text=True, timeout=60,
+            )
+
+    def test_on_time_is_0(self):
+        done = self.run_script([answer_row(), row("autopilot-pick", seconds=1)])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("1 cases", done.stdout)
+
+    def test_none_is_1(self):
+        done = self.run_script([answer_row()])
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("none", done.stdout)
+
+    def test_no_case_is_3(self):
+        self.assertEqual(self.run_script([row("start")]).returncode, 3)
 
     def test_no_cos_db_is_2(self):
         self.assertEqual(self.run_script(None).returncode, 2)
