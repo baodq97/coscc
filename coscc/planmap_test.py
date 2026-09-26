@@ -66,6 +66,19 @@ class TheDefinitions(unittest.TestCase):
         self.assertNotIn("def inner", names)
         self.assertFalse(any("nested" in n for n in names))
 
+    def test_a_line_inside_a_multi_line_string_is_no_definition(self):
+        names = [d for _, d in planmap.definitions("planmap_test.py", Path(__file__).read_text(encoding="utf-8"))]
+        self.assertIn("class TheDefinitions", names)
+        for phantom in ("def top", "class Box", "def Box.__init__", "async def later"):
+            self.assertNotIn(phantom, names)
+
+    def test_a_multi_line_string_in_a_class_does_not_end_it(self):
+        text = 'class A:\n    X = """\nnot code\n"""\n\n    def after(self):\n        pass\n'
+        self.assertEqual(planmap.definitions("m.py", text), [(1, "class A"), (6, "def A.after")])
+
+    def test_python_that_does_not_tokenize_is_read_line_by_line(self):
+        self.assertEqual(planmap.definitions("m.py", 'def a():\n    pass\n"""\n'), [(1, "def a")])
+
     def test_javascript_function_class_and_const_at_column_zero(self):
         for name in ("m.js", "m.mjs"):
             with self.subTest(name=name):

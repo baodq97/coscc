@@ -14,8 +14,10 @@ writes no reader of its own. Nothing outside the tree is read. It opens no `cos.
 
 from __future__ import annotations
 
+import io
 import os
 import re
+import tokenize
 from pathlib import Path
 from typing import Any
 
@@ -39,15 +41,37 @@ def _empty() -> dict[str, Any]:
     return {"bytes": 0, "files": 0, "full": 0, "short": 0, "new": 0, "outside": 0}
 
 
+def _statements(text: str) -> set[int] | None:
+    """The lines a logical line of Python starts on, from 1. A line inside a string, a bracket
+    or after a `\\` is not one. `None` when `text` does not tokenize: every line may then be."""
+    starts: set[int] = set()
+    fresh = True
+    skip = (tokenize.NL, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER)
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.NEWLINE:
+                fresh = True
+            elif fresh and tok.type not in skip:
+                starts.add(tok.start[0])
+                fresh = False
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return starts
+
+
 def definitions(name: str, text: str) -> list[tuple[int, str]]:
     """`(line, "def name")` for every definition `spec.md` R9 lists, lines from 1: for `.py`,
     `def` and `class` at column 0 and a `def` four spaces in whose nearest column-0
     statement is a `class`, as `Class.method`; for `.js` and `.mjs`, `function`, `class` and
-    `const … =` at column 0. Any other file has none."""
+    `const … =` at column 0. Any other file has none. A Python line that starts no statement,
+    one inside a multi-line string among them, is neither a definition nor an end of a class."""
     out: list[tuple[int, str]] = []
     if name.endswith(".py"):
         owner = ""
+        starts = _statements(text)
         for i, line in enumerate(text.splitlines(), 1):
+            if starts is not None and i not in starts:
+                continue
             if line[:1] and not line[0].isspace() and not line.startswith("#"):
                 m = _PY.match(line)
                 owner = m.group(2) if m and m.group(1) == "class" else ""
