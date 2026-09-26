@@ -14,11 +14,22 @@ workspace (`coscc/knowledge.py`); `coscc knowledge gather` writes that file
   `--yes` is batches × $2.00, not a bound.
 - Nobody has counted the `spike.md` and `review.md` files the history holds, so what
   `gather --all` costs is unknown until it prints its batch count.
-- `gather --all` writes nothing until every batch has passed. A batch that fails at the end
-  has spent every batch before it for a store that did not change.
-- A batch whose reply the check refuses is sent again by every later `gather`, since the
-  manifest records only what was written. Nothing skips it; read its `reason` in the
-  `knowledge` rows of `cos.db` and decide.
+- Since `0107`, `gather --all` saves the store after every batch that passes and records
+  which sources passed in `<COS_DATA_DIR>/knowledge/gather-all.json`. Running `--all` again
+  goes on from the batch that failed; deleting that file by hand is the only way to start
+  over, and there is no flag for it. While the file is there, `gather` without `--all` is
+  refused. It lives beside the store, in no repository: lose it and the next `--all` starts
+  over and pays again, but the store is not harmed.
+- A reply the check refuses is sent back to be repaired, at most twice (`gather.REPAIRS`),
+  but only while the sum of what the run spent plus one more $2.00 session stays under the
+  figure it printed. So a run of one batch — a daily `gather`, or the last batch of an
+  `--all` run again — is never repaired: it fails at the first refusal. A session that
+  broke, stopped at its ceiling or replied with no JSON is not repaired either.
+- What a run spends can pass the figure it printed by one session's excess over $2.00: the
+  check comes before a session opens, and a session's own cost is known only after it ran.
+- A batch that fails every repair stops the run. It is sent again by the next run, since
+  neither the manifest nor the progress record names it; read its `reason` in the
+  `knowledge` rows of `cos.db` (`attempt` 1 to 3) and decide.
 - A store edited by hand into a block `parse` cannot read — no `Scope:`, no `Source:`, no
   statement, or a `## ` heading that is not `## K<n>` — refuses every `gather`, dry run
   included, until the block is fixed or removed: a save renders only what was read. So
@@ -62,6 +73,11 @@ the batch's `dropped`; `coscc knowledge check` reads the store against `main`.
 5. `coscc knowledge check`: 0 every entry passes and at least half are `tool:`. Run it again
    before 2026-10-02 and after every raise of `reflex` or `claude-agent-sdk`: an entry pinned
    at the old version fails, and the way back is another `gather`.
+
+The store of an unfinished `--all` is a real store holding only the batches that passed, and
+the first save of a new `--all` has already replaced the old one. Turn the flag on before
+`gather-all.json` is gone and `spec`, `spike` and `plan` are handed that part. Nothing stops
+it.
 
 The later the flag goes on, the more units ran `spec` without it and are left out as mixed
 (`spec.md` C8). `measure` reads the deadline, 2026-10-16, as a UTC day.

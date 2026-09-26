@@ -94,13 +94,20 @@ def _gather(config, opts: dict[str, str | bool], say: Callable[[str], None]) -> 
         say(f"coscc knowledge gather: {e}")
         return 1
     n, parts = len(planned["sources"]), len(planned["batches"])
+    if planned["resumed"]:
+        # `0107` R6: what is left of it, and what that may cost.
+        say(f"an unfinished --all ({knowledge.path_of(config.data_dir) / gather.PROGRESS}): "
+            f"{planned['passed']} source(s) passed; {parts} batch(es) left, at most ${planned['ceiling_usd']:.2f}")
     say(f"{n} source(s) in {parts} batch(es); at most ${planned['ceiling_usd']:.2f}, {parts} × the "
         "knowledge grant's ceiling, which is checked after each turn, so a batch can pass it")
     if not opts.get("--yes"):
         if parts:
-            say("nothing was run: add --yes to open " + ("one paid session" if parts == 1 else f"{parts} paid sessions"))
+            say("nothing was run: add --yes to open " + ("one paid session" if parts == 1 else f"{parts} paid sessions")
+                + ", and more to repair a refused reply while the total stays under that figure")
+        elif planned["resumed"]:
+            say("nothing was run: add --yes to finish it, which opens no session")
         return 0
-    if not parts:
+    if not parts and not planned["resumed"]:
         return 0
     from coscc.sessions import Sessions
 

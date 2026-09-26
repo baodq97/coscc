@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
-
 from unittest import mock
 
 from coscc import admit, gather, knowledge, units
@@ -42,9 +42,10 @@ def tearDownModule():
 
 
 class Replies:
-    """Each call takes the next reply; `prompts` keeps what was sent."""
+    """Each call takes the next reply; `prompts` keeps what was sent. `cost=None` reports
+    none, as a session that broke may not."""
 
-    def __init__(self, *replies: str, cost: float = 0.25):
+    def __init__(self, *replies: str, cost: float | None = 0.25):
         self.replies, self.cost = list(replies), cost
         self.prompts: list[str] = []
         self.cwds: list[str] = []
@@ -54,7 +55,8 @@ class Replies:
         self.prompts.append(text)
         self.cwds.append(cwd)
         yield ("chunk", self.replies.pop(0))
-        yield ("done", {"session_id": f"s{len(self.prompts)}", "cost": {"cost_usd": self.cost, "turns": 1}})
+        cost = {"turns": 1} if self.cost is None else {"cost_usd": self.cost, "turns": 1}
+        yield ("done", {"session_id": f"s{len(self.prompts)}", "cost": cost})
 
 
 def reply(store: str, dropped=None) -> str:
@@ -65,6 +67,17 @@ def entry(n: int, source: str, scope: str = "tool:claude-agent-sdk 0.2.158", ref
     """A `workspace:` entry carries `Ref: <ref>`, a file both repositories hold (`0108` R5)."""
     refs = f"Ref: {ref}\n" if scope.startswith("workspace:") else ""
     return f"## K{n}\nScope: {scope}\nSource: {source}\n{refs}Measured: 2026-09-25\nA fact {n}."
+
+
+def sized(first: int, total: int, source: str) -> str:
+    """Entries from `K<first>` whose text `validate` measures at exactly `total` bytes, each
+    of them 500 bytes but the last, so the only reason to refuse them is the store's cap."""
+    n = total // 502 + 1
+    blocks = [entry(first + k, source) for k in range(n)]
+    blocks = [b + "x" * (500 - len(b)) for b in blocks[:-1]] + [blocks[-1]]
+    blocks[-1] += "x" * (total - len("\n\n".join(blocks)))
+    assert all(len(b) <= knowledge.ENTRY_BYTES for b in blocks)
+    return "\n\n".join(blocks)
 
 
 class Fixture(unittest.TestCase):
@@ -378,40 +391,239 @@ class AGather(Fixture):
 
 
 class AllRebuilds(Fixture):
+    # Batch 1 is B's (`other-` sorts first), batch 2 A's, which is given the tool entry K8.
     def setUp(self):
         super().setUp()
-        self.unit(A, "0001_a", spike_md="# Spike\n## U1\nx\n")
-        self.unit(B, "0001_a", spike_md="# Spike\n## U1\ny\n")
+        # Here, not on the class: `A` and `B` are set by `setUpModule`, after import.
+        self.B_SRC = f"{B}/0001_a/spike.md ## U1"
+        self.A_SRC = f"{A}/0001_a/spike.md ## U1"
+        self.unit(A, "0001_a", spike_md="# Spike\n## U1\nA measured x\n")
+        self.unit(B, "0001_a", spike_md="# Spike\n## U1\nB measured y\n")
         old = knowledge.render({"version": 3, "gathered": "2026-09-01T00:00:00Z", "max_id": 7},
-                               knowledge.parse(entry(7, f"{A}/0001_a/spike.md ## U1"))["entries"])
+                               knowledge.parse(entry(7, self.A_SRC))["entries"])
         knowledge.save(self.dir / knowledge.STORE, old)
         self.old = old
 
-    def test_it_keeps_max_id_and_replaces_the_store_only_when_every_batch_passed(self):
-        # Batch 1 is B's (`other-` sorts first), batch 2 A's, which is given the tool entry K8.
-        s = Replies(reply(entry(8, f"{B}/0001_a/spike.md ## U1")),
-                    reply(entry(8, f"{B}/0001_a/spike.md ## U1") + "\n\n"
-                          + entry(9, f"{A}/0001_a/spike.md ## U1", scope=f"workspace:{A}")))
+    def batch_one(self) -> str:
+        return reply(entry(8, self.B_SRC))
+
+    def batch_two(self) -> str:
+        return reply(entry(8, self.B_SRC) + "\n\n" + entry(9, self.A_SRC, scope=f"workspace:{A}"))
+
+    def refused(self) -> str:
+        # K1 is at or below the old store's Max id K7.
+        return reply(entry(1, self.B_SRC))
+
+    def progress(self) -> dict | None:
+        return gather.load_progress(self.dir / gather.PROGRESS)
+
+    def half_done(self) -> Replies:
+        """`0107` R4: batch 1 passes, batch 2 is refused, and so are both its repairs."""
+        s = Replies(self.batch_one(), self.refused(), self.refused(), self.refused())
+        self.assertEqual(self.run_gather(s, "all"), 1)
+        return s
+
+    def test_it_keeps_max_id_and_rebuilds_the_store_batch_by_batch(self):
+        s = Replies(self.batch_one(), self.batch_two())
         self.assertEqual(self.run_gather(s, "all"), 0)
         parsed = knowledge.parse(self.store())
         self.assertEqual([e["id"] for e in parsed["entries"]], [8, 9])
-        self.assertEqual((parsed["header"]["version"], parsed["header"]["max_id"]), (4, 9))
+        # One version per save, as `new` has always counted them: 3, then one per batch.
+        self.assertEqual((parsed["header"]["version"], parsed["header"]["max_id"]), (5, 9))
         first, second = self.rows()
         self.assertEqual(first["dropped"], [{"id": "K7", "reason": gather.REBUILT}])
         self.assertEqual((first["mode"], first["entries_before"], second["entries_after"]), ("all", 1, 2))
         self.assertEqual(set(self.manifest()), {f"{A}/0001_a/spike.md", f"{B}/0001_a/spike.md"})
 
     def test_an_id_at_or_below_the_old_max_is_refused(self):
-        s = Replies(reply(entry(1, f"{B}/0001_a/spike.md ## U1")))
+        s = Replies(self.refused(), self.refused(), self.refused())
         self.assertEqual(self.run_gather(s, "all"), 1)
         self.assertEqual(self.store(), self.old)
+        self.assertEqual([(r["outcome"], r["attempt"]) for r in self.rows()],
+                         [("failed", 1), ("failed", 2), ("failed", 3)])
 
-    def test_a_failure_at_batch_two_leaves_the_store_as_it_was(self):
-        s = Replies(reply(entry(8, f"{B}/0001_a/spike.md ## U1")), "no json here")
-        self.assertEqual(self.run_gather(s, "all"), 1)
-        self.assertEqual(self.store(), self.old)
+    def test_each_batch_prompt_says_how_many_bytes_its_store_holds(self):
+        s = Replies(self.batch_one(), self.batch_two())
+        self.run_gather(s, "all")
+        self.assertIn("The part of the store below is 0 bytes now", s.prompts[0])
+        # What batch 1 wrote and batch 2 is given, measured as `validate` measures it.
+        given = len(knowledge.entries_text(knowledge.parse(entry(8, self.B_SRC))["entries"]).encode("utf-8"))
+        self.assertIn(f"The part of the store below is {given} bytes now", s.prompts[1])
+
+    def test_a_failure_at_batch_two_keeps_what_batch_one_wrote(self):
+        # `0107` R4 turns the old `..._leaves_the_store_as_it_was` round: what passed is kept.
+        self.half_done()
+        text = self.store()
+        parsed = knowledge.parse(text)
+        self.assertEqual(([e["id"] for e in parsed["entries"]], parsed["skipped"]), ([8], []))
+        for slot in (A, B):
+            self.assertLessEqual(knowledge.slice_for(text, slot)[1]["bytes"], knowledge.CAP_BYTES)
+        found = {s["label"]: s["sha"] for s in gather.sources(str(self.data))}
+        self.assertEqual(self.progress()["done"], {f"{B}/0001_a/spike.md": found[f"{B}/0001_a/spike.md"]})
         self.assertEqual(self.manifest(), {})
-        self.assertEqual([r["outcome"] for r in self.rows()], ["done", "failed"])
+        self.assertEqual([r["outcome"] for r in self.rows()], ["done", "failed", "failed", "failed"])
+
+    def test_a_failed_new_says_the_batches_before_it_are_kept(self):
+        # `0107` review F2: "nothing written" was true of the batch, not of the run.
+        def failed() -> str:
+            return [line for line in self.said if " failed, " in line][-1]
+
+        self.assertEqual(self.run_gather(Replies(self.refused(), self.refused(), self.refused()), "new"), 1)
+        self.assertTrue(failed().startswith("batch 1/2 failed, nothing of it written: "), failed())
+        self.assertEqual(self.manifest(), {})
+        # `new` keeps the old store, so batch 1 has to hand K7 back beside its own K8.
+        keep = reply(entry(7, self.A_SRC) + "\n\n" + entry(8, self.B_SRC))
+        s = Replies(keep, self.refused(), self.refused(), self.refused())
+        self.assertEqual(self.run_gather(s, "new"), 1)
+        self.assertTrue(failed().startswith(
+            "batch 2/2 failed, nothing of it written, the batches before it are kept: "), failed())
+        self.assertEqual(list(self.manifest()), [f"{B}/0001_a/spike.md"])
+
+    def test_a_second_all_resumes_at_the_batch_that_failed(self):
+        self.half_done()
+        s = Replies(self.batch_two())
+        self.assertEqual(self.run_gather(s, "all"), 0)
+        [prompt] = s.prompts
+        self.assertNotIn(f"### {B}/0001_a/spike.md", prompt)
+        self.assertIn(f"### {A}/0001_a/spike.md", prompt)
+        self.assertIn("## K8", prompt)
+        self.assertEqual([e["id"] for e in knowledge.parse(self.store())["entries"]], [8, 9])
+        last = self.rows()[-1]
+        self.assertEqual((last["mode"], last["resumed"], last["outcome"], last["dropped"]), ("all", True, "done", []))
+        self.assertTrue(all(r["mode"] == "all" for r in self.rows()))
+
+    def test_the_store_is_saved_before_the_progress_that_records_it(self):
+        # The other way round, a batch could be marked passed that the store does not hold.
+        saved: list[str] = []
+        real = knowledge.save
+        with mock.patch.object(knowledge, "save", lambda p, t: (saved.append(Path(p).name), real(p, t))):
+            self.run_gather(Replies(self.batch_one(), self.batch_two()), "all")
+        self.assertEqual(saved, [knowledge.STORE, gather.PROGRESS, knowledge.STORE, gather.PROGRESS, knowledge.SOURCES])
+
+    def test_a_finished_resume_writes_the_manifest_and_removes_the_progress(self):
+        self.half_done()
+        self.run_gather(Replies(self.batch_two()), "all")
+        self.assertIsNone(self.progress())
+        self.assertEqual(self.manifest(), {s["label"]: s["sha"] for s in gather.sources(str(self.data))})
+        self.assertIn("is version 5, 2 entries", self.said[-1])
+
+    def test_a_resume_with_nothing_left_only_finishes(self):
+        # The last batch passed, and the process died before the manifest or the unlink.
+        every = {s["label"]: s["sha"] for s in gather.sources(str(self.data))}
+        gather.save_progress(self.dir / gather.PROGRESS, {"started": "t", "done": every, "rebuilt_recorded": True})
+        s = Replies()
+        self.assertEqual(self.run_gather(s, "all"), 0)
+        self.assertEqual((s.prompts, self.rows(), self.store()), ([], [], self.old))
+        self.assertIsNone(self.progress())
+        self.assertEqual(self.manifest(), every)
+
+    def test_the_rebuilt_list_goes_with_the_first_save_and_never_again(self):
+        # 1: batch 1 refused outright. Nothing is saved, so nothing is recorded as rebuilt.
+        self.assertEqual(self.run_gather(Replies(self.refused(), self.refused(), self.refused()), "all"), 1)
+        self.assertEqual([r["dropped"] for r in self.rows()], [[], [], []])
+        self.assertIsNone(self.progress())
+        self.assertEqual(self.store(), self.old)
+        # 2: a new `--all` from the same old store; its first save names what it replaced.
+        self.half_done()
+        done = [r for r in self.rows() if r["outcome"] == "done"]
+        self.assertEqual([(r["batch"], r["dropped"]) for r in done], [(1, [{"id": "K7", "reason": gather.REBUILT}])])
+        # 3: the resume names it again nowhere.
+        self.assertEqual(self.run_gather(Replies(self.batch_two()), "all"), 0)
+        rebuilt = [r for r in self.rows() if any(d.get("reason") == gather.REBUILT for d in r["dropped"])]
+        self.assertEqual(len(rebuilt), 1)
+
+    def test_a_refused_reply_is_repaired_and_the_batch_passes(self):
+        over = reply(sized(8, 8858, self.B_SRC))
+        s = Replies(over, self.batch_one(), self.batch_two())
+        self.assertEqual(self.run_gather(s, "all"), 0)
+        self.assertEqual([e["id"] for e in knowledge.parse(self.store())["entries"]], [8, 9])
+        rows = self.rows()
+        self.assertEqual([(r["batch"], r["attempt"], r["outcome"]) for r in rows],
+                         [(1, 1, "failed"), (1, 2, "done"), (2, 1, "done")])
+        self.assertEqual(rows[0]["reason"], f"workspace:{B} would receive 8858 bytes, over 8192")
+        self.assertTrue(all(r["mode"] == "all" and r["resumed"] is False for r in rows))
+        self.assertIn("batch 1/2: refused, repair 1/2: ", "\n".join(self.said))
+
+    def test_a_batch_that_was_repaired_says_what_all_its_sessions_cost(self):
+        s = Replies(reply(sized(8, 8858, self.B_SRC)), self.batch_one(), self.batch_two())
+        self.assertEqual(self.run_gather(s, "all"), 0)
+        done = [line for line in self.said if " done: " in line]
+        self.assertEqual(done, [
+            "batch 1/2 done: 1 entries, 2 session(s), cost $0.50; $0.50 counted against the $4.00 printed",
+            "batch 2/2 done: 2 entries, 1 session(s), cost $0.25; $0.75 counted against the $4.00 printed",
+        ])
+
+    def test_a_batch_line_names_the_sessions_that_reported_no_cost(self):
+        s = Replies(self.batch_one(), self.batch_two(), cost=None)
+        self.assertEqual(self.run_gather(s, "all"), 0)
+        self.assertIn("batch 1/2 done: 1 entries, 1 session(s), cost $0.00, and 1 that reported no cost; "
+                      "$2.00 counted against the $4.00 printed", self.said)
+
+    def test_the_repair_prompt_carries_the_reasons_and_the_bytes_and_no_source(self):
+        s = Replies(reply(sized(8, 8858, self.B_SRC)), self.batch_one(), self.batch_two())
+        self.run_gather(s, "all")
+        first, repair = s.prompts[0], s.prompts[1]
+        self.assertIn("B measured y", first)
+        self.assertIn("would receive 8858 bytes, over 8192", repair)
+        self.assertIn("entries total 8858 bytes", repair)
+        self.assertIn("7372", repair)
+        self.assertIn("## K8", repair)
+        self.assertNotIn("B measured y", repair)
+        self.assertNotIn(f"### {B}/0001_a/spike.md", repair)
+
+    def test_no_session_opens_past_the_ceiling(self):
+        with self.subTest(batches=2):
+            # $4.00: batch 1 at $1.50, a repair at $3.00, and a second repair could reach $5.00.
+            s = Replies(self.refused(), self.refused(), cost=1.5)
+            self.assertEqual(self.run_gather(s, "all"), 1)
+            self.assertEqual(len(s.prompts), 2)
+            self.assertIn("$3.00 spent", self.said[-1])
+            self.assertIn("past the $4.00 printed", self.said[-1])
+        shutil.rmtree(self.data / "units" / B)
+        with self.subTest(batches=1):
+            s = Replies(reply(entry(1, self.A_SRC)), cost=1.5)
+            self.assertEqual(self.run_gather(s, "all"), 1)
+            self.assertEqual(len(s.prompts), 1)
+            self.assertIn("past the $2.00 printed", self.said[-1])
+
+    def test_a_session_with_no_cost_counts_as_the_grant_ceiling(self):
+        s = Replies(self.refused(), self.refused(), self.refused(), cost=None)
+        self.assertEqual(self.run_gather(s, "all"), 1)
+        # $2.00 + $2.00 reaches the $4.00 printed; a third session could pass it.
+        self.assertEqual(len(s.prompts), 2)
+        self.assertNotIn("cost_usd", self.rows()[0])
+        self.assertIn("$4.00 spent", self.said[-1])
+
+    # `0107` plan step 1: what `plan_of` makes of a progress record written by hand.
+
+    def write(self, text: str) -> None:
+        knowledge.save(self.dir / gather.PROGRESS, text)
+
+    def test_all_leaves_out_what_passed_and_sends_again_what_changed(self):
+        found = {s["label"]: s["sha"] for s in gather.sources(str(self.data))}
+        a, b = f"{A}/0001_a/spike.md", f"{B}/0001_a/spike.md"
+        gather.save_progress(self.dir / gather.PROGRESS,
+                             {"started": "t", "done": {b: found[b], a: "an older sha"}, "rebuilt_recorded": True})
+        planned = gather.plan_of(str(self.data), "all")
+        self.assertEqual([s["label"] for s in planned["sources"]], [a])
+        self.assertEqual((planned["resumed"], planned["passed"], planned["ceiling_usd"]), (True, 2, 2.0))
+
+    def test_new_is_refused_and_names_the_record(self):
+        gather.save_progress(self.dir / gather.PROGRESS, {"started": "t", "done": {}, "rebuilt_recorded": True})
+        s = Replies(self.batch_one())
+        with self.assertRaises(gather.Refused) as refused:
+            self.run_gather(s, "new")
+        self.assertIn(str(self.dir / gather.PROGRESS), str(refused.exception))
+        self.assertEqual(s.prompts, [])
+
+    def test_a_record_that_does_not_read_is_an_error_not_an_empty_one(self):
+        for text in ("{not json", "[]", '{"started": "t", "done": {"x": 1}, "rebuilt_recorded": true}',
+                     '{"started": "t", "done": {}}'):
+            with self.subTest(text=text):
+                self.write(text)
+                with self.assertRaises(ValueError) as failed:
+                    gather.plan_of(str(self.data), "all")
+                self.assertIn(str(self.dir / gather.PROGRESS), str(failed.exception))
 
 
 if __name__ == "__main__":
