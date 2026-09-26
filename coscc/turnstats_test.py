@@ -189,6 +189,18 @@ class TheCommand(Fixture):
         self.assertEqual((code, out), (2, ""))
         self.assertIn(config.PROTECTED_DB_VAR, err)
 
+    def test_a_database_that_links_to_a_protected_one_is_refused_before_it_is_opened(self):
+        protected, linked = self.data / "cos.db", self.root / "linked"
+        linked.mkdir()
+        (linked / "cos.db").symlink_to(protected)
+        self.data = linked
+        env = {config.PROTECTED_DB_VAR: str(protected)}
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(turnstats.sqlite3, "connect", side_effect=AssertionError("opened")):
+            code, out, err = self.main("--since", "2026-09-24")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn(config.PROTECTED_DB_VAR, err)
+
     def test_a_missing_database_is_exit_2_and_is_not_made(self):
         self.data = self.root / "none"
         code, _, err = self.main()

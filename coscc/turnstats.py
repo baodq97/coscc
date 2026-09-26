@@ -61,8 +61,9 @@ def _mean(values: list[float], digits: int | None) -> float | None:
 
 def open_db(data_root: str | Path) -> sqlite3.Connection:
     """`<data_root>/cos.db`, read-only. Refused before anything is opened when
-    `config.protected_databases()` lists it, as `Data.connect` refuses (`0076` R5)."""
-    db = Path(data_root).expanduser().resolve() / DB_FILENAME
+    `config.protected_databases()` lists it, as `Data.connect` refuses (`0076` R5). The file
+    is resolved, not only its directory, so a `cos.db` that links to a listed one is refused."""
+    db = (Path(data_root).expanduser() / DB_FILENAME).resolve()
     if db in config.protected_databases():
         raise Refused(
             f"{db} belongs to the app that started this process; "
