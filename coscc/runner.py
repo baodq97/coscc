@@ -221,6 +221,27 @@ PRIOR_FINDINGS_ADVICE = (
     "not change the plan."
 )
 
+# `0096` R9, R10. Two headings, and the same words after each, for `impl` only; `write-impl`
+# describes both. The commands advice is prose about `policy.check_command`, and
+# `runner_test.TheCommandsAStepMayRun` asks that function each thing it says is refused.
+PLAN_MAP_HEADING = "# The files this plan changes, as they stand"
+PLAN_MAP_ADVICE = (
+    "Each file above is one the plan's `## Files that change` names, with its line count and, "
+    "for Python and JavaScript, the line each top-level and class-level definition starts on, "
+    "as the tree stood when this step began; `new` is a file not there yet. Read the part you "
+    "need with `Read` and `offset`/`limit` instead of searching for it again. The numbers move "
+    "once you edit a file."
+)
+COMMANDS_HEADING = "# The commands this step may run"
+COMMANDS_ADVICE = (
+    "Every segment of a command line, each part after `;`, `&&`, `||` or `|`, must open with "
+    "one of these words; any other is refused, `cd` and `timeout` among them. To read part of "
+    "a file, use `Read` with `offset` and `limit`. A redirect that writes a file, anywhere but "
+    "`/dev/null` or under a `/tmp` directory named after this unit, is refused, and so is a "
+    "command or process substitution (`$(…)`, backticks, `<(…)`): write with `Write` or "
+    "`Edit` instead."
+)
+
 
 def _jera_answers(directory: Path, names: list[str]) -> str:
     """`# Answers an agent gave`, listing every `<artifact> ### Câu N` block Jera wrote in
@@ -326,6 +347,8 @@ def compose_prompt(
     rerun: bool = False,
     rerun_note: str = "",
     prior_findings: str = "",
+    plan_map: str = "",
+    commands: tuple[str, ...] = (),
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole (`spec.md` R4), and
     the ones it names by path only (`0094` R16).
@@ -335,6 +358,10 @@ def compose_prompt(
 
     `prior_findings` (`0110` R6) is what `priorfindings.for_step` built, placed for `impl`
     only; `""`, or any other stage, adds not one byte (R9).
+
+    `plan_map` (`0096` R9) is what `planmap.for_step` built and `commands` (R10) the words
+    of the step's grant, both placed for `impl` only; empty, or any other stage, adds not
+    one byte (R11).
 
     The list is returned rather than inferred later because R4 is checked against it: if a
     step ran without the previous stage's artifact in the prompt, the record says so.
@@ -460,6 +487,17 @@ def compose_prompt(
     if knowledge and stage in KNOWLEDGE_STAGES:
         included.append("knowledge")
         parts.append(f"# What earlier units measured\n\n{knowledge}\n\n{KNOWLEDGE_ADVICE}")
+
+    # `0096` R9, R10. The files the plan changes as they stand, already capped
+    # (`planmap.select`), and the first words the grant allows, taken from it rather than
+    # written here; this only places them.
+    if plan_map and stage in ("impl", "implement"):
+        included.append("plan-map")
+        parts.append(f"{PLAN_MAP_HEADING}\n\n{plan_map}\n\n{PLAN_MAP_ADVICE}")
+    if commands and stage in ("impl", "implement"):
+        included.append("commands")
+        words = ", ".join(f"`{c}`" for c in commands)
+        parts.append(f"{COMMANDS_HEADING}\n\n{words}\n\n{COMMANDS_ADVICE}")
 
     # `0110` R6. The finding lines earlier reviews raised on the files this plan changes,
     # already chosen and capped (`priorfindings.select`); this only places it, before the
@@ -1528,6 +1566,8 @@ class Runner:
         rerun_note: str = "",
         prior_findings: str = "",
         prior_findings_record: dict[str, Any] | None = None,
+        plan_map: str = "",
+        plan_map_record: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -1593,6 +1633,10 @@ class Runner:
         `priorfindings.for_step` built for an `impl` step, for the prompt, and its
         `{bytes, lines, units, dropped}`, for `start`. `None` leaves the record without the
         field, which is every other stage.
+
+        `plan_map` and `plan_map_record` are `0096` R9/R11's, the same way round: what
+        `planmap.for_step` built, and its `{bytes, files, full, short, new, outside}`. An
+        `impl` step's prompt also carries its grant's `commands` (R10).
         """
         check_started_by(started_by)
         grant = grant_for_step(stage, label)
@@ -1635,6 +1679,8 @@ class Runner:
             rerun=rerun,
             rerun_note=rerun_note,
             prior_findings=prior_findings,
+            plan_map=plan_map,
+            commands=grant.commands if stage in ("impl", "implement") else (),
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
@@ -1695,6 +1741,9 @@ class Runner:
                     if prior_findings_record is not None
                     else {}
                 ),
+                # `0096` R11. The same: every `impl` start from this build, `bytes: 0` when
+                # the plan names no file.
+                **({"plan_map": plan_map_record} if plan_map_record is not None else {}),
                 # `0054` R7. Only on a stage run again from the board, so every other `start`
                 # is what it was.
                 **({"rerun": True, "rerun_note": rerun_note} if rerun else {}),

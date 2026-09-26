@@ -72,6 +72,24 @@ plan's `## Files that change` names, prefixed with that unit and round. Before y
 branch, check whether your change repeats any of them. They are not requirements and do not
 change the plan.
 
+## Reading the tree
+
+Every turn re-sends the whole session so far, so a read that could have shared a turn costs
+the most the later it comes (`0096`).
+
+- Put `Read`, `Grep` and `Glob` calls that do not depend on each other in one turn.
+- Open the files the plan's `## Files that change` names together, in one turn, at the start
+  of the session, rather than one at a time as each becomes needed.
+
+A step started from the coscc board may carry a section *The files this plan changes, as
+they stand*: each of those files with its line count and, for Python and JavaScript, the line
+each top-level and class-level definition starts on, taken as the step began. Read the part
+you need with `offset`/`limit` rather than searching for it again.
+
+It may also carry *The commands this step may run*: the first words the step's grant allows,
+read from the grant. A segment of a command line that opens with any other word is refused,
+and so is a redirect that writes a file or a substitution; use the file tools instead.
+
 ## Screens
 
 This applies when the branch changes a file listed under `paths:` in

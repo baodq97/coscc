@@ -3603,6 +3603,57 @@ class RunStepHandsOnWhatEarlierReviewsSaid(RunStepHandsOnTheKnowledgeStore):
                          {"bytes": 0, "lines": 0, "units": 0, "dropped": 0, "unreadable": 1})
 
 
+class RunStepHandsOnThePlanMap(RunStepHandsOnTheKnowledgeStore):
+    """`0096` plan step 4. `run_step` hands an `impl` step the files its plan names as they
+    stand in the step's tree, and every other stage no key. The same stand-ins as the
+    knowledge store's; the tests of that class run here too."""
+
+    PLAN = "# Plan: x\nStatus: accepted.\n\n## Files that change\n\n- `pkg/m.py`.\n- `pkg/later.py`.\n"
+
+    def plan(self, text: str | bytes) -> None:
+        path = units.unit_dir(str(self.repo), self.unit, str(self.data)) / "plan.md"
+        if isinstance(text, bytes):
+            path.write_bytes(text)
+        else:
+            path.write_text(text, encoding="utf-8")
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / "pkg").mkdir()
+        (self.repo / "pkg" / "m.py").write_text("import os\n\n\ndef top():\n    pass\n", encoding="utf-8")
+
+    def test_impl_gets_the_files_of_its_plan_from_the_tree(self):
+        service = self.service(False)
+        self.plan(self.PLAN)
+        kw = self.kwargs_of(service, "impl")
+        self.assertEqual(kw["plan_map"], "- `pkg/m.py` — 5 lines\n  - 4 def top\n- `pkg/later.py` — new")
+        self.assertEqual((kw["plan_map_record"]["files"], kw["plan_map_record"]["new"]), (2, 1))
+        self.assertNotIn("error", kw["plan_map_record"])
+
+    def test_a_plan_without_the_section_is_an_empty_section_and_zero_bytes(self):
+        service = self.service(False)
+        self.plan("# Plan: x\nStatus: accepted.\n")
+        kw = self.kwargs_of(service, "impl")
+        self.assertEqual(kw["plan_map"], "")
+        self.assertEqual(kw["plan_map_record"]["bytes"], 0)
+
+    def test_no_other_stage_gets_a_key(self):
+        service = self.service(False)
+        self.plan(self.PLAN)
+        for stage in ("plan", "pr", "review", "ship"):
+            with self.subTest(stage=stage):
+                kw = self.kwargs_of(service, stage)
+                self.assertNotIn("plan_map", kw)
+                self.assertNotIn("plan_map_record", kw)
+
+    def test_a_plan_that_cannot_be_read_still_runs_the_step(self):
+        service = self.service(False)
+        self.plan(b"# Plan: x\nStatus: accepted.\n\n## Files that change\n\n- `pkg/m.py` \xff\n")
+        kw = self.kwargs_of(service, "impl")
+        self.assertEqual(kw["plan_map"], "")
+        self.assertIn("UnicodeDecodeError", kw["plan_map_record"]["error"])
+
+
 class TheStateOfAUnit(unittest.TestCase):
     """`0100` R3, R5, R13. One state per unit, the first rule that matches deciding it."""
 

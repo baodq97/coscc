@@ -4112,3 +4112,114 @@ class TheScreenshotsTakenAgain(unittest.TestCase):
 
             asyncio.run(go())
         self.assertIn("SCREENS-MARKER", seen[0])
+
+
+class ThePlanMapAndTheCommands(unittest.TestCase):
+    """`0096` plan step 3. `service.run_step` builds the map and `Runner.run` hands on the
+    grant's words; this module places both for `impl` only, and every other stage's prompt is
+    what it was, byte for byte (R11)."""
+
+    MAP = "- `coscc/runner.py` — 2000 lines\n  - 307 def compose_prompt MAP-MARKER"
+    WORDS = ("git", "npm", "COMMAND-MARKER")
+
+    unit = WhatEarlierUnitsMeasured.unit
+    ANSWERS = WhatEarlierUnitsMeasured.ANSWERS
+    rules = staticmethod(WhatEarlierUnitsMeasured.rules)
+
+    def test_no_stage_but_impl_carries_them_even_when_handed_them(self):
+        from coscc import runner
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(runner, "skill_for", self.rules):
+            directory = self.unit(d)
+            for stage in [s for s in STAGES if s != "impl"]:
+                with self.subTest(stage=stage):
+                    args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
+                    self.assertEqual(compose_prompt(*args, plan_map=self.MAP, commands=self.WORDS),
+                                     compose_prompt(*args))
+            prompt = compose_prompt(d, directory, UNIT, "implement", STAGES, "implement.md",
+                                    plan_map=self.MAP, commands=self.WORDS)[0]
+            self.assertIn("MAP-MARKER", prompt)
+            self.assertIn("COMMAND-MARKER", prompt)
+
+    def test_nothing_handed_is_the_impl_prompt_byte_for_byte(self):
+        from coscc.runner import COMMANDS_HEADING, PLAN_MAP_HEADING
+
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d)
+            args = (d, directory, UNIT, "impl", STAGES, "impl.md")
+            without = compose_prompt(*args)
+            self.assertEqual(compose_prompt(*args, plan_map="", commands=()), without)
+            for heading in (PLAN_MAP_HEADING, COMMANDS_HEADING):
+                self.assertNotIn(heading, without[0])
+            self.assertNotIn("plan-map", without[1])
+            self.assertNotIn("commands", without[1])
+
+    def test_impl_carries_each_once_after_the_plan_and_before_the_earlier_reviews(self):
+        from coscc.runner import (
+            COMMANDS_ADVICE, COMMANDS_HEADING, PLAN_MAP_ADVICE, PLAN_MAP_HEADING, PRIOR_FINDINGS_HEADING,
+        )
+
+        with tempfile.TemporaryDirectory() as d:
+            directory = self.unit(d)
+            prompt, included, _ = compose_prompt(
+                d, directory, UNIT, "impl", STAGES, "impl.md",
+                plan_map=self.MAP, commands=self.WORDS, prior_findings=WhatEarlierReviewsSaid.SECTION)
+            for heading in (PLAN_MAP_HEADING, COMMANDS_HEADING):
+                self.assertEqual(prompt.count(heading), 1)
+                self.assertLess(prompt.index("# The plan it follows"), prompt.index(heading))
+                self.assertLess(prompt.index(heading), prompt.index(PRIOR_FINDINGS_HEADING))
+            self.assertIn(f"{PLAN_MAP_HEADING}\n\n{self.MAP}\n\n{PLAN_MAP_ADVICE}", prompt)
+            self.assertIn(f"{COMMANDS_HEADING}\n\n`git`, `npm`, `COMMAND-MARKER`\n\n{COMMANDS_ADVICE}", prompt)
+            self.assertIn("plan-map", included)
+            self.assertIn("commands", included)
+
+
+class TheCommandsAStepMayRun(unittest.TestCase):
+    """`0096` Risk 4. `COMMANDS_ADVICE` is prose about `policy.check_command`: each thing it
+    says is refused is refused, and what it says may run does, on `impl`'s own grant."""
+
+    def test_what_the_advice_says_is_refused_is_refused(self):
+        grant = policy.grant_for_step("impl", None)
+        for line in ("cd x", "timeout 5 npm test", "git status; cd x", "echo a > f.txt", "echo $(pwd)",
+                     "echo `pwd`", "diff <(ls) f"):
+            with self.subTest(line=line):
+                self.assertNotEqual(policy.check_command(grant, line, unit=UNIT), "")
+
+    def test_what_it_says_may_run_runs(self):
+        grant = policy.grant_for_step("impl", None)
+        for line in ("echo a > /dev/null", "git status && npm test", "ls | wc -l"):
+            with self.subTest(line=line):
+                self.assertEqual(policy.check_command(grant, line, unit=UNIT), "")
+
+    def test_the_words_an_impl_step_gets_are_its_grant(self):
+        from coscc.runner import COMMANDS_HEADING
+
+        steps = AStepCarriesItsGrantAndNothingOfTheMachine()
+        words = ", ".join(f"`{c}`" for c in policy.grant_for_step("impl", None).commands)
+        for stage in ("impl", "plan"):
+            replies = steps.Replies()
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
+                make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+                steps._run(d, replies, stage=stage)
+                if stage == "impl":
+                    self.assertIn(f"{COMMANDS_HEADING}\n\n{words}\n\n", replies.prompt)
+                else:
+                    self.assertNotIn(COMMANDS_HEADING, replies.prompt)
+
+    def test_write_impl_tells_a_step_to_batch_its_reads(self):
+        prompt = compose_prompt("/w", "/nowhere", UNIT, "impl", STAGES, "impl.md")[0]
+        self.assertIn("## Reading the tree", prompt)
+        self.assertIn("in one turn", prompt)
+
+
+class AStepRecordsThePlanMapItCarried(AStepRecordsTheBaseItRanOn):
+    """`0096` R11: the record handed in is the record written, and none is no field."""
+
+    def test_no_record_handed_in_leaves_no_field(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertNotIn("plan_map", self._start_record(d))
+
+    def test_the_record_handed_in_is_the_record_written(self):
+        record = {"bytes": 0, "files": 0, "full": 0, "short": 0, "new": 0, "outside": 0}
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self._start_record(d, plan_map_record=record)["plan_map"], record)
