@@ -19,12 +19,13 @@ node .claude/scripts/cos.mjs next <unit> [--repo <dir>]           # JSON: the on
 node .claude/scripts/cos.mjs new-path <slug>       # allocates the number, validates the slug
 node .claude/scripts/cos.mjs unit-branch <unit>    # the branch name this unit's Type implies
 node .claude/scripts/cos.mjs pr-text <unit>        # JSON: title and body pr.md puts on its pull request
+node .claude/scripts/cos.mjs rerun <unit> [<stage>] # JSON: stages the board may run again, or its ### Rerun block
 node .claude/scripts/cos.mjs check-branch [name]   # the branch you are on, or one you are considering
 node .claude/scripts/cos.mjs check-tag <tag>       # prints: release | prerelease
 node .claude/scripts/cos.mjs check-version         # the five places a version is declared
 ```
 
-The first six take `--root <dir>` and read another repository's `.cos/`; the last three
+The first seven take `--root <dir>` and read another repository's `.cos/`; the last three
 refuse it, and `new-path` alone also takes `--reserve-from <dir>` (repeatable) to count
 that directory's numbers as taken. `gate` and `next` take `--repo <dir>`, the checkout whose
 branch and pull request the `review` and `ship` gates read: with `--root` and no `--repo`

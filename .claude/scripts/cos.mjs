@@ -4,6 +4,7 @@
 // — whether a spec should be skipped, whether a plan is good — stays with the skills.
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -50,6 +51,11 @@ const STAGE_ALIAS = { implement: 'impl' }
 
 const stageOf = (name) => STAGES.find((s) => s.name === (STAGE_ALIAS[name] ?? name)) ?? null
 export const STAGE_NAMES = STAGES.map((s) => s.name)
+
+// `0054` R1 (a): the stages a person may run again from the board once their artifact is
+// accepted (`intent.md ## Answers, câu 2`). `idea`, `impl`, `review` and `ship` are not
+// among them. `cmdRerun` is the one reader.
+export const RERUNNABLE = ['intent', 'spec', 'spike', 'plan', 'pr']
 
 const ARTIFACTS = STAGES.map((s) => s.file)
 const VALID = Object.fromEntries(STAGES.map((s) => [s.file, s.statuses]))
@@ -132,6 +138,9 @@ const ANSWER_META = /^Answered by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\
 // Since `0045` the section may also hold hold blocks (`HOLD_HEAD`). Each one ends the block
 // above it, so a reason is never read as the tail of the answer before it, and none is ever
 // returned as an answer.
+//
+// Since `0054` a `### Rerun` block (`RERUN_HEAD`) ends the block above it the same way, and
+// is not an answer either.
 function answerBlocks(text) {
   const lines = section(text, 'Answers')
   if (lines === null) return []
@@ -140,6 +149,7 @@ function answerBlocks(text) {
     const m = line.match(/^###\s+(?:Câu\s+(\d+)|(F\d+)|(Outcome))\s*$/)
     if (m) blocks.push({ n: m[1] !== undefined ? Number(m[1]) : null, id: m[2] ?? null, outcome: m[3] !== undefined, lines: [] })
     else if (HOLD_HEAD.test(line)) blocks.push({ hold: true, lines: [] })
+    else if (RERUN_HEAD.test(line)) blocks.push({ rerun: true, lines: [] })
     else if (blocks.length) blocks[blocks.length - 1].lines.push(line)
   }
   return blocks
@@ -148,7 +158,7 @@ function answerBlocks(text) {
 export function parseAnswers(text) {
   const answers = []
   for (const b of answerBlocks(text)) {
-    if (b.outcome || b.hold) continue
+    if (b.outcome || b.hold || b.rerun) continue
     const at = b.lines.findIndex((l) => l.trim() !== '')
     const meta = at === -1 ? null : b.lines[at].match(ANSWER_META)
     if (!meta) continue
@@ -212,6 +222,71 @@ export function parseHold(text) {
     hold = to === 'active' ? null : { state: to, reason: b.lines.slice(at + 1).join('\n').trim(), by: meta[1].trim(), date: meta[2] }
   }
   return { hold, problems }
+}
+
+// --- a stage run again, and the artifacts that makes stale ----------------------
+
+// `0054`. A person may run an accepted stage again from the board. The app appends one
+// `### Rerun` block under `intent.md ## Answers`, composed by `rerunBlock` below:
+//
+//   ### Rerun
+//   Requested by: owner. Date: <YYYY-MM-DD>. Via: product.
+//   Stage: <stage>.
+//   Stale: <file> sha256:<64 hex>
+//
+// one `Stale:` line for the stage's own artifact and one for each later artifact on disk.
+// An artifact is stale while the text above its `## Answers` still hashes to a value a
+// block wrote for it (R4): an answer appended since does not change that, and only the
+// stage writing its own text again does. `owner` is the fixed word of the UI standard's S7,
+// not a name. Nothing in the block reads as approval (R3).
+const RERUN_HEAD = /^###\s+Rerun\s*$/
+const RERUN_META = /^Requested by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\.?\s*$/
+const RERUN_STAGE = /^Stage:\s*([a-z]+)\.?\s*$/
+const RERUN_STALE = /^Stale:\s*(\S+)\s+sha256:([0-9a-f]{64})\s*$/
+
+// The sha256, in hex, of the text above an artifact's first `## Answers` line — the line
+// `section()` finds — with its trailing whitespace dropped, so the blank line
+// `runner.with_answers` or an app write puts before a new `## Answers` changes nothing.
+export function aboveAnswers(text) {
+  const lines = text.split(/\r?\n/)
+  const at = lines.findIndex((l) => l.trimEnd() === '## Answers')
+  const above = (at === -1 ? lines : lines.slice(0, at)).join('\n').trimEnd()
+  return createHash('sha256').update(above, 'utf8').digest('hex')
+}
+
+// Every `### Rerun` block of an intent, in file order, as `{stage, by, date, stale: {file:
+// hash}}`. A block with no well-formed `Requested by:` or `Stage:` line is not counted,
+// because nothing says who asked or what for, and it is reported, as `parseHold` reports.
+export function parseReruns(text) {
+  const lines = section(text ?? '', 'Answers')
+  const reruns = []
+  const problems = []
+  if (lines === null) return { reruns, problems }
+  const blocks = []
+  for (const line of lines) {
+    if (RERUN_HEAD.test(line)) blocks.push({ rerun: true, lines: [] })
+    else if (/^###\s/.test(line)) blocks.push({ rerun: false, lines: [] })
+    else if (blocks.length) blocks[blocks.length - 1].lines.push(line)
+  }
+  let n = 0
+  for (const b of blocks) {
+    if (!b.rerun) continue
+    n += 1
+    const body = b.lines.filter((l) => l.trim() !== '')
+    const meta = body[0]?.match(RERUN_META)
+    const stage = body[1]?.match(RERUN_STAGE)
+    if (!meta || !stage || !RERUNNABLE.includes(stage[1])) {
+      problems.push(`rerun block ${n} has no well-formed Requested by: and Stage: lines — it is ignored`)
+      continue
+    }
+    const stale = {}
+    for (const l of body.slice(2)) {
+      const m = l.match(RERUN_STALE)
+      if (m && ARTIFACTS.includes(m[1])) stale[m[1]] = m[2]
+    }
+    reruns.push({ stage: stage[1], by: meta[1].trim(), date: meta[2], stale })
+  }
+  return { reruns, problems }
 }
 
 // Each question joined to the answer in force for it, if any.
@@ -578,6 +653,8 @@ export function reviewRounds(env = process.env) {
 export function readUnit(dir, name) {
   const unit = { name, artifacts: {}, problems: [] }
   let intentText = null
+  // `0054`. Each artifact's text, kept for the stale check below and never attached.
+  const texts = {}
   const match = name.match(UNIT_RE)
   if (!match) {
     unit.problems.push(`directory name does not match NNNN_<slug>`)
@@ -590,6 +667,7 @@ export function readUnit(dir, name) {
     const path = join(dir, file)
     if (!existsSync(path)) continue
     const text = readFileSync(path, 'utf8')
+    texts[file] = text
     if (file === 'intent.md') intentText = text
     const status = parseStatus(text)
     if (status === null) {
@@ -678,6 +756,20 @@ export function readUnit(dir, name) {
   }
   // No intent — a pre-intent unit, or a broken one — has nowhere to write a block.
   unit.holdMoves = ended || intentText === null ? [] : HOLD_MOVES[unit.hold?.state ?? 'active']
+
+  // `0054` R4. `stale` is attached only to an artifact that is stale, so `status --json` of a
+  // unit with no `### Rerun` block is what it was, byte for byte. Only a settled artifact
+  // can be: a `changes-requested` review already goes round again, and a draft is
+  // unfinished either way. `spike.md` only while the spec still names a `U<n>`.
+  const rerun = parseReruns(intentText)
+  unit.problems.push(...rerun.problems.map((p) => `intent.md: ${p}`))
+  for (const [file, text] of Object.entries(texts)) {
+    if (!rerun.reruns.length || !settled(statusOf(unit, file))) continue
+    if (file === 'spike.md' && !unmeasuredOf(unit).ids.length) continue
+    const hash = aboveAnswers(text)
+    const by = rerun.reruns.findLast((r) => r.stale[file] === hash)
+    if (by) unit.artifacts[file].stale = { stage: by.stage, date: by.date }
+  }
 
   return unit
 }
@@ -822,6 +914,13 @@ function decide(unit, limit) {
       return { blocked: true, action: s.hint, stage: s.name, why: 'missing' }
     }
     if (status === 'rejected') return { blocked: false, action: `closed — ${s.name} rejected`, stage: '', why: 'rejected' }
+    // `0054` R5: a stage run again from the board left this artifact stale; its stage runs
+    // before anything after it. `nextStep` takes a stale `review` or `ship` down the road
+    // a missing one takes.
+    const stale = unit.artifacts[s.file]?.stale
+    if (stale) {
+      return { blocked: true, action: `${s.file} is stale — ${stale.stage} was rerun on ${stale.date}: ${s.hint.split(' ')[0]} again`, stage: s.name, why: 'stale' }
+    }
     // `0085` R8: a review that ran out of turns left a round the app's closing turn wrote.
     // That is not a draft to finish by hand: another review goes on from it, unless the
     // rounds before it already used the limit (R9 keeps the floor for exactly that).
@@ -1327,6 +1426,10 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
       need.push(canSkip ? `${missing(unit, s.file)} — write it, or record the skip in it` : missing(unit, s.file))
     } else if (!settled(status)) {
       need.push(`${s.file} is "${status}", not accepted${canSkip ? ' or skipped' : ''}`)
+    } else if (unit.artifacts[s.file].stale) {
+      // `0054` R5. Before `reviewNeeds` and `shipNeeds`, so a gate closed by it asks no `gh`.
+      const { stage: by, date } = unit.artifacts[s.file].stale
+      need.push(`${s.file} is stale: ${by} was rerun on ${date} — run ${s.name} again first`)
     }
   }
 
@@ -1384,9 +1487,11 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   // `0045` R3: a held unit is answered from the files, before anything reaches for `probe`.
   if (why === 'paused' || why === 'dropped') return next
 
-  if (why === 'missing' && next.stage === 'review') return onReview([])
+  // `0054` R5: a stale `review` or `ship` is due the way a missing one is, CI permitting.
+  const due = why === 'missing' || why === 'stale'
+  if (due && next.stage === 'review') return onReview(why === 'stale' ? [next.action] : [])
 
-  if (why === 'missing' && next.stage === 'ship') {
+  if (due && next.stage === 'ship') {
     const g = evaluate(unit, 'ship', { probe, limit })
     if (g.ok) return { ...next, action: `${next.action} — merge with --match-head-commit ${g.said.head}` }
     // `0083` R10: a UI unit whose pass lacks current screenshots is cured the same way.
@@ -1431,6 +1536,60 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   }
 
   return next
+}
+
+// --- running an accepted stage again -------------------------------------------
+
+// `0054` R2: the stages after `name` in `STAGES` order, those without an artifact included,
+// `idea` never, and `spike` only while it is required.
+export function rerunLater(unit, name) {
+  const at = STAGES.findIndex((s) => s.name === name)
+  return STAGES.slice(at + 1).filter((s) => !s.optional && (!s.when || required(unit, s))).map((s) => s.name)
+}
+
+// R1 (b) and (c): why nothing may be run again on `unit` at all, or `null`.
+function rerunClosed(unit) {
+  if (statusOf(unit, 'plan.md') === 'done') return 'the unit is finished: plan.md is done'
+  const rejected = STAGES.find((s) => statusOf(unit, s.file) === 'rejected')
+  if (rejected) return `the unit is closed: ${rejected.file} is rejected`
+  if (unit.hold) return `the unit is ${unit.hold.state}`
+  return null
+}
+
+// `0054` R1: why `name` may not be run again on `unit`, or `null` when it may. Files only:
+// no rerunnable stage's gate needs `--repo`.
+export function rerunRefusal(unit, name, limit = REVIEW_ROUNDS) {
+  if (!RERUNNABLE.includes(name)) return `${name} cannot be run again from the board — only ${RERUNNABLE.join(', ')}`
+  const closed = rerunClosed(unit)
+  if (closed) return closed
+  const s = stageOf(name)
+  const status = statusOf(unit, s.file)
+  if (s.when && !unmeasuredOf(unit).ids.length) return `${name} is not required: spec.md has no [unmeasured] item`
+  if (!present(unit, s.file)) return `${s.file} does not exist — ${name} has not run yet`
+  if (!(status === 'accepted' || (status === 'skipped' && s.statuses.includes('skipped')))) {
+    return `${s.file} is "${status}", not accepted`
+  }
+  if (unit.artifacts[s.file].stale) return `${s.file} is already stale — run ${name} from the next step`
+  const g = evaluate(unit, name, { probe: null, limit })
+  return g.ok ? null : g.need.join('; ')
+}
+
+// Every stage `rerunRefusal` lets through, each with what it makes run again.
+export function rerunOffers(unit, limit = REVIEW_ROUNDS) {
+  return RERUNNABLE.filter((name) => rerunRefusal(unit, name, limit) === null).map((stage) => ({ stage, later: rerunLater(unit, stage) }))
+}
+
+// R3: the `### Rerun` block the app appends to `intent.md ## Answers`, whole. `hashOf(file)`
+// is `aboveAnswers` of that artifact as it is on disk now.
+export function rerunBlock(unit, name, date, hashOf) {
+  const files = [name, ...rerunLater(unit, name)].map((n) => stageOf(n).file).filter((f) => present(unit, f))
+  return [
+    '### Rerun',
+    `Requested by: owner. Date: ${date}. Via: product.`,
+    `Stage: ${name}.`,
+    ...files.map((f) => `Stale: ${f} sha256:${hashOf(f)}`),
+    '',
+  ].join('\n')
 }
 
 export function nextNumber(units) {
@@ -1814,6 +1973,52 @@ function cmdPrText(unitName, cosDir) {
   return 0
 }
 
+// `0054`. Which accepted stages the board may offer to run again, or — given a stage — the
+// `### Rerun` block to append before running it. Reads files and prints; it writes nothing,
+// the app appends the block. No `<stage>`: `{unit, offers: [{stage, later}], why}`, exit 0,
+// `why` saying why when `offers` is empty. With one: `{unit, stage, later, block}` and exit
+// 0, or the reason and exit 1. Exit 2 is misuse, as `gate`'s.
+function cmdRerun(unitName, stage, cosDir, limit, today = localDate()) {
+  if (!unitName) {
+    console.error(`usage: cos.mjs rerun <NNNN_slug> [${RERUNNABLE.join('|')}]`)
+    return 2
+  }
+  if (!UNIT_RE.test(unitName)) {
+    console.error(`Invalid unit name "${unitName}": expected NNNN_slug.`)
+    return 2
+  }
+  const dir = join(cosDir, unitName)
+  if (!existsSync(dir)) {
+    console.error(`No such work unit: ${unitName}`)
+    return 2
+  }
+  const unit = readUnit(dir, unitName)
+  if (stage === undefined) {
+    const offers = rerunOffers(unit, limit)
+    const why = offers.length ? '' : rerunClosed(unit) ?? 'no accepted stage can be run again now'
+    console.log(JSON.stringify({ unit: unitName, offers, why }))
+    return 0
+  }
+  if (!stageOf(stage)) {
+    console.error(`unknown stage "${stage}" — use one of ${STAGE_NAMES.join(', ')}`)
+    return 2
+  }
+  const refused = rerunRefusal(unit, stage, limit)
+  if (refused) {
+    console.error(`${stage} cannot be run again for ${unitName}: ${refused}`)
+    return 1
+  }
+  const block = rerunBlock(unit, stage, today, (f) => aboveAnswers(readFileSync(join(dir, f), 'utf8')))
+  console.log(JSON.stringify({ unit: unitName, stage, later: rerunLater(unit, stage), block }))
+  return 0
+}
+
+// Today on this machine's calendar, `YYYY-MM-DD` — the date the app's own blocks carry.
+function localDate(d = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 // The three commands above answer about this checkout, so `--root` is refused for them.
 const LOCAL_ONLY = new Set(['check-branch', 'check-tag', 'check-version'])
 
@@ -1898,6 +2103,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     'new-path': () => cmdNewPath(rest[0], cosDir, reserveFrom),
     'unit-branch': () => cmdUnitBranch(rest[0], cosDir),
     'pr-text': () => cmdPrText(rest[0], cosDir),
+    rerun: () => cmdRerun(rest[0], rest[1], cosDir, limit),
     'check-branch': () => cmdCheckBranch(rest[0]),
     'check-tag': () => cmdCheckTag(rest[0]),
     'check-version': () => cmdCheckVersion(),
@@ -1906,7 +2112,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!run) {
     console.error('usage: cos.mjs [--root <dir>] <command>')
     console.error('  reading a .cos/ (these take --root):')
-    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit> | pr-text <unit>')
+    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>]')
     console.error('  describing this checkout (these do not):')
     console.error('    check-branch [name] | check-tag <tag> | check-version')
     process.exit(2)
