@@ -140,6 +140,12 @@ class WhatTheFingerprintCovers(unittest.TestCase):
             digest = build.source_digest(Path(d))
         self.assertEqual(set(digest.values()), {"missing"})
 
+    def test_every_source_it_lists_is_a_file_in_this_checkout(self):
+        """A path left behind by a rename hashes as `missing` for ever, and a missing file
+        never changes, so the fingerprint would call a stale bundle current."""
+        repo = Path(__file__).resolve().parent.parent
+        self.assertEqual([s for s in build._SOURCES if not (repo / s).is_file()], [])
+
 
 if __name__ == "__main__":
     unittest.main()
