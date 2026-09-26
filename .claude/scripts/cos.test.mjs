@@ -11,7 +11,7 @@ import {
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
   parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking, prText,
-  UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe,
+  UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe, stageAt,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -2211,4 +2211,48 @@ test('0044 R14: a Jera block in spec.md does not change what a review waits on',
   for (const stage of STAGE_NAMES) {
     assert.deepEqual(checkGate(jera, stage, { probe: greenProbe() }), checkGate(person, stage, { probe: greenProbe() }), stage)
   }
+})
+
+// --- the stage a unit is at (0100) ---------------------------------------------
+
+test('0100: stageAt is the stage next names, else the last artifact on disk, else the first stage', () => {
+  const at = (artifacts) => { const u = unit(artifacts); return stageAt(u, nextAction(u)) }
+  assert.equal(at({ 'intent.md': art('accepted'), 'spec.md': art('accepted') }), 'plan', 'next.stage has a value')
+  assert.equal(at({ 'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('draft') }), 'plan', 'plan.md draft')
+  const asked = { ...CHAIN, 'review.md': reviewArt('changes-requested', round(1, 'changes-requested', ['- F1 [open] x'])) }
+  assert.equal(nextAction(unit(asked)).stage, '')
+  assert.equal(at(asked), 'review', 'review.md changes-requested')
+  assert.equal(at({ 'idea.md': art('accepted') }), 'intent', 'pre-intent: only an accepted idea')
+  assert.equal(stageAt(unit({}), { stage: '' }), 'intent', 'no artifact at all')
+})
+
+test('0100: status --json carries at and next.why for every unit', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cos-0100-'))
+  const cos = join(root, '.cos')
+  const put = (u, f, text) => { mkdirSync(join(cos, u), { recursive: true }); writeFileSync(join(cos, u, f), text) }
+  put('0001_open', 'intent.md', '# X\nType: feat. Status: accepted.\n')
+  put('0002_draft', 'intent.md', '# X\nType: fix. Status: draft.\n')
+  put('0003_done', 'intent.md', '# X\nType: fix. Status: accepted.\n')
+  put('0003_done', 'plan.md', '# X\nStatus: done.\n')
+  const cli = (...args) =>
+    spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', root], { encoding: 'utf8' })
+  const status = JSON.parse(cli('status', '--json').stdout)
+  assert.deepEqual(
+    status.units.map((u) => [u.name, u.at, u.next.why]),
+    [['0001_open', 'spec', 'missing'], ['0002_draft', 'intent', 'draft'], ['0003_done', 'plan', 'finished']],
+  )
+  const names = status.stages.map((s) => s.name)
+  assert.ok(status.units.every((u) => names.includes(u.at) && typeof u.next.why === 'string'))
+})
+
+test('0100: the line cos.mjs next prints carries no why', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cos-0100-'))
+  const dir = join(root, '.cos', '0001_open')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'intent.md'), '# X\nType: feat. Status: accepted.\n')
+  const run = spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), 'next', '0001_open', '--root', root], { encoding: 'utf8' })
+  const line = JSON.parse(run.stdout)
+  assert.equal(line.stage, 'spec')
+  assert.ok(!('why' in line), 'next carries no why')
+  assert.ok(!('at' in line), 'next carries no at')
 })

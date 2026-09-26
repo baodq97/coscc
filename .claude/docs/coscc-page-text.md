@@ -20,7 +20,7 @@ Read this before adding words to a screen, or removing the one sentence a screen
   new-path` and its brief becomes `idea.md`, which the intent step reads. An empty board
   read only the app's store; the host repository's own `.cos/` is counted, never listed. A
   stage's status on a card comes from its artifact's `Status:` line, never from the run
-  log; the lanes only sort cards for attention. Paths, full shas, UUIDs, variable names and
+  log; the columns sort cards by stage and a badge says the state. Paths, full shas, UUIDs, variable names and
   the update logs' tails are on the page only inside a *Details* the person opens
   (`coscc/studio.py`, `details`).
 - **The sentences that stay are the warnings.** Run (spends quota), `pr` and `ship` (this

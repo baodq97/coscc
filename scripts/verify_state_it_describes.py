@@ -13,7 +13,8 @@ measured through the page and the API the page uses, in six claims:
     2  (R8)      a 15th directory in the repository is counted after a reload
     3  (R10)     a unit made through the API is numbered 0016, and the repository's
                  `.cos/` is not written to
-    4  (R4)      that unit's card sits in Planned, not in Needs you
+    4  (R4)      that unit's card sits in the intent column, its badge reading Ready
+                 (`0100` R1, R3: the stage columns replaced the lanes)
     5  (R1, R3)  the branch is cut from the remote's main — one commit ahead of the local
                  one — the page names origin/main and that commit, and it tracks nothing
     6  (R2)      with origin unreachable nothing is cut, and the page says so
@@ -23,7 +24,8 @@ measured through the page and the API the page uses, in six claims:
     2  the environment is not ready — no build, stale build, no browser, port in use
 
 No session, no quota, no network: the remote is a bare directory. It needs `COS_PORT`
-free, for the reason `scripts/proof_harness.py` gives.
+free, for the reason `scripts/proof_harness.py` gives. It gets past the `0070` login with a
+seeded session, as `verify_0053` does.
 
 **It does not look at a clone that stayed fresh.** `0014`'s proof cloned anew each run,
 which is why it never saw symptoms 1 and 4 (`intent.md`, Constraints). Here the local
@@ -32,18 +34,23 @@ which is why it never saw symptoms 1 and 4 (`intent.md`, Constraints). Here the 
 
 from __future__ import annotations
 
+import os
+import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import argon2  # noqa: E402
 import httpx  # noqa: E402
 
-from coscc import units  # noqa: E402
+from coscc import auth, units  # noqa: E402
 from coscc.config import from_env  # noqa: E402
+from coscc.data import Data  # noqa: E402
 from scripts.proof_harness import (  # noqa: E402
     EXIT_BROKEN,
     EXIT_PASS,
@@ -113,8 +120,20 @@ def make_scene(root: Path, outside: Path) -> tuple[Path, Path]:
     return remote, proj
 
 
-def open_page(browser, base: str):
-    page = browser.new_page(viewport={"width": 1440, "height": 900})
+def seed_session(data_dir: Path) -> str:
+    """`0070`: a password nobody types and one live session, as `verify_0053` seeds them."""
+    data = Data(data_dir)
+    now = int(time.time())
+    data.auth_set_password(argon2.PasswordHasher().hash(secrets.token_urlsafe(24)), now)
+    token = secrets.token_urlsafe(32)
+    data.auth_session_add(auth._sha(token), now, now + auth.SESSION_TTL)
+    return token
+
+
+def open_page(browser, base: str, token: str):
+    ctx = browser.new_context(viewport={"width": 1440, "height": 900})
+    ctx.add_cookies([{"name": auth.COOKIE, "value": token, "url": base}])
+    page = ctx.new_page()
     page.goto(base, wait_until="domcontentloaded", timeout=PAGE_TIMEOUT_MS)
     page.wait_for_selector("#studio-shell", timeout=PAGE_TIMEOUT_MS)
     page.wait_for_function(
@@ -178,6 +197,9 @@ def write_intent(unit_path: Path, slug: str) -> None:
 
 
 def run() -> int:
+    # As `verify_0071`: a blank `__REFLEX_*` a step inherits would leave `/` a 404.
+    for name in [k for k, v in os.environ.items() if k.startswith("__REFLEX") and not v]:
+        del os.environ[name]
     config = from_env()
     require_build(config)
     require_free_port(config)
@@ -189,8 +211,10 @@ def run() -> int:
     results: list[bool] = []
     try:
         remote, proj = make_scene(root, outside)
+        token = seed_session(data_dir)
         with RealApp(config, root, data_dir) as app:
-            api = httpx.Client(base_url=app.base, timeout=CUT_TIMEOUT_MS / 1000)
+            api = httpx.Client(base_url=app.base, timeout=CUT_TIMEOUT_MS / 1000,
+                               cookies={auth.COOKIE: token})
             added = api.post("/api/workspaces", json={"name": "proj"})
             if added.status_code != 200:
                 print(f"could not adopt the workspace: {added.text}", file=sys.stderr)
@@ -198,7 +222,7 @@ def run() -> int:
             cwd = str(proj)
             store = str(units.root(cwd, data_dir))
 
-            page = open_page(browser, app.base)
+            page = open_page(browser, app.base, token)
             board(page)
 
             # 1 (R6)
@@ -234,12 +258,13 @@ def run() -> int:
 
             # 4 (R4)
             reload_board(page)
-            planned = page.locator(f'[data-testid="lane-Planned"] #unit-{unit}').count()
-            review = page.locator(f'[data-testid="lane-Needs you"] #unit-{unit}').count()
+            card = page.locator(f'[data-testid="column-intent"] #unit-{unit}')
+            placed = card.count()
+            ready = card.get_by_text("Ready", exact=True).count() if placed else 0
             results.append(say(
-                bool(unit) and planned == 1 and review == 0,
-                "4 its card is in Planned, not in Needs you",
-                f"in Planned: {planned}, in Needs you: {review}",
+                bool(unit) and placed == 1 and ready == 1,
+                "4 its card is in the intent column, and its badge reads Ready",
+                f"in intent: {placed}, Ready badges: {ready}",
             ))
 
             # 5 (R1, R3)

@@ -8,8 +8,9 @@ of text, and stops. A conditional about business state in this file is a bug in
 
 The dataclasses below exist because Reflex needs a declared shape to render a list against,
 and `Service` returns dictionaries. They are a *view*: every field is something the screen
-draws. Nothing is computed here that the service could have answered — the one exception is
-`_lane`, which is named and explained where it sits.
+draws. Nothing is computed here that the service could have answered: since `0100` a card's
+state is `service.unit_state`'s, and the page only lays `Running` over it through
+`service.shown_state`.
 
 The service instance is the same object the FastAPI app holds. Two instances would mean two
 `Sessions` registries, and knob 4 ("resume only what this app created") would answer
@@ -30,7 +31,9 @@ from coscc import events as events_mod
 from coscc import place, present, spend
 from coscc.api import build
 from coscc.journal import COST_USD, TOKEN_FIELDS
-from coscc.service import Invalid, StaleCutList, describe_base
+from coscc.service import (
+    COLLAPSED_STATES, Invalid, StaleCutList, describe_base, reason_beside, shown_state,
+)
 
 API = build()
 SERVICE = API.state.service
@@ -84,13 +87,6 @@ def _cell_label(row: dict) -> tuple[str, str]:
         return f"not started · {outcome} · {said_turns} · {said_cost}", "amber"
     return status, STATUS_COLOR.get(status, "gray")
 
-
-LANE_COLOR = {
-    "Planned": "gray",
-    "In progress": "iris",
-    "Needs you": "amber",
-    "Complete": "grass",
-}
 
 # Colours for the workspace marks, assigned by position so the same workspace keeps the
 # same colour between loads. Nothing is stored; the list is the only state.
@@ -206,23 +202,20 @@ class Unit:
     id: str = ""
     title: str = ""
     summary: str = ""
-    lane: str = ""
+    # The last stage with an artifact: the one the Artifact tab opens. Not the column,
+    # which is `at` (`0100` R2).
     stage: str = ""
-    color: str = "gray"
     owner: str = "You"
     mode: str = "manual"
     tokens: str = ""
     usd: str = ""
     token_count: int = 0
     progress: int = 0
-    # True when this unit sits in *Needs you*: an artifact is in draft, or the harness
-    # reported a problem with the directory. Not the harness's `blocked` — see `_lane`.
-    needs_attention: bool = False
     problems: str = ""
     cells: list[Cell] = dataclasses.field(default_factory=list)
     # `0016` R8. How many questions in the counted artifact nobody has answered, taken
-    # from `cos.mjs` (`open`) and never recounted (R7). Shown as a badge, not a lane:
-    # an open question does not move a unit into *Needs you*.
+    # from `cos.mjs` (`open`) and never recounted (R7). Since `0100` an open question
+    # makes the unit's state *Needs you* (`intent.md ## Answers, câu 3`).
     open_questions: int = 0
     questions: list[Question] = dataclasses.field(default_factory=list)
     # `0021`. The pull request `pr.md` names, and every review round with its comment state.
@@ -267,6 +260,19 @@ class Unit:
     # what a unit in *Needs you* waits on.
     answerable: bool = True
     attention_reason: str = ""
+    # `0100` R2, R3. The stage whose column the unit sits in, as `cos.mjs` sent it, and the
+    # state shown: `Service.board`'s decision (`decided_*`), with `Running` laid over it by
+    # `service.shown_state` alone (Design 5). `ci_line` is the dialog's CI line (R7), and
+    # `state_reason` the `attention_reason` its header shows beside the state (review F1).
+    at: str = ""
+    state: str = ""
+    state_label: str = ""
+    state_color: str = "gray"
+    ci_line: str = ""
+    state_reason: str = ""
+    decided_state: str = ""
+    decided_label: str = ""
+    decided_color: str = "gray"
 
 
 @dataclasses.dataclass
@@ -279,9 +285,6 @@ class Card:
     id: str = ""
     title: str = ""
     summary: str = ""
-    lane: str = ""
-    stage: str = ""
-    color: str = "gray"
     mode: str = "manual"
     owner: str = "You"
     progress: int = 0
@@ -301,19 +304,47 @@ class Card:
     live: list[Activity] = dataclasses.field(default_factory=list)
     answerable: bool = True
     attention_reason: str = ""
+    at: str = ""
+    state: str = ""
+    state_label: str = ""
+    state_color: str = "gray"
 
 
 def _card(u: Unit) -> Card:
     """`0053`. A `Unit` as its card. Copies; decides nothing."""
     return Card(
-        id=u.id, title=u.title, summary=u.summary, lane=u.lane, stage=u.stage, color=u.color,
-        mode=u.mode, owner=u.owner, progress=u.progress, tokens=u.tokens, usd=u.usd,
+        id=u.id, title=u.title, summary=u.summary, mode=u.mode, owner=u.owner, progress=u.progress, tokens=u.tokens, usd=u.usd,
         token_count=u.token_count, has_problem=u.problems != "", open_questions=u.open_questions,
         integration_state=u.integration_state, integrate_button=u.integrate_button,
         outcome_text=u.outcome_text, outcome_color=u.outcome_color, hold_state=u.hold_state,
         shortlist_rank=u.shortlist_rank, relations_text=u.relations_text, live=list(u.live),
         answerable=u.answerable, attention_reason=u.attention_reason,
+        at=u.at, state=u.state, state_label=u.state_label, state_color=u.state_color,
     )
+
+
+def _ci_line(ci: dict | None) -> str:
+    """`0100` R7. The service's CI answer as one line, `""` where it gives none. The time
+    is for a reader (S4); no SHA (S3)."""
+    if not ci:
+        return ""
+    read = " · read " + present.when(ci.get("at")) if ci.get("read") else ""
+    if ci.get("red"):
+        return "CI is red: " + ", ".join(ci["red"]) + read
+    if ci.get("read"):
+        return "CI is not red" + read
+    return "CI has not been read"
+
+
+def _shown(u: Unit, read: dict) -> dict:
+    """`0100` Design 5. The `state*` fields of `u` under one `Service.running` answer: the
+    service's own choice between its two answers, never one made here."""
+    shown = shown_state(
+        {"state": u.decided_state, "label": u.decided_label, "color": u.decided_color},
+        (read.get("running") or {}).get(u.id),
+    )
+    return {"state": shown["state"], "state_label": shown["label"], "state_color": shown["color"],
+            "state_reason": reason_beside(u.attention_reason, shown["state"])}
 
 
 @dataclasses.dataclass
@@ -1062,43 +1093,6 @@ def _rounds(unit: dict) -> list[Round]:
     return out
 
 
-def _lane(unit: dict) -> str:
-    """Which column a unit sits in.
-
-    The only derivation in this module, and it is presentation. Nothing downstream reads
-    it back, so it cannot drift into a second answer about progress.
-
-    **It deliberately does not use the harness's `blocked`.** Measured on 2026-09-22 by
-    reading `cos.mjs status --json` against this repository: `blocked` is `true` for every
-    unit that is not finished — `.claude/scripts/cos.mjs:122-135` returns it for "the next
-    stage has not been written yet" as readily as for "an artifact is sitting in draft".
-    Mapping it onto a lane called *Needs you* put all six unfinished units there and
-    left *Planned* and *In progress* permanently empty, which is a board that sorts nothing.
-
-    So the lanes are read off the artifacts instead: a `draft` artifact is something a
-    person wrote and has not accepted, and that is the thing worth surfacing.
-    """
-    action = str(unit.get("next") or "")
-    rows = unit.get("stages") or []
-    # First, before every other rule. A unit started from this page holds only an
-    # `idea.md`, and that idea carries `Status: accepted` (`coscc/units.py` writes it so),
-    # so the *In progress* rule below would otherwise claim it the moment its `problems`
-    # went empty. `cos.mjs` decides what pre-intent means; this only places it.
-    if unit.get("phase") == "pre-intent":
-        return "Planned"
-    if action == "finished" or action.startswith("closed"):
-        return "Complete"
-    # `changes-requested` sits with `draft`: the review found something and the unit waits
-    # on a fix, which is the kind of thing this lane exists to surface (`0015`).
-    if unit.get("problems") or any(
-        r.get("status") in ("draft", "changes-requested") for r in rows
-    ):
-        return "Needs you"
-    if any(r.get("status") != "not started" for r in rows):
-        return "In progress"
-    return "Planned"
-
-
 def _current_stage(unit: dict, stages: list[str]) -> str:
     """The stage a person would say the unit is at: the last one with an artifact."""
     started = [r["stage"] for r in unit.get("stages") or [] if r.get("status") != "not started"]
@@ -1144,8 +1138,8 @@ class StudioState(rx.State):
     # only: the page gets `cards` and, for the one unit open, `current_unit`. Always
     # assigned a new dict, never changed in place (`spike.md ## U3` measured only that).
     _full: dict[str, Unit] = {}
-    # `0053` R7, R8. The one list of cards the page receives; lanes, List, Dropped, the
-    # palette and Overview all filter it on the page.
+    # `0053` R7, R8. The one list of cards the page receives; the stage columns, List, the
+    # collapsed groups, the palette and Overview all filter it on the page.
     cards: list[Card] = []
     # `0053` R7. The open unit, whole, copied from `_full` by `_set_current` — never by a
     # computed var walking a list the page would then receive too.
@@ -1412,53 +1406,73 @@ class StudioState(rx.State):
             return self.workspaces
         return [w for w in self.workspaces if q in w.name.lower() or q in w.label.lower()]
 
-    # `0053` R8. The lanes, the List, Dropped, the palette and Overview each filter `cards`
-    # on the page by one of the lists of ids below: a list of cards per lane would send
-    # every card again (`spike.md ## U2`). Order is always `cards`' order.
+    # `0053` R8. The columns, the List, the collapsed groups, the palette and Overview each
+    # filter `cards` on the page by one of the lists of ids below: a list of cards per column
+    # would send every card again (`spike.md ## U2`). Order is always `cards`' order.
 
     @rx.var
     def shown_ids(self) -> list[str]:
+        """The cards the search and the filter leave, the collapsed groups' included: the
+        List shows each with its stage and state."""
         q = self.query.strip().lower()
-        # `0045` (`spec.md ## Answers, câu 1`). A dropped unit leaves the four lanes for the
-        # collapsed group at the foot of the board; a paused one stays in its lane.
-        rows = [c for c in self.cards if c.hold_state != "dropped"]
+        rows = list(self.cards)
         if q:
             rows = [c for c in rows if q in c.id.lower() or q in c.title.lower()]
         if self.focus == "Autonomous":
             rows = [c for c in rows if c.mode == "autonomous"]
         elif self.focus == "Needs you":
-            # `Unit.needs_attention` is set from exactly this (`_load_board`).
-            rows = [c for c in rows if c.lane == "Needs you"]
+            # `0100` R10: the state, as the service decided it.
+            rows = [c for c in rows if c.state == "needs-you"]
         return [c.id for c in rows]
 
     @rx.var
-    def lane_counts(self) -> dict[str, int]:
-        """How many shown cards each lane holds, for its count and its *Nothing here*."""
-        shown = set(self.shown_ids)
-        counts = {name: 0 for name in LANE_COLOR}
-        for c in self.cards:
-            if c.id in shown:
-                counts[c.lane] = counts.get(c.lane, 0) + 1
-        return counts
-
-    @rx.var
     def resume_id(self) -> str:
-        """*Pick up where you left off*: the first shown card in progress, `""` if none."""
-        shown = set(self.shown_ids)
-        return next((c.id for c in self.cards if c.id in shown and c.lane == "In progress"), "")
+        """*Pick up where you left off*: the first card in board order — column, then place
+        in it — that is `Running` or `Ready` (`0100` R10), `""` if none."""
+        board = set(self.board_ids)
+        order = {name: i for i, name in enumerate(self.stages)}
+        rows = [(order.get(c.at, len(order)), i, c.id) for i, c in enumerate(self.cards)
+                if c.id in board and c.state in ("running", "ready")]
+        return min(rows)[2] if rows else ""
 
     @rx.var
     def active_count(self) -> int:
-        return len([c for c in self.cards if c.lane == "In progress"])
+        """`0100` R10. Every unit outside the three collapsed groups."""
+        return len([c for c in self.cards if c.state not in COLLAPSED_STATES])
 
     @rx.var
     def attention_count(self) -> int:
-        return len([c for c in self.cards if c.lane == "Needs you" and c.hold_state != "dropped"])
+        """`0100` R10. Every unit whose state is *Needs you*."""
+        return len([c for c in self.cards if c.state == "needs-you"])
 
     @rx.var
-    def dropped_count(self) -> int:
-        """`0045`. How many units `cos.mjs` reads as dropped, for the collapsed group."""
-        return len([c for c in self.cards if c.hold_state == "dropped"])
+    def board_ids(self) -> list[str]:
+        """`0100` R8. The shown cards the stage columns draw: every one outside the three
+        collapsed groups."""
+        shown = set(self.shown_ids)
+        return [c.id for c in self.cards if c.id in shown and c.state not in COLLAPSED_STATES]
+
+    @rx.var
+    def stage_counts(self) -> dict[str, int]:
+        """`0100` R1. How many cards each stage's column holds, keyed by the stages the board
+        read returned, for its count and its *Nothing here*."""
+        counts = {name: 0 for name in self.stages}
+        board = set(self.board_ids)
+        for c in self.cards:
+            if c.id in board:
+                counts[c.at] = counts.get(c.at, 0) + 1
+        return counts
+
+    @rx.var
+    def group_counts(self) -> dict[str, int]:
+        """`0100` R8. How many shown cards each collapsed group holds: the search and the
+        filter narrow a group as they narrow a column (review F2)."""
+        counts = {name: 0 for name in COLLAPSED_STATES}
+        shown = set(self.shown_ids)
+        for c in self.cards:
+            if c.id in shown and c.state in counts:
+                counts[c.state] += 1
+        return counts
 
     @rx.var
     def ws_name(self) -> str:
@@ -1734,7 +1748,6 @@ class StudioState(rx.State):
                     consequence=str(row.get("consequence") or ""),
                 ))
             started = len([c for c in cells if c.started])
-            lane = _lane(u)
             stage = _current_stage(u, self.stages)
             count, shown = _tokens(u.get("cost") or {})
             # The file-only stage `cos.mjs` names, not the one the run button asks for: that
@@ -1742,21 +1755,19 @@ class StudioState(rx.State):
             nxt = next((c for c in cells if c.stage == (u.get("next_stage") or "")), None)
             mode = nxt.mode if nxt is not None else "manual"
             waiting, asked = _questions(u)
+            decided = u.get("state") or {}
             units.append(
                 Unit(
                     id=u["name"],
                     title=_title_of(u["name"]),
                     summary=u.get("next") or "",
-                    lane=lane,
                     stage=stage,
-                    color=LANE_COLOR.get(lane, "gray"),
                     owner="AI" if mode == "autonomous" else "You",
                     mode=mode,
                     tokens=shown,
                     usd=_usd(u.get("cost") or {}),
                     token_count=count,
                     progress=int(started * 100 / len(cells)) if cells else 0,
-                    needs_attention=lane == "Needs you",
                     problems="; ".join(u.get("problems") or []),
                     cells=cells,
                     open_questions=waiting,
@@ -1771,8 +1782,14 @@ class StudioState(rx.State):
                     relations_text=_relations_text((u.get("backlog") or {}).get("relations")),
                     answerable=bool(u.get("answerable", True)),
                     attention_reason=str(u.get("attention_reason") or ""),
+                    at=str(u.get("at") or ""),
+                    ci_line=_ci_line(decided.get("ci")),
+                    decided_state=str(decided.get("state") or ""),
+                    decided_label=str(decided.get("label") or ""),
+                    decided_color=str(decided.get("color") or "gray"),
                 )
             )
+        units = [dataclasses.replace(u, **_shown(u, self._running_read)) for u in units]
         self._full = {u.id: u for u in units}
         self.cards = [_card(u) for u in units]
         self._set_current()
@@ -1781,13 +1798,14 @@ class StudioState(rx.State):
         """`0051` R3. Put one `Service.running` answer on every card. Decides nothing.
 
         `0053` C4: the cards are sent again only when a card's `live` changed, and the open
-        unit only when its own did — an ask that changes nothing sends neither."""
+        unit only when its own did — an ask that changes nothing sends neither. `0100`: a
+        state that `Running` starts or stops covering is a change the same way."""
         self._running_read = read
         full, moved = {}, set()
         for key, unit in self.get_value("_full").items():
-            live = _activities(key, read)
-            if live != unit.live:
-                unit = dataclasses.replace(unit, live=live)
+            live, shown = _activities(key, read), _shown(unit, read)
+            if live != unit.live or shown["state"] != unit.state:
+                unit = dataclasses.replace(unit, live=live, **shown)
                 moved.add(key)
             full[key] = unit
         if not moved:

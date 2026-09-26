@@ -16,10 +16,12 @@ import os
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 from coscc import fetches, integrate
+from coscc import service as service_mod
 from coscc.config import Config
 from coscc.service import Invalid, Service
 
@@ -584,6 +586,130 @@ class AStaleOriginMain(unittest.TestCase):
         [only] = self.records("integration")
         self.assertEqual(only["outcome"], "refused")
         self.assertEqual(self.updates, 0)
+
+
+class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
+    """`0100` R6. The board holds the last `gh pr checks` answer per unit and asks again in
+    the background; a read never waits on it, whatever `gh` does."""
+
+    async def asyncSetUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.workspace = root / "work" / "proj"
+        self.workspace.mkdir(parents=True)
+        git(self.workspace, "init", "-q", "-b", "main")
+        git(self.workspace, "commit", "-q", "--allow-empty", "-m", "seed")
+        self.cwd = str(self.workspace)
+        env = {"COS_DATA_DIR": str(root / "data"), "COS_WORKING_DIR": str(root / "work")}
+        self._env = mock.patch.dict(os.environ, env)
+        self._env.start()
+        self.addCleanup(self._env.stop)
+        config = Config(workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+        self.service = Service(config, StandIn(None))
+        made = await self.service.create_unit(self.cwd, SLUG, "fixture")
+        self.unit, directory = made["unit"], Path(made["path"])
+        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
+            extra = " Type: feat." if name == "intent.md" else ""
+            (directory / name).write_text(f"# X: fixture\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8")
+        (directory / "pr.md").write_text(
+            f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n", encoding="utf-8")
+        self.head = "a" * 40
+        self.checks: list[dict] | None = None  # None: `pr checks` never answers
+        self.never = asyncio.Event()
+        self.calls: list[list[str]] = []
+        patch = mock.patch.object(integrate, "_gh", self._gh)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    async def asyncTearDown(self):
+        await self.service.shutdown()
+
+    async def _gh(self, argv, cwd):
+        self.calls.append(argv[:2])
+        if argv[:2] == ["pr", "list"]:
+            return 0, json.dumps([{"number": PR, "headRefOid": self.head, "headRefName": BRANCH,
+                                   "mergeable": "MERGEABLE"}]), ""
+        if argv[:2] == ["pr", "checks"]:
+            if self.checks is None:
+                await self.never.wait()
+            return 0, json.dumps(self.checks), ""
+        return 1, "", f"stand-in gh: unexpected {argv}"
+
+    async def read(self) -> dict:
+        data = await asyncio.wait_for(self.service.board(self.cwd), 5)
+        return next(u for u in data["units"] if u["name"] == self.unit)
+
+    async def settle(self) -> None:
+        """Let the background asks that can finish, finish."""
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    def asked(self) -> int:
+        return self.calls.count(["pr", "checks"])
+
+    async def test_a_gh_that_never_answers_does_not_hold_the_board(self):
+        u = await self.read()
+        # (c) While `board` ran, `gh` was asked what it was asked before `0100`: one list.
+        self.assertEqual(self.calls, [["pr", "list"]])
+        await self.settle()
+        # (a)
+        self.assertEqual(u["state"]["state"], "awaiting")
+        self.assertEqual(u["state"]["ci"], {"read": False, "red": [], "at": ""})
+        self.assertEqual(len(self.service._ci_asks), 1)
+        self.assertEqual(self.asked(), 1)
+        # (b) A second read opens no second ask while the first is out.
+        await self.read()
+        await self.settle()
+        self.assertEqual((len(self.service._ci_asks), self.asked()), (1, 1))
+
+    async def test_a_red_check_is_an_error_from_the_next_read(self):
+        """(d)"""
+        self.checks = [{"name": "tests", "bucket": "fail"}]
+        first = await self.read()
+        self.assertEqual(first["state"]["state"], "awaiting")
+        await self.settle()
+        self.assertEqual(self.service._ci_asks, {}, "the ask removed itself once done")
+        u = await self.read()
+        self.assertEqual(u["state"]["state"], "error")
+        self.assertEqual(u["state"]["ci"]["red"], ["tests"])
+        self.assertTrue(u["state"]["ci"]["read"])
+        await self.settle()
+        self.assertEqual(self.asked(), 1, "a fresh answer for this head is not asked again")
+
+    async def test_a_new_head_or_an_old_answer_is_asked_again(self):
+        """(e)"""
+        self.checks = [{"name": "tests", "bucket": "pass"}]
+        await self.read()
+        await self.settle()
+        u = await self.read()
+        self.assertEqual((u["state"]["state"], u["state"]["ci"]["read"]), ("awaiting", True))
+        await self.settle()
+        self.assertEqual(self.asked(), 1)
+        # The head moved: the held answer is for another commit, so it is not shown, and asked.
+        self.head = "b" * 40
+        u = await self.read()
+        self.assertFalse(u["state"]["ci"]["read"])
+        await self.settle()
+        self.assertEqual(self.asked(), 2)
+        # CI_REFRESH later by the service's clock: asked again, the answer still shown.
+        later = (datetime.now(timezone.utc) + timedelta(seconds=service_mod.CI_REFRESH + 1)).isoformat(timespec="seconds")
+        with mock.patch.object(service_mod, "_now", return_value=later):
+            u = await self.read()
+        self.assertTrue(u["state"]["ci"]["read"])
+        await self.settle()
+        self.assertEqual(self.asked(), 3)
+
+    async def test_a_cancelled_ask_is_removed_so_the_unit_is_asked_again(self):
+        await self.read()
+        await self.settle()
+        [task] = self.service._ci_asks.values()
+        task.cancel()
+        await self.settle()
+        self.assertEqual(self.service._ci_asks, {})
+        await self.read()
+        await self.settle()
+        self.assertEqual(self.asked(), 2)
 
 
 if __name__ == "__main__":

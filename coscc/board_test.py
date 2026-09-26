@@ -9,7 +9,9 @@ apart. `spec.md` C8 is the concern these tests stand against.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -209,6 +211,41 @@ class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
             [u] = run(board.read(d))["units"]
             self.assertEqual((u["pr"], u["rounds"]), (None, []))
+
+
+class TheStageAtAndWhyAreCarriedFromTheScript(unittest.TestCase):
+    """`0100` Design 2. `at` and `next.why` arrive as `status --json` sent them."""
+
+    def test_at_and_why_are_the_scripts(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, files in {
+                "0001_open": {"intent.md": "# I\nType: feat. Status: accepted.\n"},
+                "0002_draft": {"intent.md": "# I\nType: feat. Status: accepted.\n",
+                               "spec.md": "# S\nStatus: draft.\n"},
+            }.items():
+                unit = Path(d) / ".cos" / name
+                unit.mkdir(parents=True)
+                for f, text in files.items():
+                    (unit / f).write_text(text, encoding="utf-8")
+            script = REPO / ".claude" / "scripts" / "cos.mjs"
+            said = json.loads(subprocess.run(
+                ["node", str(script), "--root", d, "status", "--json"],
+                capture_output=True, text=True, check=True,
+            ).stdout)
+            got = run(board.read(d))["units"]
+        self.assertEqual(
+            [(u["at"], u["why"]) for u in got],
+            [(u["at"], u["next"]["why"]) for u in said["units"]],
+        )
+        self.assertEqual([(u["at"], u["why"]) for u in got], [("spec", "missing"), ("spec", "draft")])
+
+    def test_an_older_script_that_sends_neither_reads_as_empty(self):
+        async def fake_run(argv, timeout):
+            return 0, '{"stages": [], "units": [{"name": "0001_q", "next": {"stage": ""}}]}', ""
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
+            [u] = run(board.read(d))["units"]
+            self.assertEqual((u["at"], u["why"]), ("", ""))
 
 
 class AnEmptyWorkspaceIsAnAnswerNotAFailure(unittest.TestCase):

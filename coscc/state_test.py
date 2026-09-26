@@ -117,7 +117,8 @@ class TheAutopilotBlockIsCopied(unittest.TestCase):
 
 
 class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
-    """`0001_product-describes-a-state-it-is-not-in` R4/R5, from this store.
+    """`0001_product-describes-a-state-it-is-not-in` R4/R5, from this store, asked of the
+    stage columns and states of `0100` rather than the lanes they replaced.
 
     The dict is the shape `coscc/board.py` hands over for a unit started from the page:
     one accepted `idea.md`, nothing else, `next` pointing at the intent.
@@ -128,6 +129,8 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
         return {
             "name": "0015_fresh",
             "next": "write-intent — the unit has no intent.md",
+            "why": "missing",
+            "at": "intent",
             "blocked": True,
             "problems": [],
             "phase": phase,
@@ -136,35 +139,56 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
             ],
         }
 
-    def test_a_pre_intent_unit_sits_in_the_first_lane(self):
-        from coscc.state import _lane
+    def test_a_pre_intent_unit_sits_in_the_intent_column_and_is_ready(self):
+        import asyncio
+        import tempfile
 
-        self.assertEqual(_lane(self._fresh("pre-intent")), "Planned")
+        from coscc import board
+        from coscc.service import unit_state
 
-    def test_without_the_phase_the_same_unit_would_have_been_in_progress(self):
-        # The reason `phase` is read before every other rule: the idea is accepted, so the
-        # artifact rules alone would move a ten-second-old unit out of *Planned*.
-        from coscc.state import _lane
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0015_fresh"
+            unit.mkdir(parents=True)
+            (unit / "idea.md").write_text("# Idea: x\nStatus: accepted.\n", encoding="utf-8")
+            [u] = asyncio.run(board.read(d))["units"]
+        self.assertEqual((u["phase"], u["at"]), ("pre-intent", "intent"))
+        self.assertEqual(unit_state(u | {"integration": None}, None, None)["state"], "ready")
 
-        self.assertEqual(_lane(self._fresh("started")), "In progress")
-
-    def test_a_unit_with_problems_still_needs_review(self):
-        from coscc.state import _lane
+    def test_a_unit_with_problems_is_an_error(self):
+        """`0100` C3: an artifact that cannot be read is something a re-run fixes."""
+        from coscc.service import unit_state
 
         unit = self._fresh("started") | {"problems": ["no intent.md — every unit opens with one"]}
-        self.assertEqual(_lane(unit), "Needs you")
+        self.assertEqual(unit_state(unit, None, None)["state"], "error")
 
-    def test_a_review_that_asked_for_changes_needs_review(self):
-        """`0015`: the review found something and the unit waits on a fix."""
-        from coscc.state import STATUS_COLOR, _lane
+    def test_the_dialog_of_a_unit_with_problems_does_not_say_it_needs_a_person(self):
+        """`0100` review F1. The dialog's header draws `state_reason`, never the raw
+        `attention_reason`, which calls this unit "Needs a person" beside `Error`."""
+        from coscc.service import attention_reason, unit_state
+        from coscc.state import Unit, _shown
 
-        unit = self._fresh("started")
-        unit["next"] = "fix the open findings of review round 1 on the branch"
+        unit = self._fresh("started") | {"problems": ["no intent.md — every unit opens with one"]}
+        decided = unit_state(unit, None, None)
+        page = Unit(id=unit["name"], attention_reason=attention_reason(unit), decided_state=decided["state"],
+                    decided_label=decided["label"], decided_color=decided["color"])
+        self.assertEqual(page.attention_reason, "Needs a person")
+        self.assertEqual(_shown(page, {})["state"], "error")
+        self.assertEqual(_shown(page, {})["state_reason"], "")
+        screens = (Path(__file__).parent / "screens.py").read_text(encoding="utf-8")
+        self.assertNotIn("current_unit.attention_reason", screens)
+        self.assertIn("current_unit.state_reason", screens)
+
+    def test_a_review_that_asked_for_changes_is_ready(self):
+        """`0015`, `0100` C6: the unit waits on a fix a step makes, not on a person."""
+        from coscc.service import unit_state
+        from coscc.state import STATUS_COLOR
+
+        unit = self._fresh("started") | {"why": "changes-requested", "at": "review", "between_pr_and_ship": True}
         for row in unit["stages"]:
             row["status"] = "accepted" if row["stage"] not in ("review", "ship") else "not started"
             if row["stage"] == "review":
                 row["status"] = "changes-requested"
-        self.assertEqual(_lane(unit), "Needs you")
+        self.assertEqual(unit_state(unit, None, None)["state"], "ready")
         self.assertIn("changes-requested", STATUS_COLOR)
 
 
@@ -210,12 +234,14 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
             [(q["artifact"], q["n"], q["answered"]) for q in from_script["questions"]],
         )
 
-    def test_an_open_question_alone_does_not_put_a_unit_in_needs_review(self):
-        from coscc.state import _lane
+    def test_an_open_question_alone_puts_a_unit_in_needs_you(self):
+        """Reversed by `0100` on purpose (`intent.md ## Answers, câu 3`): until then an open
+        question was a number on the card and moved the unit into no lane (`0016` R8)."""
+        from coscc.service import unit_state
 
         _, through_board = self._both()
         self.assertGreater(through_board["open"], 0)
-        self.assertNotEqual(_lane(through_board), "Needs you")
+        self.assertEqual(unit_state(through_board | {"integration": None}, None, None)["state"], "needs-you")
 
 
 class PostingARoundLocksTheButtonWhileItRuns(unittest.TestCase):
@@ -334,21 +360,30 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
             " / không đáng / by Leif / close-pr: failed (closed #7; #9: HTTP 502: Bad Gateway)",
         )
 
-    def test_dropped_units_leave_the_lanes_and_paused_ones_stay(self):
+    def test_dropped_and_paused_units_leave_the_columns_for_their_groups(self):
+        """`0100` R8, Design 6. Until then a paused unit stayed in its lane (`0045`)."""
         from types import SimpleNamespace
 
         from coscc.state import Card, StudioState
 
-        # `0053`: the lanes draw the cards `shown_ids` names; the Dropped group draws the
-        # cards whose `hold_state` is `dropped` and counts them with `dropped_count`.
+        # `0053`: the columns draw the cards `board_ids` names; each collapsed group draws
+        # the cards of its state and counts them with `group_counts`.
         page = SimpleNamespace(
-            cards=[Card(id="a", hold_state="dropped"), Card(id="b", hold_state="paused"), Card(id="c")],
+            cards=[Card(id="a", hold_state="dropped", state="dropped"),
+                   Card(id="b", hold_state="paused", state="paused"), Card(id="c", state="ready")],
             query="", focus="All work",
         )
-        shown = StudioState.computed_vars["shown_ids"].fget(page)
-        dropped = StudioState.computed_vars["dropped_count"].fget(page)
-        self.assertEqual(shown, ["b", "c"])
-        self.assertEqual(([c.id for c in page.cards if c.hold_state == "dropped"], dropped), (["a"], 1))
+        cv = StudioState.computed_vars
+        page.shown_ids = cv["shown_ids"].fget(page)
+        self.assertEqual(cv["board_ids"].fget(page), ["c"])
+        self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "paused": 1, "dropped": 1})
+        # Review F2: a group holds only what the search and the filter leave.
+        page.query = "b"
+        page.shown_ids = cv["shown_ids"].fget(page)
+        self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "paused": 1, "dropped": 0})
+        page.query, page.focus = "", "Needs you"
+        page.shown_ids = cv["shown_ids"].fget(page)
+        self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "paused": 0, "dropped": 0})
 
     def test_the_handler_calls_hold_and_no_step(self):
         tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
@@ -1958,14 +1993,17 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
 
 
 def _sample_board() -> dict:
-    """`0053`. A `Service.board` answer with a unit in each lane and each badge a card draws."""
+    """`0053`. A `Service.board` answer with a unit in each lane and each badge a card draws.
+    `0100`: each unit's `at` and `why` as `cos.mjs` would send them, and its `state` as
+    `Service.board` decides it."""
+    from coscc.service import unit_state
 
     def rows(statuses, auto: str = ""):
         return [{"stage": n, "status": st, "mode": "autonomous" if n == auto else "manual",
                  "grants": ["Read"] if n == "impl" else [], "warning": "w" if n == "impl" else ""}
                 for n, st in zip(("intent", "spec", "plan", "impl"), statuses)]
 
-    return {"stages": ["intent", "spec", "plan", "impl"], "recording": True, "units": [
+    board = {"stages": ["intent", "spec", "plan", "impl"], "recording": True, "units": [
         {"name": "0001_planned", "stages": rows(["not started"] * 4), "next": "write-intent",
          "problems": []},
         {"name": "0002_going", "stages": rows(["accepted", "accepted", "not started", "not started"]),
@@ -1991,6 +2029,13 @@ def _sample_board() -> dict:
                                              auto="spec"),
          "next": "write-spec", "next_stage": "spec", "problems": []},
     ]}
+    said = {"0001_planned": ("intent", "missing"), "0002_going": ("plan", "missing"),
+            "0003_review": ("spec", "draft"), "0004_done": ("impl", "finished"),
+            "0005_gone": ("spec", "dropped"), "0006_auto": ("spec", "missing")}
+    for u in board["units"]:
+        u["at"], u["why"] = said[u["name"]]
+        u["state"] = unit_state(u, None, None)
+    return board
 
 
 _LIVE = {"running": {"0002_going": [{"kind": "step", "stage": "plan",
@@ -2004,15 +2049,16 @@ class _Sample(_Page):
     BOARD = _sample_board()
 
 
-def _sample_read(token: str, then=None):
+def _sample_read(token: str, then=None, fake: _Page | None = None):
     """The sample read by a first arrival at the Board, a poll applying `_LIVE`, then
-    `then(arrive, manager)` if given. Returns `(_full, cards, what then returned)`."""
+    `then(arrive, manager)` if given. Returns `(_full, cards, what then returned)`. `fake`
+    answers in place of `_Sample` when given."""
     import asyncio
     from unittest import mock
 
     from coscc import state as page
 
-    fake = _Sample()
+    fake = fake or _Sample()
 
     async def go():
         manager, processor, _ = _processor(token)
@@ -2029,6 +2075,41 @@ def _sample_read(token: str, then=None):
 
     with fake.patches(), mock.patch.object(page.SERVICE, "running", lambda cwd: _LIVE):
         return asyncio.run(go())
+
+
+class TheBoardIsDrawnFromTheStages(unittest.TestCase):
+    """`0100` R1. The columns are the stages the board read returned: another list of stages
+    is other columns, with no line of coscc changed."""
+
+    def test_two_made_up_stages_are_two_columns(self):
+        from types import SimpleNamespace
+
+        from coscc.service import unit_state
+        from coscc.state import StudioState
+
+        class Other(_Page):
+            BOARD = {"stages": ["alpha", "beta"], "recording": True, "units": [
+                {"name": f"000{i}_{at}", "stages": [], "next": "x", "problems": [], "at": at, "why": "missing"}
+                for i, at in enumerate(["alpha", "beta", "beta"], start=1)
+            ]}
+
+        for u in Other.BOARD["units"]:
+            u["state"] = unit_state(u, None, None)
+
+        async def ask(arrive, manager):
+            studio = await _studio(manager, "state-test-0100-stages")
+            return list(studio.stages)
+
+        full, cards, stages = _sample_read("state-test-0100-stages", ask, Other())
+        self.assertEqual(stages, ["alpha", "beta"])
+        page = SimpleNamespace(cards=cards, query="", focus="All work", stages=stages)
+        cv = StudioState.computed_vars
+        page.shown_ids = cv["shown_ids"].fget(page)
+        page.board_ids = cv["board_ids"].fget(page)
+        counts = cv["stage_counts"].fget(page)
+        self.assertEqual(list(counts), ["alpha", "beta"])
+        self.assertEqual(counts, {"alpha": 1, "beta": 2})
+        self.assertEqual({c.id: c.at for c in cards}, {u["name"]: u["at"] for u in Other.BOARD["units"]})
 
 
 class NoCardLosesWhatItShowed(unittest.TestCase):
@@ -2087,27 +2168,29 @@ class NoCardLosesWhatItShowed(unittest.TestCase):
 
 
 class TheIdListsAnswerAsTheCardListsDid(unittest.TestCase):
-    """`0053` plan step 2: `shown_ids`, `lane_counts`, `resume_id` and `command_ids` against
-    the rules of `visible_units`, the four lanes, `in_progress[:1]` and `command_units` as
-    they stood before, on the same sample."""
+    """`0053` plan step 2: `shown_ids`, `stage_counts`, `resume_id` and `command_ids` against
+    the rules they answer to, written out over the whole units, on the same sample. `0100`
+    replaced the four lanes with the stage columns and the states."""
 
     def test_same_answers(self):
         from types import SimpleNamespace
 
-        from coscc.state import LANE_COLOR, StudioState
+        from coscc.state import StudioState
 
         full, cards, _ = _sample_read("state-test-id-lists")
         units = list(full.values())
+        stages = _Sample.BOARD["stages"]
+        grouped = ("done", "paused", "dropped")
 
-        def visible(query, focus):  # `visible_units` before `0053`, verbatim in its rules
+        def visible(query, focus):
             q = query.strip().lower()
-            rows = [u for u in units if u.hold_state != "dropped"]
+            rows = list(units)
             if q:
                 rows = [u for u in rows if q in u.id.lower() or q in u.title.lower()]
             if focus == "Autonomous":
                 rows = [u for u in rows if u.mode == "autonomous"]
             elif focus == "Needs you":
-                rows = [u for u in rows if u.needs_attention]
+                rows = [u for u in rows if u.state == "needs-you"]
             return rows
 
         def command(query):  # `command_units` before `0053`
@@ -2117,16 +2200,25 @@ class TheIdListsAnswerAsTheCardListsDid(unittest.TestCase):
             return [u for u in units if q in u.title.lower() or q in u.id.lower()][:6]
 
         cv = StudioState.computed_vars
+        self.assertEqual({u.id: (u.at, u.state) for u in units}, {
+            "0001_planned": ("intent", "ready"), "0002_going": ("plan", "running"),
+            "0003_review": ("spec", "error"), "0004_done": ("impl", "done"),
+            "0005_gone": ("spec", "dropped"), "0006_auto": ("spec", "ready"),
+        })
         for query, focus in [("", "All work"), ("going", "All work"), ("", "Autonomous"),
                              ("", "Needs you"), ("000", "Needs you"), ("nothing", "All work")]:
-            page = SimpleNamespace(cards=cards, query=query, focus=focus, command_query=query)
+            page = SimpleNamespace(cards=cards, query=query, focus=focus, command_query=query, stages=stages)
             page.shown_ids = cv["shown_ids"].fget(page)
             old = visible(query, focus)
             self.assertEqual(page.shown_ids, [u.id for u in old], (query, focus))
-            self.assertEqual(cv["lane_counts"].fget(page),
-                             {lane: len([u for u in old if u.lane == lane]) for lane in LANE_COLOR})
-            going = [u for u in old if u.lane == "In progress"][:1]
-            self.assertEqual(cv["resume_id"].fget(page), going[0].id if going else "")
+            page.board_ids = cv["board_ids"].fget(page)
+            board = [u for u in old if u.state not in grouped]
+            self.assertEqual(page.board_ids, [u.id for u in board])
+            self.assertEqual(cv["stage_counts"].fget(page),
+                             {n: len([u for u in board if u.at == n]) for n in stages})
+            going = sorted((stages.index(u.at), i, u.id) for i, u in enumerate(board)
+                           if u.state in ("running", "ready"))
+            self.assertEqual(cv["resume_id"].fget(page), going[0][2] if going else "")
             self.assertEqual(cv["command_ids"].fget(page), [u.id for u in command(query)])
 
 
@@ -2177,7 +2269,7 @@ class UsageIsSentOnlyOnItsScreen(unittest.TestCase):
 
         from coscc.state import Card, StudioState, UsageRow
 
-        cards = [Card(id="a", title="A", tokens="10", usd="$0.50", token_count=10, lane="Planned"),
+        cards = [Card(id="a", title="A", tokens="10", usd="$0.50", token_count=10, at="intent"),
                  Card(id="b", title="B")]
         rows = StudioState.computed_vars["usage_rows"].fget
         self.assertEqual(rows(SimpleNamespace(screen="board", cards=cards)), [])

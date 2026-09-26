@@ -10,7 +10,7 @@ The time of R4 stops when the cards are all there, not after the quiet.
     (a) R1   fixture 42: loading `/board?ws=coscc` receives ≤ 256000 B
     (b) R4   fixture 42: the median of three loads has every card in the DOM < 1000 ms
     (c) R8   across the load's deltas exactly one var carries a list of cards (items with
-             both `id` and `lane`), and no delta carries one card twice
+             both `id` and `state`), and no delta carries one card twice
     (d) R9, R11  no delta of the load carries a non-empty `messages`, `conversations` or
              `usage_rows`. The fixture has a conversation holding a 72.9 KiB message and
              units with a cost, so each of the three would be sent if it were read
@@ -19,7 +19,8 @@ The time of R4 stops when the cards are all there, not after the quiet.
     (f) R3   in-process: a step ends while its unit's dialog is open; every delta from
              the one carrying its `done` on, re-serialized, is ≤ 256000 B together
     (g)      no card lost: the DOM holds as many cards as `/api/board` lists, and each
-             lane as many as `coscc.state._lane` puts there
+             stage's column as many of them outside the collapsed groups as have that `at`
+             (`0100` R1, R8)
     (h) R5   fixture 200: (a) and (b) again, printed with bytes per card; no threshold
     (i) C4   in-process: the delta of one `_apply_running` that changes a card's `live`,
              and of one that changes nothing; printed, no threshold
@@ -92,7 +93,6 @@ RUNS = 3                  # loads per fixture; the median is chosen, not measure
 LONG_MESSAGE = 74650      # the 72.9 KiB prompt `idea.md` found in `messages`
 PAGE_TIMEOUT_MS = 120_000
 SIZE = {"width": 1440, "height": 900}
-LANES = ("Planned", "In progress", "Needs you", "Complete")
 UNIT = re.compile(r"^(\d{4})_(.+)$")
 MARK = "_rx_state_"
 
@@ -113,9 +113,9 @@ CARDS_IN_DOM = """
 }
 """
 
-LANE_COUNTS = """
+COLUMN_COUNTS = """
 (names) => Object.fromEntries(names.map(n => [n,
-  document.querySelectorAll('[data-testid="lane-' + n + '"] [data-testid=work-card]').length]))
+  document.querySelectorAll('[data-testid="column-' + n + '"] [data-testid=work-card]').length]))
 """
 
 
@@ -163,7 +163,7 @@ def flat(delta: dict):
 
 def card_list(value) -> bool:
     return (isinstance(value, list) and bool(value)
-            and all(isinstance(x, dict) and "id" in x and "lane" in x for x in value))
+            and all(isinstance(x, dict) and "id" in x and "state" in x for x in value))
 
 
 def r8(all_deltas: list[dict]) -> tuple[bool, str]:
@@ -242,8 +242,9 @@ def wait_board(page, ids: list[str]) -> None:
         page.wait_for_selector("[data-testid=empty-board]", timeout=PAGE_TIMEOUT_MS)
 
 
-def load(browser, base, cookie, password, ws: str, ids: list[str]) -> dict:
-    """One fresh tab at `/board?ws=<ws>`, as `idea.md` measured it."""
+def load(browser, base, cookie, password, ws: str, ids: list[str], stages: list[str] = ()) -> dict:
+    """One fresh tab at `/board?ws=<ws>`, as `idea.md` measured it. `stages` are the columns
+    counted for (g)."""
     ctx = context(browser, base, cookie, password)
     try:
         page = ctx.new_page()
@@ -256,7 +257,7 @@ def load(browser, base, cookie, password, ws: str, ids: list[str]) -> dict:
         return {
             "ms": shown, "payloads": payloads, "bytes": sum(len(p.encode()) for p in payloads),
             "dom": page.evaluate("document.querySelectorAll('[data-testid=work-card]').length"),
-            "lanes": page.evaluate(LANE_COUNTS, list(LANES)),
+            "columns": page.evaluate(COLUMN_COUNTS, list(stages)),
         }
     finally:
         ctx.close()
@@ -284,15 +285,17 @@ def switch(browser, base, cookie, password, ws: str, ids: list[str],
         ctx.close()
 
 
-def board_ids(api: httpx.Client, cwd: str) -> tuple[list[str], list[dict]]:
-    rows = api.get("/api/board", params={"cwd": cwd}).json().get("units") or []
-    return [u["name"] for u in rows], rows
+def board_ids(api: httpx.Client, cwd: str) -> tuple[list[str], list[dict], list[str]]:
+    data = api.get("/api/board", params={"cwd": cwd}).json()
+    rows = data.get("units") or []
+    return [u["name"] for u in rows], rows, list(data.get("stages") or [])
 
 
 def browser_claims(browser, base, cookie, password, ws, ids, other, other_ids,
-                   rows: list[dict] | None, judge_time: bool) -> tuple[list[bool], list[dict]]:
+                   rows: list[dict] | None, judge_time: bool,
+                   stages: list[str] = ()) -> tuple[list[bool], list[dict]]:
     ok: list[bool] = []
-    runs = [load(browser, base, cookie, password, ws, ids) for _ in range(RUNS)]
+    runs = [load(browser, base, cookie, password, ws, ids, stages) for _ in range(RUNS)]
     for i, r in enumerate(runs, 1):
         print(f"      load {i}: {r['bytes']} B in {len(r['payloads'])} frames; every card at "
               f"{r['ms']:.0f} ms; {r['dom']} cards in the DOM")
@@ -315,16 +318,16 @@ def browser_claims(browser, base, cookie, password, ws, ids, other, other_ids,
                   f"(e) R2 choosing {ws} from {other}'s Board receives ≤ {LIMIT_B} B", f"{moved['bytes']} B"))
     print(f"      switch: {moved['bytes']} B in {len(moved['payloads'])} frames")
     if rows is not None:
-        from coscc.state import _lane
+        from coscc.service import COLLAPSED_STATES
 
-        want = {n: 0 for n in LANES}
+        want = {n: 0 for n in stages}
         for u in rows:
-            if ((u.get("hold") or {}).get("state") or "") != "dropped":
-                want[_lane(u)] += 1
-        got = runs[0]["lanes"]
+            if (u.get("state") or {}).get("state") not in COLLAPSED_STATES:
+                want[u["at"]] = want.get(u["at"], 0) + 1
+        got = runs[0]["columns"]
         ok.append(say(runs[0]["dom"] == len(rows) and got == want,
-                      "(g) every card listed is in the DOM, and each lane holds what `_lane` puts there",
-                      f"dom {runs[0]['dom']} of {len(rows)}; lanes {got} want {want}"))
+                      "(g) every card listed is in the DOM, and each stage's column holds the units at it",
+                      f"dom {runs[0]['dom']} of {len(rows)}; columns {got} want {want}"))
     heavy = sorted(per_var(list(deltas(runs[0]["payloads"]))).items(), key=lambda kv: -kv[1])
     print("      vars over 1 KiB in load 1: "
           + ", ".join(f"{k} {v}" for k, v in heavy if v > 1024))
@@ -635,14 +638,14 @@ def plain() -> int:
                     if added.status_code != 200:
                         print(f"could not adopt {ws}: {added.text}", file=sys.stderr)
                         return EXIT_ENV
-                ids, rows = board_ids(api, str(root / "coscc"))
+                ids, rows, stages = board_ids(api, str(root / "coscc"))
                 print(f"fixture 42: {len(ids)} units on /api/board")
                 claims, runs42 = browser_claims(browser, app.base, token, None, "coscc", ids,
-                                                "other", [], rows, judge_time=True)
+                                                "other", [], rows, judge_time=True, stages=stages)
                 ok += claims
 
                 fill(store, 42, 200)
-                ids200, _ = board_ids(api, str(root / "coscc"))
+                ids200, _, _ = board_ids(api, str(root / "coscc"))
                 runs200 = [load(browser, app.base, token, None, "coscc", ids200) for _ in range(RUNS)]
                 for label, n, runs in (("42", len(ids), runs42), ("200", len(ids200), runs200)):
                     b = max(r["bytes"] for r in runs)
@@ -677,8 +680,8 @@ def against(base: str, ws: str, other: str) -> int:
             print(f"--ws {ws!r} and --from {other!r} must both be workspaces of {base}: {sorted(paths)}",
                   file=sys.stderr)
             return EXIT_ENV
-        ids, _ = board_ids(api, paths[ws])
-        other_ids, _ = board_ids(api, paths[other])
+        ids, _, _ = board_ids(api, paths[ws])
+        other_ids, _, _ = board_ids(api, paths[other])
     print(f"{ws}: {len(ids)} cards on /api/board at {time.strftime('%Y-%m-%d %H:%M:%S')}; "
           f"{other}: {len(other_ids)}")
     loopback = (urlparse(base).hostname or "") in ("127.0.0.1", "localhost", "::1")
