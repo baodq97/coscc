@@ -40,4 +40,7 @@ when `low`.
 
 The merge sets `--match-head-commit` to the head the gate names. Every push resets the
 required checks — including the commit recording the pass — so the merge may first be
-refused with `2 of 2 required status checks are expected`: wait.
+refused with `2 of 2 required status checks are expected`: wait. Since `0112` the gate is
+closed while the pull request is behind the `origin/main` this repository knows, and a
+merge refused anyway leaves a `draft` `ship.md` with `Round:` and a `Refused:` line, which
+a later passing round goes past.

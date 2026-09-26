@@ -26,7 +26,9 @@ dropped, the rounds
 are numbered without a gap, and nothing outside `.cos/<unit>/` reached the branch — local,
 `origin`, or the pull request's head as GitHub reports it — after the reviewed commit.
 Exit 1 means do not merge: fix what it names. If it says code landed after the pass, that
-code goes back to `write-review` — it was never reviewed.
+code goes back to `write-review` — it was never reviewed. Since `0112` it also exits 1 when
+the pull request is behind the `origin/main` this repository knows (it does not fetch):
+integrate, then another review round.
 
 The open line ends `— merge with --match-head-commit <sha>`. That is the head the gate
 checked. Copy it; do not read the head again yourself.
@@ -51,13 +53,11 @@ The commit that recorded the passing round reset the required checks. Wait for t
 (`gh pr checks <url> --required --watch`), then merge. Do not force it and do not
 bypass the ruleset.
 
-**Refused because the branch is behind `main`?** Do not rebase and merge. A rebase
-rewrites the reviewed commit away and the gate will close on `the reviewed commit … is not
-on …`. Rebase, wait for green, and send it back to `write-review` for another round; a
-round that passes does not count toward `COS_REVIEW_ROUNDS`.
-
-If the merge is refused for any other reason, write `ship.md` as `draft` with the refusal
-in `## What went out`, and stop.
+**Refused — the head branch not up to date, or anything else?** Write `ship.md` as `draft`
+with, in `## What went out`, one line at column 0: `Refused: <what gh said, on one line>`.
+Then stop. Do not rebase: the autopilot or a person integrates, and a rebase needs another
+review round anyway. `cos.mjs next` reads that line and the header's `Round:`, so a later
+passing round is not blocked by this draft.
 
 ## Output
 
@@ -65,7 +65,7 @@ One file, `ship.md`, in the unit's directory.
 
 ```markdown
 # Ship: <title>
-Review: review.md. Author: <name>. Status: accepted.
+Review: review.md. Round: <n>. Author: <name>. Status: accepted.
 
 ## What went out
 
@@ -76,7 +76,8 @@ Review: review.md. Author: <name>. Status: accepted.
 ## What to do if it breaks
 ```
 
-`Status` is `draft`, `accepted` or `rejected`.
+`Status` is `draft`, `accepted` or `rejected`. `<n>` is the number of the passing review
+round the gate read.
 
 ## Invariants
 

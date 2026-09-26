@@ -451,14 +451,59 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [("0001_a", "review", "autopilot")])
 
-    async def test_integrate_when_behind_but_never_after_a_pass(self):
+    async def test_0112_integrate_when_behind_before_and_after_a_pass(self):
+        """`0112` R1, R9: was `test_integrate_when_behind_but_never_after_a_pass`. After a pass
+        a unit behind is integrated too, where the autopilot may ship; where it may not, a
+        person merges, and the unit stops `f` on the gate's reason (R3) — `next` names no
+        `ship` for a head behind `origin/main`, the ref the board reads `behind` from."""
+        behind = ("#7 is 2 commit(s) behind origin/main — integrate, then review again; "
+                  "a round that passes does not count toward the limit")
         self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again",
                  integration={"state": "behind"}, rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
-        self.add("0002_b", "ship", integration={"state": "behind"}, rounds=[{"verdict": "pass"}],
+        self.add("0003_c", "", action=behind, integration={"state": "behind"}, rounds=[{"verdict": "pass"}],
                  between_pr_and_ship=True)
         await self.pass_()
         self.assertEqual(self.launched, [("0001_a", "integrate", "autopilot")])
-        self.assertEqual(self.stops(), {"0002_b": "c"})
+        self.assertEqual(self.stops(), {"0003_c": "f"})
+        self.assertIn("behind origin/main", self.service._autopilot_stops[self.key]["0003_c"]["reason"])
+
+        self.release.set()
+        await self.settled()
+        self.launched.clear()
+        del self.units["0001_a"], self.units["0003_c"]
+        self.add("0002_b", "", action=behind, integration={"state": "behind"}, rounds=[{"verdict": "pass"}],
+                 between_pr_and_ship=True)
+        self.listed("0002_b")
+        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        await self.pass_()
+        self.assertEqual(self.launched, [("0002_b", "integrate", "autopilot")])
+        self.assertEqual(self.stops(), {})
+
+    async def test_0112_r1_a_pass_behind_main_is_integrated_not_shipped(self):
+        """R1: `next` names no stage — the `ship` gate is closed on a head behind
+        `origin/main` (R3) — and the board reads the unit `behind`. The pass integrates."""
+        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.add("0001_a", "", action="#7 is 2 commit(s) behind origin/main — integrate, then review again; "
+                 "a round that passes does not count toward the limit",
+                 integration={"state": "behind"}, rounds=[{"verdict": "pass"}], between_pr_and_ship=True)
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "integrate", "autopilot")])
+        self.assertEqual(self.stops(), {})
+        self.assertEqual([p["stage"] for p in self.picks()], ["integrate"])
+
+    async def test_0112_r7_a_refused_ship_stops_on_what_gh_said(self):
+        """R7: R6 b with the gate open — the merge was refused for something the gate cannot
+        see. The stop, and the `autopilot-stop` record, carry the `Refused` line's words."""
+        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        said = "ship was refused: you do not have permission to merge — finish and accept ship.md"
+        self.add("0001_a", "", action=said, integration={"state": "current"}, rounds=[{"verdict": "pass"}],
+                 between_pr_and_ship=True)
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "f"}))
+        self.assertIn("you do not have permission to merge", self.service._autopilot_stops[self.key]["0001_a"]["reason"])
+        [logged] = Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-stop")
+        self.assertEqual((logged["unit"], logged["stop"]), ("0001_a", "f"))
+        self.assertIn("you do not have permission to merge", logged["reason"])
 
     async def test_red_after_its_own_integration_is_not_integrated_again(self):
         for unit in ("0001_a", "0002_b"):

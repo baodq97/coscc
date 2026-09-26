@@ -44,7 +44,9 @@ paths:
 - **Every board read with a unit between `pr` and `ship` costs one `gh pr list`,** up to
   `GH_TIMEOUT`, plus a `gh pr checks` for a unit whose head is the one its last integration
   pushed. Offline, every such unit reads `unknown` and the board waits out the timeout.
-  Unmeasured. The counts use the `origin/main` of the last fetch; the read does not fetch. A
+  Unmeasured. The counts use the `origin/main` of the last fetch; the read does not fetch —
+  but an autopilot pass does, through the coordinator, when a listed unit is at `ship`
+  (`0112`), and that moves the ref for every worktree. A
   `current` unit has the *Integrate* button too, since only a press fetches; pressed on a
   unit that is really current, it leaves a `refused` row. After the read, such a unit may
   start one background `gh pr checks` for its state badge (`0100`): one per unit at a time,

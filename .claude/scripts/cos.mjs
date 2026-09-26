@@ -634,6 +634,25 @@ export function parseSpike(text) {
   return { round: round ? Number(round[1]) : null, items }
 }
 
+// `0112` R5: the review round a `ship.md` was written against — `Round: <n>` on the header
+// line that carries `Status:` — and, from `## What went out`, the first line opening
+// `Refused:` at column 0: what `gh` said when it would not merge. Either is `null` when
+// absent, which is every `ship.md` written before `0112`.
+export function parseShip(text) {
+  const lines = text.split(/\r?\n/)
+  const stop = lines.findIndex((l) => l.trimEnd() === '## Answers')
+  const own = stop === -1 ? lines : lines.slice(0, stop)
+  const first = own.findIndex((l) => l.startsWith('## '))
+  const header = (first === -1 ? own : own.slice(0, first)).find((l) => /\bStatus:/.test(l))
+  const round = header?.match(/\bRound:\s*(\d+)/)
+  const out = section(own.join('\n'), 'What went out') ?? []
+  const refused = out.find((l) => l.startsWith('Refused:'))
+  return {
+    round: round ? Number(round[1]) : null,
+    refused: refused ? refused.slice('Refused:'.length).trim() || null : null,
+  }
+}
+
 // How many `spec → spike` rounds may end with a question that does not hold before the
 // loop needs a person (`0039` spec, Answers, Câu 3). A choice, not a measurement.
 export const SPIKE_ROUNDS = 2
@@ -701,6 +720,12 @@ export function readUnit(dir, name) {
       }
     }
     if (file === 'spike.md') unit.artifacts[file].spike = parseSpike(text)
+    // `0112` R5: attached only when it says something, as `unmeasured` above, so that
+    // `status --json` of every `ship.md` written before it stays what it was.
+    if (file === 'ship.md') {
+      const ship = parseShip(text)
+      if (ship.round !== null || ship.refused !== null) unit.artifacts[file].ship = ship
+    }
     // Read after `spec.md` and `spike.md`, which `STAGES` puts before it. Only when `spike`
     // is required: a plan may mention `spike.md` without needing one — this unit's does.
     if (file === 'plan.md' && required(unit, SPIKE)) unit.artifacts[file].citesSpike = text.includes('spike.md')
@@ -940,6 +965,15 @@ function decide(unit, limit) {
       return { blocked: true, action: `review round ${lastRound(unit).n} is incomplete — write-review again`, stage: 'review', why: 'review-incomplete' }
     }
     if (status === 'draft') {
+      // `0112` R6 and review F1: a `ship.md` naming its `Round` records a merge that did not
+      // happen, and only the branch can say what follows it — integrate, review, ship again,
+      // or a stop naming the refusal (`nextStep`). So nothing read off the files alone asks
+      // for it to be accepted: accepting it would read the unit as finished with its pull
+      // request still open. One naming no `Round` predates `0112` and reads as any draft.
+      const refused = s.file === 'ship.md' ? unit.artifacts['ship.md']?.ship?.round ?? null : null
+      if (refused !== null && lastRound(unit)) {
+        return { blocked: true, action: `ship after review round ${refused} did not merge — the next step says what runs now`, stage: '', why: 'ship-refused' }
+      }
       // `0106` R1: every question the draft asked has an answer, so running its stage again
       // is what finishes it. `stage` stays `''` — the run button does not offer it — and only
       // the autopilot reads `rerun`, deciding for itself whether it may.
@@ -1439,6 +1473,18 @@ function shipNeeds(unit, probe, said = {}) {
     }
   }
   if (need.length) return need
+  // `0112` R3: after `moved`, so a head already rebased goes to review rather than here. A
+  // pull request behind `origin/main` is one GitHub refuses to merge; the gate says so first,
+  // off the ref as it is — it does not fetch, the autopilot does (R4). No `origin/main`
+  // here, no opinion: GitHub still decides.
+  const trunk = 'refs/remotes/origin/main'
+  if (probe.git('rev-parse', '--verify', '--quiet', trunk).code === 0 && probe.git('merge-base', '--is-ancestor', trunk, said.head).code !== 0) {
+    const count = probe.git('rev-list', '--count', `${said.head}..${trunk}`)
+    const k = count.code === 0 ? Number(count.out.trim()) : null
+    if (k !== null) said.behind = k
+    const by = k !== null ? `${k} commit(s)` : `an unknown number of commits (git said: ${(count.err || count.out).trim() || `exit ${count.code}`})`
+    return [`#${pr.number} is ${by} behind origin/main — integrate, then review again; a round that passes does not count toward the limit`]
+  }
   return screensNeeds(unit, probe, last, said)
 }
 
@@ -1563,6 +1609,24 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     // `0083` R10: a UI unit whose pass lacks current screenshots is cured the same way.
     if (g.said.moved || g.said.screens) return onReview(g.need)
     return none(g.need.join('; '))
+  }
+
+  // `0112` R6: a `ship.md` left `draft` by a merge that did not happen. Reached only once
+  // `review.md` is accepted, so the last round passed. A draft that names no `Round` was
+  // written before `0112`, reads as `draft`, and stops as it always did (c). One written
+  // against an older round than the last is a missing `ship.md` again (a). One written
+  // against the last round (b) asks the gate: moved goes to review (R2), closed says why
+  // (R3), and open means the merge was refused for something the gate cannot see, so the
+  // unit stops and says what. `>` joins `=`: only a round removed makes it larger, and the
+  // gate refuses that.
+  if (why === 'ship-refused') {
+    const ship = unit.artifacts['ship.md'].ship
+    const last = lastRound(unit)
+    const g = evaluate(unit, 'ship', { probe, limit })
+    if (g.said.moved || g.said.screens) return onReview(g.need)
+    if (!g.ok) return none(g.need.join('; '))
+    if (ship.round < last.n) return { blocked: true, action: `write-ship — merge with --match-head-commit ${g.said.head}`, stage: 'ship' }
+    return none(`ship was refused: ${ship.refused ?? 'ship.md names no refusal'} — finish and accept ship.md`)
   }
 
   // `0028` (a): a person is awaited. Files alone settle it, so no probe is asked.

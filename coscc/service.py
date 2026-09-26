@@ -364,6 +364,10 @@ def attention_reason(unit: dict[str, Any]) -> str:
         return "Needs a person"
     draft = next((r for r in rows if r.get("status") == "draft"), None)
     if draft is not None:
+        # `0112` review F1: a `ship.md` a refused merge left is worked by `next`, not
+        # accepted; accepting it reads the unit as finished with its pull request open.
+        if unit.get("why") == "ship-refused":
+            return ""
         return f"Accept {draft.get('stage')}.md"
     return "Changes requested"
 
@@ -4097,6 +4101,23 @@ class Service:
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST}})
                 return
             names = list(listed["units"])
+            # `0112` R4: a listed unit at `ship` is decided on the `origin/main` the remote has
+            # now — `behind` below and the `ship` gate `next` asks both read that ref, and
+            # neither fetches. Through the coordinator, which reuses a fetch under
+            # `REUSE_SECONDS`. A fetch that fails leaves the ref as it was, and each such
+            # unit's stop says so.
+            at_ship = {
+                u["name"] for u in data["units"]
+                if u["name"] in names and u.get("between_pr_and_ship") and u.get("at") == "ship"
+            }
+            unfetched: dict[str, Any] | None = None
+            if at_ship:
+                try:
+                    await fetches.fetch(Path(cwd).expanduser().resolve(), BRANCH_REMOTE, BRANCH_TRUNK)
+                except GitError as e:
+                    unfetched = {"outcome": "failed", "detail": str(e)}
+                else:
+                    data = await self.board(cwd)
             last: dict[str, dict[str, Any]] = {}
             integrations: dict[str, dict[str, Any]] = {}
             for r in records:
@@ -4128,13 +4149,16 @@ class Service:
                 stop = autopilot.stop_for(u, nxt, last.get(name), settings["autopilot_may_ship"])
                 stage = nxt.get("stage") or ""
                 # R10: a unit behind `main`, conflicting or red after integration is integrated
-                # first — never after a `pass`, which a rebase would close `ship` on, and not
-                # again when CI is red on what the autopilot's own integration pushed.
+                # first, and not again when CI is red on what the autopilot's own integration
+                # pushed. Since `0112` R1 also after a `pass`: GitHub would refuse the merge,
+                # the rebase closes `ship`, and a new round opens it again — but only where the
+                # autopilot may ship, since otherwise a person merges and the round is theirs.
                 info = u.get("integration") or {}
                 rounds = u.get("rounds") or []
+                passed = bool(rounds) and rounds[-1].get("verdict") == "pass"
                 if (
                     info.get("state") in integrate.BUTTON_STATES
-                    and not (rounds and rounds[-1].get("verdict") == "pass")
+                    and (not passed or settings["autopilot_may_ship"])
                     and (stop is None or stop["kind"] == "f")
                 ):
                     stop, stage = autopilot.red_again(info, integrations.get(name)), "integrate"
@@ -4151,6 +4175,9 @@ class Service:
                         stop = autopilot.stop_for(u, {**nxt, "rerun": ""}, last.get(name), settings["autopilot_may_ship"])
                     else:
                         stage, rerun = nxt["rerun"], True
+                if stop is not None and unfetched is not None and name in at_ship:
+                    note = integrate.origin_note(str(info.get("origin_sha") or ""), unfetched)
+                    stop = {**stop, "reason": f"{stop['reason']}; {note}"}
                 reason = ("running", here[name]) if name in here else autopilot.reason_for(nxt, stage, stop)
                 if reason is not None:
                     reasons[name] = reason
