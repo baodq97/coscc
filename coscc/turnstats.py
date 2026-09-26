@@ -10,7 +10,8 @@ that ran `impl` twice or more, and the `changes-requested` rounds per shipped un
 
 `--files` adds `0095` R9's `touched_*` fields: the `impl` steps that aimed a `Read` or `Grep`
 at one of those paths, and over the first N of them their turns, those calls and what each
-such `Read` returned.
+such `Read` returned. `touched_purged` counts the steps whose events the app had already
+purged, which none of those fields can see: measure a window before its runs age out.
 
 Run it at a terminal. A board step carries this app's `cos.db` in `COSCC_PROTECTED_DB`, and
 this command opens the file with `sqlite3` rather than through `Data`, so it asks the same
@@ -186,11 +187,17 @@ def file_fields(
 ) -> dict[str, Any]:
     """`0095` R9: how many steps aimed a `Read` or `Grep` at one of `files`, and, over the
     first `first` of them in `start` order, their turns, those calls per step, and the
-    characters per such `Read`."""
+    characters per such `Read`. A step whose events `events.purge` deleted cannot be told
+    either way; `touched_purged` counts those, since the sample slides past them."""
     touched: list[tuple[int, int, list[int]]] = []
+    purged = 0
     for p in steps:
         run = p["end"].get("run")
         if not run:
+            continue
+        index = conn.execute("SELECT purged_at FROM step_runs WHERE run = ?", (run,)).fetchone()
+        if index and index[0]:
+            purged += 1
             continue
         reads: dict[str, bool] = {}
         results: dict[str, int] = {}
@@ -215,6 +222,7 @@ def file_fields(
         "touched_reads_greps_mean": _mean([n for _, n, _ in sample], 2),
         "touched_read_chars_mean": _mean([c for _, _, cs in sample for c in cs], None),
         "touched_n": len(sample),
+        "touched_purged": purged,
     }
 
 

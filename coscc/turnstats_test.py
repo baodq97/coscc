@@ -215,6 +215,20 @@ class TheFilesTouched(Fixture):
                    self.result("b", "x" * 5, persisted_size=3000))
         self.assertEqual(self.files()["touched_read_chars_mean"], 2000)
 
+    def test_a_step_whose_events_were_purged_is_counted_apart(self):
+        self.step("2026-09-24T10:00:00", "0001_a", turns=10, run="r1")
+        self.step("2026-09-24T11:00:00", "0002_b", turns=30, run="r2")
+        self.calls("r2", self.use("a", "Read", file_path="/w/coscc/state.py"), self.result("a", "q"))
+        with Data(self.data).connect() as conn:
+            for run, purged_at in (("r1", "2026-10-25T00:00:00"), ("r2", None)):
+                conn.execute(
+                    "INSERT INTO step_runs (run, root, workspace, unit, stage, started_at, purged_at) "
+                    "VALUES (?, '/r', ?, 'u', 'impl', 0, ?)",
+                    (run, self.key, purged_at),
+                )
+        f = self.files()
+        self.assertEqual((f["touched_steps"], f["touched_purged"], f["touched_turns_mean"]), (1, 1, 30))
+
     def test_without_files_there_are_no_touched_fields(self):
         self.assertNotIn("touched_steps", self.measure())
 
