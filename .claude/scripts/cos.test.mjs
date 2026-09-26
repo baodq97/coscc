@@ -576,13 +576,70 @@ test('questions are the numbered items under Open questions and nowhere else', (
   assert.match(qs[0].text, /continued on this line/)
 })
 
-test('a bullet list is numbered by position, but only when nothing is numbered', () => {
-  const bullets = '## Open questions\n\n- **One?** first\n  still one\n- Two?\n\n## Next\n- not a question\n'
-  assert.deepEqual(parseQuestions(bullets).map((q) => q.n), [1, 2])
-  assert.match(parseQuestions(bullets)[0].text, /still one/)
-  const mixed = '## Open questions\n\n1. Numbered.\n- a sub-point of it\n2. Also numbered.\n'
+// --- 0109: a question carries a `?`, and everything else under the heading is a note ---
+test('a bullet is never a question, even when nothing is numbered', () => {
+  const bullets = '## Open questions\n\nKhông còn câu hỏi mở.\n\n- **One?** first\n- Two?\n'
+  assert.deepEqual(parseQuestions(bullets), [])
+  const mixed = '## Open questions\n\n1. Numbered?\n- a sub-point of it\n2. Also numbered?\n'
   assert.deepEqual(parseQuestions(mixed).map((q) => q.n), [1, 2])
   assert.match(parseQuestions(mixed)[0].text, /sub-point/)
+})
+
+test('a numbered item is a question only when it asks one', () => {
+  const text = '## Open questions\n\n1. Ai quyết định?\n7. Người khởi xướng vẫn nên đọc lại file này.\n'
+  assert.deepEqual(parseQuestions(text).map((q) => q.n), [1])
+})
+
+test('the ? must be in the first paragraph of the item', () => {
+  assert.deepEqual(parseQuestions('## Open questions\n\n1. Chọn A\n   hay B?\n').map((q) => q.n), [1])
+  assert.deepEqual(parseQuestions('## Open questions\n\n1. Ghi chú.\n\n   Còn gì nữa?\n'), [])
+})
+
+test('a numbered note still ends the question above it and keeps its number', () => {
+  const qs = parseQuestions('## Open questions\n\n1. A?\n2. Ghi chú.\n3. B?\n')
+  assert.deepEqual(qs.map((q) => q.n), [1, 3])
+  assert.doesNotMatch(qs[0].text, /Ghi chú/)
+})
+
+test('a note keeps no answer, a question keeps its own, and a heading with none is counted', () => {
+  const intent = [
+    '# Intent: q', 'Author: t. Type: fix. Status: accepted.', '', '## Open questions', '',
+    '1. A?', '2. Ghi chú.', '', '## Answers',
+    answerBlock(1, 'A', 'có'), answerBlock(2, 'A', 'đã đọc'),
+  ].join('\n')
+  const spec = '# Spec\nIntent: intent.md. Author: t. Status: accepted.\n\n## Open questions\n\nKhông còn câu hỏi mở.\n'
+  const { u } = questionTree({ 'intent.md': intent, 'spec.md': spec })
+  const qs = u.artifacts['intent.md'].questions
+  assert.deepEqual(qs.map((q) => [q.n, q.answered]), [[1, true]])
+  assert.equal(parseAnswers(intent).length, 2)
+  assert.equal(u.counted, 'spec.md')
+  assert.equal(u.open, 0)
+})
+
+// The shape of the two sections `0109` was opened for (`spike.md ## U1`), written here so
+// the test reads nothing outside the repository.
+test('the notes of 0107 and 0054 are not questions', () => {
+  const s0107 = [
+    '## Open questions', '',
+    'Không còn câu hỏi mở. Câu 1 đến câu 5 của intent.md ## Answers đã được trả lời, và spec này dùng chúng như sau:',
+    '',
+    '- Câu 1 là hạn 2026-10-02. Spec không đổi hạn này.',
+    '- Câu 2 cho phép R4.',
+    '- Câu 3 cho phép R5.',
+    '- Câu 4 là cách đo, và thành phép thử ngoài spec.',
+    '- Câu 5 là lý do có Out of scope về nén tất định.',
+    '',
+    'Cả năm câu do Leif (CoS) trả lời thay người khởi xướng.', '',
+  ].join('\n')
+  assert.deepEqual(parseQuestions(s0107), [])
+  const s0054 = [
+    '## Open questions', '',
+    '1. Hạn thật cho outcome: đã trả lời, xem `intent.md ## Answers, câu 1`.',
+    '6. Nút tách riêng và dòng xác nhận là yêu cầu hay gợi ý: đã trả lời, xem `intent.md ## Answers, câu 6`.',
+    '7. Các câu 1–6 do Leif (CoS) trả lời thay người khởi xướng. Người khởi xướng vẫn nên đọc lại file này.',
+    '',
+  ].join('\n')
+  assert.equal(parseQuestions(s0054).some((q) => q.n === 7), false)
 })
 
 test('no Open questions section is not the same as an empty one', () => {
@@ -629,7 +686,7 @@ test('Answers is never read as questions, and the Status line survives it', () =
 })
 
 test('only the latest artifact with questions is counted, but every question is listed', () => {
-  const spec = '# Spec\nIntent: intent.md. Author: t. Status: accepted.\n\n## Open questions\n\n1. Only one.\n'
+  const spec = '# Spec\nIntent: intent.md. Author: t. Status: accepted.\n\n## Open questions\n\n1. Only one?\n'
   const { u } = questionTree({ 'intent.md': QUESTIONS, 'spec.md': spec })
   assert.equal(u.open, 1)
   assert.equal(u.counted, 'spec.md')
@@ -652,7 +709,7 @@ test('an open question does not close a gate', () => {
 // Read asynchronously, the way `coscc/board.py` reads it. `spawnSync` drains the pipe as
 // fast as it fills and never saw the truncation this guards against.
 test('status --json over 64 KiB reaches a pipe whole', async () => {
-  const long = `${QUESTIONS}4. ${'x'.repeat(200 * 1024)}\n`
+  const long = `${QUESTIONS}4. ${'x'.repeat(200 * 1024)}?\n`
   const { root } = questionTree({ 'intent.md': long })
   const script = fileURLToPath(new URL('./cos.mjs', import.meta.url))
   const child = spawn(process.execPath, [script, '--root', root, 'status', '--json'])
