@@ -877,12 +877,8 @@ def _with_reply(reason: str, collected: str) -> str:
     return f"{reason}\n--- what the session replied{more} ---\n{kept}"
 
 
-def check_reply(text: str) -> str:
-    """The reply, ready to be written, or a reason it is not an artifact.
-
-    Refusing here rather than writing and letting the gate complain later keeps a
-    half-formed file from ever reaching the directory a human reads.
-    """
+def _unfence(text: str) -> str:
+    """The reply stripped, and out of the fence it came wrapped in, if it came in one."""
     body = (text or "").strip()
     if not body:
         raise RunError("the session returned nothing")
@@ -892,9 +888,96 @@ def check_reply(text: str) -> str:
         lines = body.splitlines()
         if len(lines) >= 2 and lines[-1].strip().startswith("```"):
             body = "\n".join(lines[1:-1]).strip()
+    return body
+
+
+def check_reply(text: str) -> str:
+    """The reply, ready to be written, or a reason it is not an artifact.
+
+    Refusing here rather than writing and letting the gate complain later keeps a
+    half-formed file from ever reaching the directory a human reads. Since `0099` the
+    write path asks `opening_problem` instead; `closing_round_problem` still asks this.
+    """
+    body = _unfence(text)
     if not STATUS_RE.search(body):
         raise RunError("the reply carries no `Status:` line, so the gate could not read it")
     return body + "\n"
+
+
+def _title(artifact: str) -> str:
+    """`# Plan:` for `plan.md`: how every `write-*` skill's template opens its file."""
+    return "# " + Path(artifact).stem.capitalize() + ":"
+
+
+def from_title(text: str, artifact: str) -> str:
+    """`0099` R1, R2, R9. `text` from its last title line outside a code fence, or all of it.
+
+    The last, not the first: a session that drafts the whole artifact, reads again and
+    writes it anew has made the draft narration before the one that counts.
+    """
+    title = _title(artifact)
+    fenced, start = False, None
+    at = 0
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        elif not fenced and line.startswith(title):
+            start = at
+        at += len(line)
+    return text if start is None else text[start:]
+
+
+def opening_problem(text: str, artifact: str) -> str | None:
+    """`0099` R3. `None` when `text` opens with its title and a `Status:` header, else what
+    it lacks. Nothing else of the template is checked.
+    """
+    lines = text.splitlines()
+    first = lines[0] if lines else ""
+    header = next((line for line in lines[1:] if line.strip()), "")
+    missing = []
+    if not first.startswith(_title(artifact)):
+        missing.append(f"no `{_title(artifact)}` title")
+    if not HEADER_STATUS_RE.search(header):
+        missing.append("no `Status:` line in its header")
+    return " and ".join(missing) or None
+
+
+def opening_reason(artifact: str, problem: str, blocks: int | None) -> str:
+    """`0099` R5. English, as every other reason in this module is (spec C4)."""
+    reason = f"{artifact} lacks its opening: {problem}"
+    if blocks is not None:
+        reason += f" (the session replied in {blocks} block{'s' if blocks != 1 else ''})"
+    return reason
+
+
+def _after_tool(text: str) -> str:
+    """`0099` spec *Design* 1, C2. The text so far, ending a line before the next piece."""
+    return text if not text or text.endswith("\n") else text + "\n"
+
+
+def _unwrapped(piece: str, artifact: str) -> str:
+    """`0099` R9 for one piece. A piece that is one fence with the artifact's title at its
+    top comes out of the fence; any other piece is left as it came.
+
+    Review round 1, F1: narration, a tool call, then the artifact in a fence. Before `0099`
+    only the fenced piece was kept, and `_unfence` took it out. Joined to the narration it
+    no longer opens with the fence, and `from_title` reads its title as quoted.
+    """
+    body = piece.strip()
+    if body.startswith("```"):
+        inside = _unfence(body)
+        if inside != body and inside.startswith(_title(artifact)):
+            return inside + "\n"
+    return piece
+
+
+def _joined(pieces: list[str], artifact: str | None = None) -> str:
+    """The pieces a session said between its tool calls, each on a line of its own. Given
+    `artifact`, a piece wrapped whole in a fence around it is unwrapped first."""
+    text = ""
+    for piece in pieces:
+        text = _after_tool(text) + (_unwrapped(piece, artifact) if artifact else piece)
+    return text
 
 
 # How the SDK says a turn ran out of room. `terminal_reason` is the field that carries it;
@@ -1188,11 +1271,15 @@ def describe_tree_change(before: tuple[str, str], after: tuple[str, str]) -> str
     return ", ".join(parts)
 
 
-def _write_artifact(directory: Path, artifact: str, text: str) -> None:
+def _write_artifact(directory: Path, artifact: str, text: str, blocks: int | None = None) -> None:
     """Write an artifact the app writes, from `text`, or raise the reason it is not one.
 
-    `0080` spec *Design* 3: one check and one write, for a step's reply and for a spike's
-    progress file alike. Synchronous on purpose -- see the comment where `Runner.run` calls it.
+    `0080` spec *Design* 3: one check and one write, for a step's reply, a spike's progress
+    file and a review's closing turn alike. `text` is everything the session said, or at its
+    ceiling what it said after its last tool call; the artifact is what follows its last
+    title line (`0099` R1). `blocks`, when given, is how
+    many pieces the session said it in, for the reason (R5). Synchronous on purpose -- see
+    the comment where `Runner.run` calls it.
     """
     # `0025` `spec.md` R1-R6. The reply's own `## Answers`, if it has one, is never what
     # reaches disk (R3) -- only the section already there is, and it is read as late as
@@ -1200,16 +1287,14 @@ def _write_artifact(directory: Path, artifact: str, text: str) -> None:
     # already happened, not at the step's start (R6). Nothing between this read and the
     # write below can yield, so a block a person appended while the step ran is still on
     # disk when this runs and is carried through untouched.
-    body = strip_answers(check_reply(text))
-    # `check_reply` looked at the whole reply, the reply's own `## Answers` included. A
-    # `Status:` line that lived only there has just been cut, and the gate reads nothing
-    # below the header anyway, so ask again of what will actually be written (`0025`
-    # review round 1, F1).
-    if not STATUS_RE.search(body):
-        raise RunError(
-            "the reply carries no `Status:` line above its own `## Answers`, "
-            "so the gate could not read it"
-        )
+    body = strip_answers(from_title(_unfence(text), artifact) + "\n")
+    # `0099` R3, R4. Asked of what will be written, below the reply's own `## Answers`
+    # cut, and before the file is even read: a refusal leaves it byte for byte. Until
+    # `0099` this asked for a `Status:` anywhere, and a file that lost its first piece
+    # passed on one its body happened to quote.
+    problem = opening_problem(body, artifact)
+    if problem:
+        raise RunError(opening_reason(artifact, problem, blocks))
     target = directory / artifact
     try:
         raw = target.read_bytes()
@@ -1223,6 +1308,11 @@ def _write_artifact(directory: Path, artifact: str, text: str) -> None:
         # unchanged: a reply that rewrites an earlier round, or adds none, still raises
         # before anything below is written (R4, R5).
         body = merge_review(above.decode("utf-8", errors="replace"), body)
+        # R3 asks it of the merged text. Its header is the reply's, so this answers as the
+        # check above did; asked again so what reaches disk is what was checked.
+        problem = opening_problem(body, artifact)
+        if problem:
+            raise RunError(opening_reason(artifact, problem, blocks))
     target.write_bytes(with_answers(body, section))
 
 
@@ -1264,7 +1354,7 @@ async def _closing_turn(
         if kind == "chunk":
             text += payload
         elif kind == "tool":
-            text = ""
+            text = _after_tool(text)
         elif kind == "done":
             done = payload
     return text, done
@@ -1520,7 +1610,10 @@ class Runner:
         denials = Denials()
         if recorder is not None:
             denials.listener = recorder.denied
-        collected = ""
+        # `0099` R1. What the session said, one entry per stretch between two tool calls.
+        pieces = [""]
+        # `0099` R5: how many pieces of text, blank ones aside, the session said.
+        blocks = 0
         terminal = ""
         session_id = ""
         cost: dict[str, Any] = {}
@@ -1581,7 +1674,9 @@ class Runner:
                 **({"step": running.handle} if running is not None else {}),
             ):
                 if kind == "chunk":
-                    collected += payload
+                    pieces[-1] += payload
+                    if payload.strip():
+                        blocks += 1
                     yield ("chunk", payload)
                 elif kind == "session":
                     # `0019` plan step 5. The one place this app learns a session id
@@ -1589,23 +1684,18 @@ class Runner:
                     # note on why only `chunk` may cross this boundary as itself.
                     session_id = str(payload)
                 elif kind == "tool":
-                    # Everything said before a tool call was said on the way to using it.
-                    # For a stage whose artifact the app writes, that text is narration and
-                    # the artifact is what comes after the last one.
-                    #
-                    # This cost nothing while no prose stage had tools. `plan` got `Read`,
-                    # `Glob` and `Grep` on 2026-09-23 to fix a different defect, and from
-                    # that hour every `plan.md` the board produced began with the step
-                    # thinking out loud -- glued to the heading, so the file no longer
-                    # opened with `# Plan:` and the `Status:` line was no longer the second.
-                    # Measured on `0016_no-human-in-the-loop`: two sentences ahead of the
-                    # title. `cos.mjs` still parsed it, because it looks for `Status:`
-                    # anywhere, which is why this corrupted quietly instead of failing.
+                    # Kept: what comes after a tool call is the next piece, and `_joined`
+                    # puts it on a line of its own. `plan` got `Read`, `Glob` and `Grep` on 2026-09-23,
+                    # and its narration before a tool call began to open every `plan.md`
+                    # (`0016_no-human-in-the-loop`). Dropping all text before the last call
+                    # fixed that, and lost the head of any artifact written in pieces
+                    # (`0099`, measured on `0085`'s plan). `_write_artifact` now drops what
+                    # comes before the artifact's last title line instead.
                     #
                     # Not forwarded. `coscc/api.py:227-231` treats every kind that is not
                     # `chunk` as the terminal `done` row, so a third kind reaching it would
                     # arrive at the client as a malformed `done`.
-                    collected = ""
+                    pieces.append("")
                 else:
                     session_id = payload.get("session_id", "")
                     cost = payload.get("cost", {}) or {}
@@ -1631,7 +1721,13 @@ class Runner:
             if grant.app_writes_artifact:
                 # Synchronous, so nothing yields between reading the `## Answers` already
                 # on disk and writing the artifact over it.
-                _write_artifact(directory, artifact, collected)
+                #
+                # Review round 1, F2. A session stopped at its ceiling was cut off, so a
+                # title it wrote before its last tool call is a draft or a first piece, and
+                # its header may well say `accepted`. Only what it said after that call is
+                # taken, as before `0099`; nothing else leaves a review its closing turn.
+                taken = pieces[-1:] if _hit_ceiling(terminal) else pieces
+                _write_artifact(directory, artifact, _joined(taken, artifact), blocks=blocks)
                 if watch:
                     # `0080` R4: the reply was written, so the progress file is never read.
                     spike_md = "reply"
@@ -1667,7 +1763,7 @@ class Runner:
             # is often a good artifact with a preamble in front of it, and a person who
             # can see it can decide that in a second — measured 2026-09-22, when a `spec`
             # step failed this way inside a paid proof run and left nothing to look at.
-            detail = _with_reply(detail, collected)
+            detail = _with_reply(detail, _joined(pieces))
             # A step stopped by its own ceiling did not fail in the ordinary sense — it was
             # bounded. `journal.OUTCOMES` keeps the two apart so a reader can tell a defect
             # from a limit working as intended (`spec.md` R11).
@@ -1675,7 +1771,7 @@ class Runner:
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal} — {detail}"
         except Exception as e:  # surfaced as data; the process keeps serving
             error = {"type": type(e).__name__, "message": str(e)}
-            detail = _with_reply(f"{type(e).__name__}: {e}", collected)
+            detail = _with_reply(f"{type(e).__name__}: {e}", _joined(pieces))
             if _hit_ceiling(terminal):
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         else:

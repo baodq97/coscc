@@ -171,6 +171,61 @@ class AReplyIsCheckedBeforeItBecomesAFile(unittest.TestCase):
         self.assertTrue(got.endswith("\n"))
 
 
+class TheOpeningIsCheckedBeforeAnArtifactIsWritten(unittest.TestCase):
+    """`0099` R3, R5, R9: where the artifact starts in what a session said, and the two
+    things its opening must carry."""
+
+    PLAN = "# Plan: x\nIntent: intent.md. Status: accepted.\n\n## Body\n"
+
+    def cut(self, text, artifact="plan.md"):
+        from coscc.runner import _unfence, from_title
+        return from_title(_unfence(text), artifact)
+
+    def problem(self, text, artifact="plan.md"):
+        from coscc.runner import opening_problem
+        return opening_problem(text, artifact)
+
+    def test_a_title_and_a_status_line_pass(self):
+        self.assertIsNone(self.problem(self.PLAN))
+        self.assertIsNone(self.problem("# Plan: x\n\nIntent: intent.md. Status: draft.\n"))
+
+    def test_each_thing_missing_is_named(self):
+        self.assertEqual(self.problem("## Plan: x\nIntent: i. Status: accepted.\n"), "no `# Plan:` title")
+        self.assertEqual(self.problem("# Plan: x\n\n## Body\nStatus: accepted.\n"),
+                         "no `Status:` line in its header")
+        self.assertEqual(self.problem("## Body\n\nR1.\n"),
+                         "no `# Plan:` title and no `Status:` line in its header")
+
+    def test_another_stages_title_is_no_title(self):
+        self.assertEqual(self.problem("# Spec: x\nStatus: accepted.\n"), "no `# Plan:` title")
+        self.assertIsNone(self.problem("# Spec: x\nStatus: accepted.\n", "spec.md"))
+
+    def test_the_last_title_is_where_the_artifact_starts(self):
+        text = "Nháp:\n# Plan: nháp\nStatus: draft.\n\nĐọc thêm.\n" + self.PLAN
+        self.assertEqual(self.cut(text), self.PLAN.strip())
+
+    def test_a_title_inside_a_fence_in_the_body_is_not_chosen(self):
+        text = self.PLAN + "\n```markdown\n# Plan: <title>\nStatus: draft.\n```\n"
+        self.assertEqual(self.cut(text), text.strip())
+
+    def test_a_reply_wrapped_whole_in_a_fence_is_unwrapped_then_cut(self):
+        got = self.cut("```markdown\n" + self.PLAN + "```\n")
+        self.assertEqual(got, self.PLAN.strip())
+        self.assertIsNone(self.problem(got))
+
+    def test_text_with_no_title_comes_back_whole(self):
+        from coscc.runner import from_title
+        self.assertEqual(from_title("## Body\nR1.\n", "plan.md"), "## Body\nR1.\n")
+
+    def test_the_reason_names_the_artifact_what_is_missing_and_the_blocks(self):
+        from coscc.runner import opening_reason
+        got = opening_reason("plan.md", "no `Status:` line in its header", 3)
+        for part in ("plan.md", "no `Status:` line", "3 blocks"):
+            self.assertIn(part, got)
+        self.assertIn("1 block)", opening_reason("plan.md", "x", 1))
+        self.assertNotIn("(", opening_reason("plan.md", "x", None))
+
+
 class TheAnswersSectionIsFound(unittest.TestCase):
     """`0025`: the three functions the write path is built from, tested apart from it.
 
@@ -1073,6 +1128,113 @@ class NarrationBeforeAToolCallIsNotTheArtifact(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             items, _ = self.go(d)
             self.assertEqual([k for k, _ in items if k not in ("chunk", "done")], [])
+
+
+class AnAnswerInPiecesIsWrittenWhole(unittest.TestCase):
+    """`0099` R1, R4, R5, R8. `0085`'s `plan.md` came back as its last piece alone: the
+    session wrote the title and the head, called a tool, wrote more, called another, and
+    only what followed the last call reached the file."""
+
+    HEAD = ("# Plan: 0085 again\nIntent: intent.md. Spec: spec.md. Author: t. Status: accepted. "
+            "Impl: routine.\n\n## Files that change\n\nPHẦN-ĐẦU\n")
+    UNTITLED = "## Files that change\n\nPHẦN-ĐẦU\n"
+    TAIL = "Lượt chốt (closing turn) không chạy… PHẦN-ĐUÔI\n"
+
+    class Pieces:
+        def __init__(self, first, blank=False, terminal="success"):
+            self.first, self.blank, self.terminal = first, blank, terminal
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", self.first)
+            if self.blank:
+                yield ("chunk", "  ")
+            yield ("tool", "Read")
+            yield ("chunk", "PHẦN-GIỮA")
+            yield ("tool", "Grep")
+            yield ("chunk", AnAnswerInPiecesIsWrittenWhole.TAIL)
+            yield ("done", {"session_id": "s-85", "terminal_reason": self.terminal, "cost": {}})
+
+    def go(self, sessions, existing=None):
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS")
+            if existing is not None:
+                (directory / "plan.md").write_bytes(existing)
+            journal = Journal(d, d)
+            runner = Runner(sessions, journal)
+
+            async def run():
+                return [item async for item in runner.run(
+                    workspace=d, directory=directory, journal_key=d, unit=UNIT, stage="plan",
+                    artifact="plan.md", stages=STAGES, mode="autonomous",
+                )]
+
+            out = asyncio.run(run())
+            target = directory / "plan.md"
+            [end] = [r for r in journal.records() if r["kind"] == "end"]
+            return out[-1][1], end, target.read_bytes() if target.exists() else None
+
+    def test_every_piece_after_the_title_is_written_in_order(self):
+        final, _, written = self.go(self.Pieces(self.HEAD))
+        self.assertEqual(final["outcome"], "done")
+        text = written.decode("utf-8")
+        self.assertTrue(text.startswith("# Plan:"), text[:80])
+        self.assertLess(text.index("PHẦN-ĐẦU"), text.index("PHẦN-GIỮA"))
+        self.assertLess(text.index("PHẦN-GIỮA"), text.index("PHẦN-ĐUÔI"))
+        self.assertIn("PHẦN-GIỮA\nLượt chốt", text, "a piece that ends mid-line gets its own line")
+
+    def test_an_answer_without_its_head_fails_and_says_why(self):
+        final, end, written = self.go(self.Pieces(self.UNTITLED, blank=True))
+        self.assertEqual(final["outcome"], "failed")
+        first = end["detail"].splitlines()[0]
+        for part in ("plan.md", "title", "`Status:`", "3 blocks"):
+            self.assertIn(part, first)
+        self.assertIsNone(written)
+
+    def test_an_answer_without_its_head_leaves_the_file_byte_for_byte(self):
+        existing = ("# Plan: x\nIntent: i. Status: draft.\n\nCŨ\n\n## Answers\n\n"
+                    "### Câu 1\nAnswered by: Lan. Date: 2026-09-26. Via: product.\n\ncó\n").encode("utf-8")
+        final, _, written = self.go(self.Pieces(self.UNTITLED, blank=True), existing=existing)
+        self.assertEqual(final["outcome"], "failed")
+        self.assertEqual(written, existing)
+
+    def test_at_the_ceiling_it_is_exhausted_never_done(self):
+        final, end, written = self.go(self.Pieces(self.UNTITLED, blank=True, terminal="max_turns"))
+        self.assertEqual((final["outcome"], end["outcome"]), ("exhausted", "exhausted"))
+        self.assertIn("plan.md lacks its opening", end["detail"])
+        self.assertIsNone(written)
+
+
+class AFencedAnswerAfterNarrationIsUnwrapped(unittest.TestCase):
+    """`0099` review round 1, F1. Narration, a tool call, then the artifact in a fence:
+    written before `0099`, when only the fenced piece was kept and `_unfence` took it out."""
+
+    BODY = "# Plan: x\nIntent: i. Status: accepted.\n\n## Body\n\n```\n# Plan: quoted\n```\n"
+
+    class Fenced:
+        def __init__(self, last):
+            self.last = last
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "Để tôi đọc lại plan.")
+            yield ("tool", "Read")
+            yield ("chunk", self.last)
+            yield ("done", {"session_id": "s-1", "cost": {}})
+
+    def go(self, last):
+        return AnAnswerInPiecesIsWrittenWhole.go(self, self.Fenced(last))
+
+    def test_the_fenced_artifact_is_written_out_of_its_fence(self):
+        final, _, written = self.go("```markdown\n" + self.BODY + "```\n")
+        self.assertEqual(final["outcome"], "done")
+        self.assertEqual(written.decode("utf-8"), self.BODY)
+
+    def test_a_piece_that_is_only_a_code_block_keeps_its_fence(self):
+        # A fence whose top is not the title is the body's, not a wrapper.
+        from coscc.runner import _joined
+
+        pieces = ["# Plan: x\nStatus: accepted.\n\n## Body\n", "```\ncode\n```"]
+        self.assertEqual(_joined(pieces, "plan.md"),
+                         "# Plan: x\nStatus: accepted.\n\n## Body\n```\ncode\n```")
 
 
 class AnAnswerReachesTheStageThatReadsItsArtifact(unittest.TestCase):
@@ -2703,7 +2865,8 @@ class AStoppedStepEndsStopped(unittest.TestCase):
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.steps.append(kw.get("step"))
-            yield ("chunk", "thinking ")
+            # Its own line: since `0099` narration run into the title is no artifact.
+            yield ("chunk", "thinking\n")
             await self.release.wait()
             yield ("chunk", self.reply)
             yield ("done", {"session_id": "s-1", "terminal_reason": "success",
@@ -3515,6 +3678,94 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertEqual(out[-1], ("cancelled", None))
         self.assertEqual(ends, [])
         self.assertEqual(review, REVIEW_R1)
+
+
+class TheOtherTwoWritesAreCheckedTheSame(unittest.TestCase):
+    """`0099` R4, R6: a spike's progress file and a review's closing turn are held to the
+    opening a reply is, and an opening that fails writes nothing."""
+
+    def test_a_progress_file_with_no_title_is_unusable(self):
+        untitled = PROGRESS.split("\n", 1)[1]
+        final, written, end, _ = ASpikeLeavesWhatItMeasured.run_spike(self, progress=untitled)
+        self.assertIsNone(written)
+        self.assertEqual((final["outcome"], end["spike_md"]), ("exhausted", "unusable"))
+        self.assertIn("spike.md lacks its opening: no `# Spike:` title", end["detail"])
+
+    def test_a_closing_round_with_no_title_is_not_written(self):
+        def untitled(head):
+            return incomplete_reply(head).split("\n", 1)[1]
+
+        closes = AReviewThatRunsOutGetsAClosingTurn.Closes(closing=untitled)
+        _, [end], review, _, _ = AReviewThatRunsOutGetsAClosingTurn.run_review(self, closes)
+        self.assertEqual(review, REVIEW_R1)
+        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "none"))
+        self.assertIn("review.md lacks its opening: no `# Review:` title", end["detail"])
+
+    def test_a_refused_write_leaves_the_file_and_its_answers_byte_for_byte(self):
+        from coscc.runner import _write_artifact
+
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d))
+            before = ("# Plan: x\nIntent: i. Status: draft.\n\nBODY\n\n## Answers\n\n"
+                      "### Câu 1\nAnswered by: Lan. Date: 2026-09-26. Via: product.\n\ncó\n").encode("utf-8")
+            (directory / "plan.md").write_bytes(before)
+            with self.assertRaises(RunError) as caught:
+                _write_artifact(directory, "plan.md", "## Files that change\n\nStatus: accepted.\n", blocks=2)
+            self.assertIn("(the session replied in 2 blocks)", str(caught.exception))
+            self.assertEqual((directory / "plan.md").read_bytes(), before)
+
+
+class AnAnswerCutAtItsCeilingIsNotWritten(unittest.TestCase):
+    """`0099` review round 1, F2. A session that wrote a title and a header, called a tool
+    and ran out of turns left a draft, or the first of its pieces. Only what it said after
+    its last tool call is taken, as before `0099`."""
+
+    class Cut:
+        def __init__(self, *said, terminal="max_turns"):
+            self.said, self.terminal = said, terminal
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            for kind, payload in self.said:
+                yield (kind, payload)
+            yield ("done", {"session_id": "s-1", "terminal_reason": self.terminal, "cost": {}})
+
+    class DraftsThenRunsOut(AReviewThatRunsOutGetsAClosingTurn.Closes):
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            async for kind, payload in super().stream(cwd, text, session_id, max_turns, **kw):
+                yield (kind, payload)
+                if kind == "chunk" and len(self.calls) == 1:
+                    yield ("tool", "Read")
+
+    def test_a_titled_piece_before_the_last_tool_call_is_not_written(self):
+        cut = self.Cut(("chunk", AnAnswerInPiecesIsWrittenWhole.HEAD), ("tool", "Read"))
+        final, end, written = AnAnswerInPiecesIsWrittenWhole.go(self, cut)
+        self.assertEqual((final["outcome"], end["outcome"]), ("exhausted", "exhausted"))
+        # Nothing followed the last call, so the reason is the one `main` gave.
+        self.assertIn("the session returned nothing", end["detail"].splitlines()[0])
+        self.assertIsNone(written)
+
+    def test_the_same_pieces_below_the_ceiling_are_written(self):
+        cut = self.Cut(("chunk", AnAnswerInPiecesIsWrittenWhole.HEAD), ("tool", "Read"),
+                       ("chunk", "PHẦN-ĐUÔI\n"), terminal="success")
+        final, _, written = AnAnswerInPiecesIsWrittenWhole.go(self, cut)
+        self.assertEqual(final["outcome"], "done")
+        self.assertIn("PHẦN-ĐẦU\nPHẦN-ĐUÔI\n", written.decode("utf-8"))
+
+    def test_a_whole_answer_after_the_last_tool_call_is_still_written(self):
+        cut = self.Cut(("chunk", "Đọc thêm."), ("tool", "Read"),
+                       ("chunk", AnAnswerInPiecesIsWrittenWhole.HEAD))
+        final, _, written = AnAnswerInPiecesIsWrittenWhole.go(self, cut)
+        self.assertEqual(final["outcome"], "exhausted")
+        self.assertEqual(written.decode("utf-8"), AnAnswerInPiecesIsWrittenWhole.HEAD)
+
+    def test_a_drafted_round_leaves_the_review_its_closing_turn(self):
+        draft = incomplete_reply("c" * 40, verdict="pass", status="accepted")
+        sessions = self.DraftsThenRunsOut(first=draft)
+        _, [end], review, head, _ = AReviewThatRunsOutGetsAClosingTurn.run_review(self, sessions)
+        self.assertEqual(len(sessions.calls), 2)
+        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "incomplete"))
+        self.assertNotIn("Verdict: pass", review)
+        self.assertIn(f"## Round 2\n\nReviewed: {head}. Verdict: incomplete.", review)
 
 
 class TheNextReviewGoesOnFromAnIncompleteRound(unittest.TestCase):
