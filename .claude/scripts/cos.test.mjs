@@ -2836,7 +2836,7 @@ test('0112 review F1: status offers no acceptance of a ship.md naming its Round,
     return JSON.parse(cli('--root', root, 'status', '--json').stdout).units[0]
   }
   const refused = status(shipDraft(1))
-  assert.deepEqual(refused.next, { blocked: true, action: 'ship after review round 1 did not merge — next, with --repo, says what runs now', stage: '', why: 'ship-refused' })
+  assert.deepEqual(refused.next, { blocked: true, action: 'ship after review round 1 did not merge — the next step says what runs now', stage: '', why: 'ship-refused' })
   // Still in the window, at `ship`: the board reads the integration and the autopilot fetches.
   assert.equal(refused.at, 'ship')
   assert.equal(refused.betweenPrAndShip, true)

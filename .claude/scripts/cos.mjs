@@ -972,7 +972,7 @@ function decide(unit, limit) {
       // request still open. One naming no `Round` predates `0112` and reads as any draft.
       const refused = s.file === 'ship.md' ? unit.artifacts['ship.md']?.ship?.round ?? null : null
       if (refused !== null && lastRound(unit)) {
-        return { blocked: true, action: `ship after review round ${refused} did not merge — next, with --repo, says what runs now`, stage: '', why: 'ship-refused' }
+        return { blocked: true, action: `ship after review round ${refused} did not merge — the next step says what runs now`, stage: '', why: 'ship-refused' }
       }
       // `0106` R1: every question the draft asked has an answer, so running its stage again
       // is what finishes it. `stage` stays `''` — the run button does not offer it — and only

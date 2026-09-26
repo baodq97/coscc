@@ -3741,7 +3741,7 @@ class TheStateOfAUnit(unittest.TestCase):
         """`0112` review F1. `next` works that draft; one with no `Round` reads as before."""
         rows = [{"stage": "review", "status": "accepted"}, {"stage": "ship", "status": "draft"}]
         refused = self._unit(why="ship-refused", at="ship", between_pr_and_ship=True, stages=rows,
-                             next="ship after review round 1 did not merge — next, with --repo, says what runs now")
+                             next="ship after review round 1 did not merge — the next step says what runs now")
         self.assertEqual(attention_reason(refused), "")
         self.assertEqual(unit_state(refused, None, None)["state"], "ready")
         old = self._unit(why="draft", at="ship", between_pr_and_ship=True, stages=rows, next="finish and accept ship.md")
