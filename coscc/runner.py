@@ -955,6 +955,31 @@ def _after_tool(text: str) -> str:
     return text if not text or text.endswith("\n") else text + "\n"
 
 
+def _unwrapped(piece: str, artifact: str) -> str:
+    """`0099` R9 for one piece. A piece that is one fence with the artifact's title at its
+    top comes out of the fence; any other piece is left as it came.
+
+    Review round 1, F1: narration, a tool call, then the artifact in a fence. Before `0099`
+    only the fenced piece was kept, and `_unfence` took it out. Joined to the narration it
+    no longer opens with the fence, and `from_title` reads its title as quoted.
+    """
+    body = piece.strip()
+    if body.startswith("```"):
+        inside = _unfence(body)
+        if inside != body and inside.startswith(_title(artifact)):
+            return inside + "\n"
+    return piece
+
+
+def _joined(pieces: list[str], artifact: str | None = None) -> str:
+    """The pieces a session said between its tool calls, each on a line of its own. Given
+    `artifact`, a piece wrapped whole in a fence around it is unwrapped first."""
+    text = ""
+    for piece in pieces:
+        text = _after_tool(text) + (_unwrapped(piece, artifact) if artifact else piece)
+    return text
+
+
 # How the SDK says a turn ran out of room. `terminal_reason` is the field that carries it;
 # older CLIs leave it unset and put a hint in `subtype`, so both are folded into one string
 # before this looks at it.
@@ -1584,7 +1609,8 @@ class Runner:
         denials = Denials()
         if recorder is not None:
             denials.listener = recorder.denied
-        collected = ""
+        # `0099` R1. What the session said, one entry per stretch between two tool calls.
+        pieces = [""]
         # `0099` R5: how many pieces of text, blank ones aside, the session said.
         blocks = 0
         terminal = ""
@@ -1647,7 +1673,7 @@ class Runner:
                 **({"step": running.handle} if running is not None else {}),
             ):
                 if kind == "chunk":
-                    collected += payload
+                    pieces[-1] += payload
                     if payload.strip():
                         blocks += 1
                     yield ("chunk", payload)
@@ -1657,8 +1683,8 @@ class Runner:
                     # note on why only `chunk` may cross this boundary as itself.
                     session_id = str(payload)
                 elif kind == "tool":
-                    # Kept, and ended on a line of its own: what comes after a tool call is
-                    # the next piece. `plan` got `Read`, `Glob` and `Grep` on 2026-09-23,
+                    # Kept: what comes after a tool call is the next piece, and `_joined`
+                    # puts it on a line of its own. `plan` got `Read`, `Glob` and `Grep` on 2026-09-23,
                     # and its narration before a tool call began to open every `plan.md`
                     # (`0016_no-human-in-the-loop`). Dropping all text before the last call
                     # fixed that, and lost the head of any artifact written in pieces
@@ -1668,7 +1694,7 @@ class Runner:
                     # Not forwarded. `coscc/api.py:227-231` treats every kind that is not
                     # `chunk` as the terminal `done` row, so a third kind reaching it would
                     # arrive at the client as a malformed `done`.
-                    collected = _after_tool(collected)
+                    pieces.append("")
                 else:
                     session_id = payload.get("session_id", "")
                     cost = payload.get("cost", {}) or {}
@@ -1694,7 +1720,7 @@ class Runner:
             if grant.app_writes_artifact:
                 # Synchronous, so nothing yields between reading the `## Answers` already
                 # on disk and writing the artifact over it.
-                _write_artifact(directory, artifact, collected, blocks=blocks)
+                _write_artifact(directory, artifact, _joined(pieces, artifact), blocks=blocks)
                 if watch:
                     # `0080` R4: the reply was written, so the progress file is never read.
                     spike_md = "reply"
@@ -1730,7 +1756,7 @@ class Runner:
             # is often a good artifact with a preamble in front of it, and a person who
             # can see it can decide that in a second — measured 2026-09-22, when a `spec`
             # step failed this way inside a paid proof run and left nothing to look at.
-            detail = _with_reply(detail, collected)
+            detail = _with_reply(detail, _joined(pieces))
             # A step stopped by its own ceiling did not fail in the ordinary sense — it was
             # bounded. `journal.OUTCOMES` keeps the two apart so a reader can tell a defect
             # from a limit working as intended (`spec.md` R11).
@@ -1738,7 +1764,7 @@ class Runner:
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal} — {detail}"
         except Exception as e:  # surfaced as data; the process keeps serving
             error = {"type": type(e).__name__, "message": str(e)}
-            detail = _with_reply(f"{type(e).__name__}: {e}", collected)
+            detail = _with_reply(f"{type(e).__name__}: {e}", _joined(pieces))
             if _hit_ceiling(terminal):
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         else:

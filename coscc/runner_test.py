@@ -1204,6 +1204,39 @@ class AnAnswerInPiecesIsWrittenWhole(unittest.TestCase):
         self.assertIsNone(written)
 
 
+class AFencedAnswerAfterNarrationIsUnwrapped(unittest.TestCase):
+    """`0099` review round 1, F1. Narration, a tool call, then the artifact in a fence:
+    written before `0099`, when only the fenced piece was kept and `_unfence` took it out."""
+
+    BODY = "# Plan: x\nIntent: i. Status: accepted.\n\n## Body\n\n```\n# Plan: quoted\n```\n"
+
+    class Fenced:
+        def __init__(self, last):
+            self.last = last
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            yield ("chunk", "Để tôi đọc lại plan.")
+            yield ("tool", "Read")
+            yield ("chunk", self.last)
+            yield ("done", {"session_id": "s-1", "cost": {}})
+
+    def go(self, last):
+        return AnAnswerInPiecesIsWrittenWhole.go(self, self.Fenced(last))
+
+    def test_the_fenced_artifact_is_written_out_of_its_fence(self):
+        final, _, written = self.go("```markdown\n" + self.BODY + "```\n")
+        self.assertEqual(final["outcome"], "done")
+        self.assertEqual(written.decode("utf-8"), self.BODY)
+
+    def test_a_piece_that_is_only_a_code_block_keeps_its_fence(self):
+        # A fence whose top is not the title is the body's, not a wrapper.
+        from coscc.runner import _joined
+
+        pieces = ["# Plan: x\nStatus: accepted.\n\n## Body\n", "```\ncode\n```"]
+        self.assertEqual(_joined(pieces, "plan.md"),
+                         "# Plan: x\nStatus: accepted.\n\n## Body\n```\ncode\n```")
+
+
 class AnAnswerReachesTheStageThatReadsItsArtifact(unittest.TestCase):
     """`0016` R5. An answer appended under `## Answers` is in the file, so it is in the
     prompt of whichever stage embeds that file, and only that one (`0016` plan, Risks 4)."""
