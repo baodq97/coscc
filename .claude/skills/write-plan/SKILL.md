@@ -55,8 +55,10 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: a
 3. `## Risks` names what could break and what would show it breaking, ordered by blast
    radius. Include the risk you would rather not write down; it is usually the real one.
 4. `## Proof` is a command whose output decides pass or fail, plus the result that counts
-   as passing. "Verify manually" is not proof. If no such command exists yet, the first
-   step of the plan is to create one.
+   as passing, and it is one of three things: `npm test`, carrying tests named for the
+   behaviour they show; `npm run e2e`, carrying a case named the same way; or a one-time
+   measurement whose result `impl.md` records. "Verify manually" is not proof, and neither
+   is a script of the unit's own: a claim worth keeping becomes a test or a case.
 5. State what you chose not to do and why, where a reader would otherwise assume it was
    overlooked.
 6. An engineer who never saw this conversation implements the change from this file alone.

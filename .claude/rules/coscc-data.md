@@ -14,6 +14,6 @@ paths:
   which is why a hand-edited store cannot point the app at `/etc`.
 - A unit's artifacts live under `COS_DATA_DIR`, not in the repository the work is done in;
   `coscc/units.py` is the one place that answers where.
-- A field added to a `start` or `end` row is read by `scripts/verify_*.py --measure` with
+- A field added to a `start` or `end` row is read by the measuring scripts' `--measure` with
   `sqlite3` directly (they do not import `coscc`): renaming or nesting one breaks a
   measurement no test runs.

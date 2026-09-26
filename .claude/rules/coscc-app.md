@@ -3,7 +3,7 @@ paths:
   - "coscc/**"
   - "coscc/**/*"
   - "rxconfig.py"
-  - "scripts/verify_*.py"
+  - "scripts/*.py"
 ---
 
 # The coscc app
@@ -28,7 +28,7 @@ server binding every interface, with no setting for its host. `coscc` mounts the
 frontend into the API's own ASGI app and binds one port, on `0.0.0.0` by default, behind
 a master password (`coscc/auth.py`); `COS_HOST=127.0.0.1` is the loopback posture.
 
-`npm test` never builds. `verify_0001` and `verify_0002` drive the ASGI app in-process, so
+`npm test` never builds. `coscc/api_test.py` drives the ASGI app in-process, so
 the test command needs no JavaScript toolchain — that is deliberate, and it is why editing
 the page and forgetting to rebuild is possible at all.
 
@@ -46,8 +46,8 @@ navigation does not cancel is the `cos.mjs next` ask `load_next` waits on: it ru
 own task (`_ASKING`), and the next arrival at that unit waits for it instead of asking
 again. A proof that drives the state in-process has no browser to
 follow a redirect: it arrives where the button would have sent it (`arrive_at`).
-Components in `screens.py`, state in `state.py`, logic behind `service.py`.
-**A handler that decides anything is a bug in `service.py`, not in the page.**
+Components in `screens*.py`, state in `state*.py`, logic behind `Service` (`service*.py`).
+**A handler that decides anything is a bug in `Service`, not in the page.**
 
 `policy.py` is the grant table, keyed by stage; the mode is recorded but grants nothing. It
 sits **outside `Config`** so the four knobs keep meaning what they meant. Default is the
@@ -57,8 +57,7 @@ locked position: no tools, no commands, one turn, no budget.
 
 - **Sessions spend account quota.** Nothing that talks to the app belongs in an unattended
   loop — except the app's own autopilot (`0043`), on per workspace, capped per day, which
-  starts steps with nobody watching (`.claude/docs/not-built.md`). These proofs spend money, push, or need another machine: `verify_0001`, `0002`,
-  `0004`, `0005`, `0011`, `0014`, and every `--paid` flag
+  starts steps with nobody watching (`.claude/docs/not-built.md`). Every `--paid` flag of a script under `scripts/` spends money
   (`.claude/docs/coscc-proofs.md`).
 - **SQLite settings are ordered.** `busy_timeout` must be the **first statement on every
   connection**, before `PRAGMA journal_mode=WAL`; reversed, it fails now and then with
@@ -105,9 +104,9 @@ only from here.
 | the `review`/`ship` gates call `gh`; the run button follows `next` | `.claude/rules/coscc-board.md` | editing `coscc/board.py` or the run button |
 | two roots, and what `--measure` reads | `.claude/rules/coscc-data.md` | editing `coscc/config.py`, `units.py`, `data.py`, `journal.py`, or a run-log field |
 | `/api/timeline` returns a failed reply; `pull` within one process; a failed step's tail; `POST /api/board/stop`; units at the same time; `GET /api/board/running` | `.claude/docs/coscc-steps.md` | editing `/api/timeline`, `/api/board/stop`, `/api/board/running`, `Service.run_step`, `runner.describe_attempt` or `journal.failed_attempts` |
-| `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold`; re-running keeps `## Answers`; a board rerun makes later artifacts stale | `.claude/docs/coscc-answers.md` | editing those routes, `run_step`'s `rerun`, `cos.mjs rerun`, `coscc/hold.py`, or `answers_section`/`strip_answers`/`with_answers` in `coscc/runner.py` |
+| `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold`; re-running keeps `## Answers`; a board rerun makes later artifacts stale | `.claude/docs/coscc-answers.md` | editing those routes, `run_step`'s `rerun`, `cos.mjs rerun`, `coscc/hold.py`, or `answers_section`/`strip_answers`/`with_answers` in `coscc/runner_prompt.py` |
 | `POST /api/settings/models` and `/efforts`; `POST /api/backlog/*` | `.claude/docs/coscc-settings.md` | editing `/api/settings/*`, `coscc/models.py`, `/api/backlog/*` or `coscc/backlog.py` |
 | `spike` runs arbitrary code | `.claude/docs/coscc-spike.md` | editing the `spike` grant, its scratch directory, or its progress-file write |
 | what the page stopped explaining in `0082` | `.claude/docs/coscc-page-text.md` | adding words to a screen, or removing a sentence the page says beside a button |
 | `coscc knowledge gather` spends quota past its ceiling; a wrong entry reaches every plan; baseline before the flag | `.claude/docs/coscc-knowledge.md` | editing `coscc/knowledge.py`, `gather.py`, `admit.py`, `measure.py`, `knowledge_cli.py`, the `knowledge` grant, or running `coscc knowledge` |
-| every proof's cost; `capture_screens.py` overwrites `.web` | `.claude/docs/coscc-proofs.md` | running any `scripts/verify_*.py` or `scripts/capture_screens.py`, or writing a proof |
+| every proof's cost; `capture_screens.py` overwrites `.web` | `.claude/docs/coscc-proofs.md` | running `npm run e2e`, a measuring script under `scripts/` or `scripts/capture_screens.py`, or writing a proof |

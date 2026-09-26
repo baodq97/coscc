@@ -27,7 +27,7 @@ CLAUDE_MAX = 8_000
 APP_MAX = 12_000
 AREA_MAX = 8_000
 
-APP_PATHS = ["coscc/**", "coscc/**/*", "rxconfig.py", "scripts/verify_*.py"]
+APP_PATHS = ["coscc/**", "coscc/**/*", "rxconfig.py", "scripts/*.py"]
 
 # R7: files nearly every unit passes through. A rule scoped to one of them would be read by
 # nearly every step, which is what tier 2 already is. The spec's list, not measured.
@@ -68,6 +68,23 @@ class TheScopes(unittest.TestCase):
                     self.assertFalse(set("*?[") & set(p), p)
                     self.assertNotIn(p, HOT)
                     self.assertTrue((REPO / p).is_file(), p)
+
+
+class TheUiStandardFollowsTheSplit(unittest.TestCase):
+    """`0095`: `screens.py`, `state.py` and `service.py` were split into modules of their own.
+    A module the UI standard does not name is code it is not loaded for, and a unit that
+    changes only that module is not a UI unit to `coscc/board.py`."""
+
+    def test_every_module_they_were_split_into_is_named(self):
+        named = set(scoped_patterns(UI.read_text(encoding="utf-8")))
+        split = [
+            f"coscc/{p.name}"
+            for name in ("screens", "state", "service")
+            for p in sorted((REPO / "coscc").glob(f"{name}_*.py"))
+            if not p.name.endswith("_test.py")
+        ]
+        self.assertIn("coscc/state_views.py", split)
+        self.assertEqual([m for m in split if m not in named], [])
 
 
 class EveryDocIsPointedTo(unittest.TestCase):

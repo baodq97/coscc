@@ -86,7 +86,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
             async for item in self.service.run_step(self.cwd, self.unit, stage, **kw):
                 self.items.append(item)
 
-        with mock.patch.object(service_mod, "Runner", StandIn), \
+        with mock.patch("coscc.service_steps.Runner", StandIn), \
                 mock.patch.object(self.service, "_worktree", tree), \
                 mock.patch.object(self.service, "_sync_pr", no_sync), \
                 mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \

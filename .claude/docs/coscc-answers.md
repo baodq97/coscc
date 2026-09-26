@@ -49,14 +49,14 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or 
     reads past Jera's own `start`/`end` rows (`autopilot.is_step`), so a Jera run neither
     lifts nor sets the stop on a failed step.
 - **Re-running a prose stage keeps `## Answers` byte for byte; a reply's own attempt at
-  one is dropped, silently.** Since `0025` the runner (`coscc/runner.py`: `answers_section`,
+  one is dropped, silently.** Since `0025` the runner (`coscc/runner_prompt.py`: `answers_section`,
   `strip_answers`, `with_answers`) reads the section already on disk right before it
   writes — not at the step's start — and writes it back after the stage's own text, on
   all five prose stages: `idea`, `intent`, `spec`, `plan` and `review`. Whatever a reply
   says under its own `## Answers` heading — copied from the artifact, forged, or a model
   answering its own question — never reaches disk, and nothing records that a reply tried.
   A window remains between the answer route's read and the runner's: the two hold no lock
-  in common (`_answer_lock` is `Service`'s, `coscc/service.py:140`, and `Runner` carries
+  in common (`_answer_lock` is `Service`'s, `coscc/service.py:131`, and `Runner` carries
   no reference to it). Byte-identical is not meaning-identical: a re-run that renumbers
   `## Open questions` leaves `### Câu N` on disk pointing at whichever question now
   carries that number, not the one a person answered

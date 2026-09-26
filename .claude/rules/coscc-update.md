@@ -35,5 +35,5 @@ paths:
   `/api/workspaces` for `200` without a cookie fails every trial against a build with the
   login: such a release is installed with `curl … | sh`.
 - `update.identity` is also what a board step's `start` row takes `app_version` and
-  `app_commit` from (`Service._app_identity`); `scripts/verify_0094.py --measure` splits
-  before and after on them.
+  `app_commit` from (`Service._app_identity`); `0094`'s measuring script splits before and
+  after on them.

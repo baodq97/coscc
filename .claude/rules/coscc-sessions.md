@@ -23,8 +23,8 @@ paths:
     one that stays until then. A SIGKILL of the app, or any restart without that update,
     leaves every `/tmp/coscc-session-*` behind for good, and nothing sweeps them (C4, size
     unmeasured). Chat does not fall back to `~/.cos` (C6).
-  - `verify_0037/0041/0060/0061 --measure` run inside a step read an empty database and exit
-    2: run them at a terminal. If the app itself is started with its own `cos.db` in
+  - A measuring script's `--measure` run inside a step reads an empty database and exits
+    2: run it at a terminal. If the app itself is started with its own `cos.db` in
     `COSCC_PROTECTED_DB`, every route that reads it is a `500` while `/api/health` says `ok`
     (`.cos/0076_*/plan.md` Risk 2).
 - **A session reads nothing of `~/.claude/`, and of the project only what the app hands it.**

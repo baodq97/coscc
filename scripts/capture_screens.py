@@ -104,10 +104,11 @@ from scripts.proof_harness import (  # noqa: E402
     EXIT_ENV,
     EXIT_PASS,
     RealApp,
+    make_repo,
     port_free,
     require_browser,
+    seed_session,
 )
-from scripts.verify_0071 import make_repo, seed_session  # noqa: E402
 
 HOST, PORT = "127.0.0.1", 18783  # chosen: a port no other proof here uses
 SIZES = ((1440, 900), (390, 844))  # the two `verify_0056` and `verify_0071` measured

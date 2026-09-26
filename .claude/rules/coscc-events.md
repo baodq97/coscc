@@ -23,7 +23,7 @@ paths:
 - A second copy of the app on the same data root writes its steps' events into the same
   tables, but nobody can follow them live, and this copy reads them as `ended-unknown` while
   they run (C9).
-- The watch pane holds at most `WATCH_WINDOW` (`coscc/state.py:622`) events, because every
+- The watch pane holds at most `WATCH_WINDOW` (`coscc/state_views.py:819`) events, because every
   frame resends the whole list (`.cos/0073_*/spike.md ## U4` measured the frame sizes); on
   a slow link the delay will pile up (unmeasured). Each tab that opens the pane keeps a
   follower until the step ends, the pane closes, or it falls `SUB_LIMIT`

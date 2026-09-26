@@ -6,6 +6,12 @@ that ran `impl` twice or more, and the `changes-requested` rounds per shipped un
 `--outcome` it then says whether R7 holds.
 
     uv run python -m coscc.turnstats --workspace <path> [--since T] [--until T] [--outcome]
+        [--files PATH... [--first N]]
+
+`--files` adds `0095` R9's `touched_*` fields: the `impl` steps that aimed a `Read` or `Grep`
+at one of those paths, and over the first N of them their turns, those calls and what each
+such `Read` returned. `touched_purged` counts the steps whose events the app had already
+purged, which none of those fields can see: measure a window before its runs age out.
 
 Run it at a terminal. A board step carries this app's `cos.db` in `COSCC_PROTECTED_DB`, and
 this command opens the file with `sqlite3` rather than through `Data`, so it asks the same
@@ -152,6 +158,74 @@ def event_fields(conn: sqlite3.Connection, steps: list[dict[str, Any]]) -> dict[
     }
 
 
+def _aimed_at(tool_input: Any, files: list[str]) -> bool:
+    """`0095` R9: a `Read` or `Grep` input whose `file_path` or `path` ends in `/<file>`. A
+    `Grep` with no `path`, or one on a directory, names none of `files`."""
+    if not isinstance(tool_input, dict):
+        return False
+    target = tool_input.get("file_path") or tool_input.get("path")
+    return isinstance(target, str) and any(target.endswith("/" + f) for f in files)
+
+
+def _result_chars(event: dict[str, Any]) -> int:
+    """What a `tool_result` carried back: the CLI's own size when it persisted the output,
+    the length before `events._cut` when the content was cut, else the content's length."""
+    if isinstance(event.get("persisted_size"), int):
+        return event["persisted_size"]
+    if "content" in (event.get("truncated_fields") or []) and isinstance(event.get("length"), int):
+        return event["length"]
+    content = event.get("content")
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        return sum(len(b.get("text") or "") for b in content if isinstance(b, dict))
+    return 0
+
+
+def file_fields(
+    conn: sqlite3.Connection, steps: list[dict[str, Any]], files: list[str], first: int
+) -> dict[str, Any]:
+    """`0095` R9: how many steps aimed a `Read` or `Grep` at one of `files`, and, over the
+    first `first` of them in `start` order, their turns, those calls per step, and the
+    characters per such `Read`. A step whose events `events.purge` deleted cannot be told
+    either way; `touched_purged` counts those, since the sample slides past them."""
+    touched: list[tuple[int, int, list[int]]] = []
+    purged = 0
+    for p in steps:
+        run = p["end"].get("run")
+        if not run:
+            continue
+        index = conn.execute("SELECT purged_at FROM step_runs WHERE run = ?", (run,)).fetchone()
+        if index and index[0]:
+            purged += 1
+            continue
+        reads: dict[str, bool] = {}
+        results: dict[str, int] = {}
+        for kind, raw in conn.execute(
+            "SELECT kind, event FROM step_events WHERE run = ? AND kind IN ('tool_use', 'tool_result') "
+            "ORDER BY seq",
+            (run,),
+        ).fetchall():
+            event = json.loads(raw)
+            if kind == "tool_result":
+                results[event.get("tool_use_id")] = _result_chars(event)
+            elif event.get("name") in ("Read", "Grep") and _aimed_at(event.get("input"), files):
+                reads[event.get("id")] = event.get("name") == "Read"
+        if not reads:
+            continue
+        chars = [results.get(i, 0) for i, is_read in reads.items() if is_read]
+        touched.append((p["end"].get("turns") or 0, len(reads), chars))
+    sample = touched[:first]
+    return {
+        "touched_steps": len(touched),
+        "touched_turns_mean": _mean([t for t, _, _ in sample], 2),
+        "touched_reads_greps_mean": _mean([n for _, n, _ in sample], 2),
+        "touched_read_chars_mean": _mean([c for _, _, cs in sample for c in cs], None),
+        "touched_n": len(sample),
+        "touched_purged": purged,
+    }
+
+
 def changes_requested(text: str) -> int:
     """The rounds of a `review.md` whose first `Verdict:` is `changes-requested`."""
     parts = _ROUND.split(text)[1:]
@@ -197,7 +271,10 @@ def quality_fields(
     }
 
 
-def measure(workspace: str, data_root: str | Path, since: str | None, until: str | None) -> dict[str, Any]:
+def measure(
+    workspace: str, data_root: str | Path, since: str | None, until: str | None,
+    files: list[str] | None = None, first: int = 20,
+) -> dict[str, Any]:
     key = units.key(workspace)
     conn = open_db(data_root)
     try:
@@ -206,6 +283,7 @@ def measure(workspace: str, data_root: str | Path, since: str | None, until: str
             **step_fields(steps),
             **quality_fields(conn, key, units.cos_dir(key, data_root), since, until),
             **event_fields(conn, steps),
+            **(file_fields(conn, steps, files, first) if files else {}),
         }
     finally:
         conn.close()
@@ -229,9 +307,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--until", help="first start time not counted")
     parser.add_argument("--data-root", default=DEFAULT_DIR, help=f"where cos.db is (default {DEFAULT_DIR})")
     parser.add_argument("--outcome", action="store_true", help="then say whether spec.md R7 holds")
+    parser.add_argument("--files", nargs="+", metavar="PATH",
+                        help="paths from the repository's root; adds the touched_* fields (0095 R9)")
+    parser.add_argument("--first", type=int, default=20, help="touched steps the touched_* means are over")
     args = parser.parse_args(argv)
     try:
-        fields = measure(args.workspace, args.data_root, args.since, args.until)
+        fields = measure(args.workspace, args.data_root, args.since, args.until, args.files, args.first)
     except (Refused, sqlite3.Error) as e:
         print(f"turnstats: {e}", file=sys.stderr)
         return 2

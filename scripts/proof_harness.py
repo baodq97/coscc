@@ -15,6 +15,7 @@ broken" — which is the exit-code split both proofs are built around.
 from __future__ import annotations
 
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -24,7 +25,8 @@ from pathlib import Path
 
 import httpx
 
-from coscc import build
+from coscc import auth, build
+from coscc.data import Data
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -34,6 +36,9 @@ BOOT_TIMEOUT_S = 60.0
 # the same number `verify_0003.py` calls `EXIT_PAGE`; the two proofs name it for what is
 # broken in each.
 EXIT_PASS, EXIT_BROKEN, EXIT_ENV = 0, 1, 2
+
+GIT_ID = ("-c", "user.name=verify", "-c", "user.email=verify@example.invalid",
+          "-c", "commit.gpgsign=false")
 
 
 # Every line a proof prints, as it prints it. Python buffers stdout whenever it is not a
@@ -169,3 +174,37 @@ class RealApp:
     def __exit__(self, *exc):
         self.stop()
         return False
+
+
+def git(where: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(where), *GIT_ID, *args],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def make_repo(root: Path, outside: Path, name: str = "proj", remote: str = "remote.git",
+              readme: str = "verify_0071\n") -> Path:
+    """A workspace: a clone of a bare-directory remote, one commit on `main`. The defaults
+    are the fixture `capture_screens.py` has taken its screenshots on since `0083`."""
+    origin = outside / remote
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    proj = root / name
+    subprocess.run(["git", "clone", "-q", str(origin), str(proj)], check=True, capture_output=True)
+    git(proj, "symbolic-ref", "HEAD", "refs/heads/main")
+    (proj / "README.md").write_text(readme, encoding="utf-8")
+    git(proj, "add", "-A")
+    git(proj, "commit", "-q", "-m", "a repository")
+    git(proj, "push", "-q", "origin", "main")
+    return proj
+
+
+def seed_session(data_dir: Path) -> str:
+    """`0070`: a password nobody types and one live session, so a page opens past the login
+    without `/setup`. Returns the cookie's value."""
+    import argon2
+
+    data = Data(data_dir)
+    now = int(time.time())
+    data.auth_set_password(argon2.PasswordHasher().hash(secrets.token_urlsafe(24)), now)
+    token = secrets.token_urlsafe(32)
+    data.auth_session_add(auth._sha(token), now, now + auth.SESSION_TTL)
+    return token

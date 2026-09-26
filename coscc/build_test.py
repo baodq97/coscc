@@ -132,13 +132,36 @@ class WhatTheFingerprintCovers(unittest.TestCase):
             set(build._SOURCES), {
                 "coscc/coscc.py", "coscc/ui.py", "coscc/studio.py",
                 "coscc/screens.py", "coscc/state.py", "rxconfig.py",
-            }
+            } | set(self.split_modules())
         )
+
+    @staticmethod
+    def split_modules() -> list[str]:
+        """`0095`: the modules `screens.py` and `state.py` were split into, tests left out."""
+        repo = Path(__file__).resolve().parent.parent
+        return [
+            f"coscc/{p.name}"
+            for name in ("screens", "state")
+            for p in sorted((repo / "coscc").glob(f"{name}_*.py"))
+            if not p.name.endswith("_test.py")
+        ]
+
+    def test_every_module_the_page_was_split_into_is_hashed(self):
+        """A module left out would change the page while the fingerprint says "current"."""
+        split = self.split_modules()
+        self.assertIn("coscc/state_views.py", split)
+        self.assertEqual([m for m in split if m not in build._SOURCES], [])
 
     def test_a_missing_source_file_is_recorded_not_ignored(self):
         with tempfile.TemporaryDirectory() as d:
             digest = build.source_digest(Path(d))
         self.assertEqual(set(digest.values()), {"missing"})
+
+    def test_every_source_it_lists_is_a_file_in_this_checkout(self):
+        """A path left behind by a rename hashes as `missing` for ever, and a missing file
+        never changes, so the fingerprint would call a stale bundle current."""
+        repo = Path(__file__).resolve().parent.parent
+        self.assertEqual([s for s in build._SOURCES if not (repo / s).is_file()], [])
 
 
 if __name__ == "__main__":
