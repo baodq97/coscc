@@ -91,32 +91,38 @@ function section(text, title) {
   return end === -1 ? rest : rest.slice(0, end)
 }
 
-// A question is a numbered item at column 0 under `## Open questions`. Its identity is the
-// number written, not its position and not its words — a later stage may reword it, and a
-// list that skips a number still means the number it wrote. Lines up to the next numbered
-// item belong to the one above them. `null` when the file has no `## Open questions`.
+// A question is a numbered item at column 0 under `## Open questions` whose first paragraph
+// — up to its first blank line — holds a `?`. Its identity is the number written, not its
+// position and not its words — a later stage may reword it, and a list that skips a number
+// still means the number it wrote. Lines up to the next numbered item belong to the one
+// above them. `null` when the file has no `## Open questions`.
 //
-// A section with no numbered item at all is read as a bullet list (`- ` or `* ` at column
-// 0), numbered by position from 1. Measured 2026-09-23 on the product's own store: two of
-// the artifacts there, `0015` `spec.md` and `0002` `intent.md`, wrote their questions that
-// way, and a numbered-only reader showed them as having none. Position is a weaker
-// identity than a written number — inserting a bullet renumbers everything below it — so
-// the numbered form wins whenever a section has both.
+// Everything else there is a note, and is never listed: a numbered item with no `?`, a
+// bullet, a sentence. `0109`: a line such as "7. The initiator should still reread this
+// file." stopped the autopilot as if a person owed it an answer. Both marks are ones the
+// writer puts down, the number and the `?`, so this compares characters and never reads
+// meaning — "inferring from content is not deterministic, and the gate must be"
+// (`0109` `intent.md ## Answers, câu 1`). A numbered note still ends the item above it, and
+// its number is never given to another question.
+//
+// This reverses what was measured 2026-09-23, when a section with no numbered item was
+// read as a bullet list numbered by position, because `0015` and `0002` wrote their
+// questions that way. `0109` `spike.md ## U2` found that reversing it changes only units
+// already finished or `dropped`; `write-intent` and `write-spec` now say the line's shape.
 export function parseQuestions(text) {
   const lines = section(text, 'Open questions')
   if (lines === null) return null
-  const collect = (re, numberOf) => {
-    const found = []
-    for (const line of lines) {
-      const m = line.match(re)
-      if (m) found.push({ n: numberOf(m, found.length), lines: [m[m.length - 1]] })
-      else if (found.length) found[found.length - 1].lines.push(line)
-    }
-    return found
+  const found = []
+  for (const line of lines) {
+    const m = line.match(/^(\d+)\.\s+(.*)$/)
+    if (m) found.push({ n: Number(m[1]), lines: [m[2]] })
+    else if (found.length) found[found.length - 1].lines.push(line)
   }
-  let found = collect(/^(\d+)\.\s+(.*)$/, (m) => Number(m[1]))
-  if (!found.length) found = collect(/^[-*]\s+(.*)$/, (_, i) => i + 1)
-  return found.map((q) => ({ n: q.n, text: q.lines.join('\n').trim() }))
+  const asks = (q) => {
+    const blank = q.lines.findIndex((l) => l.trim() === '')
+    return (blank === -1 ? q.lines : q.lines.slice(0, blank)).join('\n').includes('?')
+  }
+  return found.filter(asks).map((q) => ({ n: q.n, text: q.lines.join('\n').trim() }))
 }
 
 // The header line of an answer block. The name is lazy so that a name holding a full stop

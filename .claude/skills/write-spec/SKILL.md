@@ -94,7 +94,7 @@ Intent: intent.md. Author: <name>. Status: accepted.
    the data that crosses them. It does not name the order of work or the files to edit;
    the plan decides those.
 5. Carry the intent's open questions forward. Answer them, or restate them under
-   `## Open questions` with what an answer would change. Silence loses them.
+   `## Open questions` as `N. …?`, with what an answer would change. Silence loses them.
 6. `## Out of scope` names what a reader would reasonably expect and will not get. An
    empty section here usually means the boundary was never thought about.
 7. Every figure names its source or is marked unverifiable. Cite only a file committed in
@@ -119,6 +119,14 @@ Intent: intent.md. Author: <name>. Status: accepted.
     requirement resting on it — never keep it. A new question takes a new id; never reuse
     one. When no direction left holds, write `Status: draft` with the question under
     `## Open questions`: a draft stops the loop until a person answers.
+12. Under `## Open questions`, each question is an item `N. ` at column 0 whose first
+    paragraph holds a `?`. `cos.mjs` counts nothing else: a bullet, or a numbered line with
+    no `?`, is read as a note and never stops the autopilot. So a real question always
+    carries its `?`. A note — no question is left open, how the answers were used, the
+    originator should reread this — is a plain sentence there or goes in another section,
+    never an item. When nothing is left open, keep the heading: the latest artifact with
+    it is the one counted (`cos.mjs`, `unitQuestions`), so dropping it would count the
+    intent's questions again.
 
 ## Done when
 
