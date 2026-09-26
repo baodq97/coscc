@@ -22,18 +22,16 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
-from coscc import gitops, harness, instructions, steps
+from coscc import instructions, steps
 from coscc.integrate import check_started_by
 from coscc import sessions as sessions_mod
 from coscc.journal import Journal
-from coscc.knowledge import STAGES as KNOWLEDGE_STAGES
-from coscc.policy import Grant, beyond_reading, decide, grant_for_step, is_prose_stage
+from coscc.policy import beyond_reading, grant_for_step, is_prose_stage
 from coscc.sessions import Refused, Sessions
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
