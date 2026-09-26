@@ -28,7 +28,7 @@ CAP_BYTES = 6144
 
 # Its own, not `runner._ROUND_RE`: `runner` would have to be imported, and it imports this.
 _ROUND = re.compile(r"^## Round (\d+)\b")
-_FINDING = re.compile(r"^- F\d+ \[[^\]]*\]\s+(\S+)")
+_FINDING = re.compile(r"^- (F\d+) \[[^\]]*\]\s+(\S+)")
 _LINE_REF = re.compile(r":[\d,-]+$")
 
 
@@ -42,7 +42,7 @@ def path_of(line: str) -> str:
     m = _FINDING.match(line)
     if not m:
         return ""
-    token = _LINE_REF.sub("", m.group(1).strip("`"))
+    token = _LINE_REF.sub("", m.group(2).strip("`"))
     return token if ("/" in token or "." in token) else ""
 
 
@@ -66,19 +66,26 @@ def select(reviews: dict[str, str], plan_text: str) -> tuple[str, dict[str, Any]
     """`(section, record)`: the finding lines of `reviews` — unit to `review.md` text — whose
     path the plan's `## Files that change` names, prefixed `<NNNN> Round <n>`, by path,
     unit, round and place in the file, never over `CAP_BYTES`; and `{bytes, lines, units,
-    dropped}` for the `start` record. No section, or nothing matching, is `""`."""
+    dropped}` for the `start` record. No section, or nothing matching, is `""`.
+
+    A finding is its unit and its `F<k>`, and only the last line the file states it on is
+    kept: every round carries every earlier finding forward (`write-review`), so a unit of
+    three rounds would otherwise give each of its first findings three times."""
     files = files_section(plan_text)
     if files is None:
         return "", _empty()
-    matched: dict[str, tuple[bytes, int, int, int]] = {}
+    latest: dict[tuple[str, str], tuple[int, int, str]] = {}
     for unit, text in reviews.items():
-        number = unit[:4]
         for rnd, pos, line in findings(text):
-            path = path_of(line)
-            if not path or not mentioned(files, [path]):
-                continue
-            out = f"- {number} Round {rnd} {line[2:]}"
-            matched.setdefault(out, (path.encode(), int(number) if number.isdigit() else -1, rnd, pos))
+            latest[(unit, _FINDING.match(line).group(1))] = (rnd, pos, line)
+    matched: dict[str, tuple[bytes, int, int, int]] = {}
+    for (unit, _), (rnd, pos, line) in latest.items():
+        number = unit[:4]
+        path = path_of(line)
+        if not path or not mentioned(files, [path]):
+            continue
+        out = f"- {number} Round {rnd} {line[2:]}"
+        matched.setdefault(out, (path.encode(), int(number) if number.isdigit() else -1, rnd, pos))
 
     def order(lines: list[str]) -> list[str]:
         return sorted(lines, key=lambda x: matched[x])

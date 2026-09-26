@@ -67,16 +67,30 @@ class TheOrderAndTheCap(unittest.TestCase):
     def test_by_path_then_unit_then_round_and_a_repeat_is_kept_once(self):
         section, record = priorfindings.select({
             "0080_b": review(["- F1 [open] coscc/service.py:1 — high — b1"],
-                             ["- F1 [open] coscc/runner.py:2 — high — b2",
-                              "- F1 [open] coscc/runner.py:2 — high — b2"]),
+                             ["- F1 [fixed abc1234] coscc/service.py:1 — high — b1",
+                              "- F2 [open] coscc/runner.py:2 — high — b2",
+                              "- F2 [open] coscc/runner.py:2 — high — b2"]),
             "0035_a": review(["- F2 [open] coscc/service.py:9 — low — a1"]),
         }, PLAN)
         self.assertEqual(section.splitlines(), [
-            "- 0080 Round 2 F1 [open] coscc/runner.py:2 — high — b2",
+            "- 0080 Round 2 F2 [open] coscc/runner.py:2 — high — b2",
             "- 0035 Round 1 F2 [open] coscc/service.py:9 — low — a1",
-            "- 0080 Round 1 F1 [open] coscc/service.py:1 — high — b1",
+            "- 0080 Round 2 F1 [fixed abc1234] coscc/service.py:1 — high — b1",
         ])
         self.assertEqual((record["lines"], record["units"], record["dropped"]), (3, 2, 0))
+
+    def test_a_finding_carried_through_every_round_is_one_line_its_last(self):
+        # `write-review` carries every finding forward: three rounds state F1 three times.
+        section, record = priorfindings.select({"0054_a": review(
+            ["- F1 [open] coscc/service.py:1 — high — x"],
+            ["- F1 [open] coscc/service.py:1 — high — x", "- F2 [open] coscc/runner.py:5 — low — y"],
+            ["- F1 [fixed abc1234] coscc/service.py:1 — high — x", "- F2 [open] coscc/runner.py:5 — low — y"],
+        )}, PLAN)
+        self.assertEqual(section.splitlines(), [
+            "- 0054 Round 3 F2 [open] coscc/runner.py:5 — low — y",
+            "- 0054 Round 3 F1 [fixed abc1234] coscc/service.py:1 — high — x",
+        ])
+        self.assertEqual((record["lines"], record["dropped"]), (2, 0))
 
     def test_over_the_cap_the_newest_units_whole_lines_are_kept_in_order(self):
         filler = "x" * 900  # about 960 bytes a line: six fit under the cap, seven do not
