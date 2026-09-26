@@ -437,6 +437,20 @@ class Scripted(_Base):
         self.assertIn("spec step ended failed", self.service._autopilot_stops[self.key]["0001_a"]["reason"])
         self.assertEqual([(u, s) for u, s, _ in self.launched], [("0002_b", "plan")])
 
+    async def test_e_after_screenshots_that_could_not_be_taken_again_until_they_are(self):
+        """`0111`: a retake that failed is no retry; the one after it, taken, lifts the stop."""
+        journal = Journal(self.config.working_dir, self.config.data_dir)
+        self.add("0001_a", "review")
+        journal.finished(self.key, "0001_a", "impl", "done")
+        screens = {"kind": "screens", "workspace": self.key, "unit": "0001_a", "stage": "review"}
+        journal.append({**screens, "outcome": "failed", "detail": "capture_screens.py exited 2"})
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
+        self.assertIn("screenshots could not be taken again", self.service._autopilot_stops[self.key]["0001_a"]["reason"])
+        journal.append({**screens, "outcome": "taken"})
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "review", "autopilot")])
+
     async def test_integrate_when_behind_but_never_after_a_pass(self):
         self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again",
                  integration={"state": "behind"}, rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)

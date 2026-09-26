@@ -91,6 +91,14 @@ class Stops(unittest.TestCase):
         theirs = {"kind": "integration", "outcome": "refused", "started_by": "person"}
         self.assertIsNone(ap.stop_for(unit(), nxt("review", "x"), theirs, True))
 
+    def test_e_screenshots_that_could_not_be_taken_again_and_none_once_they_were(self):
+        # `0111`: no retry; a retake that is taken, run by a person, lifts it.
+        failed = {"kind": "screens", "stage": "review", "outcome": "failed", "detail": "exited 2"}
+        got = ap.stop_for(unit(), nxt("review", "x"), failed, True)
+        self.assertEqual(got, {"kind": "e", "reason": ap.SCREENS_FAILED})
+        taken = {**failed, "outcome": "taken"}
+        self.assertIsNone(ap.stop_for(unit(), nxt("review", "x"), taken, True))
+
     def test_e_red_again_after_the_autopilots_own_integration(self):
         red = {"state": "red-after-integration"}
         mine = {"kind": "integration", "outcome": "pushed", "started_by": "autopilot"}

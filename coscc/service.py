@@ -4062,7 +4062,7 @@ class Service:
                 return
             data = await self.board(cwd)
             try:
-                records = journal.records(kinds=("start", "end", "integration", "shortlist", "answer"))
+                records = journal.records(kinds=("start", "end", "integration", "shortlist", "answer", "screens"))
             except Busy as e:
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
                 return
@@ -4078,7 +4078,8 @@ class Service:
             last: dict[str, dict[str, Any]] = {}
             integrations: dict[str, dict[str, Any]] = {}
             for r in records:
-                if r.get("workspace") == key and r.get("kind") in ("end", "integration") and autopilot.is_step(r):
+                # `0111`: a retake of the screenshots that failed is the unit's last word too.
+                if r.get("workspace") == key and r.get("kind") in ("end", "integration", "screens") and autopilot.is_step(r):
                     last[str(r.get("unit") or "")] = r
                     if r.get("kind") == "integration":
                         integrations[str(r.get("unit") or "")] = r
