@@ -2824,9 +2824,27 @@ test('0112 R2: a pass, then a rebase, with no ship.md, is review — not a draft
   assert.doesNotMatch(n.action, /finish and accept/)
 })
 
-test('0112 R6: status --json, nextAction and nextStep never carry file', () => {
-  const { root, u } = answeredTree({ 'intent.md': DRAFT_INTENT })
-  assert.equal('file' in nextAction(u), false)
-  assert.equal('file' in nextStep(u), false)
-  assert.equal(JSON.parse(cli('--root', root, 'status', '--json').stdout).units[0].next.file, undefined)
+test('0112 review F1: status offers no acceptance of a ship.md naming its Round, and still does of one naming none', () => {
+  const status = (ship) => {
+    const { root } = questionTree({
+      'intent.md': '# I\nAuthor: t. Type: fix. Status: accepted.\n',
+      'spec.md': 'Status: accepted.\n', 'plan.md': 'Status: accepted.\n', 'impl.md': implText(''),
+      'pr.md': 'PR: https://github.com/o/r/pull/7. Status: accepted.\n',
+      'review.md': `# Review: x\nPR: pr.md. Author: t. Status: accepted.\n\n${round(1, 'pass')}`,
+      'ship.md': ship,
+    })
+    return JSON.parse(cli('--root', root, 'status', '--json').stdout).units[0]
+  }
+  const refused = status(shipDraft(1))
+  assert.deepEqual(refused.next, { blocked: true, action: 'ship after review round 1 did not merge — next, with --repo, says what runs now', stage: '', why: 'ship-refused' })
+  // Still in the window, at `ship`: the board reads the integration and the autopilot fetches.
+  assert.equal(refused.at, 'ship')
+  assert.equal(refused.betweenPrAndShip, true)
+  // R6 c: a ship.md from before `0112` is any draft, byte for byte.
+  assert.deepEqual(status(SHIP_OLD).next, { blocked: true, action: 'finish and accept ship.md', stage: '', why: 'draft' })
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')), 'ship.md': shipArt(shipDraft(1)) })
+  assert.doesNotMatch(nextAction(u).action, /accept/)
+  // With no repository, `next` says it needs one, as the gate does.
+  assert.equal(nextStep(u).stage, '')
+  assert.match(nextStep(u).action, /--repo/)
 })

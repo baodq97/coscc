@@ -364,6 +364,10 @@ def attention_reason(unit: dict[str, Any]) -> str:
         return "Needs a person"
     draft = next((r for r in rows if r.get("status") == "draft"), None)
     if draft is not None:
+        # `0112` review F1: a `ship.md` a refused merge left is worked by `next`, not
+        # accepted; accepting it reads the unit as finished with its pull request open.
+        if unit.get("why") == "ship-refused":
+            return ""
         return f"Accept {draft.get('stage')}.md"
     return "Changes requested"
 

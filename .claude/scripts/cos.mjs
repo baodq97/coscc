@@ -891,7 +891,7 @@ function spikeNeeds(unit) {
 // which stage runs. A `changes-requested` review is the case that matters — its action
 // names two stages, and only the branch can say which one is due. `nextStep` below asks it.
 export function nextAction(unit, limit = REVIEW_ROUNDS) {
-  const { why, rerun, file, ...next } = decide(unit, limit)
+  const { why, rerun, ...next } = decide(unit, limit)
   return next
 }
 
@@ -965,13 +965,21 @@ function decide(unit, limit) {
       return { blocked: true, action: `review round ${lastRound(unit).n} is incomplete — write-review again`, stage: 'review', why: 'review-incomplete' }
     }
     if (status === 'draft') {
+      // `0112` R6 and review F1: a `ship.md` naming its `Round` records a merge that did not
+      // happen, and only the branch can say what follows it — integrate, review, ship again,
+      // or a stop naming the refusal (`nextStep`). So nothing read off the files alone asks
+      // for it to be accepted: accepting it would read the unit as finished with its pull
+      // request still open. One naming no `Round` predates `0112` and reads as any draft.
+      const refused = s.file === 'ship.md' ? unit.artifacts['ship.md']?.ship?.round ?? null : null
+      if (refused !== null && lastRound(unit)) {
+        return { blocked: true, action: `ship after review round ${refused} did not merge — next, with --repo, says what runs now`, stage: '', why: 'ship-refused' }
+      }
       // `0106` R1: every question the draft asked has an answer, so running its stage again
       // is what finishes it. `stage` stays `''` — the run button does not offer it — and only
       // the autopilot reads `rerun`, deciding for itself whether it may.
       const questions = unit.artifacts[s.file]?.questions ?? []
       const answered = RERUN_STAGES.includes(s.name) && questions.length > 0 && questions.every((q) => q.answered)
-      // `file` (`0112` R6) is for `nextStep`, which tells a `ship.md` draft from the rest.
-      return { blocked: true, action: `finish and accept ${s.file}`, stage: '', why: 'draft', file: s.file, ...(answered ? { rerun: s.name } : {}) }
+      return { blocked: true, action: `finish and accept ${s.file}`, stage: '', why: 'draft', ...(answered ? { rerun: s.name } : {}) }
     }
     // Not closed and not done: the work goes back to the branch, then to another round.
     if (status === 'changes-requested') {
@@ -1577,7 +1585,7 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
 // This names a stage; it opens nothing. A caller still asks `checkGate` before running it.
 export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   const base = decide(unit, limit)
-  const { why, file, ...next } = base
+  const { why, ...next } = base
   const none = (action) => ({ blocked: true, action, stage: '' })
   const onReview = (prefix) => {
     const g = evaluate(unit, 'review', { probe, limit })
@@ -1605,15 +1613,15 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
 
   // `0112` R6: a `ship.md` left `draft` by a merge that did not happen. Reached only once
   // `review.md` is accepted, so the last round passed. A draft that names no `Round` was
-  // written before `0112` and stops as it always did (c). One written against an older round
-  // than the last is a missing `ship.md` again (a). One written against the last round (b)
-  // asks the gate: moved goes to review (R2), closed says why (R3), and open means the
-  // merge was refused for something the gate cannot see, so the unit stops and says what.
-  // `>` joins `=`: only a round removed makes it larger, and the gate refuses that.
-  if (why === 'draft' && file === 'ship.md') {
-    const ship = unit.artifacts['ship.md']?.ship ?? null
+  // written before `0112`, reads as `draft`, and stops as it always did (c). One written
+  // against an older round than the last is a missing `ship.md` again (a). One written
+  // against the last round (b) asks the gate: moved goes to review (R2), closed says why
+  // (R3), and open means the merge was refused for something the gate cannot see, so the
+  // unit stops and says what. `>` joins `=`: only a round removed makes it larger, and the
+  // gate refuses that.
+  if (why === 'ship-refused') {
+    const ship = unit.artifacts['ship.md'].ship
     const last = lastRound(unit)
-    if (ship?.round == null || !last) return next
     const g = evaluate(unit, 'ship', { probe, limit })
     if (g.said.moved || g.said.screens) return onReview(g.need)
     if (!g.ok) return none(g.need.join('; '))
@@ -1856,10 +1864,9 @@ function cmdStatus(json, cosDir, limit) {
   const units = readAll(cosDir)
   // `0100` R4: `status` carries `why` as well, so the board reads which rule answered
   // rather than the English of `action`. `next` still prints `nextAction`, without it.
-  // `rerun` (`0106`) is for `next` and the autopilot only, so `status` drops it; `file`
-  // (`0112`) is for `nextStep` alone.
+  // `rerun` (`0106`) is for `next` and the autopilot only, so `status` drops it.
   const rows = units.map((u) => {
-    const { rerun, file, ...next } = decide(u, limit)
+    const { rerun, ...next } = decide(u, limit)
     return { ...u, next, at: stageAt(u, next), betweenPrAndShip: betweenPrAndShip(u, limit) }
   })
 
