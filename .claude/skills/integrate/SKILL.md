@@ -60,10 +60,11 @@ before it pushed. Then **How** above does not apply. Do not rebase, commit or re
 at most once, with the lease above, and push the tree's head as it is.
 
 - `ahead`: the tree's head holds the pull request's. Push it.
-- `diverged`: run the `git range-diff` the prompt names. Push only when every difference is
-  context the new base brought. When any commit changes in anything else, push nothing and
-  end with one `[needs-person]` line per such commit. Here that line means the content
-  differs, not that two intents contradict.
+- `diverged`: the tree's head sits on a newer `main` than the pull request's; the app sends
+  no other divergence here. Run the `git range-diff` the prompt names. Push only when every
+  difference is context the new base brought. When any commit changes in anything else,
+  push nothing and end with one `[needs-person]` line per such commit. Here that line means
+  the content differs, not that two intents contradict.
 
 ## When to stop
 

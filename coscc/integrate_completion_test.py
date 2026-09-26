@@ -289,6 +289,23 @@ class TheCaseOf0096(ACutIntegration):
         self.assertEqual(rec["outcome"], "failed")
         self.assertIn(f"not to the local head {L[:7]}", rec["detail"])
 
+    def test_review_f1_a_pull_request_rebased_elsewhere_is_not_pushed_back(self):
+        """The other way round from `0096`: GitHub rebased the pull request, the tree kept `P`.
+        The heads diverge, but the tree is on the older base, and a press opens no session."""
+        self.github_rebases()
+        rebased = self.remote_head()
+        git(self.workspace, "fetch", "-q", "origin")
+        self.assertEqual(git(self.tree, "rev-parse", "HEAD"), self.P)
+        with self.assertRaises(Invalid) as said:
+            self.press(self.pushing_act(self.P, {}))
+        self.assertIn("is not the pull request's head", str(said.exception))
+        self.assertIn(integrate.STALE, str(said.exception))
+        self.assertEqual(self.service.sessions.prompts, [])
+        self.assertEqual(self.remote_head(), rebased)
+        [rec] = self.records("integration")
+        self.assertEqual(rec["outcome"], "refused")
+        self.assertEqual(rec["completion"]["relation"], "stale")
+
 
 class AStoppedRebase(ACutIntegration):
     """`main` changes `g.txt` too: rebasing the branch stops on a conflict."""

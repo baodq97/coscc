@@ -153,11 +153,18 @@ def cut_integration(records: list[dict], unit: str, running: bool) -> dict | Non
     return cut
 
 
-def relation(local: str, pr: str, local_in_pr: bool | None, pr_in_local: bool | None) -> str:
+def relation(
+    local: str, pr: str, local_in_pr: bool | None, pr_in_local: bool | None, newer: bool | None = True,
+) -> str:
     """`0114` R5: how the local head stands to the pull request's head.
 
     `local_in_pr` and `pr_in_local` are `gitops.is_ancestor`'s answers, `None` when git could
     not give one. `""` then, since nothing is known.
+
+    `newer` (review F1) is `newer_base`'s answer, read only for heads that diverge. A local
+    head that is not on a newer `main` than the pull request's is `stale`, not `diverged`: the
+    pull request was rebased elsewhere, or the tree rewritten in place, and neither is a
+    rebase that was never pushed.
     """
     if local and local == pr:
         return "same"
@@ -167,11 +174,23 @@ def relation(local: str, pr: str, local_in_pr: bool | None, pr_in_local: bool | 
         return "behind"
     if pr_in_local:
         return "ahead"
-    return "diverged"
+    if newer is None:
+        return ""
+    return "diverged" if newer else "stale"
+
+
+def newer_base(local_base: str, pr_base: str, pr_base_in_local_base: bool | None) -> bool | None:
+    """`0114` review F1: whether the local head's merge-base with `origin/main` strictly
+    descends the pull request's — what a rebase onto a newer `main` leaves. `None` when git
+    could not tell."""
+    if not local_base or not pr_base or pr_base_in_local_base is None:
+        return None
+    return local_base != pr_base and pr_base_in_local_base
 
 
 # `0114` R6: the relations that go the completion road, whatever the unit's state.
 COMPLETION = ("ahead", "diverged")
+STALE = "the pull request's head is on a base no older than the local head's, so the local head is not a rebase of it"
 
 
 def refusal(
@@ -194,7 +213,7 @@ def refusal(
 
     `0114` R5: `relation` is how the two heads stand when they differ. `ahead` or `diverged`
     is the completion road, which runs in every state; anything else is still refused, with
-    git's words (`relation_said`) when it could not tell.
+    git's words (`relation_said`) when it could not tell, and `stale` with `STALE`.
     """
     if not in_window:
         return "this unit is not between pr and ship with an open pull request"
@@ -214,6 +233,8 @@ def refusal(
     if not local_head or local_head != pr_head:
         if local_head and relation in COMPLETION:
             return ""
+        if relation == "stale" and not relation_said:
+            relation_said = STALE
         return (
             f"the local head ({local_head[:7] or 'none'}) is not the pull request's head "
             f"({pr_head[:7] or 'none'})" + (f": {relation_said}" if relation_said else "")

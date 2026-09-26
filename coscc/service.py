@@ -1280,6 +1280,21 @@ class Service:
                         answers.append(None)
                         how_said = how_said or str(e)
                 how = integrate.relation(local_head, pr_head, *answers)
+                if how == "diverged":
+                    # Review F1: only a local head on a newer `main` than the pull request's is
+                    # a rebase that was never pushed; the other way round, the pull request was
+                    # rebased elsewhere and pushing the tree would undo that.
+                    newer = None
+                    try:
+                        if not origin_sha:
+                            raise GitError("origin/main could not be read, so the two bases cannot be compared")
+                        local_base = await gitops.merge_base_of(tree, local_head, origin_sha)
+                        pr_base = await gitops.merge_base_of(tree, pr_head, origin_sha)
+                        newer = integrate.newer_base(
+                            local_base, pr_base, await gitops.is_ancestor(tree, pr_base, local_base))
+                    except GitError as e:
+                        how_said = str(e)
+                    how = integrate.relation(local_head, pr_head, *answers, newer=newer)
                 was = local_head
                 if how == "behind":
                     try:

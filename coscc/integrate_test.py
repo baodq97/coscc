@@ -124,6 +124,33 @@ class Relation(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertEqual(ig.relation(*args), want)
 
+    def test_review_f1_diverged_is_only_a_local_head_on_a_newer_base(self):
+        self.assertEqual(ig.relation(NEW, HEAD, False, False, newer=True), "diverged")
+        self.assertEqual(ig.relation(NEW, HEAD, False, False, newer=False), "stale")
+        self.assertEqual(ig.relation(NEW, HEAD, False, False, newer=None), "")
+        # Read only when the heads diverge.
+        self.assertEqual(ig.relation(NEW, HEAD, False, True, newer=False), "ahead")
+        self.assertEqual(ig.relation(HEAD, NEW, True, False, newer=False), "behind")
+
+    def test_review_f1_newer_base(self):
+        cases = [
+            ((NEW, MAIN, True), True),
+            ((MAIN, MAIN, True), False),
+            ((MAIN, NEW, False), False),
+            ((NEW, MAIN, None), None),
+            (("", MAIN, True), None),
+        ]
+        for args, want in cases:
+            with self.subTest(args=args):
+                self.assertIs(ig.newer_base(*args), want)
+
+    def test_review_f1_stale_is_refused_and_says_why(self):
+        ok = RefusalNamesTheFirstConditionMissing.OK
+        for state in ig.STATES:
+            with self.subTest(state=state):
+                said = ig.refusal(**{**ok, "local_head": NEW, "relation": "stale", "state": state})
+                self.assertEqual(said, f"the local head (bbbbbbb) is not the pull request's head (aaaaaaa): {ig.STALE}")
+
 
 class CutIntegration(unittest.TestCase):
     """`0114` R3: a `start` of `integrate` that nothing closed, in this unit's run log."""
