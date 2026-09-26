@@ -4021,12 +4021,15 @@ class WhatEarlierReviewsSaid(unittest.TestCase):
             self.assertIn("PRIOR-MARKER", compose_prompt(*args, prior_findings=self.SECTION)[0])
 
     def test_nothing_handed_is_the_impl_prompt_byte_for_byte(self):
+        from coscc.runner import PRIOR_FINDINGS_HEADING
+
         with tempfile.TemporaryDirectory() as d:
             directory = self.unit(d)
             args = (d, directory, UNIT, "impl", STAGES, "impl.md")
             without = compose_prompt(*args)
             self.assertEqual(compose_prompt(*args, prior_findings=""), without)
-            self.assertNotIn("What earlier reviews said", without[0])
+            # `write-impl` names the section in its prose (R8); the heading is not there.
+            self.assertNotIn(PRIOR_FINDINGS_HEADING, without[0])
             self.assertNotIn("prior-findings", without[1])
 
     def test_impl_carries_it_once_after_the_plan_and_before_the_review_that_sent_it_back(self):
