@@ -32,7 +32,7 @@ from coscc import board as board_reader
 from coscc import drift, events, fetches, gitops
 from coscc import harness, integrate, knowledge
 from coscc import hold as hold_rules
-from coscc import present, prcomment, priorfindings, prsync, retake, spend
+from coscc import planmap, present, prcomment, priorfindings, prsync, retake, spend
 from coscc import precedent as precedent_mod
 from coscc import sessions as reader
 from coscc.board import Unavailable
@@ -1783,6 +1783,11 @@ class Service:
                     directory / "plan.md",
                     unit,
                 )
+            # `0096` R9, R11. The files the plan names, as they stand in the tree the step runs
+            # on, for `impl` only. The same again: nothing in `for_step` may refuse the step.
+            plan_kw: dict[str, Any] = {}
+            if stage in ("impl", "implement"):
+                plan_kw = planmap.for_step(directory / "plan.md", work)
             # `0074` R14. Where the unit stood in the shortlist in effect as it started, for the
             # outcome's measurement. Like `plan_drift`, nothing here may refuse the step.
             try:
@@ -1878,6 +1883,7 @@ class Service:
                     pr_before=pr_before,
                     **knowledge_kw,
                     **prior_kw,
+                    **plan_kw,
                     **config,
                     # Only named for a spike, so a stand-in `run` without it keeps working.
                     **({"watch": work} if scratch is not None else {}),
