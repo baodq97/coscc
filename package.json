@@ -6,6 +6,7 @@
   "scripts": {
     "test": "npm run test:node && npm run test:python",
     "test:node": "node --test '.claude/scripts/*.test.mjs'",
-    "test:python": "uv run python -m unittest discover -s coscc -p '*_test.py' -t ."
+    "test:python": "uv run python -m unittest discover -s coscc -p '*_test.py' -t .",
+    "e2e": "uv run python scripts/e2e.py"
   }
 }
