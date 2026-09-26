@@ -2104,6 +2104,11 @@ class Service:
         """The Stop itself, shared with `0068`'s "apply now" so a step it cuts ends the
         same way: an `end` record with `stopped` and `stopped_by`, or none for a step
         cancelled before its first turn."""
+        # `0114` R2: an integration is listed beside the steps but has no Stop; say what
+        # holds the unit rather than that nothing runs.
+        mark = self._active.get((key, unit))
+        if mark is not None and mark.kind == "integrate":
+            raise Invalid(steps_mod.describe(unit, mark))
         try:
             running = self.steps.request_stop(key, unit, by)
         except (steps_mod.NotRunning, steps_mod.Finishing) as e:
@@ -2114,9 +2119,21 @@ class Service:
         return {"unit": running.unit, "stage": running.stage, "stopped_by": running.stopped_by}
 
     def running_steps(self, cwd: str) -> list[dict[str, Any]]:
-        """The board steps running now in this workspace (`0034` R13). This process only."""
+        """The board steps running now in this workspace (`0034` R13). This process only.
+
+        `0114` R1: and every integration, from its `_running` entry to the `finally` that
+        pops it, with `kind: "integration"` and no `run`; a step is `kind: "step"`. A restart
+        that asks this sees an integration it would cut."""
         self._workspace_or_refuse(cwd)
-        return self.steps.listing(self._journal_key(cwd))
+        key = self._journal_key(cwd)
+        rows = [{**r, "kind": "step"} for r in self.steps.listing(key)]
+        rows += [
+            {"unit": e["unit"], "stage": "integrate", "started_at": e["started"], "stopping": False,
+             "run": None, "kind": "integration"}
+            for e in self._running.values()
+            if e["workspace"] == key and e["stage"] == "integrate"
+        ]
+        return sorted(rows, key=lambda r: r["started_at"])
 
     # -- watching a step (`0073`) ---------------------------------------------
     #

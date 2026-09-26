@@ -791,6 +791,8 @@ class RunningStep:
     stopping: bool = False
     # `0073`. What the watch pane opens.
     run: str = ""
+    # `0114` R1: `integration` has no watch pane and no Stop.
+    kind: str = "step"
 
 
 @dataclasses.dataclass
@@ -1689,7 +1691,8 @@ class StudioState(rx.State):
         if not self.cwd:
             return
         try:
-            self.running_steps = [RunningStep(**{**r, "started_at": present.when(r.get("started_at"))})
+            self.running_steps = [RunningStep(**{**r, "started_at": present.when(r.get("started_at")),
+                                                 "run": r.get("run") or ""})
                                   for r in SERVICE.running_steps(self.cwd)]
         except Invalid:
             self.running_steps = []

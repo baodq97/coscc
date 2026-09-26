@@ -1053,6 +1053,36 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
         self.assertEqual(unestimated, ["0010_y"])
 
 
+class AnIntegrationIsListedWithTheSteps(unittest.TestCase):
+    """`0114` R1: the service lists an integration with `kind: "integration"` and `run: None`,
+    and the page builds its row rather than failing on the new key or the `None`."""
+
+    def test_both_kinds_load(self):
+        import asyncio
+        from unittest import mock
+
+        from coscc import state as page
+
+        listed = [
+            {"unit": "0001_a", "stage": "plan", "started_at": "2026-09-26T13:00:00+00:00",
+             "stopping": False, "run": "r1", "kind": "step"},
+            {"unit": "0096_x", "stage": "integrate", "started_at": "2026-09-26T13:12:35+00:00",
+             "stopping": False, "run": None, "kind": "integration"},
+        ]
+        token = "state-test-integration-listed"
+        manager, _, _ = _processor(token)
+
+        async def go():
+            async with manager.modify_state(_key(token)) as root:
+                studio = await root.get_state(page.StudioState)
+                studio.cwd = "/w"
+                with mock.patch.object(page.SERVICE, "running_steps", lambda cwd: listed):
+                    studio._load_running()
+                return [(r.unit, r.kind, r.run) for r in studio.running_steps]
+
+        self.assertEqual(asyncio.run(go()), [("0001_a", "step", "r1"), ("0096_x", "integration", "")])
+
+
 def _key(token: str):
     from reflex.istate.manager.token import BaseStateToken
     from reflex.state import State

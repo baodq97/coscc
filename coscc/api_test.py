@@ -430,6 +430,18 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.service.steps.claim(self.service._journal_key("/tmp"), "0001_a", "plan")
         [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual((row["unit"], row["stage"], row["stopping"]), ("0001_a", "plan", False))
+        self.assertEqual(row["kind"], "step")
+
+    async def test_0114_an_integration_is_on_the_running_list_until_it_ends(self):
+        key = self.service._journal_key("/tmp")
+        rid = self.service._mark_running(key, "0001_a", "integrate", "gebo")
+        [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
+        self.assertEqual(
+            (row["unit"], row["stage"], row["stopping"], row["run"], row["kind"]),
+            ("0001_a", "integrate", False, None, "integration"))
+        self.assertEqual(row["started_at"], self.service._running[rid]["started"])
+        self.service._running.pop(rid)
+        self.assertEqual((await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), [])
 
     async def test_the_running_list_refuses_a_directory_that_is_not_a_workspace(self):
         r = await self.client.get("/api/board/steps", params={"cwd": "/etc"})

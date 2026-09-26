@@ -677,16 +677,23 @@ def _running_steps() -> rx.Component:
                 s.text(r.started_at, size="1"),
                 rx.spacer(),
                 # `0073` R10. Watching changes nothing; Stop, beside it, is what acts.
-                rx.button(
-                    rx.icon("eye", size=13), "Watch",
-                    on_click=P.open_watch(r.run, r.unit + " · " + r.stage, r.unit),
-                    class_name="watch-step", variant="soft", size="1",
-                ),
-                rx.button(
-                    rx.icon("square", size=13),
-                    rx.cond(r.stopping, "Stopping", "Stop"),
-                    id="stop-step", on_click=P.stop_step(r.unit), disabled=r.stopping,
-                    color_scheme="red", variant="soft", size="1",
+                # `0114` R1: an integration is listed with neither.
+                rx.cond(
+                    r.kind == "step",
+                    rx.hstack(
+                        rx.button(
+                            rx.icon("eye", size=13), "Watch",
+                            on_click=P.open_watch(r.run, r.unit + " · " + r.stage, r.unit),
+                            class_name="watch-step", variant="soft", size="1",
+                        ),
+                        rx.button(
+                            rx.icon("square", size=13),
+                            rx.cond(r.stopping, "Stopping", "Stop"),
+                            id="stop-step", on_click=P.stop_step(r.unit), disabled=r.stopping,
+                            color_scheme="red", variant="soft", size="1",
+                        ),
+                        spacing="3", align="center",
+                    ),
                 ),
                 width="100%", align="center", spacing="3", margin_top="10px", flex_wrap="wrap",
             )),
