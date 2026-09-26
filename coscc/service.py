@@ -1916,8 +1916,8 @@ class Service:
         """`0111`. Ask `cos.mjs screens`; when it says to, take the screenshots again under
         `_screens_lock`, judge the result (R4) and record it (R6). Returns the section for the
         `review` prompt (R7), `""` when nothing was taken. A retake that fails raises
-        `Invalid` with `RETAKE_REFUSED`; what went wrong is only in its record (R5). Nothing in
-        the worktree is put back."""
+        `Invalid` with `RETAKE_REFUSED`; what went wrong is only in its record (R5). No tracked
+        file is put back; `.screens/` is, by `retake.take` (review round 1, F1)."""
         try:
             asked = await board_reader.screens(self._units_root(cwd), unit, work)
         except Unavailable as e:

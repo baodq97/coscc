@@ -60,5 +60,6 @@ paths:
   - *Stop* does not reach it: the step is not running yet, and the unit's mark is held.
   - Port 18783 is shared with every `impl` session's capture, which the lock does not cover;
     one of those running at the same time refuses the review, and the autopilot stops at `e`.
-  - A failed retake is not undone: a build that rewrote a tracked file leaves the tree dirty,
-    and every later review of that unit is refused until a person cleans it.
+  - A failed retake puts `.screens/` back as it was, so the next review retakes from the
+    same manifest; nothing else is undone. A build that rewrote a tracked file leaves the
+    tree dirty, and every later review of that unit is refused until a person cleans it.

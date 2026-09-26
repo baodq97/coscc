@@ -148,6 +148,98 @@ class ARetakePastItsTimeIsKilledWithEverythingItStarted(unittest.TestCase):
             self.assertFalse(_alive(int(pidfile.read_text())))
 
 
+_CLEARS = (
+    # What `clear_out` does before any browser opens (`scripts/capture_screens.py:392-396`),
+    # and a first image of the new run.
+    "import glob, os\n"
+    "os.makedirs('.screens', exist_ok=True)\n"
+    "[os.remove(f) for f in glob.glob('.screens/*.png') + glob.glob('.screens/manifest.json')]\n"
+    "open('.screens/board-1440x900.png', 'w').write('new')\n"
+)
+
+
+class ARetakeThatFailsLeavesTheScreensItFound(unittest.TestCase):
+    """Review round 1, F1: a run that fails after `clear_out` must not take `impl`'s evidence."""
+
+    OLD = {"head": "a" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
+
+    def _old(self, repo: Path) -> dict[str, bytes]:
+        (repo / ".screens").mkdir()
+        (repo / ".screens" / "manifest.json").write_text(json.dumps(self.OLD))
+        (repo / ".screens" / "board-1440x900.png").write_text("old")
+        (repo / ".screens" / "board-390x844.png").write_text("old too")
+        return self._screens(repo)
+
+    @staticmethod
+    def _screens(repo: Path) -> dict[str, bytes]:
+        return {p.name: p.read_bytes() for p in (repo / ".screens").iterdir()}
+
+    def test_an_exit_past_clear_out_puts_them_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _ = _repo(tmp)
+            before = self._old(repo)
+            result = _take(repo, [sys.executable, "-c", _CLEARS + "raise SystemExit(1)"])
+            self.assertFalse(retake.judge(result)[0])
+            self.assertIsNone(result["manifest_after"])
+            self.assertEqual(self._screens(repo), before)
+
+    def test_a_timeout_past_clear_out_puts_them_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _ = _repo(tmp)
+            before = self._old(repo)
+            result = _take(repo, [sys.executable, "-c", _CLEARS + "import time; time.sleep(60)"], timeout=2.0)
+            self.assertEqual(result["code"], 124)
+            self.assertEqual(self._screens(repo), before)
+
+    def test_a_cancel_past_clear_out_puts_them_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _ = _repo(tmp)
+            before = self._old(repo)
+            marker = Path(tmp) / "cleared"
+            body = _CLEARS + f"open({str(marker)!r}, 'w').write('1')\nimport time; time.sleep(60)\n"
+
+            async def go():
+                task = asyncio.create_task(retake.take(repo, [], data_dir=tmp, argv=[sys.executable, "-c", body]))
+                while not marker.exists():
+                    await asyncio.sleep(0.05)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+
+            asyncio.run(go())
+            self.assertEqual(self._screens(repo), before)
+
+    def test_a_retake_that_is_taken_keeps_what_it_wrote(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, head = _repo(tmp)
+            self._old(repo)
+            result = _take(repo, [sys.executable, "-c", _CLEARS + (
+                "import json\n"
+                f"json.dump({{'head': {head!r}, 'dirty': False, 'addresses': ['/board'], 'hits': []}}, open('.screens/manifest.json', 'w'))\n"
+            )])
+            self.assertTrue(retake.judge(result)[0])
+            now = self._screens(repo)
+        self.assertEqual(sorted(now), ["board-1440x900.png", "manifest.json"])
+        self.assertEqual(now["board-1440x900.png"], b"new")
+        self.assertEqual(json.loads(now["manifest.json"])["head"], head)
+
+    def test_nothing_is_left_in_the_temporary_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, _ = _repo(tmp)
+            self._old(repo)
+            made: list[str] = []
+            real = tempfile.mkdtemp
+
+            def mkdtemp(*a, **kw):
+                made.append(real(*a, **kw))
+                return made[-1]
+
+            with mock.patch.object(retake.tempfile, "mkdtemp", mkdtemp):
+                _take(repo, [sys.executable, "-c", _CLEARS + "raise SystemExit(1)"])
+            self.assertEqual(len(made), 1)
+            self.assertFalse(Path(made[0]).exists())
+
+
 def _alive(pid: int) -> bool:
     try:
         state = Path(f"/proc/{pid}/status").read_text()

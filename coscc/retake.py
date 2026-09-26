@@ -14,6 +14,12 @@ this module only runs the command, judges its result, and says what happened.
 cold, 26.1 s warm); with the `__REFLEX_*` names left as `coscc/run.py` sets them the build
 fails and overwrites `reflex.lock/package.json`, a tracked file. No session is involved, and
 nothing narrows the environment further, since nothing narrower was measured.
+
+**A retake that fails leaves `.screens/` as it found it** (review round 1, F1). The command
+removes the last run's images and manifest before it opens a browser (`clear_out`), so one
+that fails past that point would take the evidence `impl` left with it, and the next review
+would find no manifest to retake from. What it would remove is copied aside first and put
+back unless `judge` passes. `.screens/` is ignored by git: no tracked file is put back.
 """
 
 from __future__ import annotations
@@ -21,7 +27,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import signal
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Iterable
@@ -33,7 +41,8 @@ from coscc.data import Data
 RETAKE_TIMEOUT = 300.0
 # The command, with the addresses after it. Relative to the worktree it runs in.
 COMMAND = ("uv", "run", "python", "scripts/capture_screens.py")
-MANIFEST = Path(".screens") / "manifest.json"
+SCREENS = Path(".screens")
+MANIFEST = SCREENS / "manifest.json"
 TAIL_LINES = 12
 # What is kept of the output while it runs; only its last lines are ever recorded.
 _KEEP_BYTES = 64 * 1024
@@ -78,6 +87,32 @@ def read_manifest(tree: Path) -> dict[str, Any] | None:
     return found if isinstance(found, dict) else None
 
 
+def _replaced(out: Path) -> list[Path]:
+    """What a run of the command replaces in `out`: what `clear_out` removes
+    (`scripts/capture_screens.py:392-396`), and nothing else."""
+    if not out.is_dir():
+        return []
+    return [f for f in [*out.glob("*.png"), *out.glob("*.txt"), out / "manifest.json"] if f.is_file()]
+
+
+def _keep(tree: Path) -> Path:
+    saved = Path(tempfile.mkdtemp(prefix="cos-0111-screens-"))
+    for f in _replaced(tree / SCREENS):
+        shutil.copy2(f, saved / f.name)
+    return saved
+
+
+def _put_back(tree: Path, saved: Path) -> None:
+    out = tree / SCREENS
+    for f in _replaced(out):
+        f.unlink(missing_ok=True)
+    files = list(saved.iterdir())
+    if files:
+        out.mkdir(exist_ok=True)
+    for f in files:
+        shutil.copy2(f, out / f.name)
+
+
 async def take(
     tree: str | os.PathLike[str],
     addresses: Iterable[str],
@@ -90,12 +125,30 @@ async def take(
 
     `{code, seconds, tail, head_before_run, manifest_after, status_before, status_after}`:
     `code` is 124 when it ran past `timeout` and was killed. Cancelled, the group is killed
-    and the cancel raised again. `argv` replaces the command, for tests only.
+    and the cancel raised again. `manifest_after` is what the run left; unless `judge` passes
+    it, `.screens/` is then put back as it was before the run. `argv` replaces the command,
+    for tests only.
     """
     tree = Path(tree)
     head = (await _git(tree, "rev-parse", "HEAD")).strip()
     status_before = await _git(tree, "status", "--porcelain")
     command = list(argv) if argv is not None else [*COMMAND, *addresses]
+    saved = _keep(tree)
+    taken = False
+    try:
+        result = await _run(tree, command, data_dir, timeout)
+        result.update(head_before_run=head, status_before=status_before)
+        taken = judge(result)[0]
+        return result
+    finally:
+        if not taken:
+            _put_back(tree, saved)
+        shutil.rmtree(saved, ignore_errors=True)
+
+
+async def _run(
+    tree: Path, command: list[str], data_dir: str | os.PathLike[str] | None, timeout: float,
+) -> dict[str, Any]:
     started = time.monotonic()
     proc = await asyncio.create_subprocess_exec(
         *command, cwd=str(tree), env=env(data_dir),
@@ -127,9 +180,7 @@ async def take(
         "code": code,
         "seconds": round(time.monotonic() - started, 1),
         "tail": "\n".join(lines[-TAIL_LINES:]),
-        "head_before_run": head,
         "manifest_after": read_manifest(tree),
-        "status_before": status_before,
         "status_after": await _git(tree, "status", "--porcelain"),
     }
 
