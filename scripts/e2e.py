@@ -20,9 +20,7 @@ for this address, the port in use, or no chromium. It is not part of `npm test`.
 from __future__ import annotations
 
 import os
-import secrets
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -31,19 +29,19 @@ from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import argon2  # noqa: E402
 import httpx  # noqa: E402
 
 from coscc import auth, hold  # noqa: E402
 from coscc.config import from_env  # noqa: E402
-from coscc.data import Data  # noqa: E402
 from scripts.proof_harness import (  # noqa: E402
     EXIT_BROKEN,
     EXIT_PASS,
     RealApp,
+    make_repo,
     require_browser,
     require_build,
     require_free_port,
+    seed_session,
     say,
 )
 
@@ -51,7 +49,6 @@ SIZE = {"width": 1440, "height": 900}  # the sidebar is on screen from `lg` up
 TIMEOUT_MS = 20_000
 PLACE_TIMEOUT_S = 15.0
 SCREENS = ("overview", "workspaces", "board", "sessions", "activity", "settings")
-GIT_ID = ("-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "commit.gpgsign=false")
 
 # Where the page says it is: the sidebar button marked `aria-current=page`, the chosen
 # workspace, the open dialog and its selected tab.
@@ -75,34 +72,6 @@ WHERE_JS = """
 # --------------------------------------------------------------------------
 # the fixture
 # --------------------------------------------------------------------------
-
-
-def git(where: Path, *args: str) -> None:
-    subprocess.run(["git", "-C", str(where), *GIT_ID, *args], capture_output=True, check=True)
-
-
-def make_repo(root: Path, outside: Path, name: str) -> Path:
-    """A workspace: a clone of a bare-directory remote, one commit on `main`."""
-    remote = outside / f"{name}.git"
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
-    proj = root / name
-    subprocess.run(["git", "clone", "-q", str(remote), str(proj)], check=True, capture_output=True)
-    git(proj, "symbolic-ref", "HEAD", "refs/heads/main")
-    (proj / "README.md").write_text("e2e\n", encoding="utf-8")
-    git(proj, "add", "-A")
-    git(proj, "commit", "-q", "-m", "a repository")
-    git(proj, "push", "-q", "origin", "main")
-    return proj
-
-
-def seed_session(data_dir: Path) -> str:
-    """`0070`: a password nobody types and one live session."""
-    data = Data(data_dir)
-    now = int(time.time())
-    data.auth_set_password(argon2.PasswordHasher().hash(secrets.token_urlsafe(24)), now)
-    token = secrets.token_urlsafe(32)
-    data.auth_session_add(auth._sha(token), now, now + auth.SESSION_TTL)
-    return token
 
 
 def intent(title: str, tail: str = "") -> str:
@@ -346,7 +315,7 @@ def main() -> int:
     outside = Path(tempfile.mkdtemp(prefix="cos-e2e-remote-")).resolve()
     results: list[bool] = []
     try:
-        proj, other = make_repo(root, outside, "proj"), make_repo(root, outside, "other")
+        proj, other = (make_repo(root, outside, name, f"{name}.git", "e2e\n") for name in ("proj", "other"))
         token = seed_session(data_dir)
         with RealApp(config, root, data_dir) as app, \
                 httpx.Client(base_url=app.base, timeout=30, cookies={auth.COOKIE: token}) as api:
