@@ -2,6 +2,9 @@
 
 Nothing here opens a session. The stand-in returns a reply built in advance, the way
 `coscc/precedent_test.py` stands in for Jera's.
+
+Since `0108` each workspace is a real git repository, built once for the module, and each
+source has the `done` `end` row that dates it: `admit` reads both.
 """
 
 from __future__ import annotations
@@ -12,11 +15,30 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc import gather, knowledge
+from unittest import mock
+
+from coscc import admit, gather, knowledge, units
+from coscc.admit_test import lock, make_repo
 from coscc.journal import Journal
 
-A = "proj-aaaaaaaaaaaa"
-B = "other-bbbbbbbbbbbb"
+# Set by `setUpModule`: the slots of two repositories, `other-` sorting before `proj-`.
+A = B = ""
+REPOS: dict[str, Path] = {}
+AT = "2026-09-25T00:00:00+00:00"
+
+
+def setUpModule():
+    global A, B, _REPOS_DIR
+    _REPOS_DIR = tempfile.TemporaryDirectory()
+    for name in ("proj", "other"):
+        repo = make_repo(Path(_REPOS_DIR.name) / name, ("2026-09-01T00:00:00+00:00", {
+            ".python-version": "3.14\n", "uv.lock": lock(**{"claude-agent-sdk": "0.2.158"}), "README.md": "x\n"}))
+        REPOS[units.slot(repo)] = repo
+    A, B = sorted(REPOS, reverse=True)
+
+
+def tearDownModule():
+    _REPOS_DIR.cleanup()
 
 
 class Replies:
@@ -39,8 +61,10 @@ def reply(store: str, dropped=None) -> str:
     return "```json\n" + json.dumps({"store": store, "dropped": dropped or []}) + "\n```"
 
 
-def entry(n: int, source: str, scope: str = "tool:claude-agent-sdk 0.2.158") -> str:
-    return f"## K{n}\nScope: {scope}\nSource: {source}\nMeasured: 2026-09-25\nA fact {n}."
+def entry(n: int, source: str, scope: str = "tool:claude-agent-sdk 0.2.158", ref: str = "README.md") -> str:
+    """A `workspace:` entry carries `Ref: <ref>`, a file both repositories hold (`0108` R5)."""
+    refs = f"Ref: {ref}\n" if scope.startswith("workspace:") else ""
+    return f"## K{n}\nScope: {scope}\nSource: {source}\n{refs}Measured: 2026-09-25\nA fact {n}."
 
 
 class Fixture(unittest.TestCase):
@@ -54,12 +78,20 @@ class Fixture(unittest.TestCase):
         self.journal = Journal(self.work, self.data)
         self.said: list[str] = []
         self.dir = knowledge.path_of(str(self.data))
+        # The run log names both repositories, so a slot with no source still has a path.
+        for repo in REPOS.values():
+            self.journal.finished(str(repo), "0000_known", "plan", "done", at=AT)
 
-    def unit(self, slot: str, unit: str, **files: str) -> Path:
+    def unit(self, slot: str, unit: str, dated: str = AT, **files: str) -> Path:
+        """The files, and for each `spike.md` or `review.md` the `done` `end` row that dates it
+        at `dated`; `dated=""` writes none."""
         d = self.data / "units" / slot / ".cos" / unit
         d.mkdir(parents=True, exist_ok=True)
         for name, body in files.items():
             (d / name.replace("_", ".")).write_text(body, encoding="utf-8")
+            stage = name.split("_")[0]
+            if dated and stage in ("spike", "review"):
+                self.journal.finished(str(REPOS[slot]), unit, stage, "done", at=dated)
         return d
 
     def run_gather(self, sessions, mode="new") -> int:
@@ -101,6 +133,45 @@ class TheSources(Fixture):
         parts = gather.batches(found, cap=100)
         # `other-` sorts before `proj-`.
         self.assertEqual([[s["label"] for s in b] for b in parts], [["b1"], ["a1", "a2"], ["a3"]])
+
+    def test_the_first_batch_of_a_workspace_holds_its_newest_source(self):
+        # `0108` R2: newest first, then `(unit, file)`; an undated source goes last.
+        found = [
+            {"slot": A, "unit": f"000{n}_x", "file": "spike.md", "text": "x" * 40, "label": f"a{n}"}
+            for n in range(1, 6)
+        ]
+        dates = {"a1": {"date": "2026-09-23"}, "a2": {"date": "2026-09-26"}, "a4": {"date": "2026-09-26"},
+                 "a5": {"date": "2026-09-24"}}
+        parts = gather.batches(found, cap=100, dates=dates)
+        self.assertEqual([[s["label"] for s in b] for b in parts], [["a2", "a4"], ["a5", "a1"], ["a3"]])
+
+    def test_the_prompt_dates_each_source_and_says_what_is_not_knowledge(self):
+        # `0108` R9, held word for word.
+        batch = [{"label": f"{A}/0001_a/spike.md", "text": "x"}, {"label": f"{A}/0002_b/review.md", "text": "y"}]
+        prompt = gather.build_prompt(A, 3, "", batch, {f"{A}/0001_a/spike.md": {"date": "2026-09-24"}})
+        self.assertIn(f"### {A}/0001_a/spike.md (measured 2026-09-24)\n", prompt)
+        self.assertIn(f"### {A}/0002_b/review.md (measured: no date)\n", prompt)
+        for line in (
+            "- Prefer knowledge about tools and how to use a framework.",
+            "- Write a `workspace:` entry only for a pitfall the current code does not show. What the "
+            "code says for itself, an agent can read.",
+            "- Do not include anything a source itself says was not run, not measured or only "
+            "derived, in any language. An entry, or a source, holding one of these is dropped: "
+            "not run, not measured, not verified, unverified, derived, không kiểm, chưa kiểm, "
+            "không chạy, chưa chạy, không đo, chưa đo.",
+            "Scope: tool:<name>   or   workspace:" + A,
+            "Ref: <path>[::<symbol>]",
+            "- `Scope: tool:<name>` carries no version, and a `tool:` entry has no `Ref:`.",
+            "- A `workspace:` entry carries at least one `Ref:`: a file's path from the repository's "
+            "root, optionally followed by `::` and a name that file holds. An entry whose `Ref:` is "
+            "not on `main` is dropped.",
+            "- Write no `Measured:` line and no version: the code writes the date from the run log "
+            "and the version from the workspace's pins.",
+            "- Copy a source's label without the parenthesis after it.",
+        ):
+            with self.subTest(line=line[:40]):
+                self.assertIn(line + "\n", prompt)
+        self.assertNotIn("Measured: YYYY-MM-DD", prompt)
 
 
 class AGather(Fixture):
@@ -251,6 +322,50 @@ class AGather(Fixture):
         self.journal.append({"kind": gather.KIND, "outcome": "done", "dropped": [{"id": "K9", "reason": "x"}, "junk"]})
         self.journal.append({"kind": gather.KIND, "outcome": "failed", "dropped": [{"id": "K40", "reason": "x"}]})
         self.assertEqual(gather.dropped_max(self.journal), 9)
+
+    def test_an_undated_entry_is_dropped_and_its_row_says_so(self):
+        self.unit(A, "0002_b", dated="", review_md="# Review\n## Round 1\nF1 x\n")
+        s = Replies(reply(entry(1, f"{A}/0002_b/review.md Round 1 F1")))
+        self.assertEqual(self.run_gather(s), 0)
+        self.assertIn("(measured: no date)", s.prompts[0])
+        self.assertEqual(knowledge.parse(self.store())["entries"], [])
+        [row] = self.rows()
+        self.assertEqual((row["outcome"], row["entries_after"], row["dropped"]),
+                         ("done", 0, [{"id": "K1", "reason": "undated"}]))
+
+    def test_an_id_admit_dropped_is_not_given_out_again(self):
+        self.unit(A, "0002_b", dated="", review_md="# Review\n## Round 1\nF1 x\n")
+        self.assertEqual(self.run_gather(Replies(reply(entry(1, f"{A}/0002_b/review.md Round 1 F1")))), 0)
+        self.assertEqual(knowledge.parse(self.store())["header"]["max_id"], 1)
+        self.unit(A, "0003_c", review_md="# Review\n## Round 1\nF1 y\n")
+        s = Replies(reply(entry(1, f"{A}/0003_c/review.md Round 1 F1")))
+        self.assertEqual(self.run_gather(s), 1)
+        self.assertIn("from K2 upward", s.prompts[0])
+        self.assertIn("K1 is new but not above the store's Max id K1", self.rows()[-1]["reason"])
+
+    def test_a_merge_into_an_entry_of_older_sources_fails_the_batch(self):
+        self.unit(A, "0002_b", dated="2026-09-20T00:00:00+00:00", review_md="# Review\n## Round 1\nF1 x\n")
+        old_src = f"{A}/0002_b/review.md Round 1 F1"
+        self.assertEqual(self.run_gather(Replies(reply(entry(1, old_src) + "\n\n" + entry(2, self.src)))), 0)
+        self.unit(A, "0003_c", review_md="# Review\n## Round 1\nF1 y\n")
+        s = Replies(reply(entry(1, old_src), [{"id": "K2", "reason": "same", "merged_into": "K1"}]))
+        self.assertEqual(self.run_gather(s), 1)
+        self.assertIn("K2 is merged into K1", self.rows()[-1]["reason"])
+
+    def test_a_run_log_or_a_git_it_cannot_read_is_refused_before_a_session(self):
+        class Broken:
+            def records(self, **kw):
+                raise OSError("disk gone")
+
+        s = Replies(reply(entry(1, self.src)))
+        with self.assertRaises(gather.Refused) as refused:
+            asyncio.run(gather.gather(str(self.data), Broken(), s, "m", "new", self.said.append))
+        self.assertIn("the run log cannot be read", str(refused.exception))
+        with mock.patch.object(admit, "git_runs", return_value=False):
+            with self.assertRaises(gather.Refused) as refused:
+                self.run_gather(s)
+        self.assertIn("git cannot be run", str(refused.exception))
+        self.assertEqual((s.prompts, self.rows(), self.store()), ([], [], ""))
 
     def test_a_store_holding_an_id_twice_is_refused_before_a_session(self):
         knowledge.save(self.dir / knowledge.STORE, entry(3, self.src) + "\n\n"
