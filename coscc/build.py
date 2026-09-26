@@ -49,7 +49,17 @@ _SOURCES = (
     "coscc/studio.py",
     "coscc/screens.py",
     "coscc/state.py",
-    # `0095`: the modules `state.py` was split into. `build_test` fails when one is missing.
+    # `0095`: the modules `screens.py` and `state.py` were split into. `build_test` fails
+    # when one is missing.
+    "coscc/screens_common.py",
+    "coscc/screens_chrome.py",
+    "coscc/screens_overview.py",
+    "coscc/screens_board.py",
+    "coscc/screens_sessions.py",
+    "coscc/screens_settings.py",
+    "coscc/screens_unit.py",
+    "coscc/screens_backlog.py",
+    "coscc/screens_dialogs.py",
     "coscc/state_views.py",
     "coscc/state_workspaces.py",
     "coscc/state_watch.py",
