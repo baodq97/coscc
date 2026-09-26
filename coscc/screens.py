@@ -28,7 +28,6 @@ from coscc import present, spend
 from coscc import studio as s
 from coscc.service import CONSEQUENCE
 from coscc.state import (
-    LANE_COLOR,
     NAVIGATION,
     Activity,
     AnomalyRow,
@@ -231,7 +230,7 @@ def _metrics() -> rx.Component:
         s.stat("Active work", P.active_count.to_string(), "Units with an artifact and no end yet",
                "layers"),
         s.stat("Needs attention", P.attention_count.to_string(),
-               "The gate is closed on the next step", "circle-dot", "amber"),
+               "Waiting on an answer or a person's decision", "circle-dot", "amber"),
         s.stat("Tokens", P.usage_total_tokens, "Billed for this workspace, from the run log",
                "sparkles", "blue"),
         s.stat("Cost", P.usage_total_usd, P.usage_cost_note, "wallet", "grass"),
@@ -524,7 +523,9 @@ def _activity_body(line: rx.Var[Activity], watchable: bool = False) -> rx.Compon
     )
 
 
-def _unit_card(unit: rx.Var[Card]) -> rx.Component:
+def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
+    """One card. `grouped` for a card in a collapsed group, which names its stage (`0100` R8):
+    in a column, the column does."""
     return rx.el.button(
         rx.hstack(
             s.text(unit.id, size="1", font_family="ui-monospace, monospace"),
@@ -538,11 +539,12 @@ def _unit_card(unit: rx.Var[Card]) -> rx.Component:
         s.text("Next: " + unit.summary, size="1", line_height="1.7", margin_top="7px",
                display=rx.cond(P.density == "compact", "none", "block")),
         rx.hstack(
-            s.badge(unit.stage, unit.color),
+            # `0100` R9. The one state badge, as the service decided it. `attention_reason`
+            # stays in the dialog (spec C3); a paused or dropped hold is this badge's word.
+            s.badge(unit.state_label, unit.state_color),
+            *([s.badge(unit.at, "gray")] if grouped else []),
             rx.cond(unit.has_problem, s.badge("problem", "red")),
-            # `0082` R12: what a unit in *Needs you* waits on, as the service said it.
-            rx.cond(unit.attention_reason != "", s.badge(unit.attention_reason, "amber")),
-            # `0016` R8. A number, not a lane: an open question does not stop the loop.
+            # `0016` R8. How many, beside the state they put the unit in.
             # `0082` R11: only while the service says the unit can still be answered.
             rx.cond((unit.open_questions > 0) & unit.answerable,
                     s.badge(unit.open_questions.to_string() + " waiting on you", "amber")),
@@ -555,8 +557,6 @@ def _unit_card(unit: rx.Var[Card]) -> rx.Component:
             # `0047` R8. The label is the service's; the page only shows it.
             rx.cond(unit.outcome_text != "",
                     s.badge("outcome: " + unit.outcome_text, unit.outcome_color)),
-            # `0045` R14. `cos.mjs`'s hold, never worked out on the page.
-            rx.cond(unit.hold_state != "", s.badge(unit.hold_state, "amber")),
             # `0074`. Its place in the shortlist; changes nothing about the run button.
             rx.cond(unit.shortlist_rank > 0, s.badge("#" + unit.shortlist_rank.to_string(), "iris")),
             rx.spacer(),
@@ -583,28 +583,28 @@ def _unit_card(unit: rx.Var[Card]) -> rx.Component:
     )
 
 
-def _lane(title: str, color: str) -> rx.Component:
-    count = P.lane_counts[title]
+def _column(stage: rx.Var[str]) -> rx.Component:
+    """`0100` R1. One stage's column. The stages are the board read's, never a list here."""
+    count = P.stage_counts[stage]
     return rx.vstack(
         rx.hstack(
-            rx.box(width="7px", height="7px", border_radius="50%", background=rx.color(color, 9)),
-            rx.text(title, size="2", weight="medium"),
+            rx.text(stage, size="2", weight="medium"),
             s.text(count.to_string(), size="1"),
             rx.spacer(), width="100%", align="center", padding="2px 4px 8px",
         ),
-        # `0053` R8: every lane walks the one `cards` list and draws its own shown ones
+        # `0053` R8: every column walks the one `cards` list and draws its own shown ones
         # (`spike.md ## U2`), so no card reaches the page twice.
         rx.foreach(P.cards, lambda c: rx.cond(
-            (c.lane == title) & P.shown_ids.contains(c.id), _unit_card(c), rx.fragment())),
+            (c.at == stage) & P.board_ids.contains(c.id), _unit_card(c), rx.fragment())),
         rx.cond(count == 0,
                 rx.center(s.text("Nothing here", size="1", text_align="center"),
                           padding="26px 10px", border=f"1px dashed {s.LINE}",
                           border_radius="10px", width="100%")),
-        spacing="3", align="stretch", width="100%", min_width="0",
+        spacing="3", align="stretch", width="264px", min_width="264px", flex_shrink="0",
         padding="12px", border_radius="13px", background=s.SURFACE,
-        # So a proof can ask which lane a card is in (`0001_product-describes-a-state-it-
-        # is-not-in` R4). `title` is a Python string here, one of `LANE_COLOR`'s keys.
-        data_testid=f"lane-{title}",
+        # So a proof can ask which column a card is in (`0001_product-describes-a-state-it-
+        # is-not-in` R4).
+        data_testid="column-" + stage,
     )
 
 
@@ -911,20 +911,19 @@ def _board() -> rx.Component:
                         s.text("Try a different search or choose All work.", margin_top="8px")),
                 rx.cond(
                     P.board_view == "Board",
-                    rx.grid(
-                        *(
-                            _lane(name, LANE_COLOR[name])
-                            for name in ("Planned", "In progress", "Needs you", "Complete")
-                        ),
-                        columns=rx.breakpoints(initial="1", sm="2", lg="4"),
-                        gap="12px", width="100%", align_items="start", id="board-grid",
+                    # `0100` Design 6. One column per stage; wider than the screen, it
+                    # scrolls sideways, as GitHub Projects' board does.
+                    rx.hstack(
+                        rx.foreach(P.stages, _column),
+                        spacing="3", width="100%", align="start", overflow_x="auto",
+                        padding_bottom="8px", id="board-grid",
                     ),
                     s.panel(
                         rx.foreach(P.cards, lambda u: rx.cond(P.shown_ids.contains(u.id), rx.button(
                             s.text(u.id, size="1", min_width="110px",
                                    font_family="ui-monospace, monospace"),
                             rx.text(u.title, size="2", weight="medium", text_align="left"),
-                            rx.spacer(), s.badge(u.stage, u.color), s.text(u.lane, size="1"),
+                            rx.spacer(), s.badge(u.at, "gray"), s.badge(u.state_label, u.state_color),
                             on_click=P.open_unit(u.id), variant="ghost", color_scheme="gray",
                             width="100%", height="auto", padding="15px 8px", flex_wrap="wrap",
                             justify_content="flex-start", border_bottom=f"1px solid {s.LINE}",
@@ -934,7 +933,7 @@ def _board() -> rx.Component:
                 ),
             ),
         ),
-        _dropped_group(),
+        _collapsed_groups(),
         spacing="5", width="100%",
     )
 
@@ -1900,22 +1899,29 @@ def _backlog_screen() -> rx.Component:
     )
 
 
-def _dropped_group() -> rx.Component:
-    """`0045` (`spec.md ## Answers, câu 1`). Dropped units, collapsed at the foot of the board."""
+def _collapsed_groups() -> rx.Component:
+    """`0100` R8 (`intent.md ## Answers, câu 4`). Done, paused and dropped units, each in a
+    closed group with its count at the foot of the board; a group of none is not drawn."""
+    return rx.vstack(
+        *(_collapsed_group(state, label) for state, label in
+          (("done", "Done"), ("paused", "Paused"), ("dropped", "Dropped"))),
+        spacing="3", width="100%",
+    )
+
+
+def _collapsed_group(state: str, label: str) -> rx.Component:
+    count = P.group_counts[state]
     return rx.cond(
-        P.dropped_count > 0,
+        count > 0,
         rx.el.details(
-            rx.el.summary(
-                s.text("Dropped (" + P.dropped_count.to_string() + ")", size="2"),
-                cursor="pointer",
-            ),
+            rx.el.summary(s.text(label + " (" + count.to_string() + ")", size="2"), cursor="pointer"),
             rx.grid(
                 rx.foreach(P.cards, lambda c: rx.cond(
-                    c.hold_state == "dropped", _unit_card(c), rx.fragment())),
+                    c.state == state, _unit_card(c, grouped=True), rx.fragment())),
                 columns=rx.breakpoints(initial="1", sm="2", lg="4"),
                 gap="12px", width="100%", margin_top="12px",
             ),
-            width="100%", id="dropped-group",
+            width="100%", id=f"{state}-group",
         ),
     )
 
@@ -2003,7 +2009,10 @@ def _detail_dialog() -> rx.Component:
                 rx.hstack(
                     s.text(P.current_unit.id, size="1",
                            font_family="ui-monospace, monospace"),
-                    s.badge(P.current_unit.lane, P.current_unit.color),
+                    s.badge(P.current_unit.state_label, P.current_unit.state_color),
+                    # `0082` R12, `0100` C3: what a unit waits on, beside its state.
+                    rx.cond(P.current_unit.attention_reason != "",
+                            s.badge(P.current_unit.attention_reason, "amber")),
                     rx.spacer(),
                     rx.dialog.close(s.icon_button("x", "Close work detail")),
                     width="100%", align="center",
@@ -2137,6 +2146,9 @@ def _detail_dialog() -> rx.Component:
                             ),
                             s.text("No stage is ready to run; the line above says why."),
                         ),
+                        # `0100` R7. What the board last heard from CI, and when.
+                        rx.cond(P.current_unit.ci_line != "",
+                                s.text(P.current_unit.ci_line, id="unit-ci-line", size="2")),
                         rx.cond(~P.unit_dropped, _integration_panel()),
                         rx.cond(~P.unit_dropped, _outcome_panel()),
                         _unit_cost(),

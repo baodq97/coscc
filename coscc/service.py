@@ -329,10 +329,11 @@ def answerable(unit: dict[str, Any]) -> bool:
 
 
 def attention_reason(unit: dict[str, Any]) -> str:
-    """`0082` R12. What a unit in *Needs you* waits on, `""` for any other unit.
+    """`0082` R12. What a unit waits on, `""` when it waits on nothing named here.
 
-    Which units are in that lane is still `state._lane`'s rule, unchanged; this repeats its
-    condition only to say nothing about a unit outside it."""
+    Its condition is the rule of the lane *Needs you* had until `0100`, kept so the words
+    stay those `0082` wrote (`0100` R12). The board's state is `unit_state`'s, not this;
+    since `0100` this shows in the unit's dialog beside it (spec C3)."""
     action = str(unit.get("next") or "")
     rows = unit.get("stages") or []
     if unit.get("phase") == "pre-intent" or action == "finished" or action.startswith("closed"):
