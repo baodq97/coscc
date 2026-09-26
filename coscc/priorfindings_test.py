@@ -125,13 +125,23 @@ class ReadingTheStore(unittest.TestCase):
         self.assertEqual(got["prior_findings"], "- 0054 Round 1 F1 [open] coscc/service.py:1 — high — from 0054_a")
         self.assertEqual(got["prior_findings_record"]["units"], 1)
 
-    def test_a_review_that_cannot_be_read_is_an_error_in_the_record_never_a_raise(self):
+    def test_a_review_that_cannot_be_read_is_skipped_and_counted_never_a_raise(self):
         (self.cos / "0054_a" / "review.md").unlink()
         (self.cos / "0054_a" / "review.md").mkdir()
+        (self.cos / "0070_b").mkdir()
+        (self.cos / "0070_b" / "review.md").write_bytes(b"## Round 1\n\n- F1 [open] coscc/service.py:1 \xff\n")
+        (self.cos / "0080_c").mkdir()
+        (self.cos / "0080_c" / "review.md").write_text(
+            review(["- F1 [open] coscc/runner.py:1 — high — from 0080_c"]), encoding="utf-8"
+        )
+        got = priorfindings.for_step(self.cos, ["0054_a", "0070_b", "0080_c"], self.plan, "0110_me")
+        self.assertEqual(got["prior_findings"], "- 0080 Round 1 F1 [open] coscc/runner.py:1 — high — from 0080_c")
+        self.assertEqual(got["prior_findings_record"]["unreadable"], 2)
+        self.assertNotIn("error", got["prior_findings_record"])
+
+    def test_a_record_with_every_review_read_has_no_unreadable_key(self):
         got = priorfindings.for_step(self.cos, ["0054_a"], self.plan, "0110_me")
-        self.assertEqual(got["prior_findings"], "")
-        self.assertEqual(got["prior_findings_record"]["bytes"], 0)
-        self.assertIn("error", got["prior_findings_record"])
+        self.assertNotIn("unreadable", got["prior_findings_record"])
 
     def test_a_plan_that_cannot_be_read_is_an_error_in_the_record(self):
         got = priorfindings.for_step(self.cos, ["0054_a"], self.cos / "missing" / "plan.md", "0110_me")

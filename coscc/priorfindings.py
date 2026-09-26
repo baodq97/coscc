@@ -113,8 +113,10 @@ def section_for(
     cos_dir: str | os.PathLike[str], finished: list[str], plan_text: str, unit: str
 ) -> tuple[str, dict[str, Any]]:
     """`select` over the `review.md` of every unit in `finished` but `unit`. A unit with no
-    `review.md` is skipped; one that cannot be read raises."""
+    `review.md` is skipped. So is one that cannot be read, counted as `unreadable` in the
+    record: one broken file in the store must not cost every other unit's lines."""
     reviews: dict[str, str] = {}
+    unreadable = 0
     for name in finished:
         if name == unit:
             continue
@@ -122,15 +124,20 @@ def section_for(
             reviews[name] = (Path(cos_dir) / name / "review.md").read_text(encoding="utf-8")
         except FileNotFoundError:
             continue
-    return select(reviews, plan_text)
+        except (OSError, UnicodeDecodeError):
+            unreadable += 1
+    section, record = select(reviews, plan_text)
+    if unreadable:
+        record["unreadable"] = unreadable
+    return section, record
 
 
 def for_step(
     cos_dir: str | os.PathLike[str], finished: list[str], plan_path: str | os.PathLike[str], unit: str
 ) -> dict[str, Any]:
     """`{prior_findings, prior_findings_record}` for `Runner.run`. Never raises: a `plan.md`
-    or a `review.md` that cannot be read, or a bug here, is no section and a record carrying
-    `error`, and the step runs as it would have."""
+    that cannot be read, or a bug here, is no section and a record carrying `error`, and the
+    step runs as it would have. A `review.md` that cannot be read is `section_for`'s."""
     try:
         plan_text = Path(plan_path).read_text(encoding="utf-8")
         section, record = section_for(cos_dir, finished, plan_text, unit)

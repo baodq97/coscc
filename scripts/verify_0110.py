@@ -8,6 +8,7 @@ case prints PASS or FAIL:
 - no `ship` `done` of `0110` yet → `chưa merge`, exit 2;
 - 10 units after the merge at ≤ $7.00 → `đạt`, exit 0; over → `không đạt`, exit 1;
 - 9 units → `chưa đủ mẫu (n=9)`, exit 2;
+- R7 counts a `start` of `impl` whose `prior_findings` carries no `error`;
 - a unit whose first `impl` started before the merge is only under `tham khảo`;
 - `baseline` drops a unit with no `impl` `done`, and reproduces R2's numbers.
 
@@ -108,7 +109,9 @@ def per_unit(rows: list[dict]) -> dict[str, dict]:
         if r.get("kind") == "start" and stage == "impl":
             u["first_impl"] = u["first_impl"] or at
             u["impl_starts"] += 1
-            u["impl_starts_recorded"] += "prior_findings" in r
+            # A record carrying `error` is a step that was handed nothing.
+            pf = r.get("prior_findings")
+            u["impl_starts_recorded"] += isinstance(pf, dict) and "error" not in pf
         if r.get("kind") != "end" or r.get("outcome") != "done":
             continue
         if stage == "ship":
@@ -267,7 +270,7 @@ def _run(build, window: str) -> tuple[int, list[str]]:
 MERGE = datetime(2026, 9, 28, tzinfo=timezone.utc)
 
 
-def _after(n: int, cost: float, early: bool = False):
+def _after(n: int, cost: float, early: bool = False, errors: int = 0):
     def build(f: _Fixture) -> None:
         if early:
             # Its first `impl` before the merge, its `ship` after it.
@@ -277,7 +280,8 @@ def _after(n: int, cost: float, early: bool = False):
         f.unit(MERGE - timedelta(minutes=6), "0110_x", 1, 5.0, 2.0)
         t = MERGE + timedelta(hours=2)
         for i in range(n):
-            t = f.unit(t, f"{300 + i:04d}_u", 1 + i % 2, cost - 2.0, 2.0, prior_findings={"bytes": 0})
+            record = {"bytes": 0, "error": "OSError: x"} if i < errors else {"bytes": 0}
+            t = f.unit(t, f"{300 + i:04d}_u", 1 + i % 2, cost - 2.0, 2.0, prior_findings=record)
     return build
 
 
@@ -291,6 +295,9 @@ def prove() -> int:
                 f"exit {code}, {lines}")
     ok &= claim(any(x.strip() == "mọi start impl mang prior_findings: 10 / 10" for x in lines),
                 "R7 is counted from the start rows", f"{lines}")
+    code, lines = _run(_after(10, 6.50, errors=1), "result")
+    ok &= claim(any(x.strip() == "mọi start impl mang prior_findings: 9 / 10" for x in lines),
+                "a start whose record carries error is not counted for R7", f"{lines}")
     code, lines = _run(_after(10, 7.50), "result")
     ok &= claim(code == EXIT_BROKEN and lines[-1] == "không đạt", "10 units at $7.50 → không đạt, exit 1",
                 f"exit {code}, {lines}")

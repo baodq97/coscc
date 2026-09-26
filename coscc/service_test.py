@@ -3599,7 +3599,8 @@ class RunStepHandsOnWhatEarlierReviewsSaid(RunStepHandsOnTheKnowledgeStore):
         self.plan(self.PLAN)
         kw = self.kwargs_of(service, "impl")
         self.assertEqual(kw["prior_findings"], "")
-        self.assertIn("UnicodeDecodeError", kw["prior_findings_record"]["error"])
+        self.assertEqual(kw["prior_findings_record"],
+                         {"bytes": 0, "lines": 0, "units": 0, "dropped": 0, "unreadable": 1})
 
 
 class TheStateOfAUnit(unittest.TestCase):
