@@ -158,10 +158,13 @@ Read this before adding a route, a button or a grant, and before copying this ha
 - **A screenshot is not a person's look.** Since `0083` a unit whose branch changes a file
   listed under `paths:` in `.claude/rules/ui-standard.md` cannot ship until its passing
   review round carries `### Screens`: `impl` takes the screenshots with
-  `scripts/capture_screens.py`, and the one who looks at them is the `review` agent, reading
-  the PNGs — not a person. The gate reads the words in `review.md`, never the images: a
-  round can write the section without opening one, `Taken at` is impl's word passed on by
-  review, and impl chose which screens to take. The originator took that trade
+  `scripts/capture_screens.py` — or, since `0111`, the app does, before a `review` step,
+  when the branch's head was rewritten after `impl` took them, with the addresses `impl`
+  chose — and the one who looks at them is the `review` agent, reading the PNGs — not a
+  person. The app taking them is not anyone's approval either. The gate reads the words in
+  `review.md`, never the images: a round can write the section without opening one,
+  `Taken at` is impl's word, or the app's, passed on by review, and impl chose which
+  screens to take. The originator took that trade
   (`.cos/0083_*/intent.md ## Answers, câu 1`); they still see the screens when they use the
   board, and what they dislike comes back as an idea.
 - **A login that knows who you are.** Since `0070` every route — the page, its socket,

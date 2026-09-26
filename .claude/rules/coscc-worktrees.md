@@ -52,3 +52,13 @@ paths:
   - Anything that fails — no `done` run of `plan`, no section, a commit the tree lacks — is
     `checked: false` with a reason, never an empty list, and never stops the step. A step
     started at a terminal gets none of this.
+- **A `review` step can run the branch's own code before its session, with no session at
+  all** (`0111`). When `cos.mjs screens` says a UI unit's head was rewritten after its
+  screenshots, `run_step` runs the tree's `scripts/capture_screens.py` through `uv run`, with
+  this process's environment less `__REFLEX_*`, for up to `retake.RETAKE_TIMEOUT` (300 s,
+  chosen, not measured) under one lock for the whole app, so other units' reviews wait.
+  - *Stop* does not reach it: the step is not running yet, and the unit's mark is held.
+  - Port 18783 is shared with every `impl` session's capture, which the lock does not cover;
+    one of those running at the same time refuses the review, and the autopilot stops at `e`.
+  - A failed retake is not undone: a build that rewrote a tracked file leaves the tree dirty,
+    and every later review of that unit is refused until a person cleans it.
