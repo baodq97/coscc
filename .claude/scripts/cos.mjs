@@ -1561,9 +1561,24 @@ export function betweenPrAndShip(unit, limit = REVIEW_ROUNDS) {
   return !['finished', 'rejected', 'paused', 'dropped'].includes(why)
 }
 
+// `0100` R2: the stage a unit is at, for a board that draws one column per stage. It is
+// the stage `next` names; failing that, the last stage whose artifact is on disk (a draft,
+// a `changes-requested` review, a closed or finished unit); failing that, the first stage
+// every unit walks. Read off `STAGES`, so the board keeps no copy of the loop.
+export function stageAt(unit, next) {
+  if (next.stage) return next.stage
+  const last = STAGES.filter((s) => present(unit, s.file)).at(-1)
+  return (last ?? STAGES.find((s) => !s.optional && !s.when)).name
+}
+
 function cmdStatus(json, cosDir, limit) {
   const units = readAll(cosDir)
-  const rows = units.map((u) => ({ ...u, next: nextAction(u, limit), betweenPrAndShip: betweenPrAndShip(u, limit) }))
+  // `0100` R4: `status` carries `why` as well, so the board reads which rule answered
+  // rather than the English of `action`. `next` still prints `nextAction`, without it.
+  const rows = units.map((u) => {
+    const next = decide(u, limit)
+    return { ...u, next, at: stageAt(u, next), betweenPrAndShip: betweenPrAndShip(u, limit) }
+  })
 
   if (json) {
     // The stage list ships with the data so a reader never has to keep its own copy of it.
