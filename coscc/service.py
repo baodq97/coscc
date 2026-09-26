@@ -1943,6 +1943,9 @@ class Service:
         try:
             journal.append(retake.record(key, unit, old, result, ok, detail, started_by))
         except (BadRecord, Busy) as e:
+            # Review round 1, F2: only a retake that was taken may say it was.
+            if not ok:
+                raise Invalid(RETAKE_REFUSED) from e
             raise Invalid(f"the screenshots were taken again, but the run log could not record it: {e}") from e
         if not ok:
             raise Invalid(RETAKE_REFUSED)

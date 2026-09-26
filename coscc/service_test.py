@@ -3856,6 +3856,37 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(unittest.TestCase):
                 asyncio.run(self.service._retake_screens(
                     str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
 
+    def _unrecorded(self, result: dict) -> str:
+        from coscc import board as board_reader
+        from coscc import retake
+        from coscc.journal import Busy, Journal
+
+        async def asked(*a, **kw):
+            return {"retake": True, "manifest": self.OLD}
+
+        async def take(tree, addresses, **kw):
+            return result
+
+        with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take), \
+                mock.patch.object(Journal, "append", side_effect=Busy("locked")):
+            with self.assertRaises(Invalid) as refused:
+                asyncio.run(self.service._retake_screens(
+                    str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
+        return str(refused.exception)
+
+    def test_a_failed_retake_the_run_log_could_not_record_says_it_failed(self):
+        # Review round 1, F2: it must not say the screenshots were taken again.
+        from coscc.service import RETAKE_REFUSED
+
+        said = self._unrecorded({"code": 2, "seconds": 0.3, "tail": "", "head_before_run": "b" * 40,
+                                 "manifest_after": self.OLD, "status_before": "", "status_after": ""})
+        self.assertEqual(said, RETAKE_REFUSED)
+
+    def test_a_taken_retake_the_run_log_could_not_record_says_so(self):
+        said = self._unrecorded({"code": 0, "seconds": 21.0, "tail": "", "head_before_run": "b" * 40,
+                                 "manifest_after": self.NEW, "status_before": "", "status_after": ""})
+        self.assertIn("taken again, but the run log could not record it", said)
+
     def test_two_retakes_never_run_at_once(self):
         from coscc import board as board_reader
         from coscc import retake
