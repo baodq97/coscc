@@ -454,20 +454,24 @@ class Scripted(_Base):
     async def test_0112_integrate_when_behind_before_and_after_a_pass(self):
         """`0112` R1, R9: was `test_integrate_when_behind_but_never_after_a_pass`. After a pass
         a unit behind is integrated too, where the autopilot may ship; where it may not, a
-        person merges, and the unit keeps the stop `c` it had."""
+        person merges, and the unit stops `f` on the gate's reason (R3) — `next` names no
+        `ship` for a head behind `origin/main`, the ref the board reads `behind` from."""
+        behind = ("#7 is 2 commit(s) behind origin/main — integrate, then review again; "
+                  "a round that passes does not count toward the limit")
         self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again",
                  integration={"state": "behind"}, rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
-        self.add("0003_c", "ship", integration={"state": "behind"}, rounds=[{"verdict": "pass"}],
+        self.add("0003_c", "", action=behind, integration={"state": "behind"}, rounds=[{"verdict": "pass"}],
                  between_pr_and_ship=True)
         await self.pass_()
         self.assertEqual(self.launched, [("0001_a", "integrate", "autopilot")])
-        self.assertEqual(self.stops(), {"0003_c": "c"})
+        self.assertEqual(self.stops(), {"0003_c": "f"})
+        self.assertIn("behind origin/main", self.service._autopilot_stops[self.key]["0003_c"]["reason"])
 
         self.release.set()
         await self.settled()
         self.launched.clear()
         del self.units["0001_a"], self.units["0003_c"]
-        self.add("0002_b", "ship", integration={"state": "behind"}, rounds=[{"verdict": "pass"}],
+        self.add("0002_b", "", action=behind, integration={"state": "behind"}, rounds=[{"verdict": "pass"}],
                  between_pr_and_ship=True)
         self.listed("0002_b")
         self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
