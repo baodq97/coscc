@@ -3736,3 +3736,160 @@ class TheStateOfAUnit(unittest.TestCase):
         self.assertEqual(reason_beside("Needs a person", "needs-you"), "Needs a person")
         self.assertEqual(reason_beside("Accept plan.md", "ready"), "Accept plan.md")
         self.assertEqual(reason_beside("Changes requested", "ready"), "Changes requested")
+
+
+class ReviewTakesTheScreenshotsAgainAfterARewrite(unittest.TestCase):
+    """`0111` plan step 6. `cos.mjs screens` and the capture are stand-ins, and so is the
+    runner: what is checked is whether `Runner.run` is reached, with which section, and what
+    the run log holds."""
+
+    OLD = {"head": "a" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
+    NEW = {"head": "b" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        (self.repo / ".git").mkdir(parents=True)
+        config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
+                        data_dir=str(self.root / "data"))
+        self.service = Service(config, Sessions(config))
+        made = create_sync(self.service, str(self.repo), "a-problem", "words")
+        self.unit, self.dir = made["unit"], Path(made["path"])
+        self.seen: list[dict] = []
+        self.taken: list[list[str]] = []
+
+    def screens_records(self) -> list[dict]:
+        journal = self.service._journal()
+        return [r for r in journal.records(self.service._journal_key(str(self.repo))) if r.get("kind") == "screens"]
+
+    def step(self, answer: dict, result: dict | None):
+        from coscc import board as board_reader
+        from coscc import retake
+        from coscc import service as service_mod
+        from coscc.runner import RunError
+
+        seen, taken = self.seen, self.taken
+
+        class StandIn:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def run(self, **kw):
+                seen.append(kw)
+                raise RunError("a stand-in runner")
+                yield  # pragma: no cover
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, f"open: {stage} may proceed"
+
+        async def tree(*a, **kw):
+            return {"path": str(self.repo), "branch": "fix/a-problem", "base": None}
+
+        async def asked(units_root, unit, repo, **kw):
+            return answer
+
+        async def take(tree, addresses, **kw):
+            taken.append(list(addresses))
+            return result
+
+        async def go():
+            async for _ in self.service.run_step(str(self.repo), self.unit, "review"):
+                pass
+
+        with mock.patch.object(board_reader, "gate", open_gate), \
+                mock.patch.object(board_reader, "screens", asked), \
+                mock.patch.object(retake, "take", take), \
+                mock.patch.object(service_mod, "Runner", StandIn), \
+                mock.patch.object(self.service, "_worktree", tree):
+            with self.assertRaises(Invalid) as refused:
+                asyncio.run(go())
+        return str(refused.exception)
+
+    def test_no_retake_records_nothing_and_the_step_runs(self):
+        self.step({"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None)
+        self.assertEqual(len(self.seen), 1)
+        self.assertEqual(self.seen[0]["screens_note"], "")
+        self.assertEqual((self.taken, self.screens_records()), ([], []))
+
+    def test_a_retake_taken_is_recorded_and_the_prompt_carries_it(self):
+        result = {"code": 0, "seconds": 21.0, "tail": "", "head_before_run": "b" * 40,
+                  "manifest_after": self.NEW, "status_before": "", "status_after": ""}
+        self.step({"retake": True, "manifest": self.OLD}, result)
+        self.assertEqual(self.taken, [["/board"]])
+        [rec] = self.screens_records()
+        self.assertEqual((rec["outcome"], rec["head_before"], rec["head_after"], rec["started_by"], rec["stage"]),
+                         ("taken", "a" * 40, "b" * 40, "person", "review"))
+        self.assertEqual(len(self.seen), 1)
+        self.assertIn("# The screenshots, taken again", self.seen[0]["screens_note"])
+        self.assertIn("b" * 40, self.seen[0]["screens_note"])
+
+    def test_a_retake_that_fails_refuses_review_before_the_session(self):
+        from coscc.service import RETAKE_REFUSED
+
+        files = {p.name: p.read_bytes() for p in self.dir.iterdir()}
+        result = {"code": 2, "seconds": 0.3, "tail": "127.0.0.1:18783 is already in use", "head_before_run": "b" * 40,
+                  "manifest_after": self.OLD, "status_before": "", "status_after": ""}
+        said = self.step({"retake": True, "manifest": self.OLD}, result)
+        self.assertEqual(said, RETAKE_REFUSED)
+        self.assertEqual(self.seen, [])
+        [rec] = self.screens_records()
+        self.assertEqual((rec["outcome"], rec["head_after"], rec["code"]), ("failed", "", 2))
+        self.assertIn("exited 2", rec["detail"])
+        self.assertIn("already in use", rec["detail"])
+        # The mark is given back, and nothing was appended to the unit.
+        self.assertEqual(self.service._active, {})
+        self.assertEqual({p.name: p.read_bytes() for p in self.dir.iterdir()}, files)
+        # One sentence, and no commit, path or log line in it (S1, S3).
+        self.assertNotIn("/", said)
+        self.assertNotRegex(said, r"[0-9a-f]{7,}")
+
+    def test_a_board_that_cannot_answer_refuses_the_step(self):
+        from coscc import board as board_reader
+
+        async def unavailable(*a, **kw):
+            raise board_reader.Unavailable("node is missing")
+
+        with mock.patch.object(board_reader, "screens", unavailable):
+            with self.assertRaises(Invalid):
+                asyncio.run(self.service._retake_screens(
+                    str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
+
+    def test_two_retakes_never_run_at_once(self):
+        from coscc import board as board_reader
+        from coscc import retake
+
+        running, most = [0], [0]
+
+        async def asked(*a, **kw):
+            return {"retake": True, "manifest": self.OLD}
+
+        async def take(tree, addresses, **kw):
+            running[0] += 1
+            most[0] = max(most[0], running[0])
+            await asyncio.sleep(0.05)
+            running[0] -= 1
+            return {"code": 0, "seconds": 0.05, "tail": "", "head_before_run": "b" * 40,
+                    "manifest_after": self.NEW, "status_before": "", "status_after": ""}
+
+        async def go():
+            journal = self.service._journal()
+            await asyncio.gather(*(
+                self.service._retake_screens(str(self.repo), "k", journal, u, str(self.repo), "person")
+                for u in ("0001_a", "0002_b", "0003_c")
+            ))
+
+        with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take):
+            asyncio.run(go())
+        self.assertEqual(most[0], 1)
+
+    def test_activity_shows_no_screens_record(self):
+        journal = self.service._journal()
+        key = self.service._journal_key(str(self.repo))
+        journal.append({"kind": "screens", "workspace": key, "unit": self.unit, "stage": "review", "outcome": "failed"})
+        journal.append({"kind": "start", "workspace": key, "unit": self.unit, "stage": "plan", "mode": "manual"})
+        kinds = [e["kind"] for e in self.service.activity(str(self.repo))["events"]]
+        self.assertEqual(kinds, ["start"])
+        both = self.service.activity_and_usage(str(self.repo))
+        self.assertEqual([e["kind"] for e in both["events"]], ["start"])

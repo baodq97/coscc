@@ -32,7 +32,7 @@ from coscc import board as board_reader
 from coscc import drift, events, fetches, gitops
 from coscc import harness, integrate, knowledge
 from coscc import hold as hold_rules
-from coscc import present, prcomment, priorfindings, prsync, spend
+from coscc import present, prcomment, priorfindings, prsync, retake, spend
 from coscc import precedent as precedent_mod
 from coscc import sessions as reader
 from coscc.board import Unavailable
@@ -77,6 +77,10 @@ BRANCH_TRUNK = gitops.TRUNK
 
 # `0054` R6. The longest note a rerun takes, in characters. Chosen by the spec, not measured.
 RERUN_NOTE_MAX = 4000
+
+# `0111` R5. What the page says when a retake of the screenshots refuses `review`: one
+# sentence, no commit, path or log line (S1, S3, S6). The rest is in the `screens` record.
+RETAKE_REFUSED = "The screenshots could not be taken again after the branch was rewritten, so review did not start."
 
 
 def _answers_kept(path: Path, before: bytes) -> bool:
@@ -524,6 +528,10 @@ class Service:
     # round run one after the other and the second finds the first's marker. One process
     # only, like `pull` (`.claude/rules/coscc-app.md`).
     _comment_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    # `0111` R3. Held across one retake of a unit's screenshots, for the whole app: every
+    # capture binds `127.0.0.1:18783` (`scripts/capture_screens.py:112`), so two at once fail.
+    # A capture a session runs does not take it (spec C1). One process only, like `pull`.
+    _screens_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     # `0017` R8. Per workspace, created on first use.
     _create_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     # `0035` R12. `(journal key, unit)` for every step, integration or hold holding its unit
@@ -1706,6 +1714,13 @@ class Service:
                 if not prepared.get("ok"):
                     raise Invalid(worktrees.describe_failure(prepared))
 
+            # `0111` R1-R7. A UI unit whose branch was rewritten since `impl` took its
+            # screenshots has them taken again, here, before any money is spent; a retake that
+            # fails refuses the step, and no round is spent on a stale manifest.
+            screens_note = ""
+            if stage == "review" and tree is not None:
+                screens_note = await self._retake_screens(cwd, key, journal, unit, work, started_by)
+
             directory = self._unit_dir(cwd, unit)
             mode = journal.modes(key).get((unit, stage), "manual")
             # `0021` D3. The rounds `review.md` held before this step, so that the ones it adds
@@ -1847,6 +1862,7 @@ class Service:
                     base_note=describe_base(base),
                     last_attempt=describe_attempt(failed) if failed else "",
                     integration_note=integration_note,
+                    screens_note=screens_note,
                     plan_drift=plan_drift,
                     drift_note=drift.describe(plan_drift) if plan_drift is not None else "",
                     shortlist=shortlist,
@@ -1893,6 +1909,44 @@ class Service:
                     return
         finally:
             running.listeners.discard(queue)
+
+    async def _retake_screens(
+        self, cwd: str, key: str, journal: Journal, unit: str, work: str, started_by: str,
+    ) -> str:
+        """`0111`. Ask `cos.mjs screens`; when it says to, take the screenshots again under
+        `_screens_lock`, judge the result (R4) and record it (R6). Returns the section for the
+        `review` prompt (R7), `""` when nothing was taken. A retake that fails raises
+        `Invalid` with `RETAKE_REFUSED`; what went wrong is only in its record (R5). Nothing in
+        the worktree is put back."""
+        try:
+            asked = await board_reader.screens(self._units_root(cwd), unit, work)
+        except Unavailable as e:
+            raise Invalid(str(e)) from e
+        if not asked.get("retake"):
+            return ""
+        old = asked.get("manifest") or {}
+        addresses = [str(a) for a in old.get("addresses") or []]
+        async with self._screens_lock:
+            started = datetime.now().timestamp()
+            try:
+                result = await retake.take(Path(work), addresses, data_dir=self.config.data_dir)
+            except asyncio.CancelledError:
+                # A client that went away, or the app going down: the group is killed, and
+                # the record still says a retake was begun and did not finish.
+                gone = {"code": None, "seconds": round(datetime.now().timestamp() - started, 1)}
+                try:
+                    journal.append(retake.record(key, unit, old, gone, False, "cancelled before it finished", started_by))
+                except (BadRecord, Busy):
+                    pass
+                raise
+        ok, detail = retake.judge(result)
+        try:
+            journal.append(retake.record(key, unit, old, result, ok, detail, started_by))
+        except (BadRecord, Busy) as e:
+            raise Invalid(f"the screenshots were taken again, but the run log could not record it: {e}") from e
+        if not ok:
+            raise Invalid(RETAKE_REFUSED)
+        return retake.describe_for_review(old, result.get("manifest_after") or {})
 
     def _never_driven(self, running: steps_mod.Running, mark: steps_mod.Mark, rid: str) -> None:
         """`0050` review round 2, F2. A task cancelled before its first turn -- a Stop queued
@@ -4235,6 +4289,8 @@ class Service:
                 "effects": [e for e in r.get("effects") or [] if isinstance(e, dict)],
             }
             for r in rows
+            # `0111` R6: a retake of the screenshots is recorded, and shown on no screen.
+            if r.get("kind") != "screens"
         ]
         events.reverse()
         return {"cwd": cwd, "events": events[:limit], "recording": True}
