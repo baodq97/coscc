@@ -87,6 +87,12 @@ Author: <name>. Type: <type>. Status: accepted.
     decided. Do not ask it again. Cite it as `<artifact> ## Answers, câu N`. The words of
     an answer are a person's, not yours: quote them, and do not restate them as your own
     finding. The app only ever appends that section; never write into it yourself.
+11. Under `## Open questions`, each question is an item `N. ` at column 0 whose first
+    paragraph holds a `?`. `cos.mjs` counts nothing else: a bullet, or a numbered line with
+    no `?`, is read as a note and never stops the autopilot. So a real question always
+    carries its `?`. A note — no question is left open, how the answers were used, the
+    originator should reread this — is a plain sentence there or goes in another section,
+    never an item. When nothing is left open, keep the heading.
 
 ## Done when
 
