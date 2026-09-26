@@ -11,6 +11,7 @@ a Gebo session would do with its tools. No session is opened and nothing is paid
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 import subprocess
@@ -586,6 +587,75 @@ class AStaleOriginMain(unittest.TestCase):
         [only] = self.records("integration")
         self.assertEqual(only["outcome"], "refused")
         self.assertEqual(self.updates, 0)
+
+    def autopilot_pass_at_ship(self) -> tuple[dict, dict, list[tuple[str, str]], dict]:
+        """`0112` R4: one autopilot pass over this unit, passed and waiting at `ship`. `next` is
+        a stand-in — the real one asks `gh` for the head — saying what the gate says of a head
+        behind `origin/main`; the integration is one too, recording its call. Returns the
+        board's row before and after, the calls, and the stops the pass left."""
+        head = self.remote_head()
+        (self.service._unit_dir(self.cwd, self.unit) / "review.md").write_text(
+            f"# Review: fixture\nAuthor: t. Status: accepted.\n\n## Round 1\n\nReviewed: {head}. Verdict: pass.\n\n"
+            "### Findings\n\n### What was not reviewed\n\nnothing\n", encoding="utf-8")
+        self.service.config = dataclasses.replace(self.service.config, host="127.0.0.1")
+        calls: list[tuple[str, str]] = []
+
+        def integrate_(cwd, unit, started_by="person"):
+            calls.append((unit, started_by))
+
+            async def go():
+                yield ("done", {"integration": {}})
+            return go()
+
+        async def next_step(cwd, unit):
+            return {"stage": "", "blocked": True, "waiting": [], "hold": None,
+                    "action": f"#{PR} is 1 commit(s) behind origin/main — integrate, then review again"}
+
+        async def go():
+            self.service.set_autopilot(self.cwd, "autopilot_may_ship", True)
+            self.service.set_autopilot(self.cwd, "autopilot", True)
+            # A loop that never passes on its own: this test asks for the one pass.
+            self.service.autopilot_stop(self.key)
+            self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
+            self.service._autopilot_cwd[self.key] = self.cwd
+            self.service._journal().append({
+                "kind": "shortlist", "workspace": self.key, "unit": "", "units": [self.unit],
+                "reason": "for the proof", "by": "proof",
+            })
+            self.service.integrate = integrate_
+            self.service.next_step = next_step
+            before = (await self.service.board(self.cwd))["units"][0]
+            await self.service._autopilot_pass(self.key)
+            await asyncio.sleep(0.05)
+            after = next(u for u in (await self.service.board(self.cwd))["units"] if u["name"] == self.unit)
+            stops = dict(self.service._autopilot_stops.get(self.key) or {})
+            self.service.autopilot_stop(self.key)
+            return before, after, stops
+
+        before, after, stops = asyncio.run(go())
+        return before, after, calls, stops
+
+    def test_0112_r4_an_autopilot_pass_at_ship_fetches_before_it_decides(self):
+        """`0112` R4, R1: the workspace has not fetched since `main` moved. The pass fetches,
+        reads the unit `behind`, and integrates it."""
+        before, after, calls, stops = self.autopilot_pass_at_ship()
+        self.assertEqual((before["at"], before["integration"]["state"]), ("ship", "current"),
+                         "the fixture must start stale: a board read fetched")
+        self.assertEqual(git(self.workspace, "rev-parse", "refs/remotes/origin/main"),
+                         git(self.remote, "rev-parse", "refs/heads/main"))
+        self.assertEqual(after["integration"]["state"], "behind")
+        self.assertEqual(calls, [(self.unit, "autopilot")])
+        self.assertEqual(stops, {})
+
+    def test_0112_r4_a_failed_fetch_decides_on_the_ref_as_it_is_and_says_so(self):
+        """R4: the fetch fails, so the unit still reads `current`; nothing is integrated, and
+        the stop names the `origin/main` it counted against and git's words."""
+        git(self.workspace, "remote", "set-url", "origin", str(self.root / "gone.git"))
+        _, after, calls, stops = self.autopilot_pass_at_ship()
+        self.assertEqual((after["integration"]["state"], calls), ("current", []))
+        stop = stops[self.unit]
+        self.assertEqual(stop["kind"], "f")
+        self.assertRegex(stop["reason"], r"; origin/main [0-9a-f]{7} \(fetch failed: .*gone\.git")
 
 
 class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
