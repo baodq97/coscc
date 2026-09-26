@@ -12,6 +12,7 @@ import {
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
   parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking, prText,
   UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe, stageAt,
+  aboveAnswers, parseReruns, RERUNNABLE,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -2255,4 +2256,216 @@ test('0100: the line cos.mjs next prints carries no why', () => {
   assert.equal(line.stage, 'spec')
   assert.ok(!('why' in line), 'next carries no why')
   assert.ok(!('at' in line), 'next carries no at')
+})
+
+// --- 0054: an accepted stage run again from the board -----------------------------
+
+// A unit with every artifact up to a passed review, like the board's `0003_awaiting-ship`.
+const RERUN_FILES = {
+  'intent.md': '# Intent: x\nType: feat. Status: accepted.\n\n## Open questions\n\n1. Một?\n',
+  'spec.md': '# Spec: x\nIntent: intent.md. Status: accepted.\n\nR1.\n',
+  'plan.md': '# Plan: x\nStatus: accepted.\n\n1. build it\n',
+  'impl.md': '# Impl: x\nStatus: accepted.\n\nbuilt\n',
+  'pr.md': '# PR: x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nbody\n',
+  'review.md': `# Review: x\nStatus: accepted.\n\n${round(1, 'pass')}`,
+}
+
+function rerunTree(files = RERUN_FILES, name = '0003_awaiting-ship') {
+  const root = mkdtempSync(join(tmpdir(), 'cos-0054-'))
+  const dir = join(root, '.cos', name)
+  mkdirSync(dir, { recursive: true })
+  for (const [f, text] of Object.entries(files)) writeFileSync(join(dir, f), text)
+  const cli = (...args) =>
+    spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', root], { encoding: 'utf8' })
+  const read = () => readUnit(dir, name)
+  // What the app does with the block: append it under `intent.md ## Answers`.
+  const append = (file, tail) => {
+    const was = readFileSync(join(dir, file), 'utf8')
+    writeFileSync(join(dir, file), was + (was.includes('\n## Answers') ? '' : '\n## Answers\n') + '\n' + tail)
+  }
+  const rerun = (stage) => {
+    const out = cli('rerun', name, stage)
+    assert.equal(out.status, 0, out.stderr)
+    const answer = JSON.parse(out.stdout)
+    append('intent.md', answer.block)
+    return answer
+  }
+  return { root, dir, name, cli, read, append, rerun, write: (f, t) => writeFileSync(join(dir, f), t) }
+}
+
+test('0054 R4: the hash above ## Answers does not move when an answer is appended', () => {
+  const text = '# Spec: x\nStatus: accepted.\n\nR1.\n'
+  const hash = aboveAnswers(text)
+  assert.match(hash, /^[0-9a-f]{64}$/)
+  // The two ways a section is opened: the runner's `with_answers`, and the app's append.
+  assert.equal(aboveAnswers(`${text}\n## Answers\n\n### Câu 1\nAnswered by: A. Date: 2026-09-26. Via: product.\n\nx\n`), hash)
+  assert.equal(aboveAnswers(`${text.trimEnd()}\n\n## Answers\n`), hash)
+  assert.notEqual(aboveAnswers(text.replace('R1.', 'R1, rewritten.')), hash)
+})
+
+test('0054: a ### Rerun block ends the answer before it and is never an answer', () => {
+  const block = '### Rerun\nRequested by: owner. Date: 2026-09-26. Via: product.\nStage: pr.\nStale: pr.md sha256:' + 'c'.repeat(64) + '\n'
+  const text = withAnswers(answerBlock(1, 'A', 'Có.'), `\n${block}`, answerBlock(2, 'B', 'Không.'))
+  assert.deepEqual(parseAnswers(text).map((a) => [a.n, a.text]), [[1, 'Có.'], [2, 'Không.']])
+  assert.equal(parseHold(text).hold, null)
+  assert.deepEqual(parseReruns(text).reruns, [
+    { stage: 'pr', by: 'owner', date: '2026-09-26', stale: { 'pr.md': 'c'.repeat(64) } },
+  ])
+})
+
+test('0054: a malformed ### Rerun block is ignored and reported', () => {
+  const t = rerunTree()
+  t.append('intent.md', '### Rerun\nStage: pr.\nStale: pr.md sha256:' + aboveAnswers(RERUN_FILES['pr.md']) + '\n')
+  const u = t.read()
+  assert.equal(u.artifacts['pr.md'].stale, undefined)
+  assert.match(u.problems.join('\n'), /intent\.md: rerun block 1 has no well-formed/)
+})
+
+test('0054 R1, R2: a unit up to a passed review is offered intent, spec, plan and pr', () => {
+  const t = rerunTree()
+  const out = t.cli('rerun', t.name)
+  assert.equal(out.status, 0, out.stderr)
+  const answer = JSON.parse(out.stdout)
+  assert.deepEqual(answer.offers.map((o) => o.stage), ['intent', 'spec', 'plan', 'pr'])
+  assert.equal(answer.why, '')
+  const later = Object.fromEntries(answer.offers.map((o) => [o.stage, o.later]))
+  assert.deepEqual(later.pr, ['review', 'ship'])
+  assert.deepEqual(later.plan, ['impl', 'pr', 'review', 'ship'])
+  assert.deepEqual(later.intent, ['spec', 'plan', 'impl', 'pr', 'review', 'ship'])
+  assert.deepEqual(RERUNNABLE, ['intent', 'spec', 'spike', 'plan', 'pr'])
+})
+
+test('0054 R3: the block names the stage, owner and a hash per artifact, and no approval', () => {
+  const t = rerunTree()
+  const out = t.cli('rerun', t.name, 'pr')
+  assert.equal(out.status, 0, out.stderr)
+  const { stage, later, block } = JSON.parse(out.stdout)
+  assert.equal(stage, 'pr')
+  assert.deepEqual(later, ['review', 'ship'])
+  const lines = block.trimEnd().split('\n')
+  assert.equal(lines[0], '### Rerun')
+  assert.match(lines[1], /^Requested by: owner\. Date: \d{4}-\d{2}-\d{2}\. Via: product\.$/)
+  assert.equal(lines[2], 'Stage: pr.')
+  // `ship.md` does not exist, so it has no line.
+  assert.deepEqual(lines.slice(3), [
+    `Stale: pr.md sha256:${aboveAnswers(RERUN_FILES['pr.md'])}`,
+    `Stale: review.md sha256:${aboveAnswers(RERUN_FILES['review.md'])}`,
+  ])
+  assert.doesNotMatch(block, /approved|accepted|Decided by/i)
+})
+
+test('0054 R5, R10: rerunning pr closes ship until pr and then review are written again', () => {
+  const t = rerunTree()
+  const probe = greenProbe()
+  assert.equal(checkGate(t.read(), 'ship', { probe }).need.some((n) => /stale/.test(n)), false)
+  t.rerun('pr')
+  let u = t.read()
+  assert.deepEqual(u.artifacts['pr.md'].stale, { stage: 'pr', date: u.artifacts['review.md'].stale.date })
+  // The stage run again comes first: a rerun that never ran is offered again.
+  assert.equal(nextStep(u, { probe }).stage, 'pr')
+  assert.match(nextStep(u, { probe }).action, /^pr\.md is stale — pr was rerun on .*: write-pr again$/)
+  // An answer appended to pr.md does not make it fresh.
+  t.append('pr.md', answerBlock(1, 'A', 'x'))
+  assert.ok(t.read().artifacts['pr.md'].stale)
+
+  t.write('pr.md', RERUN_FILES['pr.md'].replace('body', 'a new body'))
+  u = t.read()
+  assert.equal(u.artifacts['pr.md'].stale, undefined)
+  assert.ok(u.artifacts['review.md'].stale)
+  assert.equal(nextStep(u, { probe }).stage, 'review')
+  const ship = checkGate(u, 'ship', { probe })
+  assert.equal(ship.ok, false)
+  assert.match(ship.need.join('\n'), /review\.md is stale: pr was rerun on .* — run review again first/)
+  // Red CI sends a stale review back to impl, as a missing one would be.
+  assert.equal(nextStep(u, { probe: greenProbe([{ name: 'tests', bucket: 'fail' }]) }).stage, 'impl')
+  // With no repository, `next` offers nothing and says why, the review first.
+  assert.match(nextStep(u).action, /^review\.md is stale/)
+  assert.equal(nextStep(u).stage, '')
+
+  t.write('review.md', `${RERUN_FILES['review.md']}${round(2, 'pass')}`)
+  assert.equal(t.read().artifacts['review.md'].stale, undefined)
+  assert.equal(checkGate(t.read(), 'ship').need.some((n) => /stale/.test(n)), false)
+})
+
+test('0054 R5: a stale artifact before the target closes its gate, and names the stage run again', () => {
+  const t = rerunTree()
+  t.rerun('plan')
+  const u = t.read()
+  for (const f of ['plan.md', 'impl.md', 'pr.md', 'review.md']) assert.ok(u.artifacts[f].stale, f)
+  assert.equal(u.artifacts['spec.md'].stale, undefined)
+  assert.equal(checkGate(u, 'plan').ok, true)
+  const impl = checkGate(u, 'impl')
+  assert.equal(impl.ok, false)
+  assert.deepEqual(impl.need, [`plan.md is stale: plan was rerun on ${u.artifacts['plan.md'].stale.date} — run plan again first`])
+  assert.equal(nextAction(u).stage, 'plan')
+  // Already stale: not offered again, the run button offers it.
+  const offers = JSON.parse(t.cli('rerun', t.name).stdout).offers.map((o) => o.stage)
+  assert.deepEqual(offers, ['intent', 'spec'])
+  assert.equal(t.cli('rerun', t.name, 'plan').status, 1)
+})
+
+test('0054 R4: a changes-requested review and a spike the spec no longer needs are never stale', () => {
+  const review = `# Review: x\nStatus: changes-requested.\n\n${round(1, 'changes-requested', ['- F1 [open] x'])}`
+  const spike = '# Spike: x\nStatus: accepted.\n\n## U1\n\nVerdict: holds.\n'
+  const t = rerunTree({ ...RERUN_FILES, 'review.md': review, 'spike.md': spike })
+  t.append('intent.md', [
+    '### Rerun', 'Requested by: owner. Date: 2026-09-26. Via: product.', 'Stage: spec.',
+    `Stale: spike.md sha256:${aboveAnswers(spike)}`, `Stale: review.md sha256:${aboveAnswers(review)}`, '',
+  ].join('\n'))
+  const u = t.read()
+  assert.equal(u.artifacts['review.md'].stale, undefined)
+  assert.equal(u.artifacts['spike.md'].stale, undefined)
+})
+
+test('0054 R1: nothing is offered on a finished, held or closed unit', () => {
+  const done = rerunTree({ ...RERUN_FILES, 'plan.md': '# Plan: x\nStatus: done.\n' })
+  assert.deepEqual(JSON.parse(done.cli('rerun', done.name).stdout), {
+    unit: done.name, offers: [], why: 'the unit is finished: plan.md is done',
+  })
+  const refused = done.cli('rerun', done.name, 'pr')
+  assert.equal(refused.status, 1)
+  assert.match(refused.stderr, /pr cannot be run again for .*: the unit is finished/)
+
+  const held = rerunTree()
+  held.append('intent.md', holdBlock('Paused', 'chờ'))
+  assert.deepEqual(JSON.parse(held.cli('rerun', held.name).stdout).offers, [])
+
+  const closed = rerunTree({ ...RERUN_FILES, 'impl.md': '# Impl: x\nStatus: rejected.\n' })
+  assert.match(JSON.parse(closed.cli('rerun', closed.name).stdout).why, /impl\.md is rejected/)
+})
+
+test('0054 R1: only an accepted artifact is offered, spike only when the spec needs one', () => {
+  const fresh = rerunTree({ 'intent.md': RERUN_FILES['intent.md'] }, '0001_fresh-intent')
+  assert.deepEqual(JSON.parse(fresh.cli('rerun', fresh.name).stdout).offers, [
+    { stage: 'intent', later: ['spec', 'plan', 'impl', 'pr', 'review', 'ship'] },
+  ])
+  const draft = rerunTree({ ...RERUN_FILES, 'plan.md': '# Plan: x\nStatus: draft.\n' })
+  assert.deepEqual(JSON.parse(draft.cli('rerun', draft.name).stdout).offers.map((o) => o.stage), ['intent', 'spec'])
+  // A skipped spec counts as settled; its later list has no spike.
+  const skipped = rerunTree({ ...RERUN_FILES, 'spec.md': '# Spec: x\nStatus: skipped.\n' })
+  assert.deepEqual(JSON.parse(skipped.cli('rerun', skipped.name).stdout).offers[1],
+    { stage: 'spec', later: ['plan', 'impl', 'pr', 'review', 'ship'] })
+
+  const spec = '# Spec: x\nStatus: accepted.\n\n## Concerns\n\n- [unmeasured] U1 nhanh không?\n'
+  const spike = '# Spike: x\nStatus: accepted.\n\n## U1\n\nVerdict: holds.\n\n```\n$ x\n1\n```\n'
+  const plan = '# Plan: x\nStatus: accepted.\n\n1. build it (spike.md ## U1)\n'
+  const measured = rerunTree({ ...RERUN_FILES, 'spec.md': spec, 'spike.md': spike, 'plan.md': plan })
+  const offers = JSON.parse(measured.cli('rerun', measured.name).stdout).offers
+  assert.deepEqual(offers.map((o) => o.stage), ['intent', 'spec', 'spike', 'plan', 'pr'])
+  assert.deepEqual(offers[1].later, ['spike', 'plan', 'impl', 'pr', 'review', 'ship'])
+})
+
+test('0054: rerun refuses a stage it does not offer, an unknown one, and --repo', () => {
+  const t = rerunTree()
+  const review = t.cli('rerun', t.name, 'review')
+  assert.equal(review.status, 1)
+  assert.match(review.stderr, /review cannot be run again from the board — only intent, spec, spike, plan, pr/)
+  assert.equal(t.cli('rerun', t.name, 'spike').status, 1)
+  assert.equal(t.cli('rerun', t.name, 'nonsense').status, 2)
+  assert.equal(t.cli('rerun', '0009_nope').status, 2)
+  assert.equal(t.cli('rerun', '../x').status, 2)
+  assert.equal(t.cli('rerun').status, 2)
+  const repo = t.cli('rerun', t.name, '--repo', t.root)
+  assert.equal(repo.status, 2)
+  assert.match(repo.stderr, /--repo applies only to `gate` and `next`/)
 })

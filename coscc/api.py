@@ -547,7 +547,11 @@ def build(config: Config | None = None) -> FastAPI:
 
         cwd, unit = str(body.get("cwd", "")), str(body.get("unit", ""))
         stage = str(body.get("stage", ""))
-        stream = service.run_step(cwd, unit, stage)
+        # `0054` R6. `rerun` only when the body says `true` itself; without it the call is
+        # the one it always was.
+        rerun = body.get("rerun") is True
+        extra = {"rerun": True, "note": str(body.get("note") or "")} if rerun else {}
+        stream = service.run_step(cwd, unit, stage, **extra)
         try:
             # Pull the first item here so a refusal that happens before any output is still
             # a 400. An async generator does nothing until it is advanced.

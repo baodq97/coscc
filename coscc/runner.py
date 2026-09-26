@@ -255,6 +255,39 @@ UNIT_FILES_ADVICE = (
 )
 
 
+def _rerun_block(directory: Path, stage: str, artifact: str, note: str) -> str:
+    """`0054` R7. What a stage run again from the board is told about why. For `spec` and
+    `plan` it carries the artifact as it stands, above its `## Answers`: no other part of the
+    prompt does. `intent`'s own file is already above, and `spike` and `pr` are handed or
+    named theirs, so theirs is not repeated."""
+    note = note.strip()
+    told = (
+        f"Their note, verbatim, between the two `~~~` lines:\n\n~~~\n{note}\n~~~"
+        if note
+        else "No note was given: rewrite it on what changed since — new answers, or main."
+    )
+    text = (
+        "# Why this stage runs again\n\n"
+        f"`{artifact}` was already accepted. The person holding this app's login, recorded "
+        "as `owner` rather than by name, asked for this stage to run again. That is a "
+        "request, not a decision anyone approved. Write the artifact again from it; every "
+        "stage after this one runs again after you.\n\n"
+        f"{told}"
+    )
+    if stage in ("spec", "plan"):
+        try:
+            raw = (directory / artifact).read_bytes()
+        except OSError:
+            return text
+        section = answers_section(raw)
+        above = raw[: len(raw) - len(section)] if section is not None else raw
+        text += (
+            f"\n\n`{artifact}` as it stands, above its `## Answers`:\n\n"
+            f"{above.decode('utf-8', errors='replace').rstrip()}"
+        )
+    return text
+
+
 def build_prompt(*args: Any, **kwargs: Any) -> tuple[str, list[str]]:
     """`compose_prompt` without `pointed`, for every caller written before `0094`."""
     prompt, included, _ = compose_prompt(*args, **kwargs)
@@ -279,9 +312,14 @@ def compose_prompt(
     pr_note: str = "",
     ceilings: tuple[int, float] | None = None,
     knowledge: str = "",
+    rerun: bool = False,
+    rerun_note: str = "",
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole (`spec.md` R4), and
     the ones it names by path only (`0094` R16).
+
+    `rerun` (`0054` R7) is true only for a stage a person ran again from the board, with
+    `rerun_note` their note; false adds not one byte.
 
     The list is returned rather than inferred later because R4 is checked against it: if a
     step ran without the previous stage's artifact in the prompt, the record says so.
@@ -588,6 +626,10 @@ def compose_prompt(
     jera = _jera_answers(directory, list(dict.fromkeys(seen)))
     if jera:
         parts.append(jera)
+
+    # `0054` R7. Just before the task, so the note is the last thing read before it.
+    if rerun:
+        parts.append(_rerun_block(directory, stage, artifact, rerun_note))
 
     location = directory / artifact
     if writes_own and stage == "ship":
@@ -1453,6 +1495,8 @@ class Runner:
         started_by: str = "person",
         knowledge: str = "",
         knowledge_record: dict[str, Any] | None = None,
+        rerun: bool = False,
+        rerun_note: str = "",
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -1510,6 +1554,9 @@ class Runner:
         `knowledge` and `knowledge_record` are `0090` R3/R4's: the slice of the store
         `service.run_step` read, for the prompt, and its `{version, entries, bytes}`, for
         `start`. `None` leaves the record without the field, which is what the flag off is.
+
+        `rerun` and `rerun_note` are `0054` R7's: a stage a person ran again from the board,
+        and their note, into the prompt and into `start`. False leaves both as they were.
         """
         check_started_by(started_by)
         grant = grant_for_step(stage, label)
@@ -1548,6 +1595,8 @@ class Runner:
             pr_note=pr_note,
             ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
             knowledge=knowledge,
+            rerun=rerun,
+            rerun_note=rerun_note,
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
@@ -1601,6 +1650,9 @@ class Runner:
                 **({"shortlist": shortlist} if shortlist is not None else {}),
                 # `0090` R4. Beside `model`, and only when the flag was on for this stage.
                 **({"knowledge": knowledge_record} if knowledge_record is not None else {}),
+                # `0054` R7. Only on a stage run again from the board, so every other `start`
+                # is what it was.
+                **({"rerun": True, "rerun_note": rerun_note} if rerun else {}),
                 **pr_extra,
                 # `0092` R5: whose step this is, so the next start can tell one this process
                 # still runs from one the app went down under.

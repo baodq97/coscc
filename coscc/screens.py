@@ -1726,6 +1726,49 @@ _HOLD_BUTTONS = (
 )
 
 
+def _rerun_panel() -> rx.Component:
+    """`0054` R9. Run an accepted stage again, apart from the main *Run*. The stages offered and
+    what runs again after each are `cos.mjs rerun`'s; the note sits beside the button
+    (`spec.md ## Answers, câu 2`). Nothing runs until the confirming button."""
+    return rx.vstack(
+        rx.heading("Run an earlier stage again", size="4", weight="medium"),
+        rx.hstack(
+            rx.select(P.rerun_stages, value=P.rerun_stage, on_change=P.set_rerun_stage,
+                      size="2", id="rerun-stage", aria_label="Stage to run again"),
+            rx.cond(
+                ~P.rerun_confirming,
+                rx.button(rx.icon("rotate-ccw", size=14), "Rerun…", id="rerun-ask",
+                          on_click=P.ask_rerun, variant="soft", size="2",
+                          disabled=P.running_here, loading=P.running_here),
+            ),
+            spacing="3", align="center", width="100%",
+        ),
+        rx.text_area(placeholder="What should change (optional)", value=P.rerun_note,
+                     on_change=P.set_rerun_note, aria_label="What should change", id="rerun-note",
+                     max_length=4000, width="100%", rows="3"),
+        rx.cond(
+            P.rerun_confirming,
+            rx.vstack(
+                # R2's list as badges, never a run of prose (S5).
+                rx.hstack(
+                    s.text("Rerunning " + P.rerun_stage + " means these run again:", size="2"),
+                    rx.foreach(P.rerun_after, lambda stage: s.badge(stage, "amber")),
+                    spacing="2", align="center", flex_wrap="wrap", id="rerun-after",
+                ),
+                rx.hstack(
+                    rx.button(rx.icon("play", size=14), "Rerun " + P.rerun_stage + " — spends quota",
+                              id="rerun-confirm", on_click=P.run_rerun, size="2"),
+                    rx.button("Cancel", id="rerun-cancel", on_click=P.cancel_rerun,
+                              variant="soft", color_scheme="gray", size="2"),
+                    spacing="2", flex_wrap="wrap",
+                ),
+                spacing="2", width="100%",
+            ),
+        ),
+        spacing="3", width="100%", align="start", id="rerun-panel",
+    )
+
+
 def _hold_panel() -> rx.Component:
     """`0045` R14. The unit's hold as `cos.mjs` read it, and one button per move it allows.
 
@@ -2153,6 +2196,9 @@ def _detail_dialog() -> rx.Component:
                         # `0100` R7. What the board last heard from CI, and when.
                         rx.cond(P.current_unit.ci_line != "",
                                 s.text(P.current_unit.ci_line, id="unit-ci-line", size="2")),
+                        # `0054` review F2. Below the CI line, which belongs to the next step.
+                        rx.cond(~P.unit_dropped & P.recording & (P.rerun_stages.length() > 0),
+                                _rerun_panel()),
                         rx.cond(~P.unit_dropped, _integration_panel()),
                         rx.cond(~P.unit_dropped, _outcome_panel()),
                         _unit_cost(),
