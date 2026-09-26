@@ -52,6 +52,20 @@ network — stop, push nothing, and say what failed in your reply. That is not a
 `[needs-person]` line, which is for two intents that contradict; the app records the
 attempt as `failed`.
 
+## When the prompt says the commits were never pushed
+
+The prompt has a section *Commits that were never pushed* when this tree's head is not the
+pull request's and holds commits it does not: an earlier session rebased here and was cut
+before it pushed. Then **How** above does not apply. Do not rebase, commit or reset; push
+at most once, with the lease above, and push the tree's head as it is.
+
+- `ahead`: the tree's head holds the pull request's. Push it.
+- `diverged`: the tree's head sits on a newer `main` than the pull request's; the app sends
+  no other divergence here. Run the `git range-diff` the prompt names. Push only when every
+  difference is context the new base brought. When any commit changes in anything else,
+  push nothing and end with one `[needs-person]` line per such commit. Here that line means
+  the content differs, not that two intents contradict.
+
 ## When to stop
 
 Stop — `git rebase --abort`, push nothing — when either holds:

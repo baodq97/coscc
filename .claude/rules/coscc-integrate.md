@@ -31,6 +31,10 @@ paths:
     timeout, and a head GitHub has not moved yet, stay `failed` with no session. A non-zero
     exit after which the head has moved is taken as GitHub's rebase (`pushed`, the tree
     follows it); one after which it cannot be read is `failed`.
+  - A press whose local head holds commits the pull request lacks (`ahead`, or `diverged`
+    onto a newer `main`, `0114`) opens Gebo in every state, `current` too, and the panel
+    does not say so first.
+    A rebase left in progress is aborted only when the run log shows a cut integration.
   - The head is read once, not polled, so a rebase GitHub finishes after that read still
     races the session: the lease refuses Gebo's push, the row is `failed` rather than Gebo's
     `pushed` whenever Gebo's tree does not end on the moved head, and the tree is moved to

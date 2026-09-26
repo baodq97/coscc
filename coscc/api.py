@@ -602,8 +602,12 @@ def build(config: Config | None = None) -> FastAPI:
     @api.get("/api/board/steps")
     async def running_steps(request: Request) -> Any:
         """`0034`. The board steps running now in one workspace, as the registry a Stop
-        reads holds them. This process only. Not `/api/board/running`: that is `0051`'s
-        display of steps and integrations, and it says nothing a Stop would need."""
+        reads holds them, and the integrations beside them, which no Stop reaches. This
+        process only. Not `/api/board/running`: that is `0051`'s
+        display of steps and integrations, and it says nothing a Stop would need.
+
+        `0114` R1: integrations are listed too, `kind: "integration"` beside a step's
+        `kind: "step"`, so whatever restarts the app on an empty list sees them."""
         try:
             return service.running_steps(request.query_params.get("cwd", ""))
         except Invalid as e:

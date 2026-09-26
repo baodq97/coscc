@@ -94,6 +94,93 @@ class RefusalNamesTheFirstConditionMissing(unittest.TestCase):
         self.assertEqual(ig.refusal(**{**self.OK, "state": "unknown", "origin": "origin/main x"}),
                          "the unit is unknown, which has nothing to integrate")
 
+    def test_0114_ahead_or_diverged_is_the_completion_road_in_every_state(self):
+        for how in ig.COMPLETION:
+            for state in ig.STATES:
+                with self.subTest(relation=how, state=state):
+                    self.assertEqual(ig.refusal(**{**self.OK, "local_head": NEW, "relation": how, "state": state}), "")
+
+    def test_0114_an_unread_relation_is_refused_with_gits_words(self):
+        said = ig.refusal(**{**self.OK, "local_head": NEW, "relation_said": "bad object bbbbbbb"})
+        self.assertEqual(said, "the local head (bbbbbbb) is not the pull request's head (aaaaaaa): bad object bbbbbbb")
+        # `behind` that could not follow is refused too.
+        self.assertIn("not the pull request's head", ig.refusal(**{**self.OK, "local_head": NEW, "relation": "behind"}))
+
+
+class Relation(unittest.TestCase):
+    """`0114` R5: the four answers two `is_ancestor` calls give, and none when git gave none."""
+
+    def test_each(self):
+        cases = [
+            ((HEAD, HEAD, None, None), "same"),
+            ((HEAD, NEW, True, False), "behind"),
+            ((NEW, HEAD, False, True), "ahead"),
+            ((NEW, HEAD, False, False), "diverged"),
+            ((NEW, HEAD, True, True), "behind"),
+            ((NEW, HEAD, None, True), ""),
+            ((NEW, HEAD, False, None), ""),
+        ]
+        for args, want in cases:
+            with self.subTest(args=args):
+                self.assertEqual(ig.relation(*args), want)
+
+    def test_review_f1_diverged_is_only_a_local_head_on_a_newer_base(self):
+        self.assertEqual(ig.relation(NEW, HEAD, False, False, newer=True), "diverged")
+        self.assertEqual(ig.relation(NEW, HEAD, False, False, newer=False), "stale")
+        self.assertEqual(ig.relation(NEW, HEAD, False, False, newer=None), "")
+        # Read only when the heads diverge.
+        self.assertEqual(ig.relation(NEW, HEAD, False, True, newer=False), "ahead")
+        self.assertEqual(ig.relation(HEAD, NEW, True, False, newer=False), "behind")
+
+    def test_review_f1_newer_base(self):
+        cases = [
+            ((NEW, MAIN, True), True),
+            ((MAIN, MAIN, True), False),
+            ((MAIN, NEW, False), False),
+            ((NEW, MAIN, None), None),
+            (("", MAIN, True), None),
+        ]
+        for args, want in cases:
+            with self.subTest(args=args):
+                self.assertIs(ig.newer_base(*args), want)
+
+    def test_review_f1_stale_is_refused_and_says_why(self):
+        ok = RefusalNamesTheFirstConditionMissing.OK
+        for state in ig.STATES:
+            with self.subTest(state=state):
+                said = ig.refusal(**{**ok, "local_head": NEW, "relation": "stale", "state": state})
+                self.assertEqual(said, f"the local head (bbbbbbb) is not the pull request's head (aaaaaaa): {ig.STALE}")
+
+
+class CutIntegration(unittest.TestCase):
+    """`0114` R3: a `start` of `integrate` that nothing closed, in this unit's run log."""
+
+    U = "0096_x"
+
+    def start(self, stage="integrate", at="2026-09-26T13:12:35+00:00", head=HEAD):
+        return {"kind": "start", "unit": self.U, "stage": stage, "at": at, "head": head}
+
+    def test_each(self):
+        end = {"kind": "end", "unit": self.U, "stage": "integrate"}
+        integration = {"kind": "integration", "unit": self.U}
+        cases = [
+            ([self.start()], False, {"at": "2026-09-26T13:12:35+00:00", "head": HEAD}),
+            ([self.start(), end], False, None),
+            ([self.start(), integration], False, None),
+            ([self.start()], True, None),
+            ([self.start(stage="impl")], False, None),
+            ([self.start(), end, self.start(at="2026-09-26T14:00:00+00:00", head=NEW)], False,
+             {"at": "2026-09-26T14:00:00+00:00", "head": NEW}),
+            ([], False, None),
+        ]
+        for records, running, want in cases:
+            with self.subTest(records=records, running=running):
+                self.assertEqual(ig.cut_integration(records, self.U, running), want)
+
+    def test_another_units_records_are_not_read(self):
+        other = {"kind": "end", "unit": "0097_y", "stage": "integrate"}
+        self.assertIsNotNone(ig.cut_integration([self.start(), other], self.U, False))
+
 
 class OriginNote(unittest.TestCase):
     """`0052` R4: the four ways a press got its `origin/main`."""
@@ -239,6 +326,34 @@ class Record(unittest.TestCase):
         self.assertIn("not by a person", text)
         self.assertIn("an agent session", ig.describe_for_review({"mode": "agent"}))
 
+    def test_0114_completion_is_always_written(self):
+        rec = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD,
+                        head_after="", origin_sha=MAIN, outcome="refused")
+        self.assertIn("completion", rec)
+        self.assertIsNone(rec["completion"])
+        cut = {"at": "2026-09-26T13:12:35+00:00", "head": HEAD}
+        rec = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD, head_after=NEW,
+                        origin_sha=MAIN, outcome="pushed",
+                        completion={"relation": "diverged", "local_head": NEW, "cut": cut})
+        self.assertEqual(rec["completion"], {"relation": "diverged", "local_head": NEW, "cut": cut})
+        rec = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD, head_after=NEW,
+                        origin_sha=MAIN, outcome="pushed",
+                        completion={"relation": "behind", "local_head": MAIN, "cut": None})
+        self.assertEqual(rec["completion"], {"relation": "behind", "local_head": MAIN, "cut": None})
+
+    def test_0114_a_completion_says_it_pushed_unpushed_commits_and_whose_word_it_is(self):
+        rec = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD, head_after=NEW,
+                        origin_sha=MAIN, outcome="pushed",
+                        completion={"relation": "ahead", "local_head": NEW, "cut": None})
+        text = ig.describe_for_review(rec)
+        for want in ("An integration since the last round", "local commits", "never been pushed",
+                     "not a person", "no one's approval", NEW):
+            self.assertIn(want, text)
+        self.assertNotIn("rebased onto", text)
+        # `behind` pushed nothing of its own: the old sentence stands.
+        rec["completion"]["relation"] = "behind"
+        self.assertIn("rebased onto", ig.describe_for_review(rec))
+
 
 class ThePrompt(unittest.TestCase):
     def test_it_carries_the_lease_the_lists_and_the_artifacts(self):
@@ -290,6 +405,39 @@ class ThePrompt(unittest.TestCase):
         for want in ("# The mechanical rebase was refused", "gh pr update-branch 7 --rebase",
                      "exited 1", "gh: merge conflict", "a login, the network, a permission"):
             self.assertIn(want, text)
+
+    def completion_prompt(self, completion):
+        return ig.build_prompt(skill="RULES", unit="0035_x", branch="feat/x", pr=7, state="current",
+                               reason="", head_before=HEAD, origin_sha=MAIN,
+                               rel={"merged": [], "open": []}, units_root=Path("/u"), own_paths={},
+                               completion=completion)
+
+    def test_0114_no_completion_no_section(self):
+        self.assertNotIn("# Commits that were never pushed", self.completion_prompt(None))
+
+    def test_0114_diverged_compares_then_pushes_or_asks_a_person(self):
+        cut = {"at": "2026-09-26T13:12:35+00:00", "head": HEAD}
+        text = self.completion_prompt({"relation": "diverged", "local_head": NEW, "cut": cut})
+        for want in ("# Commits that were never pushed", NEW, HEAD, "`diverged`", "2026-09-26T13:12:35+00:00",
+                     f"git range-diff origin/main {HEAD} {NEW}", "[needs-person]",
+                     "Do not rebase, commit or reset",
+                     # The lease is still the pull request's head.
+                     f"--force-with-lease=feat/x:{HEAD}"):
+            self.assertIn(want, text)
+        self.assertNotIn("has changed since", text)
+
+    def test_0114_a_cut_on_another_head_says_the_pull_request_moved(self):
+        cut = {"at": "2026-09-26T13:12:35+00:00", "head": MAIN}
+        text = self.completion_prompt({"relation": "diverged", "local_head": NEW, "cut": cut})
+        self.assertIn("The pull request's head has changed since that integration was cut.", text)
+
+    def test_0114_ahead_pushes_with_no_range_diff(self):
+        text = self.completion_prompt({"relation": "ahead", "local_head": NEW, "cut": None})
+        self.assertIn("`ahead`", text)
+        self.assertIn(f"`{NEW}` holds the pull request's head", text)
+        self.assertNotIn("range-diff", text)
+        self.assertNotIn("never ended", text)
+        self.assertIn("Do not rebase, commit or reset", text)
 
 
 class MergeState(unittest.TestCase):

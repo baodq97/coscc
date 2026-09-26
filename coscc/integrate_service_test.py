@@ -253,6 +253,27 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(row["agent"], {"glyph": "ᚷ", "name": "Gebo"})
         self.assertEqual(self.service._running, {})
 
+    def test_0114_r1_r2_gebo_is_on_the_running_list_and_refuses_a_stop(self):
+        """`0114` R1, R2: the list a restart reads names the integration, and Stop says what
+        holds the unit rather than that nothing runs."""
+        seen = {}
+
+        async def act(tree, gate):
+            seen["listed"] = self.service.running_steps(self.cwd)
+            try:
+                await self.service.stop_step(self.cwd, self.unit, "")
+            except Invalid as e:
+                seen["stop"] = str(e)
+            return "[needs-person] stand-in"
+
+        self.integrate_with(act)
+        [row] = seen["listed"]
+        self.assertEqual((row["unit"], row["stage"], row["kind"], row["run"], row["stopping"]),
+                         (self.unit, "integrate", "integration", None, False))
+        self.assertIn("being integrated", seen["stop"])
+        self.assertNotIn("has no step running", seen["stop"])
+        self.assertEqual(self.service.running_steps(self.cwd), [])
+
     def test_a_mechanical_rebase_is_rebasing_with_no_agent_and_not_after(self):
         """`0051` plan step 3, the mechanical road: `behind` with no conflict.
 
