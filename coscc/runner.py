@@ -211,6 +211,16 @@ KNOWLEDGE_ADVICE = (
     "than quietly picking one side."
 )
 
+# `0110` R6. The heading and the same words after every section `priorfindings` built, for
+# `impl` only; `write-impl` carries the same advice (R8).
+PRIOR_FINDINGS_HEADING = "# What earlier reviews said about these files"
+PRIOR_FINDINGS_ADVICE = (
+    "Each line above is a finding an earlier unit's review raised on a file this plan's "
+    "`## Files that change` names, prefixed with that unit and round. Before you push the "
+    "branch, check whether your change repeats any of them. They are not requirements and do "
+    "not change the plan."
+)
+
 
 def _jera_answers(directory: Path, names: list[str]) -> str:
     """`# Answers an agent gave`, listing every `<artifact> ### Câu N` block Jera wrote in
@@ -314,12 +324,16 @@ def compose_prompt(
     knowledge: str = "",
     rerun: bool = False,
     rerun_note: str = "",
+    prior_findings: str = "",
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole (`spec.md` R4), and
     the ones it names by path only (`0094` R16).
 
     `rerun` (`0054` R7) is true only for a stage a person ran again from the board, with
     `rerun_note` their note; false adds not one byte.
+
+    `prior_findings` (`0110` R6) is what `priorfindings.for_step` built, placed for `impl`
+    only; `""`, or any other stage, adds not one byte (R9).
 
     The list is returned rather than inferred later because R4 is checked against it: if a
     step ran without the previous stage's artifact in the prompt, the record says so.
@@ -445,6 +459,13 @@ def compose_prompt(
     if knowledge and stage in KNOWLEDGE_STAGES:
         included.append("knowledge")
         parts.append(f"# What earlier units measured\n\n{knowledge}\n\n{KNOWLEDGE_ADVICE}")
+
+    # `0110` R6. The finding lines earlier reviews raised on the files this plan changes,
+    # already chosen and capped (`priorfindings.select`); this only places it, before the
+    # review that sent this unit back.
+    if prior_findings and stage in ("impl", "implement"):
+        included.append("prior-findings")
+        parts.append(f"{PRIOR_FINDINGS_HEADING}\n\n{prior_findings}\n\n{PRIOR_FINDINGS_ADVICE}")
 
     # `spec.md` R7. A prose stage re-run against an artifact that already carries
     # `## Answers` is one of `intent.md ## Affected users and systems`' "later stages" too:
@@ -1497,6 +1518,8 @@ class Runner:
         knowledge_record: dict[str, Any] | None = None,
         rerun: bool = False,
         rerun_note: str = "",
+        prior_findings: str = "",
+        prior_findings_record: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -1557,6 +1580,11 @@ class Runner:
 
         `rerun` and `rerun_note` are `0054` R7's: a stage a person ran again from the board,
         and their note, into the prompt and into `start`. False leaves both as they were.
+
+        `prior_findings` and `prior_findings_record` are `0110` R6/R7's: what
+        `priorfindings.for_step` built for an `impl` step, for the prompt, and its
+        `{bytes, lines, units, dropped}`, for `start`. `None` leaves the record without the
+        field, which is every other stage.
         """
         check_started_by(started_by)
         grant = grant_for_step(stage, label)
@@ -1597,6 +1625,7 @@ class Runner:
             knowledge=knowledge,
             rerun=rerun,
             rerun_note=rerun_note,
+            prior_findings=prior_findings,
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
@@ -1650,6 +1679,13 @@ class Runner:
                 **({"shortlist": shortlist} if shortlist is not None else {}),
                 # `0090` R4. Beside `model`, and only when the flag was on for this stage.
                 **({"knowledge": knowledge_record} if knowledge_record is not None else {}),
+                # `0110` R7. Every `impl` start from this build, `bytes: 0` when nothing
+                # matched, so `verify_0110` tells "nothing to hand" from an older build.
+                **(
+                    {"prior_findings": prior_findings_record}
+                    if prior_findings_record is not None
+                    else {}
+                ),
                 # `0054` R7. Only on a stage run again from the board, so every other `start`
                 # is what it was.
                 **({"rerun": True, "rerun_note": rerun_note} if rerun else {}),
