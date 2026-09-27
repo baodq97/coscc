@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import gitops, harness, policy
+from coscc import efforttrial, gitops, harness, policy
 from coscc.journal import Journal
 from coscc.policy import decide, grant_for
 from coscc.runner import (
@@ -1623,6 +1623,27 @@ class AStepRecordsTheKnowledgeItCarried(AStepRecordsTheBaseItRanOn):
         record = {"version": "abc", "entries": 0, "bytes": 0}
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self._start_record(d, knowledge_record=record)["knowledge"], record)
+
+
+class AStepRecordsTheEffortTrial(AStepRecordsTheBaseItRanOn):
+    """`0123` R6, R7: the record handed in lands in `start` as given, and none is no field."""
+
+    def test_no_trial_record_leaves_the_start_record_as_it_was(self):
+        with tempfile.TemporaryDirectory() as d:
+            unnamed = self._start_record(d)
+        with tempfile.TemporaryDirectory() as d:
+            none = self._start_record(d, trial_record=None)
+        self.assertEqual(set(unnamed), set(none))
+        for field in (efforttrial.FIELD, efforttrial.CI_RED):
+            self.assertNotIn(field, unnamed)
+
+    def test_a_trial_record_lands_in_start_as_given(self):
+        record = {efforttrial.FIELD: {"arm": "trial", "applied": True}, efforttrial.CI_RED: None}
+        with tempfile.TemporaryDirectory() as d:
+            start = self._start_record(d, trial_record=record)
+        self.assertEqual(start[efforttrial.FIELD], {"arm": "trial", "applied": True})
+        self.assertIn(efforttrial.CI_RED, start)
+        self.assertIsNone(start[efforttrial.CI_RED])
 
 
 class AStepRecordsThePriorFindingsItCarried(AStepRecordsTheBaseItRanOn):
