@@ -331,6 +331,31 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.post("/api/units/more-rounds")
+    async def more_rounds(request: Request) -> Any:
+        """`0081`. Allow one more review round to a unit out of rounds: body `{cwd, unit, by?}`.
+
+        Appends a `### More rounds` block under `review.md ## Answers`; `cos.mjs` then adds
+        one round to that unit's limit and opens its `review` gate again. The `ship` gate is
+        unchanged. **Whoever holds the password or a live session can open a paid review
+        round, and the route starts nothing itself** — with the autopilot on, its next sweep
+        will.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.more_rounds(
+                str(body.get("cwd") or ""),
+                str(body.get("unit") or ""),
+                str(body.get("by") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
     async def _object(request: Request) -> dict[str, Any] | JSONResponse:
         try:
             body = await request.json()
