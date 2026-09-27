@@ -39,16 +39,19 @@ class _Sessions:
     """A session that sends one chunk, then waits until the test lets it end.
 
     A copy of `scripts/verify_0034.py`'s `_Sessions`, cut to one unit: nothing under
-    `coscc/` imports from `scripts/`.
+    `coscc/` imports from `scripts/`. `entered` is this copy's alone: it is set once the
+    step's session is open, so a Stop after it is one `Runner.run` catches (`0117`).
     """
 
     def __init__(self) -> None:
         self.release = asyncio.Event()
+        self.entered = asyncio.Event()
 
     async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
         step = kw.get("step")
         if step is not None:
             step.client = _Client()
+        self.entered.set()
         try:
             yield ("chunk", "# Spec: a problem\n")
             await asyncio.wait_for(self.release.wait(), 20)
@@ -196,11 +199,21 @@ class TenAtOnce(_OneUnit):
 
     async def test_the_winner_is_listed_and_stops(self):
         tasks, _ = await self.race()
+        winners = [t for t in tasks if not t.done()]
+        self.assertEqual(len(winners), 1)
+        # Listed is not yet driven: a Stop before `_drive`'s first turn cancels a step that
+        # never began, and that road writes no `end` by design (`0117`).
+        try:
+            await asyncio.wait_for(self.fake.entered.wait(), 20)
+        except asyncio.TimeoutError:
+            self.fail("timed out waiting for the winning step's session to open")
         stop = await self.client.post(
             "/api/board/stop", json={"cwd": self.ws, "unit": self.unit, "by": "Proof person"}
         )
         self.assertEqual(stop.status_code, 200, stop.text)
         await asyncio.gather(*tasks)
+        self.assertEqual(winners[0].result().status_code, 200, winners[0].result().text)
+        self.assertEqual(len(self.records("start")), 1)
         [end] = self.records("end")
         self.assertEqual(end.get("outcome"), "stopped")
         self.assertEqual(end.get("stopped_by"), "Proof person")
