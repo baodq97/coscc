@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator
 
 from coscc import autopilot, backlog
 from coscc import board as board_reader
-from coscc import efforttrial
+from coscc.knowledge import efforttrial
 from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc import harness, knowledge

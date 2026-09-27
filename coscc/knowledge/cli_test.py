@@ -12,11 +12,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import admit, gather, knowledge, knowledge_cli, units
-from coscc.admit_test import lock, make_repo
+from coscc import knowledge, units
+from coscc.knowledge import admit, gather, cli as knowledge_cli
+from coscc.knowledge.admit_test import lock, make_repo
 from coscc.runlog.journal import Journal
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 SLOT = "proj-aaaaaaaaaaaa"
 
 
@@ -161,7 +162,7 @@ class Check(Fixture):
         super().setUp()
         self.repo = make_repo(self.root / "proj", ("2026-09-20T00:00:00+00:00", {
             ".python-version": "3.14\n", "uv.lock": lock(**{"claude-agent-sdk": "0.2.159"}),
-            "coscc/gather.py": "def batches():\n    pass\n"}))
+            "coscc/knowledge/gather.py": "def batches():\n    pass\n"}))
         self.slot = units.slot(self.repo)
         Journal(self.root, self.data).finished(str(self.repo), "0001_a", "spike", "done")
         self.src = f"{self.slot}/0001_a/spike.md ## U1"
@@ -178,7 +179,7 @@ class Check(Fixture):
 
     def test_every_entry_passing_is_0(self):
         self.store(("tool:claude-agent-sdk 0.2.159", ""), ("tool:python 3.14", ""),
-                   (f"workspace:{self.slot}", "coscc/gather.py::batches"))
+                   (f"workspace:{self.slot}", "coscc/knowledge/gather.py::batches"))
         self.assertEqual(self.run_cli("check"), 0, self.said)
         out = "\n".join(self.said)
         sha = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "main"], capture_output=True, text=True).stdout
@@ -201,12 +202,12 @@ class Check(Fixture):
         self.assertIn("K2 tool:python: fail: cannot be checked", self.said)
 
     def test_a_missing_ref_is_1(self):
-        self.store(("tool:python 3.14", ""), (f"workspace:{self.slot}", "coscc/gather.py::gather"))
+        self.store(("tool:python 3.14", ""), (f"workspace:{self.slot}", "coscc/knowledge/gather.py::gather"))
         self.assertEqual(self.run_cli("check"), 1)
-        self.assertIn(f"K2 workspace:{self.slot}: fail: ref missing: coscc/gather.py::gather", self.said)
+        self.assertIn(f"K2 workspace:{self.slot}: fail: ref missing: coscc/knowledge/gather.py::gather", self.said)
 
     def test_one_tool_entry_in_three_is_1(self):
-        ws = (f"workspace:{self.slot}", "coscc/gather.py")
+        ws = (f"workspace:{self.slot}", "coscc/knowledge/gather.py")
         self.store(("tool:python 3.14", ""), ws, ws)
         self.assertEqual(self.run_cli("check"), 1)
         self.assertIn("tool: 1/3 = 33% (needs >= 50%)", self.said)
@@ -226,7 +227,7 @@ class Check(Fixture):
             self.assertEqual(self.run_cli("check"), 2)
 
     def test_it_writes_nothing(self):
-        path = self.store(("tool:python 3.14", ""), (f"workspace:{self.slot}", "coscc/gather.py::gone"))
+        path = self.store(("tool:python 3.14", ""), (f"workspace:{self.slot}", "coscc/knowledge/gather.py::gone"))
         db = self.data / "cos.db"
         before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in (path, db)]
         rows = Journal(self.root, self.data).records()
@@ -244,38 +245,43 @@ class BaselineAndMeasure(Fixture):
         self.assertEqual(self.run_cli("baseline"), 1)
 
 
+def imported(path: Path) -> set[str]:
+    """Every module an import in `path` names, dotted in full. `from a import b` gives `a`
+    and `a.b`, since `b` may be a module: since `0129` the four live in one package, and
+    `from coscc.knowledge import gather` names only the package on its `from` side."""
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            names |= {a.name for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names |= {node.module} | {f"{node.module}.{a.name}" for a in node.names}
+    return names
+
+
+
 class OnlyATerminalReachesIt(unittest.TestCase):
     """R9: no route, no autopilot pass and no service call imports what gathers or measures.
     Read from the source, because a route added later is exactly what this is for."""
 
-    FORBIDDEN = {"gather", "knowledge_cli", "measure", "admit"}
+    FORBIDDEN = {"coscc.knowledge.gather", "coscc.knowledge.cli", "coscc.knowledge.measure", "coscc.knowledge.admit"}
 
-    def imported(self, path: Path) -> set[str]:
-        names: set[str] = set()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.Import):
-                names |= {a.name.split(".")[-1] for a in node.names if a.name.startswith("coscc.")}
-            elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("coscc"):
-                if node.module == "coscc":
-                    names |= {a.name for a in node.names}
-                else:
-                    names.add(node.module.split(".")[-1])
-        return names
+    def forbidden(self, path: Path) -> set[str]:
+        return {f for f in self.FORBIDDEN for n in imported(path) if n == f or n.startswith(f + ".")}
 
     def test_api_autopilot_and_service_import_none_of_it(self):
         # `0095`: `Service` is spread over `service.py` and the `service_*.py` it was split into.
-        split = [p.name for p in sorted((REPO / "coscc").glob("service_*.py")) if not p.name.endswith("_test.py")]
+        split = [f"coscc/{p.name}" for p in sorted((REPO / "coscc").glob("service_*.py")) if not p.name.endswith("_test.py")]
         self.assertTrue(split)
-        for name in ("api.py", "autopilot.py", "service.py", *split):
+        for name in ("coscc/api.py", "coscc/autopilot.py", "coscc/service.py", *split):
             with self.subTest(module=name):
-                self.assertFalse(self.imported(REPO / "coscc" / name) & self.FORBIDDEN)
+                self.assertFalse(self.forbidden(REPO / name))
 
     def test_the_check_would_see_one(self):
         with tempfile.TemporaryDirectory() as d:
             probe = Path(d) / "probe.py"
-            probe.write_text("from coscc import gather\nimport coscc.measure\nfrom coscc.knowledge_cli import main\n"
-                             "from coscc.admit import check\n")
-            self.assertEqual(self.imported(probe) & self.FORBIDDEN, self.FORBIDDEN)
+            probe.write_text("from coscc.knowledge import gather\nimport coscc.knowledge.measure\n"
+                             "from coscc.knowledge.cli import main\nfrom coscc.knowledge import admit as a\n")
+            self.assertEqual(self.forbidden(probe), self.FORBIDDEN)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ gathered from (R11) and the baseline `coscc knowledge measure` compares against 
 person can read it and edit it by hand; a block this module cannot read is skipped, never a
 reason to read nothing.
 
-`coscc/gather.py` writes it, only through `validate` and `save`. `Service.run_step` reads it
+`coscc/knowledge/gather.py` writes it, only through `validate` and `save`. `Service.run_step` reads it
 once per `spec`, `spike` or `plan` step, only while `COS_KNOWLEDGE` is on, and hands the
 slice this workspace receives to `runner.compose_prompt`, which does not read the disk.
 
@@ -66,7 +66,7 @@ def empty_header() -> dict[str, Any]:
 
 def _entry(n: int, lines: list[str]) -> tuple[dict[str, Any] | None, str]:
     """One `## K<n>` block, or `None` and why it cannot be read. A block with no `Ref:`
-    reads: a person editing by hand may leave it out, and `coscc/admit.py` drops it."""
+    reads: a person editing by hand may leave it out, and `coscc/knowledge/admit.py` drops it."""
     scope, sources, refs, measured, statement = "", [], [], "", []
     for line in lines[1:]:
         s = line.strip()
@@ -94,7 +94,7 @@ def _entry(n: int, lines: list[str]) -> tuple[dict[str, Any] | None, str]:
 
 
 def format_entry(e: dict[str, Any]) -> str:
-    """The block of an entry from its fields, in the grammar's order. `coscc/admit.py` sets
+    """The block of an entry from its fields, in the grammar's order. `coscc/knowledge/admit.py` sets
     `text` to this once it has written the date and the version (`0108` R1, R4)."""
     lines = [f"## K{e['id']}", f"Scope: {e['scope']}"]
     lines += [f"Source: {s}" for s in e["sources"]]
@@ -266,7 +266,7 @@ def validate(
 
     `0108`: a `Measured:` the session wrote is not read — the code writes it (R1). With
     `dates`, label to `YYYY-MM-DD`, an entry merged into one whose sources are older is a
-    reason (R3); without it that is not checked, and `coscc/gather.py` always passes it."""
+    reason (R3); without it that is not checked, and `coscc/knowledge/gather.py` always passes it."""
     others = list(others)
     old = parse(old_slice)["entries"]
     new = parse(new_text)

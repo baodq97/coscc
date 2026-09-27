@@ -14,7 +14,8 @@ from coscc import board as board_reader
 from coscc.board import Unavailable
 from coscc.data import Data
 from coscc.runlog.journal import BadRecord, Busy, Journal
-from coscc import efforttrial, labels, models
+from coscc import labels, models
+from coscc.knowledge import efforttrial
 from coscc.config import LOOPBACK
 from coscc.runner import SESSIONS_PER_STEP
 from coscc.service_common import Invalid

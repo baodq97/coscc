@@ -2,7 +2,7 @@
 
 `0090_agents-relearn-what-earlier-units-already-knew` R9-R14. A command run by hand at a
 terminal and nothing else: not a stage, unknown to `cos.mjs`, never called by the autopilot,
-and no route starts it (`coscc/knowledge_cli_test.py` holds that). Each batch is one
+and no route starts it (`coscc/knowledge/cli_test.py` holds that). Each batch is one
 tool-less session under the grant `knowledge`, run through `precedent.ask` — the one way a
 tool-less session is run here — and whatever it says reaches the store only through
 `knowledge.validate` and `knowledge.save`.
@@ -39,7 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from coscc import admit, knowledge, units
+from coscc import knowledge, units
+from coscc.knowledge import admit
 from coscc.data import Data
 
 # R12. Bytes of sources per batch. Chosen, not measured: a batch this size and a full store

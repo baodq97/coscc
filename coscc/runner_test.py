@@ -19,7 +19,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import efforttrial, harness, policy
+from coscc import harness, policy
+from coscc.knowledge import efforttrial
 from coscc.git import gitops
 from coscc.runlog.journal import Journal
 from coscc.policy import decide, grant_for

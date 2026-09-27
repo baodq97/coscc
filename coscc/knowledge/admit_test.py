@@ -10,7 +10,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import admit, knowledge, units
+from coscc import knowledge, units
+from coscc.knowledge import admit
 from coscc.runlog.journal import Journal
 
 
@@ -60,7 +61,7 @@ class Fixture(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.repo = make_repo(
             self.root / "proj",
-            (OLD, {".python-version": "3.14\n", "uv.lock": lock(reflex="0.9.11"), "coscc/gather.py": CODE}),
+            (OLD, {".python-version": "3.14\n", "uv.lock": lock(reflex="0.9.11"), "coscc/knowledge/gather.py": CODE}),
             (NEW, {"uv.lock": lock(reflex="0.9.12", **{"claude-agent-sdk": "0.2.159"})}),
         )
         self.slot = units.slot(self.repo)
@@ -113,10 +114,10 @@ class DatesAndPins(Fixture):
 
     def test_a_ref_needs_its_path_on_main_and_its_symbol_in_it(self):
         git = admit.Reader()
-        self.assertEqual(git.ref_exists(str(self.repo), "coscc/gather.py"), (True, ""))
-        self.assertEqual(git.ref_exists(str(self.repo), "coscc/gather.py::batches"), (True, ""))
-        self.assertFalse(git.ref_exists(str(self.repo), "coscc/gather.py::batch")[0])
-        self.assertFalse(git.ref_exists(str(self.repo), "coscc/admit.py")[0])
+        self.assertEqual(git.ref_exists(str(self.repo), "coscc/knowledge/gather.py"), (True, ""))
+        self.assertEqual(git.ref_exists(str(self.repo), "coscc/knowledge/gather.py::batches"), (True, ""))
+        self.assertFalse(git.ref_exists(str(self.repo), "coscc/knowledge/gather.py::batch")[0])
+        self.assertFalse(git.ref_exists(str(self.repo), "coscc/knowledge/admit.py")[0])
 
     def test_no_git_on_path_is_an_error_not_an_answer(self):
         with mock.patch.dict("os.environ", {"PATH": str(self.root)}):
@@ -192,14 +193,14 @@ class Admit(Fixture):
         s = self.source("0001_a")
         ctx = self.dated(s)
         scope = f"workspace:{self.slot}"
-        good = entry(1, scope, self.label(s), refs=("coscc/gather.py::batches",))
-        bad = entry(2, scope, self.label(s), refs=("coscc/gather.py", "coscc/gone.py"))
+        good = entry(1, scope, self.label(s), refs=("coscc/knowledge/gather.py::batches",))
+        bad = entry(2, scope, self.label(s), refs=("coscc/knowledge/gather.py", "coscc/gone.py"))
         bare = entry(3, scope, self.label(s))
         tools = [entry(n, "tool:python", self.label(s)) for n in (4, 5, 6)]
         kept, dropped = admit.admit([good, bad, bare, *tools], [], ctx)
         self.assertEqual([e["id"] for e in kept], [1, 4, 5, 6])
         self.assertEqual(dropped, [{"id": "K2", "reason": "ref-missing"}, {"id": "K3", "reason": "ref-missing"}])
-        self.assertIn("Ref: coscc/gather.py::batches", kept[0]["text"])
+        self.assertIn("Ref: coscc/knowledge/gather.py::batches", kept[0]["text"])
 
     def test_an_old_entry_of_another_workspace_is_checked_too(self):
         s = self.source("0001_a")
@@ -219,9 +220,9 @@ class Admit(Fixture):
     def test_the_share_of_tool_entries_drops_the_oldest_workspace_entries_first(self):
         s = self.source("0001_a")
         ctx = self.dated(s)
-        scope, ref = f"workspace:{self.slot}", ("coscc/gather.py",)
+        scope, ref = f"workspace:{self.slot}", ("coscc/knowledge/gather.py",)
         old = knowledge.parse("\n\n".join(
-            f"## K{n}\nScope: {scope}\nSource: {self.label(s)}\nRef: coscc/gather.py\nMeasured: {day}\nOld {n}."
+            f"## K{n}\nScope: {scope}\nSource: {self.label(s)}\nRef: coscc/knowledge/gather.py\nMeasured: {day}\nOld {n}."
             for n, day in ((1, "2026-09-20"), (2, "2026-09-10"), (3, "2026-09-10"))))["entries"]
         new = [entry(4, scope, self.label(s), refs=ref), entry(5, "tool:python", self.label(s)),
                entry(6, "tool:reflex", self.label(s))]
@@ -232,7 +233,7 @@ class Admit(Fixture):
 
     def test_a_store_with_no_tool_entry_keeps_no_workspace_entry(self):
         s = self.source("0001_a")
-        e = entry(1, f"workspace:{self.slot}", self.label(s), refs=("coscc/gather.py",))
+        e = entry(1, f"workspace:{self.slot}", self.label(s), refs=("coscc/knowledge/gather.py",))
         self.assertEqual(admit.admit([e], [], self.dated(s)), ([], [{"id": "K1", "reason": "ratio"}]))
 
     def test_a_git_error_drops_the_entry_it_met_and_says_why(self):

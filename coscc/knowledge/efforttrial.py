@@ -6,7 +6,7 @@ restart, and nothing is stored but the `start` record (spec R2). The `trial` arm
 `impl` runs at `EFFORT`; everything else runs as it did (R3, R5).
 
 Pure: it reads nothing but its arguments. The arm and whether the effort was taken go into
-`start` under `FIELD`, beside `CI_RED`, and `coscc/effort_measure.py` reads them back by
+`start` under `FIELD`, beside `CI_RED`, and `coscc/knowledge/effort_measure.py` reads them back by
 these names (`.claude/rules/coscc-data.md`).
 """
 

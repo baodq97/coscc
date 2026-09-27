@@ -1043,7 +1043,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
 
     def _run(self, stage: str = "impl", arm: str = "trial"):
         from coscc import board as board_reader
-        from coscc import efforttrial
+        from coscc.knowledge import efforttrial
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, f"open: {stage} may proceed"

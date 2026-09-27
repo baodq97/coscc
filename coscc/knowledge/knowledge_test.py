@@ -69,9 +69,9 @@ class ParseAndRender(unittest.TestCase):
 
     def test_a_ref_is_read_in_order_and_a_block_without_one_reads(self):
         block = entry(4, scope=f"workspace:{SLOT}").replace(
-            "\nMeasured:", "\nRef: coscc/gather.py::batches\nRef: coscc/admit.py\nMeasured:")
+            "\nMeasured:", "\nRef: coscc/knowledge/gather.py::batches\nRef: coscc/knowledge/admit.py\nMeasured:")
         [e] = knowledge.parse(store(block, max_id=4))["entries"]
-        self.assertEqual(e["refs"], ["coscc/gather.py::batches", "coscc/admit.py"])
+        self.assertEqual(e["refs"], ["coscc/knowledge/gather.py::batches", "coscc/knowledge/admit.py"])
         [bare] = knowledge.parse(store(entry(5), max_id=5))["entries"]
         self.assertEqual(bare["refs"], [])
 
@@ -192,9 +192,9 @@ class TheCheckOfAGatheredStore(unittest.TestCase):
                 self.assertEqual(self.check(self.OLD + "\n\n" + entry(3, measured=bad)), [])
 
     def test_a_tool_entry_carrying_a_ref(self):
-        tool = entry(3).replace("\nMeasured:", "\nRef: coscc/gather.py\nMeasured:")
+        tool = entry(3).replace("\nMeasured:", "\nRef: coscc/knowledge/gather.py\nMeasured:")
         self.assertIn("K3 is a tool: entry and carries Ref:", self.check(self.OLD + "\n\n" + tool))
-        ws = entry(3, scope=f"workspace:{SLOT}").replace("\nMeasured:", "\nRef: coscc/gather.py\nMeasured:")
+        ws = entry(3, scope=f"workspace:{SLOT}").replace("\nMeasured:", "\nRef: coscc/knowledge/gather.py\nMeasured:")
         self.assertEqual(self.check(self.OLD + "\n\n" + ws), [])
 
     def test_a_merge_into_an_older_entry(self):

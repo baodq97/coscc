@@ -183,12 +183,12 @@ def _answer_and_stop(args: list[str]) -> None:
     if args[0] == "knowledge":
         # `0090` R9. The knowledge store's commands, here for the same reason as
         # `reset-password`: they need a shell on this machine, and no route reaches them.
-        from coscc import knowledge_cli
+        from coscc.knowledge import cli as knowledge_cli
 
         raise SystemExit(knowledge_cli.main(args[1:]))
     if args[0] == "effort":
         # `0123` R8. The effort trial's verdict, on the same terms as `knowledge`.
-        from coscc import effort_measure
+        from coscc.knowledge import effort_measure
 
         raise SystemExit(effort_measure.main(args[1:]))
     if args == ["reset-password"]:

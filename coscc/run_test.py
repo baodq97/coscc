@@ -90,7 +90,7 @@ class TheVersionAnswer(unittest.TestCase):
         """`0090` R9: `coscc knowledge ...` is a terminal command, answered and exited."""
         from unittest import mock
 
-        from coscc import knowledge_cli
+        from coscc.knowledge import cli as knowledge_cli
 
         for code in (0, 2):
             with mock.patch.object(knowledge_cli, "main", return_value=code) as called, \
@@ -104,7 +104,7 @@ class TheVersionAnswer(unittest.TestCase):
         """`0123` R8: `coscc effort measure` is a terminal command, answered and exited."""
         from unittest import mock
 
-        from coscc import effort_measure
+        from coscc.knowledge import effort_measure
 
         for code in (0, 2):
             with mock.patch.object(effort_measure, "main", return_value=code) as called, \

@@ -7,7 +7,7 @@ run log (R1), a tool's version from the workspace's pins (R4), that a `Ref:` sti
 `admit` never fails a batch: what it cannot admit it drops, with a reason, into the batch's
 `dropped` (R8). `check` is `coscc knowledge check` (R10), and reads the same way.
 
-It does not import `coscc/gather.py`, so `gather` and `knowledge_cli` both can import it.
+It does not import `coscc/knowledge/gather.py`, so `gather` and `knowledge_cli` both can import it.
 Everything but `_git` and what calls it is pure.
 """
 
@@ -361,7 +361,7 @@ def check(data_dir: str | os.PathLike[str] | None, say: Callable[[str], None]) -
     import sqlite3
 
     from coscc.data import Data
-    from coscc.measure import read_rows
+    from coscc.knowledge.measure import read_rows
 
     path = knowledge.path_of(data_dir) / knowledge.STORE
     try:

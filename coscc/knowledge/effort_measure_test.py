@@ -1,7 +1,7 @@
 """`0123` plan step 7: `coscc effort measure`, on a `cos.db` built by the app's own schema.
 
 The records are written with the field names `coscc/runner.py` writes, `effort_trial` and
-`ci_red` by `coscc/efforttrial.py`'s constants, so a rename there turns this red (plan Risk 5).
+`ci_red` by `coscc/knowledge/efforttrial.py`'s constants, so a rename there turns this red (plan Risk 5).
 """
 
 from __future__ import annotations
@@ -13,10 +13,12 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from coscc import effort_measure, efforttrial, units
+from coscc import units
+from coscc.knowledge import effort_measure, efforttrial
 from coscc.data import Data
+from coscc.knowledge.cli_test import imported
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parents[2]
 WS = "/x/coscc"
 SLOT = units.slot(WS)
 TRIAL, CONTROL = efforttrial.TRIAL_ARM, efforttrial.CONTROL_ARM
@@ -271,34 +273,24 @@ class OnlyATerminalReachesIt(unittest.TestCase):
     """R8: no route, no autopilot pass and no service call imports the measurement. Read from
     the source, as `knowledge_cli_test.py` reads it for `coscc knowledge`."""
 
-    def imported(self, path: Path) -> set[str]:
-        names: set[str] = set()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.Import):
-                names |= {a.name.split(".")[-1] for a in node.names if a.name.startswith("coscc.")}
-            elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("coscc"):
-                if node.module == "coscc":
-                    names |= {a.name for a in node.names}
-                else:
-                    names.add(node.module.split(".")[-1])
-        return names
+    MEASURE = "coscc.knowledge.effort_measure"
 
     def test_api_autopilot_and_service_do_not_import_it(self):
-        split = [p.name for p in sorted((REPO / "coscc").glob("service*.py")) if not p.name.endswith("_test.py")]
+        split = [f"coscc/{p.name}" for p in sorted((REPO / "coscc").glob("service*.py")) if not p.name.endswith("_test.py")]
         self.assertTrue(split)
-        for name in ("api.py", "autopilot.py", *split):
+        for name in ("coscc/api.py", "coscc/autopilot.py", *split):
             with self.subTest(module=name):
-                self.assertNotIn("effort_measure", self.imported(REPO / "coscc" / name))
+                self.assertNotIn(self.MEASURE, imported(REPO / name))
 
     def test_it_imports_nothing_of_the_web_app(self):
-        found = self.imported(REPO / "coscc" / "effort_measure.py")
-        self.assertFalse({n for n in found if n.startswith(("service", "state", "screens", "api"))}, found)
+        found = imported(REPO / "coscc/knowledge/effort_measure.py")
+        self.assertFalse({n for n in found if n.startswith(("coscc.service", "coscc.state", "coscc.screens", "coscc.api"))}, found)
 
     def test_the_check_would_see_one(self):
         with tempfile.TemporaryDirectory() as d:
             probe = Path(d) / "probe.py"
-            probe.write_text("from coscc import effort_measure\n")
-            self.assertIn("effort_measure", self.imported(probe))
+            probe.write_text("from coscc.knowledge import effort_measure\n")
+            self.assertIn(self.MEASURE, imported(probe))
 
 
 if __name__ == "__main__":

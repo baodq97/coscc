@@ -14,7 +14,8 @@ import asyncio
 import sys
 from typing import Callable
 
-from coscc import admit, gather, knowledge, measure
+from coscc import knowledge
+from coscc.knowledge import admit, gather, measure
 
 USAGE = (
     "usage: coscc knowledge gather [--all] [--yes] [--model M]\n"

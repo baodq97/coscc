@@ -387,7 +387,7 @@ GRANTS: dict[str, Grant] = {
     ),
     # `0090`. Not a stage either: one batch of `coscc knowledge gather`, a command run at a
     # terminal that no route, button or autopilot starts (`spec.md` R9). No tools, no
-    # commands, one turn; the app checks the reply and writes the store (`coscc/gather.py`).
+    # commands, one turn; the app checks the reply and writes the store (`coscc/knowledge/gather.py`).
     # $2.00 is chosen, not measured: nobody has measured a batch of 64 KiB of sources, and
     # the CLI checks it after the turn has run (`0085` `spike.md ## U2`), so a batch can pass it.
     "knowledge": Grant(

@@ -17,8 +17,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import admit, gather, knowledge, units
-from coscc.admit_test import lock, make_repo
+from coscc import knowledge, units
+from coscc.knowledge import admit, gather
+from coscc.knowledge.admit_test import lock, make_repo
 from coscc.runlog.journal import Journal
 
 # Set by `setUpModule`: the slots of two repositories, `other-` sorting before `proj-`.

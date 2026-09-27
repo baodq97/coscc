@@ -26,7 +26,7 @@ spends it.
 **The effort trial** (`0123_no-one-knows-if-each-stage-runs-at-the-right-effort`). `resolve`
 may be handed a `trial_effort`, and then the effort is looked up override, trial, default:
 an `effort:<name>` override still wins (spec R4), and the model is looked up as before. Only
-a board step of `impl` with `COS_EFFORT_TRIAL` on hands one in (`coscc/efforttrial.py`);
+a board step of `impl` with `COS_EFFORT_TRIAL` on hands one in (`coscc/knowledge/efforttrial.py`);
 `table` never does, so Settings shows what it showed before (spec C11).
 
 **What it does not hold is the list of stages.** That list is `cos.mjs`'s, and the caller

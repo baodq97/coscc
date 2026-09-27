@@ -1,10 +1,11 @@
-"""`coscc/efforttrial.py`: the arm a unit is in, and which step gets the trial's effort."""
+"""`coscc/knowledge/efforttrial.py`: the arm a unit is in, and which step gets the trial's effort."""
 
 from __future__ import annotations
 
 import unittest
 
-from coscc import efforttrial, models
+from coscc import models
+from coscc.knowledge import efforttrial
 
 
 class TheArm(unittest.TestCase):

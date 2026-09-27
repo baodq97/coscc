@@ -348,7 +348,7 @@ class TheJeraGrantOpensNothing(unittest.TestCase):
 
 class TheGatheringGrantOpensNothing(unittest.TestCase):
     """`0090` plan step 5: one batch of `coscc knowledge gather` — no tool, no command, one
-    turn, $2.00. The session runs in the store's directory (`coscc/gather.py`); a tool here
+    turn, $2.00. The session runs in the store's directory (`coscc/knowledge/gather.py`); a tool here
     would let it read whatever is there (plan Risk 5)."""
 
     def test_the_grant(self):

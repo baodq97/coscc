@@ -97,11 +97,11 @@ class Config:
     # no button. Set in the env file, never by a request.
     update_local_from: str | None = None
     # `.cos/0090_agents-relearn-what-earlier-units-already-knew` R1. On, `spec`, `spike`
-    # and `plan` carry what earlier units measured (`coscc/knowledge.py`). Off, every
+    # and `plan` carry what earlier units measured (`coscc/knowledge/__init__.py`). Off, every
     # prompt and every `start` record is what it was before (R2). Only the env file sets it.
     knowledge: bool = False
     # `.cos/0123_no-one-knows-if-each-stage-runs-at-the-right-effort` R1. On, a routine `impl`
-    # of about half the units runs at a higher effort (`coscc/efforttrial.py`). Off, every
+    # of about half the units runs at a higher effort (`coscc/knowledge/efforttrial.py`). Off, every
     # step, its `start` record and its calls to `cos.mjs` are what they were. Only the env
     # file sets it.
     effort_trial: bool = False

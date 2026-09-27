@@ -24,7 +24,7 @@ Read this before changing `POST /api/settings/*`, `coscc/models.py`, `POST /api/
   from `models.json` and taken from an override, so anyone holding the password can set it.
   The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
 - **With `COS_EFFORT_TRIAL` on, Settings does not show the effort a routine `impl` runs at.**
-  Since `0123`, a unit whose name hashes to the `trial` arm (`coscc/efforttrial.py`) runs a
+  Since `0123`, a unit whose name hashes to the `trial` arm (`coscc/knowledge/efforttrial.py`) runs a
   routine `impl` at `high`, between an override and `models.json`, while the `impl` row
   still reads `medium (default)`: `models.table` never passes the trial's effort, on
   purpose (spec C11). Only that step's `start` record says so, as `effort_source: trial`

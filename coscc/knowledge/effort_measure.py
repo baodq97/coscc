@@ -1,14 +1,14 @@
 """`coscc effort measure`: did a routine `impl` at a higher effort take fewer turns?
 
 `0123_no-one-knows-if-each-stage-runs-at-the-right-effort` R8-R11. Reads `cos.db` with
-`sqlite3` in `mode=ro` through `coscc/measure.py`'s own reader, chooses the workspace by its
+`sqlite3` in `mode=ro` through `coscc/knowledge/measure.py`'s own reader, chooses the workspace by its
 rule, and imports nothing of the web app. Run it at a terminal: inside a step `cos.db` is a
 tripwire (`.claude/rules/coscc-sessions.md`).
 
 The arm is read from the `start` records, never worked out again from a name (spec Design,
 part 2). The fields are the ones `coscc/runner.py` writes, by the names in
-`coscc/efforttrial.py`: rename one there and this reads nothing, silently
-(`.claude/rules/coscc-data.md`), which `coscc/effort_measure_test.py` guards by writing its
+`coscc/knowledge/efforttrial.py`: rename one there and this reads nothing, silently
+(`.claude/rules/coscc-data.md`), which `coscc/knowledge/effort_measure_test.py` guards by writing its
 fixture through the same names.
 """
 
@@ -19,8 +19,9 @@ import os
 import statistics
 from typing import Any, Callable
 
-from coscc import efforttrial, labels
-from coscc import measure as reader
+from coscc import labels
+from coscc.knowledge import efforttrial
+from coscc.knowledge import measure as reader
 
 # `intent.md ## Answers`, câu 1, 2, 3 and 6: 10 units a side, 20% fewer turns, by 2026-11-30
 # read in UTC, and no more cost, changes-requested rounds or red-CI returns.
