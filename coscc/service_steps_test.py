@@ -439,6 +439,115 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
 
 
+class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
+    """`0113` R4, R5. After a `done` step's `end`: the questions it left open, and after `ship`
+    whether the unit merged. Driven like `AStepRecordsTheTransitionItCaused`."""
+
+    ASKS = "# Spec: a problem\nAuthor: t. Status: draft.\n\n## Body\n\n## Open questions\n\n1. Which one?\n"
+
+    def replies(self, text: str, outcome: dict | None = None):
+        class Replies:
+            async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
+                yield ("chunk", text)
+                yield ("done", outcome or {"session_id": "sess-1", "cost": {"output_tokens": 3}})
+
+        return Replies()
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.config = Config(
+            workspaces=(str(self.repo),), working_dir=str(self.root / "work"), data_dir=str(self.root / "data"),
+        )
+        self.service = Service(self.config, self.replies(self.ASKS))
+        self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        self.unit = self.made["unit"]
+        (Path(self.made["path"]) / "intent.md").write_text(
+            "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
+        )
+        self.key = self.service._journal_key(str(self.repo))
+
+    def _run(self, stage: str = "spec") -> list:
+        async def go():
+            stream = self.service.run_step(str(self.repo), self.unit, stage)
+            items = [await stream.__anext__()]
+            running = self.service.steps.get(self.key, self.unit)
+            items += [item async for item in stream]
+            # The reader has its `done` before `_after_end` runs, last in the step's task.
+            if running is not None:
+                await running.task
+            return items
+
+        return asyncio.run(go())
+
+    def records(self) -> list[dict]:
+        from coscc.journal import Journal
+
+        return Journal(self.config.working_dir, self.config.data_dir).records(self.key, self.unit)
+
+    def test_a_done_step_that_leaves_open_questions_records_them_after_its_end(self):
+        _, payload = self._run()[-1]
+        self.assertEqual(payload["outcome"], "done")
+        kinds = [r["kind"] for r in self.records()]
+        self.assertEqual(kinds[-2:], ["end", "questions"])
+        [asked] = [r for r in self.records() if r["kind"] == "questions"]
+        self.assertEqual((asked["workspace"], asked["stage"]), (self.key, "spec"))
+        self.assertEqual(asked["questions"], [{"artifact": "spec.md", "n": 1}])
+
+    def test_a_done_step_with_every_question_answered_records_none(self):
+        self.service.sessions = self.replies("# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+        self._run()
+        self.assertNotIn("questions", [r["kind"] for r in self.records()])
+
+    def test_a_failed_or_stopped_step_records_no_questions(self):
+        self.service.sessions = self.replies(self.ASKS, {"session_id": "s", "terminal_reason": "error_max_turns"})
+        _, payload = self._run()[-1]
+        self.assertNotEqual(payload["outcome"], "done")
+        self.assertNotIn("questions", [r["kind"] for r in self.records()])
+
+    def _after_end_with(self, why: str, stage: str = "ship") -> list[dict]:
+        from coscc import board as board_reader
+
+        async def read(root, timeout=None):
+            return {"units": [{"name": self.unit, "why": why, "questions": []}]}
+
+        with mock.patch.object(board_reader, "read", read):
+            asyncio.run(self.service._after_end(str(self.repo), self.unit, stage, self.key))
+        return [r for r in self.records() if r["kind"] == "ship"]
+
+    def test_a_done_ship_records_shipped_when_the_unit_is_finished(self):
+        [row] = self._after_end_with("finished")
+        self.assertEqual((row["result"], row["stage"], row["workspace"]), ("shipped", "ship", self.key))
+
+    def test_a_done_ship_records_refused_on_ship_refused(self):
+        [row] = self._after_end_with("ship-refused")
+        self.assertEqual(row["result"], "refused")
+
+    def test_any_other_why_or_stage_records_no_ship(self):
+        self.assertEqual(self._after_end_with("ci"), [])
+        self.assertEqual(self._after_end_with("finished", stage="review"), [])
+
+    def test_a_board_read_that_fails_changes_nothing_about_the_step(self):
+        from coscc import board as board_reader
+
+        real = board_reader.read
+
+        async def broken(root, timeout=board_reader.TIMEOUT):
+            # Only once the step's `end` is written: the gate before it reads the board too.
+            if "end" in [r["kind"] for r in self.records()]:
+                raise board_reader.Unavailable("node is missing")
+            return await real(root, timeout)
+
+        with mock.patch.object(board_reader, "read", broken):
+            _, payload = self._run()[-1]
+        self.assertEqual(payload["outcome"], "done")
+        self.assertEqual([r["kind"] for r in self.records()][-1], "end")
+        self.assertEqual(self.service._active, {})
+
+
 class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
     """`0034`. A step is its own task: a reader leaving does not end it (R3), a second
     step on one unit is refused before it spends anything (R11), two units run at once
