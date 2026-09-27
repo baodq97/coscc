@@ -1370,7 +1370,12 @@ function reviewNeeds(unit, probe, limit, said = {}) {
   }
   if (need.length || !pr) return need
   if (!probe) return ['no repository given — pass --repo <dir>']
+  return ciNeeds(probe, pr, said)
+}
 
+// The required checks of `pr`, read once: `[]` when green, else why not, with `said.ci` set.
+// Shared by `review` and, after a clean rebase, `ship` (`0067` R3), so there is one reading.
+function ciNeeds(probe, pr, said) {
   const r = probe.gh('pr', 'checks', String(pr.number), '--required', '--json', 'name,bucket')
   // `gh pr checks` exits non-zero when a check failed or is pending, and still prints the
   // JSON. So the output is read first and the exit code only when there is none.
