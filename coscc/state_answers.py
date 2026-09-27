@@ -1,5 +1,5 @@
 """What a person writes into a unit from the page: answers, Jera, outcomes, review rounds
-posted, integration and holds.
+posted, integration, holds and review rounds allowed.
 
 Split from `coscc/state.py` (`0095`). `StudioState` inherits it, so its vars and handlers
 keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
@@ -46,6 +46,8 @@ class AnswersMixin(rx.State, mixin=True):
     # `0045`. The reason typed into the hold panel, and whether a move is in flight.
     hold_reason: str = ""
     holding: bool = False
+    # `0081`. True while one more review round is being allowed; locks its button.
+    granting_round: bool = False
 
     @rx.event
     async def answer_question(self, key: str):
@@ -282,4 +284,26 @@ class AnswersMixin(rx.State, mixin=True):
         )
         await self._load_board()
         self._load_activity()
+        yield StudioState.load_next
+
+    @rx.event
+    async def allow_more_rounds(self):
+        """`0081` R8. Allow the open unit one more review round. Whether it is out of rounds
+        is `Service.more_rounds`'s decision, read off `cos.mjs`; a refusal is shown as it is.
+        Reads the board and `next` again afterwards and starts nothing: the run button still
+        waits for a person to press it."""
+        from coscc.state import SERVICE, StudioState
+        if self.granting_round:
+            return
+        self.granting_round = True
+        yield
+        try:
+            done = await SERVICE.more_rounds(self.cwd, self.unit_id, "")
+        except Invalid as e:
+            self.notice = f"Not changed: {e}"
+            return
+        finally:
+            self.granting_round = False
+        self.notice = f"{done['unit']}: one more review round allowed. Nothing was started."
+        await self._load_board()
         yield StudioState.load_next

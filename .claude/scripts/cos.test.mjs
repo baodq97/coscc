@@ -13,6 +13,7 @@ import {
   parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking, prText, prScope,
   UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe, stageAt,
   aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip, normalizePatch, openLines,
+  parseMoreRounds, reviewLimit, moreRounds,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -3760,4 +3761,109 @@ test('0116 R5: an accepted ship.md is finished for a merged pull request without
     assert.deepEqual(nextStep(u, { probe }), { blocked: false, action: 'finished', stage: '' })
   }
   assert.deepEqual(calls, [])
+})
+
+// --- 0081: a unit stuck at the review limit is given a round more ------------------
+
+// The bytes `POST /api/units/more-rounds` appends (`coscc/more_rounds.py`), date fixed.
+const MORE = '\n### More rounds\nDecided by: owner. Date: 2026-09-27. Via: product.\nRounds: 1\n'
+const stuckRounds = (n) => [...Array(n)].map((_, i) => round(i + 1, 'changes-requested', ['- F1 [open] a'])).join('\n')
+const STUCK = `${REVIEW_HEAD}${stuckRounds(3)}`
+const withMore = (review, ...blocks) => `${review}\n## Answers\n${blocks.join('')}`
+const stuckFiles = (review) => ({
+  'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n',
+  'spec.md': '# S\nStatus: accepted.\n',
+  'plan.md': '# P\nStatus: accepted.\n',
+  'impl.md': implText(''),
+  'pr.md': '# PR\nPR: https://github.com/o/r/pull/7. Status: accepted.\n',
+  'review.md': review,
+})
+const stuck = (review, extra = {}) => questionTree({ ...stuckFiles(review), ...extra }).u
+
+test('0081 R3: a more rounds block lifts the review limit of its unit alone', () => {
+  const none = stuck(STUCK)
+  assert.match(checkGate(none, 'review', { probe: greenProbe(), limit: 3 }).need[0], /needs a person — review used 3 of 3 rounds/)
+  assert.match(nextAction(none, 3).action, /needs a person/)
+  const given = stuck(withMore(STUCK, MORE))
+  assert.equal(given.artifacts['review.md'].roundsGranted, 1)
+  assert.deepEqual(given.problems, [])
+  assert.equal(checkGate(given, 'review', { probe: greenProbe(), limit: 3 }).ok, true)
+  assert.doesNotMatch(nextAction(given, 3).action, /needs a person/)
+  assert.match(nextAction(given, 3).action, /3 of 4 rounds used/)
+  assert.doesNotMatch(nextStep(given, { probe: greenProbe(), limit: 3 }).action, /needs a person/)
+})
+
+test('0081 R7: a unit that used its granted round needs a person again at the new limit', () => {
+  const again = stuck(withMore(`${REVIEW_HEAD}${stuckRounds(4)}`, MORE))
+  assert.match(checkGate(again, 'review', { probe: greenProbe(), limit: 3 }).need[0], /needs a person — review used 4 of 4 rounds/)
+  assert.match(nextAction(again, 3).action, /review used 4 of 4 rounds/)
+  assert.equal(moreRounds(again, 3), true)
+  // Two blocks add up.
+  assert.equal(reviewLimit(stuck(withMore(`${REVIEW_HEAD}${stuckRounds(4)}`, MORE, MORE)), 3), 5)
+})
+
+test('0081 R2: a more rounds block with no Decided by or no Rounds line is not counted and is reported', () => {
+  const bad = [
+    ['\n### More rounds\nRounds: 1\n', 'Decided by'],
+    ['\n### More rounds\nDecided by: owner. Date: 2026-09-27. Via: product.\nRounds: 0\n', 'Rounds'],
+    ['\n### More rounds\nDecided by: owner. Date: 2026-09-27. Via: product.\nRounds: x\n', 'Rounds'],
+  ]
+  for (const [block, line] of bad) {
+    const u = stuck(withMore(STUCK, block))
+    assert.equal('roundsGranted' in u.artifacts['review.md'], false, block)
+    assert.deepEqual(u.problems, [`review.md: more rounds block 1 has no valid ${line} line — it is not counted`], block)
+    assert.match(checkGate(u, 'review', { probe: greenProbe(), limit: 3 }).need[0], /needs a person — review used 3 of 3/)
+  }
+  // A bad block is numbered among the more rounds blocks only, and does not void a good one.
+  const mixed = parseMoreRounds(withMore(STUCK, fBlock('F1'), MORE, bad[1][0]))
+  assert.deepEqual(mixed, { granted: 1, problems: ['more rounds block 2 has no valid Rounds line — it is not counted'] })
+})
+
+test('0081 R2: a more rounds block is never an answer and never the tail of an F answer', () => {
+  const answers = parseAnswers(withMore(STUCK, fBlock('F1', 'đã chạy'), MORE))
+  assert.equal(answers.length, 1)
+  assert.equal(answers[0].id, 'F1')
+  assert.equal(answers[0].text, 'đã chạy')
+  assert.doesNotMatch(answers[0].text, /Rounds:/)
+  // Nor is it a round: `parseReview` stops at `## Answers`.
+  assert.equal(parseReview(withMore(STUCK, MORE)).rounds.length, 3)
+})
+
+test('0081 R4: moreRounds is attached only to a unit out of rounds and neither field to any other unit', () => {
+  const HOLD = '# I\nAuthor: t. Type: feat. Status: accepted.\n\n## Answers\n\n### Paused\nDecided by: owner. Date: 2026-09-27. Via: product.\n\nchờ\n'
+  const cases = {
+    out: [stuck(STUCK), true],
+    notYet: [stuck(`${REVIEW_HEAD}${stuckRounds(1)}`), false],
+    done: [stuck(STUCK, { 'plan.md': '# P\nStatus: done.\n' }), false],
+    paused: [stuck(STUCK, { 'intent.md': HOLD }), false],
+    rejected: [stuck(STUCK, { 'spec.md': '# S\nStatus: rejected.\n' }), false],
+  }
+  for (const [name, [u, want]] of Object.entries(cases)) {
+    assert.equal(moreRounds(u, 3), want, name)
+    assert.equal('roundsGranted' in u.artifacts['review.md'], false, name)
+  }
+  // Through `status --json`: the key is on the stuck unit's row and on no other.
+  const { root } = questionTree(stuckFiles(STUCK))
+  const second = join(root, '.cos', '0002_q')
+  mkdirSync(second)
+  for (const [f, text] of Object.entries(stuckFiles(`${REVIEW_HEAD}${stuckRounds(1)}`))) writeFileSync(join(second, f), text)
+  const out = cli('status', '--json', '--root', root)
+  assert.equal(out.status, 0, out.stderr)
+  const rows = Object.fromEntries(JSON.parse(out.stdout).units.map((u) => [u.name, u]))
+  assert.equal(rows['0001_q'].moreRounds, true)
+  assert.equal('moreRounds' in rows['0002_q'], false)
+  assert.equal('roundsGranted' in rows['0001_q'].artifacts['review.md'], false)
+})
+
+test('0081 R9: a more rounds block changes no answer of the ship gate', () => {
+  const findings = [rated('F1', 'medium'), '- F2 [open] a.py:3 — low — S3 a SHA on the card']
+  const ship = (review) => checkGate(stuck(review), 'ship', { probe: greenProbe(), limit: 3 })
+  const one = `${REVIEW_HEAD}${round(1, 'changes-requested', findings)}`
+  assert.deepEqual(ship(withMore(one, MORE)), ship(one))
+  assert.equal(ship(withMore(one, MORE)).ok, false)
+  // With the rounds used up, the block that lifts review still leaves ship as it was.
+  const used = `${REVIEW_HEAD}${[1, 2, 3].map((n) => round(n, 'changes-requested', findings)).join('\n')}`
+  assert.equal(checkGate(stuck(withMore(used, MORE)), 'review', { probe: greenProbe(), limit: 3 }).ok, true)
+  assert.deepEqual(ship(withMore(used, MORE)), ship(used))
+  assert.equal(ship(withMore(used, MORE)).ok, false)
 })

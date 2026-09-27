@@ -861,6 +861,102 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
 
 
 _ROUND_0028 = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
+REVIEW_STUCK = "# Review: q\nAuthor: t. Status: changes-requested.\n" + "".join(
+    _ROUND_0028.format(n=i, v="changes-requested", f="- F1 [open] a") for i in (1, 2, 3)
+)
+
+
+class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0081` R6, R7, R11. `POST /api/units/more-rounds` appends one block to the one unit
+    named, or answers 400 and writes nothing; `cos.mjs` reads the block, and only it."""
+
+    _answering_setup = AnsweringAQuestionOverHttp.asyncSetUp
+    asyncTearDown = AnsweringAQuestionOverHttp.asyncTearDown
+
+    async def asyncSetUp(self):
+        await self._answering_setup()
+        self.root = self.dir.parent.parent
+        self.first = self._stuck("0101_first-stuck", REVIEW_STUCK)
+        self.second = self._stuck("0102_second-stuck", REVIEW_STUCK)
+
+    def _stuck(self, name: str, review: str) -> Path:
+        """The state of `0073`: three rounds, each asking for changes, at the limit of 3."""
+        d = self.dir.parent / name
+        d.mkdir()
+        (d / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
+        for f in ("spec.md", "plan.md", "impl.md"):
+            (d / f).write_text("Status: accepted.\n", encoding="utf-8")
+        (d / "pr.md").write_text("PR: https://github.com/o/r/pull/3. Status: accepted.\n", encoding="utf-8")
+        (d / "review.md").write_text(review, encoding="utf-8")
+        return d
+
+    async def allow(self, **over):
+        return await self.client.post(
+            "/api/units/more-rounds", json={"cwd": self.cwd, "unit": self.first.name, "by": "", **over}
+        )
+
+    async def test_one_unit_is_given_a_round_and_the_other_still_needs_a_person(self):
+        from datetime import date
+        import os
+
+        from coscc import board, more_rounds
+
+        with mock.patch.dict(os.environ):
+            os.environ.pop("COS_REVIEW_ROUNDS", None)
+            first, second = self.first / "review.md", self.second / "review.md"
+            before, other = first.read_bytes(), second.read_bytes()
+            got = await self.allow()
+            self.assertEqual(got.status_code, 200, got.text)
+            self.assertEqual((got.json()["by"], got.json()["rounds"]), ("owner", 1))
+            after = first.read_bytes()
+            self.assertTrue(after.startswith(before))
+            added = more_rounds.block("owner", date.today().isoformat())
+            # `_append_to_answers` opens the section first when the file has none.
+            self.assertEqual(after[len(before):].decode("utf-8"), "\n## Answers\n" + added)
+            self.assertEqual(second.read_bytes(), other)
+            # The real `cos.mjs`, no `--repo`: past the limit, the gate stops at the repository.
+            allowed, said = await board.gate(str(self.root), self.first.name, "review")
+            self.assertFalse(allowed)
+            self.assertIn("no repository given", said)
+            self.assertNotIn("needs a person", said)
+            allowed, said = await board.gate(str(self.root), self.second.name, "review")
+            self.assertFalse(allowed)
+            self.assertIn("needs a person — review used 3 of 3", said)
+            self.assertIsNone(os.environ.get("COS_REVIEW_ROUNDS"))
+
+    async def test_a_second_press_is_refused_until_the_unit_is_out_of_rounds_again(self):
+        self.assertEqual((await self.allow()).status_code, 200)
+        before = (self.first / "review.md").read_bytes()
+        got = await self.allow()
+        self.assertEqual(got.status_code, 400)
+        self.assertIn("has not used all its review rounds", got.json()["error"])
+        self.assertEqual((self.first / "review.md").read_bytes(), before)
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        [row] = [u for u in board["units"] if u["name"] == self.first.name]
+        self.assertEqual((row["more_rounds"], row["rounds_granted"]), (False, 1))
+        # A fourth round asking for changes, written above `## Answers` as the runner writes
+        # it, reaches the new limit, and a press is taken again.
+        head, answers = before.decode("utf-8").split("\n## Answers\n", 1)
+        round4 = _ROUND_0028.format(n=4, v="changes-requested", f="- F1 [open] a")
+        (self.first / "review.md").write_text(f"{head}{round4}\n## Answers\n{answers}", encoding="utf-8")
+        board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
+        [row] = [u for u in board["units"] if u["name"] == self.first.name]
+        self.assertEqual((row["more_rounds"], row["rounds_granted"]), (True, 1))
+        self.assertEqual((await self.allow()).status_code, 200)
+        self.assertEqual((self.first / "review.md").read_text(encoding="utf-8").count("### More rounds"), 2)
+
+    async def test_a_refusal_is_400_and_writes_nothing(self):
+        not_yet = self._stuck("0103_not-yet", REVIEW_STUCK.split("\n## Round 2")[0])
+        files = [d / "review.md" for d in (self.first, self.second, not_yet)]
+        before = [f.read_bytes() for f in files]
+        for over in ({"unit": "0199_nothing"}, {"cwd": "/etc"}, {"unit": not_yet.name}, {"unit": ""}):
+            got = await self.allow(**over)
+            self.assertEqual(got.status_code, 400, over)
+        got = await self.client.post("/api/units/more-rounds", content=b"nope")
+        self.assertEqual(got.status_code, 400)
+        self.assertEqual([f.read_bytes() for f in files], before)
+
+
 REVIEW_CLAIMED = (
     "# Review: q\nAuthor: t. Status: changes-requested.\n"
     + _ROUND_0028.format(n=1, v="changes-requested", f="- F2 [open] b\n- F3 [open] c")

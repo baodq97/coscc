@@ -265,6 +265,69 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
         self.assertTrue(isinstance(after, ast.Expr) and isinstance(after.value, ast.Yield))
 
 
+class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
+    """`0081` R8. The unit's `more_rounds` is `cos.mjs`'s; the handler calls
+    `SERVICE.more_rounds` and never a step."""
+
+    def test_the_more_rounds_handler_calls_the_service_and_no_step(self):
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+        [handler] = [
+            n for n in _state_class(tree).body
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "allow_more_rounds"
+        ]
+        text = "\n".join(ast.unparse(s) for s in handler.body[1:])  # past the docstring
+        self.assertIn("SERVICE.more_rounds(", text)
+        for forbidden in ("run_step", "run_next", "SERVICE.integrate"):
+            self.assertNotIn(forbidden, text)
+        raised = next(
+            i for i, stmt in enumerate(handler.body)
+            if isinstance(stmt, ast.Assign) and "granting_round" in [x for t in stmt.targets for x in _self_names(t)]
+        )
+        after = handler.body[raised + 1]
+        self.assertTrue(isinstance(after, ast.Expr) and isinstance(after.value, ast.Yield))
+
+    def test_more_rounds_is_copied_onto_the_unit(self):
+        """The expression `_load_board` gives `Unit(more_rounds=…)`, run on a real board read:
+        a unit `cos.mjs` calls out of rounds, and one it does not."""
+        import asyncio
+        import os
+        import tempfile
+        from unittest import mock
+
+        from coscc import board
+
+        [kw] = [
+            k for node in ast.walk(ast.parse(SOURCE.read_text(encoding="utf-8")))
+            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "Unit"
+            for k in node.keywords if k.arg == "more_rounds"
+        ]
+        code = compile(ast.Expression(kw.value), "state.py", "eval")
+
+        def copy(u: dict) -> object:
+            return eval(code, {"bool": bool, "u": u})
+
+        review = "# Review: q\nAuthor: t. Status: changes-requested.\n" + "".join(
+            f"\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: changes-requested.\n\n### Findings\n\n- F1 [open] a\n"
+            for n in (1, 2, 3)
+        )
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ):
+            os.environ.pop("COS_REVIEW_ROUNDS", None)
+            for name, text in (("0001_stuck", review), ("0002_fine", review.split("\n## Round 2")[0])):
+                unit = Path(d) / ".cos" / name
+                unit.mkdir(parents=True)
+                (unit / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
+                for f in ("spec.md", "plan.md", "impl.md"):
+                    (unit / f).write_text("Status: accepted.\n", encoding="utf-8")
+                (unit / "pr.md").write_text("PR: https://github.com/o/r/pull/3. Status: accepted.\n", encoding="utf-8")
+                (unit / "review.md").write_text(text, encoding="utf-8")
+            got = {u["name"]: u for u in asyncio.run(board.read(d))["units"]}
+        self.assertIs(copy(got["0001_stuck"]), True)
+        self.assertIs(copy(got["0002_fine"]), False)
+        self.assertIs(copy({}), False)
+        from coscc.state_views import Unit
+        self.assertIs(Unit().more_rounds, False)
+
+
 class AnAskOutlivesItsWaiter(unittest.TestCase):
     """`0056` review round 1, F2. A navigation cancels the `load_next` an arrival chained; the
     `cos.mjs next` it was waiting on must not be cancelled with it — its `node` and `gh` would

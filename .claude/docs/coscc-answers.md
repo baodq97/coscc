@@ -1,6 +1,6 @@
 # Routes that write into a unit's artifacts
 
-Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or `/hold`, `POST /api/board/run`'s `rerun`, `coscc/hold.py`, `coscc/precedent.py`, `Service._append_answers` or `_append_to_answers`, `cos.mjs rerun`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold` or `/more-rounds`, `POST /api/board/run`'s `rerun`, `coscc/hold.py`, `coscc/precedent.py`, `Service._append_answers` or `_append_to_answers`, `cos.mjs rerun`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
 - **`POST /api/units/answer` writes a stranger's words into a paid prompt.** Since `0016`
   it appends an answer to an artifact, and the next stage embeds that file. Since `0082` the
@@ -92,6 +92,14 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or 
   `impl`'s `prepare` and `pr`'s `gh pr list`, a stretch whose length is unmeasured. A step
   in that phase is not on `/api/board/steps` and has no *Stop*, so the only thing to do is
   wait; the refusal says so and says since when.
+- **`POST /api/units/more-rounds` opens a paid review round.** Since `0081`. On a unit
+  `cos.mjs` marks `moreRounds`, it appends one `### More rounds` block (`Decided by: owner.
+  Date: …. Via: product.`, `Rounds: 1`) under `review.md ## Answers` through
+  `_append_to_answers`, and `cos.mjs` adds its rounds to that unit's review limit. It writes
+  no run-log row, runs no step and does not wake the autopilot; the only trace is the block.
+  A review the app runs keeps it, as it keeps every `## Answers` (the runner's guard above,
+  `with_answers`); a review at a terminal or in a second app that
+  rewrites `review.md` without it loses it, and the unit reads as out of rounds again.
 - **`POST /api/board/run` with `rerun: true` makes every later artifact stale.** Since
   `0054`. For a stage `cos.mjs rerun <unit>` offers — `intent`, `spec`, `spike`, `plan` or
   `pr`, accepted, on a unit neither finished, held nor closed, its gate open —

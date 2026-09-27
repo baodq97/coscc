@@ -357,6 +357,23 @@ def _hold_panel() -> rx.Component:
     )
 
 
+def _rounds_panel() -> rx.Component:
+    """`0081` R8. Shown only when `cos.mjs` says the unit used its review rounds with findings
+    still open. One sentence and one button; who may press it and what it costs are in
+    `.claude/docs/not-built.md` (S2), and no name is asked (S7)."""
+    return s.panel(
+        s.eyebrow("REVIEW ROUNDS"),
+        s.text("Review used all its rounds and findings are still open.", size="2", margin_top="8px"),
+        rx.button(
+            rx.icon("rotate-ccw", size=14), "Allow one more review round",
+            id="rounds-allow", on_click=P.allow_more_rounds,
+            loading=P.granting_round, disabled=P.granting_round,
+            size="2", variant="soft", margin_top="8px",
+        ),
+        width="100%", id="rounds-panel",
+    )
+
+
 def _round_row(r: rx.Var[Round]) -> rx.Component:
     """`0021` R7, R8. One review round: on the PR with its link, or not and a button."""
     return s.panel(
@@ -591,6 +608,11 @@ def _detail_dialog() -> rx.Component:
                         # `0100` R7. What the board last heard from CI, and when.
                         rx.cond(P.current_unit.ci_line != "",
                                 s.text(P.current_unit.ci_line, id="unit-ci-line", size="2")),
+                        # `0081` R8. Under the CI line, so the button stays in view on a
+                        # phone; the hold panel follows it here rather than below, so the
+                        # page holds one `#hold-panel` at a time.
+                        rx.cond(P.current_unit.more_rounds,
+                                rx.fragment(_rounds_panel(), _hold_panel())),
                         # `0054` review F2. Below the CI line, which belongs to the next step.
                         rx.cond(~P.unit_dropped & P.recording & (P.rerun_stages.length() > 0),
                                 _rerun_panel()),
@@ -599,7 +621,7 @@ def _detail_dialog() -> rx.Component:
                         _unit_cost(),
                         # Kept for a dropped unit: its one move (`paused`, `cos.mjs`
                         # `HOLD_MOVES`) is the board's way back (`spec.md ## Answers, câu 1`).
-                        _hold_panel(),
+                        rx.cond(~P.current_unit.more_rounds, _hold_panel()),
                         rx.cond(
                             P.log_here,
                             s.panel(

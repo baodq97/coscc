@@ -7,8 +7,9 @@ Read this before adding a route, a button or a grant, and before copying this ha
   passes with nothing open. But the one saying it is a separate agent session, not a
   person, so `accepted` is still an agent's word about an agent's work. The chair is in
   front of the door now, and an agent sits in it — nobody who is not an agent approves
-  anything. The loop waits for a person in two places: when `COS_REVIEW_ROUNDS` rounds have
-  asked for changes and findings are still open; and, since `0028`, when a review round
+  anything. The loop waits for a person in two places: when the unit's rounds —
+  `COS_REVIEW_ROUNDS` plus any a person allowed it since `0081` — have asked for changes
+  and findings are still open; and, since `0028`, when a review round
   ends `Verdict: needs-person` — every finding left is one `impl` listed under
   `impl.md ## Needs a person` and the review accepted as needing one. That second stop is
   an agent's claim confirmed by another agent, not proof that the finding could not be
@@ -104,6 +105,17 @@ Read this before adding a route, a button or a grant, and before copying this ha
   refused while a step or an
   integration of that unit runs — but only one this process started; a chat, a terminal or
   a second app is not seen.
+- **Allowing one more review round is not an approval, and it starts nothing.** Since
+  `0081` a unit whose review used all its rounds with findings still open offers *Allow one
+  more review round* on its Overview (`POST /api/units/more-rounds`). Whoever holds the
+  password or a live session can press it, as often as the unit runs out again. Each press
+  opens one more `review` round, and with it maybe one more `impl` round, and both are paid;
+  with the workspace's autopilot on, its next 5-minute pass runs them with nobody pressing
+  anything, and nothing caps how many presses there are. The block's `Decided by:` is
+  `owner`, or any name the request carries. `cos.mjs` reads the block, under
+  `review.md ## Answers`, to raise that unit's limit and open its `review` gate; the `ship`
+  gate reads nothing of it, so an open finding still blocks the merge. A press is refused
+  while a step of that unit runs — but only one this process started.
 - **An update is not an approval, and anyone holding the password can press it.** Since
   `0068` an install made by `install.sh` updates itself from the Board
   (`POST /api/update/apply`, `/cancel`, `/build-local`). Applying can stop every running

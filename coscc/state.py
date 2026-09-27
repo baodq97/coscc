@@ -692,6 +692,7 @@ class StudioState(
                     **_outcome_fields(u.get("outcome_label")),
                     live=_activities(u["name"], self._running_read),
                     **_hold_fields(u),
+                    more_rounds=bool(u.get("more_rounds")),
                     shortlist_rank=int((u.get("backlog") or {}).get("rank") or 0),
                     relations_text=_relations_text((u.get("backlog") or {}).get("relations")),
                     answerable=bool(u.get("answerable", True)),

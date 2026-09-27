@@ -1,5 +1,5 @@
 """What is written into a unit from outside a step: review rounds posted to the pull
-request, transitions, answers, outcomes and holds.
+request, transitions, answers, outcomes, holds and review rounds allowed (`0081`).
 
 Split from `coscc/service.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
 """
@@ -16,6 +16,7 @@ from coscc import autopilot, backlog
 from coscc import board as board_reader
 from coscc import gitops
 from coscc import hold as hold_rules
+from coscc import more_rounds as more_rounds_rules
 from coscc import policy
 from coscc import prcomment, prscope, prsync
 from coscc import precedent as precedent_mod
@@ -748,3 +749,41 @@ class AnswersMixin:
             if mark is not None:
                 self._release(key, unit, mark)
         return {"unit": unit, "from": from_, "to": to, "reason": reason, "by": by, "date": today, "effects": effects}
+
+    async def more_rounds(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
+        """`0081` R6. A person allows one more review round to a unit that used all of its.
+
+        Appends one `### More rounds` block under `review.md ## Answers` — the way `hold`
+        appends, never rewriting a byte above it. Whether the unit is out of rounds is
+        `cos.mjs`'s `moreRounds`, read off the board; nothing here compares rounds with a
+        limit. Not an approval, and it starts nothing: no step, no session, no run-log row,
+        and the autopilot is not woken. `by` is whatever name the caller sent, `owner` when
+        none. Refused while a step or an integration of this unit runs in this process; it
+        holds that same mark itself while it writes.
+        """
+        self._workspace_or_refuse(cwd)
+        if not unit:
+            raise Invalid("name a work unit")
+        by = str(by or "").strip() or OWNER
+        directory = self._unit_dir(cwd, unit)
+        key = self._journal_key(cwd)
+        # No `await` between the check and the take, as in `hold`.
+        held = self._active.get((key, unit))
+        mark = self._take(key, unit, "more-rounds") if held is None else None
+        try:
+            try:
+                data = await board_reader.read(self._units_root(cwd))
+            except Unavailable as e:
+                raise Invalid(str(e)) from e
+            found = next((u for u in data["units"] if u["name"] == unit), None)
+            said = more_rounds_rules.refusal(found, by, steps_mod.describe(unit, held) if held else "")
+            if said:
+                raise Invalid(said)
+            today = date.today().isoformat()
+            await self._append_to_answers(
+                directory / "review.md", more_rounds_rules.block(by, today), "a round"
+            )
+        finally:
+            if mark is not None:
+                self._release(key, unit, mark)
+        return {"unit": unit, "by": by, "date": today, "rounds": 1}
