@@ -46,4 +46,6 @@ required checks — including the commit recording the pass — so the merge may
 refused with `2 of 2 required status checks are expected`: wait. Since `0112` the gate is
 closed while the pull request is behind the `origin/main` this repository knows, and a
 merge refused anyway leaves a `draft` `ship.md` with `Round:` and a `Refused:` line, which
-a later passing round goes past.
+a later passing round goes past. Since `0067` so does a refusal as not up to date once the
+pull request's head is a clean rebase of the reviewed commit and CI is green on it: `next`
+offers `ship` again with no round. Any other refusal still stops until a later round.
