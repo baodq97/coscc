@@ -2,7 +2,7 @@
 
 The chain the spec's outcome names: the stages offered, a rerun of `pr` with a note, a `pr`
 session that ends `done`, then `cos.mjs next` naming the review and the `ship` gate closed.
-`cos.mjs` is the real one, asked through `coscc/board.py` as the app asks it; only the
+`cos.mjs` is the real one, asked through `coscc/units/board.py` as the app asks it; only the
 worktree, the pull-request lookup, the sync onto GitHub and `Runner` itself stand in.
 """
 
@@ -14,14 +14,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import board as board_reader
+from coscc.units import board as board_reader
 from coscc.github import integrate
 from coscc.git import worktrees
 from coscc import service as service_mod
 from coscc.config import Config
 from coscc.runner import RunError
 from coscc.service import Invalid, Service
-from coscc.sessions import Sessions
+from coscc.agent.sessions import Sessions
 
 SHA = "a" * 40
 PR_MD = "# PR: x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân cũ\n"

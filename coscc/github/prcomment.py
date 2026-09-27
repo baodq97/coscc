@@ -31,9 +31,9 @@ import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from coscc.harness import child_env
+from coscc.agent.harness import child_env
 
-# Chosen, not measured: the same figure as `coscc/board.py` `GATE_TIMEOUT`, the other place
+# Chosen, not measured: the same figure as `coscc/units/board.py` `GATE_TIMEOUT`, the other place
 # this app waits on `gh` talking to GitHub.
 TIMEOUT = 30.0
 

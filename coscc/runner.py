@@ -14,7 +14,7 @@ holds the pen for `.cos/`, and the session only returns text.**
 
 The rules a stage follows come from **this app's own** skills, never the workspace's, for
 the same reason `board.py` runs its own `cos.mjs`: a workspace is a repository somebody
-cloned, and its files are that repository's to write. `coscc/harness.py` is the only thing
+cloned, and its files are that repository's to write. `coscc/agent/harness.py` is the only thing
 that answers where those skills are, and a step whose rules it cannot find does not run.
 """
 
@@ -27,12 +27,12 @@ from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
-from coscc import instructions, steps
+from coscc.agent import instructions, steps
 from coscc.github.integrate import check_started_by
-from coscc import sessions as sessions_mod
+from coscc.agent import sessions as sessions_mod
 from coscc.runlog.journal import Journal
-from coscc.policy import beyond_reading, grant_for_step, is_prose_stage
-from coscc.sessions import Refused, Sessions
+from coscc.agent.policy import beyond_reading, grant_for_step, is_prose_stage
+from coscc.agent.sessions import Refused, Sessions
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
 # `coscc.runner.<name>` still resolves; a patch reaches only the module that looks it up.
@@ -272,7 +272,7 @@ class Runner:
         `workspace` stays the membership question and the journal's subject. Unset, the
         two are the same directory, as they were before.
 
-        `model` is the one `coscc/models.py` resolved for this stage, and `model_source`
+        `model` is the one `coscc/agent/models.py` resolved for this stage, and `model_source`
         says where it came from. Both go into the `start` record, which is where a reader
         checks what a step ran on. `None` leaves the session on `COS_MODEL`.
 

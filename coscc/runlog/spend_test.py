@@ -20,7 +20,7 @@ from coscc.runlog import spend
 from coscc.config import Config
 from coscc.data import DB_FILENAME
 from coscc.service import Service
-from coscc.sessions import Sessions
+from coscc.agent.sessions import Sessions
 
 REPO = str(Path(__file__).resolve().parents[2])
 

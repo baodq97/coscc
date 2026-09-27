@@ -1,6 +1,6 @@
 # Routes that write into a unit's artifacts
 
-Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold` or `/more-rounds`, `POST /api/board/run`'s `rerun`, `coscc/hold.py`, `coscc/precedent.py`, `Service._append_answers` or `_append_to_answers`, `cos.mjs rerun`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold` or `/more-rounds`, `POST /api/board/run`'s `rerun`, `coscc/units/hold.py`, `coscc/agent/precedent.py`, `Service._append_answers` or `_append_to_answers`, `cos.mjs rerun`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
 - **`POST /api/units/answer` writes a stranger's words into a paid prompt.** Since `0016`
   it appends an answer to an artifact, and the next stage embeds that file. Since `0082` the

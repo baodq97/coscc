@@ -1,12 +1,12 @@
 # Settings and the backlog
 
-Read this before changing `POST /api/settings/*`, `coscc/models.py`, `POST /api/backlog/*` or `coscc/backlog.py`. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST /api/backlog/*` or `coscc/units/backlog.py`. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
 - **`POST /api/settings/models` decides what every step spends, for whoever holds the
   password.** Since
   the store's `0004_no-setting-says-which-model-runs-a-stage` each stage, and chat, runs
   on the model Settings names: an override in the `prefs` table (`model:<name>`), else
-  `coscc/models.json`, else `COS_MODEL`. Anyone holding the password can move `review` to
+  `coscc/agent/models.json`, else `COS_MODEL`. Anyone holding the password can move `review` to
   a weak model or every stage to a dear one, `0.0.0.0` by default. The trace is a
   `setting` record in the run log (workspace `""`, with `old` and `new` — it shows on no
   workspace's Activity) and the `override` badge on Settings. A model id is not checked
@@ -14,7 +14,7 @@ Read this before changing `POST /api/settings/*`, `coscc/models.py`, `POST /api/
   had `COS_MODEL` set before this lost it for every stage: it now answers only chat.
   Since `0033` every row also has an effort (`effort:<name>`, `POST /api/settings/efforts`,
   the same `setting` trace), and each stage after `plan` has a `<stage>:novel` row used when
-  the plan's label is `novel`: declared, forced by a file in `coscc/labels.py`
+  the plan's label is `novel`: declared, forced by a file in `coscc/agent/labels.py`
   `SECURITY_SURFACE`, missing (every plan written before `0033`), or escalated because an
   earlier `impl` of the unit stopped at `max_turns`. So a routine `impl` that runs out of
   turns reruns on the dearer row with nobody pressing anything different. Since `0062`

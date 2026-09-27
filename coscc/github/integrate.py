@@ -10,7 +10,7 @@ Two roads:
 - **mechanical** (`behind`): `gh pr update-branch --rebase`, then the local branch follows
   the new head. No session, no quota (R4).
 - **agent** (`conflicting`, `red-after-integration`): Gebo, a session under the
-  `integrate` grant in `coscc/policy.py`, which may push only with a lease bound to the
+  `integrate` grant in `coscc/agent/policy.py`, which may push only with a lease bound to the
   head it began at (R5, R6). Since `0052` also a `behind` unit whose `update-branch`
   exited non-zero: the press agreed to a Gebo session when the mechanical road cannot go
   (`.cos/0052_*/spec.md ## Answers, câu 1`).
@@ -29,7 +29,7 @@ import re
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from coscc.harness import child_env
+from coscc.agent.harness import child_env
 
 STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown")
 # R3: the three states with something to integrate. Since `0052` `current` carries a button

@@ -12,7 +12,7 @@ from unittest import mock
 from coscc.config import Config
 from coscc.service_common import Invalid
 from coscc.service import Service
-from coscc.sessions import Sessions
+from coscc.agent.sessions import Sessions
 from coscc.service_test import create_sync
 
 

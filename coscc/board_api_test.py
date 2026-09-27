@@ -27,7 +27,7 @@ def seed_store(data_dir, workspace=REPO) -> Path:
     test that wants units to look at has to put them where the product now keeps them.
     Copied rather than pointed at, because these tests drive routes that could write.
 
-    The fixture stays this repository's own `.cos/` for the reason `coscc/board_test.py:1-7`
+    The fixture stays this repository's own `.cos/` for the reason `coscc/units/board_test.py:1-7`
     gives: what breaks here is the *agreement* with `cos.mjs`, and a hand-built fixture
     keeps passing after the two drift apart.
     """
@@ -109,7 +109,7 @@ class BoardOverHttp(unittest.IsolatedAsyncioTestCase):
         was what granted `git` and `gh`. Now the same grant and the same warning show
         before the button whichever mode is set.
         """
-        from coscc.policy import grant_for
+        from coscc.agent.policy import grant_for
 
         def pr_row(body: dict, name: str) -> dict:
             unit = next(u for u in body["units"] if u["name"] == name)

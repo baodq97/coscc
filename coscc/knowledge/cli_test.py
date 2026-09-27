@@ -61,7 +61,7 @@ class Gather(Fixture):
     def test_without_yes_it_only_says_what_it_would_spend(self):
         self.a_source()
         with mock.patch.object(gather, "gather", side_effect=AssertionError("ran")), \
-                mock.patch("coscc.sessions.Sessions", side_effect=AssertionError("a session")):
+                mock.patch("coscc.agent.sessions.Sessions", side_effect=AssertionError("a session")):
             self.assertEqual(self.run_cli("gather", "--all"), 0)
         self.assertIn("1 source(s) in 1 batch(es); at most $2.00", self.said[0])
         self.assertIn("nothing was run: add --yes", self.said[-1])
@@ -99,7 +99,7 @@ class Gather(Fixture):
     def test_without_yes_an_unfinished_all_says_what_is_left(self):
         path = self.unfinished()
         with mock.patch.object(gather, "gather", side_effect=AssertionError("ran")), \
-                mock.patch("coscc.sessions.Sessions", side_effect=AssertionError("a session")):
+                mock.patch("coscc.agent.sessions.Sessions", side_effect=AssertionError("a session")):
             self.assertEqual(self.run_cli("gather", "--all"), 0)
         self.assertEqual(self.said[0], f"an unfinished --all ({path}): 1 source(s) passed; 1 batch(es) left, at most $2.00")
         self.assertIn("nothing was run: add --yes", self.said[-1])
@@ -109,7 +109,7 @@ class Gather(Fixture):
         for argv in (["gather"], ["gather", "--yes"]):
             with self.subTest(argv=argv):
                 with mock.patch.object(gather, "gather", side_effect=AssertionError("ran")), \
-                        mock.patch("coscc.sessions.Sessions", side_effect=AssertionError("a session")):
+                        mock.patch("coscc.agent.sessions.Sessions", side_effect=AssertionError("a session")):
                     self.assertEqual(self.run_cli(*argv), 2)
                 self.assertIn(str(path), self.said[-1])
 
@@ -272,7 +272,7 @@ class OnlyATerminalReachesIt(unittest.TestCase):
         # `0095`: `Service` is spread over `service.py` and the `service_*.py` it was split into.
         split = [f"coscc/{p.name}" for p in sorted((REPO / "coscc").glob("service_*.py")) if not p.name.endswith("_test.py")]
         self.assertTrue(split)
-        for name in ("coscc/api.py", "coscc/autopilot.py", "coscc/service.py", *split):
+        for name in ("coscc/api.py", "coscc/units/autopilot.py", "coscc/service.py", *split):
             with self.subTest(module=name):
                 self.assertFalse(self.forbidden(REPO / name))
 

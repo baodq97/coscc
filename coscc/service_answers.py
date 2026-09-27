@@ -12,20 +12,20 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from coscc import autopilot, backlog
-from coscc import board as board_reader
+from coscc.units import autopilot, backlog
+from coscc.units import board as board_reader
 from coscc.git import gitops
-from coscc import hold as hold_rules
-from coscc import more_rounds as more_rounds_rules
-from coscc import policy
+from coscc.units import hold as hold_rules
+from coscc.units import more_rounds as more_rounds_rules
+from coscc.agent import policy
 from coscc.github import prcomment, prscope, prsync
-from coscc import precedent as precedent_mod
-from coscc.board import Unavailable
+from coscc.agent import precedent as precedent_mod
+from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
-from coscc.history import UNKNOWN, BadTransition
+from coscc.units.history import UNKNOWN, BadTransition
 from coscc.runlog.journal import BadRecord, Busy
 from coscc.runner import STATUS_RE
-from coscc import steps as steps_mod
+from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate
@@ -216,7 +216,7 @@ class AnswersMixin:
     async def create_unit(self, cwd: str, slug: str, brief: str = "") -> dict[str, Any]:
         """`0014` R1. Start a work unit, in the product's store rather than the repository.
 
-        The number and the slug grammar are `cos.mjs`'s, through `coscc/units.py`. Nothing
+        The number and the slug grammar are `cos.mjs`'s, through `coscc/units/__init__.py`. Nothing
         here is a second opinion about either — `.claude/CLAUDE.md` says that script is the
         one place the loop is defined.
 

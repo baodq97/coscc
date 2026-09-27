@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
-from coscc import sessions as reader
+from coscc.agent import sessions as reader
 from coscc.runlog.journal import BadRecord, Busy
-from coscc import models
+from coscc.agent import models
 from coscc.service_common import Invalid
 
 

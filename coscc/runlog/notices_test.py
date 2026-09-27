@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from coscc import autopilot
+from coscc.units import autopilot
 from coscc.runlog import notices
 
 WS = "/home/someone/work/proj"

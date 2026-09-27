@@ -2,7 +2,7 @@
 
 `0019_a-failed-step-destroys-the-work-that-succeeded` plan step 3 (`spec.md ## Answers,
 câu 2`). Reads one real session transcript, assembles it with the same
-`coscc.sessions.transcript_excerpt` the runner uses (no limit), and for every `Bash`
+`coscc.agent.sessions.transcript_excerpt` the runner uses (no limit), and for every `Bash`
 call whose command matches `--match` prints how far from the *end* of that assembled
 string its output starts, in characters. The largest such distance is the smallest
 `runner.ATTEMPT_EXCERPT` that would have kept every one of those outputs.
@@ -22,7 +22,7 @@ import sys
 
 import claude_agent_sdk as sdk
 
-from coscc.sessions import _tool_result_text, transcript_excerpt
+from coscc.agent.sessions import _tool_result_text, transcript_excerpt
 
 
 def main() -> int:

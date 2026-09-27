@@ -19,7 +19,7 @@ from unittest import mock
 
 import httpx
 
-from coscc import board as board_reader
+from coscc.units import board as board_reader
 from coscc.git import worktrees
 from coscc.api import build
 from coscc.config import Config

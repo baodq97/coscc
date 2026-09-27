@@ -173,7 +173,7 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
 # --- branches ----------------------------------------------------------------
 #
 # `0014` R5. This is the first thing in this app that **writes** to somebody else's git,
-# and it is not covered by `coscc/policy.py`: that table says what a *session* may do, and
+# and it is not covered by `coscc/agent/policy.py`: that table says what a *session* may do, and
 # these run with the app process's own authority. So the limit has to live here, and it is
 # a short list on purpose.
 #
@@ -205,7 +205,7 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
 #
 # The app may **not**: push, merge, commit, move `main` to another commit, or delete any
 # branch but that one. Those are a step's business — the `pr` grant carries `git`
-# and `gh` and a warning that says what that reaches (`coscc/policy.py:96-99`) — or nobody's.
+# and `gh` and a warning that says what that reaches (`coscc/agent/policy.py:96-99`) — or nobody's.
 #
 # `plan.md` Risk 1 names the weakness honestly: this is a hand-written list, not a
 # mechanism, in the same way `policy.check_command` is. What makes it narrow is that the

@@ -13,7 +13,7 @@ from unittest import mock
 from coscc.config import Config
 from coscc.service_common import Invalid
 from coscc.service import Service
-from coscc.sessions import Live, Sessions
+from coscc.agent.sessions import Live, Sessions
 
 
 class PullStopsAtALiveSession(unittest.TestCase):

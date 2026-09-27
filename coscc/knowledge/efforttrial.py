@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import hashlib
 
-from coscc import labels
+from coscc.agent import labels
 
 # The one pair under trial (spec Design, part 3). Not a row of `models.json`: `models.table`
 # reports any key it does not know there. Spec C1 leaves `high` against `low` to the originator.

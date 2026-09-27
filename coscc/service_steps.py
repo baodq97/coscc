@@ -12,21 +12,22 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from coscc import autopilot, backlog
-from coscc import board as board_reader
+from coscc.units import autopilot, backlog
+from coscc.units import board as board_reader
 from coscc.knowledge import efforttrial
 from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
-from coscc import harness, knowledge
+from coscc import knowledge
+from coscc.agent import harness
 from coscc.github import integrate
-from coscc import planmap, priorfindings, retake
-from coscc.board import Unavailable
+from coscc.units import planmap, priorfindings, retake
+from coscc.units.board import Unavailable
 from coscc.data import Data, now as _now
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord, Busy, Journal
-from coscc.policy import grant_for
+from coscc.agent.policy import grant_for
 from coscc.runner import RunError, Runner, answers_section, describe_attempt
-from coscc import steps as steps_mod
+from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate

@@ -14,7 +14,7 @@ from unittest import mock
 from coscc.config import Config
 from coscc.service_common import STAGE_FILES, Invalid
 from coscc.service import Service
-from coscc.sessions import Sessions
+from coscc.agent.sessions import Sessions
 from coscc.service_test import create_sync
 
 
@@ -95,7 +95,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
             return asyncio.run(self.service.post_review_comment(str(self.repo), self.unit, n))
 
     def _run_review(self, gh):
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
         from coscc.github import prcomment
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
@@ -383,7 +383,7 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertEqual(self.board_unit()["outcome"]["invalid"], 0)
 
     def test_the_block_is_recorded_as_a_person_in_the_history(self):
-        from coscc.history import History
+        from coscc.units.history import History
 
         self.record()
         rows = History(str(Path(self.cwd).parent), self.data_dir).outputs(

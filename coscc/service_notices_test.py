@@ -20,7 +20,7 @@ from coscc.runlog import notices
 from coscc.config import Config
 from coscc.runlog.journal import BELL, Journal
 from coscc.service import Invalid, Service
-from coscc.sessions import Sessions
+from coscc.agent.sessions import Sessions
 
 BEAT = 0.3
 

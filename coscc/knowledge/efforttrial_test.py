@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from coscc import models
+from coscc.agent import models
 from coscc.knowledge import efforttrial
 
 

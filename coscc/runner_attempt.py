@@ -11,8 +11,8 @@ from typing import Any
 import claude_agent_sdk as sdk
 
 from coscc.git import gitops
-from coscc import sessions as sessions_mod
-from coscc.policy import Grant, decide
+from coscc.agent import sessions as sessions_mod
+from coscc.agent.policy import Grant, decide
 from coscc.runner_reply import (
     ATTEMPT_EXCERPT,
     RunError,

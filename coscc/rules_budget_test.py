@@ -1,7 +1,7 @@
 """`0094` R6, R7, R10, R11: what every session carries of this repository's rules stays small.
 
 `.claude/CLAUDE.md` reaches every session in a checkout, and each rule under
-`.claude/rules/` at least as a line of contents (`coscc/instructions.py`). The ceilings are
+`.claude/rules/` at least as a line of contents (`coscc/agent/instructions.py`). The ceilings are
 the spec's own choice, not a measurement (`.cos/0094_*/spec.md` C9). A unit that meets one
 moves detail down into `.claude/docs/`, which nothing loads, and points to it — or changes
 the ceiling here and says why. Red here is the point (C8): the files grew quietly until now.
@@ -13,7 +13,7 @@ import re
 import unittest
 from pathlib import Path
 
-from coscc.instructions import scoped_patterns
+from coscc.agent.instructions import scoped_patterns
 
 REPO = Path(__file__).resolve().parents[1]
 CLAUDE = REPO / ".claude" / "CLAUDE.md"
@@ -73,7 +73,7 @@ class TheScopes(unittest.TestCase):
 class TheUiStandardFollowsTheSplit(unittest.TestCase):
     """`0095`: `screens.py`, `state.py` and `service.py` were split into modules of their own.
     A module the UI standard does not name is code it is not loaded for, and a unit that
-    changes only that module is not a UI unit to `coscc/board.py`."""
+    changes only that module is not a UI unit to `coscc/units/board.py`."""
 
     def test_every_module_they_were_split_into_is_named(self):
         named = set(scoped_patterns(UI.read_text(encoding="utf-8")))

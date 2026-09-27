@@ -18,7 +18,7 @@ from coscc.git import fetches, worktrees
 from coscc.config import Config
 from coscc.service_common import Invalid, describe_base, step_cwd
 from coscc.service import Service
-from coscc.sessions import Sessions
+from coscc.agent.sessions import Sessions
 from coscc.service_test import create_sync
 
 
@@ -511,7 +511,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.assertNotIn("questions", [r["kind"] for r in self.records()])
 
     def _after_end_with(self, why: str, stage: str = "ship") -> list[dict]:
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
 
         async def read(root, timeout=None):
             return {"units": [{"name": self.unit, "why": why, "questions": []}]}
@@ -533,7 +533,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.assertEqual(self._after_end_with("finished", stage="review"), [])
 
     def test_a_board_read_that_fails_changes_nothing_about_the_step(self):
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
 
         real = board_reader.read
 
@@ -894,7 +894,7 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
 
     def test_the_gate_is_told_which_repository_the_unit_lives_beside(self):
         """`0015`: the store has no git, so `review` and `ship` read the workspace's."""
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
 
         seen = {}
 
@@ -947,7 +947,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
             yield ("done", {"session_id": "sess-i", "cost": {}, "terminal_reason": self.test.terminal})
 
     def _run(self):
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, "open: impl may proceed"
@@ -963,7 +963,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         return journal.records(self.service._journal_key(str(self.repo)), kind="start")
 
     def test_a_plan_naming_the_security_surface_runs_as_novel(self):
-        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/policy.py`"), encoding="utf-8")
+        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/agent/policy.py`"), encoding="utf-8")
         self._run()
         start = self._starts()[-1]
         self.assertEqual((start["label_declared"], start["label"], start["label_source"]),
@@ -974,7 +974,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
 
     def test_a_novel_impl_gets_the_novel_ceilings(self):
         """`0062` R1 and R7, down the board's whole road."""
-        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/policy.py`"), encoding="utf-8")
+        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/agent/policy.py`"), encoding="utf-8")
         self._run()
         start = self._starts()[-1]
         self.assertEqual((start["label"], start["label_source"]), ("novel", "forced"))
@@ -983,7 +983,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.assertEqual(start["max_turns"], 250)
 
     def test_a_routine_run_escalates_after_a_max_turns_stop_and_counts_its_runs(self):
-        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/board.py`"), encoding="utf-8")
+        (self.dir / "plan.md").write_text(self.PLAN.format(path="`coscc/units/board.py`"), encoding="utf-8")
         self.terminal = "max_turns"
         self._run()
         self.terminal = None
@@ -1005,8 +1005,8 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
     counts its calls and answers `self.action`, or raises `self.next_fails`."""
 
     PLAN = AnImplStepRunsUnderThePlansLabel.PLAN
-    ROUTINE = "`coscc/board.py`"
-    SECURITY = "`coscc/policy.py`"
+    ROUTINE = "`coscc/units/board.py`"
+    SECURITY = "`coscc/agent/policy.py`"
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1042,7 +1042,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
             (self.dir / "plan.md").write_text(self.PLAN.format(path=plan), encoding="utf-8")
 
     def _run(self, stage: str = "impl", arm: str = "trial"):
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
         from coscc.knowledge import efforttrial
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
@@ -1067,7 +1067,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         return journal.records(self.service._journal_key(str(self.repo)), kind="start")
 
     def _prefs(self):
-        from coscc import models
+        from coscc.agent import models
         from coscc.data import Data
 
         data = Data(self.service.config.data_dir)
@@ -1182,7 +1182,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         self.assertIs(self._starts()[1]["ci_red"], False)
 
     def test_next_failing_never_refuses_the_step(self):
-        from coscc.board import Unavailable
+        from coscc.units.board import Unavailable
 
         self._unit(effort_trial=True)
         self._run()
@@ -1235,7 +1235,7 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
                 self._next(unit=unit)
 
     def test_next_reads_the_same_checkout_the_gate_reads(self):
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
 
         seen = {}
 
@@ -1257,7 +1257,7 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
 
     def test_waiting_is_copied_and_absent_reads_as_none(self):
         """`0028`. The findings a person is awaited on reach the page as `cos.mjs` named them."""
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
 
         answers = [
             {"unit": "u", "stage": "", "action": "needs a person — F3: x", "blocked": True, "waiting": ["F3"]},
@@ -1278,7 +1278,7 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
     def test_dropped_is_copied_and_absent_reads_as_none(self):
         """`0027` review F1. The ids the last round left out reach the page as `cos.mjs`
         listed them, not inside `action`."""
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
 
         answers = [
             {"unit": "u", "stage": "review", "action": "a", "blocked": True, "dropped": ["F2", "F3"]},
@@ -1454,7 +1454,7 @@ class APrStepIsHandedItsPullRequest(unittest.TestCase):
             yield ("done", {"session_id": "sess-41", "cost": {}})
 
     def _run_pr(self, stdout: str, code: int = 0) -> tuple[str, dict, str]:
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
         from coscc.github.integrate_test import fake_gh, on_path
         from coscc.runlog.journal import Journal
 
@@ -1575,7 +1575,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             return [c for c in self.calls if c[0][:2] == ["pr", sub] and (json_ is None or c[0][-1] == json_)]
 
     def _run(self, text, gh, stage="pr", hold=False, prepare=None):
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
         from coscc.github import integrate, prcomment
 
         unit = self._typed_unit()
@@ -1749,7 +1749,7 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
         knowledge.save(knowledge.path_of(str(self.data)) / knowledge.STORE, text)
 
     def kwargs_of(self, service: Service, stage: str) -> dict:
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
         from coscc.github import integrate
         from coscc import service as service_mod
         from coscc.runner import RunError
@@ -1834,7 +1834,7 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
 
     def test_settings_does_not_list_the_gathering_grant(self):
         """Spec *Design*: no screen changes, so `/settings` lists the grants it listed before."""
-        from coscc import policy
+        from coscc.agent import policy
 
         stages = [r["stage"] for r in self.service(False).settings()["grants"]]
         self.assertNotIn("knowledge", stages)
@@ -1989,8 +1989,8 @@ class _AReviewStep:
         return [r for r in journal.records(self.service._journal_key(str(self.repo))) if r.get("kind") == "screens"]
 
     def step(self, answer: dict, result: dict | None):
-        from coscc import board as board_reader
-        from coscc import retake
+        from coscc.units import board as board_reader
+        from coscc.units import retake
         from coscc import service as service_mod
         from coscc.runner import RunError
 
@@ -2079,7 +2079,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         self.assertNotRegex(said, r"[0-9a-f]{7,}")
 
     def test_a_board_that_cannot_answer_refuses_the_step(self):
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
 
         async def unavailable(*a, **kw):
             raise board_reader.Unavailable("node is missing")
@@ -2090,8 +2090,8 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                     str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
 
     def _unrecorded(self, result: dict) -> str:
-        from coscc import board as board_reader
-        from coscc import retake
+        from coscc.units import board as board_reader
+        from coscc.units import retake
         from coscc.runlog.journal import Busy, Journal
 
         async def asked(*a, **kw):
@@ -2122,8 +2122,8 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
 
     def test_a_pending_update_waits_for_a_retake(self):
         # Review round 1, F3: listed as a job while it runs, never cut, gone once it ends.
-        from coscc import board as board_reader
-        from coscc import retake
+        from coscc.units import board as board_reader
+        from coscc.units import retake
 
         during: list[list[dict]] = []
 
@@ -2145,8 +2145,8 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         ended.assert_called_once()
 
     def test_no_retake_begins_while_an_update_is_applied(self):
-        from coscc import board as board_reader
-        from coscc import retake
+        from coscc.units import board as board_reader
+        from coscc.units import retake
 
         taken: list[str] = []
 
@@ -2165,8 +2165,8 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         self.assertEqual((taken, self.service._update_jobs()), ([], []))
 
     def test_two_retakes_never_run_at_once(self):
-        from coscc import board as board_reader
-        from coscc import retake
+        from coscc.units import board as board_reader
+        from coscc.units import retake
 
         running, most = [0], [0]
 

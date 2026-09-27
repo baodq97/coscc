@@ -19,11 +19,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import harness, policy
+from coscc.agent import harness, policy
 from coscc.knowledge import efforttrial
 from coscc.git import gitops
 from coscc.runlog.journal import Journal
-from coscc.policy import decide, grant_for
+from coscc.agent.policy import decide, grant_for
 from coscc.runner import (
     ATTEMPT_EXCERPT,
     RunError,
@@ -276,7 +276,7 @@ class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
 
     def test_an_empty_grant_is_an_empty_list_whatever_cos_tools_says(self):
         # R4. `None` fell back to `COS_TOOLS`, so an `idea` held `Read` with no gate.
-        from coscc import sessions as sessions_mod
+        from coscc.agent import sessions as sessions_mod
         from coscc.config import Config
 
         replies = self.Replies()
@@ -1471,7 +1471,7 @@ class RecordingChangesNothing(unittest.TestCase):
 
     def _once(self, make_recorder):
         """`make_recorder(data)` gives the step's recorder; `None` runs it with no row at all."""
-        from coscc import steps
+        from coscc.agent import steps
         from coscc.data import Data
 
         with tempfile.TemporaryDirectory() as d:

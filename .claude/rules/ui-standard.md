@@ -7,7 +7,7 @@ paths:
   - "coscc/coscc.py"
   - "coscc/auth.py"
   - "coscc/service.py"
-  - "coscc/backlog.py"
+  - "coscc/units/backlog.py"
   - "coscc/update/updater.py"
   - "coscc/update/__init__.py"
   - "coscc/runlog/events.py"

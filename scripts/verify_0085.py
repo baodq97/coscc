@@ -272,7 +272,7 @@ def run(*args: str, cwd: Path = REPO, env: dict | None = None) -> subprocess.Com
 
 
 def r1() -> bool:
-    from coscc.policy import grant_for
+    from coscc.agent.policy import grant_for
 
     g = grant_for("review")
     return claim((g.max_turns, g.max_budget_usd) == (40, 4.0), "R1: review's grant is 40 turns and $4.0",
@@ -421,7 +421,7 @@ def _head_in(text: str) -> str:
 
 def through_the_service(tmp: Path) -> bool:
     """R2, R4-R7, R11, end to end through `Service.run_step`."""
-    from coscc import board
+    from coscc.units import board
     from coscc.config import Config
     from coscc.service import Service
 

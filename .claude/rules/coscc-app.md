@@ -74,7 +74,7 @@ locked position: no tools, no commands, one turn, no budget.
   `.cos/0005_hand-driven-invisible-loop/plan.md` Risk 1 records why.
 - **A `coscc/_harness/` left in a checkout shadows `.claude/`.** Both are gitignored and
   built, not committed, so `git status` stays clean while the app reads the stale copy —
-  edit a skill, and the step still runs the old text. `coscc/harness.py` prefers the
+  edit a skill, and the step still runs the old text. `coscc/agent/harness.py` prefers the
   packaged tree on purpose (a wheel has no checkout to fall back to). `rm -rf
   coscc/_harness` after building a wheel by hand. The same is true of `coscc/_web/`, where
   it costs a stale page instead of stale rules.
@@ -93,20 +93,20 @@ only from here.
 
 | Hazard | File | Read it when |
 |---|---|---|
-| `ship` merges, `pr` does not; `pr`/`ship` reach every repository the login does; the mode grants nothing; the read boundary is not a sandbox; a redirect may write under `/tmp` | `.claude/rules/coscc-policy.md` | editing `coscc/policy.py`, or any grant, tool list or `decide` call |
+| `ship` merges, `pr` does not; `pr`/`ship` reach every repository the login does; the mode grants nothing; the read boundary is not a sandbox; a redirect may write under `/tmp` | `.claude/rules/coscc-policy.md` | editing `coscc/agent/policy.py`, or any grant, tool list or `decide` call |
 | the login door, `EXEMPT`, proxies, hashing limits | `.claude/rules/coscc-auth.md` | editing `coscc/auth.py`, `coscc/run.py`, or adding any route |
-| scratch `COS_DATA_DIR`, `COSCC_PROTECTED_DB`; what a session loads of `~/.claude/` and the project | `.claude/rules/coscc-sessions.md` | editing `coscc/sessions.py`, `coscc/steps.py`, `coscc/instructions.py`, or adding a rule |
+| scratch `COS_DATA_DIR`, `COSCC_PROTECTED_DB`; what a session loads of `~/.claude/` and the project | `.claude/rules/coscc-sessions.md` | editing `coscc/agent/sessions.py`, `coscc/agent/steps.py`, `coscc/agent/instructions.py`, or adding a rule |
 | a worktree per unit, `switch main`, fetches before a step; names from `main` in `impl`'s prompt | `.claude/rules/coscc-worktrees.md` | editing `coscc/git/worktrees.py`, `gitops.py`, `drift.py`, `fetches.py`, or `run_step`'s preparation |
 | `POST /api/units/integrate` force-pushes; `gh pr list` per board read and per `pr` step | `.claude/rules/coscc-integrate.md` | editing `coscc/github/integrate.py`, the `integrate` or `pr` grant, or the board's integration read |
 | `POST /api/units/review-comment` posts; a `pr` step rewrites its pull request | `.claude/rules/coscc-github.md` | editing `coscc/github/prcomment.py`, `coscc/github/prsync.py`, `/review-comment`, or `_sync_pr` |
 | `POST /api/update/*` stops work and restarts | `.claude/rules/coscc-update.md` | editing `coscc/update/__init__.py`, `coscc/update/updater.py`, `scripts/build_wheel.sh`, `/api/update/*` |
 | `GET /api/board/events` hands out everything a step saw | `.claude/rules/coscc-events.md` | editing `coscc/runlog/events.py`, `/api/board/events`, `/follow`, or the watch pane |
 | `GET /api/notices/follow` holds a connection per listener | `.claude/docs/coscc-notices.md` | editing `coscc/runlog/notices.py`, `service_notices.py` or the notice script |
-| the `review`/`ship` gates call `gh`; the run button follows `next` | `.claude/rules/coscc-board.md` | editing `coscc/board.py` or the run button |
+| the `review`/`ship` gates call `gh`; the run button follows `next` | `.claude/rules/coscc-board.md` | editing `coscc/units/board.py` or the run button |
 | two roots, and what `--measure` reads | `.claude/rules/coscc-data.md` | editing `coscc/config.py`, `units.py`, `data.py`, `journal.py`, or a run-log field |
 | `/api/timeline` returns a failed reply; `pull` within one process; a failed step's tail; `POST /api/board/stop`; units at the same time; `GET /api/board/running` | `.claude/docs/coscc-steps.md` | editing `/api/timeline`, `/api/board/stop`, `/api/board/running`, `Service.run_step`, `runner.describe_attempt` or `journal.failed_attempts` |
-| `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold`, `/more-rounds`; re-running keeps `## Answers`; a board rerun makes later artifacts stale | `.claude/docs/coscc-answers.md` | editing those routes, `run_step`'s `rerun`, `cos.mjs rerun`, `coscc/hold.py`, or `answers_section`/`strip_answers`/`with_answers` in `coscc/runner_prompt.py` |
-| `POST /api/settings/models` and `/efforts`; `POST /api/backlog/*` | `.claude/docs/coscc-settings.md` | editing `/api/settings/*`, `coscc/models.py`, `/api/backlog/*` or `coscc/backlog.py` |
+| `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold`, `/more-rounds`; re-running keeps `## Answers`; a board rerun makes later artifacts stale | `.claude/docs/coscc-answers.md` | editing those routes, `run_step`'s `rerun`, `cos.mjs rerun`, `coscc/units/hold.py`, or `answers_section`/`strip_answers`/`with_answers` in `coscc/runner_prompt.py` |
+| `POST /api/settings/models` and `/efforts`; `POST /api/backlog/*` | `.claude/docs/coscc-settings.md` | editing `/api/settings/*`, `coscc/agent/models.py`, `/api/backlog/*` or `coscc/units/backlog.py` |
 | `spike` runs arbitrary code | `.claude/docs/coscc-spike.md` | editing the `spike` grant, its scratch directory, or its progress-file write |
 | what the page stopped explaining in `0082` | `.claude/docs/coscc-page-text.md` | adding words to a screen, or removing a sentence the page says beside a button |
 | `coscc knowledge gather` spends quota past its ceiling; a wrong entry reaches every plan; baseline before the flag | `.claude/docs/coscc-knowledge.md` | editing `coscc/knowledge/__init__.py`, `gather.py`, `admit.py`, `measure.py`, `knowledge_cli.py`, the `knowledge` grant, or running `coscc knowledge` |

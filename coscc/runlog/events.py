@@ -115,7 +115,7 @@ def _cut(event: dict[str, Any]) -> dict[str, Any]:
 
 def _result_fields(message: Any) -> dict[str, Any]:
     """R3 `result`: turns, cost, the four token fields `journal.TOKEN_FIELDS` adds, time."""
-    from coscc.sessions import _cumulative  # the one reading of `model_usage`
+    from coscc.agent.sessions import _cumulative  # the one reading of `model_usage`
 
     total = _cumulative(message)
     return {

@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from coscc import autopilot, backlog
+from coscc.units import autopilot, backlog
 from coscc.git import fetches
 from coscc.github import integrate
 from coscc.git.gitops import GitError
@@ -25,7 +25,7 @@ class AutopilotMixin:
     #
     # It holds no rule of the loop. Each pass reads the board, the run log, the settings and
     # the workspace's last shortlist, and `next` for every unit on it and no other (`0104`);
-    # with no shortlist it asks nothing. `coscc/autopilot.py` decides where to stop and what
+    # with no shortlist it asks nothing. `coscc/units/autopilot.py` decides where to stop and what
     # to start; what it starts goes through `run_step` and `integrate`, which ask the gate
     # themselves. A refusal from them is a stop line, never a second way past the gate.
 

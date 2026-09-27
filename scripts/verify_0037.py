@@ -370,7 +370,7 @@ def claim_a(tmp: Path) -> tuple[bool, dict[str, object]]:
     """The whole chain, with only the SDK client replaced. Returns options per stage."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
-    from coscc import sessions as sessions_mod
+    from coscc.agent import sessions as sessions_mod
     from coscc.config import Config
     from coscc.runlog.journal import Journal
     from coscc.runner import Runner

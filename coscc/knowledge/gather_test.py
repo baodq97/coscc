@@ -1,7 +1,7 @@
 """`0090` plan step 6: `coscc knowledge gather`, with a stand-in for the session.
 
 Nothing here opens a session. The stand-in returns a reply built in advance, the way
-`coscc/precedent_test.py` stands in for Jera's.
+`coscc/agent/precedent_test.py` stands in for Jera's.
 
 Since `0108` each workspace is a real git repository, built once for the module, and each
 source has the `done` `end` row that dates it: `admit` reads both.

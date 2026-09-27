@@ -7,7 +7,7 @@ from __future__ import annotations
 import reflex as rx
 from reflex.style import set_color_mode
 
-from coscc import models
+from coscc.agent import models
 from coscc import studio as s
 from coscc.state import GrantRow, Knob, ModelRow
 from coscc.screens_common import P, _MONO, _details

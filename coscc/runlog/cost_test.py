@@ -16,7 +16,7 @@ import unittest
 from dataclasses import dataclass, field
 from typing import Any
 
-from coscc import sessions
+from coscc.agent import sessions
 from coscc.runlog.journal import Journal
 
 

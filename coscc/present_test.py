@@ -5,7 +5,8 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from coscc import backlog, present, service
+from coscc import present, service
+from coscc.units import backlog
 
 NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)
 

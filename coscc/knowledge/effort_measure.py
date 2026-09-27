@@ -19,7 +19,7 @@ import os
 import statistics
 from typing import Any, Callable
 
-from coscc import labels
+from coscc.agent import labels
 from coscc.knowledge import efforttrial
 from coscc.knowledge import measure as reader
 

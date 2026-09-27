@@ -24,9 +24,9 @@ from coscc.runlog import events
 from coscc.config import Config
 from coscc.data import now as _now
 from coscc.runner import Runner
-from coscc.sessions import Sessions
+from coscc.agent.sessions import Sessions
 from coscc.store import Store
-from coscc import steps as steps_mod
+from coscc.agent import steps as steps_mod
 from coscc.update import updater as updater_mod
 
 # `0095`: these moved to modules of their own. Every name is imported back, so

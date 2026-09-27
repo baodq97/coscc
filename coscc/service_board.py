@@ -10,16 +10,17 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from coscc import agents, backlog
-from coscc import board as board_reader
+from coscc.units import backlog
+from coscc.agent import agents
+from coscc.units import board as board_reader
 from coscc.git import gitops
-from coscc import precedent as precedent_mod
-from coscc.board import Unavailable
+from coscc.agent import precedent as precedent_mod
+from coscc.units.board import Unavailable
 from coscc.data import now as _now
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import Busy, Journal, last_runs, timelines_of, totals_of
-from coscc.policy import grant_for
-from coscc import steps as steps_mod
+from coscc.agent.policy import grant_for
+from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit
@@ -156,7 +157,7 @@ class BoardMixin:
     def _units_root(self, cwd: str) -> Path:
         """Where this workspace's units live. One question, asked of one module.
 
-        `coscc/units.py` owns the answer; this is the only place in the service that asks.
+        `coscc/units/__init__.py` owns the answer; this is the only place in the service that asks.
         """
         return units.root(cwd, self.config.data_dir)
 

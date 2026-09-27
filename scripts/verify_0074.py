@@ -192,7 +192,7 @@ def tree_hash(root: Path) -> dict:
 async def proof(tmp: Path) -> bool:
     import httpx
 
-    from coscc import backlog
+    from coscc.units import backlog
     from coscc.api import build
     from coscc.config import Config
     from coscc.runlog.journal import Journal

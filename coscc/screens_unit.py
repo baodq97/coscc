@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc import hold as hold_rules
+from coscc.units import hold as hold_rules
 from coscc import present
 from coscc import studio as s
 from coscc.service import CONSEQUENCE

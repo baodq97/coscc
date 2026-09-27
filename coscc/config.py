@@ -37,7 +37,7 @@ _ENV_PREFIX = "COS_"
 
 # `.cos/0076_a-step-can-migrate-the-running-apps-database`. The `cos.db` files a child of
 # this app must not open, separated by `os.pathsep`. Deliberately not a `COS_*` name: those
-# describe this app and are blanked for every child (`coscc/sessions.py` `child_env`),
+# describe this app and are blanked for every child (`coscc/agent/sessions.py` `child_env`),
 # while this one is written *for* the child and read by `coscc/data.py` in it.
 PROTECTED_DB_VAR = "COSCC_PROTECTED_DB"
 
@@ -218,7 +218,7 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         workspaces=declared or fallback,
         working_dir=working_dir,
         data_dir=_dir(e, "DATA_DIR"),
-        # Empty is unset, for every setting. `coscc/sessions.py` `child_env` cannot remove
+        # Empty is unset, for every setting. `coscc/agent/sessions.py` `child_env` cannot remove
         # a `COS_*` name from a session, only override it with "", so a session started
         # from an app launched with `COS_PORT` set reads `COS_PORT=""` -- and `int("")`
         # errored seven tests in a unit's worktree (`0017` review, F1).

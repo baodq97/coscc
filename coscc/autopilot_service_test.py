@@ -14,11 +14,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import autopilot
+from coscc.units import autopilot
 from coscc.config import Config
 from coscc.runlog.journal import Busy, Journal
 from coscc.service import Invalid, Service
-from coscc.sessions import Sessions
+from coscc.agent.sessions import Sessions
 
 
 class _Replies:

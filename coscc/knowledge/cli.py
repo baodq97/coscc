@@ -110,7 +110,7 @@ def _gather(config, opts: dict[str, str | bool], say: Callable[[str], None]) -> 
         return 0
     if not parts and not planned["resumed"]:
         return 0
-    from coscc.sessions import Sessions
+    from coscc.agent.sessions import Sessions
 
     model = opts.get("--model") or config.model
     try:

@@ -215,7 +215,7 @@ def screens_records(data: Path) -> list[dict]:
 
 
 def through_the_service(tmp: Path) -> bool:
-    from coscc import board
+    from coscc.units import board
     from coscc.config import Config
     from coscc.service import Invalid, Service
 

@@ -8,7 +8,7 @@ With no such answer at all the outcome is not measured, which is not met.
 
 No session, no quota, no network, and nothing written. It opens `<COS_DATA_DIR>/cos.db`
 (default `~/.cos`) with `mode=ro`, never through `Data`, and hands every record of the
-workspace to `coscc.autopilot.measure_reruns`. `--workspace` is the journal key: the
+workspace to `coscc.units.autopilot.measure_reruns`. `--workspace` is the journal key: the
 workspace's resolved path, as the run log names it. `--since` defaults to the day of the
 workspace's first `answer` record; both days are the machine's: run it on the machine the
 app runs on, and at a terminal — inside a step `COS_DATA_DIR` is that step's scratch root
@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from coscc import autopilot
+from coscc.units import autopilot
 from coscc.runlog import spend  # noqa: E402
 
 UNTIL = "2026-10-31"

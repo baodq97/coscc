@@ -18,7 +18,7 @@ from coscc.git import gitops, worktrees
 from coscc.config import Config
 from coscc.service_common import Invalid
 from coscc.service import Service
-from coscc.sessions import Sessions
+from coscc.agent.sessions import Sessions
 from coscc.service_test import REPO, _service, create_sync
 
 
@@ -39,7 +39,7 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         self.service = _service(working_dir=str(self.work), data_dir=str(self.root / "data"))
 
     def _log(self):
-        from coscc.history import History
+        from coscc.units.history import History
 
         return History(self.work, self.root / "data")
 
@@ -111,8 +111,8 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         would hide the only evidence that the two sets were ever mixed."""
         import json
 
-        from coscc import states
-        from coscc.history import History
+        from coscc.units import states
+        from coscc.units.history import History
 
         other = self.root / "other.json"
         other.write_text(

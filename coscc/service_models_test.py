@@ -118,7 +118,7 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         )
 
     def test_the_gate_is_asked_the_same_question_either_way(self):
-        from coscc import board as board_reader
+        from coscc.units import board as board_reader
 
         seen = []
         real = board_reader.gate

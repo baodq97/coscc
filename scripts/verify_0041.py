@@ -270,7 +270,7 @@ def lookup_and_prompt(tmp: Path, name: str, stdout: str, code: int = 0) -> tuple
 
 
 def claims_abc(tmp: Path) -> bool:
-    from coscc.policy import check_command, grant_for
+    from coscc.agent.policy import check_command, grant_for
 
     ok = True
     found = json.dumps([{"url": URL, "number": 7, "mergeable": "MERGEABLE", "headRefOid": HEAD}])
@@ -428,7 +428,7 @@ async def paid_case(service, repo: Path, proof_repo: str, case: str, stamp: str)
 async def paid_mode(base: Path, proof_repo: str) -> bool:
     from coscc.config import Config
     from coscc.service import Service
-    from coscc.sessions import Sessions
+    from coscc.agent.sessions import Sessions
 
     work = base / "work"
     work.mkdir()

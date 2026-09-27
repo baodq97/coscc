@@ -8,7 +8,7 @@ paths:
 - **`POST /api/units/integrate` force-pushes under this machine's `gh` login.**
   - On a `behind` unit it runs `gh pr update-branch --rebase` and then moves the unit's
     local branch with `reset --keep`. On a `conflicting` or `red-after-integration` unit it
-    opens Gebo, a paid session (ceilings in the `integrate` grant, `coscc/policy.py:361-365`,
+    opens Gebo, a paid session (ceilings in the `integrate` grant, `coscc/agent/policy.py:361-365`,
     chosen, not measured)
     whose grant allows exactly one push: `--force-with-lease=<branch>:<head at start>` to
     the unit's own branch.
@@ -18,7 +18,7 @@ paths:
     the step. The grant still reads tokens, so any program it may start can push past the
     lease itself — `node -e`, `python -c`, or a script the step wrote and then runs through
     `npm test` — and so can an alias already in a git config before the step
-    (`coscc/policy_test.py`, `test_the_known_limit_c6`). What stops a force on `main` is
+    (`coscc/agent/policy_test.py`, `test_the_known_limit_c6`). What stops a force on `main` is
     the GitHub ruleset, not this grant.
   - Gebo may read its own unit's folder and the intent, spec and plan of the units the app
     lists as related (`read_paths`) — a widening of the read boundary, and not a sandbox
@@ -64,4 +64,4 @@ paths:
   or `GIT_CONFIG_*` made during the step, and `gh api` naming the update-branch endpoint
   (`pulls/<n>/update-branch`, `updatePullRequestBranch`). It does not refuse `gh api` as a
   whole, as the `integrate` grant does. `node -e`, or an alias defined before the step,
-  still walks past (`coscc/policy_test.py`, `IntegrationIsNotPrs`).
+  still walks past (`coscc/agent/policy_test.py`, `IntegrationIsNotPrs`).

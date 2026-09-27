@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Proof, and measuring tool, for `.cos/0060_the-command-filter-refuses-safe-commands-it-misreads`.
 
-`coscc/policy.py` refused commands it had misread: a `|` inside a regex split into a
+`coscc/agent/policy.py` refused commands it had misread: a `|` inside a regex split into a
 "command", `${` or a backtick in single quotes taken for a substitution, `> /dev/null`
 taken for a write. This script counts those refusals in the transcripts of board steps.
 Two modes:
@@ -20,7 +20,7 @@ Two modes:
        version at `01699b8` refused ran in the window (after `--confirmed`)
     1  either did not hold (or, for the proof, a claim did not)
     2  the environment could not answer: no `cos.db`, no transcripts, no session in the
-       window, no `git` or `bash`, or `git show 01699b8:coscc/policy.py` failed
+       window, no `git` or `bash`, or `git show 01699b8:coscc/agent/policy.py` failed
 
 It does **not** import `coscc`. `0060 spec.md` C5: classifying with the filter's own
 reader would hide exactly the misreadings it exists to count. It has a simpler reader of
@@ -99,7 +99,7 @@ def transcripts_root() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# This script's own reader. Simpler than `coscc/policy.py`'s on purpose (C5).
+# This script's own reader. Simpler than `coscc/agent/policy.py`'s on purpose (C5).
 # ---------------------------------------------------------------------------
 
 
@@ -326,8 +326,8 @@ def bash_calls(path: str) -> list[dict]:
 
 
 def load_old_policy(tmp: Path):
-    """`coscc/policy.py` as it was at `01699b8`, never copied into this script (R11)."""
-    out = subprocess.run(["git", "-C", str(REPO), "show", f"{OLD_COMMIT}:coscc/policy.py"],
+    """`coscc/agent/policy.py` as it was at `01699b8`, never copied into this script (R11)."""
+    out = subprocess.run(["git", "-C", str(REPO), "show", f"{OLD_COMMIT}:coscc/agent/policy.py"],
                          capture_output=True, text=True)
     if out.returncode != 0:
         return None, out.stderr.strip() or f"git show {OLD_COMMIT} failed"

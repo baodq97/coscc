@@ -9,20 +9,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from coscc import backlog
-from coscc import board as board_reader
+from coscc.units import backlog
+from coscc.units import board as board_reader
 from coscc.git import fetches, gitops
-from coscc import hold as hold_rules
-from coscc import precedent as precedent_mod
-from coscc.board import Unavailable
+from coscc.units import hold as hold_rules
+from coscc.agent import precedent as precedent_mod
+from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
-from coscc.history import History, settled_edits
+from coscc.units.history import History, settled_edits
 from coscc.runlog.journal import BadRecord, Busy, Journal, timelines_of, totals_of
-from coscc.policy import grant_for
-from coscc import models
+from coscc.agent.policy import grant_for
+from coscc.agent import models
 from coscc.runner import CEILING_MARKERS, Denials, permission_gate
-from coscc.sessions import StepHandle
-from coscc import steps as steps_mod
+from coscc.agent.sessions import StepHandle
+from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate

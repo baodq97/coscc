@@ -54,7 +54,7 @@ EXIT_CODE = 75
 # The package root, `coscc/`, one up from this package: where a wheel holds `_build.json`.
 _HERE = Path(__file__).resolve().parents[1]
 REPO = _HERE.parent
-# The same name `coscc.harness.BUILD_STAMP` checks for in a wheel.
+# The same name `coscc.agent.harness.BUILD_STAMP` checks for in a wheel.
 BUILD_STAMP = _HERE / "_build.json"
 
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")

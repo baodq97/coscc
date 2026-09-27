@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import harness
+from coscc.agent import harness
 from coscc.git import gitops
 from coscc.runlog.journal import Journal
 from coscc.runner_reply import RunError
@@ -701,7 +701,7 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
         self.assertIn("the worktree changed during spike", final["error"])
 
     def test_c_a_stop_before_the_seal_withholds_it(self):
-        from coscc import steps
+        from coscc.agent import steps
 
         running = steps.Running(workspace="w", unit=UNIT, stage="spike", started_at="t")
         final, written, end, _ = self.run_spike(running=running)
@@ -710,7 +710,7 @@ class ASpikeLeavesWhatItMeasured(unittest.TestCase):
         self.assertEqual(end["spike_md"], "withheld")
 
     def test_c_a_stop_during_the_session_withholds_it(self):
-        from coscc import steps
+        from coscc.agent import steps
 
         release = asyncio.Event()
 
@@ -846,7 +846,7 @@ class AStoppedStepEndsStopped(unittest.TestCase):
                             "cost": {"turns": 2, "cost_usd": 0.25}})
 
     def _run(self, d, sessions, stage, artifact, act):
-        from coscc import steps
+        from coscc.agent import steps
 
         registry = steps.Registry()
         running = registry.claim(d, UNIT, stage)
@@ -918,7 +918,7 @@ class AStoppedStepEndsStopped(unittest.TestCase):
             self.assertEqual(end["outcome"], "stopped")
 
     def test_a_stop_after_the_seal_is_refused_and_the_step_is_done(self):
-        from coscc import steps
+        from coscc.agent import steps
 
         async def release_then_stop(registry, running, sessions):
             sessions.release.set()
@@ -938,7 +938,7 @@ class AStoppedStepEndsStopped(unittest.TestCase):
     def test_a_stop_after_the_outcome_is_decided_is_refused_and_the_end_says_failed(self):
         """Review round 1, F2: a Stop that lands while a failed step captures its attempt
         used to be told "stopped" while the `end` said `failed`."""
-        from coscc import steps
+        from coscc.agent import steps
 
         registry_box = []
         refused = []
@@ -1005,7 +1005,7 @@ class ADeadStepKeepsItsTurns(unittest.TestCase):
             yield ("done", self.then)
 
     def _run(self, then):
-        from coscc import steps
+        from coscc.agent import steps
         from coscc.runlog import events
         from coscc.data import Data
 
@@ -1101,7 +1101,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                    if self.closing_terminal else {"session_id": "s1", "cost": {}})
 
     def run_review(self, sessions, stage="review", git=True, act=None, stop=False):
-        from coscc import steps
+        from coscc.agent import steps
 
         with tempfile.TemporaryDirectory() as ws:
             tree = _git_repo(Path(ws)) if git else Path(ws)

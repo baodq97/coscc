@@ -385,7 +385,7 @@ class ThePrompt(unittest.TestCase):
 
     def test_every_own_artifact_it_names_can_be_read(self):
         """`0094` R15: Gebo is handed its unit's artifacts by path, so its grant must read them."""
-        from coscc.policy import decide, grant_for
+        from coscc.agent.policy import decide, grant_for
 
         with tempfile.TemporaryDirectory() as d:
             units_root = Path(d) / "units"
@@ -544,7 +544,7 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
     def test_the_session_gets_the_gate_and_the_ceilings(self):
         import asyncio
 
-        from coscc.policy import grant_for
+        from coscc.agent.policy import grant_for
 
         seen: dict = {}
 

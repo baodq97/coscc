@@ -36,7 +36,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from coscc.config import Config, from_env
 from coscc.service import Invalid, NotUpdatable, Service, StaleCutList, Updating
-from coscc.sessions import Refused, Sessions
+from coscc.agent.sessions import Refused, Sessions
 
 
 def _bad(message: str, status: int = 400) -> JSONResponse:
@@ -486,7 +486,7 @@ def build(config: Config | None = None) -> FastAPI:
 
         The only route in this app that writes to somebody else's git.
         `coscc/git/gitops.py` carries the list of what that is allowed to be, because
-        `coscc/policy.py` covers sessions and this runs with the app's own authority.
+        `coscc/agent/policy.py` covers sessions and this runs with the app's own authority.
         """
         try:
             body = await request.json()

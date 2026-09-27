@@ -42,7 +42,7 @@ class TheAutopilotBlockIsCopied(unittest.TestCase):
         """`0104` R9."""
         from types import SimpleNamespace
 
-        from coscc import autopilot
+        from coscc.units import autopilot
         from coscc.state import AutopilotStop, StudioState
 
         page = SimpleNamespace()
@@ -58,7 +58,7 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
     """`0001_product-describes-a-state-it-is-not-in` R4/R5, from this store, asked of the
     stage columns and states of `0100` rather than the lanes they replaced.
 
-    The dict is the shape `coscc/board.py` hands over for a unit started from the page:
+    The dict is the shape `coscc/units/board.py` hands over for a unit started from the page:
     one accepted `idea.md`, nothing else, `next` pointing at the intent.
     """
 
@@ -81,7 +81,7 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
         import asyncio
         import tempfile
 
-        from coscc import board
+        from coscc.units import board
         from coscc.service import unit_state
 
         with tempfile.TemporaryDirectory() as d:
@@ -140,13 +140,14 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
     )
 
     def _both(self) -> tuple[dict, dict]:
-        """The unit as `status --json` printed it, and as `coscc/board.py` handed it on."""
+        """The unit as `status --json` printed it, and as `coscc/units/board.py` handed it on."""
         import asyncio
         import json
         import subprocess
         import tempfile
 
-        from coscc import board, harness
+        from coscc.units import board
+        from coscc.agent import harness
 
         with tempfile.TemporaryDirectory() as d:
             unit = Path(d) / ".cos" / "0001_q"
@@ -195,7 +196,7 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
         import asyncio
         import tempfile
 
-        from coscc import board
+        from coscc.units import board
         from coscc.state import _hold_fields
 
         with tempfile.TemporaryDirectory() as d:
@@ -294,7 +295,7 @@ class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
         import tempfile
         from unittest import mock
 
-        from coscc import board
+        from coscc.units import board
 
         [kw] = [
             k for node in ast.walk(ast.parse(SOURCE.read_text(encoding="utf-8")))

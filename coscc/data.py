@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS prefs (
 --
 -- R3 decides the columns: a transition that cannot say who or which session must say so
 -- in a value, not by leaving a column empty. So every column is NOT NULL with no default,
--- which pushes the decision onto the writer -- `coscc/history.py` substitutes its
+-- which pushes the decision onto the writer -- `coscc/units/history.py` substitutes its
 -- `UNKNOWN` and nothing here can quietly accept a blank. `intent.md` exists because
 -- "not known" already looks exactly like "did not happen"; a NULL here would be that
 -- mistake written into the schema.

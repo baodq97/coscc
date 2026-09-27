@@ -9,12 +9,12 @@ import math
 from pathlib import Path
 from typing import Any
 
-from coscc import autopilot
-from coscc import board as board_reader
-from coscc.board import Unavailable
+from coscc.units import autopilot
+from coscc.units import board as board_reader
+from coscc.units.board import Unavailable
 from coscc.data import Data
 from coscc.runlog.journal import BadRecord, Busy, Journal
-from coscc import labels, models
+from coscc.agent import labels, models
 from coscc.knowledge import efforttrial
 from coscc.config import LOOPBACK
 from coscc.runner import SESSIONS_PER_STEP
@@ -38,7 +38,7 @@ class ModelsMixin:
 
     # -- which model each stage runs on --------------------------------------
     #
-    # `0004_no-setting-says-which-model-runs-a-stage`. The resolving is `coscc/models.py`;
+    # `0004_no-setting-says-which-model-runs-a-stage`. The resolving is `coscc/agent/models.py`;
     # this is where its three inputs are gathered: the stage list from `cos.mjs`, the
     # overrides from `prefs`, `COS_MODEL` from `Config`.
 

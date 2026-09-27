@@ -8,7 +8,7 @@ on `main` and is never worked in** (`0017` `intent.md ## Answers, câu 5`).
 
 What goes where:
 
-- **Artifacts stay in the store** (`coscc/units.py`). A worktree holds code only, so
+- **Artifacts stay in the store** (`coscc/units/__init__.py`). A worktree holds code only, so
   `cos.mjs` is asked with `--root <store> --repo <worktree>` — the store for the unit,
   the worktree for its branch and pull request. `0017` `plan.md` records why this departs
   from the spec, which wrote as if artifacts were in the repository.

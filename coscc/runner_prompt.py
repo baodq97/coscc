@@ -8,9 +8,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from coscc import harness
+from coscc.agent import harness
 from coscc.knowledge import STAGES as KNOWLEDGE_STAGES
-from coscc.policy import is_prose_stage
+from coscc.agent.policy import is_prose_stage
 from coscc.runner_review import (
     INCOMPLETE_SECTIONS,
     _ROUND_RE,
@@ -371,7 +371,7 @@ def compose_prompt(
     The list is returned rather than inferred later because R4 is checked against it: if a
     step ran without the previous stage's artifact in the prompt, the record says so.
 
-    `directory` is handed in rather than worked out here. `coscc/units.py` is the one place
+    `directory` is handed in rather than worked out here. `coscc/units/__init__.py` is the one place
     that answers it: the artifacts live in the product's own store while `workspace` stays
     the repository the work is done in (`0014` `spec.md` R2).
     """

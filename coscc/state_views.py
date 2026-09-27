@@ -1028,7 +1028,7 @@ def _initials(name: str) -> str:
 
 def _questions(unit: dict) -> tuple[int, list[Question]]:
     """`0016` R7. The open count and the questions of one board unit, copied from what
-    `cos.mjs` sent through `coscc/board.py`. Nothing is counted here: `open` is taken as
+    `cos.mjs` sent through `coscc/units/board.py`. Nothing is counted here: `open` is taken as
     sent, so the page and `status --json` cannot disagree.
 
     `0028`: the findings `cos.mjs` lists in `personFindings` follow, one row each, keyed

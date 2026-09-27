@@ -39,7 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from coscc import auth, frontend, harness, update
+from coscc import auth, frontend, update
+from coscc.agent import harness
 from coscc.git import fetches
 from coscc.data import Data
 

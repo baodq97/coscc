@@ -428,7 +428,7 @@ def plan_of(data_dir: str | os.PathLike[str] | None, mode: str, journal: Any = N
     While a `--all` is unfinished (`0107` R5, R11), `new` is refused, and `all` leaves out
     every source its progress record passed at the sha it has now; `ceiling_usd` is then that
     of the batches left (R6)."""
-    from coscc.policy import grant_for
+    from coscc.agent.policy import grant_for
 
     if mode not in MODES:
         raise Refused(f"mode must be one of {', '.join(MODES)}")
@@ -489,8 +489,8 @@ async def gather(
     sources passed, so a run that stops goes on from there when run again (`0107` R5), and
     the manifest is replaced only when the last batch has passed (`0107` R10).
     Its `dropped` holds what the session dropped and what `admit` dropped (`0108` R8)."""
-    from coscc import precedent
-    from coscc.policy import grant_for
+    from coscc.agent import precedent
+    from coscc.agent.policy import grant_for
 
     directory = knowledge.path_of(data_dir)
     with _Lock(directory):

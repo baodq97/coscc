@@ -11,8 +11,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import policy
-from coscc.policy import decide
+from coscc.agent import policy
+from coscc.agent.policy import decide
 from coscc.runner_prompt import (
     answers_section,
     build_prompt,

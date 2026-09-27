@@ -71,7 +71,7 @@ def step_cwd(stage: str, work: str, directory: Path, spike_dir: str | None = Non
 
     The same command with the pull request's URL, run from a directory that is not a git
     checkout, exited 0, merged, and deleted the remote branch. The unit's directory in the
-    store is such a directory -- the store has no git (`coscc/units.py`) -- and `ship` writes
+    store is such a directory -- the store has no git (`coscc/units/__init__.py`) -- and `ship` writes
     `ship.md` there anyway. The worktree and the local branch are then removed by
     `worktrees.remove_if_finished`, which already waits for GitHub to say `MERGED`.
 

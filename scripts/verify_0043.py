@@ -6,7 +6,7 @@ of R6's stops carries `started_by: autopilot`.
 
 No session, no quota, no network, and nothing written. It opens `<COS_DATA_DIR>/cos.db`
 (default `~/.cos`) with `mode=ro`, never through `Data`, and hands every record of the
-workspace to `coscc.autopilot.measure`. `--workspace` is the journal key: the workspace's
+workspace to `coscc.units.autopilot.measure`. `--workspace` is the journal key: the workspace's
 resolved path, as the run log names it. Days are the machine's, as the cap counts them:
 run it on the machine the app runs on, and at a terminal — inside a step `COS_DATA_DIR` is
 that step's scratch root (`0076`).
@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from coscc import autopilot  # noqa: E402
+from coscc.units import autopilot  # noqa: E402
 
 NEEDED = 3
 

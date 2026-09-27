@@ -608,7 +608,7 @@ class UnitHistoryRoutes(unittest.IsolatedAsyncioTestCase):
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
-        from coscc.history import History
+        from coscc.units.history import History
 
         self.log = History(self.cwd, root / "data")
 
@@ -721,7 +721,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertIn("### Câu 1", text)
 
     async def test_the_answer_is_recorded_as_a_person_in_the_history(self):
-        from coscc.history import History
+        from coscc.units.history import History
 
         await self.post()
         rows = History(str(Path(self.cwd).parent), self.data_dir).outputs(
@@ -974,7 +974,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         from datetime import date
         import os
 
-        from coscc import board, more_rounds
+        from coscc.units import board, more_rounds
 
         with mock.patch.dict(os.environ):
             os.environ.pop("COS_REVIEW_ROUNDS", None)

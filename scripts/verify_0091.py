@@ -2,7 +2,7 @@
 
 Plain: no session, no quota, no network. A fake CLI in a temporary directory prints one JSON
 line of a chosen length and exits; the SDK's real `SubprocessCLITransport` reads it, given
-the options `coscc.sessions._options` builds. It pushes one line of 32 MiB through a pipe.
+the options `coscc.agent.sessions._options` builds. It pushes one line of 32 MiB through a pipe.
 Each claim prints PASS or FAIL:
 
 - baseline: the SDK's own default options raise `CLIJSONDecodeError` on a line of
@@ -276,7 +276,7 @@ def transport_claims(tmp: Path) -> bool | None:
     except ImportError as e:
         say(f"environment: the SDK's transport cannot be imported ({e})")
         return None
-    from coscc import sessions
+    from coscc.agent import sessions
     from coscc.config import Config
 
     def built(length: int, where: Path):

@@ -79,7 +79,7 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: a
     precedent.` is the exception: an agent inferred it from precedent, so cite it as Jera's
     inference and never present it as the originator's decision.
 11. `Impl:` is `novel` when the work is new logic rather than an existing pattern followed,
-    or when `## Files that change` names a file in `coscc/labels.py` `SECURITY_SURFACE`.
+    or when `## Files that change` names a file in `coscc/agent/labels.py` `SECURITY_SURFACE`.
     Otherwise `routine`. A missing label is run as `novel`. The label picks the model and
     effort a later stage runs on in the coscc app; it opens and closes no gate.
 12. When the spec carried `[unmeasured] U<n>` items, `spike.md` measured them. Every step

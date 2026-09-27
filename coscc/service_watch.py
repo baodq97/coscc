@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, AsyncIterator
 
-from coscc import backlog
+from coscc.units import backlog
 from coscc.runlog import events
 from coscc.data import Data
 from coscc.runlog.journal import Busy

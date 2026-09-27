@@ -9,7 +9,7 @@ from pathlib import Path
 
 from coscc.config import Config
 from coscc.service import Service
-from coscc.sessions import Sessions
+from coscc.agent.sessions import Sessions
 
 
 class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
