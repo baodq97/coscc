@@ -17,6 +17,15 @@ class RunError(Exception):
     """A step that cannot start, or one whose reply cannot be stored."""
 
 
+class OpeningError(RunError):
+    """`0127` spec *Design* 1. A reply refused for its opening alone, and what it lacked:
+    the one refusal a repair turn may follow. Its words are `opening_reason`'s, as before."""
+
+    def __init__(self, reason: str, problem: str):
+        super().__init__(reason)
+        self.problem = problem
+
+
 class _Stopped(Exception):
     """`0034`: a Stop came before `steps.seal`, so the artifact is not to be written."""
 
@@ -127,6 +136,29 @@ def opening_reason(artifact: str, problem: str, blocks: int | None) -> str:
     if blocks is not None:
         reason += f" (the session replied in {blocks} block{'s' if blocks != 1 else ''})"
     return reason
+
+
+def opening_prompt(artifact: str, problem: str) -> str:
+    """`0127` R3. What the app sends when it reopens a prose step whose reply lacked its
+    opening. English: an instruction to the model. It names no `Status:` value: the session
+    picks its own, by its stage's skill.
+    """
+    title = _title(artifact)
+    if artifact == "review.md":
+        # As `closing_prompt` says it: the earlier rounds are the app's to keep.
+        whole = (
+            "Reply with the title, the header line and your new round only. The earlier "
+            "rounds of `review.md` are the app's to keep; do not copy them."
+        )
+    else:
+        whole = f"Reply with the whole of `{artifact}` again, and nothing else."
+    return (
+        f"Your reply could not be written as `{artifact}`: it lacks its opening: {problem}.\n\n"
+        "You have no tools now; do not try to call one. "
+        f"{whole} No preamble, no code fence. Its first line is the title, opening with "
+        f"`{title}`. The next line that is not blank is the header, carrying the `Status:` "
+        "line your stage's skill sets out."
+    )
 
 
 def _after_tool(text: str) -> str:

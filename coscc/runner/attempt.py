@@ -15,6 +15,7 @@ from coscc.agent import sessions as sessions_mod
 from coscc.agent.policy import Grant, decide
 from coscc.runner.reply import (
     ATTEMPT_EXCERPT,
+    OpeningError,
     RunError,
     _unfence,
     from_title,
@@ -328,7 +329,8 @@ def _write_artifact(directory: Path, artifact: str, text: str, blocks: int | Non
     # passed on one its body happened to quote.
     problem = opening_problem(body, artifact)
     if problem:
-        raise RunError(opening_reason(artifact, problem, blocks))
+        # `0127`: typed, so `Runner.run` can tell this refusal from the others by its class.
+        raise OpeningError(opening_reason(artifact, problem, blocks), problem)
     target = directory / artifact
     try:
         raw = target.read_bytes()
@@ -346,5 +348,5 @@ def _write_artifact(directory: Path, artifact: str, text: str, blocks: int | Non
         # check above did; asked again so what reaches disk is what was checked.
         problem = opening_problem(body, artifact)
         if problem:
-            raise RunError(opening_reason(artifact, problem, blocks))
+            raise OpeningError(opening_reason(artifact, problem, blocks), problem)
     target.write_bytes(with_answers(body, section))

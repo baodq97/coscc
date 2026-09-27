@@ -236,6 +236,32 @@ class Stops(unittest.TestCase):
         self.assertFalse(ap.is_ci_red("CI has not finished on #7: t — wait, then ask again"))
         self.assertFalse(ap.is_ci_red(None))
 
+    UNOPENED = {"kind": "end", "stage": "plan", "outcome": "failed",
+                "detail": "plan.md lacks its opening: no `Status:` line in its header"}
+
+    def test_a_first_opening_failure_of_a_prose_stage_is_no_stop(self):
+        self.assertIsNone(ap.stop_for(unit(), nxt("plan", "write-plan"), self.UNOPENED, False, unopened=1))
+        # A repair turn that failed too keeps the first refusal on its first line.
+        repaired_not = {**self.UNOPENED, "detail": self.UNOPENED["detail"] + "\n--- plan.md: the repair turn failed ---"}
+        self.assertIsNone(ap.stop_for(unit(), nxt("plan", "write-plan"), repaired_not, False, unopened=1))
+        # Left at 0, the count stops it as before `0127`.
+        self.assertEqual(ap.stop_for(unit(), nxt("plan", "write-plan"), self.UNOPENED, False)["kind"], "e")
+
+    def test_a_second_opening_failure_stops_e_with_the_same_words(self):
+        self.assertEqual(ap.stop_for(unit(), nxt("plan", "write-plan"), self.UNOPENED, False, unopened=2),
+                         {"kind": "e", "reason": "the last plan step ended failed"})
+
+    def test_a_failure_for_another_reason_after_an_opening_failure_stops(self):
+        other = {**self.UNOPENED, "detail": "the session returned nothing"}
+        self.assertEqual(ap.stop_for(unit(), nxt("plan", "write-plan"), other, False, unopened=1)["kind"], "e")
+        # And the count of the other reason forgives nothing here.
+        self.assertEqual(ap.stop_for(unit(), nxt("plan", "write-plan"), self.UNOPENED, False,
+                                     exhausted=1, unopened=2)["kind"], "e")
+
+    def test_a_spike_opening_failure_stops(self):
+        spike = {"kind": "end", "stage": "spike", "outcome": "failed", "detail": "spike.md lacks its opening: no `# Spike:` title"}
+        self.assertEqual(ap.stop_for(unit(), nxt("spike", "write-spike"), spike, False, unopened=1)["kind"], "e")
+
     def test_f_no_stage_and_not_ci(self):
         got = ap.stop_for(unit(), nxt("", "finish and accept plan.md"), None, True)
         self.assertEqual((got["kind"], got["reason"]), ("f", "finish and accept plan.md"))
@@ -749,6 +775,96 @@ class ExhaustedOf(unittest.TestCase):
         self.assertEqual(ap.exhausted_of(rows, "w", "0001_a", "plan"), 0)
 
 
+UNOPENED_DETAIL = "plan.md lacks its opening: no `Status:` line in its header"
+
+
+def unopened_row(seconds=0, stage="plan", unit="0001_a", **kw):
+    fields = {"outcome": "failed", "detail": f"{stage}.md" + UNOPENED_DETAIL[len("plan.md"):], **kw}
+    return row("end", unit, stage, seconds, **fields)
+
+
+class UnopenedOf(unittest.TestCase):
+    """`0127` R8: how many times a stage's reply lacked its opening, the count `stop_for`'s e reads."""
+
+    def test_counts_every_such_failed_end_whoever_started_it(self):
+        rows = [unopened_row(started_by="person"), unopened_row(1, started_by="autopilot")]
+        self.assertEqual(ap.unopened_of(rows, "w", "0001_a", "plan"), 2)
+
+    def test_another_workspace_unit_stage_outcome_or_detail_is_not_counted(self):
+        rows = [unopened_row(workspace="other"),
+                unopened_row(unit="0002_b"),
+                unopened_row(stage="spec"),
+                unopened_row(outcome="exhausted"),
+                unopened_row(detail="the session returned nothing"),
+                unopened_row(detail="spec.md lacks its opening: no `# Spec:` title"),
+                row("start", stage="plan")]
+        self.assertEqual(ap.unopened_of(rows, "w", "0001_a", "plan"), 0)
+
+    def test_the_two_counts_do_not_read_each_other(self):
+        rows = [unopened_row(), row("end", stage="plan", outcome="exhausted", detail=UNOPENED_DETAIL)]
+        self.assertEqual(ap.exhausted_of(rows, "w", "0001_a", "plan"), 1)
+        self.assertEqual(ap.unopened_of(rows, "w", "0001_a", "plan"), 1)
+
+
+def unopened_stop(seconds=0, stage="plan", unit="0001_a", note=""):
+    return stop_row("e", seconds, unit, f"the last {stage} step ended failed" + note)
+
+
+class MeasureOpening(unittest.TestCase):
+    """`0127` R9: what became of the prose steps whose reply lacked its opening."""
+
+    def measure(self, rows):
+        return ap.measure_opening(rows, "w", ap.today(NOW - timedelta(days=1)), ap.today(NOW + timedelta(days=1)))
+
+    def test_a_stop_after_an_opening_failure_is_a_miss_and_says_which_time(self):
+        rows = [row("start", stage="plan"), unopened_row(1),
+                row("start", stage="plan", seconds=2, started_by="autopilot"), unopened_row(3),
+                unopened_stop(4, note="; origin x")]
+        got = self.measure(rows)
+        self.assertIs(got["met"], False)
+        self.assertEqual(got["stops"], [{"unit": "0001_a", "stage": "plan", "at": at(timedelta(seconds=4)), "attempt": 2}])
+        self.assertEqual(len(got["failed"]), 2)
+
+    def test_a_repaired_step_counts_and_meets(self):
+        done = row("end", stage="spec", outcome="done", opening="repaired",
+                   closing={"terminal": "completed", "turns": 1, "cost_usd": 1.1})
+        got = self.measure([row("start", stage="spec"), done])
+        self.assertIs(got["met"], True)
+        self.assertEqual(got["repaired"], [{"unit": "0001_a", "stage": "spec", "at": at(), "cost_usd": 1.1}])
+        self.assertEqual((got["failed"], got["stops"], got["reruns"]), ([], [], []))
+
+    def test_a_start_after_an_opening_failure_is_a_rerun(self):
+        rows = [unopened_row(), row("start", stage="spec", seconds=1),
+                row("start", stage="plan", seconds=2, started_by="autopilot"),
+                row("end", stage="plan", seconds=3, outcome="done"),
+                row("start", stage="plan", seconds=4)]
+        got = self.measure(rows)
+        self.assertEqual(got["reruns"], [{"unit": "0001_a", "stage": "plan", "at": at(timedelta(seconds=2)),
+                                          "started_by": "autopilot"}])
+        self.assertIs(got["met"], True)
+
+    def test_a_stop_after_another_failure_is_not_counted(self):
+        rows = [unopened_row(), row("start", stage="plan", seconds=1),
+                row("end", stage="plan", seconds=2, outcome="failed", detail="the session returned nothing"),
+                unopened_stop(3)]
+        got = self.measure(rows)
+        self.assertEqual(got["stops"], [])
+        self.assertIs(got["met"], True)
+        # Nor a stop on a spike, which gets no repair turn.
+        spike = [unopened_row(stage="spike"), unopened_stop(1, "spike")]
+        self.assertIsNone(self.measure(spike)["met"])
+
+    def test_nothing_in_the_window_is_not_measured(self):
+        self.assertIsNone(self.measure([row("end", stage="plan", outcome="done")])["met"])
+        self.assertIsNone(self.measure([unopened_row(-3 * 86400), unopened_stop(-3 * 86400 + 1)])["met"])
+        self.assertIsNone(ap.measure_opening([unopened_row()], "other", "2026-01-01", "2026-12-31")["met"])
+
+    def test_the_measure_reads_the_words_stop_for_writes(self):
+        said = ap.stop_for(unit(), nxt("plan", "write-plan"), unopened_row(), False, unopened=2)
+        got = self.measure([unopened_row(), stop_row(said["kind"], 1, reason=said["reason"])])
+        self.assertEqual([s["stage"] for s in got["stops"]], ["plan"])
+
+
 class MeasuringReruns(unittest.TestCase):
     """`0106` R7: one sample log per class."""
 
@@ -862,13 +978,14 @@ class AWorkspaceStopIsNoUnitsStop(unittest.TestCase):
             [answer_row(), row("start", seconds=700), stop_row("full", 800)],
             [ran_out_row(), ran_out_stop(1)],
             [ran_out_row(), row("start", stage="plan", seconds=1), ran_out_row(2), ran_out_stop(3)],
+            [unopened_row(), row("start", stage="plan", seconds=1), unopened_row(2), unopened_stop(3)],
         ]
         workspace = [stop_row("shortlist", 0.5, unit="", reason=ap.NO_SHORTLIST),
                      stop_row("f", 1.5, unit="", reason="the autopilot's pass failed: boom"),
                      stop_row("", 2.5, unit="")]
         for rows in logs:
             with_it = sorted(rows + workspace, key=lambda r: r["at"])
-            for measure in (ap.measure, ap.measure_reruns, ap.measure_exhausted):
+            for measure in (ap.measure, ap.measure_reruns, ap.measure_exhausted, ap.measure_opening):
                 self.assertEqual(measure(with_it, "w", since, until), measure(rows, "w", since, until),
                                  f"{measure.__name__} on {[r['kind'] for r in rows]}")
 

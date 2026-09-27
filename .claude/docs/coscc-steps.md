@@ -4,7 +4,7 @@ Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/boa
 
 - **`/api/timeline` returns what a failed paid step replied.** A step whose reply
   could not be used (`0014`) keeps the last `REPLY_KEPT` characters of it, 2000
-  (`coscc/runner/reply.py:33`), and
+  (`coscc/runner/reply.py:42`), and
   that text reaches the board as `detail`, for whoever holds the password or a live
   session.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
@@ -76,3 +76,14 @@ Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/boa
   `incomplete` round of `review.md`; when it writes nothing, the paths the run's
   `tool_use` events name go into the next review's prompt (`journal.failed_attempts`),
   never into the file.
+- **A prose reply without its opening spends one more turn, past its budget.** Since `0127`,
+  a prose step that ends `failed` because its reply lacked its title or its `Status:` line
+  (`OpeningError`) is reopened once on the same session, with no tools and `max_turns=1`
+  (`runner._opening_turn`), and asked for the artifact again. A Stop is refused for up to
+  `OPENING_TIMEOUT` (180 s). `max_budget_usd` does not bound the turn: one that rewrote a
+  26,535-character plan cost about $1.1 (0127 spike ## U1), and a turn that ends at a
+  ceiling, `max_turns` or the budget, writes nothing even when its reply is whole: the
+  money is spent and the step stays `failed`. `end` carries `opening`
+  (`repaired`, `none` or `withheld`) and the turn's cost as `closing`. When the turn's
+  reply is written the step ends `done` with no `detail`, so the first reply survives only
+  in the session's transcript, under the `end`'s `session_id`.

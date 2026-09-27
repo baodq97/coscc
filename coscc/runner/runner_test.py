@@ -257,6 +257,10 @@ class AStepCarriesItsGrantAndNothingOfTheMachine(unittest.TestCase):
             self.prompt = ""
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            if session_id is not None:
+                # `0127`: another stage's step reads `# Idea:` as no title and gets a repair
+                # turn on this session; what is asked of here is the step's own call.
+                return
             self.prompt = text
             self.kw = kw
             yield ("chunk", "# Idea: x\nStatus: accepted.\n")
