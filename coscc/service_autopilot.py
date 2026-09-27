@@ -248,7 +248,8 @@ class AutopilotMixin:
                 # rebase closes `ship`, and a new round opens it again — but only where the
                 # autopilot may ship, since otherwise a person merges and the round is theirs.
                 # CI red after the autopilot's own integration runs `impl` once if `next` names
-                # it, and is not integrated again (`0124` R1, R2).
+                # it, and is not integrated again (`0124` R1, R2) — nor once `main` has moved on
+                # or the pull request conflicts, which would open a new window (review F1).
                 rounds = u.get("rounds") or []
                 passed = bool(rounds) and rounds[-1].get("verdict") == "pass"
                 if (
@@ -256,7 +257,7 @@ class AutopilotMixin:
                     and (not passed or settings["autopilot_may_ship"])
                     and (stop is None or stop["kind"] == "f")
                 ):
-                    if info.get("state") == "red-after-integration" and own is not None:
+                    if own is not None and (info.get("state") == "red-after-integration" or own[1] is not None):
                         stage, stop = own
                     else:
                         stop, stage = None, "integrate"

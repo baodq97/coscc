@@ -622,6 +622,22 @@ class Scripted(_Base):
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED)
 
+    async def _0124_still_red_once_main_moved(self, state: str) -> None:
+        """R2, review F1: the `impl` pushed, CI is still red, and `main` moved on or the pull
+        request conflicts. No `integrate`, which would open a new window and a second `impl`."""
+        await self._0124_impl_after_a_red_rebase()
+        self.units["0001_a"]["integration"] = {"state": state}
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED)
+
+    async def test_0124_r2_still_red_and_behind_after_impl_stops(self):
+        await self._0124_still_red_once_main_moved("behind")
+
+    async def test_0124_r2_still_red_and_conflicting_after_impl_stops(self):
+        await self._0124_still_red_once_main_moved("conflicting")
+
     async def test_an_integration_before_its_mark_is_counted_against_the_cap(self):
         reading = asyncio.Event()
         self.addCleanup(reading.set)
