@@ -1438,9 +1438,9 @@ function prHead(probe, pr) {
 //
 // `0067`: a ref rewritten after the pass no longer closes the gate by itself. When the
 // unit's patch there is byte for byte the reviewed one, less line numbers and `index` lines
-// (`rebaseClean`), the gate reads CI on the pull request instead of asking for a round, and
-// sets `said.rebased` to the two commits. A patch that differs, or cannot be compared,
-// closes it as before.
+// (`rebaseClean`), the gate reads CI on the pull request instead of asking for a round. It
+// sets `said.rebased` to the two commits only when the rewritten ref is the pull request's
+// head. A patch that differs, or cannot be compared, closes it as before.
 function shipNeeds(unit, probe, said = {}) {
   const rounds = reviewOf(unit)
   if (!rounds.length) return ['review.md has no ## Round — nothing says what was reviewed or found']
@@ -1498,7 +1498,7 @@ function shipNeeds(unit, probe, said = {}) {
   // `0067`: the reviewed commit's patch, taken only once a ref is found rewritten, and then
   // once for all of them — a unit never rebased asks git nothing more (R7).
   let reviewedPatch = null
-  let clean = false
+  let rebased = false
   for (const ref of refs) {
     const name = ref === said.head ? `the head of #${pr.number} (${ref})` : ref
     const since = changedSince(probe, unit, last.reviewed, ref)
@@ -1512,8 +1512,10 @@ function shipNeeds(unit, probe, said = {}) {
     if (since.rewritten) {
       reviewedPatch ??= unitPatch(probe, unit, last.reviewed)
       const compared = rebaseClean(probe, unit, reviewedPatch, ref)
+      // Only the pull request's head is what merges: a local ref rewritten clean while the
+      // head is still the reviewed commit leaves the gate as it was, and names no rebase.
       if (compared.clean) {
-        clean = true
+        if (ref === said.head) rebased = true
         continue
       }
       said.moved = true
@@ -1532,7 +1534,7 @@ function shipNeeds(unit, probe, said = {}) {
   // `0067` R3: a clean rebase stands in for the round only once CI is green on it — CI is
   // what is left to catch a conflict with no conflicting line. Before `behind`: a head just
   // rebased is up to date, and "wait for CI" is then the true reason.
-  if (clean) {
+  if (rebased) {
     said.rebased = { reviewed: last.reviewed, head: said.head }
     const ci = ciNeeds(probe, pr, said)
     if (ci.length) return ci

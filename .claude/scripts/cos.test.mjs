@@ -3012,15 +3012,16 @@ const hunk = (at, context = 'line 28', blob = '1111111..2222222') =>
 const PATCH_R = hunk(27)
 // A pass on `SHA`, then a rebase to `REB`: the reviewed commit is on none of the three refs.
 // `patch(commit)` is what `git diff` prints for the unit at that commit, `base(commit)` what
-// `git merge-base` does; every call, git's and gh's, lands in `calls`.
-const rebasedProbe = ({ patch = (c) => (c === SHA ? PATCH_R : hunk(28, 'line 28', '3333333..4444444')), base = () => ok(`${'f'.repeat(40)}\n`), checks = [{ name: 'tests', bucket: 'pass' }], calls = [] } = {}) => ({
+// `git merge-base` does; every call, git's and gh's, lands in `calls`. `head: SHA` leaves the
+// pull request's head where the pass was, with only the two branch refs rewritten.
+const rebasedProbe = ({ patch = (c) => (c === SHA ? PATCH_R : hunk(28, 'line 28', '3333333..4444444')), base = () => ok(`${'f'.repeat(40)}\n`), checks = [{ name: 'tests', bucket: 'pass' }], calls = [], head = REB } = {}) => ({
   gh: (...a) => {
     calls.push(['gh', ...a].join(' '))
-    return a[1] === 'view' ? ok(JSON.stringify({ state: 'OPEN', headRefOid: REB })) : ok(JSON.stringify(checks))
+    return a[1] === 'view' ? ok(JSON.stringify({ state: 'OPEN', headRefOid: head })) : ok(JSON.stringify(checks))
   },
   git: (...a) => {
     calls.push(a.join(' '))
-    if (a[0] === 'merge-base' && a[1] === '--is-ancestor') return a[2] === SHA ? { code: 1, out: '', err: '' } : ok()
+    if (a[0] === 'merge-base' && a[1] === '--is-ancestor') return a[2] === SHA && a[3] !== SHA ? { code: 1, out: '', err: '' } : ok()
     if (a[0] === 'merge-base') return base(a[1])
     if (a[0] === 'diff' && a[1] === '--no-color') return ok(patch(a.at(-4)))
     return ok()
@@ -3077,6 +3078,20 @@ test('0067 R2: a rewritten ref whose patch is unchanged opens ship once CI is gr
   const n = nextStep(u, { probe: rebasedProbe() })
   assert.equal(n.stage, 'ship')
   assert.match(n.action, new RegExp(`--match-head-commit ${REB}$`))
+})
+
+test('0067 review F1: a branch ref rewritten clean while the pull request head is still the reviewed commit names no rebase', () => {
+  const u = passedOnce()
+  const calls = []
+  // The gate stays as a head that did not move leaves it: open on that head, CI not asked.
+  assert.deepEqual(checkGate(u, 'ship', { probe: rebasedProbe({ head: SHA, calls }) }), { ok: true, need: [], head: SHA })
+  assert.deepEqual(calls.filter((c) => c.startsWith('gh pr checks')), [])
+  assert.equal(nextStep(u, { probe: rebasedProbe({ head: SHA, checks: [{ name: 'tests', bucket: 'fail' }] }) }).stage, 'ship')
+  // A merge refused as not up to date is not cured by a rewrite the pull request never saw.
+  const refused = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')), 'ship.md': shipArt(shipDraft(1)) })
+  assert.deepEqual(nextStep(refused, { probe: rebasedProbe({ head: SHA }) }), {
+    blocked: true, action: 'ship was refused: the head branch is not up to date with the base branch — finish and accept ship.md', stage: '',
+  })
 })
 
 test('0067 R3: red, pending, none or unreadable CI on a clean rebase closes ship with said.ci and never said.moved', () => {
