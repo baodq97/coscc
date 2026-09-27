@@ -1163,8 +1163,39 @@ class ASiblingCheckoutIsReadNotChanged(unittest.TestCase):
             said = decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also)
             self.assertIn("may not be pointed at", said, command)
 
+    def test_git_pointed_there_by_its_environment_or_a_chain_of_c_is_refused(self):
+        """Review round 1, F1: git reads `GIT_DIR` and `GIT_WORK_TREE`, and each `-C` goes on
+        from the one before, so a relative one lands where the chain says."""
+        for command in (
+            f"GIT_DIR={self.sibling}/.git GIT_WORK_TREE={self.sibling} git commit -am x",
+            f"GIT_WORK_TREE={self.sibling} git checkout .",
+            f"git -C / -C {str(self.sibling).lstrip('/')} commit -am x",
+            f"git -C {self.tree} -C ../api commit -am x",
+            f"git -C {self.tree.parent} --git-dir=api/.git log",
+            "git --work-tree ../api checkout .",
+            f"git -c core.worktree={self.sibling} checkout .",
+        ):
+            said = decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also)
+            self.assertIn("may not be pointed at", said, command)
+        # A variable's value is not known here, so it is refused where it would point git.
+        for command in ("GIT_DIR=$S git log", "git -C $S commit -am x", "git --git-dir=$S/.git log"):
+            said = decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also)
+            self.assertIn("cannot read where it points", said, command)
+
+    def test_the_known_limit_of_git_into(self):
+        """What `_git_into` does not read (`.claude/rules/coscc-policy.md`): a path a
+        subcommand takes, and anything but git. Pinned, so closing one turns this red."""
+        for command in (
+            f"git worktree add {self.sibling}/x",
+            f"python -c \"open('{self.sibling}/api.py', 'w')\"",
+        ):
+            self.assertEqual(decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also), "", command)
+
     def test_git_c_elsewhere_and_git_without_it_still_run(self):
-        for command in (f"git -C {self.tree} status", "git status", f"cat {self.sibling}/api.py", "git log -C"):
+        for command in (
+            f"git -C {self.tree} status", "git status", f"cat {self.sibling}/api.py", "git log -C",
+            f"GIT_DIR={self.tree}/.git git log", "git -c user.name=x -C sub status", "git -C",
+        ):
             self.assertEqual(decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also), "", command)
 
     def test_without_read_also_git_c_reads_as_it_did(self):

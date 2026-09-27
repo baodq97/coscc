@@ -1367,8 +1367,8 @@ def decide(
     return ""
 
 
-# The options that point `git` at another repository, each with its value.
-_GIT_ELSEWHERE = ("-C", "--git-dir", "--work-tree")
+# git's own options that take a value, in front of the subcommand.
+_GIT_VALUED = ("-C", "-c", "--git-dir", "--work-tree")
 
 
 def _git_into(command: str, workspace: str, read_also: tuple[str, ...]) -> str:
@@ -1376,8 +1376,12 @@ def _git_into(command: str, workspace: str, read_also: tuple[str, ...]) -> str:
 
     `read_also` widens reading, and `git -C <sibling> commit` would be a write there that no
     write tool made. `_words` drops `-C` and its value, so the deny list never sees it; this
-    reads them. `cd <sibling> && git …` needs `cd`, which no grant holds. The rest is still
-    the read boundary, which is not a sandbox (`.claude/rules/coscc-policy.md`).
+    reads them, as git does (`0040` review round 1, F1): each `-C` relative to the one before,
+    and a relative `--git-dir`, `--work-tree`, `-c` value or `GIT_*=` assignment against both
+    the workspace and the directory the `-C`s end in. `cd <sibling> && git …` needs `cd`,
+    which no grant holds. A path a subcommand takes (`git worktree add <sibling>/x`) is not
+    read, and the rest is still the read boundary, which is not a sandbox
+    (`.claude/rules/coscc-policy.md`; `test_the_known_limit_of_git_into`).
     """
     from pathlib import Path
 
@@ -1391,6 +1395,7 @@ def _git_into(command: str, workspace: str, read_also: tuple[str, ...]) -> str:
         base = Path(workspace).expanduser().resolve()
     except OSError:
         return "a path this step may read could not be resolved"
+    refused = "git may not be pointed at {}: this step may read that repository, not change it"
     for simple in parsed.commands:
         words = list(simple.words)
         k = 0
@@ -1398,17 +1403,37 @@ def _git_into(command: str, workspace: str, read_also: tuple[str, ...]) -> str:
             k += 1
         if not words or words[k].rsplit("/", 1)[-1] != "git":
             continue
+        # `GIT_DIR=`, `GIT_WORK_TREE=` and the other `GIT_*` paths git reads from its
+        # environment, set on this one command.
+        values = [w.partition("=")[2] for w in words[:k] if w.startswith("GIT_")]
+        if any(e for w, e in zip(words[:k], simple.expanded) if w.startswith("GIT_")):
+            # What a variable holds is not known here, and `impl`'s grant lets one reach git.
+            return "git may not be given a GIT_* variable's value: this step cannot read where it points"
         rest = words[k + 1:]
+        unknown = simple.expanded[k + 1:]
+        where = base
         i = 0
-        # git's own options, in front of the subcommand; `-c` takes a value too.
         while i < len(rest) and rest[i].startswith("-"):
             name, eq, value = rest[i].partition("=")
-            if (name in _GIT_ELSEWHERE or name == "-c") and not eq:
+            if name in _GIT_VALUED and not eq:
                 value = rest[i + 1] if i + 1 < len(rest) else ""
                 i += 1
-            if name in _GIT_ELSEWHERE and value and _inside(value, roots, base):
-                return f"git may not be pointed at {value}: this step may read that repository, not change it"
+            if name in _GIT_VALUED and i < len(unknown) and unknown[i]:
+                return f"git may not be given a variable for {name}: this step cannot read where it points"
+            if name == "-C" and value:
+                # An absolute value replaces `where`; a relative one goes on from it.
+                where = where / Path(value).expanduser()
+                if _inside(str(where), roots, None):
+                    return refused.format(value)
+            elif name == "-c":
+                # `-c core.worktree=<dir>` moves the work tree as `--work-tree` does.
+                values.append(value.partition("=")[2])
+            elif name in _GIT_VALUED:
+                values.append(value)
             i += 1
+        for value in values:
+            if value and (_inside(value, roots, base) or _inside(value, roots, where)):
+                return refused.format(value)
     return ""
 
 

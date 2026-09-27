@@ -143,7 +143,8 @@ class IdeasMixin:
             return (), ""
         note = (
             "Read these to see the other side of the contract. Do not write there: Write and Edit "
-            "are refused outside this worktree, and so is git pointed at them.\n\n" + "\n".join(lines)
+            "are refused outside this worktree, and so is git given one of them with -C, --git-dir, "
+            "--work-tree or GIT_DIR. Nothing else stops a command that writes there.\n\n" + "\n".join(lines)
         )
         return tuple(paths), note
 
