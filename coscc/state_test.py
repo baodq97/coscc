@@ -1582,5 +1582,16 @@ class TimesReadForAReader(unittest.TestCase):
         self.assertEqual((done.key, running.key), ("r1", "impl-1"))
 
 
+class TheStateNameIsUnchanged(unittest.TestCase):
+    """`0129` R6: Reflex names the state after its module. A page left open across an update
+    would lose its state if the name changed, and what the server pushes would not match.
+    The value was read on `825b542`, before the package was split."""
+
+    def test_the_name(self):
+        from coscc import state
+
+        self.assertEqual(state.StudioState.get_name(), "coscc___state____studio_state")
+
+
 if __name__ == "__main__":
     unittest.main()
