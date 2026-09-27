@@ -212,6 +212,9 @@ class Door(unittest.IsolatedAsyncioTestCase):
         self.data = Data(self.tmp.name)
         self.api = build(Config(data_dir=self.tmp.name))
         self.events: list[dict] = []
+        # Set each time `_ws_app` records a message, so a test waits for it, not for a
+        # stretch of time (`0079`).
+        self.heard = asyncio.Event()
         self.recorder = Recorder(self.api, self._ws_app)
         self.clock = Clock()
         self.err = io.StringIO()
@@ -229,6 +232,7 @@ class Door(unittest.IsolatedAsyncioTestCase):
         while True:
             message = await receive()
             self.events.append(message)
+            self.heard.set()
             if message["type"] == "websocket.disconnect":
                 return
 
