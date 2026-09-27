@@ -14,7 +14,9 @@ import {
   UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe, stageAt,
   aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip, normalizePatch, openLines,
   parseMoreRounds, reviewLimit, moreRounds, branchChecks, notAWorkBranch,
+  parseIdea, parseLinks, parseIdeaRef, parseUnitRef, WAITING_ON,
 } from './cos.mjs'
+import { createHash } from 'node:crypto'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
 const art = (status) => ({ status, skipReason: null })
@@ -4044,4 +4046,238 @@ test('0103: check-branch prints notAWorkBranch\'s line unchanged', () => {
   assert.equal(out.stderr, `"${HEAD_97}" is not a work branch: ${REASON_97}\n`)
   assert.equal(notAWorkBranch(HEAD_97, REASON_97), out.stderr.trimEnd())
   assert.equal(cli('check-branch', 'feat/x').stdout, 'feat/x\n')
+})
+
+// --- 0040: one idea, several units, several repositories ----------------------------
+
+const I40 = (status, header = '') => `# Intent: x\nAuthor: a. Type: feat. Status: ${status}.${header ? `\n${header}` : ''}\n`
+// A store root whose `.cos/` holds `units`, `{ name: { file: text } }`, and `ideas`.
+const store40 = (units, ideas = {}) => {
+  const root = mkdtempSync(join(tmpdir(), 'cos-0040-'))
+  mkdirSync(join(root, '.cos'))
+  for (const [u, files] of Object.entries(units)) {
+    mkdirSync(join(root, '.cos', u))
+    for (const [f, t] of Object.entries(files)) writeFileSync(join(root, '.cos', u, f), t)
+  }
+  if (Object.keys(ideas).length) mkdirSync(join(root, '.cos', 'ideas'))
+  for (const [f, t] of Object.entries(ideas)) writeFileSync(join(root, '.cos', 'ideas', f), t)
+  return root
+}
+const IDEA40 = (...lines) =>
+  `# Idea: one feature\nAuthor: the originator. Status: accepted.\n\n## In their own words\n\nboth sides\n\n## Units\n\n${lines.map((l) => `${l}\n`).join('')}`
+// A unit whose next stage is `impl`, its links in its header.
+const toImpl = (header) => ({ 'intent.md': I40('accepted', header), 'spec.md': '# Spec\nStatus: skipped.\n', 'plan.md': '# Plan\nStatus: accepted.\n' })
+// Workspace `a` holds the unit depended on; `b` holds the idea and the unit that waits.
+const pair40 = ({ ship = 'draft', aIntent = I40('accepted'), line = '- b/0001_y. Depends on: a/0001_x.', header = 'Idea: ideas/0001_f.md. Repo: b. Depends on: a/0001_x.' } = {}) => {
+  const a = store40({ '0001_x': { 'intent.md': aIntent, ...(ship ? { 'ship.md': `# Ship\nStatus: ${ship}.\n` } : {}) } })
+  const b = store40({ '0001_y': toImpl(header) }, { '0001_f.md': IDEA40('- a/0001_x.', line) })
+  return { a, b }
+}
+const json40 = (out) => JSON.parse(out.stdout)
+
+test('0040 R1: new-idea gives 0001 then 0002 and leaves new-path numbering alone', () => {
+  const root = store40({ '0007_u': { 'intent.md': I40('accepted') } })
+  const first = cli('--root', root, 'new-idea', 'one')
+  assert.equal(first.status, 0, first.stderr)
+  assert.equal(first.stdout, '.cos/ideas/0001_one.md\n')
+  assert.deepEqual(readdirSync(join(root, '.cos')), ['0007_u'], 'new-idea creates nothing')
+  mkdirSync(join(root, '.cos', 'ideas'))
+  writeFileSync(join(root, first.stdout.trim()), IDEA40())
+  assert.equal(cli('--root', root, 'new-idea', 'two').stdout, '.cos/ideas/0002_two.md\n')
+  assert.equal(cli('--root', root, 'new-path', 'z').stdout, '.cos/0008_z\n')
+})
+
+test('0040 R1: new-idea refuses a bad slug with exit 2', () => {
+  const root = store40({})
+  for (const slug of ['Bad_Slug', 'a'.repeat(61), '']) {
+    const out = cli('--root', root, 'new-idea', slug)
+    assert.equal(out.status, 2, slug)
+    assert.equal(out.stdout, '')
+  }
+})
+
+test('0040 R2, R3: a store with ideas/ reports no problem about it', () => {
+  const { b } = pair40()
+  const status = json40(cli('--root', b, 'status', '--json'))
+  assert.deepEqual(status.units.map((u) => u.name), ['0001_y'])
+  assert.ok(!status.units.some((u) => u.problems.some((p) => /ideas/.test(p) && !/Depends on/.test(p))), JSON.stringify(status.units))
+  assert.deepEqual(status.ideas, [{
+    id: '0001_f', title: 'one feature', status: 'accepted', problems: [],
+    units: [{ ref: 'a/0001_x', dependsOn: [] }, { ref: 'b/0001_y', dependsOn: ['a/0001_x'] }],
+  }])
+})
+
+// The sha256 of `status --json` of the store below, its root blanked, as the `cos.mjs` of
+// `5556245` printed it, before `0040` touched the file.
+const BEFORE_0040 = 'f7851805e41dcd5ee4c4d9e8fb136515e23784eea2dc82e79fda647524e3f3cb'
+
+test('0040 R2: status --json without ideas/ is byte-identical', () => {
+  const root = store40({
+    // The fields in the body, not the header, are not read.
+    '0001_plain': {
+      'intent.md': `${I40('accepted')}\n## Problem\n\nIdea: ideas/0001_y.md. Repo: x. Depends on: 0002_other.\n`,
+      'spec.md': '# Spec\nStatus: skipped.\n',
+      'plan.md': '# Plan\nStatus: accepted.\n',
+    },
+    '0002_other': { 'intent.md': `${I40('draft')}\n## Open questions\n\n1. Which?\n` },
+    '0003_shipped': Object.fromEntries(['intent', 'spec', 'plan', 'impl', 'pr', 'review', 'ship'].map((s) => [`${s}.md`, s === 'intent' ? I40('accepted') : `# ${s}\nStatus: accepted.\n`])),
+  })
+  const out = cli('--root', root, 'status', '--json').stdout
+  assert.equal(createHash('sha256').update(out.split(join(root, '.cos')).join('<root>')).digest('hex'), BEFORE_0040)
+  assert.doesNotMatch(out, /"ideas":|"idea":|"repo":|"dependsOn":/)
+})
+
+test('0040 R4: a child unit carries idea, repo and dependsOn in status --json', () => {
+  const { a, b } = pair40()
+  const [u] = json40(cli('--root', b, 'status', '--json', '--peer', `a=${a}`)).units
+  assert.equal(u.idea, 'ideas/0001_f.md')
+  assert.equal(u.repo, 'b')
+  assert.deepEqual(u.dependsOn, [{ ref: 'a/0001_x', merged: false, why: 'not merged: its ship.md is not accepted' }])
+  assert.deepEqual(u.problems, [])
+})
+
+test('0040 R4: a unit without those headers has none of the keys', () => {
+  const { a } = pair40()
+  const [u] = json40(cli('--root', a, 'status', '--json')).units
+  for (const key of ['idea', 'repo', 'dependsOn']) assert.ok(!(key in u), key)
+})
+
+test('0040 R4: the header fields read to whitespace, less the closing dot, and a list splits on commas', () => {
+  assert.deepEqual(parseLinks('# Intent: x\nIdea: a/ideas/0001_f.md. Repo: b. Depends on: a/0001_x, 0002_y. Status: accepted.\n'),
+    { idea: 'a/ideas/0001_f.md', repo: 'b', dependsOn: ['a/0001_x', '0002_y'] })
+  assert.deepEqual(parseLinks('# Intent: Idea: no\nStatus: accepted.\n\n## Problem\n\nRepo: body.\n'), { idea: null, repo: null, dependsOn: null })
+  assert.deepEqual(parseIdeaRef('ideas/0001_f.md'), { ws: null, file: '0001_f.md' })
+  assert.deepEqual(parseIdeaRef('proj/ideas/0001_f.md'), { ws: 'proj', file: '0001_f.md' })
+  assert.equal(parseIdeaRef('proj/ideas/0001_f'), null)
+  assert.equal(parseIdeaRef('a/b/ideas/0001_f.md'), null)
+  assert.deepEqual(parseUnitRef('api/0001_x'), { ws: 'api', name: '0001_x' })
+  assert.equal(parseUnitRef('api/1_x'), null)
+})
+
+test('0040 R3: a line under ## Units that is not the grammar is a problem of that idea', () => {
+  const idea = parseIdea(IDEA40('- a/0001_x.', '- 0002_no-workspace.', 'a note', '- b/0003_z. Depends on: nowhere.'))
+  assert.deepEqual(idea.units, [{ ref: 'a/0001_x', dependsOn: [] }])
+  assert.equal(idea.problems.length, 3)
+  assert.deepEqual(parseIdea('# Idea: x\nStatus: accepted.\n').problems, ['has no ## Units section'])
+})
+
+test('0040 R6: a missing peer, a missing idea file and an unlisted unit each land in problems', () => {
+  const b = store40({
+    '0002_p': toImpl('Repo: b. Depends on: c/0001_z.'),
+    '0003_q': toImpl('Idea: ideas/0009_none.md. Repo: b.'),
+    '0004_r': toImpl('Idea: ideas/0001_f.md. Repo: b.'),
+    '0005_s': toImpl('Idea: ideas/0001_f.md.'),
+  }, { '0001_f.md': IDEA40('- b/0005_s.') })
+  const units = json40(cli('--root', b, 'status', '--json')).units
+  const said = (name) => units.find((u) => u.name === name).problems.join('\n')
+  assert.match(said('0002_p'), /Depends on: c\/0001_z — no --peer c/)
+  assert.match(said('0003_q'), /Idea: ideas\/0009_none\.md — .*0009_none\.md does not exist/)
+  assert.match(said('0004_r'), /does not list b\/0004_r under ## Units/)
+  assert.match(said('0005_s'), /declares no Repo:/)
+})
+
+test('0040 R5: --peer with a bad or repeated name exits 2', () => {
+  const root = store40({})
+  for (const args of [['--peer', 'a/b=/x'], ['--peer', 'a'], ['--peer', 'a='], ['--peer'], ['--peer', 'a=/x', '--peer', 'a=/y'], ['--peer', '..=/x']]) {
+    const out = cli('--root', root, 'status', ...args)
+    assert.equal(out.status, 2, args.join(' '))
+  }
+  assert.equal(cli('--root', root, 'status', '--peer', 'a=/x', '--peer', 'b.c_d-1=/y').status, 0)
+})
+
+test('0040 R5: --peer is refused on new-path', () => {
+  const out = cli('--root', store40({}), 'new-path', 'x', '--peer', 'a=/x')
+  assert.equal(out.status, 2)
+  assert.match(out.stderr, /--peer applies only to/)
+  assert.equal(out.stdout, '')
+})
+
+test('0040 R7: impl gate stays shut while the dependency\'s ship.md is not accepted', () => {
+  for (const ship of ['draft', null]) {
+    const { a, b } = pair40({ ship })
+    const out = cli('--root', b, 'gate', '0001_y', 'impl', '--peer', `a=${a}`)
+    assert.equal(out.status, 1, String(ship))
+    assert.match(out.stderr, /waits on a\/0001_x: not merged: its ship\.md is not accepted/)
+    // `plan` is not `impl`: the wait closes nothing else.
+    assert.equal(cli('--root', b, 'gate', '0001_y', 'plan', '--peer', `a=${a}`).status, 0)
+  }
+})
+
+test('0040 R7: next says why dependency and names the ref', () => {
+  const { a, b } = pair40()
+  assert.deepEqual(json40(cli('--root', b, 'next', '0001_y', '--peer', `a=${a}`)),
+    { unit: '0001_y', stage: '', action: `${WAITING_ON}a/0001_x to merge`, blocked: true, why: 'dependency' })
+  const [u] = json40(cli('--root', b, 'status', '--json', '--peer', `a=${a}`)).units
+  assert.equal(u.next.why, 'dependency')
+  assert.equal(u.next.action, `${WAITING_ON}a/0001_x to merge`)
+})
+
+test('0040 R8: impl gate opens once the dependency\'s ship.md is accepted', () => {
+  const { a, b } = pair40({ ship: 'accepted' })
+  const out = cli('--root', b, 'gate', '0001_y', 'impl', '--peer', `a=${a}`)
+  assert.equal(out.status, 0, out.stderr)
+  const next = json40(cli('--root', b, 'next', '0001_y', '--peer', `a=${a}`))
+  assert.equal(next.stage, 'impl')
+  assert.ok(!('why' in next), 'why is carried only by a wait')
+})
+
+test('0040 R7: without --peer the impl gate names --peer', () => {
+  const { b } = pair40({ ship: 'accepted' })
+  const out = cli('--root', b, 'gate', '0001_y', 'impl')
+  assert.equal(out.status, 1)
+  assert.match(out.stderr, /waits on a\/0001_x: no --peer a: pass --peer a=<dir>/)
+})
+
+test('0040 R9: a Depends on that differs from the idea\'s line shuts impl', () => {
+  // The idea lists no dependency; the header declares one.
+  let { a, b } = pair40({ ship: 'accepted', line: '- b/0001_y.' })
+  let out = cli('--root', b, 'gate', '0001_y', 'impl', '--peer', `a=${a}`)
+  assert.equal(out.status, 1)
+  assert.match(out.stderr, /lists b\/0001_y with Depends on: nothing, but intent\.md declares a\/0001_x — the two must match/)
+  // The header lacks the field the idea lists.
+  ;({ a, b } = pair40({ ship: 'accepted', header: 'Idea: ideas/0001_f.md. Repo: b.' }))
+  out = cli('--root', b, 'gate', '0001_y', 'impl', '--peer', `a=${a}`)
+  assert.equal(out.status, 1)
+  assert.match(out.stderr, /Depends on: a\/0001_x, but intent\.md declares none/)
+  assert.equal(json40(cli('--root', b, 'next', '0001_y', '--peer', `a=${a}`)).stage, '')
+  // Both agree, one of them without its `<ws>`: the unit's own.
+  ;({ a, b } = pair40({ ship: 'accepted', line: '- b/0001_y. Depends on: b/0002_z.', header: 'Idea: ideas/0001_f.md. Repo: b. Depends on: 0002_z.' }))
+  mkdirSync(join(b, '.cos', '0002_z'))
+  writeFileSync(join(b, '.cos', '0002_z', 'intent.md'), I40('accepted'))
+  writeFileSync(join(b, '.cos', '0002_z', 'ship.md'), '# Ship\nStatus: accepted.\n')
+  out = cli('--root', b, 'gate', '0001_y', 'impl', '--peer', `a=${a}`)
+  assert.equal(out.status, 0, out.stderr)
+})
+
+test('0040 R7: a dropped dependency shuts impl and says dropped', () => {
+  const { a, b } = pair40({ ship: null, aIntent: `${I40('accepted')}\n## Answers\n${holdBlock('Dropped', 'Not needed.')}` })
+  const out = cli('--root', b, 'gate', '0001_y', 'impl', '--peer', `a=${a}`)
+  assert.equal(out.status, 1)
+  assert.match(out.stderr, /waits on a\/0001_x: dropped/)
+  const rejected = pair40({ ship: null, aIntent: I40('rejected') })
+  assert.match(cli('--root', rejected.b, 'gate', '0001_y', 'impl', '--peer', `a=${rejected.a}`).stderr, /waits on a\/0001_x: rejected: its intent\.md is rejected/)
+})
+
+test('0040 R9: an unreadable Idea: shuts impl but no other gate', () => {
+  const b = store40({ '0001_y': toImpl('Idea: b/ideas/0001_gone.md. Repo: b.') })
+  for (const stage of ['spec', 'plan']) assert.equal(cli('--root', b, 'gate', '0001_y', stage, '--peer', `b=${b}`).status, 0, stage)
+  const out = cli('--root', b, 'gate', '0001_y', 'impl', '--peer', `b=${b}`)
+  assert.equal(out.status, 1)
+  assert.match(out.stderr, /Idea: b\/ideas\/0001_gone\.md cannot be read: .*does not exist/)
+  const next = json40(cli('--root', b, 'next', '0001_y', '--peer', `b=${b}`))
+  assert.equal(next.stage, '')
+  assert.match(next.action, /^fix the idea link — /)
+  assert.ok(!('why' in next))
+})
+
+test('0040 R7: a red check that sends the work back to impl waits on the dependency too', () => {
+  const red = greenProbe([{ name: 'tests', bucket: 'fail' }])
+  const files = (header) => ({ ...toImpl(header), 'impl.md': '# Impl\nStatus: accepted.\n', 'pr.md': PR_MD })
+  const a = store40({ '0001_x': { 'intent.md': I40('accepted') } })
+  const b = store40({ '0001_y': files('Repo: b. Depends on: a/0001_x.'), '0002_free': files('Repo: b.') })
+  const peers = new Map([['a', a]])
+  const read = (name) => readUnit(join(b, '.cos', name), name, { peers, cosDir: join(b, '.cos') })
+  assert.equal(nextStep(read('0002_free'), { probe: red }).stage, 'impl', 'without a dependency, red goes back to impl')
+  assert.deepEqual(nextStep(read('0001_y'), { probe: red }),
+    { blocked: true, action: `${WAITING_ON}a/0001_x to merge`, stage: '', why: 'dependency' })
 })
