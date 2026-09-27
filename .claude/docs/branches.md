@@ -9,9 +9,12 @@ the eight steps.
 When the pull request falls behind, `gh pr update-branch --rebase`. Rebase, not a merge of
 `main` into the branch: the squash would remove the merge commit anyway, and keeping the
 two rules pointing the same way is worth more than the shortcut. Do it before a review
-round, not after a pass: a rebase rewrites the reviewed commit, the `ship` gate then
-closes, and another round is needed. A round that passes does not count toward
-`COS_REVIEW_ROUNDS`, so that round costs time and nothing else.
+round. After a pass, a rebase that leaves the unit's patch unchanged — the same added,
+removed and context lines; only line numbers and `index` lines may differ — opens `ship`
+once CI is green, with no round (`0067`). One that changes any of those lines closes the
+gate and needs another round, which does not count toward `COS_REVIEW_ROUNDS`. The gate
+compares against the `origin/main` it has and does not fetch: at a terminal, fetch it
+before asking, or a stale one reads as a changed patch.
 
 A rebase before a round no longer spends that round on a UI unit's screenshots alone
 (`0111`). The rebase leaves `.screens/manifest.json` naming a head that is gone; before a
@@ -43,4 +46,6 @@ required checks — including the commit recording the pass — so the merge may
 refused with `2 of 2 required status checks are expected`: wait. Since `0112` the gate is
 closed while the pull request is behind the `origin/main` this repository knows, and a
 merge refused anyway leaves a `draft` `ship.md` with `Round:` and a `Refused:` line, which
-a later passing round goes past.
+a later passing round goes past. Since `0067` so does a refusal as not up to date once the
+pull request's head is a clean rebase of the reviewed commit and CI is green on it: `next`
+offers `ship` again with no round. Any other refusal still stops until a later round.

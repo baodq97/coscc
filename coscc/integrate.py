@@ -254,13 +254,17 @@ def warnings(
     out: list[str] = []
     # `0061` R11.1: the app cannot tell "behind but mergeable" (spike U1, U2), so the page
     # says when integrating a passed unit is worth another round, and leaves it to a person.
+    # `0067` R8: only a rebase that changes the unit's patch costs that round; `cos.mjs`
+    # decides which, and this only says so.
     if rounds and str(rounds[-1].get("verdict") or "") == "pass":
         out.append(
-            "The last review round passed. Integrating rewrites the reviewed commit: the ship "
-            "gate closes and another review round is needed — it does not count toward "
-            "COS_REVIEW_ROUNDS, but it is another paid session. Run ship first. Integrate "
-            "only when GitHub reports a conflict or refuses the merge because the branch is "
-            "behind main."
+            "The last review round passed. Integrating rewrites the reviewed commit. If the "
+            "unit's patch comes out unchanged — the same added, removed and context lines — "
+            "the ship gate opens again once CI is green, with no review round. If it changes, "
+            "the ship gate closes and another review round is needed — it does not count "
+            "toward COS_REVIEW_ROUNDS, but it is another paid session. Run ship first. "
+            "Integrate only when GitHub reports a conflict or refuses the merge because the "
+            "branch is behind main."
         )
     if review_status == "changes-requested":
         out.append(

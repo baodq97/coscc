@@ -1370,7 +1370,12 @@ function reviewNeeds(unit, probe, limit, said = {}) {
   }
   if (need.length || !pr) return need
   if (!probe) return ['no repository given — pass --repo <dir>']
+  return ciNeeds(probe, pr, said)
+}
 
+// The required checks of `pr`, read once: `[]` when green, else why not, with `said.ci` set.
+// Shared by `review` and, after a clean rebase, `ship` (`0067` R3), so there is one reading.
+function ciNeeds(probe, pr, said) {
   const r = probe.gh('pr', 'checks', String(pr.number), '--required', '--json', 'name,bucket')
   // `gh pr checks` exits non-zero when a check failed or is pending, and still prints the
   // JSON. So the output is read first and the exit code only when there is none.
@@ -1430,6 +1435,12 @@ function prHead(probe, pr) {
 //
 // `said.head` is set to the pull request head the gate checked, so the merge can be pinned
 // to it.
+//
+// `0067`: a ref rewritten after the pass no longer closes the gate by itself. When the
+// unit's patch there is byte for byte the reviewed one, less line numbers and `index` lines
+// (`rebaseClean`), the gate reads CI on the pull request instead of asking for a round. It
+// sets `said.rebased` to the two commits only when the rewritten ref is the pull request's
+// head. A patch that differs, or cannot be compared, closes it as before.
 function shipNeeds(unit, probe, said = {}) {
   const rounds = reviewOf(unit)
   if (!rounds.length) return ['review.md has no ## Round — nothing says what was reviewed or found']
@@ -1484,6 +1495,10 @@ function shipNeeds(unit, probe, said = {}) {
   if (read.error) return [read.error]
   refs.push(read.head)
   said.head = read.head
+  // `0067`: the reviewed commit's patch, taken only once a ref is found rewritten, and then
+  // once for all of them — a unit never rebased asks git nothing more (R7).
+  let reviewedPatch = null
+  let rebased = false
   for (const ref of refs) {
     const name = ref === said.head ? `the head of #${pr.number} (${ref})` : ref
     const since = changedSince(probe, unit, last.reviewed, ref)
@@ -1492,10 +1507,22 @@ function shipNeeds(unit, probe, said = {}) {
       continue
     }
     // `said.moved`: what the pass reviewed is no longer what would merge. The cure for
-    // both is another round, which is what `nextStep` offers when it sees this.
+    // both is another round, which is what `nextStep` offers when it sees this. A rewrite
+    // that left the unit's patch as it was is not one (`0067` R2).
     if (since.rewritten) {
+      reviewedPatch ??= unitPatch(probe, unit, last.reviewed)
+      const compared = rebaseClean(probe, unit, reviewedPatch, ref)
+      // Only the pull request's head is what merges: a local ref rewritten clean while the
+      // head is still the reviewed commit leaves the gate as it was, and names no rebase.
+      if (compared.clean) {
+        if (ref === said.head) rebased = true
+        continue
+      }
       said.moved = true
-      need.push(`the reviewed commit ${last.reviewed} is not on ${name} — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit`)
+      const why = compared.differs
+        ? `its patch differs from the reviewed one in ${compared.differs.join(', ')}`
+        : `its patch could not be compared with the reviewed one: ${compared.error}`
+      need.push(`the reviewed commit ${last.reviewed} is not on ${name} — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — ${why}`)
       continue
     }
     if (since.files.length) {
@@ -1504,6 +1531,14 @@ function shipNeeds(unit, probe, said = {}) {
     }
   }
   if (need.length) return need
+  // `0067` R3: a clean rebase stands in for the round only once CI is green on it — CI is
+  // what is left to catch a conflict with no conflicting line. Before `behind`: a head just
+  // rebased is up to date, and "wait for CI" is then the true reason.
+  if (rebased) {
+    said.rebased = { reviewed: last.reviewed, head: said.head }
+    const ci = ciNeeds(probe, pr, said)
+    if (ci.length) return ci
+  }
   // `0112` R3: after `moved`, so a head already rebased goes to review rather than here. A
   // pull request behind `origin/main` is one GitHub refuses to merge; the gate says so first,
   // off the ref as it is — it does not fetch, the autopilot does (R4). No `origin/main`
@@ -1514,7 +1549,7 @@ function shipNeeds(unit, probe, said = {}) {
     const k = count.code === 0 ? Number(count.out.trim()) : null
     if (k !== null) said.behind = k
     const by = k !== null ? `${k} commit(s)` : `an unknown number of commits (git said: ${(count.err || count.out).trim() || `exit ${count.code}`})`
-    return [`#${pr.number} is ${by} behind origin/main — integrate, then review again; a round that passes does not count toward the limit`]
+    return [`#${pr.number} is ${by} behind origin/main — integrate, then review again only if the rebase changes the unit's patch: one that leaves it unchanged opens ship once CI is green; a round that passes does not count toward the limit`]
   }
   return screensNeeds(unit, probe, last, said)
 }
@@ -1531,6 +1566,70 @@ function changedSince(probe, unit, reviewed, ref) {
   return { rewritten: false, files: diff.out.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith(own)) }
 }
 
+// `0067` R1: a patch with what a rebase alone moves taken out — each `index <blob>..<blob>`
+// line, and the numbers of each `@@ -a,b +c,d @@` — and every other byte kept, the text
+// after the second `@@` and the three lines of context included. Both patterns are anchored
+// at column 0 on purpose: a content line opens with ` `, `+`, `-` or `\`, and a line of
+// base85 in a binary patch opens with a length letter `[A-Za-z]` and holds no space, so no
+// line of data can match either.
+export function normalizePatch(text) {
+  return text
+    .split('\n')
+    .filter((l) => !/^index [0-9a-f]+\.\.[0-9a-f]+(?: [0-7]{6})?$/.test(l))
+    .map((l) => l.replace(/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/, '@@ @@'))
+    .join('\n')
+}
+
+// The unit's patch at `commit`, normalized: from its merge-base with the trunk, outside
+// `.cos/<unit>/`, in a format no config of the checkout can change. `{ patch }` or
+// `{ error }` — a git that fails is never an empty patch, since two empty patches match.
+function unitPatch(probe, unit, commit) {
+  const trunk = ['refs/remotes/origin/main', 'refs/heads/main'].find((ref) => probe.git('rev-parse', '--verify', '--quiet', ref).code === 0)
+  if (!trunk) return { error: 'there is no origin/main and no main here to take the merge-base from' }
+  const base = probe.git('merge-base', commit, trunk)
+  const sha = base.out.trim()
+  if (base.code !== 0 || !/^[0-9a-f]{40}$/.test(sha)) {
+    return { error: base.code !== 0 ? `git merge-base ${commit} ${trunk}: ${(base.err || base.out).trim() || `exit ${base.code}`}` : 'git merge-base printed no commit' }
+  }
+  const diff = probe.git(
+    'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', '--binary',
+    '--src-prefix=a/', '--dst-prefix=b/', sha, commit, '--', ':/', `:(top,exclude).cos/${unit.name}/`,
+  )
+  if (diff.code !== 0) return { error: `git could not diff ${sha}..${commit}: ${(diff.err || diff.out).trim() || `exit ${diff.code}`}` }
+  return { patch: normalizePatch(diff.out) }
+}
+
+// A patch cut into one block per file, keyed by its `b/` path. With renames off a header
+// names one path twice, `a/P b/P`, quoted or not, so the second half is the path.
+function patchFiles(patch) {
+  const files = new Map()
+  let path = null
+  // The patch's last newline ends its last line, so a file is the same block last or not.
+  for (const line of patch.replace(/\n$/, '').split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      const rest = line.slice('diff --git '.length)
+      path = rest.slice((rest.length + 1) / 2).replace(/^"?b\//, '').replace(/"$/, '')
+      files.set(path, '')
+    }
+    if (path !== null) files.set(path, `${files.get(path)}${line}\n`)
+  }
+  return files
+}
+
+// `0067` R1, R4: is `ref` a clean rebase of the reviewed commit? `reviewed` is that
+// commit's `unitPatch`, computed once by the caller for every ref. `{ clean: true }`,
+// `{ differs: [files] }` or `{ error }`; what cannot be compared is never clean.
+function rebaseClean(probe, unit, reviewed, ref) {
+  if (reviewed.error) return { error: reviewed.error }
+  const now = unitPatch(probe, unit, ref)
+  if (now.error) return { error: now.error }
+  if (now.patch === reviewed.patch) return { clean: true }
+  const a = patchFiles(reviewed.patch)
+  const b = patchFiles(now.patch)
+  const differs = [...new Set([...a.keys(), ...b.keys()])].filter((p) => a.get(p) !== b.get(p)).sort()
+  return { differs: differs.length ? differs : ['(the text before the first file)'] }
+}
+
 // Does `stage` have everything it needs? Returns the reasons it does not.
 //
 // `probe` is how `review` and `ship` reach git and gh; `null` means no repository was
@@ -1538,7 +1637,10 @@ function changedSince(probe, unit, reviewed, ref) {
 // limit in force. Every other stage reads files only and ignores both.
 export function checkGate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   const { ok, need, said } = evaluate(unit, stage, { probe, limit })
-  return ok && said.head ? { ok, need, head: said.head } : { ok, need }
+  // `0067` R6: `rebased` only when the gate opened on a clean rebase, so every other answer
+  // is what it was.
+  if (!ok || !said.head) return { ok, need }
+  return said.rebased ? { ok, need, head: said.head, rebased: said.rebased } : { ok, need, head: said.head }
 }
 
 // `checkGate`, plus `said`: what `review` and `ship` learned on the way — the CI verdict,
@@ -1609,8 +1711,8 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
 //     pull request's head after the reviewed commit, then `review` once CI is green,
 //     `impl` again while it is red, and nothing while it runs;
 //   - `pr` is done and no review exists: `review` on green, `impl` on red, else nothing;
-//   - the review passed: `ship` if its gate is open, `review` again if the branch moved
-//     after the pass (a rebase does this), else nothing.
+//   - the review passed: `ship` if its gate is open, `impl` if a clean rebase is red,
+//     `review` again only if the patch moved after the pass (`0067`), else nothing.
 // With no `probe` those three answer `''` and say `--repo` is missing, as the gates do.
 //
 // This names a stage; it opens nothing. A caller still asks `checkGate` before running it.
@@ -1639,6 +1741,8 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     if (g.ok) return { ...next, action: `${next.action} — merge with --match-head-commit ${g.said.head}` }
     // `0083` R10: a UI unit whose pass lacks current screenshots is cured the same way.
     if (g.said.moved || g.said.screens) return onReview(g.need)
+    // `0067` R5: a clean rebase CI failed on goes back to impl, never to another round.
+    if (g.said.rebased && g.said.ci === 'red') return { blocked: true, action: g.need.join('; '), stage: 'impl' }
     return none(g.need.join('; '))
   }
 
@@ -1655,8 +1759,12 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     const last = lastRound(unit)
     const g = evaluate(unit, 'ship', { probe, limit })
     if (g.said.moved || g.said.screens) return onReview(g.need)
+    if (g.said.rebased && g.said.ci === 'red') return { blocked: true, action: g.need.join('; '), stage: 'impl' }
     if (!g.ok) return none(g.need.join('; '))
-    if (ship.round < last.n) return { blocked: true, action: `write-ship — merge with --match-head-commit ${g.said.head}`, stage: 'ship' }
+    // `0067` R5: a merge refused as not up to date, then rebased clean, adds no round to go
+    // past it — the clean rebase is what cures that refusal. Any other refusal still stops.
+    const cured = g.said.rebased && /not up to date/i.test(ship.refused ?? '')
+    if (ship.round < last.n || cured) return { blocked: true, action: `write-ship — merge with --match-head-commit ${g.said.head}`, stage: 'ship' }
     return none(`ship was refused: ${ship.refused ?? 'ship.md names no refusal'} — finish and accept ship.md`)
   }
 
@@ -1956,6 +2064,18 @@ function cmdNext(unitName, cosDir, repoDir, limit) {
   return 0
 }
 
+// What `gate` prints when it opens. `ship` is told the one commit it may merge; any other
+// head is one nobody reviewed. `0067` R6: a gate opened on a clean rebase says so on a
+// second line, in short shas — the full one is the pin's alone.
+export function openLines(stage, unitName, { head = null, rebased = null } = {}) {
+  const pin = head ? ` — merge with --match-head-commit ${head}` : ''
+  const lines = [`open: ${stage} may proceed for ${unitName}${pin}`]
+  if (rebased) {
+    lines.push(`the reviewed commit ${rebased.reviewed.slice(0, 7)} was rebased to ${rebased.head.slice(0, 7)} and the unit's patch is unchanged — no review round is needed`)
+  }
+  return lines
+}
+
 function cmdGate(unitName, stage, cosDir, repoDir, limit) {
   if (!unitName || !stage) {
     console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}> [--repo <dir>]`)
@@ -1967,11 +2087,9 @@ function cmdGate(unitName, stage, cosDir, repoDir, limit) {
     return 2
   }
   const probe = repoDir ? makeProbe(repoDir) : null
-  const { ok, need, head } = checkGate(readUnit(dir, unitName), stage, { probe, limit })
+  const { ok, need, head, rebased } = checkGate(readUnit(dir, unitName), stage, { probe, limit })
   if (ok) {
-    // `ship` is told the one commit it may merge; any other head is one nobody reviewed.
-    const pin = head ? ` — merge with --match-head-commit ${head}` : ''
-    console.log(`open: ${stage} may proceed for ${unitName}${pin}`)
+    for (const line of openLines(stage, unitName, { head, rebased })) console.log(line)
     return 0
   }
   console.error(`blocked: ${stage} cannot proceed for ${unitName}`)

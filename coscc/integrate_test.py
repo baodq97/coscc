@@ -223,6 +223,13 @@ class Warnings(unittest.TestCase):
         self.assertIn("Run ship first", said)
         self.assertIn("only when GitHub reports a conflict or refuses the merge because the branch is behind main", said)
 
+    def test_0067_a_passed_unit_is_told_a_clean_rebase_needs_no_round(self):
+        # `0067` R8: the round is the price of a patch that changes, not of every rebase.
+        said = ig.warnings([{"verdict": "pass"}], "accepted", False, "W")[0]
+        self.assertIn("the ship gate opens again once CI is green, with no review round", said)
+        self.assertIn("If the unit's patch comes out unchanged — the same added, removed and context lines", said)
+        self.assertIn("If it changes, the ship gate closes and another review round is needed", said)
+
 
 class Related(unittest.TestCase):
     UNITS = [{"name": "0030_a", "pr": {"number": 41}}, {"name": "0035_x", "pr": {"number": 50}},
