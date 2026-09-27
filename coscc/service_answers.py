@@ -16,6 +16,7 @@ from coscc import autopilot, backlog
 from coscc import board as board_reader
 from coscc import gitops
 from coscc import hold as hold_rules
+from coscc import policy
 from coscc import prcomment, prsync
 from coscc import precedent as precedent_mod
 from coscc.board import Unavailable
@@ -479,6 +480,17 @@ class AnswersMixin:
         # honest than escaping somebody's words.
         if any(line.lstrip().startswith("#") for line in text.splitlines()):
             raise Invalid("no line of an answer may start with #")
+        # `0115` review F2. A stage outside the five prose ones writes its artifact with its
+        # own tools, whenever it likes, so a block appended while it runs can be written over
+        # with nothing left to say so. Checked with no `await` before the write, like `_take`.
+        mark = self._active.get((self._journal_key(cwd), unit))
+        if mark is not None and mark.kind == "step" and not policy.is_prose_stage(mark.stage):
+            row = next((r for r in found.get("stages") or [] if r.get("stage") == mark.stage), None)
+            if row is not None and row.get("file") == artifact:
+                raise Invalid(
+                    f"{artifact} cannot be answered while the {mark.stage} step that writes it "
+                    "is running; answer it once the step ends"
+                )
 
         path = self._unit_dir(cwd, unit) / artifact
         try:

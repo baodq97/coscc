@@ -908,8 +908,10 @@ export function nextAction(unit, limit = REVIEW_ROUNDS) {
 }
 
 // `0106` R1: the stages whose draft can stop on open questions, and so the only ones `next`
-// may name as `rerun`.
-const RERUN_STAGES = ['intent', 'spec', 'spike', 'plan']
+// may name as `rerun`. `0115` R3 adds `impl`: a draft `impl.md` that left work for a person
+// runs again on its own branch once each item has an answer. `status --json` carries this
+// list as `afterAnswers` (R4), so the app keeps no copy of it.
+const RERUN_STAGES = ['intent', 'spec', 'spike', 'plan', 'impl']
 
 // `nextAction`, plus `why`: which rule answered, so `nextStep` refines the answer without
 // reading the English of `action` back.
@@ -2011,8 +2013,9 @@ function cmdStatus(json, cosDir, limit) {
   })
 
   if (json) {
-    // The stage list ships with the data so a reader never has to keep its own copy of it.
-    console.log(JSON.stringify({ root: cosDir, stages: STAGES, units: rows }, null, 2))
+    // The stage list ships with the data so a reader never has to keep its own copy of it,
+    // and so do the stages an answered draft runs again (`0115` R4).
+    console.log(JSON.stringify({ root: cosDir, stages: STAGES, afterAnswers: RERUN_STAGES, units: rows }, null, 2))
     return 0
   }
 

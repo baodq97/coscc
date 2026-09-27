@@ -379,8 +379,6 @@ def passed_for(
 # R3. How often one artifact runs again after its answers before a person decides the next
 # run (`intent.md ## Answers`, câu 4).
 MAX_RERUNS = 2
-# R1. The stages `cos.mjs next` may name as `rerun`; `answer_completes` reads only these.
-RERUN_STAGES = ("intent", "spec", "spike", "plan")
 
 
 def reruns_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
@@ -417,11 +415,13 @@ def answered_since_start(records: Iterable[dict[str, Any]], workspace: str, unit
 
 
 def answer_completes(unit_row: dict[str, Any], artifact: str, answered: Iterable[Any]) -> bool:
-    """R4. Whether `artifact`, one of `RERUN_STAGES`'s, has no numbered question left
-    unanswered: each is answered on the board read `unit_row` came from, or its number is in
-    `answered`, the blocks written since that read up to and including this one."""
+    """R4. Whether `artifact`, of a stage whose answered draft runs again, has no numbered
+    question left unanswered: each is answered on the board read `unit_row` came from, or its
+    number is in `answered`, the blocks written since that read up to and including this one.
+    Those stages are `unit_row["after_answers"]`, as `cos.mjs` listed them on that read
+    (`0115` R4); a row without the list completes nothing."""
     stage = next((s.get("stage") for s in unit_row.get("stages") or [] if s.get("file") == artifact), "")
-    if stage not in RERUN_STAGES:
+    if not stage or stage not in (unit_row.get("after_answers") or ()):
         return False
     given = set(answered)
     asked = [q for q in unit_row.get("questions") or [] if q.get("artifact") == artifact]

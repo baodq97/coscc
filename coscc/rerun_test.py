@@ -56,8 +56,9 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.seen: list[dict] = []
         self.items: list[tuple] = []
 
-    def run_step(self, stage: str, write: str | None = "# PR: x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân mới\n", **kw):
-        """`Service.run_step`, with `Runner` a stand-in that writes `pr.md` as `write` and
+    def run_step(self, stage: str, write: str | None = "# PR: x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân mới\n",
+                 file: str = "pr.md", **kw):
+        """`Service.run_step`, with `Runner` a stand-in that writes `file` as `write` and
         ends `done` — or, `write` None, fails before writing anything."""
         seen, directory = self.seen, self.dir
 
@@ -69,7 +70,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
                 seen.append(k)
                 if write is None:
                     raise RunError("a stand-in runner")
-                (directory / "pr.md").write_text(write, encoding="utf-8")
+                (directory / file).write_text(write, encoding="utf-8")
                 extra = await k["end_fields"]() if k.get("end_fields") else {}
                 yield ("done", {"outcome": "done", **extra})
 
@@ -193,6 +194,48 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.run_step("pr", write="# PR: x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nmới\n" + ANSWERS, rerun=True)
         self.assertEqual(self.items[-1][1].get("answers_kept"), True)
         self.assertNotIn("answers_lost", self.items[-1][1])
+
+
+IMPL_DRAFT = "# Impl: x\nStatus: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
+
+
+class ADraftImplThatLosesItsAnswersSaysSo(unittest.TestCase):
+    """`0115` R7. An `impl` step writes `impl.md` itself; a `done` that no longer ends with
+    the `## Answers` it started with says `answers_lost`. The app writes nothing back."""
+
+    setUp = APrRunAgainClosesShipUntilAReview.setUp
+    run_step = APrRunAgainClosesShipUntilAReview.run_step
+
+    def impl(self, before: str, after: str) -> dict:
+        for name in ("pr.md", "review.md"):
+            (self.dir / name).unlink()
+        (self.dir / "intent.md").write_text("# Intent: x\nType: feat. Status: accepted.\n", encoding="utf-8")
+        (self.dir / "impl.md").write_text(before, encoding="utf-8")
+        self.run_step("impl", write=after, file="impl.md")
+        self.assertEqual(self.items[-1][0], "done")
+        return self.items[-1][1]
+
+    def test_an_impl_that_keeps_its_answers_says_nothing(self):
+        done = self.impl(IMPL_DRAFT + ANSWERS, IMPL_DRAFT.replace("draft", "accepted") + "\nbuilt\n" + ANSWERS)
+        self.assertEqual(done.get("answers_kept"), True)
+        self.assertNotIn("answers_lost", done)
+
+    def test_an_impl_that_drops_its_answers_says_answers_lost(self):
+        done = self.impl(IMPL_DRAFT + ANSWERS, IMPL_DRAFT + "\nrewritten\n")
+        self.assertEqual(done.get("answers_kept"), False)
+        self.assertTrue(done.get("answers_lost"))
+        # Nothing wrote the section back.
+        self.assertNotIn("## Answers", (self.dir / "impl.md").read_text(encoding="utf-8"))
+
+    def test_an_impl_that_appends_its_own_answer_block_says_answers_lost(self):
+        own = "\n### Câu 2\nAnswered by: Claude. Date: 2026-09-27. Via: product.\n\ntự trả lời\n"
+        done = self.impl(IMPL_DRAFT + ANSWERS, IMPL_DRAFT + "2. Hai?\n" + ANSWERS + own)
+        self.assertTrue(done.get("answers_lost"))
+
+    def test_an_impl_md_without_answers_is_not_compared(self):
+        done = self.impl(IMPL_DRAFT, IMPL_DRAFT + "\nbuilt\n")
+        self.assertNotIn("answers_kept", done)
+        self.assertNotIn("answers_lost", done)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 `VerifyScript`, which writes one to a temporary directory for `scripts/verify_0104.py`."""
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -511,7 +512,7 @@ class Reruns(unittest.TestCase):
         return {"name": "0001_a", "questions": questions, "stages": [
             {"stage": "intent", "file": "intent.md"}, {"stage": "spec", "file": "spec.md"},
             {"stage": "impl", "file": "impl.md"}, {"stage": "review", "file": "review.md"},
-        ]}
+        ], "after_answers": ["intent", "spec", "spike", "plan", "impl"]}
 
     def test_a_rerun_is_no_stop_f(self):
         rerun = {**nxt("", "finish and accept intent.md"), "rerun": "intent"}
@@ -565,11 +566,29 @@ class Reruns(unittest.TestCase):
         self.assertFalse(ap.answer_completes(u, "spec.md", {1}))
         self.assertTrue(ap.answer_completes(u, "spec.md", {1, 2}))
 
-    def test_impl_and_review_never_complete(self):
+    def test_impl_completes_and_review_never_does(self):
+        """`0115` R4: `impl` is one of the stages `cos.mjs` lists; `review` is not."""
         qs = [{"artifact": "impl.md", "n": 1, "answered": True}, {"artifact": "review.md", "n": 1, "answered": True}]
         u = self.board_row(qs)
-        self.assertFalse(ap.answer_completes(u, "impl.md", {1}))
+        self.assertTrue(ap.answer_completes(u, "impl.md", {1}))
         self.assertFalse(ap.answer_completes(u, "review.md", {"F1"}))
+
+    def test_a_board_read_without_after_answers_completes_nothing(self):
+        """`0115` R4: an older `cos.mjs` sends no list, and no stage is guessed in its place."""
+        qs = [{"artifact": "intent.md", "n": 1, "answered": True}]
+        u = {k: v for k, v in self.board_row(qs).items() if k != "after_answers"}
+        self.assertFalse(ap.answer_completes(u, "intent.md", {1}))
+
+    def test_no_module_keeps_its_own_copy_of_the_rerun_stages(self):
+        """`0115` R4: the list lives in `cos.mjs` alone. The four stages `0106` copied, in its
+        order, appear in no module of the app."""
+        literal = re.compile(r"""["']intent["'],\s*["']spec["'],\s*["']spike["'],\s*["']plan["']""")
+        here = Path(__file__).resolve().parent
+        copies = [
+            p.name for p in sorted(here.glob("*.py"))
+            if not p.name.endswith("_test.py") and literal.search(p.read_text(encoding="utf-8"))
+        ]
+        self.assertEqual(copies, [])
 
     def test_the_two_stop_lines(self):
         self.assertEqual(ap.rerun_stop("intent.md"), {

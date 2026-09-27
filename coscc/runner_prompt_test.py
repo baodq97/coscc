@@ -404,20 +404,71 @@ class ARerunSeesItsOwnAnswers(unittest.TestCase):
             prompt, _ = build_prompt(d, Path(d) / ".cos" / UNIT, UNIT, "spec", STAGES, "spec.md")
             self.assertNotIn(self.BLOCK_HEADING, prompt)
 
-    def test_impl_never_carries_this_block(self):
+    def test_impl_never_carries_the_prose_stages_advice(self):
+        """Since `0115` R6 `impl` carries its own answers, with advice of its own
+        (`ADraftImplSeesItsOwnAnswers`); never this block's, and `impl.md` is still not
+        embedded."""
         with tempfile.TemporaryDirectory() as d:
             make_unit(
                 Path(d),
                 intent_md="Status: accepted.\nI",
                 plan_md="Status: accepted.\nP",
-                impl_md=self.ANSWERED.format(mark="IMPL-SHOULD-NOT-APPEAR-0025"),
+                impl_md=self.ANSWERED.format(mark="IMPL-ANSWER-0025"),
             )
             prompt, included = build_prompt(
                 d, Path(d) / ".cos" / UNIT, UNIT, "impl", STAGES, "impl.md"
             )
-            self.assertNotIn(self.BLOCK_HEADING, prompt)
-            self.assertNotIn("IMPL-SHOULD-NOT-APPEAR-0025", prompt)
+            self.assertNotIn(self.ADVICE, prompt)
             self.assertEqual(included, ["plan.md"])  # `0094` R14
+
+
+class ADraftImplSeesItsOwnAnswers(unittest.TestCase):
+    """`0115` R6. An `impl` step is told what a person answered its `impl.md`, verbatim,
+    with advice that does not say the app writes the section back."""
+
+    IMPL = (
+        "# Impl: x\nStatus: draft.\n\n## What was built\n\nIMPL-BODY-0115\n\n"
+        "## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
+    )
+    ANSWERS = (
+        "\n## Answers\n\n### Câu 1\nAnswered by: Leif. Date: 2026-09-27. Via: product.\n\n"
+        "IMPL-ANSWER-0115: exit 0\n"
+    )
+
+    def prompt(self, d: str, impl_md: str, stage: str = "impl") -> str:
+        from coscc import runner_prompt
+
+        make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP", impl_md=impl_md)
+        # `implement` is an alias with no skill of its own; the rules are not what is tested.
+        with mock.patch.object(runner_prompt, "skill_for", lambda stage: "RULES"):
+            return compose_prompt(d, Path(d) / ".cos" / UNIT, UNIT, stage, STAGES, "impl.md")[0]
+
+    def test_impl_prompt_carries_its_answers_verbatim(self):
+        from coscc.runner_prompt import _IMPL_ANSWERS_ADVICE
+
+        for stage in ("impl", "implement"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
+                prompt = self.prompt(d, self.IMPL + self.ANSWERS, stage)
+                self.assertIn("# The answers already given to this artifact", prompt)
+                self.assertIn("1. Chạy lệnh X rồi đưa kết quả?", prompt)
+                self.assertIn(self.ANSWERS.lstrip("\n"), prompt)
+                self.assertIn(_IMPL_ANSWERS_ADVICE, prompt)
+                # The rest of `impl.md` is still named by path only.
+                self.assertNotIn("IMPL-BODY-0115", prompt)
+
+    def test_impl_prompt_does_not_say_the_app_writes_answers_back(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self.prompt(d, self.IMPL + self.ANSWERS)
+            self.assertNotIn("Do not copy this section into your reply", prompt)
+            self.assertNotIn("the app writes it back", prompt)
+
+    def test_impl_without_answers_has_no_such_block(self):
+        from coscc.runner_prompt import _IMPL_ANSWERS_ADVICE
+
+        with tempfile.TemporaryDirectory() as d:
+            prompt = self.prompt(d, self.IMPL)
+            self.assertNotIn("# The answers already given to this artifact", prompt)
+            self.assertNotIn(_IMPL_ANSWERS_ADVICE, prompt)
 
 
 class AFixRoundCarriesTheFindings(unittest.TestCase):

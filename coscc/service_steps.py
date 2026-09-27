@@ -48,7 +48,8 @@ RETAKE_REFUSED = "The screenshots could not be taken again after the branch was 
 
 def _answers_kept(path: Path, before: bytes) -> bool:
     """`0054` R8. Whether `path` still ends with the `## Answers` section it had, `before`,
-    byte for byte. A `pr` step writes `pr.md` itself, so nothing else guards that section."""
+    byte for byte. A `pr` step writes `pr.md` itself, and since `0115` R7 an `impl` step
+    `impl.md`, so nothing else guards that section."""
     try:
         return path.read_bytes().endswith(before)
     except OSError:
@@ -958,19 +959,20 @@ class StepsMixin:
             # `0054` R3, R8. After the last refusal that reads nothing more, before any money
             # is spent. `pr.md`'s `## Answers` is read first: the `pr` session writes that file
             # itself, so only a comparison afterwards can tell whether the section survived.
+            # `0115` R7: every `impl` step writes `impl.md` itself too, rerun or not.
             answers_before: bytes | None = None
+            if (rerun and stage == "pr") or stage == "impl":
+                try:
+                    answers_before = answers_section((directory / row["file"]).read_bytes())
+                except OSError:
+                    answers_before = None
             if rerun:
-                if stage == "pr":
-                    try:
-                        answers_before = answers_section((directory / "pr.md").read_bytes())
-                    except OSError:
-                        answers_before = None
                 await self._append_to_answers(directory / "intent.md", "\n" + rerun_block, "a rerun")
             if answers_before is not None:
-                kept_from = answers_before
+                kept_from, kept_in = answers_before, directory / row["file"]
 
                 async def end_fields() -> dict[str, Any]:
-                    return {"answers_kept": _answers_kept(directory / "pr.md", kept_from)}
+                    return {"answers_kept": _answers_kept(kept_in, kept_from)}
             runner = Runner(self.sessions, journal, app=self._app_identity())
             # `0034` R11. The registry is what the page lists and what a Stop finds; the mark
             # taken above is what everything else asks. The same start time for both, and no
@@ -1145,8 +1147,9 @@ class StepsMixin:
         step's listeners with `put_nowait` -- this never waits on a reader -- and that a
         `stopped` step records no transition, cleans nothing and posts nothing (R9).
 
-        `answers_before` (`0054` R8) is `pr.md`'s `## Answers` as a `pr` rerun found it; a
-        `done` that no longer ends with it says `answers_lost`.
+        `answers_before` (`0054` R8) is `pr.md`'s `## Answers` as a `pr` rerun found it, or
+        (`0115` R7) `impl.md`'s as an `impl` step found it; a `done` that no longer ends with
+        it says `answers_lost`.
         """
 
         def tell(item: tuple[str, Any]) -> None:

@@ -263,6 +263,60 @@ class OnTheRealLoop(_Base):
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
         self.assertEqual((stop["unit"], stop["kind"], stop["reason"]), (unit, "f", "finish and accept intent.md"))
 
+    # --- `0115`, a draft impl asks a person ---------------------------------------
+
+    async def test_0115_r2_a_draft_impl_is_answered_and_journalled_as_impl(self):
+        unit = await self.unit("impl-asks")
+        d = self.service._unit_dir(self.ws, unit)
+        (d / "spec.md").write_text("# Spec: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8")
+        (d / "plan.md").write_text("# Plan: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8")
+        before = "# Impl: x\nAuthor: proof. Status: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
+        (d / "impl.md").write_text(before, encoding="utf-8")
+        await self.service.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "Leif")
+        after = (d / "impl.md").read_text(encoding="utf-8")
+        self.assertTrue(after.startswith(before))
+        self.assertRegex(after[len(before):], r"\n## Answers\n\n### Câu 1\nAnswered by: Leif\. Date: [^\n]+\. Via: product\.\n\nĐã chạy, ra 0\.\n$")
+        [u] = (await self.service.board(self.ws))["units"]
+        self.assertEqual([(q["artifact"], q["n"], q["answered"]) for q in u["questions"]], [("impl.md", 1, True)])
+        [record] = self.answers()
+        self.assertEqual((record["stage"], record["artifact"], record["completes"]), ("impl", "impl.md", True))
+
+    async def impl_asks(self, slug: str) -> tuple[str, Path, str]:
+        unit = await self.unit(slug, "Status: accepted.\n\n## Open questions\n\n1. Một?")
+        d = self.service._unit_dir(self.ws, unit)
+        (d / "spec.md").write_text("# Spec: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8")
+        (d / "plan.md").write_text("# Plan: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8")
+        before = "# Impl: x\nAuthor: proof. Status: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
+        (d / "impl.md").write_text(before, encoding="utf-8")
+        return unit, d, before
+
+    async def test_0115_f2_an_answer_to_impl_md_is_refused_while_an_impl_step_runs(self):
+        # The step writes `impl.md` with its own tools, so a block appended now could be
+        # written over and nothing would say so (review.md F2).
+        unit, d, before = await self.impl_asks("impl-busy")
+        mark = self.service._take(self.key, unit, "step", "impl")
+        mark.phase = "running"
+        with self.assertRaisesRegex(Invalid, r"^impl\.md cannot be answered while the impl step that writes it is running"):
+            await self.service.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
+        self.assertEqual((d / "impl.md").read_text(encoding="utf-8"), before)
+        self.assertEqual(self.answers(), [])
+        # Another artifact of the same unit is not the step's to write.
+        await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+        self.service._release(self.key, unit, mark)
+        await self.service.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
+        self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md", "impl.md"])
+
+    async def test_0115_f2_a_prose_step_does_not_refuse_an_answer_to_its_artifact(self):
+        # A prose stage's artifact is written by the app, which reads `## Answers` on disk as
+        # it writes (`0025`), so an answer given meanwhile is kept.
+        unit, d, before = await self.impl_asks("intent-busy")
+        mark = self.service._take(self.key, unit, "step", "intent")
+        try:
+            await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+        finally:
+            self.service._release(self.key, unit, mark)
+        self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md"])
+
 
 class _Intents:
     """A session that rewrites `intent.md` as a draft, with no open questions unless `asks`."""
@@ -707,9 +761,10 @@ class Scripted(_Base):
 
     # --- `0106`, an answered draft runs again ------------------------------------
 
-    def add_rerun(self, name, stage="intent", *before):
-        """`next` says `rerun: stage`, after `before`'s records and then one `answer`."""
-        self.add(name, "", action=f"finish and accept {stage}.md",
+    def add_rerun(self, name, stage="intent", *before, plan=None):
+        """`next` says `rerun: stage`, after `before`'s records and then one `answer`. `plan`
+        is for a code stage, whose files the autopilot reads off `plan.md` (`0115`)."""
+        self.add(name, "", action=f"finish and accept {stage}.md", plan=plan,
                  stages=[{"stage": stage, "file": f"{stage}.md", "status": "draft"}])
         self.nexts[name]["rerun"] = stage
         log = Journal(self.config.working_dir, self.config.data_dir)
@@ -800,6 +855,37 @@ class Scripted(_Base):
         self.assertEqual(self.stops(), {})
         logged = Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-stop")
         self.assertEqual([(r["unit"], r["stop"]) for r in logged], [("0002_b", "full"), ("0002_b", "")])
+
+    # --- `0115`, an answered draft impl runs again --------------------------------
+
+    async def test_0115_r5_an_answered_draft_impl_runs_impl_again(self):
+        self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
+        self.assertEqual([(p["unit"], p["stage"]) for p in self.picks()], [("0001_a", "impl")])
+        self.assertEqual(self.stops(), {})
+
+    async def test_0115_r5_two_impl_reruns_after_answers_stop_it(self):
+        self.add_rerun("0001_a", "impl", "start", "answer", "start", "answer", "start", plan="- `coscc/x.py`")
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "reruns"}))
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+                         "impl.md was run again 2 times after its answers; a person decides the next run.")
+
+    async def test_0115_r5_no_answer_since_the_last_impl_is_the_stop_f(self):
+        self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
+        Journal(self.config.working_dir, self.config.data_dir).append(
+            {"kind": "start", "workspace": self.key, "unit": "0001_a", "stage": "impl", "started_by": "autopilot"})
+        await self.pass_()
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"],
+                         {"unit": "0001_a", "kind": "f", "reason": "finish and accept impl.md"})
+
+    async def test_0115_r5_off_starts_no_impl(self):
+        self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
+        self.service.set_autopilot(self.ws, "autopilot", False)
+        await self.pass_()
+        self.assertEqual(self.launched, [])
 
 
 class ResumedAtStartUp(unittest.TestCase):
