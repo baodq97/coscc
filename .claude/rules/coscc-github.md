@@ -2,6 +2,7 @@
 paths:
   - "coscc/prsync.py"
   - "coscc/prcomment.py"
+  - "coscc/prscope.py"
 ---
 
 # What the app writes to GitHub on its own
@@ -17,13 +18,16 @@ paths:
 - **Every `pr` step that is not stopped rewrites its pull request's title and body under
   this machine's `gh` login.** After the step, `_sync_pr` reads `cos.mjs pr-text` and, when
   `pr.md` is `accepted` and names a pull request URL, runs `gh pr view` and — unless both
-  already match — `gh pr edit` on the pull request `pr.md` names, holding the `done` row for
-  two calls of `prcomment.TIMEOUT` each (chosen, not measured).
+  already match — `gh pr edit` on the pull request `pr.md` names, then one read-only
+  `gh pr view --json changedFiles,additions,deletions,files` (`coscc/prscope.py`), holding
+  the `done` row for up to three calls of `prcomment.TIMEOUT` each (chosen, not measured).
   - It overwrites whatever a person changed on GitHub since, and keeps the old text nowhere
     (0055 spec C1). A `pr.md` edited by hand to name another repository's pull
     request is written there.
   - The trace is one `pr-sync` row in the run log per step, with `existed` (the lookup
     before the step saw the pull request; `null` when that lookup could not answer — count
-    those apart, not as `false`) and `outcome` `updated`, `already`, `failed` or `skipped`;
-    no screen shows it. A `pr` step at a terminal leaves none.
+    those apart, not as `false`), `outcome` `updated`, `already`, `failed` or `skipped`,
+    and, unless skipped, `scope`: GitHub's counts and `verdict` `match`, `mismatch` or
+    `unread` against `pr.md ## Scope of the diff`. No gate reads it and no screen shows
+    the row. A `pr` step at a terminal leaves none.
 - A review comment is not an approval, and no gate reads it (`.claude/docs/not-built.md`).
