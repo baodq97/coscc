@@ -510,6 +510,8 @@ class _Parsed:
     commands: tuple[_Simple, ...]
     # Every substitution in effect, as `(token, at)`: `$(`, `` ` ``, `<(`, `>(`, `$((`.
     substitutions: tuple[tuple[str, int], ...]
+    # `0130` R2. Where each lone `&` stands: a command it ends runs in the background.
+    background: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -556,6 +558,7 @@ class _Reader:
         # still reports its position in the whole command.
         self.base = base
         self.subs: list[tuple[str, int]] = []
+        self.amps: list[int] = []
 
     def at(self, j: int) -> int:
         return self.base + j
@@ -648,6 +651,8 @@ class _Reader:
                         raise _Stop(f"a redirect ({pending[0]}) with no target", self.at(pending[2]))
                     pending = (op, "", amp)
                 else:
+                    if self.char(j) != "&":
+                        self.amps.append(self.at(self.i))
                     end_command(self.i)
                     self.i = j + 1 if self.char(j) == "&" else self.i + 1
             elif c == "|":
@@ -769,6 +774,7 @@ class _Reader:
                         body = _Reader(s[begin:line_start], self.at(begin))
                         body.expanding()
                         self.subs.extend(body.subs)
+                        self.amps.extend(body.amps)
                     break
                 logical, line_start = "", self.i
             self.i = min(self.i, self.n)
@@ -997,7 +1003,9 @@ def _read(command: str) -> _Parsed | _Unreadable:
         commands = reader.commands()
     except _Stop as stop:
         return _Unreadable(stop.what, stop.at)
-    return _Parsed(tuple(commands), tuple(sorted(reader.subs, key=lambda t: t[1])))
+    return _Parsed(
+        tuple(commands), tuple(sorted(reader.subs, key=lambda t: t[1])), tuple(sorted(reader.amps))
+    )
 
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -1052,8 +1060,8 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
     the thing that turns obvious mistakes into refusals, not as a sandbox.
 
     Since `0060` the line is read as bash reads it (`_read`), and checked in this order: a
-    line that cannot be read, a substitution in effect, a redirect that writes, then every
-    simple command. `unit` is the step's own unit, `NNNN_<slug>`: a redirect may write under
+    line that cannot be read, a lone `&` (`0130`), a substitution in effect, a redirect that
+    writes, then every simple command. `unit` is the step's own unit, `NNNN_<slug>`: a redirect may write under
     a `/tmp` directory naming it (`_redirect_refused`). **That write is outside the write
     boundary `decide` keeps**, and nothing creates or removes the directory.
     """
@@ -1066,6 +1074,9 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
             f"this command could not be read as the shell reads it: {parsed.what} "
             f"at character {parsed.at + 1}; nothing was guessed"
         )
+    if parsed.background:
+        # `0130` R2. `&&`, `&>`, `&>>`, `>&`, `<&` and `|&` are read elsewhere and never land here.
+        return f"`&` at character {parsed.background[0] + 1} runs a command in the background: {BACKGROUND_REFUSAL}"
     if parsed.substitutions:
         # With substitution in play the first word no longer says what runs.
         token = parsed.substitutions[0][0]

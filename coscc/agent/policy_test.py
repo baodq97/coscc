@@ -1227,3 +1227,16 @@ class ABackgroundCommandIsRefused(unittest.TestCase):
                     self.d(stage, {"command": "npm test"}),
                 )
         self.assertEqual(self.d("impl", {"command": "npm test"}), "")
+
+    def test_a_lone_ampersand_is_refused(self):
+        for command in ("npm run e2e &", "npm test & git status", "npm test &\ngit status",
+                        "(npm test &)", "npm test & wait"):
+            with self.subTest(command=command):
+                self.assertIn(policy.BACKGROUND_REFUSAL, check_command(IMPL, command))
+
+    def test_the_other_ampersand_operators_read_as_before(self):
+        for command in ("npm test && git status", "npm test &> /dev/null", "npm test &>> /dev/null",
+                        "npm test 2>&1", "git status >&2", "npm test |& git status",
+                        "git commit -m 'a & b'", 'grep "a & b" f'):
+            with self.subTest(command=command):
+                self.assertEqual(check_command(IMPL, command), "")
