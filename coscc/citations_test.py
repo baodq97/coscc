@@ -148,5 +148,11 @@ class TheCheckerSeesEachWayACitationBreaks(unittest.TestCase):
         self.assertEqual([(p.line, p.name) for p in problems], [(7, "LIMIT")])
 
 
+class EveryLineCitationPointsAtItsName(unittest.TestCase):
+    def test_every_citation_under_claude(self):
+        problems = scan(REPO)
+        self.assertFalse(problems, "\n".join(map(show, problems)))
+
+
 if __name__ == "__main__":
     unittest.main()

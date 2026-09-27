@@ -8,7 +8,8 @@ paths:
 - **`POST /api/units/integrate` force-pushes under this machine's `gh` login.**
   - On a `behind` unit it runs `gh pr update-branch --rebase` and then moves the unit's
     local branch with `reset --keep`. On a `conflicting` or `red-after-integration` unit it
-    opens Gebo, a paid session (ceilings at `coscc/policy.py:350-354`, chosen, not measured)
+    opens Gebo, a paid session (ceilings in the `integrate` grant, `coscc/policy.py:361-365`,
+    chosen, not measured)
     whose grant allows exactly one push: `--force-with-lease=<branch>:<head at start>` to
     the unit's own branch.
   - The roads to the branch the grant's own commands hold are refused by their words:
@@ -40,7 +41,7 @@ paths:
     `pushed` whenever Gebo's tree does not end on the moved head, and the tree is moved to
     it — the session is paid for either way.
   - Every press costs one fetch through the fetch coordinator (`coscc/fetches.py`) and one
-    `gh pr view` for `mergeStateStatus` (up to `GH_TIMEOUT`, `coscc/integrate.py:43`), both
+    `gh pr view` for `mergeStateStatus` (up to `GH_TIMEOUT`, `coscc/integrate.py:47`), both
     before the lock and the answer. The fetch moves `refs/remotes/origin/main` for every
     worktree of the workspace. `merge_state` is written to the row and decides nothing.
     Behind the password like every route; every attempt, refused ones included, is one
