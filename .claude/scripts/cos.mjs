@@ -1521,10 +1521,7 @@ function shipNeeds(unit, probe, said = {}) {
         continue
       }
       said.moved = true
-      const why = compared.differs
-        ? `its patch differs from the reviewed one in ${compared.differs.join(', ')}`
-        : `its patch could not be compared with the reviewed one: ${compared.error}`
-      need.push(`the reviewed commit ${last.reviewed} is not on ${name} — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — ${why}`)
+      need.push(`the reviewed commit ${last.reviewed} is not on ${name} — the branch was rewritten after the pass (a rebase does this): review its new head in another round; a round that passes does not count toward the limit — ${rebaseWhy(compared)}`)
       continue
     }
     if (since.files.length) {
@@ -1630,6 +1627,14 @@ function rebaseClean(probe, unit, reviewed, ref) {
   const b = patchFiles(now.patch)
   const differs = [...new Set([...a.keys(), ...b.keys()])].filter((p) => a.get(p) !== b.get(p)).sort()
   return { differs: differs.length ? differs : ['(the text before the first file)'] }
+}
+
+// Why a `rebaseClean` answer is not clean, in the words the `ship` gate and `next` both
+// print (`0121` R8).
+function rebaseWhy(compared) {
+  return compared.differs
+    ? `its patch differs from the reviewed one in ${compared.differs.join(', ')}`
+    : `its patch could not be compared with the reviewed one: ${compared.error}`
 }
 
 // Does `stage` have everything it needs? Returns the reasons it does not.
