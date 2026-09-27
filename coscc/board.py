@@ -403,7 +403,7 @@ async def pr_text(units_root: str | Path, unit: str, timeout: float = TIMEOUT) -
 
     `0055`. The rule that cuts `pr.md` into a title and a body is `cos.mjs` `prText`, the
     same one a person at a terminal pipes into `gh pr edit`, so the board and the terminal
-    put the same words up. Returns `{unit, title, body, url, status}` on exit 0, and
+    put the same words up. Returns `{unit, title, body, url, scope, status}` on exit 0, and
     `{"error": <what cos.mjs said>, "code": n}` otherwise -- exit 1 is "no such unit" or
     "no pr.md", an answer rather than a failure. Raises `Unavailable` as `read` does.
     """

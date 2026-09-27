@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import fetches, units, worktrees
+from coscc import fetches, prscope, units, worktrees
 from coscc.config import Config
 from coscc.service_common import Invalid, describe_base, step_cwd
 from coscc.service import Service
@@ -1227,9 +1227,10 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
     class Gh:
         """Both `integrate._gh` and `prcomment._gh`: one pull request, in memory."""
 
-        def __init__(self, listed: bool, title: str = "temporary", body: str = "temporary", fail=None, raise_=None):
+        def __init__(self, listed: bool, title: str = "temporary", body: str = "temporary", fail=None, raise_=None,
+                     scope=None):
             self.listed, self.title, self.body = listed, title, body
-            self.fail, self.raise_ = fail, raise_
+            self.fail, self.raise_, self.scope = fail, raise_, scope
             self.calls: list[tuple[list[str], str | None]] = []
 
         async def __call__(self, argv, cwd, stdin=None):
@@ -1246,6 +1247,8 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
                 return 1, "", "HTTP 422: Validation Failed"
             if argv[:2] == ["pr", "view"] and argv[-1] == "comments":
                 return 0, json.dumps({"comments": []}), ""
+            if argv[:2] == ["pr", "view"] and argv[-1] == prscope.FIELDS:
+                return 0, json.dumps(self.scope or {}), ""
             if argv[:2] == ["pr", "view"]:
                 return 0, json.dumps({"title": self.title, "body": self.body}), ""
             if argv[:2] == ["pr", "edit"]:
@@ -1365,6 +1368,37 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         self.assertEqual(done["outcome"], "done")
         self.assertEqual(row["outcome"], "failed")
         self.assertIn("timed out", row["detail"])
+
+    SCOPED = f"{ACCEPTED}\n## Scope of the diff\n\n2 files, +10/-3\n- `a.py`\n- `b.py`\n"
+    GH_SCOPE = {"changedFiles": 2, "additions": 10, "deletions": 3, "files": [{"path": "a.py"}, {"path": "b.py"}]}
+
+    def test_0122_the_pr_sync_row_carries_githubs_counts_and_a_verdict(self):
+        gh = self.Gh(listed=True, scope=self.GH_SCOPE)
+        done, [row], _ = self._run(self.SCOPED, gh)
+        self.assertEqual(row["outcome"], "updated")
+        self.assertEqual(row["scope"], {"github": {"files": 2, "additions": 10, "deletions": 3}, "verdict": "match"})
+        self.assertEqual(done["pr_sync"]["scope"]["verdict"], "match")
+        [(argv, stdin)] = gh.of("view", prscope.FIELDS)
+        self.assertEqual((argv, stdin), (["pr", "view", "https://github.com/o/r/pull/7", "--json", prscope.FIELDS], None))
+
+    def test_0122_a_mismatch_leaves_the_step_done_and_pr_md_as_it_was(self):
+        gh = self.Gh(listed=True, scope={**self.GH_SCOPE, "changedFiles": 3, "files": [{"path": "a.py"}, {"path": "c.py"}]})
+        done, [row], directory = self._run(self.SCOPED, gh)
+        self.assertEqual(done["outcome"], "done")
+        self.assertEqual(row["outcome"], "updated")
+        self.assertEqual(
+            {k: row["scope"][k] for k in ("verdict", "differ", "only_in_pr_md", "only_on_github")},
+            {"verdict": "mismatch", "differ": ["files"], "only_in_pr_md": ["b.py"], "only_on_github": ["c.py"]},
+        )
+        self.assertEqual((directory / "pr.md").read_text(encoding="utf-8"), self.SCOPED)
+        self.assertEqual(len(gh.of("edit")), 1, "the scope read writes nothing of its own")
+
+    def test_0122_a_skipped_sync_has_no_scope_and_no_read(self):
+        gh = self.Gh(listed=True, scope=self.GH_SCOPE)
+        done, [row], _ = self._run(self.SCOPED.replace("Status: accepted", "Status: draft"), gh)
+        self.assertEqual(row["outcome"], "skipped")
+        self.assertNotIn("scope", row)
+        self.assertEqual(gh.of("view", prscope.FIELDS), [])
 
 
 class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
