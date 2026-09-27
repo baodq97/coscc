@@ -1600,3 +1600,61 @@ class AnAnswerCutAtItsCeilingIsNotWritten(unittest.TestCase):
         self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "incomplete"))
         self.assertNotIn("Verdict: pass", review)
         self.assertIn(f"## Round 2\n\nReviewed: {head}. Verdict: incomplete.", review)
+
+
+class ABackgroundRunIsRefusedAndCounted(unittest.TestCase):
+    """`0130` R3 and R6. A step refused its background runs still ends the way it always
+    did, and its `end` row says how many there were."""
+
+    class Fake:
+        def __init__(self, calls=(), writes=None):
+            self.calls, self.writes, self.answers = calls, writes, []
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, can_use_tool=None, **kw):
+            for tool_input in self.calls:
+                got = await can_use_tool("Bash", tool_input, None)
+                self.answers.append(type(got).__name__)
+            if self.writes is not None:
+                self.writes()
+            yield ("chunk", "# Plan: x\nStatus: accepted.\n")
+            yield ("done", {"session_id": "s-bg", "cost": {}})
+
+    def run_step(self, stage, artifact, fake):
+        with tempfile.TemporaryDirectory() as d:
+            repo = _git_repo(Path(d))
+            directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            r = Runner(sessions=fake(directory), journal=journal)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=d, directory=directory, journal_key=d, unit=UNIT, stage=stage,
+                    artifact=artifact, stages=STAGES, mode="manual", cwd=str(repo),
+                )]
+
+            asyncio.run(go())
+            [end] = journal.records(d, UNIT, kind="end")
+            return end
+
+    def test_a_step_refused_two_background_runs_ends_failed_and_counts_them(self):
+        calls = ({"command": "npm run e2e", "run_in_background": True}, {"command": "npm run e2e &"})
+        fake = self.Fake(calls)
+        end = self.run_step("impl", "impl.md", lambda directory: fake)
+        self.assertEqual(fake.answers, ["PermissionResultDeny", "PermissionResultDeny"])
+        self.assertEqual(end["outcome"], "failed")
+        self.assertEqual((end["background"], end["denials"]), (2, 2))
+        self.assertTrue(end["detail"].startswith("the step did not write impl.md"), end["detail"])
+
+    def test_a_step_with_bash_and_no_background_run_records_zero(self):
+        def fake(directory):
+            writes = lambda: (directory / "impl.md").write_text("# Impl: x\nStatus: accepted.\n")
+            return self.Fake(({"command": "npm test"},), writes)
+
+        end = self.run_step("impl", "impl.md", fake)
+        self.assertEqual(end["outcome"], "done")
+        self.assertEqual(end["background"], 0)
+
+    def test_a_step_without_bash_carries_no_background_field(self):
+        end = self.run_step("plan", "plan.md", lambda directory: self.Fake())
+        self.assertEqual(end["outcome"], "done")
+        self.assertNotIn("background", end)

@@ -965,6 +965,9 @@ class Runner:
                     detail=detail or None,
                     denials=denials.count,
                     denied=denials.reasons or None,
+                    # `0130` R3: every step that may run a command says how many it was
+                    # refused for running in the background, zero included.
+                    **({"background": denials.background} if "Bash" in grant.tools else {}),
                     models_used=models_used or None,
                     terminal=terminal or None,
                     **(
