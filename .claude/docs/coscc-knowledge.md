@@ -1,6 +1,6 @@
 # The knowledge store: what no test here catches
 
-`.cos/0090_agents-relearn-what-earlier-units-already-knew`. `COS_KNOWLEDGE=1` hands `spec`,
+Unit 0090, agents relearn what earlier units already knew. `COS_KNOWLEDGE=1` hands `spec`,
 `spike` and `plan` the entries of `<COS_DATA_DIR>/knowledge/knowledge.md` that apply to the
 workspace (`coscc/knowledge.py`); `coscc knowledge gather` writes that file
 (`coscc/gather.py`); `coscc knowledge baseline` and `measure` decide whether it paid

@@ -69,7 +69,7 @@ Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/boa
   session with no tools and `max_turns=1` (`runner._closing_turn`), before `end` is
   written. The step is sealed first, so a Stop is refused for up to `CLOSING_TIMEOUT`
   (180 s, chosen). `max_budget_usd` does not bound that turn: the CLI compares the whole
-  session's cost after the turn ran (`.cos/0085_*/spike.md ## U2`), and one after a
+  session's cost after the turn ran (0085 spike ## U2), and one after a
   13-turn session cost $0.57 on its own. `end` carries it as `closing.cost_usd`, and
   `cost_usd` is the session's whole total. The turn runs under a handle with no recorder,
   so the watch pane never shows it. Whatever it writes is the session's own words, as an

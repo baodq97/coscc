@@ -165,7 +165,7 @@ Read this before adding a route, a button or a grant, and before copying this ha
   `review.md`, never the images: a round can write the section without opening one,
   `Taken at` is impl's word, or the app's, passed on by review, and impl chose which
   screens to take. The originator took that trade
-  (`.cos/0083_*/intent.md ## Answers, câu 1`); they still see the screens when they use the
+  (0083 intent ## Answers, câu 1); they still see the screens when they use the
   board, and what they dislike comes back as an idea.
 - **A login that knows who you are.** Since `0070` every route — the page, its socket,
   `/api`, the static files, paths that do not exist — is refused without a live session;
