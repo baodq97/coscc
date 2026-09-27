@@ -101,6 +101,17 @@ def open_questions(unit_row: dict[str, Any]) -> list[dict[str, Any]]:
     return [q for q in unit_row.get("questions") or [] if q.get("counted") and not q.get("answered")]
 
 
+def skips_exhausted(nxt: dict[str, Any], last: dict[str, Any] | None, recorded: bool) -> bool:
+    """`0126` R1–R3: a `ship` that ran out of turns is no stop when `next` names a `ship` that
+    only records the merge, unless the step that ran out was itself one (`recorded`)."""
+    last = last or {}
+    return (
+        last.get("kind") == "end" and last.get("stage") == "ship" and last.get("outcome") == "exhausted"
+        and nxt.get("stage") == "ship" and is_recording_ship(str(nxt.get("action") or ""))
+        and not recorded
+    )
+
+
 def stop_for(
     unit_row: dict[str, Any],
     nxt: dict[str, Any],
@@ -108,6 +119,7 @@ def stop_for(
     may_ship: bool,
     exhausted: int = 0,
     unopened: int = 0,
+    recorded: bool = False,
 ) -> dict[str, str] | None:
     """The first of R6's stops that holds for one unit, as `{kind, reason}`, or `None`.
 
@@ -118,6 +130,8 @@ def stop_for(
     `exhausted` (`exhausted_of`); left at 0, an exhausted step stops as before `0120`.
     `unopened` is how many ended `failed` for their reply's opening (`unopened_of`); left at
     0, such a step stops as before `0127`.
+    `recorded` is whether the step that wrote `last` was a `ship` that only records (`0126`
+    R3); left `False`, an exhausted `ship` before a recording one is no stop (`skips_exhausted`).
     """
     stage = str(nxt.get("stage") or "")
     action = str(nxt.get("action") or "")
@@ -151,10 +165,12 @@ def stop_for(
     # count of its own, for a prose stage that ended `failed` because its reply lacked its
     # opening; a `failed` for any other reason still stops, even after one of those.
     # Otherwise no retry (`spec.md ## Answers`, câu 1): `failed`, `cancelled`, `stopped`, and
-    # an integration that failed or that the autopilot started and was refused.
+    # an integration that failed or that the autopilot started and was refused. `0126`: nor a
+    # `ship` that ran out before `next` names one that only records the merge, however many times.
     ran_out_once = outcome == "exhausted" and (last or {}).get("stage") != "ship" and exhausted == 1
     unopened_once = _unopened(last) and unopened == 1
-    if kind == "end" and outcome != "done" and not ran_out_once and not unopened_once:
+    skipped = skips_exhausted(nxt, last, recorded)
+    if kind == "end" and outcome != "done" and not ran_out_once and not unopened_once and not skipped:
         return _stop("e", f"the last {last.get('stage')} step ended {outcome or 'without an outcome'}")
     if kind == "integration" and (
         outcome == "failed" or (outcome == "refused" and last.get("started_by") == "autopilot")
