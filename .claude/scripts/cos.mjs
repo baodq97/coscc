@@ -1263,9 +1263,10 @@ function everyOpenClaimed(unit) {
   )
 }
 
-// The first place the loop stops and waits for someone who is not an agent. A person
-// unblocks it at a terminal: `review.md: rejected`, or a larger `COS_REVIEW_ROUNDS`.
-// Nothing written through the product does — see `0015` plan, Risk 2, for why.
+// The first place the loop stops and waits for someone who is not an agent. Since `0081` a
+// `### More rounds` block under `review.md ## Answers`, which the board writes through
+// `POST /api/units/more-rounds`, lifts it for one unit (`reviewLimit`). At a terminal it
+// still lifts as before: `review.md: rejected`, or a larger `COS_REVIEW_ROUNDS`.
 const needsAPerson = (used, limit) =>
   `needs a person — review used ${used} of ${limit} rounds and findings are still open`
 
@@ -2203,6 +2204,14 @@ export function betweenPrAndShip(unit, limit = REVIEW_ROUNDS) {
   return !['finished', 'rejected', 'paused', 'dropped'].includes(why)
 }
 
+// `0081` R4: the unit used its review rounds with findings still open, and is neither
+// finished, closed nor held — the one case the board offers a round more. The app's route
+// reads this rather than compare rounds itself.
+export function moreRounds(unit, limit = REVIEW_ROUNDS) {
+  if (['finished', 'rejected', 'paused', 'dropped'].includes(decide(unit, limit).why)) return false
+  return outOfRounds(unit, limit)
+}
+
 // `0100` R2: the stage a unit is at, for a board that draws one column per stage. It is
 // the stage `next` names; failing that, the last stage whose artifact is on disk (a draft,
 // a `changes-requested` review, a closed or finished unit); failing that, the first stage
@@ -2220,7 +2229,8 @@ function cmdStatus(json, cosDir, limit) {
   // `rerun` (`0106`) is for `next` and the autopilot only, so `status` drops it.
   const rows = units.map((u) => {
     const { rerun, ...next } = decide(u, limit)
-    return { ...u, next, at: stageAt(u, next), betweenPrAndShip: betweenPrAndShip(u, limit) }
+    // `0081` R4: only when true, so every other unit's row is what it was, byte for byte.
+    return { ...u, next, at: stageAt(u, next), betweenPrAndShip: betweenPrAndShip(u, limit), ...(moreRounds(u, limit) ? { moreRounds: true } : {}) }
   })
 
   if (json) {
