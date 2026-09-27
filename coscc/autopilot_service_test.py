@@ -560,8 +560,12 @@ class Scripted(_Base):
         self.assertIn("you do not have permission to merge", logged["reason"])
 
     async def test_red_after_its_own_integration_is_not_integrated_again(self):
-        for unit in ("0001_a", "0002_b"):
-            self.add(unit, "impl", integration={"state": "red-after-integration"},
+        """`0124` R1, R3 a: was a stop `e` for `0001_a`, replaced by `intent.md ## Answers`,
+        câu 1 and 3 — CI red on its own integration runs the `impl` `next` names, once. A
+        person's integration is still integrated again."""
+        red = f"{autopilot.CI_RED}3: tests — back to impl: fix on the branch and push"
+        for unit, action, plan in (("0001_a", red, "- `a/x.py`"), ("0002_b", "", "- `b/y.py`")):
+            self.add(unit, "impl", action=action, plan=plan, integration={"state": "red-after-integration"},
                      rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
         log = Journal(self.config.working_dir, self.config.data_dir)
         for unit, by in (("0001_a", "autopilot"), ("0002_b", "person")):
@@ -570,8 +574,8 @@ class Scripted(_Base):
                 "outcome": "pushed", "mode": "agent", "started_by": by,
             })
         await self.pass_()
-        self.assertEqual(self.launched, [("0002_b", "integrate", "autopilot")])
-        self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot"), ("0002_b", "integrate", "autopilot")])
+        self.assertEqual(self.stops(), {})
 
     async def test_an_integration_before_its_mark_is_counted_against_the_cap(self):
         reading = asyncio.Event()

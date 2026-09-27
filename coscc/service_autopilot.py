@@ -238,12 +238,17 @@ class AutopilotMixin:
                     continue
                 stop = autopilot.stop_for(u, nxt, last.get(name), settings["autopilot_may_ship"])
                 stage = nxt.get("stage") or ""
-                # R10: a unit behind `main`, conflicting or red after integration is integrated
-                # first, and not again when CI is red on what the autopilot's own integration
-                # pushed. Since `0112` R1 also after a `pass`: GitHub would refuse the merge,
-                # the rebase closes `ship`, and a new round opens it again — but only where the
-                # autopilot may ship, since otherwise a person merges and the round is theirs.
                 info = u.get("integration") or {}
+                # `0124`: not while its step runs, whose `start` is already in the window.
+                own = None if name in here else autopilot.after_own_integration(
+                    info, integrations.get(name), autopilot.since_integration(records, key, name), nxt,
+                )
+                # R10: a unit behind `main`, conflicting or red after integration is integrated
+                # first. Since `0112` R1 also after a `pass`: GitHub would refuse the merge, the
+                # rebase closes `ship`, and a new round opens it again — but only where the
+                # autopilot may ship, since otherwise a person merges and the round is theirs.
+                # CI red after the autopilot's own integration runs `impl` once if `next` names
+                # it, and is not integrated again (`0124` R1, R2).
                 rounds = u.get("rounds") or []
                 passed = bool(rounds) and rounds[-1].get("verdict") == "pass"
                 if (
@@ -251,7 +256,14 @@ class AutopilotMixin:
                     and (not passed or settings["autopilot_may_ship"])
                     and (stop is None or stop["kind"] == "f")
                 ):
-                    stop, stage = autopilot.red_again(info, integrations.get(name)), "integrate"
+                    if info.get("state") == "red-after-integration" and own is not None:
+                        stage, stop = own
+                    else:
+                        stop, stage = None, "integrate"
+                # `0124` R2 once the `impl` pushed: the board no longer reads the head as the
+                # integrated one, and only `next`'s words say CI is still red.
+                if stop is None and stage == "impl" and own is not None and own[1] is not None:
+                    stage, stop = own
                 # `0106` R2, R3: a draft whose questions are all answered runs again, at most
                 # `MAX_RERUNS` times, and only on an answer given since its last run; with none,
                 # it is the stop `f` it was before `0106`. Before `reason`, which raises on no

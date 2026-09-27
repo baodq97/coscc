@@ -148,21 +148,6 @@ def stop_for(
     return None
 
 
-def red_again(integration: dict[str, Any] | None, last_integration: dict[str, Any] | None) -> dict[str, str] | None:
-    """R6 e for R10: CI is red on the head the autopilot's own last integration pushed.
-
-    `integration` is the board's integration block of the unit, `last_integration` its
-    latest `integration` record — the one `integrate.classify` compared the head with. A
-    Gebo started again would only fix the last one's result, and no retry is the rule
-    (`spec.md ## Answers`, câu 1). A person's integration that left CI red is not stopped.
-    """
-    if (integration or {}).get("state") != "red-after-integration":
-        return None
-    if started_by(last_integration or {}) != "autopilot":
-        return None
-    return _stop("e", "CI is still red after the autopilot's last integration")
-
-
 # `0124` R2, R6. How many `impl` steps the autopilot runs after its own integration turned CI
 # red (`intent.md ## Answers`, câu 1). Not `COS_REVIEW_ROUNDS`, which counts review rounds.
 IMPL_PER_INTEGRATION = 1

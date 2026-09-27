@@ -101,15 +101,6 @@ class Stops(unittest.TestCase):
         taken = {**failed, "outcome": "taken"}
         self.assertIsNone(ap.stop_for(unit(), nxt("review", "x"), taken, True))
 
-    def test_e_red_again_after_the_autopilots_own_integration(self):
-        red = {"state": "red-after-integration"}
-        mine = {"kind": "integration", "outcome": "pushed", "started_by": "autopilot"}
-        self.assertEqual(ap.red_again(red, mine)["kind"], "e")
-        self.assertIsNone(ap.red_again(red, {**mine, "started_by": "person"}))
-        self.assertIsNone(ap.red_again(red, {"kind": "integration", "outcome": "pushed"}))
-        self.assertIsNone(ap.red_again({"state": "behind"}, mine))
-        self.assertIsNone(ap.red_again(None, None))
-
     def test_since_integration_starts_at_the_latest_integration_and_closes_at_review(self):
         def r(kind, unit="0010_a", stage="impl", **kw):
             return {"kind": kind, "workspace": "w", "unit": unit, "stage": stage, **kw}
