@@ -936,6 +936,12 @@ def _run_waiting(data: dict) -> list[str]:
     return [str(x) for x in data.get("waiting") or []]
 
 
+def _run_dropped(data: dict) -> list[str]:
+    """`0027` review F1. The ids `cos.mjs next` says the last review round left out, copied,
+    so the page lists them rather than reading them out of `action`."""
+    return [str(x) for x in data.get("dropped") or []]
+
+
 def _key_label(key: str) -> str:
     """`0071` R3. A Questions row's key as a person reads it: `intent.md#1` is
     `question 1 of intent.md`, `review.md#F2` is `finding F2 of review.md`."""

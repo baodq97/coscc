@@ -317,6 +317,7 @@ def compose_prompt(
     prior_findings: str = "",
     plan_map: str = "",
     commands: tuple[str, ...] = (),
+    unfinished_round: dict[str, Any] | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole (`spec.md` R4), and
     the ones it names by path only (`0094` R16).
@@ -330,6 +331,9 @@ def compose_prompt(
     `plan_map` (`0096` R9) is what `planmap.for_step` built and `commands` (R10) the words
     of the step's grant, both placed for `impl` only; empty, or any other stage, adds not
     one byte (R11).
+
+    `unfinished_round` (`0027` R6) is `{"n", "dropped"}` of a last round `cos.mjs` read as
+    unfinished, placed for `review` only; `None`, or any other stage, adds not one byte.
 
     The list is returned rather than inferred later because R4 is checked against it: if a
     step ran without the previous stage's artifact in the prompt, the record says so.
@@ -539,6 +543,23 @@ def compose_prompt(
                 f"in `{review_path}`.\n\n"
                 f"{findings or '(no finding is left open)'}"
             )
+
+    # `0027` R6. The last round asked for changes but dropped ids an earlier round raised, so
+    # `cos.mjs` does not count it and sent the unit here again. The block above may say
+    # nothing is left open; this says why the review runs anyway. The ids are `cos.mjs`'s,
+    # carried by `service.run_step` -- nothing here compares them.
+    if stage == "review" and unfinished_round:
+        number = int(unfinished_round["n"])
+        dropped = ", ".join(f"`{i}`" for i in unfinished_round.get("dropped") or [])
+        included.append("review-unfinished")
+        parts.append(
+            "# The round that did not count\n\n"
+            f"Round {number} asked for changes but does not list {dropped}, which an earlier "
+            "round raised, so `cos.mjs` does not count it against `COS_REVIEW_ROUNDS` and "
+            f"this review runs again. Write Round {number + 1} as a full round for the commit "
+            "named below. List every finding of every earlier round with its label, "
+            f"{dropped} among them."
+        )
 
     # `0085` R10. The last round is one the app's closing turn wrote for a review that ran
     # out of turns. The next review goes on from it rather than starting again: its three

@@ -384,6 +384,24 @@ class FindingsAwaitingAPersonAreCopied(unittest.TestCase):
                     setters.add(fn.name)
         self.assertEqual(setters, {"load_next"})
 
+    def test_run_dropped_copies_and_absent_reads_as_none(self):
+        """`0027` review F1."""
+        from coscc.state import _run_dropped
+
+        self.assertEqual(_run_dropped({"stage": "review", "dropped": ["F2", "F3"]}), ["F2", "F3"])
+        self.assertEqual(_run_dropped({"stage": "impl"}), [])
+
+    def test_only_load_next_sets_run_dropped(self):
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))
+        setters = set()
+        for fn in _state_class(tree).body:
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Assign) and any("run_dropped" in _self_names(t) for t in node.targets):
+                    setters.add(fn.name)
+        self.assertEqual(setters, {"load_next"})
+
 
 class JerasAnswersAreShownAndAnswerable(unittest.TestCase):
     """`0044` R10. What `Service.board` decided about Jera is copied onto each row, and the

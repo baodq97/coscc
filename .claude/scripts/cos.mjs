@@ -477,6 +477,9 @@ const SCREENS_SHOT = /^- `?(\S+?\.png)`?\s+—\s+(\d+)\s*[×x]\s*(\d+)\s+—\s+`
 // three fields `null` when that line is not `SCREENS_HEAD`, and one `{ path, size, address,
 // result }` per line that is `SCREENS_SHOT`. What the `ship` gate makes of it is
 // `screensProblems`'s to say.
+// Since `0027` each round also carries `dropped`, the ids an earlier round raised that this
+// one does not list under `### Findings`, and `unfinished`: it asked for changes and dropped
+// at least one. This is the only place either is worked out.
 export function parseReview(text) {
   const lines = text.split(/\r?\n/)
   const stop = lines.findIndex((l) => l.trimEnd() === '## Answers')
@@ -543,10 +546,19 @@ export function parseReview(text) {
       severity: text.match(SEVERITY)?.[1].toLowerCase() ?? null,
     })
   }
+  // `0027` R1: every id an earlier round raised, whatever that round's verdict, in the order
+  // first raised. The round is only read as unfinished, never marked so in the file (R4).
+  const seen = []
   return {
-    rounds: rounds.map(({ n, reviewed, verdict, findings, screens, lines }) => ({
-      n, reviewed, verdict, findings, screens, text: lines.join('\n').trimEnd(),
-    })),
+    rounds: rounds.map(({ n, reviewed, verdict, findings, screens, lines }) => {
+      const listed = new Set(findings.map((f) => f.id))
+      const dropped = seen.filter((id) => !listed.has(id))
+      for (const id of listed) if (!seen.includes(id)) seen.push(id)
+      return {
+        n, reviewed, verdict, findings, screens, text: lines.join('\n').trimEnd(),
+        dropped, unfinished: verdict === 'changes-requested' && dropped.length > 0,
+      }
+    }),
   }
 }
 
@@ -985,6 +997,20 @@ function decide(unit, limit) {
     if (status === 'changes-requested') {
       const used = roundsUsed(unit)
       if (used >= limit) return { blocked: true, action: needsAPerson(used, limit), stage: '', why: 'needs-person' }
+      // `0027` R3: the last round dropped a finding an earlier one raised, so it does not
+      // count, and another review goes on from it the way `0085`'s `incomplete` one does.
+      // Review F1: the ids go out as `dropped`, a list, not joined into the sentence the
+      // board puts on a card (S5).
+      const last = lastRound(unit)
+      if (last?.unfinished) {
+        return {
+          blocked: true,
+          action: `review round ${last.n} left out findings an earlier round raised — write-review again (${used} of ${limit} rounds used)`,
+          stage: 'review',
+          dropped: last.dropped,
+          why: 'review-incomplete',
+        }
+      }
       // `0028` (a) and (b): the last round is a well-formed wait for a person. Read off the
       // files alone, so it needs no `--repo`. A round that merely says `needs-person` while
       // something is still open, rejected or unreadable is not one, and falls through.
@@ -1035,12 +1061,18 @@ const incompleteDraft = (unit) => statusOf(unit, 'review.md') === 'draft' && las
 // already leaves it out. But it turns the header to `draft`, and the header is what kept the
 // floor for a round whose verdict could not be read; so a `draft` whose last round is
 // `incomplete` keeps the floor while a full round before it reads no verdict.
+//
+// An `unfinished` round is not counted either (`0027` R2): it asked for changes but dropped
+// a finding an earlier round raised. Its header is still `changes-requested`, so while it is
+// last the header keeps the floor only as the `incomplete` draft does — for a round with no
+// readable verdict.
 function roundsUsed(unit) {
   const rounds = reviewOf(unit)
-  const asked = rounds.filter((r) => r.verdict === 'changes-requested').length
+  const asked = rounds.filter((r) => r.verdict === 'changes-requested' && !r.unfinished).length
   const waived = rounds.some((r) => r.verdict === 'needs-person')
-  const floor = statusOf(unit, 'review.md') === 'changes-requested' ||
-    (incompleteDraft(unit) && rounds.some((r) => r.verdict === null))
+  const last = rounds.at(-1)
+  const floor = (statusOf(unit, 'review.md') === 'changes-requested' && !last?.unfinished) ||
+    ((incompleteDraft(unit) || last?.unfinished) && rounds.some((r) => r.verdict === null))
   return Math.max(asked, floor && !waived ? 1 : 0)
 }
 
@@ -1421,10 +1453,9 @@ function shipNeeds(unit, probe, said = {}) {
     const named = (f) => (f.label === 'answered' ? `${f.id} [answered, no answer in review.md]` : `${f.id} [${f.label}]`)
     need.push(`review round ${last.n} still has findings not fixed: ${open.map(named).join(', ')}`)
   }
-  const inLast = new Set(last.findings.map((f) => f.id))
-  const dropped = [...new Set(rounds.slice(0, -1).flatMap((r) => r.findings.map((f) => f.id)))].filter((id) => !inLast.has(id))
-  if (dropped.length) {
-    need.push(`review round ${last.n} drops findings an earlier round raised: ${dropped.join(', ')} — carry each one forward, fixed or open`)
+  // `0027` R5: `parseReview` worked out what the last round dropped.
+  if (last.dropped?.length) {
+    need.push(`review round ${last.n} drops findings an earlier round raised: ${last.dropped.join(', ')} — carry each one forward, fixed or open`)
   }
   const numbers = rounds.map((r) => r.n)
   if (numbers.some((n, i) => n !== i + 1)) {
@@ -1634,7 +1665,8 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   // `0028` (b): every finding awaiting a person has an answer; a review reads them.
   if (why === 'person-answered') return onReview([next.action])
   // `0085` R8: a review ran out of turns; the next one goes on from its round, CI permitting.
-  if (why === 'review-incomplete') return onReview([next.action])
+  // `0027` R3: an unfinished round goes the same way, and keeps the ids it left out.
+  if (why === 'review-incomplete') return { ...onReview([next.action]), ...(next.dropped ? { dropped: next.dropped } : {}) }
 
   if (why === 'changes-requested') {
     // `0028` (c): every open finding is one impl claims needs a person. Only a review may
@@ -1915,12 +1947,12 @@ function cmdNext(unitName, cosDir, repoDir, limit) {
   }
   const probe = repoDir ? makeProbe(repoDir) : null
   const unit = readUnit(dir, unitName)
-  const { stage, action, blocked, waiting, rerun } = nextStep(unit, { probe, limit })
-  // `waiting` only when a person is awaited (`0028`), `hold` only when the unit is held
-  // (`0045`), `rerun` only when a draft's questions are all answered (`0106`), so every
-  // other answer is unchanged.
+  const { stage, action, blocked, waiting, dropped, rerun } = nextStep(unit, { probe, limit })
+  // `waiting` only when a person is awaited (`0028`), `dropped` only when the last round left
+  // out an earlier finding (`0027`), `hold` only when the unit is held (`0045`), `rerun` only
+  // when a draft's questions are all answered (`0106`), so every other answer is unchanged.
   const hold = unit.hold ? { hold: unit.hold } : {}
-  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...hold, ...(rerun ? { rerun } : {}) }))
+  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...(dropped?.length ? { dropped } : {}), ...hold, ...(rerun ? { rerun } : {}) }))
   return 0
 }
 

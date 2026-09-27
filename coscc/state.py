@@ -101,6 +101,7 @@ from coscc.state_views import (
     GrantRow,
     _run_target,
     _run_waiting,
+    _run_dropped,
     _key_label,
     _tokens,
     _job_line,
@@ -222,6 +223,9 @@ class StudioState(
     # `load_next`, from `_run_waiting`. Non-empty means the button offers nothing and the
     # page points at the Questions tab instead.
     run_waiting: list[str] = []
+    # `0027`. The ids `cos.mjs next` says the last review round left out; set only by
+    # `load_next`, from `_run_dropped`.
+    run_dropped: list[str] = []
 
     # -- sessions
     conversations: list[Conversation] = []
@@ -1349,6 +1353,7 @@ class StudioState(
             join, self._ask_joins = self._ask_joins, False
             self.run_stage = ""
             self.run_waiting = []
+            self.run_dropped = []
             self.run_said = "Asking cos.mjs what comes next…"
             self.rerun_stages, self.rerun_confirming = [], False
             if self._asked != unit:
@@ -1359,9 +1364,11 @@ class StudioState(
                 self.run_said = ""
             return
         waiting: list[str] = []
+        dropped: list[str] = []
         try:
             stage, said = _run_target(found := await _asking(SERVICE.next_step, cwd, unit, join))
             waiting = _run_waiting(found)
+            dropped = _run_dropped(found)
         except Invalid as e:
             stage, said = "", str(e)
         # `0054` R1. Files only, after `next` has answered; a refusal offers nothing.
@@ -1375,6 +1382,7 @@ class StudioState(
             if self.unit_id == unit and self.cwd == cwd:
                 self.run_stage, self.run_said = stage, said
                 self.run_waiting = waiting
+                self.run_dropped = dropped
                 self._asked = unit
                 self.rerun_stages, self.rerun_later = list(later), later
                 self.rerun_confirming = False

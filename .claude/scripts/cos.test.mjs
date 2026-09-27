@@ -2225,6 +2225,161 @@ test('0085 R8 d: a draft whose last round is not incomplete is still finished by
   assert.doesNotMatch(nextStep(reviewOfRounds('changes-requested', [cr(1), incompleteRound(2)]), { probe: greenProbe() }).action, /is incomplete/)
 })
 
+// --- `0027`: a round that drops a finding an earlier one raised --------------------
+
+// The header, `## Round 1` and `## Round 2` of `0017`'s `review.md`, copied verbatim. Round 2
+// lists F1 alone, under a header that says `accepted` because round 3 came later.
+const FIXTURE_0017 = readFileSync(new URL('./testdata/0017-review-rounds-1-2.md', import.meta.url), 'utf8')
+const asked0017 = (text) => text.replace('Status: accepted.', 'Status: changes-requested.')
+const ROUND1_0017 = FIXTURE_0017.slice(0, FIXTURE_0017.indexOf('\n## Round 2\n') + 1)
+const two = ['- F1 [open] a.py:1 — high — x', '- F2 [open] b.py:2 — high — y']
+
+test('0027 R1: a round that omits an earlier id is unfinished only under changes-requested', () => {
+  const read = (...rounds) =>
+    parseReview(`# Review: x\nStatus: changes-requested.\n\n${rounds.join('\n')}`).rounds.map((r) => [r.n, r.dropped, r.unfinished])
+  assert.deepEqual(read(round(1, 'changes-requested', two)), [[1, [], false]])
+  // Carrying every id forward, fixed or open, is a full round; dropping one is not.
+  const carried = round(2, 'changes-requested', [`- F1 [fixed ${FIX}] a.py:1 — high — x`, two[1]])
+  assert.deepEqual(read(round(1, 'changes-requested', two), carried).at(-1), [2, [], false])
+  assert.deepEqual(read(round(1, 'changes-requested', two), cr(2)).at(-1), [2, ['F2'], true])
+  // Every earlier id, in the order first raised, from rounds of any verdict.
+  const three = [...two, '- F3 [open] c.py:3 — low — z']
+  assert.deepEqual(read(round(1, 'changes-requested', two), round(2, 'changes-requested', three), cr(3)).at(-1), [3, ['F2', 'F3'], true])
+  assert.deepEqual(read(incompleteRound(1), round(2, 'changes-requested', ['- F2 [open] y'])).at(-1), [2, ['F1'], true])
+  const unread = `## Round 1\n\nReviewed: somewhere. Verdict: maybe.\n\n### Findings\n\n- F1 [open] x\n`
+  assert.deepEqual(read(unread, round(2, 'changes-requested', ['- F2 [open] y'])).at(-1), [2, ['F1'], true])
+  // A pass or a needs-person round that drops an id still names it, but is not unfinished.
+  for (const verdict of ['pass', 'needs-person']) {
+    assert.deepEqual(read(round(1, 'changes-requested', two), round(2, verdict, [`- F1 [fixed ${FIX}] x`])).at(-1), [2, ['F2'], false])
+  }
+  // An id named only in prose, outside `### Findings`, is dropped all the same.
+  const prose = `## Round 2\n\nReviewed: ${SHA}. Verdict: changes-requested.\n\nF2 is still open.\n\n### Findings\n\n- F1 [open] x\n\n### What was not reviewed\n\n- F2 [open] y\n`
+  assert.deepEqual(read(round(1, 'changes-requested', two), prose).at(-1), [2, ['F2'], true])
+  // `0017`'s round 2 drops everything round 1 raised but F1.
+  const r0017 = parseReview(FIXTURE_0017).rounds
+  assert.deepEqual(r0017.map((r) => [r.n, r.verdict, r.dropped, r.unfinished]), [
+    [1, 'changes-requested', [], false],
+    [2, 'changes-requested', ['F2', 'F3', 'F4', 'F5'], true],
+  ])
+})
+
+test('0027 R2 b: a changes-requested round that carries every earlier id counts exactly one more', () => {
+  const used = (rounds, limit = 3) => nextStep(reviewOfRounds('changes-requested', rounds), { limit }).action
+  const first = round(1, 'changes-requested', two)
+  assert.match(used([first]), /\(1 of 3 rounds used\)/)
+  assert.match(used([first, round(2, 'changes-requested', two)]), /\(2 of 3 rounds used\)/)
+  assert.match(used([first, round(2, 'changes-requested', two), cr(3)]), /\(2 of 3 rounds used\)/)
+  // Once a full round follows the unfinished one, the loop goes on counting from there.
+  assert.match(used([first, cr(2), round(3, 'changes-requested', two)]), /\(2 of 3 rounds used\)/)
+})
+
+test('0027 R3: an unfinished last round sends next to review with its ids, CI permitting, and leaves the review gate open', () => {
+  const u = reviewOfRounds('changes-requested', [round(1, 'changes-requested', two), cr(2)])
+  const green = nextStep(u, { probe: greenProbe() })
+  assert.equal(green.stage, 'review')
+  assert.equal(
+    green.action,
+    'review round 2 left out findings an earlier round raised — write-review again (1 of 3 rounds used); CI is green: write-review',
+  )
+  // Review F1: the ids are a list of their own, whichever stage CI leaves it at (S5).
+  assert.deepEqual(green.dropped, ['F2'])
+  assert.deepEqual(nextAction(u).dropped, ['F2'])
+  const red = nextStep(u, { probe: greenProbe([{ name: 'tests', bucket: 'fail' }]) })
+  assert.deepEqual([red.stage, red.dropped], ['impl', ['F2']])
+  assert.equal(nextStep(u, { probe: greenProbe([{ name: 'tests', bucket: 'pending' }]) }).stage, '')
+  const bare = nextStep(u)
+  assert.equal(bare.stage, '')
+  assert.match(bare.action, /left out findings an earlier round raised.*pass --repo/)
+  assert.deepEqual(bare.dropped, ['F2'])
+  assert.equal(checkGate(u, 'review', { probe: greenProbe() }).ok, true)
+  // Any other answer carries no `dropped`.
+  assert.equal('dropped' in nextStep(reviewOfRounds('changes-requested', [round(1, 'changes-requested', two)])), false)
+  assert.equal('dropped' in nextStep(reviewOfRounds('draft', [cr(1), incompleteRound(2)]), { probe: greenProbe() }), false)
+})
+
+test('0027 R3: an unfinished round at the limit still stops at needs a person', () => {
+  const first = round(1, 'changes-requested', two)
+  const u = reviewOfRounds('changes-requested', [first, cr(2)])
+  assert.match(nextStep(u, { limit: 1, probe: greenProbe() }).action, /^needs a person — review used 1 of 1 rounds/)
+  assert.equal(checkGate(u, 'review', { limit: 1, probe: greenProbe() }).ok, false)
+  const spent = reviewOfRounds('changes-requested', [first, round(2, 'changes-requested', two), cr(3)])
+  assert.match(nextStep(spent, { limit: 2, probe: greenProbe() }).action, /^needs a person — review used 2 of 2 rounds/)
+  assert.equal(nextStep(spent, { limit: 3, probe: greenProbe() }).stage, 'review')
+})
+
+test('0027 R2: an incomplete round 1 then an unfinished round 2 uses no round', () => {
+  const u = reviewOfRounds('changes-requested', [incompleteRound(1), round(2, 'changes-requested', ['- F2 [open] y'])])
+  const n = nextStep(u, { limit: 1, probe: greenProbe() })
+  assert.equal(n.stage, 'review')
+  assert.match(n.action, /left out findings .*\(0 of 1 rounds used\)/)
+  assert.deepEqual(n.dropped, ['F1'])
+  // The floor stays for a round whose verdict could not be read, as `0085` keeps it.
+  const unread = `## Round 1\n\nReviewed: somewhere. Verdict: maybe.\n\n### Findings\n\n- F1 [open] x\n`
+  const floor = reviewOfRounds('changes-requested', [unread, round(2, 'changes-requested', ['- F2 [open] y'])])
+  assert.match(nextStep(floor, { limit: 1, probe: greenProbe() }).action, /^needs a person — review used 1 of 1 rounds/)
+})
+
+// A unit whose `review.md` is `text`, asked through the command the way the board asks it.
+const tree0027 = (text) => {
+  const t = rerunTree({ ...RERUN_FILES, 'review.md': text }, '0017_units-share-one-working-tree')
+  const run = (limit, ...args) =>
+    spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', t.root], {
+      encoding: 'utf8', env: { ...process.env, COS_REVIEW_ROUNDS: String(limit) },
+    })
+  const used = (limit) => {
+    const out = run(limit, 'next', t.name)
+    assert.equal(out.status, 0, out.stderr)
+    // `(N of L rounds used)`, or at the limit `review used N of L rounds`.
+    const m = JSON.parse(out.stdout).action.match(/(\d+) of (\d+) rounds/)
+    assert.ok(m, out.stdout)
+    assert.equal(Number(m[2]), limit)
+    return Number(m[1])
+  }
+  return { ...t, run, used }
+}
+
+test("0027 R2 a: 0017's round 2 adds no round to the count", () => {
+  const both = tree0027(asked0017(FIXTURE_0017))
+  const one = tree0027(asked0017(ROUND1_0017))
+  const ids = parseReview(ROUND1_0017).rounds[0].findings.map((f) => f.id)
+  assert.deepEqual(ids, ['F1', 'F2', 'F3', 'F4', 'F5'])
+  const full = tree0027(asked0017(ROUND1_0017) + '\n' + round(2, 'changes-requested', ids.map((id) => `- ${id} [open] x`)))
+  for (const limit of [1, 2, 3]) {
+    assert.equal(both.used(limit), one.used(limit), `limit ${limit}`)
+    assert.equal(full.used(limit), one.used(limit) + 1, `limit ${limit}`)
+  }
+  // What was read goes out through status --json, where the app takes it from.
+  const status = JSON.parse(both.run(3, 'status', '--json').stdout)
+  const rounds = status.units[0].artifacts['review.md'].review.rounds
+  assert.deepEqual(rounds.map((r) => [r.n, r.dropped, r.unfinished]), [[1, [], false], [2, ['F2', 'F3', 'F4', 'F5'], true]])
+  assert.deepEqual(status.units[0].next.dropped, ['F2', 'F3', 'F4', 'F5'])
+  // `next` hands the ids over as a list beside its sentence, which names none of them.
+  const next = JSON.parse(both.run(3, 'next', both.name).stdout)
+  assert.deepEqual(next.dropped, ['F2', 'F3', 'F4', 'F5'])
+  assert.doesNotMatch(next.action, /F\d/)
+  assert.equal('dropped' in JSON.parse(one.run(3, 'next', one.name).stdout), false)
+})
+
+test("0027 R4: reading 0017's rounds leaves review.md byte for byte", () => {
+  const t = tree0027(asked0017(FIXTURE_0017))
+  const file = join(t.dir, 'review.md')
+  const before = readFileSync(file)
+  for (const args of [['status', '--json'], ['next', t.name], ['gate', t.name, 'review']]) {
+    const out = t.run(3, ...args)
+    assert.notEqual(out.status, 2, out.stderr)
+  }
+  assert.ok(readFileSync(file).equals(before))
+  assert.ok(readFileSync(new URL('./testdata/0017-review-rounds-1-2.md', import.meta.url)).equals(Buffer.from(FIXTURE_0017)))
+})
+
+test('0027 R5: the ship gate names the same dropped ids, in the same words', () => {
+  const text = `# Review: x\nStatus: accepted.\n\n${round(1, 'changes-requested', [...two, '- F3 [open] c'])}\n${round(2, 'pass', [`- F1 [fixed ${FIX}] x`])}`
+  const last = parseReview(text).rounds.at(-1)
+  assert.deepEqual(last.dropped, ['F2', 'F3'])
+  const need = checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', text) }), 'ship', { probe: greenProbe() }).need
+  assert.ok(need.includes('review round 2 drops findings an earlier round raised: F2, F3 — carry each one forward, fixed or open'), need.join('\n'))
+})
+
 // --- 0044: an answer Jera gave opens nothing a person's does not ------------------------
 
 const specWith = (by, via) =>

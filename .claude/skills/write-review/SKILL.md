@@ -39,7 +39,9 @@ rewritten or removed.
    value. At a terminal, `git rev-parse HEAD`. Never guess.
 3. List every finding, each with a severity (below). Carry forward **every** finding any
    earlier round raised, marked `[fixed <sha>]` with the commit that fixed it, or `[open]`
-   — a `low` one too. Dropping one is refused by the `ship` gate.
+   — a `low` one too. Dropping one is refused by the `ship` gate, and since `0027` a
+   `changes-requested` round that drops one is not counted against `COS_REVIEW_ROUNDS`:
+   `cos.mjs next` sends the unit to this stage again, naming the ids it dropped.
 4. If any finding that blocks is `[open]`: `Verdict: changes-requested`, header
    `Status: changes-requested`. The fixes are made on the same branch, pushed, CI goes
    green again, and this stage runs again for round N+1.
@@ -115,7 +117,9 @@ terminal — set `Status: rejected` to close the unit, or raise the limit — an
 into the product unblocks it. That is one of the two places the loop waits for someone who
 is not an agent; the other is a `needs-person` round, above.
 
-Only rounds whose verdict is `changes-requested` count toward that limit. A round that
+Only rounds whose verdict is `changes-requested` and carry forward every earlier finding
+count toward that limit (`0027`); one that drops an id an earlier round raised is written as
+it is, not counted, and the review runs again. A round that
 passes, or one that ends `needs-person`, costs nothing, so reviewing again after a rebase
 never brings the loop closer to `needs a person`. A round left with nothing but findings
 that do not block passes, so no round is ever counted for `low` findings alone.

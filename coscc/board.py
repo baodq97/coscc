@@ -345,6 +345,9 @@ async def next_step(
         "blocked": bool(data.get("blocked")),
         # `0028`. Present only when a person is awaited; its absence reads as none.
         "waiting": [str(x) for x in data.get("waiting") or []],
+        # `0027`. Present only when the last review round left out an earlier finding; its
+        # absence reads as none.
+        "dropped": [str(x) for x in data.get("dropped") or []],
         # `0045`. Present only when the unit is held; its absence reads as None.
         "hold": data.get("hold") or None,
         # `0106`. Present only when a draft's questions are all answered; its absence reads
@@ -535,6 +538,8 @@ def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
 
     `findings` and `findings_open` are counted off `parseReview`'s own list (`0033` spec
     R10) — the run log's numbers come from the one parser, not a second one here.
+    `dropped` and `unfinished` (`0027` R5) are carried as `parseReview` set them; whether a
+    round counts is decided there, never here.
     """
     review = ((unit.get("artifacts") or {}).get("review.md") or {}).get("review") or {}
     out = []
@@ -546,6 +551,8 @@ def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
             "n": r.get("n"), "verdict": r.get("verdict"), "text": r.get("text") or "",
             "findings": len(found),
             "findings_open": sum(1 for f in found if f.get("label") == "open"),
+            "dropped": [str(x) for x in r.get("dropped") or []],
+            "unfinished": bool(r.get("unfinished")),
         })
     return out
 

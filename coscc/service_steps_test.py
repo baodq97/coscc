@@ -961,6 +961,26 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
         self.assertEqual((first["stage"], first["waiting"]), ("", ["F3"]))
         self.assertEqual(second["waiting"], [])
 
+    def test_dropped_is_copied_and_absent_reads_as_none(self):
+        """`0027` review F1. The ids the last round left out reach the page as `cos.mjs`
+        listed them, not inside `action`."""
+        from coscc import board as board_reader
+
+        answers = [
+            {"unit": "u", "stage": "review", "action": "a", "blocked": True, "dropped": ["F2", "F3"]},
+            {"unit": "u", "stage": "review", "action": "a", "blocked": True},
+        ]
+
+        async def fake_next(units_root, unit, repo=None, **kw):
+            if repo is None:
+                return {"unit": "u", "stage": "", "action": "", "blocked": True, "hold": None}
+            return answers.pop(0)
+
+        with mock.patch.object(board_reader, "next_step", fake_next):
+            first, second = self._next(), self._next()
+        self.assertEqual(first["dropped"], ["F2", "F3"])
+        self.assertEqual(second["dropped"], [])
+
 
 class ShipRunsOutsideTheWorktree(unittest.TestCase):
     """`0017` review F3: inside a worktree, `gh pr merge --delete-branch` merged and then
@@ -1597,13 +1617,10 @@ class RunStepHandsOnThePlanMap(RunStepHandsOnTheKnowledgeStore):
         self.assertIn("UnicodeDecodeError", kw["plan_map_record"]["error"])
 
 
-class ReviewTakesTheScreenshotsAgainAfterARewrite(unittest.TestCase):
-    """`0111` plan step 6. `cos.mjs screens` and the capture are stand-ins, and so is the
-    runner: what is checked is whether `Runner.run` is reached, with which section, and what
-    the run log holds."""
-
-    OLD = {"head": "a" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
-    NEW = {"head": "b" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
+class _AReviewStep:
+    """A `review` step run against stand-ins for the gate, `cos.mjs screens`, the capture and
+    the runner; the board is read by the real `cos.mjs`. `self.seen` holds the kwargs each
+    `Runner.run` was handed."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1665,6 +1682,15 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(unittest.TestCase):
             with self.assertRaises(Invalid) as refused:
                 asyncio.run(go())
         return str(refused.exception)
+
+
+class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCase):
+    """`0111` plan step 6. `cos.mjs screens` and the capture are stand-ins, and so is the
+    runner: what is checked is whether `Runner.run` is reached, with which section, and what
+    the run log holds."""
+
+    OLD = {"head": "a" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
+    NEW = {"head": "b" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
 
     def test_no_retake_records_nothing_and_the_step_runs(self):
         self.step({"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None)
@@ -1827,3 +1853,30 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(unittest.TestCase):
         self.assertEqual(kinds, ["start"])
         both = self.service.activity_and_usage(str(self.repo))
         self.assertEqual([e["kind"] for e in both["events"]], ["start"])
+
+
+class AReviewAfterAnUnfinishedRoundIsToldWhy(_AReviewStep, unittest.TestCase):
+    """`0027` R6. Which round `cos.mjs` read as unfinished reaches `Runner.run` as it was
+    read; `service_steps` compares no ids itself."""
+
+    NO_RETAKE = {"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}
+    ROUND1 = ("## Round 1\n\nReviewed: abcdef1. Verdict: changes-requested.\n\n"
+              "### Findings\n\n- F1 [open] a.py:1 — high — x\n- F2 [open] b.py:2 — high — y\n")
+
+    def review(self, round2_findings: str) -> None:
+        (self.dir / "review.md").write_text(
+            "# Review: x\nStatus: changes-requested.\n\n" + self.ROUND1 +
+            "\n## Round 2\n\nReviewed: abcdef2. Verdict: changes-requested.\n\n"
+            f"### Findings\n\n{round2_findings}", encoding="utf-8")
+
+    def test_0027_r6_review_step_is_handed_the_unfinished_round(self):
+        self.review("- F1 [open] a.py:1 — high — x\n")
+        self.step(self.NO_RETAKE, None)
+        [kw] = self.seen
+        self.assertEqual(kw["unfinished_round"], {"n": 2, "dropped": ["F2"]})
+        # A round that carries every id forward hands over nothing.
+        self.seen.clear()
+        self.review("- F1 [open] a.py:1 — high — x\n- F2 [open] b.py:2 — high — y\n")
+        self.step(self.NO_RETAKE, None)
+        [kw] = self.seen
+        self.assertNotIn("unfinished_round", kw)
