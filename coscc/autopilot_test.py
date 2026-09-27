@@ -85,6 +85,39 @@ class Stops(unittest.TestCase):
             self.assertEqual(got["kind"], "e", outcome)
         self.assertIsNone(ap.stop_for(unit(), nxt("pr", "x"), {"kind": "end", "stage": "impl", "outcome": "done"}, True))
 
+    def test_e_0120_a_first_exhausted_step_is_no_stop(self):
+        ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
+        self.assertIsNone(ap.stop_for(unit(), nxt("plan", "write-plan"), ran_out, False, exhausted=1))
+
+    def test_e_0120_a_second_exhausted_step_stops_with_the_same_words(self):
+        ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
+        self.assertEqual(ap.stop_for(unit(), nxt("plan", "write-plan"), ran_out, False, exhausted=2),
+                         {"kind": "e", "reason": "the last plan step ended exhausted"})
+
+    def test_e_0120_an_exhausted_ship_stops_the_first_time(self):
+        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
+        self.assertEqual(ap.stop_for(unit(), nxt("ship", "write-ship"), ran_out, True, exhausted=1)["kind"], "e")
+
+    def test_e_0120_failed_cancelled_and_stopped_stop_whatever_the_count(self):
+        for outcome in ("failed", "cancelled", "stopped"):
+            last = {"kind": "end", "stage": "plan", "outcome": outcome}
+            self.assertEqual(ap.stop_for(unit(), nxt("plan", "write-plan"), last, False, exhausted=1)["kind"], "e", outcome)
+
+    def test_e_0120_a_first_exhausted_step_still_meets_every_other_stop(self):
+        ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
+        qs = [{"artifact": "plan.md", "n": 1, "answered": False, "counted": True}]
+        cases = [
+            (unit(qs), nxt("plan", "write-plan"), ran_out, "a"),
+            (unit(), nxt("", "answer F1", waiting=["F1"]), ran_out, "b"),
+            (unit(), nxt("", "finish and accept plan.md"), ran_out, "f"),
+            (unit(), nxt("", "paused — x", hold={"state": "paused"}), ran_out, None),
+            (unit(), nxt("ship", "write-ship"), {**ran_out, "stage": "review"}, "c"),
+        ]
+        for row_, next_, last, kind in cases:
+            got = ap.stop_for(row_, next_, last, False, exhausted=1)
+            self.assertEqual((got or {}).get("kind"), kind, next_)
+            self.assertEqual(got, ap.stop_for(row_, next_, {**last, "outcome": "done"}, False), next_)
+
     def test_e_an_integration_that_failed_or_that_the_autopilot_had_refused(self):
         failed = {"kind": "integration", "outcome": "failed", "detail": "gh down"}
         self.assertEqual(ap.stop_for(unit(), nxt("review", "x"), failed, True)["kind"], "e")
@@ -162,6 +195,24 @@ class Stops(unittest.TestCase):
             {"kind": "start", "stage": "pr", "started_by": "autopilot"},
         ]
         self.assertEqual(ap.after_own_integration(red, mine, theirs, fix), ("impl", None))
+
+    def test_after_own_integration_0120_a_first_exhausted_impl_is_not_the_one(self):
+        """`0120` review F3: the autopilot's `impl` that ran out runs once more; the one after
+        it counts, and a second that runs out is not forgiven."""
+        red = {"state": "red-after-integration"}
+        mine = {"kind": "integration", "outcome": "pushed", "started_by": "autopilot"}
+        fix = nxt("impl", "CI is red on #7: t — back to impl")
+        start = {"kind": "start", "stage": "impl", "started_by": "autopilot"}
+        out = {"kind": "end", "stage": "impl", "outcome": "exhausted"}
+        done = {**out, "outcome": "done"}
+        still = ("", {"kind": "e", "reason": ap.STILL_RED})
+        self.assertEqual(ap.after_own_integration(red, mine, [start, out], fix, 1), ("impl", None))
+        self.assertEqual(ap.after_own_integration(red, mine, [start, out], fix), still)
+        self.assertEqual(ap.after_own_integration(red, mine, [start, out, start, done], fix, 1), still)
+        self.assertEqual(ap.after_own_integration(red, mine, [start, out, start, out], fix, 2), still)
+        # A person's `impl` that ran out was never counted, and forgives nothing.
+        theirs = [{**start, "started_by": "person"}, out, start, done]
+        self.assertEqual(ap.after_own_integration(red, mine, theirs, fix, 1), still)
 
     def test_is_ci_red_reads_the_words_inside_a_joined_action(self):
         self.assertTrue(ap.is_ci_red("CI is red on #7: tests — back to impl: fix on the branch and push"))
@@ -665,6 +716,23 @@ class Reruns(unittest.TestCase):
             self.assertIn(stop["kind"], ap.STOP_KINDS)
 
 
+class ExhaustedOf(unittest.TestCase):
+    """`0120`: how many times a stage ran out, the count `stop_for`'s e reads."""
+
+    def test_counts_every_exhausted_end_of_the_stage_whoever_started_it(self):
+        rows = [row("end", stage="plan", outcome="exhausted", started_by="person", terminal="max_turns"),
+                row("end", stage="plan", outcome="exhausted", started_by="autopilot", budget_usd=1.0)]
+        self.assertEqual(ap.exhausted_of(rows, "w", "0001_a", "plan"), 2)
+
+    def test_another_workspace_unit_stage_or_outcome_is_not_counted(self):
+        rows = [row("end", stage="plan", outcome="exhausted", workspace="other"),
+                row("end", unit="0002_b", stage="plan", outcome="exhausted"),
+                row("end", stage="spec", outcome="exhausted"),
+                row("end", stage="plan", outcome="failed"),
+                row("start", stage="plan")]
+        self.assertEqual(ap.exhausted_of(rows, "w", "0001_a", "plan"), 0)
+
+
 class MeasuringReruns(unittest.TestCase):
     """`0106` R7: one sample log per class."""
 
@@ -719,6 +787,51 @@ class MeasuringReruns(unittest.TestCase):
         old = answer_row(seconds=-3 * 86400)
         self.assertIsNone(self.measure([old])["met"])
         self.assertIsNone(ap.measure_reruns([answer_row()], "other", "2026-01-01", "2026-12-31")["met"])
+
+
+def ran_out_row(seconds=0, stage="plan", unit="0001_a"):
+    return row("end", unit, stage, seconds, outcome="exhausted")
+
+
+def ran_out_stop(seconds=0, stage="plan", unit="0001_a", note=""):
+    return stop_row("e", seconds, unit, f"the last {stage} step ended exhausted" + note)
+
+
+class MeasureExhausted(unittest.TestCase):
+    """`0120` R6: a stop at the first time a stage other than `ship` ran out is a violation."""
+
+    def measure(self, rows):
+        return ap.measure_exhausted(rows, "w", ap.today(NOW - timedelta(days=1)), ap.today(NOW + timedelta(days=1)))
+
+    def test_a_stop_at_the_first_exhausted_step_is_a_violation(self):
+        got = self.measure([ran_out_row(), ran_out_stop(1)])
+        self.assertIs(got["met"], False)
+        self.assertEqual(got["violations"], [{"unit": "0001_a", "stage": "plan", "at": at(timedelta(seconds=1))}])
+        self.assertEqual(got["exhausted"], 1)
+
+    def test_a_second_exhausted_stop_and_a_ship_stop_are_not_violations(self):
+        rows = [ran_out_row(), row("start", stage="plan", seconds=1), ran_out_row(2), ran_out_stop(3, note="; origin x"),
+                ran_out_row(4, "ship", "0002_b"), ran_out_stop(5, "ship", "0002_b")]
+        got = self.measure(rows)
+        self.assertEqual((got["met"], got["violations"], got["exhausted"]), (True, [], 2))
+
+    def test_no_exhausted_step_is_not_measured(self):
+        self.assertIsNone(self.measure([row("end", stage="plan", outcome="done")])["met"])
+        self.assertIsNone(self.measure([ran_out_row(0, "ship"), ran_out_stop(1, "ship")])["met"])
+
+    def test_an_exhausted_step_before_the_window_does_not_count(self):
+        # Spec C2: the first time ran out before `since`, so the window sees only one.
+        got = self.measure([ran_out_row(-3 * 86400), ran_out_row(), ran_out_stop(1)])
+        self.assertIs(got["met"], False)
+        self.assertEqual(len(got["violations"]), 1)
+        other = ap.measure_exhausted([ran_out_row(), ran_out_stop(1)], "other", "2026-01-01", "2026-12-31")
+        self.assertIsNone(other["met"])
+
+    def test_the_measure_reads_the_words_stop_for_writes(self):
+        said = ap.stop_for(unit(), nxt("plan", "write-plan"), {"kind": "end", "stage": "plan", "outcome": "exhausted"},
+                           False, exhausted=2)
+        got = self.measure([ran_out_row(), stop_row(said["kind"], 1, reason=said["reason"])])
+        self.assertEqual([v["stage"] for v in got["violations"]], ["plan"])
 
 
 class VerifyScript(unittest.TestCase):

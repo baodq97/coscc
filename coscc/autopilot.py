@@ -83,13 +83,15 @@ def stop_for(
     nxt: dict[str, Any],
     last: dict[str, Any] | None,
     may_ship: bool,
+    exhausted: int = 0,
 ) -> dict[str, str] | None:
     """The first of R6's stops that holds for one unit, as `{kind, reason}`, or `None`.
 
     `unit_row` is the unit as `Service.board` has it; `nxt` is `Service.next_step`'s answer;
     `last` the unit's latest `end`, `integration` or `screens` (`0111`) record, or `None`. `None` back means no
     stop, which is not the same as something to run: a finished, rejected or held unit, and
-    one waiting on CI, have neither.
+    one waiting on CI, have neither. `exhausted` is how many steps of `last`'s stage ended
+    `exhausted` (`exhausted_of`); left at 0, an exhausted step stops as before `0120`.
     """
     stage = str(nxt.get("stage") or "")
     action = str(nxt.get("action") or "")
@@ -120,9 +122,13 @@ def stop_for(
     if kind == "integration" and outcome == "needs-person":
         said = "; ".join(str(x) for x in (last or {}).get("needs_person") or []) or "no reason given"
         return _stop("d", f"the last integration needs a person: {said}")
-    # e. The unit's last step did not end `done`; no retry (`spec.md ## Answers`, câu 1). An
-    # integration that failed, or that the autopilot started and was refused, is the same.
-    if kind == "end" and outcome != "done":
+    # e. The unit's last step did not end `done`. The first time a stage other than `ship` ends
+    # `exhausted` is no stop: it runs again once, and the second time stops; `ship` stops the
+    # first time (`0120 intent.md ## Answers`, câu 3, 4). Otherwise no retry (`spec.md
+    # ## Answers`, câu 1): `failed`, `cancelled`, `stopped`, and an integration that failed or
+    # that the autopilot started and was refused.
+    ran_out_once = outcome == "exhausted" and (last or {}).get("stage") != "ship" and exhausted == 1
+    if kind == "end" and outcome != "done" and not ran_out_once:
         return _stop("e", f"the last {last.get('stage')} step ended {outcome or 'without an outcome'}")
     if kind == "integration" and (
         outcome == "failed" or (outcome == "refused" and last.get("started_by") == "autopilot")
@@ -178,6 +184,7 @@ def after_own_integration(
     last_integration: dict[str, Any] | None,
     after: list[dict[str, Any]] | None,
     nxt: dict[str, Any],
+    exhausted: int = 0,
 ) -> tuple[str, dict[str, str] | None] | None:
     """`0124` R1–R3: what follows CI red on the autopilot's own pushed integration.
 
@@ -186,7 +193,9 @@ def after_own_integration(
     answer. `("impl", None)` runs the `impl` `next` names, once (R1); `("", stop)` is a stop
     `e` (R2, R3 b); `None` leaves the unit to the rest of the pass — a person's integration,
     or one CI is not red on. Gebo is never started again: no retry is the rule (`0043`
-    `spec.md ## Answers`, câu 1).
+    `spec.md ## Answers`, câu 1). `exhausted` is how many `impl` steps of the unit ended
+    `exhausted` (`exhausted_of`): while it is 1, the autopilot's `impl` that ran out is not
+    the one `impl`, which runs once more (`0120 intent.md ## Answers`, câu 4; review F3).
     """
     last_integration = last_integration or {}
     if started_by(last_integration) != "autopilot" or last_integration.get("outcome") != "pushed":
@@ -197,10 +206,17 @@ def after_own_integration(
     again = _stop("e", "CI is still red after the autopilot's last integration")
     if after is None:
         return ("", again) if red_state else None
-    ran = sum(
-        1 for r in after
-        if r.get("kind") == "start" and r.get("stage") == "impl" and started_by(r) == "autopilot"
-    )
+    ran, short, by = 0, 0, ""
+    for r in after:
+        if r.get("stage") != "impl":
+            continue
+        if r.get("kind") == "start":
+            by = started_by(r)
+            ran += 1 if by == "autopilot" else 0
+        elif r.get("kind") == "end" and r.get("outcome") == "exhausted" and by == "autopilot":
+            short += 1
+    if exhausted == 1:
+        ran -= min(short, 1)
     if ran >= IMPL_PER_INTEGRATION and (red_state or red_next):
         return ("", _stop("e", STILL_RED))
     if red_state and fixing:
@@ -450,6 +466,16 @@ def reruns_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stag
                 count += 1
             started, answered = True, False
     return count
+
+
+def exhausted_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
+    """`0120`. How many steps of `stage` on `unit` ended `exhausted`. Whoever started them,
+    out of turns or out of budget alike, and over the whole run log (spec C1, C2)."""
+    return sum(
+        1 for r in records
+        if r.get("kind") == "end" and r.get("outcome") == "exhausted" and is_step(r)
+        and r.get("workspace") == workspace and r.get("unit") == unit and r.get("stage") == stage
+    )
 
 
 def answered_since_start(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> bool:
@@ -758,3 +784,44 @@ def measure_reruns(
         })
     met = None if not cases else not any(c["class"] in _MISSED or c["class"].startswith("stop:") for c in cases)
     return {"workspace": workspace, "since": since, "until": until, "cases": cases, "met": met}
+
+
+# `stop_for`'s e on an `exhausted` step; an `autopilot-stop` records `stage: ""`, so the stage is
+# read from here, and `; <origin note>` may follow (`service_autopilot`, `0112` R4).
+_RAN_OUT = re.compile(r"^the last (\S+) step ended exhausted(?:;|$)")
+
+
+def measure_exhausted(
+    records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
+) -> dict[str, Any]:
+    """`0120` R6. Every stop of `workspace` over the machine's days `since`..`until` on an
+    `exhausted` step of a stage other than `ship`, with no other `exhausted` end of that unit
+    and stage before it in the window: a stop at the first time it ran out, which R1 forbids.
+
+    `exhausted` counts the window's `exhausted` ends of a stage other than `ship`; `met` is
+    `None` when there is none, which is not met (`intent.md ## Proposed outcome`).
+    """
+    ran_out: dict[tuple[Any, str], int] = {}
+    violations: list[dict[str, Any]] = []
+    exhausted = 0
+    for r in records:
+        if r.get("workspace") != workspace or not is_step(r) or r.get("kind") not in ("end", "autopilot-stop"):
+            continue
+        if not since <= spend.local_day(r.get("at")) <= until:
+            continue
+        if r.get("kind") == "end":
+            stage = str(r.get("stage") or "")
+            if r.get("outcome") == "exhausted":
+                ran_out[(r.get("unit"), stage)] = ran_out.get((r.get("unit"), stage), 0) + 1
+                exhausted += stage != "ship"
+            continue
+        found = _RAN_OUT.match(str(r.get("reason") or ""))
+        if r.get("stop") != "e" or not found or found.group(1) == "ship":
+            continue
+        if ran_out.get((r.get("unit"), found.group(1)), 0) < 2:
+            violations.append({"unit": r.get("unit"), "stage": found.group(1), "at": r.get("at")})
+    met = None if not exhausted else not violations
+    return {
+        "workspace": workspace, "since": since, "until": until,
+        "violations": violations, "exhausted": exhausted, "met": met,
+    }

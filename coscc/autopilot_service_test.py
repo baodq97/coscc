@@ -577,9 +577,10 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0001_a", "impl", "autopilot"), ("0002_b", "integrate", "autopilot")])
         self.assertEqual(self.stops(), {})
 
-    async def _0124_impl_after_a_red_rebase(self) -> Journal:
+    async def _0124_impl_after_a_red_rebase(self, outcome: str = "done") -> Journal:
         """0115/#120 up to its `impl`: a `pass`, the autopilot's mechanical rebase, CI red on
-        it, and `next` naming `impl` with `cos.mjs`'s words. Returns once that `impl` ended."""
+        it, and `next` naming `impl` with `cos.mjs`'s words. Returns once that `impl` ended
+        `outcome`."""
         self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
         red = f"{autopilot.CI_RED}120: tests — back to impl: fix on the branch and push"
         self.add("0001_a", "impl", action=red, plan="- `a/x.py`", integration={"state": "red-after-integration"},
@@ -599,10 +600,38 @@ class Scripted(_Base):
         self.assertEqual((len(self.launched), self.stops()), (1, {}))
         self.release.set()
         await self.settled()
-        log.finished(self.key, "0001_a", "impl", "done")
+        log.finished(self.key, "0001_a", "impl", outcome)
         stops = [r for r in log.records(kind="autopilot-stop") if r["unit"] == "0001_a" and r["stop"]]
         self.assertEqual(stops, [])
         return log
+
+    async def test_0120_f3_an_exhausted_impl_after_its_own_integration_runs_once_more(self):
+        """`0120` review F3: the `impl` `0124` runs ran out, so it is not the one `impl`; the
+        second that runs out stops `e` with `0120`'s words, not `STILL_RED`."""
+        log = await self._0124_impl_after_a_red_rebase("exhausted")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")] * 2)
+        self.assertEqual(self.stops(), {})
+        await self.settled()
+        log.started(self.key, "0001_a", "impl", "autonomous", started_by="autopilot")
+        log.finished(self.key, "0001_a", "impl", "exhausted")
+        await self.pass_()
+        self.assertEqual(len(self.launched), 2)
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        reason = self.service._autopilot_stops[self.key]["0001_a"]["reason"]
+        self.assertEqual(reason, "the last impl step ended exhausted")
+
+    async def test_0120_f3_the_impl_after_an_exhausted_one_is_the_one(self):
+        """`0124` R2 still holds once the `impl` run again ends `done` and CI is still red."""
+        log = await self._0124_impl_after_a_red_rebase("exhausted")
+        await self.pass_()
+        await self.settled()
+        log.started(self.key, "0001_a", "impl", "autonomous", started_by="autopilot")
+        log.finished(self.key, "0001_a", "impl", "done")
+        await self.pass_()
+        self.assertEqual(len(self.launched), 2)
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED)
 
     async def test_0124_r7_a_rebase_that_turns_ci_red_runs_impl_once_then_stops(self):
         """R7, the intent's outcome: sent to `impl`, not stopped; still red after it, stopped."""
@@ -951,6 +980,70 @@ class Scripted(_Base):
         self.service.set_autopilot(self.ws, "autopilot", False)
         await self.pass_()
         self.assertEqual(self.launched, [])
+
+    # --- `0120`, a step that only ran out of turns runs once more -----------------
+
+    def ran_out(self, unit, stage):
+        Journal(self.config.working_dir, self.config.data_dir).finished(self.key, unit, stage, "exhausted")
+
+    async def test_0120_r1_a_first_exhausted_step_runs_its_stage_again(self):
+        self.ran_out("0001_a", "plan")
+        self.add("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "plan", "autopilot")])
+        self.assertEqual([(p["unit"], p["stage"]) for p in self.picks()], [("0001_a", "plan")])
+        self.assertEqual(self.stops(), {})
+
+    async def test_0120_r2_the_rerun_that_runs_out_again_stops_e(self):
+        self.ran_out("0001_a", "plan")
+        self.add("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(len(self.picks()), 1)
+        self.release.set()
+        await self.settled()
+        self.ran_out("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+                         "the last plan step ended exhausted")
+        self.assertEqual((len(self.picks()), len(self.launched)), (1, 1))
+
+    async def test_0120_r3_an_exhausted_ship_stops_the_first_time(self):
+        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.ran_out("0001_a", "ship")
+        self.add("0001_a", "ship")
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
+
+    async def test_0120_r4_a_held_unit_or_a_closed_gate_after_a_first_exhausted_step(self):
+        self.ran_out("0001_a", "plan")
+        self.add("0001_a", "")
+        self.nexts["0001_a"]["hold"] = {"state": "paused", "reason": "later", "by": "Leif", "date": "2026-09-27"}
+
+        async def refused(cwd, unit, stage, started_by="person"):
+            raise Invalid("blocked: plan.md is draft")
+            yield  # pragma: no cover
+
+        self.service.run_step = refused
+        self.ran_out("0002_b", "impl")
+        self.add("0002_b", "impl", plan="- `a/b.py`")
+        await self.pass_()
+        self.assertEqual([p["unit"] for p in self.picks()], ["0002_b"])
+        self.assertEqual(self.stops(), {"0002_b": "f"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0002_b"],
+                         {"unit": "0002_b", "kind": "f", "reason": "blocked: plan.md is draft"})
+
+    async def test_0120_r1_the_rerun_branch_passes_the_count_too(self):
+        # `start, answer, start, end exhausted`: no answer since the last start, so the stop is
+        # what `stop_for` says with no `rerun` — `f`, not the `e` a count left at 0 would give.
+        self.add_rerun("0001_a", "plan", "start")
+        Journal(self.config.working_dir, self.config.data_dir).append(
+            {"kind": "start", "workspace": self.key, "unit": "0001_a", "stage": "plan", "started_by": "autopilot"})
+        self.ran_out("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"],
+                         {"unit": "0001_a", "kind": "f", "reason": "finish and accept plan.md"})
 
 
 class ResumedAtStartUp(unittest.TestCase):
