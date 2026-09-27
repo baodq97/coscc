@@ -255,7 +255,8 @@ def warnings(
     # `0061` R11.1: the app cannot tell "behind but mergeable" (spike U1, U2), so the page
     # says when integrating a passed unit is worth another round, and leaves it to a person.
     # `0067` R8: only a rebase that changes the unit's patch costs that round; `cos.mjs`
-    # decides which, and this only says so.
+    # decides which, and this only says so. `0121`: after changes were asked, the same test
+    # decides between impl and a round that counts.
     if rounds and str(rounds[-1].get("verdict") or "") == "pass":
         out.append(
             "The last review round passed. Integrating rewrites the reviewed commit. If the "
@@ -268,8 +269,10 @@ def warnings(
         )
     if review_status == "changes-requested":
         out.append(
-            "review.md asks for changes. After integrating, cos.mjs next offers review, not "
-            "impl, and that round counts toward COS_REVIEW_ROUNDS (spec C2)."
+            "review.md asks for changes. If integrating leaves the unit's patch unchanged — "
+            "the same added, removed and context lines — cos.mjs next still offers impl, and "
+            "no review round is spent. If it changes the patch, next offers review once CI is "
+            "green, and that round counts toward COS_REVIEW_ROUNDS."
         )
     if fallback:
         out.append(
