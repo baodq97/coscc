@@ -41,6 +41,11 @@ _ENV_PREFIX = "COS_"
 # while this one is written *for* the child and read by `coscc/data.py` in it.
 PROTECTED_DB_VAR = "COSCC_PROTECTED_DB"
 
+# Addresses that reach this machine and nowhere else. `0.0.0.0` and a bare interface
+# address are both absent on purpose: binding either is what `coscc/run.py`'s warning is
+# about. Here rather than in `run.py`, so the modules that read it import no entry point.
+LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
+
 
 def _flag(env: dict[str, str], name: str, default: bool) -> bool:
     raw = env.get(_ENV_PREFIX + name)

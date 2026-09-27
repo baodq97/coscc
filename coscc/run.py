@@ -43,6 +43,7 @@ from coscc import frontend
 
 # The same: standard library only (`coscc/update.py`'s docstring says why it must be).
 from coscc import update
+from coscc.config import LOOPBACK
 
 MOUNT_FLAG = "__REFLEX_MOUNT_FRONTEND_COMPILED_APP"
 
@@ -206,11 +207,6 @@ def _answer_and_stop(args: list[str]) -> None:
         file=sys.stderr,
     )
     raise SystemExit(2)
-
-
-# Addresses that reach this machine and nowhere else. `0.0.0.0` and a bare interface
-# address are both absent on purpose: binding either is what the warning below is about.
-LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def banner(config) -> list[str]:
