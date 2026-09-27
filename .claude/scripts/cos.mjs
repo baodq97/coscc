@@ -1492,6 +1492,13 @@ function shipNeeds(unit, probe, said = {}) {
   if (!unit.branch) return ['the unit has no branch — intent.md must declare a Type']
   const pr = unit.artifacts['pr.md']?.pr ?? null
   if (!pr) return ['pr.md names no pull request — nothing says what ship would merge']
+  // `0116`: the pull request is read before the branch is looked for — after
+  // `--delete-branch` there may be no ref left, and a merged one needs none. Any state but
+  // these two closes the gate as it always did (R3).
+  const view = prView(probe, pr)
+  if (view.error) return [view.error]
+  if (view.state === 'MERGED') return mergedNeeds(probe, pr, view, said)
+  if (view.state !== 'OPEN') return [prHead(probe, pr, view).error]
   const refs = [`refs/heads/${unit.branch}`, `refs/remotes/origin/${unit.branch}`].filter(
     (ref) => probe.git('rev-parse', '--verify', '--quiet', ref).code === 0,
   )
@@ -1504,7 +1511,7 @@ function shipNeeds(unit, probe, said = {}) {
   // from another checkout moves it and leaves `origin/<branch>` stale, since the gate does
   // not fetch (`0015` review round 1, F2). So the head is asked for and checked like a ref,
   // and `ship` merges with `--match-head-commit` set to exactly this commit.
-  const read = prHead(probe, pr)
+  const read = prHead(probe, pr, view)
   if (read.error) return [read.error]
   refs.push(read.head)
   said.head = read.head
@@ -1562,6 +1569,34 @@ function shipNeeds(unit, probe, said = {}) {
     return [`#${pr.number} is ${by} behind origin/main — integrate, then review again only if the rebase changes the unit's patch: one that leaves it unchanged opens ship once CI is green; a round that passes does not count toward the limit`]
   }
   return screensNeeds(unit, probe, last, said)
+}
+
+// `0116`: a pull request already merged — by a `ship` whose `--delete-branch` then exited 1,
+// or by hand — leaves `ship` only its record to write. The gate asks that the merge commit is
+// here and on `origin/main`, and nothing else: the branch may be gone, and CI, a rebase and
+// `behind` speak of a merge still to come. It sets `said.merged` and no `said.head`, so there
+// is nothing to pin. A head that moved after the pass does not close it (spec C1): closing
+// cannot undo the merge, and `write-ship` records the difference.
+function mergedNeeds(probe, pr, view, said) {
+  const { commit, at } = view.merged
+  const again = '— fetch, then ask again'
+  if (typeof commit !== 'string' || !/^[0-9a-f]{40}$/.test(commit) || typeof at !== 'string' || !at) {
+    return [`cannot read the merge commit of #${pr.number}: gh gave mergeCommit ${commit ?? 'none'} and mergedAt ${at || 'none'} ${again}`]
+  }
+  if (probe.git('cat-file', '-e', `${commit}^{commit}`).code !== 0) {
+    return [`the merge commit ${commit} of #${pr.number} is not in this repository ${again}`]
+  }
+  if (probe.git('merge-base', '--is-ancestor', commit, 'refs/remotes/origin/main').code !== 0) {
+    return [`the merge commit ${commit} of #${pr.number} is not on origin/main here ${again}`]
+  }
+  said.merged = { number: pr.number, commit, at, head: view.head }
+  return []
+}
+
+// What the `ship` gate's open line and `next`'s action both say of a merged pull request
+// (`0116`), so the two cannot word it differently.
+function mergedLine(merged) {
+  return `#${merged.number} was merged as ${merged.commit} at ${merged.at}: record it in ship.md; do not merge`
 }
 
 // What reached `ref` after `reviewed`, outside the unit's own `.cos/` files:
@@ -1663,6 +1698,8 @@ export function checkGate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } =
     const stuck = passLeftClosed(unit, probe, ship)
     if (stuck && !stuck.stop) return { ok, need, retry: { n: stuck.last.n, reviewed: stuck.last.reviewed, need: ship.need } }
   }
+  // `0116`: `merged` only when `ship` opened on a pull request already merged.
+  if (ok && said.merged) return { ok, need, merged: said.merged }
   // `0067` R6: `rebased` only when the gate opened on a clean rebase, so every other answer
   // is what it was.
   if (!ok || !said.head) return { ok, need }
@@ -1801,9 +1838,12 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   // `0054` R5: a stale `review` or `ship` is due the way a missing one is, CI permitting.
   const due = why === 'missing' || why === 'stale'
   if (due && next.stage === 'review') return onReview(why === 'stale' ? [next.action] : [])
+  // `0116` R4: a pull request already merged leaves `ship` its record to write, and no merge.
+  const recorded = (g) => ({ blocked: true, action: `write-ship — ${mergedLine(g.said.merged)}`, stage: 'ship' })
 
   if (due && next.stage === 'ship') {
     const g = evaluate(unit, 'ship', { probe, limit })
+    if (g.ok && g.said.merged) return recorded(g)
     if (g.ok) return { ...next, action: `${next.action} — merge with --match-head-commit ${g.said.head}` }
     // `0083` R10: a UI unit whose pass lacks current screenshots is cured the same way.
     if (g.said.moved || g.said.screens) return again(g)
@@ -1824,6 +1864,8 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     const ship = unit.artifacts['ship.md'].ship
     const last = lastRound(unit)
     const g = evaluate(unit, 'ship', { probe, limit })
+    // `0116`: `--delete-branch` in a worktree merges, then exits 1, and leaves this draft.
+    if (g.ok && g.said.merged) return recorded(g)
     if (g.said.moved || g.said.screens) return again(g)
     if (g.said.rebased && g.said.ci === 'red') return { blocked: true, action: g.need.join('; '), stage: 'impl' }
     if (!g.ok) return none(g.need.join('; '))
@@ -2149,8 +2191,9 @@ function cmdNext(unitName, cosDir, repoDir, limit) {
 // head is one nobody reviewed. `0067` R6: a gate opened on a clean rebase says so on a
 // second line, in short shas — the full one is the pin's alone. `0125` R3: so does a
 // `review` that is the one retry after a pass `ship` stayed closed on, with the gate's reasons.
-export function openLines(stage, unitName, { head = null, rebased = null, retry = null } = {}) {
-  const pin = head ? ` — merge with --match-head-commit ${head}` : ''
+// `0116`: a `ship` opened on a pull request already merged is told to record it, not to merge.
+export function openLines(stage, unitName, { head = null, rebased = null, retry = null, merged = null } = {}) {
+  const pin = merged ? ` — ${mergedLine(merged)}` : head ? ` — merge with --match-head-commit ${head}` : ''
   const lines = [`open: ${stage} may proceed for ${unitName}${pin}`]
   if (rebased) {
     lines.push(`the reviewed commit ${rebased.reviewed.slice(0, 7)} was rebased to ${rebased.head.slice(0, 7)} and the unit's patch is unchanged — no review round is needed`)
@@ -2172,9 +2215,9 @@ function cmdGate(unitName, stage, cosDir, repoDir, limit) {
     return 2
   }
   const probe = repoDir ? makeProbe(repoDir) : null
-  const { ok, need, head, rebased, retry } = checkGate(readUnit(dir, unitName), stage, { probe, limit })
+  const { ok, need, head, rebased, retry, merged } = checkGate(readUnit(dir, unitName), stage, { probe, limit })
   if (ok) {
-    for (const line of openLines(stage, unitName, { head, rebased, retry })) console.log(line)
+    for (const line of openLines(stage, unitName, { head, rebased, retry, merged })) console.log(line)
     return 0
   }
   console.error(`blocked: ${stage} cannot proceed for ${unitName}`)
