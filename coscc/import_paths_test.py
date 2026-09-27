@@ -231,5 +231,27 @@ class EveryImportOutsideThePackageResolves(unittest.TestCase):
         self.assertEqual(unresolved(source), ["coscc.config.NO_SUCH", "coscc.no_such", "coscc.no_module"])
 
 
+class PackagedDataStaysAtThePackageRoot(unittest.TestCase):
+    """R9: `scripts/build_wheel.sh` writes `_web/`, `_harness/` and `_build.json` into the
+    package root, and a module that moved into a subpackage must still look for them there.
+    A checkout usually has none of the three, so only a wheel would show it wrong."""
+
+    def test_each_place(self):
+        import coscc
+        from coscc import update
+        from coscc.agent import harness, models
+        from coscc.units import states
+        from coscc.web import frontend
+
+        root = Path(coscc.__file__).resolve().parent
+        self.assertEqual(frontend.PACKAGE_WEB, root / "_web")
+        self.assertEqual((update.BUILD_STAMP, update.REPO), (root / "_build.json", root.parent))
+        self.assertEqual((harness.PACKAGE_HARNESS, harness.CHECKOUT_HARNESS), (root / "_harness", root.parent / ".claude"))
+        self.assertEqual(models.DEFAULT_PATH, root / "agent" / "models.json")
+        self.assertEqual(states.DEFAULT_PATH, root / "units" / "states.json")
+        self.assertTrue(models.DEFAULT_PATH.is_file())
+        self.assertTrue(states.DEFAULT_PATH.is_file())
+
+
 if __name__ == "__main__":
     unittest.main()
