@@ -103,7 +103,7 @@ only from here.
 | `GET /api/board/events` hands out everything a step saw | `.claude/rules/coscc-events.md` | editing `coscc/runlog/events.py`, `/api/board/events`, `/follow`, or the watch pane |
 | `GET /api/notices/follow` holds a connection per listener | `.claude/docs/coscc-notices.md` | editing `coscc/runlog/notices.py`, `service/notices.py` or the notice script |
 | the `review`/`ship` gates call `gh`; the run button follows `next` | `.claude/rules/coscc-board.md` | editing `coscc/units/board.py` or the run button |
-| two roots, and what `--measure` reads | `.claude/rules/coscc-data.md` | editing `coscc/config.py`, `units.py`, `data.py`, `journal.py`, or a run-log field |
+| two roots, and what `--measure` reads | `.claude/rules/coscc-data.md` | editing `coscc/config.py`, `units/__init__.py`, `data.py`, `runlog/journal.py`, or a run-log field |
 | `/api/timeline` returns a failed reply; `pull` within one process; a failed step's tail; `POST /api/board/stop`; units at the same time; `GET /api/board/running` | `.claude/docs/coscc-steps.md` | editing `/api/timeline`, `/api/board/stop`, `/api/board/running`, `Service.run_step`, `runner.describe_attempt` or `journal.failed_attempts` |
 | `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold`, `/more-rounds`; re-running keeps `## Answers`; a board rerun makes later artifacts stale | `.claude/docs/coscc-answers.md` | editing those routes, `run_step`'s `rerun`, `cos.mjs rerun`, `coscc/units/hold.py`, or `answers_section`/`strip_answers`/`with_answers` in `coscc/runner/prompt.py` |
 | `POST /api/settings/models` and `/efforts`; `POST /api/backlog/*` | `.claude/docs/coscc-settings.md` | editing `/api/settings/*`, `coscc/agent/models.py`, `/api/backlog/*` or `coscc/units/backlog.py` |
