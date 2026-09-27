@@ -13,6 +13,10 @@ from coscc.service import Invalid
 from coscc.state.views import ChildRow, IdeaRow, child_rows, idea_rows
 from coscc.web import place
 
+# The first item of *Depends on*: a select cannot hold an empty value, and without one a
+# dependency once chosen could not be taken back (`0040` review round 1, F3).
+NO_DEPENDENCY = "No dependency"
+
 
 class IdeasMixin(rx.State, mixin=True):
 
@@ -39,7 +43,7 @@ class IdeasMixin(rx.State, mixin=True):
     async def _load_idea(self, idea_id: str) -> None:
         from coscc.state import SERVICE
 
-        self.idea_id, self.idea_note, self.idea_units = idea_id, "", []
+        self.idea_id, self.idea_note, self.idea_units, self.idea_depends = idea_id, "", [], []
         try:
             page = await SERVICE.idea(self.cwd, idea_id)
         except Invalid as e:
@@ -49,7 +53,10 @@ class IdeasMixin(rx.State, mixin=True):
         self.idea_title, self.idea_brief, self.idea_ref = page["title"], page["brief"], page["ref"]
         self.idea_units = child_rows(page)
         self.idea_workspaces = list(page["workspaces"])
-        self.idea_depends = [r.ref for r in self.idea_units if not r.missing]
+        refs = [r.ref for r in self.idea_units if not r.missing]
+        self.idea_depends = [NO_DEPENDENCY, *refs] if refs else []
+        if self.child_depends not in refs:
+            self.child_depends = ""
         if self.child_ws not in self.idea_workspaces:
             self.child_ws = self.idea_workspaces[0] if self.idea_workspaces else ""
 
@@ -71,7 +78,7 @@ class IdeasMixin(rx.State, mixin=True):
 
     @rx.event
     def set_child_depends(self, value: str):
-        self.child_depends = "" if value == "none" else value
+        self.child_depends = "" if value == NO_DEPENDENCY else value
 
     @rx.event
     def create_idea(self):
