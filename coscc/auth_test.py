@@ -679,23 +679,25 @@ class Sockets(Door):
         inbox: asyncio.Queue = asyncio.Queue()
         inbox.put_nowait({"type": "websocket.connect"})
         sent: list = []
+        accepted = asyncio.Event()
 
         async def send(message):
             sent.append(message)
-
-        async def settle():
-            await asyncio.sleep(0.2)
+            if message["type"] == "websocket.accept":
+                accepted.set()
 
         def expires():
             return self.data.auth_state(sha)[1]["expires_at"]
 
-        with mock.patch.object(auth, "WS_RECHECK", 0.05):
+        rechecks = Rechecks()
+        with mock.patch.object(auth, "asyncio", rechecks):
             # The handshake two hours on is a use: touched, and the 101 renews the cookie.
+            # The guard touches before it accepts, so the accept is enough to wait for.
             self.clock.t = start + 7200
             task = asyncio.ensure_future(self.guard(
                 ws_scope("/_event/?EIO=4&transport=websocket", cookie=cookie), inbox.get, send
             ))
-            await settle()
+            await asyncio.wait_for(accepted.wait(), 20)
             self.assertEqual(sent[0]["type"], "websocket.accept")
             renewed = dict(sent[0]["headers"])[b"set-cookie"].decode()
             self.assertIn(f"{auth.COOKIE}={cookie}", renewed)
@@ -704,23 +706,29 @@ class Sockets(Door):
 
             # Two more hours with no message: not use, no write.
             self.clock.t = start + 4 * 3600
-            await settle()
+            await self.look(rechecks, task)
             self.assertEqual(expires(), int(start) + 7200 + auth.SESSION_TTL)
 
-            # A message, then the watcher's next look: touched from the socket alone.
+            # A message, then the watcher's next look: touched from the socket alone. The
+            # app must have it before the look, or the look races the receive that marks
+            # the socket used.
+            self.heard.clear()
             inbox.put_nowait({"type": "websocket.receive", "text": "event"})
-            await settle()
+            await asyncio.wait_for(self.heard.wait(), 20)
+            await self.look(rechecks, task)
             self.assertEqual(expires(), int(start) + 4 * 3600 + auth.SESSION_TTL)
 
             # Past thirty days from the handshake, still open, because it was used since.
+            # `look` returns only once the watcher has decided, so this is not a race.
             self.clock.t = start + 7200 + auth.SESSION_TTL + 1
-            await settle()
+            await self.look(rechecks, task)
             self.assertFalse(task.done())
             self.assertNotIn({"type": "websocket.close", "code": 1008}, sent)
 
             # Thirty days from the last use, it closes like any ended session.
             self.clock.t = start + 4 * 3600 + auth.SESSION_TTL + 1
-            await asyncio.wait_for(task, 1)
+            await self.look(rechecks, task)
+            await asyncio.wait_for(task, 20)
         self.assertEqual(sent[-1], {"type": "websocket.close", "code": 1008})
 
     async def test_a_recent_handshake_writes_nothing_and_sets_no_cookie(self):
