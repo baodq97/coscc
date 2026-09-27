@@ -61,9 +61,10 @@ bypass the ruleset.
 
 **Refused — the head branch not up to date, or anything else?** Write `ship.md` as `draft`
 with, in `## What went out`, one line at column 0: `Refused: <what gh said, on one line>`.
-Then stop. Do not rebase: the autopilot or a person integrates, and a rebase needs another
-review round anyway. `cos.mjs next` reads that line and the header's `Round:`, so a later
-passing round is not blocked by this draft.
+Then stop. Do not rebase: the autopilot or a person integrates. `cos.mjs next` reads that
+line and the header's `Round:`, so this draft does not block a later passing round, nor —
+when the refusal was not up to date — a head that is a clean rebase of the reviewed
+commit with CI green on it: `next` offers `ship` again with no round.
 
 ## Output
 
