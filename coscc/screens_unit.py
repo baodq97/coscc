@@ -516,6 +516,16 @@ def _detail_dialog() -> rx.Component:
                                 justify="between", align="center", width="100%", spacing="3",
                             ),
                         ),
+                        # `0027` review F1: the findings the last review round left out, as
+                        # a list beside `next`'s sentence rather than joined into it (S5).
+                        rx.cond(
+                            P.run_dropped.length() > 0,
+                            rx.hstack(
+                                s.text("Left out of the last round", size="2"),
+                                rx.foreach(P.run_dropped, lambda f: s.badge(f, "amber")),
+                                spacing="2", align="center", flex_wrap="wrap", id="next-dropped",
+                            ),
+                        ),
                         # `0056` R11: nothing that writes, for a dropped unit.
                         rx.cond(
                             ~P.unit_dropped & (P.next_stage != ""),

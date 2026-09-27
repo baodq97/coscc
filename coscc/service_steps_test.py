@@ -961,6 +961,26 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
         self.assertEqual((first["stage"], first["waiting"]), ("", ["F3"]))
         self.assertEqual(second["waiting"], [])
 
+    def test_dropped_is_copied_and_absent_reads_as_none(self):
+        """`0027` review F1. The ids the last round left out reach the page as `cos.mjs`
+        listed them, not inside `action`."""
+        from coscc import board as board_reader
+
+        answers = [
+            {"unit": "u", "stage": "review", "action": "a", "blocked": True, "dropped": ["F2", "F3"]},
+            {"unit": "u", "stage": "review", "action": "a", "blocked": True},
+        ]
+
+        async def fake_next(units_root, unit, repo=None, **kw):
+            if repo is None:
+                return {"unit": "u", "stage": "", "action": "", "blocked": True, "hold": None}
+            return answers.pop(0)
+
+        with mock.patch.object(board_reader, "next_step", fake_next):
+            first, second = self._next(), self._next()
+        self.assertEqual(first["dropped"], ["F2", "F3"])
+        self.assertEqual(second["dropped"], [])
+
 
 class ShipRunsOutsideTheWorktree(unittest.TestCase):
     """`0017` review F3: inside a worktree, `gh pr merge --delete-branch` merged and then

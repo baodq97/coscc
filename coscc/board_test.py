@@ -576,6 +576,39 @@ class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
         self.assertEqual((u["person_findings"], u["waiting"]), ([], []))
 
 
+# `0027`. Round 2 asked for changes and lists F2 alone, so it left out F1 and F3.
+UNFINISHED_ROUND = {
+    **{k: v for k, v in AWAITING_PERSON.items() if k != "review.md"},
+    "impl.md": "# Impl\nStatus: accepted.\n",
+    "review.md": "# R\nStatus: changes-requested.\n"
+    + _ROUND.format(n=1, v="changes-requested", f="- F1 [open] a\n- F2 [open] b\n- F3 [open] c")
+    + _ROUND.format(n=2, v="changes-requested", f="- F2 [open] b"),
+}
+
+
+class TheIdsARoundLeftOutAreCarriedFromTheScript(unittest.TestCase):
+    """`0027` review F1. `next` hands the ids over as `dropped`, a list, and the board copies
+    it; its sentence names none of them."""
+
+    _unit = TheNextStageIsAskedNotWorkedOut._unit
+    _script_says = TheNextStageIsAskedNotWorkedOut._script_says
+
+    def test_next_step_copies_dropped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            name = self._unit(tmp, UNFINISHED_ROUND)
+            script = self._script_says(tmp, name)
+            got = run(board.next_step(tmp, name))
+        self.assertEqual(script["dropped"], ["F1", "F3"])
+        self.assertEqual(got["dropped"], ["F1", "F3"])
+        self.assertNotRegex(got["action"], r"F\d")
+
+    def test_no_dropped_in_the_script_reads_as_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            name = self._unit(tmp, AWAITING_PERSON)
+            got = run(board.next_step(tmp, name))
+        self.assertEqual(got["dropped"], [])
+
+
 OUTCOME_INTENT = (
     "# I\nAuthor: t. Type: feat. Status: accepted.\n\n"
     "## Proposed outcome\n\nBy 2026-10-07, three of three.\n\n"

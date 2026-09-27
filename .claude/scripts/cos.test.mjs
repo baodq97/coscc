@@ -2279,14 +2279,22 @@ test('0027 R3: an unfinished last round sends next to review with its ids, CI pe
   assert.equal(green.stage, 'review')
   assert.equal(
     green.action,
-    'review round 2 does not count: it drops F2, raised by an earlier round — write-review again, carrying each one forward (1 of 3 rounds used); CI is green: write-review',
+    'review round 2 left out findings an earlier round raised — write-review again (1 of 3 rounds used); CI is green: write-review',
   )
-  assert.equal(nextStep(u, { probe: greenProbe([{ name: 'tests', bucket: 'fail' }]) }).stage, 'impl')
+  // Review F1: the ids are a list of their own, whichever stage CI leaves it at (S5).
+  assert.deepEqual(green.dropped, ['F2'])
+  assert.deepEqual(nextAction(u).dropped, ['F2'])
+  const red = nextStep(u, { probe: greenProbe([{ name: 'tests', bucket: 'fail' }]) })
+  assert.deepEqual([red.stage, red.dropped], ['impl', ['F2']])
   assert.equal(nextStep(u, { probe: greenProbe([{ name: 'tests', bucket: 'pending' }]) }).stage, '')
   const bare = nextStep(u)
   assert.equal(bare.stage, '')
-  assert.match(bare.action, /does not count: it drops F2.*pass --repo/)
+  assert.match(bare.action, /left out findings an earlier round raised.*pass --repo/)
+  assert.deepEqual(bare.dropped, ['F2'])
   assert.equal(checkGate(u, 'review', { probe: greenProbe() }).ok, true)
+  // Any other answer carries no `dropped`.
+  assert.equal('dropped' in nextStep(reviewOfRounds('changes-requested', [round(1, 'changes-requested', two)])), false)
+  assert.equal('dropped' in nextStep(reviewOfRounds('draft', [cr(1), incompleteRound(2)]), { probe: greenProbe() }), false)
 })
 
 test('0027 R3: an unfinished round at the limit still stops at needs a person', () => {
@@ -2303,7 +2311,8 @@ test('0027 R2: an incomplete round 1 then an unfinished round 2 uses no round', 
   const u = reviewOfRounds('changes-requested', [incompleteRound(1), round(2, 'changes-requested', ['- F2 [open] y'])])
   const n = nextStep(u, { limit: 1, probe: greenProbe() })
   assert.equal(n.stage, 'review')
-  assert.match(n.action, /drops F1, .*\(0 of 1 rounds used\)/)
+  assert.match(n.action, /left out findings .*\(0 of 1 rounds used\)/)
+  assert.deepEqual(n.dropped, ['F1'])
   // The floor stays for a round whose verdict could not be read, as `0085` keeps it.
   const unread = `## Round 1\n\nReviewed: somewhere. Verdict: maybe.\n\n### Findings\n\n- F1 [open] x\n`
   const floor = reviewOfRounds('changes-requested', [unread, round(2, 'changes-requested', ['- F2 [open] y'])])
@@ -2343,6 +2352,12 @@ test("0027 R2 a: 0017's round 2 adds no round to the count", () => {
   const status = JSON.parse(both.run(3, 'status', '--json').stdout)
   const rounds = status.units[0].artifacts['review.md'].review.rounds
   assert.deepEqual(rounds.map((r) => [r.n, r.dropped, r.unfinished]), [[1, [], false], [2, ['F2', 'F3', 'F4', 'F5'], true]])
+  assert.deepEqual(status.units[0].next.dropped, ['F2', 'F3', 'F4', 'F5'])
+  // `next` hands the ids over as a list beside its sentence, which names none of them.
+  const next = JSON.parse(both.run(3, 'next', both.name).stdout)
+  assert.deepEqual(next.dropped, ['F2', 'F3', 'F4', 'F5'])
+  assert.doesNotMatch(next.action, /F\d/)
+  assert.equal('dropped' in JSON.parse(one.run(3, 'next', one.name).stdout), false)
 })
 
 test("0027 R4: reading 0017's rounds leaves review.md byte for byte", () => {

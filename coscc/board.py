@@ -345,6 +345,9 @@ async def next_step(
         "blocked": bool(data.get("blocked")),
         # `0028`. Present only when a person is awaited; its absence reads as none.
         "waiting": [str(x) for x in data.get("waiting") or []],
+        # `0027`. Present only when the last review round left out an earlier finding; its
+        # absence reads as none.
+        "dropped": [str(x) for x in data.get("dropped") or []],
         # `0045`. Present only when the unit is held; its absence reads as None.
         "hold": data.get("hold") or None,
         # `0106`. Present only when a draft's questions are all answered; its absence reads

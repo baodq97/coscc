@@ -999,12 +999,15 @@ function decide(unit, limit) {
       if (used >= limit) return { blocked: true, action: needsAPerson(used, limit), stage: '', why: 'needs-person' }
       // `0027` R3: the last round dropped a finding an earlier one raised, so it does not
       // count, and another review goes on from it the way `0085`'s `incomplete` one does.
+      // Review F1: the ids go out as `dropped`, a list, not joined into the sentence the
+      // board puts on a card (S5).
       const last = lastRound(unit)
       if (last?.unfinished) {
         return {
           blocked: true,
-          action: `review round ${last.n} does not count: it drops ${last.dropped.join(', ')}, raised by an earlier round — write-review again, carrying each one forward (${used} of ${limit} rounds used)`,
+          action: `review round ${last.n} left out findings an earlier round raised — write-review again (${used} of ${limit} rounds used)`,
           stage: 'review',
+          dropped: last.dropped,
           why: 'review-incomplete',
         }
       }
@@ -1662,7 +1665,8 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   // `0028` (b): every finding awaiting a person has an answer; a review reads them.
   if (why === 'person-answered') return onReview([next.action])
   // `0085` R8: a review ran out of turns; the next one goes on from its round, CI permitting.
-  if (why === 'review-incomplete') return onReview([next.action])
+  // `0027` R3: an unfinished round goes the same way, and keeps the ids it left out.
+  if (why === 'review-incomplete') return { ...onReview([next.action]), ...(next.dropped ? { dropped: next.dropped } : {}) }
 
   if (why === 'changes-requested') {
     // `0028` (c): every open finding is one impl claims needs a person. Only a review may
@@ -1943,12 +1947,12 @@ function cmdNext(unitName, cosDir, repoDir, limit) {
   }
   const probe = repoDir ? makeProbe(repoDir) : null
   const unit = readUnit(dir, unitName)
-  const { stage, action, blocked, waiting, rerun } = nextStep(unit, { probe, limit })
-  // `waiting` only when a person is awaited (`0028`), `hold` only when the unit is held
-  // (`0045`), `rerun` only when a draft's questions are all answered (`0106`), so every
-  // other answer is unchanged.
+  const { stage, action, blocked, waiting, dropped, rerun } = nextStep(unit, { probe, limit })
+  // `waiting` only when a person is awaited (`0028`), `dropped` only when the last round left
+  // out an earlier finding (`0027`), `hold` only when the unit is held (`0045`), `rerun` only
+  // when a draft's questions are all answered (`0106`), so every other answer is unchanged.
   const hold = unit.hold ? { hold: unit.hold } : {}
-  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...hold, ...(rerun ? { rerun } : {}) }))
+  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...(dropped?.length ? { dropped } : {}), ...hold, ...(rerun ? { rerun } : {}) }))
   return 0
 }
 

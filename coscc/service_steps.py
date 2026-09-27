@@ -651,7 +651,7 @@ class StepsMixin:
         if held.get("hold"):
             return {
                 "cwd": cwd, "unit": unit, **{k: held[k] for k in ("stage", "action", "blocked")},
-                "waiting": [], "hold": held["hold"],
+                "waiting": [], "dropped": [], "hold": held["hold"],
             }
         # `0017`. The unit's worktree is the checkout its branch and pull request are read
         # from. None when there is none to open, and `cos.mjs` then keeps `review` and
@@ -673,6 +673,8 @@ class StepsMixin:
             **{k: found[k] for k in ("stage", "action", "blocked")},
             # `0028`. The findings a person is awaited on, copied from `cos.mjs next`.
             "waiting": list(found.get("waiting") or []),
+            # `0027`. The ids the last review round left out, copied from `cos.mjs next`.
+            "dropped": list(found.get("dropped") or []),
             # `0106`. The stage a fully answered draft would run again; only the autopilot
             # reads it.
             "rerun": str(found.get("rerun") or ""),
