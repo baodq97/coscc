@@ -28,7 +28,7 @@ paths:
     `update-branch` after which `gh pr view` still reads the pull request's head unmoved
     opens Gebo with gh's code and words in its prompt — a missing permission, or a network
     that failed only the first call, included, and that session will likely fail the same
-    way (`.cos/0052_*/plan.md` Risk 1). A lapsed login fails that read too and opens none. A
+    way (0052 plan Risk 1). A lapsed login fails that read too and opens none. A
     timeout, and a head GitHub has not moved yet, stay `failed` with no session. A non-zero
     exit after which the head has moved is taken as GitHub's rebase (`pushed`, the tree
     follows it); one after which it cannot be read is `failed`.

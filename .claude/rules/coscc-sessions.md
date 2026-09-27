@@ -14,7 +14,7 @@ paths:
   whatever list the app itself was given; `Data.connect` raises `Protected` before opening a
   listed file, reads included.
   - What it does not stop: a branch that edits the check has only the scratch directory
-    (`.cos/0076_*/spec.md` C1); `python -c`, `sqlite3` or anything opening `~/.cos/cos.db`
+    (0076 spec C1); `python -c`, `sqlite3` or anything opening `~/.cos/cos.db`
     by its literal path walks past both.
   - A board step's directory is removed after its CLI is closed. Gebo's and a chat's live
     with their client in `Sessions._live` — Gebo streams with no `step` — and nothing in the
@@ -26,10 +26,10 @@ paths:
   - A measuring script's `--measure` run inside a step reads an empty database and exits
     2: run it at a terminal. If the app itself is started with its own `cos.db` in
     `COSCC_PROTECTED_DB`, every route that reads it is a `500` while `/api/health` says `ok`
-    (`.cos/0076_*/plan.md` Risk 2).
+    (0076 plan Risk 2).
 - **A session reads nothing of `~/.claude/`, and of the project only what the app hands it.**
   `sessions._options` sets `setting_sources=[]` and `strict_mcp_config=True` for every
-  session. `None` there, on claude-agent-sdk 0.2.158 and 0.2.159 (`.cos/0088_*/spike.md ## U6`), passes no flag, and
+  session. `None` there, on claude-agent-sdk 0.2.158 and 0.2.159 (0088 spike ## U6), passes no flag, and
   the CLI then loads every source — the machine's MCP servers, skills, plugins, hooks and
   `permissions.allow`. Consequences:
   - A proxy or a key in the `env` block of `~/.claude/settings.json` is not used: it belongs
@@ -45,4 +45,4 @@ paths:
   - `@path` in those files is not resolved, and `CLAUDE.local.md`, parent directories and
     `.claude/settings*.json` of the project are not read.
   - The CLI's own built-in skills and slash commands are still in every init: no option
-    measured removes them (`.cos/0088_*/spike.md ## U8`).
+    measured removes them (0088 spike ## U8).

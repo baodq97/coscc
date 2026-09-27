@@ -53,7 +53,7 @@ other. There is no second copy of it.
 Style references: GitHub and Linear. Where a rule below leaves a choice open, do what they
 do.
 
-These rules come from the words of `.cos/0083_*/intent.md ## Answers, câu 2`, not from
+These rules come from the words of 0083 intent ## Answers, câu 2, not from
 screenshots: the five screenshots that answer mentions were never committed (spec C5).
 
 ## Rules
@@ -85,7 +85,7 @@ paragraph where a list of findings belongs.
 
 **S6. The app's own text is English.** Labels, buttons and messages the app writes are in
 English. The content of an artifact shown on the screen (the Vietnamese prose under `.cos/`)
-is data, not the app's text, and does not count (`.cos/0083_*/spec.md ## Answers, câu 1`).
+is data, not the app's text, and does not count (0083 spec ## Answers, câu 1).
 A violation looks like: a button reading "Đăng xuất" or "Áp dụng ngay", or an English
 screen with a Vietnamese error message.
 

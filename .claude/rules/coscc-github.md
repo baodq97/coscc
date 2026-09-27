@@ -20,7 +20,7 @@ paths:
   already match — `gh pr edit` on the pull request `pr.md` names, holding the `done` row for
   two calls of `prcomment.TIMEOUT` each (chosen, not measured).
   - It overwrites whatever a person changed on GitHub since, and keeps the old text nowhere
-    (`.cos/0055_*/spec.md` C1). A `pr.md` edited by hand to name another repository's pull
+    (0055 spec C1). A `pr.md` edited by hand to name another repository's pull
     request is written there.
   - The trace is one `pr-sync` row in the run log per step, with `existed` (the lookup
     before the step saw the pull request; `null` when that lookup could not answer — count
