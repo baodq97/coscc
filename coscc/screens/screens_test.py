@@ -167,5 +167,21 @@ class Markdown(unittest.TestCase):
         self.assertFalse(any("rehypeRaw" in p for p in plugins), plugins)
 
 
+class TheIdeaScreensAreUiFiles(unittest.TestCase):
+    """`0040` C7. A file the UI standard does not list is no UI file to the `ship` gate."""
+
+    def test_ui_standard_md_paths_name_every_new_screen_file(self):
+        from pathlib import Path
+
+        text = (Path(__file__).resolve().parents[2] / ".claude" / "rules" / "ui-standard.md").read_text(encoding="utf-8")
+        for path in ("coscc/screens/idea.py", "coscc/state/ideas.py", "coscc/service/ideas.py"):
+            self.assertIn(f'  - "{path}"', text, path)
+
+    def test_the_idea_page_is_drawn(self):
+        from coscc.screens.idea import _idea_screen
+
+        self.assertIsNotNone(_idea_screen())
+
+
 if __name__ == "__main__":
     unittest.main()

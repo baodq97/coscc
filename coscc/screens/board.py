@@ -50,6 +50,8 @@ def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
                     s.badge("outcome: " + unit.outcome_text, unit.outcome_color)),
             # `0074`. Its place in the shortlist; changes nothing about the run button.
             rx.cond(unit.shortlist_rank > 0, s.badge("#" + unit.shortlist_rank.to_string(), "iris")),
+            # `0040` R15 (3). `impl` waits on another unit's merge; the dialog links to it.
+            rx.cond(unit.waits_for != "", s.badge("waits for " + unit.waits_for, "cyan")),
             rx.spacer(),
             rx.center(rx.text(unit.owner, size="1", weight="medium"),
                       width="27px", height="27px", border_radius="50%",
@@ -145,6 +147,50 @@ def _start_unit() -> rx.Component:
                 rx.icon("sprout", size=15), "Start it",
                 on_click=P.create_unit, loading=P.starting,
                 id="new-unit-start", size="2",
+            ),
+            width="100%", align="start", spacing="2",
+        ),
+        width="100%",
+    )
+
+
+def _start_idea() -> rx.Component:
+    """`0040` R15 (1). An idea several units share, one per repository, and this workspace's
+    ideas, each a link to its page. Units are opened from there."""
+    return s.panel(
+        rx.vstack(
+            rx.hstack(
+                rx.icon("lightbulb", size=16, color=rx.color("iris", 10)),
+                rx.heading("Start an idea", size="4", weight="medium"),
+                width="100%", align="center", spacing="2",
+            ),
+            s.text("One feature across repositories; open a unit per repository from its page.",
+                   size="1", margin_top="2px"),
+            rx.input(
+                placeholder="short-name-for-the-feature",
+                value=P.new_idea_slug, on_change=P.set_new_idea_slug,
+                aria_label="Name for the idea", id="new-idea-slug", width="100%", margin_top="8px",
+            ),
+            rx.text_area(
+                placeholder="The feature, in your own words.",
+                value=P.new_idea_brief, on_change=P.set_new_idea_brief,
+                aria_label="What the feature is", id="new-idea-brief", width="100%", rows="3",
+            ),
+            rx.button(rx.icon("lightbulb", size=15), "Start the idea",
+                      on_click=P.create_idea, id="new-idea-start", size="2"),
+            rx.cond(
+                P.ideas.length() > 0,
+                rx.vstack(
+                    s.text("Ideas", size="1", weight="medium", margin_top="8px"),
+                    rx.foreach(P.ideas, lambda i: rx.hstack(
+                        rx.link(i.id, href=i.href, size="2", data_testid="idea-link",
+                                font_family="ui-monospace, monospace", overflow_wrap="anywhere"),
+                        rx.spacer(),
+                        s.badge(i.units.to_string() + " units", "gray"),
+                        width="100%", align="center",
+                    )),
+                    width="100%", spacing="2",
+                ),
             ),
             width="100%", align="start", spacing="2",
         ),
@@ -370,6 +416,7 @@ def _board() -> rx.Component:
     return rx.vstack(
         s.heading("Work board", "From an idea to something real. One clear step at a time."),
         rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
+        rx.cond(P.has_workspace, _start_idea(), rx.fragment()),
         _autopilot_strip(),
         _running_steps(),
         rx.flex(

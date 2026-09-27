@@ -254,6 +254,92 @@ class Unit:
     decided_state: str = ""
     decided_label: str = ""
     decided_color: str = "gray"
+    # `0040` R15 (3, 4). The idea the unit was opened from, its `Repo:`, and the unit it waits
+    # on, each with the address it links to; empty when it has none. `link_fields` copies them.
+    idea_ref: str = ""
+    idea_href: str = ""
+    repo: str = ""
+    waits_for: str = ""
+    waits_for_href: str = ""
+
+
+@dataclasses.dataclass
+class IdeaRow:
+    """`0040` R15 (1). One idea on the Board of its home workspace."""
+
+    id: str = ""
+    title: str = ""
+    units: int = 0
+    href: str = ""
+
+
+@dataclasses.dataclass
+class ChildRow:
+    """`0040` R15 (2). One unit an idea lists, as the `/idea` page shows it."""
+
+    ref: str = ""
+    unit: str = ""
+    repo: str = ""
+    stage: str = ""
+    state: str = ""
+    waits_for: str = ""
+    href: str = ""
+    missing: bool = False
+
+
+def _unit_href(ref: str, home: str) -> str:
+    """The `/unit` address of `<ws>/NNNN_<slug>`, or of `NNNN_<slug>` in `home`."""
+    from coscc.web import place
+
+    ws, _, unit = ref.rpartition("/")
+    return place.href(place.Place("unit", ws or home, unit))
+
+
+def _idea_href(ref: str, home: str) -> str:
+    """The `/idea` address of `<ws>/ideas/NNNN_<slug>.md`, or of `ideas/…` in `home`."""
+    from coscc.web import place
+
+    ws, _, file = ref.rpartition("/ideas/")
+    if not file:
+        ws, _, file = "", "", ref.removeprefix("ideas/")
+    return place.href(place.Place("idea", ws or home, idea=file.removesuffix(".md")))
+
+
+def link_fields(u: dict, home: str) -> dict:
+    """`0040`. A board unit's links, as `Unit` fields. Copies what `Service.board` sent."""
+    idea = str(u.get("idea") or "")
+    waits = [str(x) for x in u.get("waits_for") or []]
+    return {
+        "idea_ref": idea,
+        "idea_href": _idea_href(idea, home) if idea else "",
+        "repo": str(u.get("repo") or ""),
+        "waits_for": ", ".join(waits),
+        "waits_for_href": _unit_href(waits[0], home) if waits else "",
+    }
+
+
+def idea_rows(data: dict, home: str) -> list[IdeaRow]:
+    """The ideas `status --json` read in this workspace's store, one row each."""
+    from coscc.web import place
+
+    return [
+        IdeaRow(id=str(i.get("id") or ""), title=str(i.get("title") or i.get("id") or ""),
+                units=len(i.get("units") or []),
+                href=place.href(place.Place("idea", home, idea=str(i.get("id") or ""))))
+        for i in data.get("ideas") or []
+    ]
+
+
+def child_rows(page: dict) -> list[ChildRow]:
+    """`Service.idea`'s rows, as the page draws them. Copies; decides nothing."""
+    return [
+        ChildRow(
+            ref=str(r["ref"]), unit=str(r["unit"]), repo=str(r["repo"]), stage=str(r.get("stage") or ""),
+            state=str(r.get("state") or ""), waits_for=", ".join(r.get("waits_for") or []),
+            href="" if r.get("missing") else _unit_href(str(r["ref"]), ""), missing=bool(r.get("missing")),
+        )
+        for r in page.get("units") or []
+    ]
 
 
 @dataclasses.dataclass
@@ -289,6 +375,8 @@ class Card:
     state: str = ""
     state_label: str = ""
     state_color: str = "gray"
+    # `0040` R15 (3). The unit `impl` waits on, when it waits.
+    waits_for: str = ""
 
 
 def _card(u: Unit) -> Card:
@@ -301,6 +389,7 @@ def _card(u: Unit) -> Card:
         shortlist_rank=u.shortlist_rank, relations_text=u.relations_text, live=list(u.live),
         answerable=u.answerable, attention_reason=u.attention_reason,
         at=u.at, state=u.state, state_label=u.state_label, state_color=u.state_color,
+        waits_for=u.waits_for,
     )
 
 

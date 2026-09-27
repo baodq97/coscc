@@ -114,6 +114,9 @@ from coscc.screens.backlog import (
     _backlog_editor,
     _backlog_screen,
 )
+from coscc.screens.idea import (
+    _idea_screen,
+)
 from coscc.screens.dialogs import (
     _WATCH_JS,
     _WATCH_COLOR,
@@ -140,6 +143,7 @@ def _screen() -> rx.Component:
         ("activity", _activity()),
         ("cost", _cost()),
         ("settings", _settings()),
+        ("idea", _idea_screen()),
         rx.fragment(),
     )
 

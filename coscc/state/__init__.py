@@ -133,6 +133,10 @@ from coscc.state.backlog import (
 from coscc.state.rerun import (
     RerunMixin,
 )
+from coscc.state.ideas import (
+    IdeasMixin,
+)
+from coscc.state.views import IdeaRow, ChildRow, link_fields  # noqa: F401 — the page imports them from here
 
 API = build()
 SERVICE = API.state.service
@@ -145,6 +149,7 @@ class StudioState(
     AnswersMixin,
     BacklogMixin,
     RerunMixin,
+    IdeasMixin,
     rx.State,
 ):
     """The whole page. No business state lives here — it is all read back from `Service`."""
@@ -294,7 +299,8 @@ class StudioState(
 
     @rx.var
     def screen_title(self) -> str:
-        return SCREEN_TITLES.get(self.screen, "Overview")
+        # `0040`: `/idea` is no screen of the navigation, and its title is its own.
+        return "Idea" if self.screen == "idea" else SCREEN_TITLES.get(self.screen, "Overview")
 
     @rx.var
     def session_title(self) -> str:
@@ -623,6 +629,7 @@ class StudioState(
             return
 
         self.stages = list(data["stages"])
+        self._show_ideas(data)
         for name, value in backlog_view(data).items():
             setattr(self, name, value)
         self._backlog_history = dict((data.get("backlog") or {}).get("history") or {})
@@ -702,6 +709,7 @@ class StudioState(
                     decided_state=str(decided.get("state") or ""),
                     decided_label=str(decided.get("label") or ""),
                     decided_color=str(decided.get("color") or "gray"),
+                    **link_fields(u, self._name_of(self.cwd)),
                 )
             )
         units = [dataclasses.replace(u, **_shown(u, self._running_read)) for u in units]
@@ -1028,15 +1036,17 @@ class StudioState(
         stray = bool(want.ws) and not named
 
         screen, unit, tab = want.screen, want.unit, want.tab
-        if screen not in place.SCREENS and screen != "unit":
+        if screen not in place.SCREENS and screen not in ("unit", "idea"):
             screen = "overview"
-        if screen == "unit" and not unit:
+        if (screen == "unit" and not unit) or (screen == "idea" and not want.idea):
             screen = "board"  # R10
         if screen != "unit":
             unit, tab = "", "overview"
         elif tab not in place.TABS:
             tab = "overview"
-        fixed = place.Place(screen, self._name_of(cwd), unit, tab)
+        # `0040` R15. An idea is read after the board, every arrival, like a unit's dialog.
+        idea = want.idea if screen == "idea" else ""
+        fixed = place.Place(screen, self._name_of(cwd), unit, tab, idea=idea)
 
         moved_ws = cwd != self._read_cwd
         moved_unit = unit != self._read_unit
@@ -1098,6 +1108,8 @@ class StudioState(
             self._load_unit(forget=not first)
             self._asked = ""
         self._read_unit = unit
+        if idea:
+            await self._load_idea(idea)
         if stray:
             self.notice = "That workspace is not on the list."
 
