@@ -147,6 +147,9 @@ const ANSWER_META = /^Answered by:\s*(.+?)\.\s+Date:\s*(\S+?)\.\s+Via:\s*(\S+?)\
 //
 // Since `0054` a `### Rerun` block (`RERUN_HEAD`) ends the block above it the same way, and
 // is not an answer either.
+//
+// Since `0081` a `### More rounds` block (`MORE_ROUNDS_HEAD`, in `review.md`) ends the block
+// above it the same way, and is not an answer either.
 function answerBlocks(text) {
   const lines = section(text, 'Answers')
   if (lines === null) return []
@@ -156,6 +159,7 @@ function answerBlocks(text) {
     if (m) blocks.push({ n: m[1] !== undefined ? Number(m[1]) : null, id: m[2] ?? null, outcome: m[3] !== undefined, lines: [] })
     else if (HOLD_HEAD.test(line)) blocks.push({ hold: true, lines: [] })
     else if (RERUN_HEAD.test(line)) blocks.push({ rerun: true, lines: [] })
+    else if (MORE_ROUNDS_HEAD.test(line)) blocks.push({ moreRounds: true, lines: [] })
     else if (blocks.length) blocks[blocks.length - 1].lines.push(line)
   }
   return blocks
@@ -164,7 +168,7 @@ function answerBlocks(text) {
 export function parseAnswers(text) {
   const answers = []
   for (const b of answerBlocks(text)) {
-    if (b.outcome || b.hold || b.rerun) continue
+    if (b.outcome || b.hold || b.rerun || b.moreRounds) continue
     const at = b.lines.findIndex((l) => l.trim() !== '')
     const meta = at === -1 ? null : b.lines[at].match(ANSWER_META)
     if (!meta) continue
@@ -228,6 +232,51 @@ export function parseHold(text) {
     hold = to === 'active' ? null : { state: to, reason: b.lines.slice(at + 1).join('\n').trim(), by: meta[1].trim(), date: meta[2] }
   }
   return { hold, problems }
+}
+
+// --- a person's decision to allow more review rounds ----------------------------
+
+// `0081`. A unit that used every review round with findings still open may be given more.
+// The decision is appended under `review.md ## Answers`, beside the rounds it widens:
+//
+//   ### More rounds
+//   Decided by: <name>. Date: <YYYY-MM-DD>. Via: product.
+//   Rounds: <n>
+//
+// `granted` is the sum of `n` over every valid block. A block whose first line is not a
+// well-formed `Decided by:` line, or whose next is not `Rounds: <n>` with `n` at least 1, is
+// not counted, because nothing says who decided or how much, and is reported.
+const MORE_ROUNDS_HEAD = /^###\s+More rounds\s*$/
+const MORE_ROUNDS_N = /^Rounds:\s*(\d+)\s*$/
+
+export function parseMoreRounds(text) {
+  const lines = section(text ?? '', 'Answers')
+  const problems = []
+  if (lines === null) return { granted: 0, problems }
+  const blocks = []
+  for (const line of lines) {
+    if (MORE_ROUNDS_HEAD.test(line)) blocks.push({ more: true, lines: [] })
+    else if (/^###\s/.test(line)) blocks.push({ more: false, lines: [] })
+    else if (blocks.length) blocks[blocks.length - 1].lines.push(line)
+  }
+  let granted = 0
+  let k = 0
+  for (const b of blocks) {
+    if (!b.more) continue
+    k += 1
+    const [first, second] = b.lines.filter((l) => l.trim() !== '')
+    if (!first?.match(HOLD_META)) {
+      problems.push(`more rounds block ${k} has no valid Decided by line — it is not counted`)
+      continue
+    }
+    const n = second?.match(MORE_ROUNDS_N)
+    if (!n || Number(n[1]) < 1) {
+      problems.push(`more rounds block ${k} has no valid Rounds line — it is not counted`)
+      continue
+    }
+    granted += Number(n[1])
+  }
+  return { granted, problems }
 }
 
 // --- a stage run again, and the artifacts that makes stale ----------------------
@@ -746,6 +795,11 @@ export function readUnit(dir, name) {
       unit.artifacts[file].review = parseReview(text)
       // `0028`: the findings a person answered, by id, from `review.md ## Answers`.
       unit.artifacts[file].personAnswers = [...new Set(parseAnswers(text).filter((a) => a.id !== null).map((a) => a.id))]
+      // `0081` R2/R4: attached only when a round was granted, as `unmeasured` below, so
+      // `status --json` of every unit without a `### More rounds` block stays what it was.
+      const more = parseMoreRounds(text)
+      if (more.granted > 0) unit.artifacts[file].roundsGranted = more.granted
+      unit.problems.push(...more.problems.map((p) => `review.md: ${p}`))
     }
     if (file === 'impl.md') unit.artifacts[file].needsPerson = parseNeedsPerson(text)
     // `0039`: attached only when there is something to attach, so that `status --json` of
