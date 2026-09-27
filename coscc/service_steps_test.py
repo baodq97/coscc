@@ -12,7 +12,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import fetches, prscope, units, worktrees
+from coscc import prscope, units
+from coscc.git import fetches, worktrees
 from coscc.config import Config
 from coscc.service_common import Invalid, describe_base, step_cwd
 from coscc.service import Service
@@ -338,7 +339,7 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
 
     def test_r8_a_computation_that_raises_does_not_stop_the_step(self):
         unit = self._planned()
-        with mock.patch("coscc.drift.compute", side_effect=RuntimeError("boom")):
+        with mock.patch("coscc.git.drift.compute", side_effect=RuntimeError("boom")):
             prompt, start = self._impl(unit)
         self.assertFalse(start["plan_drift"]["checked"])
         self.assertEqual(start["plan_drift"]["reason"], "boom")

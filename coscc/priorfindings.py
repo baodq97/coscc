@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from coscc.drift import files_section, mentioned
+from coscc.git.drift import files_section, mentioned
 
 # `spec.md` R6. The bytes of the lines one step receives, heading and advice aside. Chosen,
 # not measured: a file twelve earlier units named reaches it (`spike.md ## U2`, Giới hạn).

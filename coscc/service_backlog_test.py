@@ -13,7 +13,8 @@ from datetime import date
 from pathlib import Path
 from unittest import mock
 
-from coscc import gitops, units, worktrees
+from coscc import units
+from coscc.git import gitops, worktrees
 from coscc.config import Config
 from coscc.service_common import Invalid
 from coscc.service import Service

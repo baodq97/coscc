@@ -12,15 +12,16 @@ from typing import Any
 
 from coscc import agents, backlog
 from coscc import board as board_reader
-from coscc import gitops
+from coscc.git import gitops
 from coscc import precedent as precedent_mod
 from coscc.board import Unavailable
 from coscc.data import now as _now
-from coscc.gitops import GitError
+from coscc.git.gitops import GitError
 from coscc.journal import Busy, Journal, last_runs, timelines_of, totals_of
 from coscc.policy import grant_for
 from coscc import steps as steps_mod
-from coscc import units, worktrees
+from coscc import units
+from coscc.git import worktrees
 from coscc.units import BadUnit
 from coscc.service_common import (
     CONSEQUENCE,

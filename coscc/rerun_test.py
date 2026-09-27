@@ -15,7 +15,8 @@ from pathlib import Path
 from unittest import mock
 
 from coscc import board as board_reader
-from coscc import integrate, worktrees
+from coscc import integrate
+from coscc.git import worktrees
 from coscc import service as service_mod
 from coscc.config import Config
 from coscc.runner import RunError

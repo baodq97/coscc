@@ -39,7 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from coscc import auth, fetches, frontend, harness, update
+from coscc import auth, frontend, harness, update
+from coscc.git import fetches
 from coscc.data import Data
 
 CHECK_EVERY = 6 * 60 * 60

@@ -40,7 +40,7 @@ paths:
     races the session: the lease refuses Gebo's push, the row is `failed` rather than Gebo's
     `pushed` whenever Gebo's tree does not end on the moved head, and the tree is moved to
     it — the session is paid for either way.
-  - Every press costs one fetch through the fetch coordinator (`coscc/fetches.py`) and one
+  - Every press costs one fetch through the fetch coordinator (`coscc/git/fetches.py`) and one
     `gh pr view` for `mergeStateStatus` (up to `GH_TIMEOUT`, `coscc/integrate.py:47`), both
     before the lock and the answer. The fetch moves `refs/remotes/origin/main` for every
     worktree of the workspace. `merge_state` is written to the row and decides nothing.

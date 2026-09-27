@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from coscc import states
-from coscc.gitops import child_env
+from coscc.git.gitops import child_env
 from coscc.history import UNKNOWN, History
 from coscc.states import Machine
 

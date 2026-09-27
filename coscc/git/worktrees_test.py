@@ -15,9 +15,10 @@ from pathlib import Path
 from unittest import mock
 
 import coscc
-from coscc import fetches, units, worktrees
+from coscc import units
+from coscc.git import fetches, worktrees
 from coscc.config import PROTECTED_DB_VAR
-from coscc.gitops import GitError
+from coscc.git.gitops import GitError
 from coscc.units import BadUnit
 
 

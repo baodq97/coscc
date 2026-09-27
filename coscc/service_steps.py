@@ -14,17 +14,19 @@ from typing import Any, AsyncIterator
 
 from coscc import autopilot, backlog
 from coscc import board as board_reader
-from coscc import drift, efforttrial, events, fetches, gitops
+from coscc import efforttrial, events
+from coscc.git import drift, fetches, gitops
 from coscc import harness, integrate, knowledge
 from coscc import planmap, priorfindings, retake
 from coscc.board import Unavailable
 from coscc.data import Data, now as _now
-from coscc.gitops import GitError
+from coscc.git.gitops import GitError
 from coscc.journal import BadRecord, Busy, Journal
 from coscc.policy import grant_for
 from coscc.runner import RunError, Runner, answers_section, describe_attempt
 from coscc import steps as steps_mod
-from coscc import units, worktrees
+from coscc import units
+from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service_common import (
     BRANCH_REMOTE,

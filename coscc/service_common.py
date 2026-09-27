@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from coscc import gitops
+from coscc.git import gitops
 from coscc import present
 
 

@@ -18,8 +18,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-from coscc import gitops, prcomment, units, worktrees
-from coscc.gitops import GitError
+from coscc import prcomment, units
+from coscc.git import gitops, worktrees
+from coscc.git.gitops import GitError
 from coscc.units import BadUnit
 
 # The value `to` takes for each block heading, the other way round from `cos.mjs` `HOLD_TO`.

@@ -20,7 +20,8 @@ from pathlib import Path
 from unittest import mock
 
 from coscc import events as events_mod
-from coscc import fetches, gitops, harness, units, worktrees
+from coscc import harness, units
+from coscc.git import fetches, gitops, worktrees
 from coscc.config import Config
 from coscc.service import (
     STAGE_FILES, STATE_COLOR, STATE_LABEL, Invalid, Service, attention_reason, describe_base, outcome_label,

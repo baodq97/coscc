@@ -11,11 +11,11 @@ from typing import Any, AsyncIterator
 
 from coscc import backlog
 from coscc import board as board_reader
-from coscc import fetches, gitops
+from coscc.git import fetches, gitops
 from coscc import hold as hold_rules
 from coscc import precedent as precedent_mod
 from coscc.board import Unavailable
-from coscc.gitops import GitError
+from coscc.git.gitops import GitError
 from coscc.history import History, settled_edits
 from coscc.journal import BadRecord, Busy, Journal, timelines_of, totals_of
 from coscc.policy import grant_for
@@ -23,7 +23,8 @@ from coscc import models
 from coscc.runner import CEILING_MARKERS, Denials, permission_gate
 from coscc.sessions import StepHandle
 from coscc import steps as steps_mod
-from coscc import units, worktrees
+from coscc import units
+from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service_common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, OWNER
 
@@ -364,7 +365,7 @@ class BacklogMixin:
         """`0014` R4. Cut this unit's branch in the workspace and switch to it.
 
         The name is not chosen here and is not the caller's: `cos.mjs unit-branch` reads
-        the `Type:` the intent declared and prints `<type>/<slug>`. `coscc/gitops.py`
+        the `Type:` the intent declared and prints `<type>/<slug>`. `coscc/git/gitops.py`
         carries the list of what the app may do with it, which is this and nothing else.
 
         Since `0001_product-describes-a-state-it-is-not-in` it is cut from the trunk **as the

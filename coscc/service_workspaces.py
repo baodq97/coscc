@@ -11,8 +11,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from coscc import gitops
-from coscc.gitops import GitError
+from coscc.git import gitops
+from coscc.git.gitops import GitError
 from coscc.store import BadName, Store, require_name
 from coscc.service_common import Invalid
 

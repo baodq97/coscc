@@ -32,10 +32,11 @@ from typing import Any, Awaitable, Callable
 import asyncio
 
 import coscc
-from coscc import config, fetches, gitops, prcomment, units
+from coscc import config, prcomment, units
+from coscc.git import fetches, gitops
 from coscc.data import Data
 from coscc.frontend import WEB_WORKDIR_VAR
-from coscc.gitops import GitError
+from coscc.git.gitops import GitError
 from coscc.units import BadUnit
 
 WORKTREES_DIR = "worktrees"

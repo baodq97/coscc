@@ -203,7 +203,7 @@ class BacklogMixin(rx.State, mixin=True):
         """`0014` R8. Cut the open unit's branch in the workspace.
 
         The one control on this page that writes to somebody else's git.
-        `coscc/gitops.py` carries the list of what that may be.
+        `coscc/git/gitops.py` carries the list of what that may be.
         """
         from coscc.state import SERVICE
         if not self.unit_id:

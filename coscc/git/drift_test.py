@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc import drift
+from coscc.git import drift
 
 PLAN = """# Plan: x
 Intent: intent.md. Status: accepted.

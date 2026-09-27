@@ -16,7 +16,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import gitops, harness
+from coscc import harness
+from coscc.git import gitops
 from coscc.journal import Journal
 from coscc.runner_reply import RunError
 from coscc.runner import Runner

@@ -12,9 +12,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc import fetches, gitops
-from coscc.fetches import FetchFailed, Fetches
-from coscc.gitops import GitError
+from coscc.git import fetches, gitops
+from coscc.git.fetches import FetchFailed, Fetches
+from coscc.git.gitops import GitError
 
 RACE = (
     "error: fetching ref refs/remotes/origin/main failed: incorrect old value provided"

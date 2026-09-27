@@ -23,7 +23,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import fetches, integrate
+from coscc import integrate
+from coscc.git import fetches
 from coscc.config import Config
 from coscc.integrate_service_test import BRANCH, PR, SLUG, StandIn, git
 from coscc.service import Invalid, Service

@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from coscc import gitops
+from coscc.git import gitops
 
 HEADING = "## Files that change"
 TRUNK_REF = "refs/remotes/origin/main"

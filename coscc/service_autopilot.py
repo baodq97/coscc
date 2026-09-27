@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from coscc import autopilot, backlog
-from coscc import fetches
+from coscc.git import fetches
 from coscc import integrate
-from coscc.gitops import GitError
+from coscc.git.gitops import GitError
 from coscc.journal import BadRecord, Busy
 from coscc.service_common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid
 

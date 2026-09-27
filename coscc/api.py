@@ -485,7 +485,7 @@ def build(config: Config | None = None) -> FastAPI:
         """`0014` R4. Cut this unit's branch in the workspace.
 
         The only route in this app that writes to somebody else's git.
-        `coscc/gitops.py` carries the list of what that is allowed to be, because
+        `coscc/git/gitops.py` carries the list of what that is allowed to be, because
         `coscc/policy.py` covers sessions and this runs with the app's own authority.
         """
         try:

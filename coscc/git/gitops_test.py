@@ -18,8 +18,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import gitops
-from coscc.gitops import GitError, check_url, child_env
+from coscc.git import gitops
+from coscc.git.gitops import GitError, check_url, child_env
 
 
 class UrlsRefusedBeforeGitExists(unittest.TestCase):

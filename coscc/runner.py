@@ -281,13 +281,13 @@ class Runner:
         dict, is awaited only for a `done` step and its fields added to `end` — `review`'s
         finding counts. If it raises, the fields are left out and nothing else changes.
 
-        `base` is what `coscc/worktrees.py` said about `cwd`'s freshness against
+        `base` is what `coscc/git/worktrees.py` said about `cwd`'s freshness against
         `origin/main` before this call was made — `service.py` reads it, this module
         neither reads git itself nor decides what it means, only carries it into the
         `start` record. `base_note` is `service.describe_base(base)`, already worked out,
         so `build_prompt` does not import `service` to ask the same question twice.
 
-        `plan_drift` is what `service.py` worked out with `coscc/drift.py` for an `impl`
+        `plan_drift` is what `service.py` worked out with `coscc/git/drift.py` for an `impl`
         step (`0042`); this module only carries it into the `start` record, and
         `drift_note` into the prompt. `None` leaves the record without the field.
 

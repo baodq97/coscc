@@ -14,19 +14,20 @@ from typing import Any
 
 from coscc import autopilot, backlog
 from coscc import board as board_reader
-from coscc import gitops
+from coscc.git import gitops
 from coscc import hold as hold_rules
 from coscc import more_rounds as more_rounds_rules
 from coscc import policy
 from coscc import prcomment, prscope, prsync
 from coscc import precedent as precedent_mod
 from coscc.board import Unavailable
-from coscc.gitops import GitError
+from coscc.git.gitops import GitError
 from coscc.history import UNKNOWN, BadTransition
 from coscc.journal import BadRecord, Busy
 from coscc.runner import STATUS_RE
 from coscc import steps as steps_mod
-from coscc import units, worktrees
+from coscc import units
+from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service_common import Invalid, OUTCOME_RESULTS, OWNER
 

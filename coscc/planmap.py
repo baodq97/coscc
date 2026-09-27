@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from coscc.autopilot import files_of
-from coscc.drift import files_section
+from coscc.git.drift import files_section
 
 # `spec.md` R9. The bytes of the whole section, advice aside. Chosen, not measured: twice
 # `priorfindings.CAP_BYTES`, since one entry here may carry hundreds of definitions.

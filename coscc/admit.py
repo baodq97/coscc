@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from coscc import knowledge, units
-from coscc.gitops import child_env
+from coscc.git.gitops import child_env
 
 # Chosen, not measured: each call reads one object or one tree of a local repository.
 TIMEOUT = 60.0

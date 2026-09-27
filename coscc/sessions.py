@@ -82,7 +82,7 @@ def child_env(
     `data_dir` is the session's throwaway data root (`scratch_dir`) and `app_db` this
     app's `cos.db`. Both are required, so no session environment can be built without them.
     """
-    from coscc import worktrees  # here, not at the top: worktrees imports prcomment
+    from coscc.git import worktrees  # here, not at the top: worktrees imports prcomment
 
     env = {
         frontend.WEB_WORKDIR_VAR: str(Path(cwd) / ".web"),

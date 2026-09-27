@@ -28,8 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from coscc import gitops
-from coscc.gitops import GitError
+from coscc.git import gitops
+from coscc.git.gitops import GitError
 
 # Seconds. `intent.md ## Answers, câu 1`: a fetch under 30s old is reused and still counts
 # as fresh. Chosen there, not measured. Callers use the same figure for `fresh` (R7).
