@@ -84,3 +84,40 @@ class TheOpeningIsCheckedBeforeAnArtifactIsWritten(unittest.TestCase):
             self.assertIn(part, got)
         self.assertIn("1 block)", opening_reason("plan.md", "x", 1))
         self.assertNotIn("(", opening_reason("plan.md", "x", None))
+
+
+class ARepairTurnIsAskedForTheOpening(unittest.TestCase):
+    """`0127` R3, spec *Design* 1: the typed refusal a repair turn follows, and its prompt."""
+
+    PROBLEM = "no `# Plan:` title and no `Status:` line in its header"
+
+    def test_an_opening_error_is_a_run_error_carrying_its_problem(self):
+        from coscc.runner.reply import OpeningError
+
+        e = OpeningError("plan.md lacks its opening: x", "x")
+        self.assertIsInstance(e, RunError)
+        self.assertEqual((str(e), e.problem), ("plan.md lacks its opening: x", "x"))
+
+    def test_the_opening_prompt_names_what_was_missing_and_the_title(self):
+        from coscc.runner.reply import opening_prompt
+
+        prompt = opening_prompt("plan.md", self.PROBLEM)
+        self.assertIn(self.PROBLEM, prompt)
+        self.assertIn("`# Plan:`", prompt)
+        self.assertIn("the whole of `plan.md`", prompt)
+        self.assertIn("no code fence", prompt)
+
+    def test_the_opening_prompt_suggests_no_status(self):
+        import re
+        from coscc.runner.reply import opening_prompt
+
+        for artifact in ("idea.md", "intent.md", "spec.md", "plan.md", "review.md"):
+            self.assertIsNone(re.search(r"Status:\s*[A-Za-z]", opening_prompt(artifact, self.PROBLEM)), artifact)
+
+    def test_the_review_opening_prompt_asks_for_the_new_round_only(self):
+        from coscc.runner.reply import opening_prompt
+
+        prompt = opening_prompt("review.md", "no `# Review:` title")
+        self.assertIn("new round only", prompt)
+        self.assertIn("do not copy them", prompt)
+        self.assertNotIn("the whole of", prompt)
