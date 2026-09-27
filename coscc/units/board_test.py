@@ -858,3 +858,66 @@ class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", no_node):
             with self.assertRaises(Unavailable):
                 run(board.screens(tmp, "0001_x", tmp))
+
+
+def _store(d: Path, units: dict[str, dict[str, str]], ideas: dict[str, str] | None = None) -> Path:
+    for name, files in units.items():
+        unit = d / ".cos" / name
+        unit.mkdir(parents=True)
+        for f, text in files.items():
+            (unit / f).write_text(text, encoding="utf-8")
+    for f, text in (ideas or {}).items():
+        (d / ".cos" / "ideas").mkdir(parents=True, exist_ok=True)
+        (d / ".cos" / "ideas" / f).write_text(text, encoding="utf-8")
+    return d
+
+
+_TO_IMPL = {"spec.md": "# S\nStatus: skipped.\n", "plan.md": "# P\nStatus: accepted.\n"}
+
+
+class PeersReachTheScript(unittest.TestCase):
+    """`0040` R14. Each workspace is one `--peer`, before the command, beside `--root`."""
+
+    def test_argv_carries_one_peer_per_workspace(self):
+        seen: list[list[str]] = []
+
+        async def fake_run(argv, timeout):
+            seen.append(argv)
+            return 0, '{"stages": [], "units": []}' if "status" in argv else '{"stage": ""}', ""
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
+            peers = [("api", Path(d) / "a"), ("proj", Path(d) / "p")]
+            run(board.read(d, peers=peers))
+            run(board.next_step(d, "0001_x", peers=peers))
+            run(board.gate(d, "0001_x", "impl", peers=peers))
+        self.assertEqual(len(seen), 3)
+        for argv in seen:
+            at = argv.index("--root")
+            self.assertEqual(
+                argv[at + 2 : at + 6],
+                ["--peer", f"api={(Path(d) / 'a').resolve()}", "--peer", f"proj={(Path(d) / 'p').resolve()}"],
+            )
+
+    def test_a_dependency_is_read_across_workspaces_and_copied(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            _store(Path(a), {"0001_x": {"intent.md": "# I\nType: feat. Status: accepted.\n"}})
+            _store(
+                Path(b),
+                {"0001_y": {"intent.md": "# I\nType: feat. Status: accepted.\nIdea: ideas/0001_f.md. Repo: b. Depends on: a/0001_x.\n", **_TO_IMPL}},
+                {"0001_f.md": "# Idea: f\nStatus: accepted.\n\n## Units\n\n- a/0001_x.\n- b/0001_y. Depends on: a/0001_x.\n"},
+            )
+            peers = [("a", a), ("b", b)]
+            data = run(board.read(b, peers=peers))
+            nxt = run(board.next_step(b, "0001_y", peers=peers))
+        [u] = data["units"]
+        self.assertEqual((u["idea"], u["repo"], u["why"]), ("ideas/0001_f.md", "b", "dependency"))
+        self.assertEqual(u["depends_on"], [{"ref": "a/0001_x", "merged": False, "why": "not merged: its ship.md is not accepted"}])
+        self.assertEqual(data["ideas"][0]["units"][1], {"ref": "b/0001_y", "depends_on": ["a/0001_x"]})
+        self.assertEqual((nxt["stage"], nxt["why"], nxt["action"]), ("", "dependency", "waiting on a/0001_x to merge"))
+
+    def test_a_unit_without_links_reads_as_before(self):
+        with tempfile.TemporaryDirectory() as d:
+            _store(Path(d), {"0001_x": {"intent.md": "# I\nType: feat. Status: accepted.\n"}})
+            [u] = run(board.read(d))["units"]
+            nxt = run(board.next_step(d, "0001_x"))
+        self.assertEqual((u["idea"], u["repo"], u["depends_on"], nxt["why"]), ("", "", [], ""))

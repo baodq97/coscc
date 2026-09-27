@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -98,7 +99,42 @@ async def _run(argv: list[str], timeout: float) -> tuple[int, str, str]:
     )
 
 
-async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, Any]:
+Peers = Sequence[tuple[str, "str | Path"]]
+
+
+def _peer_args(peers: Peers) -> list[str]:
+    """`0040` R14. One `--peer <ws>=<store root>` per workspace, the stores a unit's `Idea:` and
+    `Depends on:` may name. Which names are left out is `Service._peers`'s decision, not this."""
+    return [a for ws, store in peers for a in ("--peer", f"{ws}={Path(store).expanduser().resolve()}")]
+
+
+def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
+    """`0040`. Each `{ref, merged, why}` of the unit's `Depends on:`, as `cos.mjs` resolved it."""
+    return [
+        {"ref": str(d.get("ref") or ""), "merged": d.get("merged"), "why": str(d.get("why") or "")}
+        for d in u.get("dependsOn") or []
+        if isinstance(d, dict)
+    ]
+
+
+def _ideas_of(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """`0040` R3. The store's ideas, `{id, title, status, units: [{ref, depends_on}], problems}`."""
+    return [
+        {
+            "id": str(i.get("id") or ""),
+            "title": str(i.get("title") or ""),
+            "status": str(i.get("status") or ""),
+            "units": [
+                {"ref": str(x.get("ref") or ""), "depends_on": [str(d) for d in x.get("dependsOn") or []]}
+                for x in i.get("units") or []
+            ],
+            "problems": [str(p) for p in i.get("problems") or []],
+        }
+        for i in data.get("ideas") or []
+    ]
+
+
+async def read(units_root: str | Path, timeout: float = TIMEOUT, peers: Peers = ()) -> dict[str, Any]:
     """Every unit under `units_root`, each with its eight stages.
 
     **`units_root` is not the workspace.** Until `0014` it was, and this module worked the
@@ -117,7 +153,7 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
 
     try:
         code, out_text, err_text = await _run(
-            [str(script), "--root", str(path), "status", "--json"], timeout
+            [str(script), "--root", str(path), *_peer_args(peers), "status", "--json"], timeout
         )
     except (OSError, ValueError) as e:
         # No node on PATH is the ordinary case here, and it must name itself -- *with the
@@ -220,6 +256,11 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             # `0115` R4. On each row too, so whoever holds one row from this read -- the
             # answer route's journal, `autopilot.answer_completes` -- reads the same list.
             "after_answers": list(after_answers),
+            # `0040` R4. The idea the unit was opened from, its `Repo:`, and each dependency
+            # as `cos.mjs` resolved it. Copied, never resolved here; absent reads as "" and none.
+            "idea": str(u.get("idea") or ""),
+            "repo": str(u.get("repo") or ""),
+            "depends_on": _depends_on_of(u),
         }
         for u in data.get("units") or []
     ]
@@ -229,6 +270,7 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
         "stages": [s["name"] for s in stages],
         "after_answers": after_answers,
         "units": units,
+        "ideas": _ideas_of(data),
         "count": len(units),
         # A workspace can be perfectly healthy and hold no units at all. Saying so is not
         # the same as failing to read it, and the page has to be able to tell them apart.
@@ -263,6 +305,7 @@ async def gate(
     stage: str,
     repo: str | Path | None = None,
     timeout: float = GATE_TIMEOUT,
+    peers: Peers = (),
 ) -> tuple[bool, str]:
     """Ask `cos.mjs gate` whether one stage of one unit may proceed.
 
@@ -295,7 +338,7 @@ async def gate(
         raise Unavailable(f"the harness script is missing: {script}")
 
     try:
-        argv = [str(script), "--root", str(path), "gate", unit, stage]
+        argv = [str(script), "--root", str(path), *_peer_args(peers), "gate", unit, stage]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
         code, out_text, err_text = await _run(argv, timeout)
@@ -315,6 +358,7 @@ async def next_step(
     unit: str,
     repo: str | Path | None = None,
     timeout: float = GATE_TIMEOUT,
+    peers: Peers = (),
 ) -> dict[str, Any]:
     """Ask `cos.mjs next` which one stage the run button may offer for `unit`.
 
@@ -334,7 +378,7 @@ async def next_step(
         raise Unavailable(f"the harness script is missing: {script}")
 
     try:
-        argv = [str(script), "--root", str(path), "next", unit]
+        argv = [str(script), "--root", str(path), *_peer_args(peers), "next", unit]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
         code, out_text, err_text = await _run(argv, timeout)
@@ -366,6 +410,8 @@ async def next_step(
         # `0106`. Present only when a draft's questions are all answered; its absence reads
         # as "". Only the autopilot reads it; the run button follows `stage`.
         "rerun": str(data.get("rerun") or ""),
+        # `0040` R7. `dependency` only when `impl` waits on a unit not merged; else "".
+        "why": str(data.get("why") or ""),
     }
 
 
