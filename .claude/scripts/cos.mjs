@@ -996,6 +996,8 @@ const RERUN_STAGES = ['intent', 'spec', 'spike', 'plan', 'impl']
 // `nextAction`, plus `why`: which rule answered, so `nextStep` refines the answer without
 // reading the English of `action` back.
 function decide(unit, limit) {
+  // `0081` R3: every comparison below, and every "N of M rounds used", reads this unit's.
+  limit = reviewLimit(unit, limit)
   // `plan.md: done` closed five units under the three-stage loop, and it stays terminal.
   // Widening the loop must not reopen work that was finished and proved under the old
   // rules — `write-plan` only allows `done` once the proof command has passed.
@@ -1157,6 +1159,18 @@ function roundsUsed(unit) {
     ((incompleteDraft(unit) || last?.unfinished) && rounds.some((r) => r.verdict === null))
   return Math.max(asked, floor && !waived ? 1 : 0)
 }
+
+// `0081` R3: the one place a unit's review limit is decided — the limit every unit shares,
+// plus the rounds a person granted this one under `review.md ## Answers`. A unit built in
+// memory by a test, or one with no block, was granted none.
+export function reviewLimit(unit, limit = REVIEW_ROUNDS) {
+  return limit + (unit.artifacts['review.md']?.roundsGranted ?? 0)
+}
+
+// The review loop has used this unit's rounds with findings still open: the condition that
+// sends it to a person, which `reviewNeeds` and `moreRounds` both ask.
+const outOfRounds = (unit, limit) =>
+  (statusOf(unit, 'review.md') === 'changes-requested' || incompleteDraft(unit)) && roundsUsed(unit) >= reviewLimit(unit, limit)
 
 // The ids a person answered under `review.md ## Answers`. Units built in memory by a test
 // carry no such field, and read as having none.
@@ -1447,9 +1461,7 @@ function reviewNeeds(unit, probe, limit, said = {}) {
   const need = []
   const pr = unit.artifacts['pr.md']?.pr ?? null
   if (!pr) need.push('pr.md names no pull request — the pr stage opens one and writes PR: <url>')
-  if ((statusOf(unit, 'review.md') === 'changes-requested' || incompleteDraft(unit)) && roundsUsed(unit) >= limit) {
-    need.push(needsAPerson(roundsUsed(unit), limit))
-  }
+  if (outOfRounds(unit, limit)) need.push(needsAPerson(roundsUsed(unit), reviewLimit(unit, limit)))
   if (need.length || !pr) return need
   if (!probe) return ['no repository given — pass --repo <dir>']
   return ciNeeds(probe, pr, said)
