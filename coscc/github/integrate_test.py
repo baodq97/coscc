@@ -575,6 +575,25 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         self.assertEqual(end["denials"], 1)
         self.assertEqual(ig.outcome_of_session(HEAD, HEAD, end["reply"]), "needs-person")
 
+    def test_gebo_counts_the_background_runs_it_was_refused(self):
+        """`0130` R3."""
+        from coscc.agent.policy import grant_for
+
+        class FakeSessions:
+            async def stream(self, cwd, prompt, session_id, **kw):
+                await kw["can_use_tool"]("Bash", {"command": "npm test &"}, None)
+                await kw["can_use_tool"]("Bash", {"command": "git push --force origin feat/x"}, None)
+                yield ("done", {"session_id": "s", "cost": {}})
+
+        async def go():
+            return [item async for item in ig.run_gebo(
+                FakeSessions(), tree="/t", workspace="/w", prompt="p", grant=grant_for("integrate"),
+                read_also=(), lease=("feat/x", HEAD), model=None,
+            )]
+
+        end = asyncio.run(go())[-1][1]
+        self.assertEqual((end["denials"], end["background"]), (2, 1))
+
 
 def fake_gh(bindir: Path, stdout: str = "", code: int = 0) -> Path:
     """A `gh` first on `PATH` that prints `stdout`, exits `code`, and logs its argv."""

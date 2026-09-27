@@ -812,4 +812,6 @@ async def run_gebo(
     end["reply"] = reply
     end["denials"] = denials.count
     end["denied"] = denials.reasons or None
+    # `0130` R3: the `integrate` grant always holds `Bash`.
+    end["background"] = denials.background
     yield ("end", end)
