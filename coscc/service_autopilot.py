@@ -236,7 +236,9 @@ class AutopilotMixin:
                     found[name] = {"unit": name, "kind": "f", "reason": str(e)}
                     reasons[name] = ("running", here[name]) if name in here else autopilot.reason_for({}, "", found[name])
                     continue
-                stop = autopilot.stop_for(u, nxt, last.get(name), settings["autopilot_may_ship"])
+                # `0120`: a first `exhausted` step of a stage other than `ship` runs again once.
+                ran_out = autopilot.exhausted_of(records, key, name, str((last.get(name) or {}).get("stage") or ""))
+                stop = autopilot.stop_for(u, nxt, last.get(name), settings["autopilot_may_ship"], ran_out)
                 stage = nxt.get("stage") or ""
                 info = u.get("integration") or {}
                 # `0124`: not while its step runs, whose `start` is already in the window.
@@ -275,7 +277,9 @@ class AutopilotMixin:
                         artifact = next((s["file"] for s in u.get("stages") or [] if s["stage"] == nxt["rerun"]), nxt["rerun"])
                         stop = autopilot.rerun_stop(artifact)
                     elif not autopilot.answered_since_start(records, key, name, nxt["rerun"]):
-                        stop = autopilot.stop_for(u, {**nxt, "rerun": ""}, last.get(name), settings["autopilot_may_ship"])
+                        stop = autopilot.stop_for(
+                            u, {**nxt, "rerun": ""}, last.get(name), settings["autopilot_may_ship"], ran_out,
+                        )
                     else:
                         stage, rerun = nxt["rerun"], True
                 if stop is not None and unfetched is not None and name in at_ship:

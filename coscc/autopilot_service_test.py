@@ -952,6 +952,70 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [])
 
+    # --- `0120`, a step that only ran out of turns runs once more -----------------
+
+    def ran_out(self, unit, stage):
+        Journal(self.config.working_dir, self.config.data_dir).finished(self.key, unit, stage, "exhausted")
+
+    async def test_0120_r1_a_first_exhausted_step_runs_its_stage_again(self):
+        self.ran_out("0001_a", "plan")
+        self.add("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "plan", "autopilot")])
+        self.assertEqual([(p["unit"], p["stage"]) for p in self.picks()], [("0001_a", "plan")])
+        self.assertEqual(self.stops(), {})
+
+    async def test_0120_r2_the_rerun_that_runs_out_again_stops_e(self):
+        self.ran_out("0001_a", "plan")
+        self.add("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(len(self.picks()), 1)
+        self.release.set()
+        await self.settled()
+        self.ran_out("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+                         "the last plan step ended exhausted")
+        self.assertEqual((len(self.picks()), len(self.launched)), (1, 1))
+
+    async def test_0120_r3_an_exhausted_ship_stops_the_first_time(self):
+        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.ran_out("0001_a", "ship")
+        self.add("0001_a", "ship")
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
+
+    async def test_0120_r4_a_held_unit_or_a_closed_gate_after_a_first_exhausted_step(self):
+        self.ran_out("0001_a", "plan")
+        self.add("0001_a", "")
+        self.nexts["0001_a"]["hold"] = {"state": "paused", "reason": "later", "by": "Leif", "date": "2026-09-27"}
+
+        async def refused(cwd, unit, stage, started_by="person"):
+            raise Invalid("blocked: plan.md is draft")
+            yield  # pragma: no cover
+
+        self.service.run_step = refused
+        self.ran_out("0002_b", "impl")
+        self.add("0002_b", "impl", plan="- `a/b.py`")
+        await self.pass_()
+        self.assertEqual([p["unit"] for p in self.picks()], ["0002_b"])
+        self.assertEqual(self.stops(), {"0002_b": "f"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0002_b"],
+                         {"unit": "0002_b", "kind": "f", "reason": "blocked: plan.md is draft"})
+
+    async def test_0120_r1_the_rerun_branch_passes_the_count_too(self):
+        # `start, answer, start, end exhausted`: no answer since the last start, so the stop is
+        # what `stop_for` says with no `rerun` — `f`, not the `e` a count left at 0 would give.
+        self.add_rerun("0001_a", "plan", "start")
+        Journal(self.config.working_dir, self.config.data_dir).append(
+            {"kind": "start", "workspace": self.key, "unit": "0001_a", "stage": "plan", "started_by": "autopilot"})
+        self.ran_out("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"],
+                         {"unit": "0001_a", "kind": "f", "reason": "finish and accept plan.md"})
+
 
 class ResumedAtStartUp(unittest.TestCase):
     """R5 c. The Reflex lifespan task, since the real stack never runs `api.py`'s.
