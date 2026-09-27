@@ -774,3 +774,44 @@ def measure_reruns(
         })
     met = None if not cases else not any(c["class"] in _MISSED or c["class"].startswith("stop:") for c in cases)
     return {"workspace": workspace, "since": since, "until": until, "cases": cases, "met": met}
+
+
+# `stop_for`'s e on an `exhausted` step; an `autopilot-stop` records `stage: ""`, so the stage is
+# read from here, and `; <origin note>` may follow (`service_autopilot`, `0112` R4).
+_RAN_OUT = re.compile(r"^the last (\S+) step ended exhausted(?:;|$)")
+
+
+def measure_exhausted(
+    records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
+) -> dict[str, Any]:
+    """`0120` R6. Every stop of `workspace` over the machine's days `since`..`until` on an
+    `exhausted` step of a stage other than `ship`, with no other `exhausted` end of that unit
+    and stage before it in the window: a stop at the first time it ran out, which R1 forbids.
+
+    `exhausted` counts the window's `exhausted` ends of a stage other than `ship`; `met` is
+    `None` when there is none, which is not met (`intent.md ## Proposed outcome`).
+    """
+    ran_out: dict[tuple[Any, str], int] = {}
+    violations: list[dict[str, Any]] = []
+    exhausted = 0
+    for r in records:
+        if r.get("workspace") != workspace or not is_step(r) or r.get("kind") not in ("end", "autopilot-stop"):
+            continue
+        if not since <= spend.local_day(r.get("at")) <= until:
+            continue
+        if r.get("kind") == "end":
+            stage = str(r.get("stage") or "")
+            if r.get("outcome") == "exhausted":
+                ran_out[(r.get("unit"), stage)] = ran_out.get((r.get("unit"), stage), 0) + 1
+                exhausted += stage != "ship"
+            continue
+        found = _RAN_OUT.match(str(r.get("reason") or ""))
+        if r.get("stop") != "e" or not found or found.group(1) == "ship":
+            continue
+        if ran_out.get((r.get("unit"), found.group(1)), 0) < 2:
+            violations.append({"unit": r.get("unit"), "stage": found.group(1), "at": r.get("at")})
+    met = None if not exhausted else not violations
+    return {
+        "workspace": workspace, "since": since, "until": until,
+        "violations": violations, "exhausted": exhausted, "met": met,
+    }

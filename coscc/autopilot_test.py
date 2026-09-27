@@ -771,6 +771,51 @@ class MeasuringReruns(unittest.TestCase):
         self.assertIsNone(ap.measure_reruns([answer_row()], "other", "2026-01-01", "2026-12-31")["met"])
 
 
+def ran_out_row(seconds=0, stage="plan", unit="0001_a"):
+    return row("end", unit, stage, seconds, outcome="exhausted")
+
+
+def ran_out_stop(seconds=0, stage="plan", unit="0001_a", note=""):
+    return stop_row("e", seconds, unit, f"the last {stage} step ended exhausted" + note)
+
+
+class MeasureExhausted(unittest.TestCase):
+    """`0120` R6: a stop at the first time a stage other than `ship` ran out is a violation."""
+
+    def measure(self, rows):
+        return ap.measure_exhausted(rows, "w", ap.today(NOW - timedelta(days=1)), ap.today(NOW + timedelta(days=1)))
+
+    def test_a_stop_at_the_first_exhausted_step_is_a_violation(self):
+        got = self.measure([ran_out_row(), ran_out_stop(1)])
+        self.assertIs(got["met"], False)
+        self.assertEqual(got["violations"], [{"unit": "0001_a", "stage": "plan", "at": at(timedelta(seconds=1))}])
+        self.assertEqual(got["exhausted"], 1)
+
+    def test_a_second_exhausted_stop_and_a_ship_stop_are_not_violations(self):
+        rows = [ran_out_row(), row("start", stage="plan", seconds=1), ran_out_row(2), ran_out_stop(3, note="; origin x"),
+                ran_out_row(4, "ship", "0002_b"), ran_out_stop(5, "ship", "0002_b")]
+        got = self.measure(rows)
+        self.assertEqual((got["met"], got["violations"], got["exhausted"]), (True, [], 2))
+
+    def test_no_exhausted_step_is_not_measured(self):
+        self.assertIsNone(self.measure([row("end", stage="plan", outcome="done")])["met"])
+        self.assertIsNone(self.measure([ran_out_row(0, "ship"), ran_out_stop(1, "ship")])["met"])
+
+    def test_an_exhausted_step_before_the_window_does_not_count(self):
+        # Spec C2: the first time ran out before `since`, so the window sees only one.
+        got = self.measure([ran_out_row(-3 * 86400), ran_out_row(), ran_out_stop(1)])
+        self.assertIs(got["met"], False)
+        self.assertEqual(len(got["violations"]), 1)
+        other = ap.measure_exhausted([ran_out_row(), ran_out_stop(1)], "other", "2026-01-01", "2026-12-31")
+        self.assertIsNone(other["met"])
+
+    def test_the_measure_reads_the_words_stop_for_writes(self):
+        said = ap.stop_for(unit(), nxt("plan", "write-plan"), {"kind": "end", "stage": "plan", "outcome": "exhausted"},
+                           False, exhausted=2)
+        got = self.measure([ran_out_row(), stop_row(said["kind"], 1, reason=said["reason"])])
+        self.assertEqual([v["stage"] for v in got["violations"]], ["plan"])
+
+
 class VerifyScript(unittest.TestCase):
     """`scripts/verify_0104.py`'s exit codes, on a run log written through `Journal`."""
 
