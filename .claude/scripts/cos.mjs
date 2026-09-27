@@ -1411,11 +1411,12 @@ function ciNeeds(probe, pr, said) {
   return []
 }
 
-// The pull request's head on GitHub, as `{ head }`, or `{ error }` saying why not. Shared by
-// `shipNeeds` and `nextStep`: both ask "what is on the pull request now", and two readings
-// of one `gh pr view` could disagree.
-function prHead(probe, pr) {
-  const view = probe.gh('pr', 'view', String(pr.number), '--json', 'state,headRefOid')
+// The pull request as GitHub reports it, from one `gh pr view`: `{ state, head, merged }`,
+// `merged` being `{ commit, at }` on a `MERGED` one and `null` otherwise, or `{ error }`.
+// `0116`: the `ship` gate reads the merge commit from the same answer as the state, so the
+// two cannot disagree.
+function prView(probe, pr) {
+  const view = probe.gh('pr', 'view', String(pr.number), '--json', 'state,headRefOid,mergeCommit,mergedAt')
   let info = null
   try {
     info = JSON.parse(view.out)
@@ -1426,11 +1427,20 @@ function prHead(probe, pr) {
     const said = (view.err || view.out).trim() || `gh exited ${view.code} and said nothing`
     return { error: `cannot read the head of #${pr.number}: ${said}` }
   }
-  if (info.state !== 'OPEN') return { error: `#${pr.number} is ${info.state}, not open — there is nothing to merge` }
-  if (probe.git('cat-file', '-e', `${info.headRefOid}^{commit}`).code !== 0) {
-    return { error: `the head of #${pr.number}, ${info.headRefOid}, is not in this repository — someone pushed from elsewhere: fetch, then ask again` }
+  const merged = info.state === 'MERGED' ? { commit: info.mergeCommit?.oid ?? null, at: info.mergedAt ?? null } : null
+  return { state: info.state, head: info.headRefOid, merged }
+}
+
+// The pull request's head on GitHub, as `{ head }`, or `{ error }` saying why not. Shared by
+// `shipNeeds` and `nextStep`: both ask "what is on the pull request now", and two readings
+// of one `gh pr view` could disagree. `view` is one the caller already read.
+function prHead(probe, pr, view = prView(probe, pr)) {
+  if (view.error) return { error: view.error }
+  if (view.state !== 'OPEN') return { error: `#${pr.number} is ${view.state}, not open — there is nothing to merge` }
+  if (probe.git('cat-file', '-e', `${view.head}^{commit}`).code !== 0) {
+    return { error: `the head of #${pr.number}, ${view.head}, is not in this repository — someone pushed from elsewhere: fetch, then ask again` }
   }
-  return { head: info.headRefOid }
+  return { head: view.head }
 }
 
 // `ship` merges. It may do so only after a pass that left nothing open, whose history is
