@@ -19,7 +19,7 @@ from typing import Any, Iterable
 
 from coscc.agent import labels
 from coscc.runlog import spend
-from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, grant_for, grant_for_step
+from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, grant_for, grant_for_step, is_prose_stage
 
 # R2. Defaults, `intent.md ## Answers`, câu 2 and 3.
 DEFAULT_MAX_PARALLEL = 4
@@ -99,6 +99,7 @@ def stop_for(
     last: dict[str, Any] | None,
     may_ship: bool,
     exhausted: int = 0,
+    unopened: int = 0,
 ) -> dict[str, str] | None:
     """The first of R6's stops that holds for one unit, as `{kind, reason}`, or `None`.
 
@@ -107,6 +108,8 @@ def stop_for(
     stop, which is not the same as something to run: a finished, rejected or held unit, and
     one waiting on CI, have neither. `exhausted` is how many steps of `last`'s stage ended
     `exhausted` (`exhausted_of`); left at 0, an exhausted step stops as before `0120`.
+    `unopened` is how many ended `failed` for their reply's opening (`unopened_of`); left at
+    0, such a step stops as before `0127`.
     """
     stage = str(nxt.get("stage") or "")
     action = str(nxt.get("action") or "")
@@ -136,11 +139,14 @@ def stop_for(
         return _stop("d", f"the last integration needs a person: {said}")
     # e. The unit's last step did not end `done`. The first time a stage other than `ship` ends
     # `exhausted` is no stop: it runs again once, and the second time stops; `ship` stops the
-    # first time (`0120 intent.md ## Answers`, câu 3, 4). Otherwise no retry (`spec.md
-    # ## Answers`, câu 1): `failed`, `cancelled`, `stopped`, and an integration that failed or
-    # that the autopilot started and was refused.
+    # first time (`0120 intent.md ## Answers`, câu 3, 4). Since `0127` R8 the same holds, on a
+    # count of its own, for a prose stage that ended `failed` because its reply lacked its
+    # opening; a `failed` for any other reason still stops, even after one of those.
+    # Otherwise no retry (`spec.md ## Answers`, câu 1): `failed`, `cancelled`, `stopped`, and
+    # an integration that failed or that the autopilot started and was refused.
     ran_out_once = outcome == "exhausted" and (last or {}).get("stage") != "ship" and exhausted == 1
-    if kind == "end" and outcome != "done" and not ran_out_once:
+    unopened_once = _unopened(last) and unopened == 1
+    if kind == "end" and outcome != "done" and not ran_out_once and not unopened_once:
         return _stop("e", f"the last {last.get('stage')} step ended {outcome or 'without an outcome'}")
     if kind == "integration" and (
         outcome == "failed" or (outcome == "refused" and last.get("started_by") == "autopilot")
@@ -494,6 +500,33 @@ def exhausted_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, s
     )
 
 
+def _lacks_opening(record: dict[str, Any]) -> bool:
+    """`0127` R8. The `detail` `opening_reason` opens with (`coscc/runner/reply.py`), for the
+    record's own stage; a repair turn that failed too keeps it on the first line."""
+    return str(record.get("detail") or "").startswith(f"{record.get('stage')}.md lacks its opening:")
+
+
+def _unopened(last: dict[str, Any] | None) -> bool:
+    """`0127` R8. `last` is a prose stage's `end` that failed because its reply lacked its opening."""
+    last = last or {}
+    return (
+        last.get("kind") == "end" and last.get("outcome") == "failed"
+        and is_prose_stage(str(last.get("stage") or "")) and _lacks_opening(last)
+    )
+
+
+def unopened_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
+    """`0127` R8. How many steps of `stage` on `unit` ended `failed` because their reply
+    lacked its opening. Whoever started them, and over the whole run log, as `exhausted_of`
+    counts; the two counts are apart."""
+    return sum(
+        1 for r in records
+        if r.get("kind") == "end" and r.get("outcome") == "failed" and is_step(r)
+        and r.get("workspace") == workspace and r.get("unit") == unit and r.get("stage") == stage
+        and _lacks_opening(r)
+    )
+
+
 def answered_since_start(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> bool:
     """R3. Whether an `answer` record of `stage` on `unit` came after its last `start`. A run
     again that ends `draft` keeps its answered questions' numbers (`runner._ANSWERS_ADVICE`),
@@ -840,4 +873,58 @@ def measure_exhausted(
     return {
         "workspace": workspace, "since": since, "until": until,
         "violations": violations, "exhausted": exhausted, "met": met,
+    }
+
+
+# `stop_for`'s e on a `failed` step, read the way `_RAN_OUT` reads an `exhausted` one.
+_UNOPENED_STOP = re.compile(r"^the last (\S+) step ended failed(?:;|$)")
+
+
+def measure_opening(
+    records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
+) -> dict[str, Any]:
+    """`0127` R9. What became of the prose steps of `workspace` over the machine's days
+    `since`..`until` whose reply lacked its opening.
+
+    `failed` is every such `end`; `repaired` every `done` one a repair turn wrote, with that
+    turn's cost; `reruns` every `start` of the same unit and stage after one of `failed`;
+    `stops` every stop `e` on a unit and stage whose last `end` is one of `failed`, with
+    `attempt`, how many of them there were by then. `met` is `None` with neither `failed`
+    nor `repaired`, which is not met (`intent.md ## Proposed outcome`), else `not stops`.
+    """
+    failed: list[dict[str, Any]] = []
+    repaired: list[dict[str, Any]] = []
+    stops: list[dict[str, Any]] = []
+    reruns: list[dict[str, Any]] = []
+    count: dict[tuple[Any, str], int] = {}
+    last_failed: dict[tuple[Any, str], bool] = {}
+    waiting: set[tuple[Any, str]] = set()
+    for r in records:
+        if r.get("workspace") != workspace or not is_step(r):
+            continue
+        if not since <= spend.local_day(r.get("at")) <= until:
+            continue
+        kind = r.get("kind")
+        key = (r.get("unit"), str(r.get("stage") or ""))
+        if kind == "end":
+            last_failed[key] = r.get("outcome") == "failed" and is_prose_stage(key[1]) and _lacks_opening(r)
+            if last_failed[key]:
+                failed.append({"unit": key[0], "stage": key[1], "at": r.get("at")})
+                count[key] = count.get(key, 0) + 1
+                waiting.add(key)
+            elif r.get("outcome") == "done" and r.get("opening") == "repaired":
+                repaired.append({"unit": key[0], "stage": key[1], "at": r.get("at"),
+                                 "cost_usd": (r.get("closing") or {}).get("cost_usd")})
+        elif kind == "start" and key in waiting:
+            waiting.discard(key)
+            reruns.append({"unit": key[0], "stage": key[1], "at": r.get("at"), "started_by": started_by(r)})
+        elif kind == "autopilot-stop" and r.get("stop") == "e":
+            found = _UNOPENED_STOP.match(str(r.get("reason") or ""))
+            stopped = (r.get("unit"), found.group(1)) if found else None
+            if stopped is not None and last_failed.get(stopped):
+                stops.append({"unit": stopped[0], "stage": stopped[1], "at": r.get("at"), "attempt": count[stopped]})
+    met = None if not failed and not repaired else not stops
+    return {
+        "workspace": workspace, "since": since, "until": until,
+        "failed": failed, "repaired": repaired, "stops": stops, "reruns": reruns, "met": met,
     }
