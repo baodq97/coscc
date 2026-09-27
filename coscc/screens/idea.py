@@ -35,8 +35,8 @@ def _open_child() -> rx.Component:
             rx.flex(
                 rx.select(P.idea_workspaces, value=P.child_ws, on_change=P.set_child_ws,
                           aria_label="Workspace", id="idea-child-ws"),
-                rx.input(placeholder="short-name-for-this-side", value=P.child_slug,
-                         on_change=P.set_child_slug, aria_label="Name for the unit",
+                rx.input(placeholder="this-side-in-a-few-words", value=P.child_slug,
+                         on_change=P.set_child_slug, aria_label="Slug for the unit",
                          id="idea-child-slug", flex_grow="1"),
                 rx.cond(
                     P.idea_depends.length() > 0,

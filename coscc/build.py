@@ -60,6 +60,7 @@ _SOURCES = (
     "coscc/screens/unit.py",
     "coscc/screens/backlog.py",
     "coscc/screens/dialogs.py",
+    "coscc/screens/idea.py",
     "coscc/state/views.py",
     "coscc/state/workspaces.py",
     "coscc/state/watch.py",
@@ -67,6 +68,7 @@ _SOURCES = (
     "coscc/state/answers.py",
     "coscc/state/backlog.py",
     "coscc/state/rerun.py",
+    "coscc/state/ideas.py",
     "rxconfig.py",
 )
 

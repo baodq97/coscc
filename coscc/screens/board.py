@@ -167,9 +167,9 @@ def _start_idea() -> rx.Component:
             s.text("One feature across repositories; open a unit per repository from its page.",
                    size="1", margin_top="2px"),
             rx.input(
-                placeholder="short-name-for-the-feature",
+                placeholder="the-feature-in-a-few-words",
                 value=P.new_idea_slug, on_change=P.set_new_idea_slug,
-                aria_label="Name for the idea", id="new-idea-slug", width="100%", margin_top="8px",
+                aria_label="Slug for the idea", id="new-idea-slug", width="100%", margin_top="8px",
             ),
             rx.text_area(
                 placeholder="The feature, in your own words.",

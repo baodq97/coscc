@@ -299,9 +299,9 @@ def _idea_href(ref: str, home: str) -> str:
     """The `/idea` address of `<ws>/ideas/NNNN_<slug>.md`, or of `ideas/…` in `home`."""
     from coscc.web import place
 
-    ws, _, file = ref.rpartition("/ideas/")
-    if not file:
-        ws, _, file = "", "", ref.removeprefix("ideas/")
+    ws, sep, file = ref.rpartition("/ideas/")
+    if not sep:
+        ws, file = "", ref.removeprefix("ideas/")
     return place.href(place.Place("idea", ws or home, idea=file.removesuffix(".md")))
 
 
