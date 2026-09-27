@@ -6,7 +6,7 @@ paths:
 # Reading the board: the gates and the run button
 
 - **The `review` and `ship` gates call `gh` and `git` in the workspace.** `board.gate`
-  passes `--repo` and waits `GATE_TIMEOUT` (`coscc/board.py:244`, chosen). `child_env`
+  passes `--repo` and waits `GATE_TIMEOUT` (`coscc/board.py:251`, chosen). `child_env`
   carries `PATH`, `HOME` and `COS_REVIEW_ROUNDS` only, so a machine logged in through
   `GH_TOKEN` alone sees the `review` gate closed with gh's own error. Offline, `review`
   cannot start.
