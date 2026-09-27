@@ -50,6 +50,7 @@ NO_SHORTLIST = "Nothing is on the shortlist, so the autopilot starts nothing."
 # `cos.mjs`'s own words, read here because `next` hands out no `why`. `autopilot_test.py`
 # reads each one back out of `.claude/scripts/cos.mjs`, so a change there turns it red.
 CI_PENDING = "CI has not finished on #"
+CI_RED = "CI is red on #"
 NEEDS_A_PERSON = "needs a person"
 FINISHED = "finished"
 CLOSED = "closed — "
@@ -60,6 +61,12 @@ _NUMBER = re.compile(r"^(\d+)")
 def is_ci_pending(said: str) -> bool:
     """R6: the gate or `next` is waiting on CI. Not a stop; R5 d asks again."""
     return CI_PENDING in (said or "")
+
+
+def is_ci_red(said: str) -> bool:
+    """`0124` R2: `next` sends the unit back to `impl` because CI is red. Read anywhere in
+    the words, since `onReview` and `rebased` put the gate's reason after their own."""
+    return CI_RED in (said or "")
 
 
 def is_step(record: dict[str, Any]) -> bool:
@@ -154,6 +161,66 @@ def red_again(integration: dict[str, Any] | None, last_integration: dict[str, An
     if started_by(last_integration or {}) != "autopilot":
         return None
     return _stop("e", "CI is still red after the autopilot's last integration")
+
+
+# `0124` R2, R6. How many `impl` steps the autopilot runs after its own integration turned CI
+# red (`intent.md ## Answers`, câu 1). Not `COS_REVIEW_ROUNDS`, which counts review rounds.
+IMPL_PER_INTEGRATION = 1
+# `0124` R2, R8. The stop `e` once that `impl` ran and CI is still red.
+STILL_RED = "CI is still red after the impl that followed the autopilot's last integration"
+
+
+def since_integration(records: Iterable[dict[str, Any]], workspace: str, unit: str) -> list[dict[str, Any]] | None:
+    """`0124`. The unit's records after its latest `integration`, up to the first `review`
+    `start` after it — or `None` when it has no `integration`, or that `start` has come."""
+    after: list[dict[str, Any]] | None = None
+    for r in records:
+        if r.get("workspace") != workspace or r.get("unit") != unit or not is_step(r):
+            continue
+        if r.get("kind") == "integration":
+            after = []
+        elif after is not None and r.get("kind") == "start" and r.get("stage") == "review":
+            after = None
+        elif after is not None:
+            after.append(r)
+    return after
+
+
+def after_own_integration(
+    integration: dict[str, Any] | None,
+    last_integration: dict[str, Any] | None,
+    after: list[dict[str, Any]] | None,
+    nxt: dict[str, Any],
+) -> tuple[str, dict[str, str] | None] | None:
+    """`0124` R1–R3: what follows CI red on the autopilot's own pushed integration.
+
+    `integration` is the board's integration block of the unit, `last_integration` its latest
+    `integration` record, `after` what `since_integration` returns for it, `nxt` `next`'s
+    answer. `("impl", None)` runs the `impl` `next` names, once (R1); `("", stop)` is a stop
+    `e` (R2, R3 b); `None` leaves the unit to the rest of the pass — a person's integration,
+    or one CI is not red on. Gebo is never started again: no retry is the rule (`0043`
+    `spec.md ## Answers`, câu 1).
+    """
+    last_integration = last_integration or {}
+    if started_by(last_integration) != "autopilot" or last_integration.get("outcome") != "pushed":
+        return None
+    red_state = (integration or {}).get("state") == "red-after-integration"
+    fixing = nxt.get("stage") == "impl"
+    red_next = fixing and is_ci_red(str(nxt.get("action") or ""))
+    again = _stop("e", "CI is still red after the autopilot's last integration")
+    if after is None:
+        return ("", again) if red_state else None
+    ran = sum(
+        1 for r in after
+        if r.get("kind") == "start" and r.get("stage") == "impl" and started_by(r) == "autopilot"
+    )
+    if ran >= IMPL_PER_INTEGRATION and (red_state or red_next):
+        return ("", _stop("e", STILL_RED))
+    if red_state and fixing:
+        return ("impl", None)
+    if red_state:
+        return ("", again)
+    return None
 
 
 # --- R7, the day's money ------------------------------------------------------
