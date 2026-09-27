@@ -1555,8 +1555,8 @@ function shipNeeds(unit, probe, said = {}) {
 
 // What reached `ref` after `reviewed`, outside the unit's own `.cos/` files:
 // `{ rewritten: true }` when `reviewed` is not on it at all, `{ files }` otherwise, or
-// `{ error }`. A rewrite counts as a change on purpose — the gate cannot tell a rebase that
-// changed nothing from one that changed everything (`0024` spec, Concern 4).
+// `{ error }`. This says only that `ref` was rewritten; whether the rewrite changed the
+// unit's patch is `rebaseClean`'s to say, and each caller asks it (`0067`, `0121`).
 function changedSince(probe, unit, reviewed, ref) {
   if (probe.git('merge-base', '--is-ancestor', reviewed, ref).code !== 0) return { rewritten: true, files: [] }
   const diff = probe.git('diff', '--name-only', `${reviewed}..${ref}`)
@@ -1715,8 +1715,9 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
 // Files settle it everywhere but three places, and those three need git and the pull
 // request, which is why this takes the same `probe` the gates take:
 //   - a review asked for changes: `impl` until something outside `.cos/<unit>/` reached the
-//     pull request's head after the reviewed commit, then `review` once CI is green,
-//     `impl` again while it is red, and nothing while it runs;
+//     pull request's head after the reviewed commit, and while the head is only a clean
+//     rebase of it (`0121`), then `review` once CI is green, `impl` again while it is red,
+//     and nothing while it runs;
 //   - `pr` is done and no review exists: `review` on green, `impl` on red, else nothing;
 //   - the review passed: `ship` if its gate is open, `impl` if a clean rebase is red,
 //     `review` again only if the patch moved after the pass (`0067`), else nothing.
@@ -1802,7 +1803,21 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     }
     const since = changedSince(probe, unit, last.reviewed, read.head)
     if (since.error) return none(`${next.action} — ${since.error}`)
-    if (!since.rewritten && !since.files.length) {
+    // `0121`: a rewrite that left the unit's patch as it was answers no finding, so it is no
+    // fix, and CI is not asked — the answer is impl whatever it says. One that changed the
+    // patch, or cannot be compared, goes to review as any fix does (R2, R3).
+    if (since.rewritten) {
+      const compared = rebaseClean(probe, unit, unitPatch(probe, unit, last.reviewed), read.head)
+      if (compared.clean) {
+        return {
+          blocked: true,
+          action: `${next.action} — ${last.reviewed.slice(0, 7)} was rebased to ${read.head.slice(0, 7)} and the unit's patch is unchanged: the open findings of review round ${last.n} are still to be fixed on the branch, then push`,
+          stage: 'impl',
+        }
+      }
+      return onReview([`#${pr.number} was rewritten past ${last.reviewed.slice(0, 7)} — ${rebaseWhy(compared)}`])
+    }
+    if (!since.files.length) {
       return {
         blocked: true,
         action: `${next.action} — nothing outside .cos/${unit.name}/ has reached #${pr.number} since ${last.reviewed.slice(0, 7)}: impl, then push`,
