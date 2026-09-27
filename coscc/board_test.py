@@ -204,6 +204,25 @@ class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
             [u] = run(board.read(d))["units"]
             self.assertEqual([r["text"] for r in u["rounds"]], _rounds(text))
 
+    def test_0027_rounds_carry_what_cos_mjs_read_as_unfinished(self):
+        """`0027` R5. Round 2 lists F1 alone, so it drops F2; the board carries what the
+        script read and works out nothing itself."""
+        text = REVIEW_TWO_ROUNDS.replace(
+            "- F1 [fixed abcdef2] the first thing\n- F2 [open] the second thing\n",
+            "- F1 [open] the first thing\n",
+        )
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_q"
+            unit.mkdir(parents=True)
+            (unit / "review.md").write_text(text, encoding="utf-8")
+            [u] = run(board.read(d))["units"]
+            self.assertEqual([(r["dropped"], r["unfinished"]) for r in u["rounds"]],
+                             [([], False), (["F2"], True)])
+            (unit / "review.md").write_text(REVIEW_TWO_ROUNDS, encoding="utf-8")
+            [u] = run(board.read(d))["units"]
+            self.assertEqual([(r["dropped"], r["unfinished"]) for r in u["rounds"]],
+                             [([], False), ([], False)])
+
     def test_an_older_script_that_sends_neither_reads_as_none(self):
         async def fake_run(argv, timeout):
             return 0, '{"stages": [], "units": [{"name": "0001_q", "artifacts": {}}]}', ""

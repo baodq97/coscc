@@ -1638,6 +1638,47 @@ class AStepRecordsThePriorFindingsItCarried(AStepRecordsTheBaseItRanOn):
             self.assertEqual(self._start_record(d, prior_findings_record=record)["prior_findings"], record)
 
 
+class AReviewAfterAnUnfinishedRoundIsHandedIt(unittest.TestCase):
+    """`0027` R6. `Runner.run` passes `unfinished_round` to the prompt and nowhere else."""
+
+    class Replies:
+        def __init__(self):
+            self.prompts: list[str] = []
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.prompts.append(text)
+            yield ("chunk", "# Review: x\nStatus: changes-requested.\n")
+            yield ("done", {"session_id": "s-review", "cost": {}})
+
+    def _run(self, d: str, **run_kw) -> tuple[str, dict]:
+        make_unit(Path(d), intent_md="Status: accepted.\nI", review_md=REVIEW_R1)
+        journal = Journal(d, d)
+        replies = self.Replies()
+        r = Runner(sessions=replies, journal=journal)
+
+        async def go():
+            async for _ in r.run(
+                workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d, unit=UNIT,
+                stage="review", artifact="review.md", stages=STAGES, mode="manual", **run_kw,
+            ):
+                pass
+
+        asyncio.run(go())
+        [start] = journal.records(d, kind="start")
+        return replies.prompts[0], start
+
+    def test_the_round_handed_in_reaches_the_prompt(self):
+        with tempfile.TemporaryDirectory() as d:
+            plain, plain_start = self._run(d)
+        with tempfile.TemporaryDirectory() as d:
+            told, start = self._run(d, unfinished_round={"n": 1, "dropped": ["F9"]})
+        self.assertNotIn("# The round that did not count", plain)
+        self.assertIn("Round 1 asked for changes but does not list `F9`", told)
+        self.assertIn("review-unfinished", start["included"])
+        self.assertNotIn("review-unfinished", plain_start["included"])
+        self.assertEqual(set(start), set(plain_start))
+
+
 class TheScreenshotsTakenAgain(unittest.TestCase):
     """`0111` R7. `service.run_step` builds the section after a retake; this module places it
     for `review` only, after the integration's, and every other prompt is what it was."""

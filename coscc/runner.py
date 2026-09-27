@@ -259,6 +259,7 @@ class Runner:
         prior_findings_record: dict[str, Any] | None = None,
         plan_map: str = "",
         plan_map_record: dict[str, Any] | None = None,
+        unfinished_round: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -328,6 +329,9 @@ class Runner:
         `plan_map` and `plan_map_record` are `0096` R9/R11's, the same way round: what
         `planmap.for_step` built, and its `{bytes, files, full, short, new, outside}`. An
         `impl` step's prompt also carries its grant's `commands` (R10).
+
+        `unfinished_round` is `0027` R6's: the `{n, dropped}` of a last review round
+        `cos.mjs` read as unfinished, for a `review` step's prompt and nowhere else.
         """
         check_started_by(started_by)
         grant = grant_for_step(stage, label)
@@ -372,6 +376,7 @@ class Runner:
             prior_findings=prior_findings,
             plan_map=plan_map,
             commands=grant.commands if stage in ("impl", "implement") else (),
+            unfinished_round=unfinished_round,
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,

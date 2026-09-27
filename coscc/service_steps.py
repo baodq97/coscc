@@ -868,6 +868,13 @@ class StepsMixin:
                 {r.get("n") for r in found.get("rounds") or []}
                 if row["file"] == "review.md" else None
             )
+            # `0027` R6. From the same board: a last round `cos.mjs` read as unfinished, and the
+            # ids it dropped, for the review that runs again. Whether it counts is not asked here.
+            last_round = (found.get("rounds") or [None])[-1] if row["file"] == "review.md" else None
+            unfinished_kw = (
+                {"unfinished_round": {"n": last_round["n"], "dropped": list(last_round["dropped"])}}
+                if last_round and last_round.get("unfinished") else {}
+            )
             # `0004_no-setting-says-which-model-runs-a-stage`. Resolved after the gate, so a
             # refused step reads nothing more. `stage` was checked against the board above.
             # `0033`: with the plan's label, the effort and, for `impl`, which run this is.
@@ -1016,6 +1023,7 @@ class StepsMixin:
                     **knowledge_kw,
                     **prior_kw,
                     **plan_kw,
+                    **unfinished_kw,
                     **config,
                     # Only named for a spike, so a stand-in `run` without it keeps working.
                     **({"watch": work} if scratch is not None else {}),

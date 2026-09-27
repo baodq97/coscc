@@ -771,6 +771,38 @@ class TheNextReviewGoesOnFromAnIncompleteRound(unittest.TestCase):
                 self.assertEqual(decide(grant, "Read", {"file_path": p}, str(tree), str(directory)), "", p)
 
 
+class TheNextReviewIsToldWhyARoundDidNotCount(unittest.TestCase):
+    """`0027` R6. `service.run_step` hands over the round `cos.mjs` read as unfinished; this
+    module only places it."""
+
+    HEADING = "# The round that did not count"
+
+    def test_0027_r6_an_unfinished_round_is_named_with_its_dropped_ids(self):
+        # Round 2 lists F1 alone, so *The rounds so far* says only F1 is open.
+        review = REVIEW_R1.replace("- F1 [open] a.py:3 — high — x\n", "- F1 [open] a.py:3 — high — x\n- F2 [open] b.py:1 — high — y\n- F3 [open] c.py:1 — low — z\n")
+        review += "\n## Round 2\n\nReviewed: " + "b" * 40 + ". Verdict: changes-requested.\n\n### Findings\n\n- F1 [open] a.py:3 — high — x\n"
+        with tempfile.TemporaryDirectory() as d:
+            directory = make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP",
+                                  impl_md="Status: accepted.\nI", pr_md="Status: accepted.\nP", review_md=review)
+            args = (d, directory, UNIT, "review", STAGES, "review.md")
+            plain = compose_prompt(*args, head="c" * 40)
+            self.assertEqual(compose_prompt(*args, head="c" * 40, unfinished_round=None), plain)
+            self.assertNotIn(self.HEADING, plain[0])
+            prompt, included, _ = compose_prompt(*args, head="c" * 40, unfinished_round={"n": 2, "dropped": ["F2", "F3"]})
+            # Any other stage is handed it and adds not one byte.
+            other = (d, directory, UNIT, "impl", STAGES, "impl.md")
+            self.assertEqual(compose_prompt(*other, unfinished_round={"n": 2, "dropped": ["F2"]}), compose_prompt(*other))
+        self.assertIn("review-unfinished", included)
+        block = prompt.split(self.HEADING + "\n\n")[1].split("\n\n---\n\n")[0]
+        self.assertIn("Round 2 asked for changes but does not list `F2`, `F3`", block)
+        self.assertIn("does not count it against `COS_REVIEW_ROUNDS`", block)
+        self.assertIn("Write Round 3 as a full round", block)
+        self.assertIn("with its label, `F2`, `F3` among them", block)
+        # Right after *The rounds so far*, which it explains.
+        self.assertLess(prompt.index("# The rounds so far"), prompt.index(self.HEADING))
+        self.assertLess(prompt.index(self.HEADING), prompt.index("# The commit you are reviewing"))
+
+
 class WhatEarlierUnitsMeasured(unittest.TestCase):
     """`0090` plan step 3. `service.run_step` reads the store; this module only places what it
     is handed, and with nothing handed not one byte of any prompt changes (R2)."""
