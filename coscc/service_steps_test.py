@@ -888,6 +888,209 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self.assertEqual(ceilings, [(120, 8.0), (250, 16.0)])
 
 
+class AnImplStepUnderTheEffortTrial(unittest.TestCase):
+    """`0123` R1-R7. The fixture of `AnImplStepRunsUnderThePlansLabel`, with the flag set per
+    test and the arm forced by patching `efforttrial.arm`; `cos.mjs next` is a stub that
+    counts its calls and answers `self.action`, or raises `self.next_fails`."""
+
+    PLAN = AnImplStepRunsUnderThePlansLabel.PLAN
+    ROUTINE = "`coscc/board.py`"
+    SECURITY = "`coscc/policy.py`"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.seen: list[dict] = []
+        self.terminal = None
+        self.asked: list[dict] = []
+        self.action = "review: run a review round"
+        self.next_fails: Exception | None = None
+        self.made_count = 0
+
+    class Impl(AnImplStepRunsUnderThePlansLabel.Impl):
+        pass
+
+    def _unit(self, effort_trial: bool, plan: str | None = ROUTINE):
+        """A fresh workspace, service and unit, so two runs of one test do not share a log."""
+        self.made_count += 1
+        root = Path(self._tmp.name) / str(self.made_count)
+        self.repo = root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.service = Service(
+            Config(
+                workspaces=(str(self.repo),),
+                working_dir=str(root / "work"),
+                data_dir=str(root / "data"),
+                effort_trial=effort_trial,
+            ),
+            self.Impl(self),
+        )
+        self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        self.dir = Path(self.made["path"])
+        if plan is not None:
+            (self.dir / "plan.md").write_text(self.PLAN.format(path=plan), encoding="utf-8")
+
+    def _run(self, stage: str = "impl", arm: str = "trial"):
+        from coscc import board as board_reader
+        from coscc import efforttrial
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, f"open: {stage} may proceed"
+
+        async def next_step(units_root, unit, repo=None, **kw):
+            self.asked.append({"unit": unit, "repo": repo})
+            if self.next_fails is not None:
+                raise self.next_fails
+            return {"unit": unit, "stage": "impl", "action": self.action, "blocked": False, "waiting": []}
+
+        async def go():
+            return [i async for i in self.service.run_step(str(self.repo), self.made["unit"], stage)]
+
+        with mock.patch.object(board_reader, "gate", open_gate), \
+                mock.patch.object(board_reader, "next_step", next_step), \
+                mock.patch.object(efforttrial, "arm", lambda unit: arm):
+            return asyncio.run(go())
+
+    def _starts(self):
+        journal = self.service._journal()
+        return journal.records(self.service._journal_key(str(self.repo)), kind="start")
+
+    def _prefs(self):
+        from coscc import models
+        from coscc.data import Data
+
+        data = Data(self.service.config.data_dir)
+        return {**data.pref_rows(models.PREFIX), **data.pref_rows(models.EFFORT_PREFIX)}
+
+    def test_with_the_flag_off_nothing_in_the_start_record_changes(self):
+        self._unit(effort_trial=False)
+        self._run()
+        self._run()
+        off = self._starts()[0]
+        self.assertEqual(self.asked, [])
+        self.assertNotIn("effort_trial", off)
+        self.assertNotIn("ci_red", self._starts()[1])
+        self._unit(effort_trial=True)
+        self._run(arm="control")
+        control = self._starts()[0]
+        fields = ("model", "effort", "effort_source")
+        self.assertEqual([off[f] for f in fields], [control[f] for f in fields])
+        self.assertEqual(set(control) - set(off), {"effort_trial"})
+        self.assertEqual(set(off) - set(control), set())
+
+    def test_a_routine_impl_in_the_trial_arm_runs_at_high(self):
+        self._unit(effort_trial=True)
+        self._run(arm="control")
+        control = self._starts()[0]
+        self._unit(effort_trial=True)
+        self._run(arm="trial")
+        start = self._starts()[0]
+        self.assertEqual((start["effort"], start["effort_source"]), ("high", "trial"))
+        self.assertEqual(start["effort_trial"], {"arm": "trial", "applied": True})
+        self.assertEqual((start["model"], start["model_source"]), (control["model"], control["model_source"]))
+        self.assertEqual(self.seen[-1].get("effort"), "high")
+
+    def test_the_control_arm_runs_as_before_and_says_so(self):
+        self._unit(effort_trial=False)
+        self._run()
+        off = self._starts()[0]
+        self._unit(effort_trial=True)
+        self._run(arm="control")
+        start = self._starts()[0]
+        self.assertEqual(start["effort_trial"], {"arm": "control", "applied": False})
+        self.assertEqual((start["effort"], start["effort_source"]), (off["effort"], off["effort_source"]))
+
+    def test_an_effort_override_wins_and_is_left_alone(self):
+        self._unit(effort_trial=True)
+        asyncio.run(self.service.set_stage_effort("impl", "low"))
+        before = self._prefs()
+        self._run(arm="trial")
+        start = self._starts()[0]
+        self.assertEqual((start["effort"], start["effort_source"]), ("low", "override"))
+        self.assertEqual(start["effort_trial"], {"arm": "trial", "applied": False})
+        self.assertEqual(self._prefs(), before)
+
+    def test_a_novel_impl_in_the_trial_arm_keeps_its_pair(self):
+        self._unit(effort_trial=True, plan=self.SECURITY)
+        self._run(arm="trial")
+        start = self._starts()[0]
+        self.assertEqual((start["label"], start["label_source"]), ("novel", "forced"))
+        self.assertEqual((start["effort"], start["effort_source"]), ("high", "default"))
+        self.assertEqual(start["effort_trial"], {"arm": "trial", "applied": False})
+
+    def test_an_impl_with_no_declared_label_in_the_trial_arm_keeps_its_pair(self):
+        self._unit(effort_trial=True, plan=None)
+        (self.dir / "plan.md").write_text(
+            self.PLAN.format(path=self.ROUTINE).replace(" Impl: routine.", ""), encoding="utf-8"
+        )
+        self._run(arm="trial")
+        start = self._starts()[0]
+        self.assertEqual((start["label"], start["label_source"]), ("novel", "missing"))
+        self.assertEqual(start["effort_source"], "default")
+        self.assertEqual(start["effort_trial"], {"arm": "trial", "applied": False})
+
+    def test_an_escalated_impl_stays_in_its_arm(self):
+        self._unit(effort_trial=True)
+        self.terminal = "max_turns"
+        self._run(arm="trial")
+        self.terminal = None
+        self._run(arm="trial")
+        first, second = self._starts()
+        self.assertEqual(first["effort_trial"], {"arm": "trial", "applied": True})
+        self.assertEqual((second["label"], second["label_source"]), ("novel", "escalated"))
+        self.assertEqual(second["effort_trial"], {"arm": "trial", "applied": False})
+        self.assertEqual(second["effort_source"], "default")
+
+    def test_other_stages_carry_no_trial(self):
+        self._unit(effort_trial=False)
+        self._run(stage="spec")
+        off = self._starts()[0]
+        self._unit(effort_trial=True)
+        self._run(stage="spec", arm="trial")
+        on = self._starts()[0]
+        self.assertEqual((on["effort"], on["effort_source"]), (off["effort"], off["effort_source"]))
+        self.assertNotIn("effort_trial", on)
+        self.assertEqual(self.asked, [])
+
+    # -- R7: the CI question ---------------------------------------------------------
+
+    def test_a_second_impl_asks_next_once_and_records_ci_red(self):
+        self._unit(effort_trial=True)
+        self._run()
+        self.action = "CI is red on #7: tests — back to impl: fix on the branch and push"
+        self._run()
+        self.assertEqual(self.asked, [{"unit": self.made["unit"], "repo": str(self.repo)}])
+        self.assertIs(self._starts()[1]["ci_red"], True)
+
+    def test_a_second_impl_after_a_review_records_no_red(self):
+        self._unit(effort_trial=True)
+        self._run()
+        self.action = "impl: review round 1 asked for changes"
+        self._run()
+        self.assertEqual(len(self.asked), 1)
+        self.assertIs(self._starts()[1]["ci_red"], False)
+
+    def test_next_failing_never_refuses_the_step(self):
+        from coscc.board import Unavailable
+
+        self._unit(effort_trial=True)
+        self._run()
+        self.next_fails = Unavailable("gh is not logged in")
+        self.seen.clear()
+        self._run()
+        start = self._starts()[1]
+        self.assertIn("ci_red", start)
+        self.assertIsNone(start["ci_red"])
+        self.assertEqual(len(self.seen), 1)
+
+    def test_a_first_impl_asks_nothing(self):
+        self._unit(effort_trial=True)
+        self._run()
+        self.assertEqual(self._starts()[0]["impl_run"], 1)
+        self.assertNotIn("ci_red", self._starts()[0])
+        self.assertEqual(self.asked, [])
+
+
 class TheNextStageComesFromTheScript(unittest.TestCase):
     """`0024`. `Service.next_step` asks `cos.mjs next` and chooses nothing itself."""
 
