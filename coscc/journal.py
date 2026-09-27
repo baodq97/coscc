@@ -34,8 +34,10 @@ out wrong is recoverable only while its source still exists.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
@@ -97,6 +99,57 @@ def zero_cost() -> dict[str, Any]:
 
 class BadRecord(ValueError):
     """A record this module will not store, carrying a reason a caller can show."""
+
+
+class Bell:
+    """`0113` Design 4. Rung after every append this process commits, from any thread.
+
+    A reader `arm`s a ticket *before* it reads, then `wait`s on it: a ring that lands between
+    its read and its wait is not missed. A ring never fails the append that rang it — a
+    ticket whose loop has closed is dropped, not raised. Another process's appends ring
+    nothing here; a reader sees those only when its wait times out.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._tickets: set[tuple[asyncio.AbstractEventLoop, asyncio.Event]] = set()
+
+    def arm(self) -> tuple[asyncio.AbstractEventLoop, asyncio.Event]:
+        ticket = (asyncio.get_running_loop(), asyncio.Event())
+        with self._lock:
+            self._tickets.add(ticket)
+        return ticket
+
+    def disarm(self, ticket: tuple[asyncio.AbstractEventLoop, asyncio.Event]) -> None:
+        with self._lock:
+            self._tickets.discard(ticket)
+
+    def ring(self) -> None:
+        with self._lock:
+            tickets = list(self._tickets)
+        for ticket in tickets:
+            loop, event = ticket
+            try:
+                loop.call_soon_threadsafe(event.set)
+            except RuntimeError:
+                self.disarm(ticket)
+
+    async def wait(self, ticket: tuple[asyncio.AbstractEventLoop, asyncio.Event], timeout: float) -> bool:
+        """True when rung, False when `timeout` seconds passed first. Disarms either way."""
+        try:
+            await asyncio.wait_for(ticket[1].wait(), max(0.0, timeout))
+            return True
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            self.disarm(ticket)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._tickets)
+
+
+BELL = Bell()
 
 
 class Journal:
@@ -208,6 +261,8 @@ class Journal:
 
         with self.transaction(timeout) as conn:
             self._insert(conn, stamped)
+        # After the commit, never inside it: a reader woken here finds the row.
+        BELL.ring()
         return stamped
 
     def set_mode(self, workspace: str, unit: str, stage: str, mode: str) -> dict[str, Any]:
@@ -298,6 +353,51 @@ class Journal:
                 out.append(item)
         return out
 
+    def last_id(self, timeout: float | None = None) -> int:
+        """`0113` R6. The largest `runs.id` in the database, 0 when there is none.
+
+        Every root's, not this one's: ids are one sequence, so "past this one" means the same
+        whichever root wrote it."""
+        if self._needs_import():
+            with self.transaction(timeout):
+                pass
+        with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
+            row = conn.execute("SELECT MAX(id) FROM runs").fetchone()
+        return int(row[0] or 0)
+
+    def notice_rows(
+        self, after: int, kinds: Iterable[str], workspace: str | None = None, limit: int = 500,
+        timeout: float | None = None,
+    ) -> list[tuple[int, dict[str, Any]]]:
+        """`0113` Design 1. `(id, record)` for this root's rows of `kinds` past `after`, by `id`,
+        at most `limit`, optionally in one workspace. A row whose JSON will not parse is
+        skipped, as `records` skips it; its id is then never handed out."""
+        if self._needs_import():
+            with self.transaction(timeout):
+                pass
+        wanted = list(kinds)
+        sql = (
+            "SELECT id, record FROM runs WHERE root = ? AND id > ?"
+            + (f" AND kind IN ({', '.join('?' for _ in wanted)})" if wanted else " AND 0")
+        )
+        args: list[Any] = [self._root, int(after), *wanted]
+        if workspace is not None:
+            sql += " AND workspace = ?"
+            args.append(workspace)
+        sql += " ORDER BY id LIMIT ?"
+        args.append(int(limit))
+        with self.data.connect(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
+            rows = conn.execute(sql, args).fetchall()
+        out: list[tuple[int, dict[str, Any]]] = []
+        for row in rows:
+            try:
+                item = json.loads(row["record"])
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+            if isinstance(item, dict):
+                out.append((int(row["id"]), item))
+        return out
+
     def modes(self, workspace: str, timeout: float | None = None) -> dict[tuple[str, str], str]:
         """Current mode of every step that has ever had one set. Latest record wins.
 
@@ -363,6 +463,7 @@ class Journal:
                     rows.append(item)
             check(rows)
             self._insert(conn, stamped)
+        BELL.ring()
         return stamped
 
     def open_starts(

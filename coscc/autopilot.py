@@ -78,6 +78,12 @@ def _stop(kind: str, reason: str) -> dict[str, str]:
     return {"kind": kind, "reason": reason}
 
 
+def open_questions(unit_row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every unanswered question of the counted artifact (`cos.mjs` `unitQuestions`): the stop
+    `a`, and since `0113` R4 the `questions` record a step that ends `done` leaves."""
+    return [q for q in unit_row.get("questions") or [] if q.get("counted") and not q.get("answered")]
+
+
 def stop_for(
     unit_row: dict[str, Any],
     nxt: dict[str, Any],
@@ -101,10 +107,7 @@ def stop_for(
         return None
 
     # a. Every unanswered question of the counted artifact (`cos.mjs` `unitQuestions`).
-    open_ = [
-        q for q in unit_row.get("questions") or []
-        if q.get("counted") and not q.get("answered")
-    ]
+    open_ = open_questions(unit_row)
     if open_:
         listed = ", ".join(f"{q.get('artifact')} question {q.get('n')}" for q in open_)
         return _stop("a", f"open questions: {listed}")

@@ -27,6 +27,7 @@ paths:
   - "coscc/service_board.py"
   - "coscc/service_common.py"
   - "coscc/service_models.py"
+  - "coscc/service_notices.py"
   - "coscc/service_sessions.py"
   - "coscc/service_steps.py"
   - "coscc/service_update.py"

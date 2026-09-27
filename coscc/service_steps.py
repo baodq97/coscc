@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from coscc import backlog
+from coscc import autopilot, backlog
 from coscc import board as board_reader
 from coscc import drift, efforttrial, events, fetches, gitops
 from coscc import harness, integrate, knowledge
@@ -632,6 +632,35 @@ class StepsMixin:
             return {"removed": False, "reason": "unit not on the board"}
         return await worktrees.remove_if_finished(cwd, unit, found, self.config.data_dir)
 
+    async def _after_end(self, cwd: str, unit: str, stage: str, key: str) -> None:
+        """`0113` R4, R5, after a step's `done` and its `end`: a `questions` record when the
+        unit is left with open questions, and after `ship` a `ship` record saying whether it
+        merged. Never raises, like `_cleanup`: a record that cannot be written changes
+        nothing about the step.
+
+        R5 says `next`, but `next` hands out no `why` (`autopilot.py`, above `CI_PENDING`):
+        `why` is `decide`'s, read off the files by `cos.mjs status` as `board.read` copies it,
+        so `ship-refused` can also be a merge whose branch deletion failed (plan Risk 4)."""
+        try:
+            journal = self._journal()
+            if journal is None:
+                return
+            data = await board_reader.read(self._units_root(cwd))
+            found = next((u for u in data["units"] if u["name"] == unit), None)
+            if found is None:
+                return
+            asked = autopilot.open_questions(found)
+            if asked:
+                journal.append({
+                    "kind": "questions", "workspace": key, "unit": unit, "stage": stage,
+                    "questions": [{"artifact": q.get("artifact"), "n": q.get("n")} for q in asked],
+                })
+            result = {"finished": "shipped", "ship-refused": "refused"}.get(str(found.get("why") or ""))
+            if stage == "ship" and result:
+                journal.append({"kind": "ship", "workspace": key, "unit": unit, "stage": "ship", "result": result})
+        except Exception:  # noqa: BLE001 — `Unavailable`, `BadRecord`, `Busy` included
+            return
+
     async def next_step(self, cwd: str, unit: str) -> dict[str, Any]:
         """`0024`. The one stage the run button may offer, and why -- `cos.mjs next`'s answer.
 
@@ -1161,6 +1190,8 @@ class StepsMixin:
                 q.put_nowait(item)
 
         told_done = False
+        # `0113` R4, R5: `_after_end` runs last, only on this.
+        ended_done = False
         recorder = running.handle.recorder
         # `0073`. A cancel with no Stop behind it is the app going down (spec C9).
         going_down = False
@@ -1200,6 +1231,8 @@ class StepsMixin:
                         item = ("done", {**item[1], "answers_lost": True})
                     told_done = True
                 tell(item)
+                if item[0] == "done" and item[1].get("outcome") == "done":
+                    ended_done = True
         except RunError as e:
             tell(("raise", Invalid(str(e))))
             told_done = True
@@ -1235,6 +1268,11 @@ class StepsMixin:
                     await recorder.close("failed", "the step ended without an outcome")
             if recorder is not None:
                 self._recorders.pop(recorder.run, None)
+            if ended_done and not going_down and stage not in autopilot.NOT_STEPS:
+                # `0113` R4, R5. After the runner's `end`, which it writes before it yields
+                # `done`, and after the mark is given back: the board read it costs holds
+                # neither the reader's `done` nor the unit.
+                await self._after_end(cwd, unit, stage, running.workspace)
 
     async def stop_step(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
         """Stop one running board step (`0034` R2, R5, R6). The route and the page's

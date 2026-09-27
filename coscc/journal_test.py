@@ -8,15 +8,18 @@ real processes, one folder, count what survives.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.journal import BadRecord, Busy, Journal, last_runs, totals_of
+from coscc.journal import BELL, BadRecord, Busy, Journal, last_runs, totals_of
 
 WRITERS = 4
 PER_WRITER = 5
@@ -597,6 +600,72 @@ class AppendCheckedReadsAndWritesInOneTransaction(unittest.TestCase):
         self.j.started("w", "u", "spec", "manual")
         self.j.finished("w", "u", "spec", "done", cost_usd=0.5, turns=2)
         self.assertEqual(self.j.timelines("w"), timelines_of(self.j.records("w")))
+
+
+class TheBellWakesAReaderAndTheReadsNarrow(unittest.TestCase):
+    """`0113` Design 1 and 4. What the notice stream reads, and what wakes it."""
+
+    SOURCE = ("autopilot-stop", "questions", "end", "ship")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.j = Journal(self._tmp.name, self._tmp.name)
+
+    def test_an_append_wakes_a_waiter_armed_before_it(self):
+        async def go():
+            ticket = BELL.arm()
+            self.j.append({"kind": "note"})
+            return await BELL.wait(ticket, 5)
+
+        self.assertTrue(asyncio.run(go()))
+
+    def test_an_append_from_another_thread_wakes_the_loop(self):
+        async def go():
+            ticket = BELL.arm()
+            threading.Thread(target=lambda: self.j.append({"kind": "note"})).start()
+            began = time.monotonic()
+            rung = await BELL.wait(ticket, 5)
+            return rung, time.monotonic() - began
+
+        rung, took = asyncio.run(go())
+        self.assertTrue(rung)
+        self.assertLess(took, 5)
+
+    def test_a_ring_after_the_loop_closed_does_not_fail_the_append(self):
+        loop = asyncio.new_event_loop()
+        ticket = loop.run_until_complete(_arm(BELL))
+        loop.close()
+        self.j.append({"kind": "note"})
+        self.assertEqual(len(self.j.records()), 1)
+        BELL.disarm(ticket)
+
+    def test_notice_rows_are_past_after_in_id_order_and_only_source_kinds(self):
+        self.j.append({"kind": "end", "workspace": "w", "unit": "u", "stage": "spec", "outcome": "failed"})
+        self.j.append({"kind": "start", "workspace": "w", "unit": "u", "stage": "spec", "mode": "manual"})
+        self.j.append({"kind": "ship", "workspace": "w", "unit": "u", "result": "shipped"})
+        self.j.append({"kind": "questions", "workspace": "w", "unit": "u"})
+        rows = self.j.notice_rows(0, self.SOURCE)
+        self.assertEqual([r["kind"] for _, r in rows], ["end", "ship", "questions"])
+        ids = [i for i, _ in rows]
+        self.assertEqual(ids, sorted(ids))
+        self.assertEqual([r["kind"] for _, r in self.j.notice_rows(ids[0], self.SOURCE)], ["ship", "questions"])
+        self.assertEqual(len(self.j.notice_rows(0, self.SOURCE, limit=1)), 1)
+
+    def test_notice_rows_narrow_to_one_workspace(self):
+        self.j.append({"kind": "ship", "workspace": "w", "unit": "u", "result": "shipped"})
+        self.j.append({"kind": "ship", "workspace": "other", "unit": "u", "result": "shipped"})
+        self.assertEqual([r["workspace"] for _, r in self.j.notice_rows(0, self.SOURCE, "w")], ["w"])
+        self.assertEqual(len(self.j.notice_rows(0, self.SOURCE)), 2)
+
+    def test_last_id_is_zero_on_an_empty_log(self):
+        self.assertEqual(self.j.last_id(), 0)
+        self.j.append({"kind": "note"})
+        self.assertEqual(self.j.last_id(), self.j.notice_rows(0, ["note"])[0][0])
+
+
+async def _arm(bell):
+    return bell.arm()
 
 
 if __name__ == "__main__":

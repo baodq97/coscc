@@ -106,6 +106,9 @@ from coscc.service_autopilot import (
 from coscc.service_activity import (
     ActivityMixin,
 )
+from coscc.service_notices import (
+    NoticesMixin,
+)
 
 
 @dataclass
@@ -121,6 +124,7 @@ class Service(
     ModelsMixin,
     AutopilotMixin,
     ActivityMixin,
+    NoticesMixin,
 ):
     config: Config
     sessions: Sessions

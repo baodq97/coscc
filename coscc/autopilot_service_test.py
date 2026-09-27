@@ -761,6 +761,43 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [])
         self.assertIn("127.0.0.1", self.service._autopilot_stops[self.key][""]["reason"])
 
+    # --- `0113` R3, the workspace's own stop in the run log ---------------------
+
+    def logged(self) -> list[tuple[str, str]]:
+        return [(r["unit"], r["stop"]) for r in
+                Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-stop")]
+
+    async def test_an_empty_shortlist_is_logged_once_and_its_clearing_once(self):
+        self.add("0001_a", "spec")
+        for _ in range(2):
+            await self.service._autopilot_pass(self.key)
+            await asyncio.sleep(0.05)
+        self.assertEqual(self.logged(), [("", "shortlist")])
+        self.listed()
+        await self.service._autopilot_pass(self.key)
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.logged(), [("", "shortlist"), ("", "")])
+        [row] = [r for r in Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-stop")
+                 if r["stop"]]
+        self.assertEqual((row["workspace"], row["reason"]), (self.key, autopilot.NO_SHORTLIST))
+
+    async def test_off_loopback_is_logged_with_no_unit(self):
+        self.service.config = dataclasses.replace(self.config, host="0.0.0.0")
+        self.add("0001_a", "spec")
+        await self.pass_()
+        await self.pass_()
+        self.assertEqual(self.logged(), [("", "f")])
+
+    async def test_a_unit_s_launch_failing_keeps_the_workspace_stop_and_logs_only_the_unit(self):
+        # Review round 1, F3: a call that looked at one unit did not look at the workspace.
+        workspace = {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST}
+        self.service._autopilot_set_stops(self.key, {"": workspace})
+        self.service._autopilot_set_stops(
+            self.key, {"0001_a": {"unit": "0001_a", "kind": "f", "reason": "said"}}, {"0001_a"},
+        )
+        self.assertEqual(self.service._autopilot_stops[self.key][""], workspace)
+        self.assertEqual(self.logged(), [("", "shortlist"), ("0001_a", "f")])
+
     # --- `0104`, the shortlist's order -----------------------------------------
 
     def one_at_a_time(self):
