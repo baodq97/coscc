@@ -10,7 +10,7 @@ import dataclasses
 import sys
 
 from coscc.runlog import events as events_mod
-from coscc import present
+from coscc.web import present
 from coscc.runlog import spend
 from coscc.runlog.journal import COST_USD, TOKEN_FIELDS
 from coscc.service import reason_beside, shown_state
@@ -830,7 +830,7 @@ NO_RUN_NOTE = "no event stream: this step ran before events were recorded"
 
 
 # `0089` R11 (D55). What the board says in place of the service's `read_only_because`, which
-# names `COS_WORKING_DIR` and stays as it is for the API (`coscc/board_api_test.py`).
+# names `COS_WORKING_DIR` and stays as it is for the API (`coscc/web/board_api_test.py`).
 READ_ONLY_NOTE = "No working folder is set, so nothing can be recorded."
 
 # `0043` R9. A label for each of R6's stops (a–f) and the cap; the page words, not a decision.

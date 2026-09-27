@@ -45,8 +45,8 @@ MARKER = ".coscc-build.json"
 # Relative to the repo root. See the module docstring for the limits of this list.
 _SOURCES = (
     "coscc/coscc.py",
-    "coscc/ui.py",
-    "coscc/studio.py",
+    "coscc/web/ui.py",
+    "coscc/web/studio.py",
     "coscc/screens.py",
     "coscc/state.py",
     # `0095`: the modules `screens.py` and `state.py` were split into. `build_test` fails

@@ -584,7 +584,7 @@ class Data:
 
     # -- the login (`0070`) -------------------------------------------------
     #
-    # Only `coscc/auth.py` calls these. None of them reads `prefs`, and `prefs()` never
+    # Only `coscc/web/auth.py` calls these. None of them reads `prefs`, and `prefs()` never
     # reads these tables, so the hash has no road out through Settings.
 
     def auth_password_hash(self) -> str | None:

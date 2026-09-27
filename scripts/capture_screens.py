@@ -47,7 +47,7 @@ shows its strip with one *No shortlist* stop and it starts nothing. **Add a shor
 fixture and the app under the camera starts real steps**, sessions that spend quota.
 
 For example `/board`, `/settings`, or `/unit?ws=proj&id=0002_open-question&tab=questions`
-(`tab` is one of `coscc/place.py`'s `TABS`, lowercase; any other value opens `overview`).
+(`tab` is one of `coscc/web/place.py`'s `TABS`, lowercase; any other value opens `overview`).
 The fixture's paths live under `/tmp/`, so a screen that shows the workspace's path today
 hits `S3` on every run; say so rather than hide it.
 
@@ -94,13 +94,14 @@ REPO = Path(__file__).resolve().parent.parent
 
 # `run.py` points Reflex at `<repo>/.web` whatever the environment says; the build must
 # write where the app will read. Set before anything imports Reflex.
-from coscc import frontend  # noqa: E402
+from coscc.web import frontend  # noqa: E402
 
 os.environ[frontend.WEB_WORKDIR_VAR] = str(frontend.web_dir(REPO))
 
 import httpx  # noqa: E402
 
-from coscc import auth, build  # noqa: E402
+from coscc import build
+from coscc.web import auth  # noqa: E402
 from coscc.config import from_env  # noqa: E402
 from scripts.proof_harness import (  # noqa: E402
     EXIT_BROKEN,
@@ -427,7 +428,7 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
     (bin_dir / "gh").write_text(FAKE_GH, encoding="utf-8")
     (bin_dir / "gh").chmod(0o755)
     os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-    # `RealApp` hands `os.environ` to the app (`scripts/proof_harness.py:131-136`).
+    # `RealApp` hands `os.environ` to the app (`scripts/proof_harness.py:132-137`).
     os.environ["CLAUDE_CONFIG_DIR"] = str(outside / "claude")
 
     shots, hits = [], []

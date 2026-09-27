@@ -444,7 +444,7 @@ class Preferences(unittest.TestCase):
 
 
 class TheLoginStore(unittest.TestCase):
-    """`0070` step 2. What the guard in `coscc/auth.py` stands on."""
+    """`0070` step 2. What the guard in `coscc/web/auth.py` stands on."""
 
     def test_prefs_never_see_the_password_hash(self):
         with tempfile.TemporaryDirectory() as d:

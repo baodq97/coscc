@@ -16,7 +16,7 @@ FAIL (`spec.md` R11):
   `head` is Y, one `screens` record says `taken`, the stand-in was called, `review.md` was the
   fixture when it was, and `cos.mjs` `screensNeeds` finds nothing wrong with a round
   `Reviewed: Y` whose `### Screens` says `Taken at: Y`.
-- (b) The same with a commit on `main` that changes `coscc/ui.py`, Y to Z, over a `.web`
+- (b) The same with a commit on `main` that changes `coscc/web/ui.py`, Y to Z, over a `.web`
   left stale by (a) — the case the spike did not measure.
 - (c) The same, W, with `127.0.0.1:18783` held by this process: the step is refused, the
   stand-in is not called, one `screens` record says `failed`, `review.md` is unchanged.
@@ -57,7 +57,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts"))
 COS = REPO / ".claude" / "scripts" / "cos.mjs"
-HOST, PORT = "127.0.0.1", 18783  # `scripts/capture_screens.py:112`
+HOST, PORT = "127.0.0.1", 18783  # `scripts/capture_screens.py:113`
 BRANCH = "fix/fixture-screens"
 ADDRESS = "/board"
 EXIT_PASS, EXIT_BROKEN, EXIT_ENV = 0, 1, 2
@@ -261,7 +261,7 @@ def through_the_service(tmp: Path) -> bool:
     heads = {"X": x}
     for case, path, line in (
         ("a", "NOTES.txt", "a commit on main that touches no screen"),
-        ("b", "coscc/ui.py", "# 0111 fixture: a commit on main that changes a screen"),
+        ("b", "coscc/web/ui.py", "# 0111 fixture: a commit on main that changes a screen"),
     ):
         review_md.write_text(fixture, encoding="utf-8")
         new = advance_main(tree, path, line)

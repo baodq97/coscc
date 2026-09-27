@@ -19,6 +19,7 @@ from coscc.config import Config
 def _fake_source_tree(root: Path, page: str = "page v1", rx: str = "cfg v1") -> None:
     (root / "coscc").mkdir(parents=True, exist_ok=True)
     for source in build._SOURCES:
+        (root / source).parent.mkdir(parents=True, exist_ok=True)
         (root / source).write_text("presentation v1")
     (root / "coscc" / "coscc.py").write_text(page)
     (root / "rxconfig.py").write_text(rx)
@@ -72,7 +73,7 @@ class WhatCountsAsCurrent(unittest.TestCase):
         In a checkout the bundle hardcodes the backend address and stays that way, so a
         build aimed at another port renders a page that never connects. The message has
         to name both numbers or the reader cannot tell which one to change. A packaged
-        install never gets here -- `coscc/frontend.py` rewrites the address instead.
+        install never gets here -- `coscc/web/frontend.py` rewrites the address instead.
         """
         build.write_marker(self.built, self.config, root=self.root)
         state, msg = build.check(
@@ -130,7 +131,7 @@ class WhatTheFingerprintCovers(unittest.TestCase):
         # that silently covers less than it claims is worse than none.
         self.assertEqual(
             set(build._SOURCES), {
-                "coscc/coscc.py", "coscc/ui.py", "coscc/studio.py",
+                "coscc/coscc.py", "coscc/web/ui.py", "coscc/web/studio.py",
                 "coscc/screens.py", "coscc/state.py", "rxconfig.py",
             } | set(self.split_modules())
         )

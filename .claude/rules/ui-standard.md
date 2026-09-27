@@ -1,11 +1,11 @@
 ---
 paths:
   - "coscc/screens.py"
-  - "coscc/studio.py"
-  - "coscc/ui.py"
+  - "coscc/web/studio.py"
+  - "coscc/web/ui.py"
   - "coscc/state.py"
   - "coscc/coscc.py"
-  - "coscc/auth.py"
+  - "coscc/web/auth.py"
   - "coscc/service.py"
   - "coscc/units/backlog.py"
   - "coscc/update/updater.py"

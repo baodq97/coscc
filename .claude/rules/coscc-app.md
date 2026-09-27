@@ -26,9 +26,9 @@ uv run python scripts/capture_screens.py /board /settings   # a UI unit's screen
 **Start it with `coscc`, not `reflex run`.** Reflex's dev mode serves the page from a vite
 server binding every interface, with no setting for its host. `coscc` mounts the compiled
 frontend into the API's own ASGI app and binds one port, on `0.0.0.0` by default, behind
-a master password (`coscc/auth.py`); `COS_HOST=127.0.0.1` is the loopback posture.
+a master password (`coscc/web/auth.py`); `COS_HOST=127.0.0.1` is the loopback posture.
 
-`npm test` never builds. `coscc/api_test.py` drives the ASGI app in-process, so
+`npm test` never builds. `coscc/web/api_test.py` drives the ASGI app in-process, so
 the test command needs no JavaScript toolchain — that is deliberate, and it is why editing
 the page and forgetting to rebuild is possible at all.
 
@@ -36,7 +36,7 @@ the page and forgetting to rebuild is possible at all.
 
 One shell under nine static routes: `/` Overview, `/workspaces`,
 `/board`, `/backlog`, `/sessions`, `/activity`, `/cost`, `/settings`, and `/unit` — the Board with a unit's dialog open,
-`?ws=<workspace name>&id=<unit>&tab=<tab>`. `coscc/place.py` reads and writes the address;
+`?ws=<workspace name>&id=<unit>&tab=<tab>`. `coscc/web/place.py` reads and writes the address;
 `StudioState.arrive`, every route's `on_load`, is the only handler that sets `screen`,
 `cwd`, `unit_id` and `detail_tab` — a navigation button only returns `rx.redirect`. A new
 socket `session_id` is a new page and reads everything; a move inside the app reads only
@@ -94,7 +94,7 @@ only from here.
 | Hazard | File | Read it when |
 |---|---|---|
 | `ship` merges, `pr` does not; `pr`/`ship` reach every repository the login does; the mode grants nothing; the read boundary is not a sandbox; a redirect may write under `/tmp` | `.claude/rules/coscc-policy.md` | editing `coscc/agent/policy.py`, or any grant, tool list or `decide` call |
-| the login door, `EXEMPT`, proxies, hashing limits | `.claude/rules/coscc-auth.md` | editing `coscc/auth.py`, `coscc/run.py`, or adding any route |
+| the login door, `EXEMPT`, proxies, hashing limits | `.claude/rules/coscc-auth.md` | editing `coscc/web/auth.py`, `coscc/run.py`, or adding any route |
 | scratch `COS_DATA_DIR`, `COSCC_PROTECTED_DB`; what a session loads of `~/.claude/` and the project | `.claude/rules/coscc-sessions.md` | editing `coscc/agent/sessions.py`, `coscc/agent/steps.py`, `coscc/agent/instructions.py`, or adding a rule |
 | a worktree per unit, `switch main`, fetches before a step; names from `main` in `impl`'s prompt | `.claude/rules/coscc-worktrees.md` | editing `coscc/git/worktrees.py`, `gitops.py`, `drift.py`, `fetches.py`, or `run_step`'s preparation |
 | `POST /api/units/integrate` force-pushes; `gh pr list` per board read and per `pr` step | `.claude/rules/coscc-integrate.md` | editing `coscc/github/integrate.py`, the `integrate` or `pr` grant, or the board's integration read |

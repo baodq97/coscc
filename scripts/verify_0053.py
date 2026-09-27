@@ -71,7 +71,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import argon2  # noqa: E402
 import httpx  # noqa: E402
 
-from coscc import auth  # noqa: E402
+from coscc.web import auth  # noqa: E402
 from coscc.config import from_env  # noqa: E402
 from coscc.data import Data  # noqa: E402
 from scripts.proof_harness import (  # noqa: E402

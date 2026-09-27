@@ -35,7 +35,7 @@ def skill_for(stage: str) -> str:
     fatal is only safe when the absence is small; the measurement says it was not.
 
     **It refuses in `RunError`, not in `MissingRules`.** `coscc/service.py` maps this
-    module's refusals with one `except RunError`, and `coscc/api.py` turns that into a 400
+    module's refusals with one `except RunError`, and `coscc/web/api.py` turns that into a 400
     that names what went wrong. A second exception type crossing that boundary is not a
     second kind of refusal, it is a 500: measured 2026-09-22 on a workspace whose harness
     had `cos.mjs` but no skills -- an incomplete copy step, which is exactly the shape

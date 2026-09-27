@@ -12,7 +12,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from coscc import frontend
+from coscc.web import frontend
 from coscc.agent import harness
 from coscc.agent.harness import MissingRules
 

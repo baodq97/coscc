@@ -541,7 +541,7 @@ class Runner:
                     # (`0099`, measured on `0085`'s plan). `_write_artifact` now drops what
                     # comes before the artifact's last title line instead.
                     #
-                    # Not forwarded. `coscc/api.py:227-231` treats every kind that is not
+                    # Not forwarded. `coscc/web/api.py:227-231` treats every kind that is not
                     # `chunk` as the terminal `done` row, so a third kind reaching it would
                     # arrive at the client as a malformed `done`.
                     pieces.append("")

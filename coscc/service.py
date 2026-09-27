@@ -138,7 +138,7 @@ class Service(
     # only, like `pull` (`.claude/rules/coscc-app.md`).
     _comment_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     # `0111` R3. Held across one retake of a unit's screenshots, for the whole app: every
-    # capture binds `127.0.0.1:18783` (`scripts/capture_screens.py:112`), so two at once fail.
+    # capture binds `127.0.0.1:18783` (`scripts/capture_screens.py:113`), so two at once fail.
     # A capture a session runs does not take it (spec C1). One process only, like `pull`.
     _screens_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     # `0111` review round 1, F3. The retake running now, if any, `{workspace, unit, started}`

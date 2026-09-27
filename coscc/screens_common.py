@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc import studio as s
+from coscc.web import studio as s
 from coscc.state import StudioState
 
 

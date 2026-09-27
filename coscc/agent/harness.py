@@ -3,13 +3,13 @@
 Two things in this app are read from outside `coscc/`: the compiled frontend, and the
 harness — `cos.mjs`, which decides what a stage's status means, and the skills, which are
 the text a step is told to follow. `0011` gave the frontend a packaged home
-(`coscc/frontend.py:90`) and a release step that copies it there. The harness got neither,
+(`coscc/web/frontend.py:90`) and a release step that copies it there. The harness got neither,
 and `.cos/0012_installed-copy-runs-no-stage/intent.md` is the measurement of what that
 cost: on `v0.2.2` installed from the release, `coscc/units/board.py` answered 400 and a step ran
 with 4.569 characters of its rules missing and no record that they had been.
 
 This module is the second half of that decision, and it is deliberately the *same* half.
-`root()` mirrors `coscc/frontend.py:106-113`: **the packaged copy wins when it is there.**
+`root()` mirrors `coscc/web/frontend.py:106-113`: **the packaged copy wins when it is there.**
 A wheel has no checkout to fall back to, and a checkout has no `coscc/_harness/` unless
 somebody built one.
 
@@ -37,7 +37,7 @@ import zipfile
 from pathlib import Path
 
 import coscc
-from coscc import frontend
+from coscc.web import frontend
 from coscc.units import states
 from coscc.agent import models
 
@@ -47,7 +47,7 @@ _HERE = Path(coscc.__file__).resolve().parent
 
 # Where the release puts the harness inside the wheel. `pyproject.toml:29-30` ships
 # everything under `coscc/`, so this is the one place a packaged tree can live -- the same
-# sentence, for the same reason, as `coscc/frontend.py:88-90`.
+# sentence, for the same reason, as `coscc/web/frontend.py:88-90`.
 PACKAGE_HARNESS = _HERE / "_harness"
 
 # The checkout's own copy, one level up beside `coscc/`. This is the `parent.parent` that
@@ -170,7 +170,7 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
 
     - no frontend: the page 404s while `/api/health` answers;
     - no compile marker: the service reports `active` and serves nothing at all (measured
-      2026-09-22 on a clean Debian 13 VM, `coscc/frontend.py:64-70`);
+      2026-09-22 on a clean Debian 13 VM, `coscc/web/frontend.py:64-70`);
     - no `cos.mjs`: the Board answers 400 (measured 2026-09-22 on `v0.2.2`);
     - no skills: a step runs without its rules;
     - no `states.json`: nothing can read or write a transition, because `coscc/units/states.py`

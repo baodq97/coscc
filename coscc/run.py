@@ -10,7 +10,7 @@ Instead the compiled frontend is mounted into the same ASGI app that serves `/ap
 
 **Two kinds of install, and they get different answers to the same question.**
 `0011` gave this app a second shape: a wheel that carries its own compiled bundle under
-`coscc/_web/`, installed on a machine with no checkout and no Node. `coscc/frontend.py`
+`coscc/_web/`, installed on a machine with no checkout and no Node. `coscc/web/frontend.py`
 decides which of the two is in front of us, and the branch below is the whole difference:
 
 *A checkout* can rebuild, so a bundle that disagrees with the source is a real error with a
@@ -20,7 +20,7 @@ was.
 *A packaged install* cannot rebuild; there is no `reflex export` to run and no Node to run
 it with. Refusing there would leave a person holding a wheel that can never start. So the
 address baked into the bundle is rewritten to the address actually being served, and the
-app comes up. `coscc/frontend.py` explains what is rewritten and why the `.gz` sidecar
+app comes up. `coscc/web/frontend.py` explains what is rewritten and why the `.gz` sidecar
 matters as much as the `.js`.
 
 Build the frontend first, in a checkout:
@@ -39,7 +39,7 @@ from pathlib import Path
 
 # Safe at module level, and the helpers below need it there: it imports nothing from
 # Reflex, so it cannot disturb the ordering the two environment variables depend on.
-from coscc import frontend
+from coscc.web import frontend
 
 # The same: standard library only (`coscc/update/__init__.py`'s docstring says why it must be).
 from coscc import update
@@ -239,7 +239,7 @@ def _point_the_bundle_here(static: Path, config) -> None:
     """A packaged bundle is built once and served wherever it lands.
 
     Two things have to be true before it can serve at all, and the second one is the half
-    that was missed until a clean machine found it -- see `coscc/frontend.py`.
+    that was missed until a clean machine found it -- see `coscc/web/frontend.py`.
     """
     # Without this, Reflex recompiles on every start and ends that compile by shelling out
     # to Bun or npm, which a packaged install does not have. `Type=simple` makes that look
@@ -262,7 +262,7 @@ def _point_the_bundle_here(static: Path, config) -> None:
     except frontend.NoEnvChunk as missing:
         # The one failure that must stop the process. Serving on is the 2026-09-21
         # failure exactly: a page that renders, an API that is healthy, and a socket
-        # that never connects. `coscc/frontend.py` measurement 2.
+        # that never connects. `coscc/web/frontend.py` measurement 2.
         print(str(missing), file=sys.stderr)
         raise SystemExit(2)
     except OSError as denied:

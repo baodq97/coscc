@@ -16,7 +16,7 @@ a VM that people reach from elsewhere -- the originator decided it that day, aft
 shown what it costs. What it costs is written in `0011`'s `spec.md` C1 and is not softened
 here. Until `0070` nothing asked for a password, so every machine that could route to
 this port could use all of it, including the two controls that spend real Claude quota.
-Since `0070` the master password in `coscc/auth.py` stands in front; what binding every
+Since `0070` the master password in `coscc/web/auth.py` stands in front; what binding every
 interface still costs is the wire, and the startup banner in `coscc/run.py` says that out
 loud every time the address is not loopback.
 """

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc import studio as s
+from coscc.web import studio as s
 from coscc.state import Activity, Workspace
 from coscc.screens_common import P, _details
 from coscc.screens_chrome import _event_row, _metrics

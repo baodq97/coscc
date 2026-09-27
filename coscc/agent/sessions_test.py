@@ -17,7 +17,7 @@ from unittest import mock
 import claude_agent_sdk as sdk
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
-from coscc import frontend
+from coscc.web import frontend
 from coscc.agent import sessions
 from coscc.config import PROTECTED_DB_VAR, Config
 from coscc.data import Data

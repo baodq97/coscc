@@ -86,8 +86,9 @@ MARKER = _BACKEND / "stateful_pages.json"
 BUNDLED_LIBRARIES = _BACKEND / "bundled_libraries.json"
 
 # Where the release puts the bundle inside the wheel. `pyproject.toml` ships everything
-# under `coscc/`, so this is the one place a packaged tree can live.
-PACKAGE_WEB = Path(__file__).resolve().parent / "_web"
+# under `coscc/`, so this is the one place a packaged tree can live: the package root, one up
+# from this module's own `web/` (`0129`).
+PACKAGE_WEB = Path(__file__).resolve().parents[1] / "_web"
 
 # Only the authority of an absolute URL is replaced, and the scheme is preserved: the
 # chunk holds both `http://` and `ws://` forms of the same address, and turning one into

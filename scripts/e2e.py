@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx  # noqa: E402
 
-from coscc import auth
+from coscc.web import auth
 from coscc.units import hold
 from coscc.runlog import notices  # noqa: E402
 from coscc.config import from_env  # noqa: E402

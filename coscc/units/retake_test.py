@@ -150,7 +150,7 @@ class ARetakePastItsTimeIsKilledWithEverythingItStarted(unittest.TestCase):
 
 
 _CLEARS = (
-    # What `clear_out` does before any browser opens (`scripts/capture_screens.py:392-396`),
+    # What `clear_out` does before any browser opens (`scripts/capture_screens.py:393-397`),
     # and a first image of the new run.
     "import glob, os\n"
     "os.makedirs('.screens', exist_ok=True)\n"

@@ -21,7 +21,7 @@ import httpx
 
 from coscc.units import board as board_reader
 from coscc.git import worktrees
-from coscc.api import build
+from coscc.web.api import build
 from coscc.config import Config
 from coscc.service import Invalid
 

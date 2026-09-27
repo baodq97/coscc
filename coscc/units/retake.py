@@ -51,7 +51,7 @@ _KEEP_BYTES = 64 * 1024
 def env(data_dir: str | os.PathLike[str] | None = None) -> dict[str, str]:
     """This process's environment, every `__REFLEX_*` blank, and this app's `cos.db` protected.
 
-    `capture_screens.py` deletes the blank ones itself (`scripts/capture_screens.py:345`).
+    `capture_screens.py` deletes the blank ones itself (`scripts/capture_screens.py:346`).
     `data_dir` is the app's data root, `None` meaning the default `~/.cos`.
     """
     e = dict(os.environ)
@@ -89,7 +89,7 @@ def read_manifest(tree: Path) -> dict[str, Any] | None:
 
 def _replaced(out: Path) -> list[Path]:
     """What a run of the command replaces in `out`: what `clear_out` removes
-    (`scripts/capture_screens.py:392-396`), and nothing else."""
+    (`scripts/capture_screens.py:393-397`), and nothing else."""
     if not out.is_dir():
         return []
     return [f for f in [*out.glob("*.png"), *out.glob("*.txt"), out / "manifest.json"] if f.is_file()]

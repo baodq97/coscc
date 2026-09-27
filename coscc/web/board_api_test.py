@@ -13,10 +13,10 @@ from pathlib import Path
 
 import httpx
 
-from coscc.api import build
+from coscc.web.api import build
 from coscc.config import Config
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parents[2]
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
 
 

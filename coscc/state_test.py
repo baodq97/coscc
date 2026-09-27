@@ -18,7 +18,7 @@ import ast
 import re
 import unittest
 
-from coscc import present
+from coscc.web import present
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent / "state.py"
@@ -972,10 +972,10 @@ class ADroppedUnitsDialogOffersNothingThatWrites(unittest.TestCase):
 
 
 class TheRoutesAreTheNavigation(unittest.TestCase):
-    """`0056`: `coscc/place.py` may not import the state, so its screen list is a copy."""
+    """`0056`: `coscc/web/place.py` may not import the state, so its screen list is a copy."""
 
     def test_screens_match(self):
-        from coscc import place
+        from coscc.web import place
         from coscc.state import NAVIGATION
 
         self.assertEqual(place.SCREENS, tuple(key for key, _, _ in NAVIGATION))

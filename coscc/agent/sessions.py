@@ -35,7 +35,7 @@ from claude_agent_sdk import (
 )
 
 from coscc import config as cfg
-from coscc import frontend
+from coscc.web import frontend
 from coscc.agent import instructions
 from coscc.config import Config
 from coscc.data import Data
@@ -58,7 +58,7 @@ from coscc.data import Data
 # hour later, because the assertion was about this process and the damage was in the
 # child. It is overridden now, and the test asks what value the child would read.
 #
-# `<cwd>/.web` is where a checkout's build belongs: `coscc/frontend.py` `web_dir` returns
+# `<cwd>/.web` is where a checkout's build belongs: `coscc/web/frontend.py` `web_dir` returns
 # exactly that for anything not packaged, and a session's `cwd` is the workspace.
 #
 # Since `0017` a step's `cwd` is the unit's own worktree, not the workspace, and three more

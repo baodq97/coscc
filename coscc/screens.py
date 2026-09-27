@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc import studio as s
+from coscc.web import studio as s
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
 # `coscc.screens.<name>` still resolves; a patch reaches only the module that looks it up.

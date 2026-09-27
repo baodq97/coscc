@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from coscc.units import autopilot
-from coscc.auth import WS_RECHECK
+from coscc.web.auth import WS_RECHECK
 
 # The run-log kinds a notice can come from; `Journal.notice_rows` narrows on them.
 SOURCE_KINDS = ("autopilot-stop", "questions", "end", "ship")

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from coscc.git import gitops
-from coscc import present
+from coscc.web import present
 
 
 # The eight stage names, in stage order. Taken from the stage list the board reports rather

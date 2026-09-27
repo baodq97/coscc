@@ -553,7 +553,7 @@ class TheTrialLogsIn(unittest.IsolatedAsyncioTestCase):
 
         import uvicorn
 
-        from coscc import auth
+        from coscc.web import auth
         from coscc.data import Data
 
         async def ok(scope, receive, send):

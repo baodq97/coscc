@@ -13,7 +13,8 @@ import unittest
 
 import reflex as rx
 
-from coscc import present, screens
+from coscc import screens
+from coscc.web import present
 
 VIETNAMESE = re.compile(r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]", re.I)
 

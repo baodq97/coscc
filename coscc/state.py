@@ -27,8 +27,8 @@ import reflex as rx
 from reflex_base.event.context import EventContext
 
 from coscc.runlog import events as events_mod
-from coscc import place, present
-from coscc.api import build
+from coscc.web import place, present
+from coscc.web.api import build
 from coscc.service import COLLAPSED_STATES, Invalid, describe_base
 
 # `0095`: these moved to modules of their own. Every name is imported back, so

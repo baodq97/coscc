@@ -213,7 +213,7 @@ class NoWebFrameworkLeaksIn(unittest.TestCase):
 
 
 class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
-    """The boundary `coscc/api.py:157-164` depends on, and the one review caught open.
+    """The boundary `coscc/web/api.py:157-164` depends on, and the one review caught open.
 
     `run_step` maps this layer's refusals with one `except RunError`. 0012 introduced a
     second exception type on that path -- `harness.MissingRules`, raised when a stage's

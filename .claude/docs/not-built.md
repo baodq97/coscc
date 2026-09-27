@@ -183,7 +183,7 @@ Read this before adding a route, a button or a grant, and before copying this ha
 - **A login that knows who you are.** Since `0070` every route — the page, its socket,
   `/api`, the static files, paths that do not exist — is refused without a live session;
   only `/api/health`, `/login`, and `/setup` until a password is set, answer.
-  `coscc/auth.py` is that door, and it is one master password for one user: it proves
+  `coscc/web/auth.py` is that door, and it is one master password for one user: it proves
   someone holds the password, not who they are, so every `owner` above — and every name a
   request carries or an older row kept — is still only a word. The default bind is still `0.0.0.0` and the app serves plain HTTP, so off loopback
   the password, the cookie and the setup token cross the network readable until someone

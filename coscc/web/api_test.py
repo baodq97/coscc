@@ -15,7 +15,7 @@ import claude_agent_sdk as sdk
 import httpx
 
 from coscc import update
-from coscc.api import build
+from coscc.web.api import build
 from coscc.config import Config
 
 
@@ -320,7 +320,7 @@ class NoHandWrittenMarkup(unittest.TestCase):
     GENERATED = "_web"
 
     def test_the_app_ships_no_hand_written_html_or_css(self):
-        repo = Path(__file__).resolve().parent.parent
+        repo = Path(__file__).resolve().parents[2]
         found = [
             p.relative_to(repo)
             for p in list(repo.glob("coscc/**/*.html")) + list(repo.glob("coscc/**/*.css"))
@@ -488,7 +488,7 @@ class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(one["events"][0]["input"], {"n": 0})
 
     async def test_refusals_are_400(self):
-        from coscc import auth
+        from coscc.web import auth
 
         for params in ({"run": "r-ended", "limit": "many"}, {"run": "nope"}, {"run": "r-ended", "unit": "0002_b"}):
             r = await self.get("/api/board/events", **params)
@@ -541,7 +541,7 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await client.get("/api/notices/follow")).status_code, 400)
 
     async def test_the_notice_route_is_behind_the_login(self):
-        from coscc import auth
+        from coscc.web import auth
 
         paths = {r.path for r in self.app.routes}
         self.assertIn("/api/notices/follow", paths)
@@ -554,7 +554,7 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
         import io
         import time
 
-        from coscc import auth
+        from coscc.web import auth
         from coscc.runlog import notices
         from coscc.data import Data
         from coscc.runlog.journal import Journal

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc import studio as s
+from coscc.web import studio as s
 from coscc.state import NAVIGATION, WatchEvent
 from coscc.screens_common import P, _MONO
 from coscc.screens_chrome import _nav, _workspace_select

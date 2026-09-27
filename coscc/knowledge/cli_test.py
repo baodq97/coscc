@@ -272,7 +272,7 @@ class OnlyATerminalReachesIt(unittest.TestCase):
         # `0095`: `Service` is spread over `service.py` and the `service_*.py` it was split into.
         split = [f"coscc/{p.name}" for p in sorted((REPO / "coscc").glob("service_*.py")) if not p.name.endswith("_test.py")]
         self.assertTrue(split)
-        for name in ("coscc/api.py", "coscc/units/autopilot.py", "coscc/service.py", *split):
+        for name in ("coscc/web/api.py", "coscc/units/autopilot.py", "coscc/service.py", *split):
             with self.subTest(module=name):
                 self.assertFalse(self.forbidden(REPO / name))
 

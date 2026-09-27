@@ -81,7 +81,7 @@ session is seeded (`0113` plan, *Proof*).
 
 ## Hazards
 
-- **The cookie lives 30 days from its last use** (`coscc/auth.py`, `SESSION_TTL`), and the
+- **The cookie lives 30 days from its last use** (`coscc/web/auth.py`, `SESSION_TTL`), and the
   jar holds a live session: whoever reads that file can call every route. Once the session
   ends — its 30 days, a logout, `coscc reset-password` — a listener hears nothing past the
   end of the stream it is on, at most 30 s; its next connection is refused, it stops with

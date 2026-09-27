@@ -647,13 +647,15 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
     def test_r1_nothing_but_the_route_and_the_page_calls_it(self):
         """R1. Structural: no read, no timer, no step and no answer starts Jera."""
         callers = []
-        for path in sorted(Path(REPO, "coscc").glob("*.py")):
-            if path.name.endswith("_test.py"):
+        # The whole package, since `0129` put its modules in subpackages.
+        for path in sorted(Path(REPO, "coscc").rglob("*.py")):
+            relative = path.relative_to(REPO).as_posix()
+            if path.name.endswith("_test.py") or relative.startswith(("coscc/_harness/", "coscc/_web/")):
                 continue
             if ".precedent(" in path.read_text(encoding="utf-8"):
-                callers.append(path.name)
+                callers.append(relative)
         # `0095`: the page's handler that asks Jera moved with `AnswersMixin`.
-        self.assertEqual(callers, ["api.py", "state_answers.py"])
+        self.assertEqual(callers, ["coscc/state_answers.py", "coscc/web/api.py"])
 
     def test_r2_a_unit_with_no_open_question_is_refused_before_a_session(self):
         self.reply(self.item(1), self.item(2))

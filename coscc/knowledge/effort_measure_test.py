@@ -278,13 +278,13 @@ class OnlyATerminalReachesIt(unittest.TestCase):
     def test_api_autopilot_and_service_do_not_import_it(self):
         split = [f"coscc/{p.name}" for p in sorted((REPO / "coscc").glob("service*.py")) if not p.name.endswith("_test.py")]
         self.assertTrue(split)
-        for name in ("coscc/api.py", "coscc/units/autopilot.py", *split):
+        for name in ("coscc/web/api.py", "coscc/units/autopilot.py", *split):
             with self.subTest(module=name):
                 self.assertNotIn(self.MEASURE, imported(REPO / name))
 
     def test_it_imports_nothing_of_the_web_app(self):
         found = imported(REPO / "coscc/knowledge/effort_measure.py")
-        self.assertFalse({n for n in found if n.startswith(("coscc.service", "coscc.state", "coscc.screens", "coscc.api"))}, found)
+        self.assertFalse({n for n in found if n.startswith(("coscc.service", "coscc.state", "coscc.screens", "coscc.web.api"))}, found)
 
     def test_the_check_would_see_one(self):
         with tempfile.TemporaryDirectory() as d:

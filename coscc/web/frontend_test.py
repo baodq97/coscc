@@ -18,7 +18,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import frontend
+from coscc.web import frontend
 
 # Copied from `.web/build/client/assets/reflex-env-C1wtcuvo.js`, 2026-09-22.
 CHUNK = (

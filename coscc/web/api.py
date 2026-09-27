@@ -15,7 +15,7 @@ into a `Service` call and a result back into JSON.
 
 Reflex reserves `/ping/`, `/_event` and `/_upload`. Nothing here may use them.
 
-**Every route here sits behind `coscc/auth.py`** (`0070`), which decides before this app
+**Every route here sits behind `coscc/web/auth.py`** (`0070`), which decides before this app
 sees a request: without a live session only `GET /api/health` gets through. The guard also
 serves `/login`, `/setup` and `/logout` itself — they are not routes of this app, and
 nothing here may use them either. One password, one user: whoever holds it or a live

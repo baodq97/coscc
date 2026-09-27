@@ -193,7 +193,7 @@ async def proof(tmp: Path) -> bool:
     import httpx
 
     from coscc.units import backlog
-    from coscc.api import build
+    from coscc.web.api import build
     from coscc.config import Config
     from coscc.runlog.journal import Journal
 

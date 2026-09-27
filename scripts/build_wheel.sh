@@ -62,7 +62,7 @@ uv run coscc-build >&2
 # `REFLEX_WEB_WORKDIR` names a *web directory*, and Reflex's static mount appends
 # `Dirs.STATIC` — `build/client` — to whatever it names (read from
 # reflex/utils/exec.py:376-380, 2026-09-22). Flattening the copy here would leave
-# `coscc/frontend.py` pointing that variable at a tree whose `build/client` does not exist,
+# `coscc/web/frontend.py` pointing that variable at a tree whose `build/client` does not exist,
 # and the page would 404 while the API stayed healthy.
 rm -rf coscc/_web
 mkdir -p coscc/_web/build/client
