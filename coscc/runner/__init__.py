@@ -459,6 +459,7 @@ class Runner:
             unfinished_round=unfinished_round,
             idea_note=idea_note,
             siblings_note=siblings_note,
+            runs_commands="Bash" in grant.tools,
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,

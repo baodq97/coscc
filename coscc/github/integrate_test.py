@@ -594,6 +594,17 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
         end = asyncio.run(go())[-1][1]
         self.assertEqual((end["denials"], end["background"]), (2, 1))
 
+    def test_gebo_is_told_once(self):
+        """`0130` R4: Gebo's session ends with its turn, as a board step's does."""
+        from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
+
+        prompt = ig.build_prompt(
+            skill="rules", unit="0130_x", branch="feat/x", pr=7, state="conflicting", reason="r",
+            head_before=HEAD, origin_sha=MAIN, rel={}, units_root=Path("/u"), own_paths={},
+        )
+        self.assertEqual(prompt.count(SESSION_ENDS_HEADING), 1)
+        self.assertIn(SESSION_ENDS_ADVICE, prompt)
+
 
 def fake_gh(bindir: Path, stdout: str = "", code: int = 0) -> Path:
     """A `gh` first on `PATH` that prints `stdout`, exits `code`, and logs its argv."""
