@@ -72,7 +72,7 @@ from coscc.data import Data
 # running app's `cos.db` to a schema the app could not read. `config.PROTECTED_DB_VAR`
 # names that database too, for the code that reaches `~/.cos` without reading the setting.
 def child_env(
-    cwd: str, workspace: str | None = None, *, data_dir: str, app_db: Path
+    cwd: str, workspace: str | None = None, *, data_dir: str, app_db: Path, bash: bool = False
 ) -> dict[str, str]:
     """What to lay over the environment a session would otherwise inherit whole.
 
@@ -82,6 +82,9 @@ def child_env(
 
     `data_dir` is the session's throwaway data root (`scratch_dir`) and `app_db` this
     app's `cos.db`. Both are required, so no session environment can be built without them.
+
+    `bash` (`0130` R5) is true when the session holds `Bash`; it then also gets
+    `FOREGROUND_ENV`.
     """
     from coscc.git import worktrees  # here, not at the top: worktrees imports prcomment
 
@@ -97,7 +100,29 @@ def child_env(
     env.update({name: "" for name in os.environ if name.startswith(("COS_", "__REFLEX_"))})
     env["COS_DATA_DIR"] = data_dir
     env[cfg.PROTECTED_DB_VAR] = cfg.protect(app_db)
+    if bash:
+        env.update(FOREGROUND_ENV)
     return env
+
+
+# `0130` R5. The app closes a step's session once its turn ends, so a command must end in
+# the foreground or be killed, never be left running where nothing reads its end. Measured on claude-agent-sdk 0.2.159 (`0130 spike.md`):
+#
+# - `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`: two roads to the background never reach
+#   `can_use_tool`. A command the CLI takes for read-only runs in the background unasked
+#   (`## U1`, result 2), and a foreground command past its timeout is moved there (`## U2`,
+#   result 1). With this set the first is refused by the CLI's own schema and the second is
+#   killed (`## U2`, result 3, runs `u1c` and `u2g`).
+# - `BASH_DEFAULT_TIMEOUT_MS`: what a call asking no `timeout` gets (`## U2`, result 5).
+#   The longest proof measured, a build and `npm run e2e`, took about 196 s (`## U3`);
+#   600000 is above twice that, and is the CLI's own default ceiling (`## U2`, result 4).
+# - `BASH_MAX_TIMEOUT_MS`: the most a call may ask for, set to the same, not higher.
+#   Above 600000 was read from the CLI's code only, never run (`## U2`, result 4).
+FOREGROUND_ENV = {
+    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
+    "BASH_DEFAULT_TIMEOUT_MS": "600000",
+    "BASH_MAX_TIMEOUT_MS": "600000",
+}
 
 
 # What every throwaway data root starts with. `_drop` removes nothing without it.
@@ -520,16 +545,19 @@ def _options(
     `data_dir` is the session's own data root (`0076`); the database it protects is the
     one `config` names. Building a `Data` touches no disk.
     """
+    # A board step brings its own list from `policy.Grant`; everything else gets the
+    # app default, which is empty. `tools=[]` and `tools=None` mean different things to
+    # the SDK, so the distinction is `is None`, not truthiness. Read once, so the
+    # environment below follows the same list the session is handed.
+    resolved = config.effective_tools() if tools is None else list(tools)
     options = ClaudeAgentOptions(
         cwd=cwd,
         # Laid over what the child would inherit. See `child_env` and what it cost twice.
         env=child_env(
-            cwd, workspace, data_dir=data_dir, app_db=Data(config.data_dir).db_path
+            cwd, workspace, data_dir=data_dir, app_db=Data(config.data_dir).db_path,
+            bash="Bash" in resolved,
         ),
-        # A board step brings its own list from `policy.Grant`; everything else gets the
-        # app default, which is empty. `tools=[]` and `tools=None` mean different things to
-        # the SDK, so the distinction is `is None`, not truthiness.
-        tools=config.effective_tools() if tools is None else list(tools),
+        tools=resolved,
         permission_mode=config.permission_mode(),
         resume=resume,
         fork_session=False,  # spec.md C7 — R3 needs the same id back, not a branch

@@ -459,6 +459,7 @@ class Runner:
             unfinished_round=unfinished_round,
             idea_note=idea_note,
             siblings_note=siblings_note,
+            runs_commands="Bash" in grant.tools,
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
@@ -965,6 +966,9 @@ class Runner:
                     detail=detail or None,
                     denials=denials.count,
                     denied=denials.reasons or None,
+                    # `0130` R3: every step that may run a command says how many it was
+                    # refused for running in the background, zero included.
+                    **({"background": denials.background} if "Bash" in grant.tools else {}),
                     models_used=models_used or None,
                     terminal=terminal or None,
                     **(

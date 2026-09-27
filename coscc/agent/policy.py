@@ -462,6 +462,14 @@ def is_prose_stage(stage: str) -> bool:
 # arrived at a session created with `tools=[]`, because `--tools` names the built-in set and
 # nothing else. A callback sits on the path every call takes, whatever declared it.
 
+# `0130`. A step's session is closed once its turn ends, so a command left running in the
+# background is one nobody reads the end of. The words are the ones `0130 spike.md ## U1`
+# refused with, after which the model ran the command again in the foreground, same turn.
+BACKGROUND_REFUSAL = (
+    "this session ends when your turn ends and nothing wakes it when a background command "
+    "finishes; run the command in the foreground"
+)
+
 # `0060`: the line is read the way bash reads it, not split as raw text. Until then `;`, `|`
 # and `&&` were split on wherever they stood, quotes and heredoc bodies included, and
 # `$(`, `` ` `` and `${` were refused wherever they stood, single quotes included. The
@@ -502,6 +510,8 @@ class _Parsed:
     commands: tuple[_Simple, ...]
     # Every substitution in effect, as `(token, at)`: `$(`, `` ` ``, `<(`, `>(`, `$((`.
     substitutions: tuple[tuple[str, int], ...]
+    # `0130` R2. Where each lone `&` stands: a command it ends runs in the background.
+    background: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -548,6 +558,7 @@ class _Reader:
         # still reports its position in the whole command.
         self.base = base
         self.subs: list[tuple[str, int]] = []
+        self.amps: list[int] = []
 
     def at(self, j: int) -> int:
         return self.base + j
@@ -640,6 +651,8 @@ class _Reader:
                         raise _Stop(f"a redirect ({pending[0]}) with no target", self.at(pending[2]))
                     pending = (op, "", amp)
                 else:
+                    if self.char(j) != "&":
+                        self.amps.append(self.at(self.i))
                     end_command(self.i)
                     self.i = j + 1 if self.char(j) == "&" else self.i + 1
             elif c == "|":
@@ -761,6 +774,7 @@ class _Reader:
                         body = _Reader(s[begin:line_start], self.at(begin))
                         body.expanding()
                         self.subs.extend(body.subs)
+                        self.amps.extend(body.amps)
                     break
                 logical, line_start = "", self.i
             self.i = min(self.i, self.n)
@@ -989,7 +1003,9 @@ def _read(command: str) -> _Parsed | _Unreadable:
         commands = reader.commands()
     except _Stop as stop:
         return _Unreadable(stop.what, stop.at)
-    return _Parsed(tuple(commands), tuple(sorted(reader.subs, key=lambda t: t[1])))
+    return _Parsed(
+        tuple(commands), tuple(sorted(reader.subs, key=lambda t: t[1])), tuple(sorted(reader.amps))
+    )
 
 
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -1044,8 +1060,8 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
     the thing that turns obvious mistakes into refusals, not as a sandbox.
 
     Since `0060` the line is read as bash reads it (`_read`), and checked in this order: a
-    line that cannot be read, a substitution in effect, a redirect that writes, then every
-    simple command. `unit` is the step's own unit, `NNNN_<slug>`: a redirect may write under
+    line that cannot be read, a lone `&` (`0130`), a substitution in effect, a redirect that
+    writes, then every simple command. `unit` is the step's own unit, `NNNN_<slug>`: a redirect may write under
     a `/tmp` directory naming it (`_redirect_refused`). **That write is outside the write
     boundary `decide` keeps**, and nothing creates or removes the directory.
     """
@@ -1058,6 +1074,9 @@ def check_command(grant: Grant, command: str, lease: tuple[str, str] | None = No
             f"this command could not be read as the shell reads it: {parsed.what} "
             f"at character {parsed.at + 1}; nothing was guessed"
         )
+    if parsed.background:
+        # `0130` R2. `&&`, `&>`, `&>>`, `>&`, `<&` and `|&` are read elsewhere and never land here.
+        return f"`&` at character {parsed.background[0] + 1} runs a command in the background: {BACKGROUND_REFUSAL}"
     if parsed.substitutions:
         # With substitution in play the first word no longer says what runs.
         token = parsed.substitutions[0][0]
@@ -1318,6 +1337,11 @@ def decide(
         return f"this step was not granted {tool}"
 
     if tool in EXEC_TOOLS:
+        # `0130` R1. Only the calls the CLI asks about reach here: one it takes for read-only
+        # runs in the background without asking (`0130 spike.md ## U1`, result 2), which is
+        # what `sessions.FOREGROUND_ENV` closes.
+        if tool_input.get("run_in_background"):
+            return f"run_in_background is refused: {BACKGROUND_REFUSAL}"
         # `0060`: the unit's name opens a `/tmp` directory to redirects. Writes there are
         # outside the boundary the write tools are held to below.
         from pathlib import Path

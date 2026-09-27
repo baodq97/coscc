@@ -243,6 +243,19 @@ COMMANDS_ADVICE = (
     "`Edit` instead."
 )
 
+# `0130` R4. For every step whose grant holds `Bash`, and for Gebo (`integrate.build_prompt`):
+# the app closes the session when its turn ends, so a step that ends its turn to wait for a
+# command has ended.
+SESSION_ENDS_HEADING = "# Your last turn ends this session"
+SESSION_ENDS_ADVICE = (
+    "This session ends when your turn ends. Nothing arrives after it: no notice that a command "
+    "finished, no further turn. A command run in the background — `run_in_background`, or a "
+    "lone `&` — is refused. Run long commands, the proof among them, in the foreground, and "
+    "give one that may pass two minutes a `timeout` of up to 600000 ms. Write what this step "
+    "must leave — its file, or the reply the app writes it from — before you end your turn; "
+    "never end it saying you will wait for something or come back."
+)
+
 
 def _jera_answers(directory: Path, names: list[str]) -> str:
     """`# Answers an agent gave`, listing every `<artifact> ### Câu N` block Jera wrote in
@@ -353,6 +366,7 @@ def compose_prompt(
     unfinished_round: dict[str, Any] | None = None,
     idea_note: str = "",
     siblings_note: str = "",
+    runs_commands: bool = False,
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole (`spec.md` R4), and
     the ones it names by path only (`0094` R16).
@@ -373,6 +387,9 @@ def compose_prompt(
 
     `unfinished_round` (`0027` R6) is `{"n", "dropped"}` of a last round `cos.mjs` read as
     unfinished, placed for `review` only; `None`, or any other stage, adds not one byte.
+
+    `runs_commands` (`0130` R4) is true when the step's grant holds `Bash`, for any stage;
+    false adds not one byte.
 
     The list is returned rather than inferred later because R4 is checked against it: if a
     step ran without the previous stage's artifact in the prompt, the record says so.
@@ -516,6 +533,8 @@ def compose_prompt(
         included.append("commands")
         words = ", ".join(f"`{c}`" for c in commands)
         parts.append(f"{COMMANDS_HEADING}\n\n{words}\n\n{COMMANDS_ADVICE}")
+    if runs_commands:
+        parts.append(f"{SESSION_ENDS_HEADING}\n\n{SESSION_ENDS_ADVICE}")
 
     # `0110` R6. The finding lines earlier reviews raised on the files this plan changes,
     # already chosen and capped (`priorfindings.select`); this only places it, before the

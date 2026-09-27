@@ -7,7 +7,19 @@ from __future__ import annotations
 
 import unittest
 
-from coscc.runner.attempt import describe_attempt
+from coscc.agent.policy import BACKGROUND_REFUSAL
+from coscc.runner.attempt import Denials, describe_attempt
+
+
+class DenialsCountTheBackgroundRuns(unittest.TestCase):
+    """`0130` R3."""
+
+    def test_a_background_refusal_is_counted_apart_from_the_rest(self):
+        denials = Denials()
+        denials.record("Bash", f"run_in_background is refused: {BACKGROUND_REFUSAL}")
+        denials.record("Bash", f"`&` at character 13 runs a command in the background: {BACKGROUND_REFUSAL}")
+        denials.record("Bash", "this step may not run 'curl'")
+        self.assertEqual((denials.count, denials.background), (3, 2))
 
 
 class DescribeAttemptRendersTheRecord(unittest.TestCase):

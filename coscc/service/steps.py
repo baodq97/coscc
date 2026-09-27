@@ -580,6 +580,7 @@ class StepsMixin:
                 key, unit, "integrate", "done" if outcome in ("pushed", "needs-person") else "failed",
                 session_id=end.get("session_id", ""), detail="; ".join(details) or None,
                 denials=end.get("denials", 0), denied=end.get("denied"),
+                background=end.get("background", 0),
                 models_used=end.get("models_used") or None, **(end.get("cost") or {}),
             )
         except (BadRecord, Busy):

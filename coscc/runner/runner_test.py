@@ -1845,6 +1845,32 @@ class TheCommandsAStepMayRun(unittest.TestCase):
         self.assertIn("in one turn", prompt)
 
 
+class TheLastTurnEndsTheSession(unittest.TestCase):
+    """`0130` R4: every step whose grant holds `Bash` is told its session ends with its turn."""
+
+    def prompt_of(self, stage):
+        from coscc.runner.prompt import SESSION_ENDS_HEADING
+
+        steps = AStepCarriesItsGrantAndNothingOfTheMachine()
+        replies = steps.Replies()
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+            steps._run(d, replies, stage=stage)
+        self.assertIn("# The rules for this stage", replies.prompt)
+        return replies.prompt.count(SESSION_ENDS_HEADING)
+
+    def test_every_stage_that_runs_commands_is_told_once(self):
+        for stage in ("impl", "spike", "pr", "ship"):
+            with self.subTest(stage=stage):
+                self.assertIn("Bash", policy.grant_for(stage).tools)
+                self.assertEqual(self.prompt_of(stage), 1)
+
+    def test_no_prose_stage_is_told(self):
+        for stage in ("idea", "intent", "spec", "plan", "review"):
+            with self.subTest(stage=stage):
+                self.assertEqual(self.prompt_of(stage), 0)
+
+
 class AStepRecordsThePlanMapItCarried(AStepRecordsTheBaseItRanOn):
     """`0096` R11: the record handed in is the record written, and none is no field."""
 

@@ -516,6 +516,10 @@ def build_prompt(
     parts.append(
         f"The only push allowed: `git push --force-with-lease={branch}:{head_before} origin {branch}`."
     )
+    # `0130` R4: the `integrate` grant always holds `Bash`.
+    from coscc.runner.prompt import SESSION_ENDS_ADVICE, SESSION_ENDS_HEADING
+
+    parts.append(f"\n{SESSION_ENDS_HEADING}\n\n{SESSION_ENDS_ADVICE}")
     if refused_update is not None:
         parts.append("\n# The mechanical rebase was refused\n")
         parts.append(
@@ -812,4 +816,6 @@ async def run_gebo(
     end["reply"] = reply
     end["denials"] = denials.count
     end["denied"] = denials.reasons or None
+    # `0130` R3: the `integrate` grant always holds `Bash`.
+    end["background"] = denials.background
     yield ("end", end)

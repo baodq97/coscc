@@ -190,6 +190,19 @@ class GeboThroughTheService(unittest.TestCase):
         self.service.unit_history(self.cwd, self.unit)
         self.service.activity(self.cwd)
 
+    def test_the_integrate_end_row_counts_background_refusals(self):
+        """`0130` R3: Gebo's `end` row carries `background`, as a board step's does."""
+        refused = {}
+
+        async def act(tree, gate):
+            refused["bg"] = type(await gate("Bash", {"command": "npm test &"}, None)).__name__
+            return "[needs-person] f.txt: both"
+
+        self.integrate_with(act)
+        self.assertEqual(refused["bg"], "PermissionResultDeny")
+        [end] = [r for r in self.records("end") if r.get("stage") == "integrate"]
+        self.assertEqual((end["background"], end["denials"]), (1, 1))
+
     def test_the_start_record_names_the_artifacts_it_pointed_at_and_the_build(self):
         """`0094` R13, R16, review round 1 F7: Gebo's `start` as a board step's."""
 

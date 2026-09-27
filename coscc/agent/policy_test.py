@@ -1200,3 +1200,43 @@ class ASiblingCheckoutIsReadNotChanged(unittest.TestCase):
 
     def test_without_read_also_git_c_reads_as_it_did(self):
         self.assertEqual(decide(IMPL, "Bash", {"command": f"git -C {self.sibling} status"}, str(self.tree)), "")
+
+
+class ABackgroundCommandIsRefused(unittest.TestCase):
+    """`0130` R1 and R2: a step's session ends with its turn, so nothing it starts in the
+    background is ever read back."""
+
+    STAGES = ("impl", "spike", "pr", "ship", "integrate")
+    UNIT_DIR = "/data/units/slot/.cos/0130_x"
+
+    def d(self, stage, tool_input):
+        return decide(grant_for(stage), "Bash", tool_input, "/w", self.UNIT_DIR)
+
+    def test_run_in_background_is_refused_for_every_grant_with_bash(self):
+        for stage in self.STAGES:
+            with self.subTest(stage=stage):
+                self.assertIn("Bash", grant_for(stage).tools)
+                reason = self.d(stage, {"command": "npm test", "run_in_background": True})
+                self.assertIn(policy.BACKGROUND_REFUSAL, reason)
+
+    def test_run_in_background_false_or_absent_decides_as_before(self):
+        for stage in self.STAGES:
+            with self.subTest(stage=stage):
+                self.assertEqual(
+                    self.d(stage, {"command": "npm test", "run_in_background": False}),
+                    self.d(stage, {"command": "npm test"}),
+                )
+        self.assertEqual(self.d("impl", {"command": "npm test"}), "")
+
+    def test_a_lone_ampersand_is_refused(self):
+        for command in ("npm run e2e &", "npm test & git status", "npm test &\ngit status",
+                        "(npm test &)", "npm test & wait"):
+            with self.subTest(command=command):
+                self.assertIn(policy.BACKGROUND_REFUSAL, check_command(IMPL, command))
+
+    def test_the_other_ampersand_operators_read_as_before(self):
+        for command in ("npm test && git status", "npm test &> /dev/null", "npm test &>> /dev/null",
+                        "npm test 2>&1", "git status >&2", "npm test |& git status",
+                        "git commit -m 'a & b'", 'grep "a & b" f'):
+            with self.subTest(command=command):
+                self.assertEqual(check_command(IMPL, command), "")
