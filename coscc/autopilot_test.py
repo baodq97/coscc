@@ -105,7 +105,7 @@ class Stops(unittest.TestCase):
 
     def test_e_0120_a_first_exhausted_step_still_meets_every_other_stop(self):
         ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
-        qs =[{"artifact": "plan.md", "n": 1, "answered": False, "counted": True}]
+        qs = [{"artifact": "plan.md", "n": 1, "answered": False, "counted": True}]
         cases = [
             (unit(qs), nxt("plan", "write-plan"), ran_out, "a"),
             (unit(), nxt("", "answer F1", waiting=["F1"]), ran_out, "b"),
