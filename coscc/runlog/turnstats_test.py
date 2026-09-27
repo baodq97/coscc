@@ -166,7 +166,7 @@ class TheEvents(Fixture):
 
 
 class TheFilesTouched(Fixture):
-    FILES = ["coscc/service/__init__.py", "coscc/state.py"]
+    FILES = ["coscc/service/__init__.py", "coscc/state/__init__.py"]
 
     def files(self, first: int = 20, since: str = "2026-09-24") -> dict:
         return turnstats.measure(str(self.ws), self.data, since, None, self.FILES, first)
@@ -176,7 +176,7 @@ class TheFilesTouched(Fixture):
         self.calls("r1",
                    self.use("a", "Read", file_path="/w/one/coscc/service/__init__.py"),
                    self.result("a", "x" * 30),
-                   self.use("b", "Grep", pattern="def", path="/w/two/coscc/state.py"),
+                   self.use("b", "Grep", pattern="def", path="/w/two/coscc/state/__init__.py"),
                    self.result("b", "hit"),
                    self.use("c", "Read", file_path="/w/one/coscc/service/service_test.py"),
                    self.result("c", "y" * 999))
@@ -203,7 +203,7 @@ class TheFilesTouched(Fixture):
         for n, turns in enumerate((10, 20, 90)):
             run = f"r{n}"
             self.step(f"2026-09-24T1{n}:00:00", f"000{n}_x", turns=turns, run=run)
-            self.calls(run, self.use("a", "Read", file_path="/w/coscc/state.py"), self.result("a", "q"))
+            self.calls(run, self.use("a", "Read", file_path="/w/coscc/state/__init__.py"), self.result("a", "q"))
         f = self.files(first=2)
         self.assertEqual((f["touched_steps"], f["touched_n"], f["touched_turns_mean"]), (3, 2, 15))
 
@@ -219,7 +219,7 @@ class TheFilesTouched(Fixture):
     def test_a_step_whose_events_were_purged_is_counted_apart(self):
         self.step("2026-09-24T10:00:00", "0001_a", turns=10, run="r1")
         self.step("2026-09-24T11:00:00", "0002_b", turns=30, run="r2")
-        self.calls("r2", self.use("a", "Read", file_path="/w/coscc/state.py"), self.result("a", "q"))
+        self.calls("r2", self.use("a", "Read", file_path="/w/coscc/state/__init__.py"), self.result("a", "q"))
         with Data(self.data).connect() as conn:
             for run, purged_at in (("r1", "2026-10-25T00:00:00"), ("r2", None)):
                 conn.execute(

@@ -12,7 +12,7 @@ on a `NULL` read as a number or a number read as `NULL`, and on any figure more 
 Days are counted in this machine's zone, by both sides: run it on the machine the app runs
 on. Run it at a terminal — inside a step `COS_DATA_DIR` is that step's scratch root (`0076`).
 
-What it does not measure: that the page draws the model's figures (`coscc/state_test.py`
+What it does not measure: that the page draws the model's figures (`coscc/state/state_test.py`
 and the screenshots do), or Leif's own total, whose script was never committed (spec C1).
 
 Exit codes: 0 every figure matches, 1 a mismatch (each printed), 2 no `cos.db`, no `end`

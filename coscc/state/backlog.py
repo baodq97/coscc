@@ -1,7 +1,7 @@
 """The backlog, and starting a unit: estimates, relations, the shortlist, a new unit and its
 branch.
 
-Split from `coscc/state.py` (`0095`). `StudioState` inherits it, so its vars and handlers
+Split from `coscc/state/__init__.py` (`0095`). `StudioState` inherits it, so its vars and handlers
 keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
 because this module cannot import `coscc.state` at the top (`spike.md ## U1`).
 """
@@ -12,7 +12,7 @@ import reflex as rx
 
 from coscc.web import present
 from coscc.service import Invalid
-from coscc.state_views import BacklogRow, tree_line
+from coscc.state.views import BacklogRow, tree_line
 
 
 class BacklogMixin(rx.State, mixin=True):

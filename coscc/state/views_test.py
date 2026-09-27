@@ -1,4 +1,4 @@
-"""Tests for `the rows, cards and pure functions` in `coscc/state_views.py`, split from `coscc/state_test.py` (`0095`).
+"""Tests for `the rows, cards and pure functions` in `coscc/state/views.py`, split from `coscc/state/state_test.py` (`0095`).
 """
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ import ast
 import unittest
 from pathlib import Path
 
-from coscc.state_test import SOURCE, _self_names, _source_text, _state_class
+from coscc.state.state_test import SOURCE, _self_names, _source_text, _state_class
 
 
 class TheAutopilotBlockIsCopied(unittest.TestCase):
@@ -325,7 +325,7 @@ class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
         self.assertIs(copy(got["0001_stuck"]), True)
         self.assertIs(copy(got["0002_fine"]), False)
         self.assertIs(copy({}), False)
-        from coscc.state_views import Unit
+        from coscc.state.views import Unit
         self.assertIs(Unit().more_rounds, False)
 
 

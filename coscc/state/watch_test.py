@@ -1,11 +1,11 @@
-"""Tests for `WatchMixin` in `coscc/state_watch.py`, split from `coscc/state_test.py` (`0095`).
+"""Tests for `WatchMixin` in `coscc/state/watch.py`, split from `coscc/state/state_test.py` (`0095`).
 """
 
 from __future__ import annotations
 
 import unittest
 
-from coscc.state_test import _key, _processor, _somewhere, _studio
+from coscc.state.state_test import _key, _processor, _somewhere, _studio
 
 
 class TheWatchPaneKeepsAWindow(unittest.TestCase):

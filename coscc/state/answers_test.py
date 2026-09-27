@@ -1,4 +1,4 @@
-"""Tests for `AnswersMixin` in `coscc/state_answers.py`, split from `coscc/state_test.py` (`0095`).
+"""Tests for `AnswersMixin` in `coscc/state/answers.py`, split from `coscc/state/state_test.py` (`0095`).
 """
 
 from __future__ import annotations

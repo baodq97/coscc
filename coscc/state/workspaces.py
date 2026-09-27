@@ -1,6 +1,6 @@
 """The Workspaces screen: the list, the form that adds or edits one, removing and pulling.
 
-Split from `coscc/state.py` (`0095`). `StudioState` inherits it, so its vars and handlers
+Split from `coscc/state/__init__.py` (`0095`). `StudioState` inherits it, so its vars and handlers
 keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
 because this module cannot import `coscc.state` at the top (`spike.md ## U1`).
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc.service import Invalid
-from coscc.state_views import Workspace
+from coscc.state.views import Workspace
 
 
 class WorkspacesMixin(rx.State, mixin=True):

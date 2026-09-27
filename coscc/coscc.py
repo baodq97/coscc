@@ -12,7 +12,7 @@ gone rather than kept around, because two front ends are two things to fix every
 only one of them ever gets fixed (`spec.md` C3 records what that costs).
 
 What is left here is registration. The page is `coscc/screens.py`, its state is
-`coscc/state.py`, and the business logic is where it always was, in
+`coscc/state/__init__.py`, and the business logic is where it always was, in
 `coscc/service/__init__.py`.
 
 The FastAPI app mounted here is the *same object* `state.py` reads its service from. Two

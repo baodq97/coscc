@@ -33,7 +33,7 @@ from coscc.service import COLLAPSED_STATES, Invalid, describe_base
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
 # `coscc.state.<name>` still resolves; a patch reaches only the module that looks it up.
-from coscc.state_views import (
+from coscc.state.views import (
     NAVIGATION,
     SCREEN_TITLES,
     STATUS_COLOR,
@@ -115,22 +115,22 @@ from coscc.state_views import (
     _rounds,
     _current_stage,
 )
-from coscc.state_workspaces import (
+from coscc.state.workspaces import (
     WorkspacesMixin,
 )
-from coscc.state_watch import (
+from coscc.state.watch import (
     WatchMixin,
 )
-from coscc.state_update import (
+from coscc.state.update import (
     UpdateMixin,
 )
-from coscc.state_answers import (
+from coscc.state.answers import (
     AnswersMixin,
 )
-from coscc.state_backlog import (
+from coscc.state.backlog import (
     BacklogMixin,
 )
-from coscc.state_rerun import (
+from coscc.state.rerun import (
     RerunMixin,
 )
 

@@ -655,7 +655,7 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
             if ".precedent(" in path.read_text(encoding="utf-8"):
                 callers.append(relative)
         # `0095`: the page's handler that asks Jera moved with `AnswersMixin`.
-        self.assertEqual(callers, ["coscc/state_answers.py", "coscc/web/api.py"])
+        self.assertEqual(callers, ["coscc/state/answers.py", "coscc/web/api.py"])
 
     def test_r2_a_unit_with_no_open_question_is_refused_before_a_session(self):
         self.reply(self.item(1), self.item(2))

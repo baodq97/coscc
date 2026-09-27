@@ -1,6 +1,6 @@
 """Running a stage of a unit again: the stages offered, the one chosen and the confirmation.
 
-Split from `coscc/state.py` (`0095`). `StudioState` inherits it, so its vars and handlers
+Split from `coscc/state/__init__.py` (`0095`). `StudioState` inherits it, so its vars and handlers
 keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
 because this module cannot import `coscc.state` at the top (`spike.md ## U1`).
 """

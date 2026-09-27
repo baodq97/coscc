@@ -1,7 +1,7 @@
 """What a person writes into a unit from the page: answers, Jera, outcomes, review rounds
 posted, integration, holds and review rounds allowed.
 
-Split from `coscc/state.py` (`0095`). `StudioState` inherits it, so its vars and handlers
+Split from `coscc/state/__init__.py` (`0095`). `StudioState` inherits it, so its vars and handlers
 keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
 because this module cannot import `coscc.state` at the top (`spike.md ## U1`).
 """
@@ -12,7 +12,7 @@ import reflex as rx
 
 from coscc.web import present
 from coscc.service import Invalid
-from coscc.state_views import _key_label
+from coscc.state.views import _key_label
 
 
 class AnswersMixin(rx.State, mixin=True):

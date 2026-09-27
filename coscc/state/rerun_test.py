@@ -1,4 +1,4 @@
-"""Tests for `RerunMixin` in `coscc/state_rerun.py`, split from `coscc/state_test.py` (`0095`).
+"""Tests for `RerunMixin` in `coscc/state/rerun.py`, split from `coscc/state/state_test.py` (`0095`).
 """
 
 from __future__ import annotations
@@ -6,7 +6,7 @@ from __future__ import annotations
 import ast
 import unittest
 
-from coscc.state_test import SOURCE, _self_names, _state_class
+from coscc.state.state_test import SOURCE, _self_names, _state_class
 
 
 class TheRerunHoldsNoCopyOfTheRule(unittest.TestCase):

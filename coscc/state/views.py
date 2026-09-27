@@ -1,5 +1,5 @@
 """What the page shows, before it is state: the rows and cards `StudioState` holds, and the
-pure functions that build them from what `Service` returns. Split from `coscc/state.py`
+pure functions that build them from what `Service` returns. Split from `coscc/state/__init__.py`
 (`0095`), which re-exports every name.
 """
 

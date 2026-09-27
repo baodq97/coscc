@@ -12,7 +12,7 @@ from coscc.units.priorfindings import CAP_BYTES
 PLAN = (
     "# Plan: x\nIntent: intent.md. Status: accepted.\n\n"
     "## Files that change\n\n- `coscc/service/__init__.py`. The call.\n- `coscc/runner/__init__.py:297-317`.\n\n"
-    "## Order of work\n\n1. `coscc/state.py` is not a file this plan changes.\n"
+    "## Order of work\n\n1. `coscc/state/__init__.py` is not a file this plan changes.\n"
 )
 
 
@@ -37,7 +37,7 @@ class WhichLinesAreKept(unittest.TestCase):
         section, _ = priorfindings.select({"0054_a": review([
             "- F1 [open] coscc/service/__init__.py.bak:3 — low — a longer path",
             "- F2 [fixed abc1234] `coscc/runner/__init__.py:12` — high — in backticks",
-            "- F3 [open] coscc/state.py:4 — high — named only under Order of work",
+            "- F3 [open] coscc/state/__init__.py:4 — high — named only under Order of work",
             "- F4 [open] S3 — high — no path at all",
             "  - F5 [open] coscc/service/__init__.py:1 — high — indented, not a finding line",
         ])}, PLAN)

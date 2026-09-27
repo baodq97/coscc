@@ -1,11 +1,11 @@
-"""Tests for `BacklogMixin` in `coscc/state_backlog.py`, split from `coscc/state_test.py` (`0095`).
+"""Tests for `BacklogMixin` in `coscc/state/backlog.py`, split from `coscc/state/state_test.py` (`0095`).
 """
 
 from __future__ import annotations
 
 import unittest
 
-from coscc.state_test import _arrival, _key, _processor
+from coscc.state.state_test import _arrival, _key, _processor
 
 
 class TheBacklogPanelIsCopied(unittest.TestCase):

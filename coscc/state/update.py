@@ -1,6 +1,6 @@
 """Updating the app from the board: the channel's state, the cut list and the buttons.
 
-Split from `coscc/state.py` (`0095`). `StudioState` inherits it, so its vars and handlers
+Split from `coscc/state/__init__.py` (`0095`). `StudioState` inherits it, so its vars and handlers
 keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
 because this module cannot import `coscc.state` at the top (`spike.md ## U1`).
 """
@@ -11,7 +11,7 @@ import reflex as rx
 
 from coscc.web import present
 from coscc.service import Invalid, StaleCutList
-from coscc.state_views import _channel_line, _job_line
+from coscc.state.views import _channel_line, _job_line
 
 
 class UpdateMixin(rx.State, mixin=True):
