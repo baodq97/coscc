@@ -37,6 +37,7 @@ class TheWordsAreCosMjs(unittest.TestCase):
     def test_each_phrase_is_still_in_cos_mjs(self):
         text = COS_MJS.read_text(encoding="utf-8")
         self.assertIn("`" + ap.CI_PENDING + "${pr.number}", text)
+        self.assertIn("`" + ap.CI_RED + "${pr.number}", text)
         self.assertIn("`" + ap.NEEDS_A_PERSON + " — review used", text)
         self.assertIn(f"action: '{ap.FINISHED}'", text)
         self.assertIn("`" + ap.CLOSED + "${s.name} rejected`", text)
@@ -100,14 +101,75 @@ class Stops(unittest.TestCase):
         taken = {**failed, "outcome": "taken"}
         self.assertIsNone(ap.stop_for(unit(), nxt("review", "x"), taken, True))
 
-    def test_e_red_again_after_the_autopilots_own_integration(self):
+    def test_since_integration_starts_at_the_latest_integration_and_closes_at_review(self):
+        def r(kind, unit="0010_a", stage="impl", **kw):
+            return {"kind": kind, "workspace": "w", "unit": unit, "stage": stage, **kw}
+
+        first, second = r("integration", stage="integrate"), r("integration", stage="integrate")
+        impl, end = r("start"), r("end", outcome="done")
+        rows = [first, r("start", stage="spec"), second, impl, r("start", unit="0011_b"),
+                r("start", stage="precedent"), end]
+        self.assertEqual(ap.since_integration(rows, "w", "0010_a"), [impl, end])
+        self.assertIsNone(ap.since_integration(rows, "w", "0011_b"))
+        self.assertIsNone(ap.since_integration(rows, "other", "0010_a"))
+        closed = rows + [r("start", stage="review"), r("start")]
+        self.assertIsNone(ap.since_integration(closed, "w", "0010_a"))
+        self.assertEqual(ap.since_integration(closed + [first], "w", "0010_a"), [])
+
+    def test_after_own_integration_runs_impl_once_then_stops(self):
+        red = {"state": "red-after-integration"}
+        mine = {"kind": "integration", "outcome": "pushed", "mode": "mechanical", "started_by": "autopilot"}
+        fix = nxt("impl", "CI is red on #120: tests — back to impl: fix on the branch and push")
+        self.assertEqual(ap.after_own_integration(red, mine, [], fix), ("impl", None))
+        ran = [{"kind": "start", "stage": "impl", "started_by": "autopilot"}, {"kind": "end", "stage": "impl"}]
+        still = ("", {"kind": "e", "reason": ap.STILL_RED})
+        self.assertEqual(ap.after_own_integration(red, mine, ran, fix), still)
+        # The `impl` pushed, so the board no longer reads the head as the integrated one.
+        self.assertEqual(ap.after_own_integration({"state": "current"}, mine, ran, fix), still)
+        self.assertEqual(ap.after_own_integration({"state": "behind"}, mine, ran, fix), still)
+        # Green again, or not sent to `impl` for CI: the rest of the pass decides.
+        self.assertIsNone(ap.after_own_integration({"state": "current"}, mine, ran, nxt("review", "write-review")))
+        self.assertIsNone(ap.after_own_integration({"state": "current"}, mine, [], fix))
+
+    def test_after_own_integration_keeps_todays_stop_when_next_names_no_impl(self):
+        red = {"state": "red-after-integration"}
+        mine = {"kind": "integration", "outcome": "pushed", "mode": "agent", "started_by": "autopilot"}
+        today = ("", {"kind": "e", "reason": "CI is still red after the autopilot's last integration"})
+        self.assertEqual(ap.after_own_integration(red, mine, [], nxt("", "finish and accept plan.md")), today)
+        # R3 c: past the window, today's stop too, `impl` or not.
+        self.assertEqual(ap.after_own_integration(red, mine, None, nxt("impl", "CI is red on #7: t")), today)
+        self.assertIsNone(ap.after_own_integration({"state": "current"}, mine, None, nxt("impl", "CI is red on #7: t")))
+
+    def test_after_own_integration_leaves_a_persons_integration_alone(self):
+        red = {"state": "red-after-integration"}
+        fix = nxt("impl", "CI is red on #7: t — back to impl")
+        ran = [{"kind": "start", "stage": "impl", "started_by": "autopilot"}]
+        theirs = {"kind": "integration", "outcome": "pushed", "started_by": "person"}
+        self.assertIsNone(ap.after_own_integration(red, theirs, [], fix))
+        self.assertIsNone(ap.after_own_integration(red, theirs, ran, fix))
+        self.assertIsNone(ap.after_own_integration(red, {"kind": "integration", "outcome": "pushed"}, ran, fix))
+        self.assertIsNone(ap.after_own_integration(red, None, None, fix))
+        refused = {"kind": "integration", "outcome": "refused", "started_by": "autopilot"}
+        self.assertIsNone(ap.after_own_integration(red, refused, [], fix))
+
+    def test_after_own_integration_counts_only_the_autopilots_impl(self):
         red = {"state": "red-after-integration"}
         mine = {"kind": "integration", "outcome": "pushed", "started_by": "autopilot"}
-        self.assertEqual(ap.red_again(red, mine)["kind"], "e")
-        self.assertIsNone(ap.red_again(red, {**mine, "started_by": "person"}))
-        self.assertIsNone(ap.red_again(red, {"kind": "integration", "outcome": "pushed"}))
-        self.assertIsNone(ap.red_again({"state": "behind"}, mine))
-        self.assertIsNone(ap.red_again(None, None))
+        fix = nxt("impl", "CI is red on #7: t — back to impl")
+        theirs = [
+            {"kind": "start", "stage": "impl", "started_by": "person"},
+            {"kind": "start", "stage": "impl"},
+            {"kind": "start", "stage": "pr", "started_by": "autopilot"},
+        ]
+        self.assertEqual(ap.after_own_integration(red, mine, theirs, fix), ("impl", None))
+
+    def test_is_ci_red_reads_the_words_inside_a_joined_action(self):
+        self.assertTrue(ap.is_ci_red("CI is red on #7: tests — back to impl: fix on the branch and push"))
+        # `onReview` and `rebased` join the gate's reasons with "; " (`cos.mjs` `nextStep`).
+        joined = "the head moved since the passing round; CI is red on #7: tests — back to impl: fix on the branch and push"
+        self.assertTrue(ap.is_ci_red(joined))
+        self.assertFalse(ap.is_ci_red("CI has not finished on #7: t — wait, then ask again"))
+        self.assertFalse(ap.is_ci_red(None))
 
     def test_f_no_stage_and_not_ci(self):
         got = ap.stop_for(unit(), nxt("", "finish and accept plan.md"), None, True)

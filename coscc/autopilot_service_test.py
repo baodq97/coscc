@@ -560,8 +560,12 @@ class Scripted(_Base):
         self.assertIn("you do not have permission to merge", logged["reason"])
 
     async def test_red_after_its_own_integration_is_not_integrated_again(self):
-        for unit in ("0001_a", "0002_b"):
-            self.add(unit, "impl", integration={"state": "red-after-integration"},
+        """`0124` R1, R3 a: was a stop `e` for `0001_a`, replaced by `intent.md ## Answers`,
+        câu 1 and 3 — CI red on its own integration runs the `impl` `next` names, once. A
+        person's integration is still integrated again."""
+        red = f"{autopilot.CI_RED}3: tests — back to impl: fix on the branch and push"
+        for unit, action, plan in (("0001_a", red, "- `a/x.py`"), ("0002_b", "", "- `b/y.py`")):
+            self.add(unit, "impl", action=action, plan=plan, integration={"state": "red-after-integration"},
                      rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
         log = Journal(self.config.working_dir, self.config.data_dir)
         for unit, by in (("0001_a", "autopilot"), ("0002_b", "person")):
@@ -570,8 +574,69 @@ class Scripted(_Base):
                 "outcome": "pushed", "mode": "agent", "started_by": by,
             })
         await self.pass_()
-        self.assertEqual(self.launched, [("0002_b", "integrate", "autopilot")])
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot"), ("0002_b", "integrate", "autopilot")])
+        self.assertEqual(self.stops(), {})
+
+    async def _0124_impl_after_a_red_rebase(self) -> Journal:
+        """0115/#120 up to its `impl`: a `pass`, the autopilot's mechanical rebase, CI red on
+        it, and `next` naming `impl` with `cos.mjs`'s words. Returns once that `impl` ended."""
+        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        red = f"{autopilot.CI_RED}120: tests — back to impl: fix on the branch and push"
+        self.add("0001_a", "impl", action=red, plan="- `a/x.py`", integration={"state": "red-after-integration"},
+                 rounds=[{"verdict": "pass"}], between_pr_and_ship=True)
+        log = Journal(self.config.working_dir, self.config.data_dir)
+        log.append({
+            "kind": "integration", "workspace": self.key, "unit": "0001_a", "stage": "integrate",
+            "outcome": "pushed", "mode": "mechanical", "started_by": "autopilot",
+        })
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
+        self.assertEqual([p["stage"] for p in self.picks()], ["impl"])
+        # The stand-in writes no `start`; the real step has written it by now.
+        log.started(self.key, "0001_a", "impl", "autonomous", started_by="autopilot")
+        # Its `start` is in the window while it runs, and that is no stop.
+        await self.pass_()
+        self.assertEqual((len(self.launched), self.stops()), (1, {}))
+        self.release.set()
+        await self.settled()
+        log.finished(self.key, "0001_a", "impl", "done")
+        stops = [r for r in log.records(kind="autopilot-stop") if r["unit"] == "0001_a" and r["stop"]]
+        self.assertEqual(stops, [])
+        return log
+
+    async def test_0124_r7_a_rebase_that_turns_ci_red_runs_impl_once_then_stops(self):
+        """R7, the intent's outcome: sent to `impl`, not stopped; still red after it, stopped."""
+        await self._0124_impl_after_a_red_rebase()
+        # The `impl` pushed a commit, so the board no longer reads the integrated head.
+        self.units["0001_a"]["integration"] = {"state": "current"}
+        await self.pass_()
+        self.assertEqual(len(self.launched), 1)
         self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED)
+
+    async def test_0124_r2_red_still_on_the_integrated_head_after_impl_stops(self):
+        """R2: the `impl` pushed nothing, and the head is still the one the rebase pushed."""
+        await self._0124_impl_after_a_red_rebase()
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED)
+
+    async def _0124_still_red_once_main_moved(self, state: str) -> None:
+        """R2, review F1: the `impl` pushed, CI is still red, and `main` moved on or the pull
+        request conflicts. No `integrate`, which would open a new window and a second `impl`."""
+        await self._0124_impl_after_a_red_rebase()
+        self.units["0001_a"]["integration"] = {"state": state}
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED)
+
+    async def test_0124_r2_still_red_and_behind_after_impl_stops(self):
+        await self._0124_still_red_once_main_moved("behind")
+
+    async def test_0124_r2_still_red_and_conflicting_after_impl_stops(self):
+        await self._0124_still_red_once_main_moved("conflicting")
 
     async def test_an_integration_before_its_mark_is_counted_against_the_cap(self):
         reading = asyncio.Event()
