@@ -3442,3 +3442,152 @@ test('0121 R4: a head that was not rewritten asks git for no patch and no merge-
     assert.deepEqual(calls.filter((c) => c.startsWith('merge-base ') && !c.startsWith('merge-base --is-ancestor ')), [])
   }
 })
+
+// --- 0125: a passing review the ship gate cannot read loops ------------------------------
+
+const FULL_PAGE = '- .screens/board-1440x900.png — 1440×900 (full page) — /board — no violation'
+// Screenshots taken off the branch: whatever else a round says, ship stays closed on
+// `said.screens`, the one reason `next` sends an unchanged head back to review.
+const STALE_AT = '7'.repeat(40)
+const offBranch = screens({ taken: STALE_AT })
+const NO = { code: 1, out: '', err: '' }
+// A UI unit whose pull request's head is `head`, with the screenshots of a round on `SHA` or
+// `REB` taken at `STALE_AT`, which is an ancestor of neither. `git` overrides any other answer.
+const stuckProbe = (git = {}, head = SHA) => ({
+  ...greenProbe(undefined, {
+    [`diff --name-only origin/main...${head}`]: ok('coscc/screens.py'),
+    [`merge-base --is-ancestor ${STALE_AT} ${SHA}`]: NO,
+    [`merge-base --is-ancestor ${STALE_AT} ${REB}`]: NO,
+    ...git,
+  }, { state: 'OPEN', headRefOid: head }),
+  ui: () => UI,
+})
+const passes = (...on) => on.map((sha, i) => `${round(i + 1, 'pass').replace(SHA, sha)}${offBranch}`).join('\n')
+const passedOn = (...on) => branched({ ...CHAIN, 'review.md': reviewArt('accepted', passes(...on)) })
+
+test('0125 R1: a screenshot line may carry a parenthesised note after its size, and size drops it', () => {
+  const shots = (line) => parseReview(`${round(1, 'pass')}${screens({ shots: [line] })}`).rounds[0].screens.shots
+  assert.deepEqual(shots(FULL_PAGE), [{ path: '.screens/board-1440x900.png', size: '1440x900', address: '/board', result: 'no violation' }])
+  assert.deepEqual(shots(SHOT), [{ path: '.screens/board-1440x900.png', size: '1440x900', address: '/board', result: 'no violation' }])
+})
+
+test('0125 R2: 0120\'s five passing rounds with "1440×900 (full page)" open ship', () => {
+  // `SHA` stands for 0120's fbdd49b: five passes on one head, each with the full-page line.
+  const text = [1, 2, 3, 4, 5].map((n) => `${round(n, 'pass')}${screens({ shots: [FULL_PAGE] })}`).join('\n')
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', text) })
+  const probe = uiProbe(['coscc/screens.py'])
+  for (const r of parseReview(text).rounds) assert.deepEqual(screensProblems(r.screens, UI_STANDARD), [])
+  const g = checkGate(u, 'ship', { probe })
+  assert.equal(g.need.some((n) => /lists no screenshot/.test(n)), false)
+  assert.deepEqual(g, { ok: true, need: [], head: SHA })
+  assert.equal(nextStep(u, { probe }).stage, 'ship')
+})
+
+test('0125 R3: one pass the ship gate stays closed on sends next to review, and the review gate names why', () => {
+  const u = passedOn(SHA)
+  assert.equal(nextStep(u, { probe: stuckProbe() }).stage, 'review')
+  const g = checkGate(u, 'review', { probe: stuckProbe() })
+  assert.equal(g.ok, true)
+  assert.deepEqual([g.retry.n, g.retry.reviewed], [1, SHA])
+  assert.match(g.retry.need.join('; '), /not an ancestor/)
+  assert.match(openLines('review', '0001_x', { retry: g.retry })[1],
+    /^review round 1 passed on aaaaaaa and the ship gate is still closed: .*not an ancestor.* — this round is the one retry/)
+})
+
+test('0125 R3: the review gate adds nothing when the stop has come, when ship would open, or when the last round did not pass', () => {
+  assert.deepEqual(checkGate(passedOn(SHA, SHA), 'review', { probe: stuckProbe() }), { ok: true, need: [] })
+  const text = [1, 2, 3, 4, 5].map((n) => `${round(n, 'pass')}${screens({ shots: [FULL_PAGE] })}`).join('\n')
+  assert.deepEqual(checkGate(branched({ ...CHAIN, 'review.md': reviewArt('accepted', text) }), 'review', { probe: uiProbe(['coscc/screens.py']) }), { ok: true, need: [] })
+  const calls = []
+  const probe = stuckProbe()
+  const counted = { ...probe, gh: (...a) => (calls.push(a.join(' ')), probe.gh(...a)) }
+  assert.deepEqual(checkGate(asked(), 'review', { probe: counted }), { ok: true, need: [] })
+  assert.equal(calls.length, 1)
+  assert.match(calls[0], /^pr checks /)
+})
+
+test('0125 R4: a second pass on the same head that leaves ship closed stops, with the gate\'s reasons', () => {
+  const n = nextStep(passedOn(SHA, SHA), { probe: stuckProbe() })
+  assert.equal(n.stage, '')
+  assert.equal(n.blocked, true)
+  assert.match(n.action, /^needs a person — review rounds 1 and 2 both passed on aaaaaaa and ship is still closed: /)
+  assert.match(n.action, /not an ancestor of the reviewed commit/)
+})
+
+test('0125 R4: the same stop in the ship-refused branch', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', passes(SHA, SHA)), 'ship.md': shipArt(shipDraft(2)) })
+  const n = nextStep(u, { probe: stuckProbe() })
+  assert.equal(n.stage, '')
+  assert.match(n.action, /^needs a person — review rounds 1 and 2 both passed on aaaaaaa and ship is still closed: .*not an ancestor of the reviewed commit/)
+})
+
+test('0125 R4: two passes on different heads do not stop', () => {
+  const u = passedOn(SHA, REB)
+  // Every git answer the test does not name is `ok('')`, which reads as the same head; so the
+  // comparison between the two rounds is named here, both ways a head can differ.
+  const moved = stuckProbe({ [`diff --name-only ${SHA}..${REB}`]: ok('coscc/runner.py') }, REB)
+  assert.equal(nextStep(u, { probe: moved }).stage, 'review')
+  const rewritten = stuckProbe({ [`merge-base --is-ancestor ${SHA} ${REB}`]: NO }, REB)
+  assert.equal(nextStep(u, { probe: rewritten }).stage, 'review')
+  // And the second of them is the retry: the review gate says so.
+  assert.equal(checkGate(u, 'review', { probe: moved }).retry.n, 2)
+})
+
+test('0125 R4: a round whose reviewed commit is not here stops and says so', () => {
+  const u = passedOn(SHA, REB)
+  const gone = nextStep(u, { probe: stuckProbe({ [`cat-file -e ${SHA}^{commit}`]: { code: 1, out: '', err: 'fatal: not a valid object' } }, REB) })
+  assert.equal(gone.stage, '')
+  assert.match(gone.action, new RegExp(`^needs a person — the reviewed commit ${SHA} of review round 1 is not in this repository`))
+  const broken = nextStep(u, { probe: stuckProbe({ [`diff --name-only ${SHA}..${REB}`]: { code: 128, out: '', err: 'fatal: bad object' } }, REB) })
+  assert.equal(broken.stage, '')
+  assert.match(broken.action, /^needs a person — git could not diff .*fatal: bad object/)
+})
+
+test('0125 review F2: where git cannot compare the two rounds, the stop does not say they share a head', () => {
+  const u = passedOn(SHA, REB)
+  const gone = nextStep(u, { probe: stuckProbe({ [`cat-file -e ${SHA}^{commit}`]: NO }, REB) })
+  const broken = nextStep(u, { probe: stuckProbe({ [`diff --name-only ${SHA}..${REB}`]: { code: 128, out: '', err: 'fatal: bad object' } }, REB) })
+  for (const { action } of [gone, broken]) {
+    assert.doesNotMatch(action, /both passed/)
+    assert.match(action, /review rounds 1 and 2 passed on aaaaaaa and ddddddd, not known to be one head, and ship is still closed: /)
+  }
+})
+
+test('0125 review F1: a pull request behind the reviewed commit gets one retry, then stops', () => {
+  // BEHIND is the reviewed commit's parent: the round was taken on a commit not pushed yet.
+  const BEHIND = '6'.repeat(40)
+  const probe = greenProbe(undefined, {
+    [`merge-base --is-ancestor ${SHA} ${BEHIND}`]: NO,
+    [`merge-base --is-ancestor ${BEHIND} ${SHA}`]: ok(),
+  }, { state: 'OPEN', headRefOid: BEHIND })
+  const once = passedOn(SHA)
+  assert.equal(nextStep(once, { probe }).stage, 'review')
+  assert.match(checkGate(once, 'review', { probe }).retry.need.join('; '), /is not on the head of #7/)
+  const twice = nextStep(passedOn(SHA, SHA), { probe })
+  assert.equal(twice.stage, '')
+  assert.match(twice.action, /^needs a person — review rounds 1 and 2 both passed on aaaaaaa and ship is still closed: .*is not on the head of #7/)
+  // A head that is not an ancestor, a rebase, is a new head: another round, as before.
+  const rebased = greenProbe(undefined, {
+    [`merge-base --is-ancestor ${SHA} ${REB}`]: NO,
+    [`merge-base --is-ancestor ${REB} ${SHA}`]: NO,
+  }, { state: 'OPEN', headRefOid: REB })
+  assert.equal(nextStep(passedOn(SHA, SHA), { probe: rebased }).stage, 'review')
+})
+
+test('0125 R6: a commit outside .cos/ on the pull request head, or a rejected review, is the way out', () => {
+  // HEAD2 follows SHA, so it is not an ancestor of it; the default `ok()` would say it is.
+  const n = nextStep(passedOn(SHA, SHA), { probe: stuckProbe({ [`diff --name-only ${SHA}..${HEAD2}`]: ok('coscc/runner.py'), [`merge-base --is-ancestor ${HEAD2} ${SHA}`]: NO }, HEAD2) })
+  assert.equal(n.stage, 'review')
+  const rejected = branched({ ...CHAIN, 'review.md': reviewArt('rejected', passes(SHA, SHA)) })
+  const r = nextStep(rejected, { probe: stuckProbe() })
+  assert.deepEqual(r, nextAction(rejected))
+  assert.doesNotMatch(r.action, /needs a person/)
+})
+
+test('0125 R7: the one retry does not read COS_REVIEW_ROUNDS', () => {
+  const u = passedOn(SHA, SHA)
+  const at = (limit) => nextStep(u, { probe: stuckProbe(), limit })
+  assert.deepEqual(at(1), at(10))
+  assert.deepEqual(at(1), nextStep(u, { probe: stuckProbe() }))
+  assert.equal(at(1).stage, '')
+})

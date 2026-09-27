@@ -176,6 +176,12 @@ the first line has this shape and says "agent", names this standard, lists at le
 Nothing checks that the images were opened. Writing the section without opening them is
 exactly the failure this stage exists to prevent.
 
+When *The gate, already asked* carries a line after `open:` saying a round passed and the
+ship gate is still closed, this round is the one retry. Fix what that line names in this
+round itself — for example, write `### Screens` again in the shape of step 2. A second
+passing round on the same head that leaves ship closed stops the unit for a person: `next`
+offers no third.
+
 ## Output
 
 One file, `review.md`, in the unit's directory. The header line is rewritten each round to

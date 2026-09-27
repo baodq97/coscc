@@ -458,9 +458,10 @@ const FINDING = /^- (F\d+)\s+\[([^\]]*)\]\s*(.*)$/
 const SEVERITY = /^\S+\s+—\s+(high|medium|low)\s+—\s/i
 // `0083` R9: the first line of a round's `### Screens`, and one line per screenshot, the
 // separators em dashes as in `SEVERITY`. Backticks around the sha, the path and the address
-// are allowed and dropped.
+// are allowed and dropped. `0125` R1: so is one parenthesised note after the size,
+// `1440×900 (full page)`, which `size` leaves out.
 const SCREENS_HEAD = /^Taken at:\s*`?([0-9a-f]{7,40})`?\.\s+Standard:\s*`?([^`\s]+?)`?\.\s+Looked at by:\s*(.+?),\s*from screenshots\.?\s*$/i
-const SCREENS_SHOT = /^- `?(\S+?\.png)`?\s+—\s+(\d+)\s*[×x]\s*(\d+)\s+—\s+`?([^`\s]+)`?\s+—\s+(\S.*)$/
+const SCREENS_SHOT = /^- `?(\S+?\.png)`?\s+—\s+(\d+)\s*[×x]\s*(\d+)(?:\s*\([^()]*\))?\s+—\s+`?([^`\s]+)`?\s+—\s+(\S.*)$/
 
 // `review.md` is a list of rounds, each `## Round N`, never rewritten once written: a
 // re-review appends a round. Each round opens with `Reviewed: <sha>. Verdict: pass|
@@ -1644,6 +1645,14 @@ function rebaseWhy(compared) {
 // limit in force. Every other stage reads files only and ignores both.
 export function checkGate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   const { ok, need, said } = evaluate(unit, stage, { probe, limit })
+  // `0125` R3: an open `review` after a pass `ship` stays closed on names why, for the one
+  // retry to fix. Asked only when the last round passed, so every other gate asks git and gh
+  // what it did (spec C2), and only adds: it never closes `review`.
+  if (ok && probe && stageOf(stage)?.name === 'review' && lastRound(unit)?.verdict === 'pass') {
+    const ship = evaluate(unit, 'ship', { probe, limit })
+    const stuck = passLeftClosed(unit, probe, ship)
+    if (stuck && !stuck.stop) return { ok, need, retry: { n: stuck.last.n, reviewed: stuck.last.reviewed, need: ship.need } }
+  }
   // `0067` R6: `rebased` only when the gate opened on a clean rebase, so every other answer
   // is what it was.
   if (!ok || !said.head) return { ok, need }
@@ -1706,6 +1715,39 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
 
 // --- the next stage to run ----------------------------------------------------
 
+// `0125` R3–R5: the one place two questions are answered — does the last pass leave `ship`
+// closed for the one reason another round cures, and was the round before it a pass on the
+// same head? `g` is the `ship` gate's `evaluate`. `null` when the first answer is no: only
+// `said.screens` sends an unchanged head back to `review`, and `said.moved` a head the pull
+// request took past the reviewed commit. A pull request whose head is an ancestor of it is
+// behind by a push no round makes, so that `moved` is answered like `screens` (review F1).
+// Else `{ last, need, stop }`: `stop` is `null` while the one retry is still to come, or the
+// sentence the unit stops on. Same head is `changedSince`, the comparison `changes-requested`
+// makes, so a commit only under `.cos/<unit>/` does not make a new one. No limit is read:
+// one retry is a choice, not a setting (R7).
+function passLeftClosed(unit, probe, g) {
+  const rounds = reviewOf(unit)
+  const last = rounds.at(-1)
+  if (last?.verdict !== 'pass') return null
+  const unpushed = () =>
+    g.said.head && g.said.head !== last.reviewed && probe.git('merge-base', '--is-ancestor', g.said.head, last.reviewed).code === 0
+  if (g.said.moved ? !unpushed() : !g.said.screens) return null
+  const prev = rounds.at(-2)
+  if (prev?.verdict !== 'pass' || !prev.reviewed) return { last, need: g.need, stop: null }
+  const short = (r) => r.reviewed.slice(0, 7)
+  // Where git cannot compare the two rounds, the sentence does not say they share a head.
+  const stop = (why = '', known = true) =>
+    `needs a person — ${why}review rounds ${prev.n} and ${last.n} ${known || prev.reviewed === last.reviewed ? `both passed on ${short(last)}` : `passed on ${short(prev)} and ${short(last)}, not known to be one head,`} and ship is still closed: ${g.need.join('; ')}`
+  // Another round cannot bring back a commit that is not here (spec C3).
+  if (probe.git('cat-file', '-e', `${prev.reviewed}^{commit}`).code !== 0) {
+    return { last, need: g.need, stop: stop(`the reviewed commit ${prev.reviewed} of review round ${prev.n} is not in this repository; `, false) }
+  }
+  const since = changedSince(probe, unit, prev.reviewed, last.reviewed)
+  if (since.error) return { last, need: g.need, stop: stop(`${since.error}; `, false) }
+  if (!since.rewritten && !since.files.length) return { last, need: g.need, stop: stop() }
+  return { last, need: g.need, stop: null }
+}
+
 // The one stage a run button may offer for `unit`, or `''` for none, with the sentence that
 // explains it. `0024`: the app's button used to pick "the first required stage with no
 // artifact" for itself — a second copy of the loop — and so after a review asked for
@@ -1720,7 +1762,8 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
 //     and nothing while it runs;
 //   - `pr` is done and no review exists: `review` on green, `impl` on red, else nothing;
 //   - the review passed: `ship` if its gate is open, `impl` if a clean rebase is red,
-//     `review` again only if the patch moved after the pass (`0067`), else nothing.
+//     `review` again only if the patch moved after the pass (`0067`), or once when the pass
+//     left ship closed on its own head (`0125`), else nothing.
 // With no `probe` those three answer `''` and say `--repo` is missing, as the gates do.
 //
 // This names a stage; it opens nothing. A caller still asks `checkGate` before running it.
@@ -1736,6 +1779,11 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     if (g.said.ci === 'red') return { blocked: true, action: reasons, stage: 'impl' }
     return none(reasons)
   }
+  // `0125` R4: a pass left closed goes to one more round, and a second on the same head stops.
+  const again = (g) => {
+    const stuck = passLeftClosed(unit, probe, g)
+    return stuck?.stop ? none(stuck.stop) : onReview(g.need)
+  }
 
   // `0045` R3: a held unit is answered from the files, before anything reaches for `probe`.
   if (why === 'paused' || why === 'dropped') return next
@@ -1748,7 +1796,7 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     const g = evaluate(unit, 'ship', { probe, limit })
     if (g.ok) return { ...next, action: `${next.action} — merge with --match-head-commit ${g.said.head}` }
     // `0083` R10: a UI unit whose pass lacks current screenshots is cured the same way.
-    if (g.said.moved || g.said.screens) return onReview(g.need)
+    if (g.said.moved || g.said.screens) return again(g)
     // `0067` R5: a clean rebase CI failed on goes back to impl, never to another round.
     if (g.said.rebased && g.said.ci === 'red') return { blocked: true, action: g.need.join('; '), stage: 'impl' }
     return none(g.need.join('; '))
@@ -1766,7 +1814,7 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     const ship = unit.artifacts['ship.md'].ship
     const last = lastRound(unit)
     const g = evaluate(unit, 'ship', { probe, limit })
-    if (g.said.moved || g.said.screens) return onReview(g.need)
+    if (g.said.moved || g.said.screens) return again(g)
     if (g.said.rebased && g.said.ci === 'red') return { blocked: true, action: g.need.join('; '), stage: 'impl' }
     if (!g.ok) return none(g.need.join('; '))
     // `0067` R5: a merge refused as not up to date, then rebased clean, adds no round to go
@@ -2089,12 +2137,16 @@ function cmdNext(unitName, cosDir, repoDir, limit) {
 
 // What `gate` prints when it opens. `ship` is told the one commit it may merge; any other
 // head is one nobody reviewed. `0067` R6: a gate opened on a clean rebase says so on a
-// second line, in short shas — the full one is the pin's alone.
-export function openLines(stage, unitName, { head = null, rebased = null } = {}) {
+// second line, in short shas — the full one is the pin's alone. `0125` R3: so does a
+// `review` that is the one retry after a pass `ship` stayed closed on, with the gate's reasons.
+export function openLines(stage, unitName, { head = null, rebased = null, retry = null } = {}) {
   const pin = head ? ` — merge with --match-head-commit ${head}` : ''
   const lines = [`open: ${stage} may proceed for ${unitName}${pin}`]
   if (rebased) {
     lines.push(`the reviewed commit ${rebased.reviewed.slice(0, 7)} was rebased to ${rebased.head.slice(0, 7)} and the unit's patch is unchanged — no review round is needed`)
+  }
+  if (retry) {
+    lines.push(`review round ${retry.n} passed on ${retry.reviewed.slice(0, 7)} and the ship gate is still closed: ${retry.need.join('; ')} — this round is the one retry: fix what that names in this round; a second passing round on the same head that leaves ship closed stops the unit for a person`)
   }
   return lines
 }
@@ -2110,9 +2162,9 @@ function cmdGate(unitName, stage, cosDir, repoDir, limit) {
     return 2
   }
   const probe = repoDir ? makeProbe(repoDir) : null
-  const { ok, need, head, rebased } = checkGate(readUnit(dir, unitName), stage, { probe, limit })
+  const { ok, need, head, rebased, retry } = checkGate(readUnit(dir, unitName), stage, { probe, limit })
   if (ok) {
-    for (const line of openLines(stage, unitName, { head, rebased })) console.log(line)
+    for (const line of openLines(stage, unitName, { head, rebased, retry })) console.log(line)
     return 0
   }
   console.error(`blocked: ${stage} cannot proceed for ${unitName}`)
