@@ -270,9 +270,9 @@ class OnlyATerminalReachesIt(unittest.TestCase):
 
     def test_api_autopilot_and_service_import_none_of_it(self):
         # `0095`: `Service` is spread over `service.py` and the `service_*.py` it was split into.
-        split = [f"coscc/{p.name}" for p in sorted((REPO / "coscc").glob("service_*.py")) if not p.name.endswith("_test.py")]
+        split = [f"coscc/service/{p.name}" for p in sorted((REPO / "coscc" / "service").glob("*.py")) if not p.name.endswith("_test.py")]
         self.assertTrue(split)
-        for name in ("coscc/web/api.py", "coscc/units/autopilot.py", "coscc/service.py", *split):
+        for name in ("coscc/web/api.py", "coscc/units/autopilot.py", *split):
             with self.subTest(module=name):
                 self.assertFalse(self.forbidden(REPO / name))
 

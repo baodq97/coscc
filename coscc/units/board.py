@@ -280,7 +280,7 @@ async def gate(
     -- *"Ask `cos.mjs gate` before a stage and stop when it exits non-zero"* -- was written
     for a person at a terminal, and every stage's skill repeats it. But the six prose
     stages run with no tools at all, so four of them could never obey it, and
-    `coscc/service.py` `run_step` went straight from reading the board to starting the
+    `coscc/service/__init__.py` `run_step` went straight from reading the board to starting the
     session. The rule existed, the script that decides it existed, and the product walked
     past both.
 

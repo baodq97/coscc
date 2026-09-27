@@ -1,6 +1,6 @@
 """Which model and effort each stage runs on, and the autopilot's settings.
 
-Split from `coscc/service.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from coscc.agent import labels, models
 from coscc.knowledge import efforttrial
 from coscc.config import LOOPBACK
 from coscc.runner import SESSIONS_PER_STEP
-from coscc.service_common import Invalid
+from coscc.service.common import Invalid
 
 
 def _whole_at_least_one(value: Any) -> bool:

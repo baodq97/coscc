@@ -1,4 +1,4 @@
-"""Tests for `coscc/service_common.py`, split from `coscc/service_test.py` (`0095`).
+"""Tests for `coscc/service/common.py`, split from `coscc/service/service_test.py` (`0095`).
 """
 
 from __future__ import annotations
@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-from coscc.service_common import (
+from coscc.service.common import (
     STATE_COLOR,
     STATE_LABEL,
     attention_reason,

@@ -166,7 +166,7 @@ class TheEvents(Fixture):
 
 
 class TheFilesTouched(Fixture):
-    FILES = ["coscc/service.py", "coscc/state.py"]
+    FILES = ["coscc/service/__init__.py", "coscc/state.py"]
 
     def files(self, first: int = 20, since: str = "2026-09-24") -> dict:
         return turnstats.measure(str(self.ws), self.data, since, None, self.FILES, first)
@@ -174,15 +174,15 @@ class TheFilesTouched(Fixture):
     def test_a_read_and_a_grep_on_the_file_touch_it_from_any_worktree(self):
         self.step("2026-09-24T10:00:00", "0001_a", turns=10, run="r1")
         self.calls("r1",
-                   self.use("a", "Read", file_path="/w/one/coscc/service.py"),
+                   self.use("a", "Read", file_path="/w/one/coscc/service/__init__.py"),
                    self.result("a", "x" * 30),
                    self.use("b", "Grep", pattern="def", path="/w/two/coscc/state.py"),
                    self.result("b", "hit"),
-                   self.use("c", "Read", file_path="/w/one/coscc/service_test.py"),
+                   self.use("c", "Read", file_path="/w/one/coscc/service/service_test.py"),
                    self.result("c", "y" * 999))
         self.step("2026-09-24T11:00:00", "0002_b", turns=30, run="r2")
         self.calls("r2",
-                   self.use("d", "Read", file_path="/elsewhere/coscc/service.py"),
+                   self.use("d", "Read", file_path="/elsewhere/coscc/service/__init__.py"),
                    self.result("d", [{"type": "text", "text": "z" * 10}, {"type": "text", "text": "z" * 40}]))
         f = self.files()
         self.assertEqual((f["touched_steps"], f["touched_n"]), (2, 2))
@@ -194,8 +194,8 @@ class TheFilesTouched(Fixture):
         self.step("2026-09-24T10:00:00", "0001_a", turns=10, run="r1")
         self.calls("r1",
                    self.use("a", "Grep", pattern="def", path="/w/coscc"),
-                   self.use("b", "Grep", pattern="coscc/service.py"),
-                   self.use("c", "Bash", command="cat coscc/service.py"))
+                   self.use("b", "Grep", pattern="coscc/service/__init__.py"),
+                   self.use("c", "Bash", command="cat coscc/service/__init__.py"))
         f = self.files()
         self.assertEqual((f["touched_steps"], f["touched_turns_mean"], f["touched_read_chars_mean"]), (0, None, None))
 
@@ -210,9 +210,9 @@ class TheFilesTouched(Fixture):
     def test_a_cut_or_persisted_result_counts_what_it_was_before(self):
         self.step("2026-09-24T10:00:00", "0001_a", turns=1, run="r1")
         self.calls("r1",
-                   self.use("a", "Read", file_path="/w/coscc/service.py"),
+                   self.use("a", "Read", file_path="/w/coscc/service/__init__.py"),
                    self.result("a", "x" * 5, truncated=True, length=1000, truncated_fields=["content"]),
-                   self.use("b", "Read", file_path="/w/coscc/service.py"),
+                   self.use("b", "Read", file_path="/w/coscc/service/__init__.py"),
                    self.result("b", "x" * 5, persisted_size=3000))
         self.assertEqual(self.files()["touched_read_chars_mean"], 2000)
 

@@ -1,4 +1,4 @@
-"""Tests for `NoticesMixin` in `coscc/service_notices.py` (`0113` R1, R6–R8, R13).
+"""Tests for `NoticesMixin` in `coscc/service/notices.py` (`0113` R1, R6–R8, R13).
 
 The generator is read directly, with `beat` shortened: `httpx.ASGITransport` collects a whole
 response body, so a stream that lasts `notices.LIFETIME_SECONDS` is read through it only with

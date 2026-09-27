@@ -129,7 +129,7 @@ class ThePromptCarriesTheStageBefore(unittest.TestCase):
 class TheAnswersSectionIsFound(unittest.TestCase):
     """`0025`: the three functions the write path is built from, tested apart from it.
 
-    Every reader of "the Answers section" -- `coscc/service.py:900`, `.claude/scripts/
+    Every reader of "the Answers section" -- `coscc/service/__init__.py:900`, `.claude/scripts/
     cos.mjs:194`, and this module -- must agree on where it starts, or a section one of
     them keeps is a section another cannot find. `spec.md` R1's definition, and `plan.md`
     Risk 3's reason for working in bytes rather than `str`, are both here.
@@ -926,7 +926,7 @@ class WhatEarlierReviewsSaid(unittest.TestCase):
     """`0110` plan step 3. `service.run_step` builds the section; this module places it for
     `impl` only, and every other stage's prompt is what it was, byte for byte (R9)."""
 
-    SECTION = "- 0054 Round 1 F3 [open] coscc/service.py:1842 — medium — PRIOR-MARKER"
+    SECTION = "- 0054 Round 1 F3 [open] coscc/service/__init__.py:1842 — medium — PRIOR-MARKER"
 
     unit = WhatEarlierUnitsMeasured.unit
     ANSWERS = WhatEarlierUnitsMeasured.ANSWERS

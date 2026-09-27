@@ -25,7 +25,7 @@ records that it is there so the app can read a `.cos/` elsewhere with this repos
 rules. This module only changes which directory that is.
 
 **One function answers where units live, and that is the whole of R3.** `coscc/units/board.py`,
-`coscc/runner/__init__.py` and `coscc/service.py` each computed a unit's path for themselves before
+`coscc/runner/__init__.py` and `coscc/service/__init__.py` each computed a unit's path for themselves before
 this. Three copies of one formula is precisely the shape of `0012`, where two modules each
 worked out where `.claude/` was and one packaging omission arrived as two unrelated-looking
 symptoms (`coscc/agent/harness.py:47-50`).
@@ -73,7 +73,7 @@ class CannotCreate(RuntimeError):
 def key(workspace: str | os.PathLike[str]) -> str:
     """How a workspace is identified. The resolved path, and nothing else.
 
-    The same convention `coscc/service.py:241-248` uses for the journal, and deliberately
+    The same convention `coscc/service/__init__.py:241-248` uses for the journal, and deliberately
     not a second one: a workspace declared by the environment has no name at all, and a
     path is the one identifier both kinds have. The cost is the same too — moving a
     workspace detaches its units from it.
@@ -111,7 +111,7 @@ def spike_dir(
     """`0039` R11. The throwaway directory a `spike` step runs in, outside every checkout.
 
     Under the data root, beside `units/` and never inside it, so a probe's files cannot be
-    read as a unit's artifacts. `coscc/service.py` makes it and removes it around the step.
+    read as a unit's artifacts. `coscc/service/__init__.py` makes it and removes it around the step.
     """
     return Data(data_dir).root / "spikes" / slot(workspace) / unit
 
@@ -204,7 +204,7 @@ def create(
     """Start a work unit: allocate the number, make the directory, record the brief.
 
     `reserve_from` names directories whose `.cos/` numbers count as taken — the host
-    repository, from `coscc/service.py`. They reach `cos.mjs` as `--reserve-from`, which
+    repository, from `coscc/service/__init__.py`. They reach `cos.mjs` as `--reserve-from`, which
     reads them; this module neither lists them nor compares a number. The flags go
     **before** `new-path` on purpose: an older `cos.mjs` would read a trailing flag as
     nothing and hand out a duplicate number silently, whereas a leading one is taken for the

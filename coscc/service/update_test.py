@@ -1,4 +1,4 @@
-"""Tests for `UpdateMixin` in `coscc/service_update.py`, split from `coscc/service_test.py` (`0095`).
+"""Tests for `UpdateMixin` in `coscc/service/update.py`, split from `coscc/service/service_test.py` (`0095`).
 """
 
 from __future__ import annotations

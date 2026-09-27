@@ -532,7 +532,8 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
         """
         watched = {"Journal", "Store", "History"}
         offenders = []
-        for path in sorted(Path(__file__).resolve().parent.glob("*_test.py")):
+        # Every test of the package, since `0129` put most of them in subpackages.
+        for path in sorted(Path(__file__).resolve().parent.rglob("*_test.py")):
             source = path.read_text(encoding="utf-8")
             for node in ast.walk(ast.parse(source, filename=str(path))):
                 if not isinstance(node, ast.Call):

@@ -1,7 +1,7 @@
 """What is written into a unit from outside a step: review rounds posted to the pull
 request, transitions, answers, outcomes, holds and review rounds allowed (`0081`).
 
-Split from `coscc/service.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate
-from coscc.service_common import Invalid, OUTCOME_RESULTS, OWNER
+from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
 
 
 class AnswersMixin:

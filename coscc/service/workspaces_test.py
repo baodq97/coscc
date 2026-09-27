@@ -1,4 +1,4 @@
-"""Tests for `WorkspacesMixin` in `coscc/service_workspaces.py`, split from `coscc/service_test.py` (`0095`).
+"""Tests for `WorkspacesMixin` in `coscc/service/workspaces.py`, split from `coscc/service/service_test.py` (`0095`).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.config import Config
-from coscc.service_common import Invalid
+from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Live, Sessions
 

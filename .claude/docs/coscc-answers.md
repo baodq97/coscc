@@ -56,7 +56,7 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/
   says under its own `## Answers` heading — copied from the artifact, forged, or a model
   answering its own question — never reaches disk, and nothing records that a reply tried.
   A window remains between the answer route's read and the runner's: the two hold no lock
-  in common (the lock is `Service._answer_lock`, `coscc/service.py:135`, and `Runner` carries
+  in common (the lock is `Service._answer_lock`, `coscc/service/__init__.py:135`, and `Runner` carries
   no reference to it). Byte-identical is not meaning-identical: a re-run that renumbers
   `## Open questions` leaves `### Câu N` on disk pointing at whichever question now
   carries that number, not the one a person answered

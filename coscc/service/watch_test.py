@@ -1,4 +1,4 @@
-"""Tests for `WatchMixin` in `coscc/service_watch.py`, split from `coscc/service_test.py` (`0095`).
+"""Tests for `WatchMixin` in `coscc/service/watch.py`, split from `coscc/service/service_test.py` (`0095`).
 """
 
 from __future__ import annotations
@@ -10,9 +10,9 @@ from pathlib import Path
 
 from coscc.runlog import events as events_mod
 from coscc.config import Config
-from coscc.service_common import Invalid
+from coscc.service.common import Invalid
 from coscc.service import Service
-from coscc.service_test import create_sync
+from coscc.service.service_test import create_sync
 
 
 class AStepCanBeWatched(unittest.TestCase):

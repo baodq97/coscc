@@ -30,7 +30,7 @@ from coscc.service import (
 )
 from coscc.agent.sessions import Live, Sessions
 
-REPO = str(Path(__file__).resolve().parent.parent)
+REPO = str(Path(__file__).resolve().parents[2])
 
 
 def create_sync(service: Service, *args):
@@ -200,10 +200,9 @@ class NoWebFrameworkLeaksIn(unittest.TestCase):
         back towards one entry point and the two will drift.
         """
         here = Path(__file__).parent
-        # `0095`: `Service` is spread over `service.py` and the modules it was split into.
-        paths = [here / "service.py"] + [
-            p for p in sorted(here.glob("service_*.py")) if not p.name.endswith("_test.py")
-        ]
+        # `0095`: `Service` is spread over `service.py` and the modules it was split into;
+        # since `0129` they are the package `coscc/service/`, `store.py` among them.
+        paths = [p for p in sorted(here.glob("*.py")) if not p.name.endswith("_test.py")]
         self.assertGreater(len(paths), 1)
         for path in paths:
             source = path.read_text()

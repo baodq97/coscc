@@ -26,7 +26,7 @@ from unittest import mock
 from coscc.github import integrate
 from coscc.git import fetches
 from coscc.config import Config
-from coscc.integrate_service_test import BRANCH, PR, SLUG, StandIn, git
+from coscc.service.integrate_service_test import BRANCH, PR, SLUG, StandIn, git
 from coscc.service import Invalid, Service
 
 REFUSED = ("is not the pull request's head", "the last integration was refused")

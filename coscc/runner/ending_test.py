@@ -170,7 +170,7 @@ class AStepWithNoRulesDoesNotRun(unittest.TestCase):
     """
 
     def test_a_stage_with_no_skill_raises_rather_than_dropping_the_section(self):
-        # `RunError`, not `MissingRules`: `coscc/service.py` maps this module's refusals
+        # `RunError`, not `MissingRules`: `coscc/service/__init__.py` maps this module's refusals
         # with one `except RunError`, and anything else reaches the route as a 500.
         with self.assertRaises(RunError) as caught:
             skill_for("no-such-stage")

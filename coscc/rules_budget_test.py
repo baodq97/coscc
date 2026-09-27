@@ -31,7 +31,7 @@ APP_PATHS = ["coscc/**", "coscc/**/*", "rxconfig.py", "scripts/*.py"]
 
 # R7: files nearly every unit passes through. A rule scoped to one of them would be read by
 # nearly every step, which is what tier 2 already is. The spec's list, not measured.
-HOT = {"coscc/service.py", "coscc/runner/__init__.py", "coscc/state.py", "coscc/screens.py", "coscc/web/api.py"}
+HOT = {"coscc/service/__init__.py", "coscc/runner/__init__.py", "coscc/state.py", "coscc/screens.py", "coscc/web/api.py"}
 
 DOC_REF = re.compile(r"\.claude/docs/[\w./-]+\.md")
 
@@ -78,10 +78,14 @@ class TheUiStandardFollowsTheSplit(unittest.TestCase):
     def test_every_module_they_were_split_into_is_named(self):
         named = set(scoped_patterns(UI.read_text(encoding="utf-8")))
         split = [
-            f"coscc/{p.name}"
+            p.relative_to(REPO).as_posix()
             for name in ("screens", "state", "service")
-            for p in sorted((REPO / "coscc").glob(f"{name}_*.py"))
-            if not p.name.endswith("_test.py")
+            for p in (
+                sorted((REPO / "coscc" / name).glob("*.py")) if (REPO / "coscc" / name).is_dir()
+                else sorted((REPO / "coscc").glob(f"{name}_*.py"))
+            )
+            # `store.py` joined `service/` in `0129` without being split out of `service.py`.
+            if not p.name.endswith("_test.py") and p.name not in ("__init__.py", "store.py")
         ]
         self.assertIn("coscc/state_views.py", split)
         self.assertEqual([m for m in split if m not in named], [])

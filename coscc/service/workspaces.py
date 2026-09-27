@@ -1,6 +1,6 @@
 """The workspaces the app serves: listing, adopting, labelling, removing and pulling one.
 
-Split from `coscc/service.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from typing import Any
 
 from coscc.git import gitops
 from coscc.git.gitops import GitError
-from coscc.store import BadName, Store, require_name
-from coscc.service_common import Invalid
+from coscc.service.store import BadName, Store, require_name
+from coscc.service.common import Invalid
 
 
 class WorkspacesMixin:

@@ -17,7 +17,7 @@ starting with `-` from reaching `gh` as a flag.
 posting, the comments already on the pull request are read, and one whose last non-empty
 line is this round's marker means the round is already there. That covers a post that
 reached GitHub but whose answer was lost. It does not cover two processes posting at the
-same instant; `coscc/service.py` holds a lock for that within one process.
+same instant; `coscc/service/__init__.py` holds a lock for that within one process.
 
 `post` never raises. A failure comes back as `Result("failed", reason=...)` with gh's own
 words, so the caller -- which has already written `review.md` -- loses nothing.

@@ -1,6 +1,6 @@
 """The agent sessions of a workspace, and sending one a message.
 
-Split from `coscc/service.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator
 from coscc.agent import sessions as reader
 from coscc.runlog.journal import BadRecord, Busy
 from coscc.agent import models
-from coscc.service_common import Invalid
+from coscc.service.common import Invalid
 
 
 class SessionsMixin:

@@ -1,4 +1,4 @@
-"""Tests for `BacklogMixin` in `coscc/service_backlog.py`, split from `coscc/service_test.py` (`0095`).
+"""Tests for `BacklogMixin` in `coscc/service/backlog.py`, split from `coscc/service/service_test.py` (`0095`).
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ from unittest import mock
 from coscc import units
 from coscc.git import gitops, worktrees
 from coscc.config import Config
-from coscc.service_common import Invalid
+from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
-from coscc.service_test import REPO, _service, create_sync
+from coscc.service.service_test import REPO, _service, create_sync
 
 
 class TheUnitHistoryReadPath(unittest.TestCase):

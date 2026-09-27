@@ -1,6 +1,6 @@
 """Watching a running step: the events it recorded, a page at a time or followed live.
 
-Split from `coscc/service.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from coscc.units import backlog
 from coscc.runlog import events
 from coscc.data import Data
 from coscc.runlog.journal import Busy
-from coscc.service_common import Invalid
+from coscc.service.common import Invalid
 
 
 class WatchMixin:

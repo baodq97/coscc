@@ -1,6 +1,6 @@
 """`0095` R3: every name code or a test reached in the four largest modules still resolves.
 
-`coscc/service.py`, `state.py`, `screens.py` and `runner.py` were split into modules of their
+`coscc/service/__init__.py`, `state.py`, `screens.py` and `runner.py` were split into modules of their
 own. The names below are the ones something in this repository imported from those four,
 patched on them, or cited under `.claude/`, collected on `5d161a2`, before the split. Each
 of the four imports them back, so `from coscc.<module> import <name>` still works; a name

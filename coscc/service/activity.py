@@ -1,6 +1,6 @@
 """Activity, usage and cost, an artifact's text, settings and preferences.
 
-Split from `coscc/service.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from coscc.data import Data
 from coscc.runlog.journal import COST_FIELDS, COST_USD, Busy, add_cost, zero_cost
 from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, TERMINAL_ONLY, grant_for_step
 from coscc.agent import labels
-from coscc.service_common import Invalid, STAGE_FILES, consequence
+from coscc.service.common import Invalid, STAGE_FILES, consequence
 
 
 class ActivityMixin:

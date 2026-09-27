@@ -276,7 +276,7 @@ class OnlyATerminalReachesIt(unittest.TestCase):
     MEASURE = "coscc.knowledge.effort_measure"
 
     def test_api_autopilot_and_service_do_not_import_it(self):
-        split = [f"coscc/{p.name}" for p in sorted((REPO / "coscc").glob("service*.py")) if not p.name.endswith("_test.py")]
+        split = [f"coscc/service/{p.name}" for p in sorted((REPO / "coscc" / "service").glob("*.py")) if not p.name.endswith("_test.py")]
         self.assertTrue(split)
         for name in ("coscc/web/api.py", "coscc/units/autopilot.py", *split):
             with self.subTest(module=name):

@@ -1,6 +1,6 @@
 """Updating the app from the board, and refusing new work while an update waits.
 
-Split from `coscc/service.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import asyncio
 from typing import Any
 
 from coscc.update import updater as updater_mod
-from coscc.service_common import Invalid, NotUpdatable, OWNER, StaleCutList, Updating
+from coscc.service.common import Invalid, NotUpdatable, OWNER, StaleCutList, Updating
 
 
 def _as_invalid(e: updater_mod.Refused) -> Invalid:

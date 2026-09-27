@@ -1,11 +1,11 @@
-"""Tests for `ActivityMixin` in `coscc/service_activity.py`, split from `coscc/service_test.py` (`0095`).
+"""Tests for `ActivityMixin` in `coscc/service/activity.py`, split from `coscc/service/service_test.py` (`0095`).
 """
 
 from __future__ import annotations
 
 import unittest
 
-from coscc.service_test import _service
+from coscc.service.service_test import _service
 
 
 class UsageCountsWhatItCouldNotAdd(unittest.TestCase):

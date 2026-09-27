@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator
 
 from coscc.runlog import notices
 from coscc.runlog.journal import BELL, Busy
-from coscc.service_common import Invalid
+from coscc.service.common import Invalid
 
 
 class NoticesMixin:

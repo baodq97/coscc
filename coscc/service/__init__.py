@@ -25,13 +25,13 @@ from coscc.config import Config
 from coscc.data import now as _now
 from coscc.runner import Runner
 from coscc.agent.sessions import Sessions
-from coscc.store import Store
+from coscc.service.store import Store
 from coscc.agent import steps as steps_mod
 from coscc.update import updater as updater_mod
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
 # `coscc.service.<name>` still resolves; a patch reaches only the module that looks it up.
-from coscc.service_common import (
+from coscc.service.common import (
     STAGE_FILES,
     BRANCH_REMOTE,
     BRANCH_TRUNK,
@@ -58,14 +58,14 @@ from coscc.service_common import (
     shown_state,
     reason_beside,
 )
-from coscc.service_board import (
+from coscc.service.board import (
     UNKNOWN_END_FOR,
     _attach_comment_state,
     _attach_precedent,
     answerable,
     BoardMixin,
 )
-from coscc.service_steps import (
+from coscc.service.steps import (
     RERUN_NOTE_MAX,
     RETAKE_REFUSED,
     _answers_kept,
@@ -73,40 +73,40 @@ from coscc.service_steps import (
     CI_REFRESH,
     StepsMixin,
 )
-from coscc.service_update import (
+from coscc.service.update import (
     _as_invalid,
     _RELEASE_LINE,
     _LOCAL_LINE,
     update_words,
     UpdateMixin,
 )
-from coscc.service_models import (
+from coscc.service.models import (
     _whole_at_least_one,
     _positive_number,
     ModelsMixin,
 )
-from coscc.service_workspaces import (
+from coscc.service.workspaces import (
     WorkspacesMixin,
 )
-from coscc.service_watch import (
+from coscc.service.watch import (
     WatchMixin,
 )
-from coscc.service_answers import (
+from coscc.service.answers import (
     AnswersMixin,
 )
-from coscc.service_backlog import (
+from coscc.service.backlog import (
     BacklogMixin,
 )
-from coscc.service_sessions import (
+from coscc.service.sessions import (
     SessionsMixin,
 )
-from coscc.service_autopilot import (
+from coscc.service.autopilot import (
     AutopilotMixin,
 )
-from coscc.service_activity import (
+from coscc.service.activity import (
     ActivityMixin,
 )
-from coscc.service_notices import (
+from coscc.service.notices import (
     NoticesMixin,
 )
 

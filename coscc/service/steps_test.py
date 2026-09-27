@@ -1,4 +1,4 @@
-"""Tests for `StepsMixin` in `coscc/service_steps.py`, split from `coscc/service_test.py` (`0095`).
+"""Tests for `StepsMixin` in `coscc/service/steps.py`, split from `coscc/service/service_test.py` (`0095`).
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ from coscc import units
 from coscc.github import prscope
 from coscc.git import fetches, worktrees
 from coscc.config import Config
-from coscc.service_common import Invalid, describe_base, step_cwd
+from coscc.service.common import Invalid, describe_base, step_cwd
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
-from coscc.service_test import create_sync
+from coscc.service.service_test import create_sync
 
 
 class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
@@ -1780,7 +1780,7 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
 
         before = len(self.seen)
         with mock.patch.object(board_reader, "gate", open_gate), \
-                mock.patch("coscc.service_steps.Runner", StandIn), \
+                mock.patch("coscc.service.steps.Runner", StandIn), \
                 mock.patch.object(service, "_worktree", tree), \
                 mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \
                 mock.patch.object(integrate, "pr_for_branch", no_pr):
@@ -1856,7 +1856,7 @@ class RunStepHandsOnWhatEarlierReviewsSaid(RunStepHandsOnTheKnowledgeStore):
     board it read reports finished, for the files its plan names, and every other stage no
     key. The same stand-ins as the knowledge store's; the tests of that class run here too."""
 
-    PLAN = "# Plan: x\nStatus: accepted.\n\n## Files that change\n\n- `coscc/service.py`.\n"
+    PLAN = "# Plan: x\nStatus: accepted.\n\n## Files that change\n\n- `coscc/service/__init__.py`.\n"
 
     def shipped(self, service: Service, review: str) -> str:
         """A second unit the board reads as finished, whose `review.md` is `review`."""
@@ -1874,17 +1874,17 @@ class RunStepHandsOnWhatEarlierReviewsSaid(RunStepHandsOnTheKnowledgeStore):
     def test_impl_gets_the_lines_of_a_finished_units_review_naming_a_file_of_the_plan(self):
         service = self.service(False)
         other = self.shipped(service, "# Review\nStatus: accepted.\n\n## Round 1\n\n"
-                                      "- F1 [fixed abc] coscc/service.py:9 — high — PRIOR-MARKER\n")
+                                      "- F1 [fixed abc] coscc/service/__init__.py:9 — high — PRIOR-MARKER\n")
         self.plan(self.PLAN)
         kw = self.kwargs_of(service, "impl")
         self.assertEqual(kw["prior_findings"],
-                         f"- {other[:4]} Round 1 F1 [fixed abc] coscc/service.py:9 — high — PRIOR-MARKER")
+                         f"- {other[:4]} Round 1 F1 [fixed abc] coscc/service/__init__.py:9 — high — PRIOR-MARKER")
         self.assertGreaterEqual(kw["prior_findings_record"]["lines"], 1)
         self.assertNotIn("error", kw["prior_findings_record"])
 
     def test_a_plan_without_the_section_is_an_empty_section_and_zero_bytes(self):
         service = self.service(False)
-        self.shipped(service, "## Round 1\n\n- F1 [open] coscc/service.py:9 — high — x\n")
+        self.shipped(service, "## Round 1\n\n- F1 [open] coscc/service/__init__.py:9 — high — x\n")
         self.plan("# Plan: x\nStatus: accepted.\n")
         kw = self.kwargs_of(service, "impl")
         self.assertEqual(kw["prior_findings"], "")
@@ -1892,7 +1892,7 @@ class RunStepHandsOnWhatEarlierReviewsSaid(RunStepHandsOnTheKnowledgeStore):
 
     def test_no_other_stage_gets_a_key(self):
         service = self.service(False)
-        self.shipped(service, "## Round 1\n\n- F1 [open] coscc/service.py:9 — high — x\n")
+        self.shipped(service, "## Round 1\n\n- F1 [open] coscc/service/__init__.py:9 — high — x\n")
         self.plan(self.PLAN)
         for stage in ("plan", "pr", "review", "ship"):
             with self.subTest(stage=stage):
@@ -1905,7 +1905,7 @@ class RunStepHandsOnWhatEarlierReviewsSaid(RunStepHandsOnTheKnowledgeStore):
         other = self.shipped(service, "")
         # Not UTF-8: `cos.mjs` still reads the board, `priorfindings` cannot read the file.
         (units.unit_dir(str(self.repo), other, str(self.data)) / "review.md").write_bytes(
-            b"## Round 1\n\n- F1 [open] coscc/service.py:9 \xff\n"
+            b"## Round 1\n\n- F1 [open] coscc/service/__init__.py:9 \xff\n"
         )
         self.plan(self.PLAN)
         kw = self.kwargs_of(service, "impl")
@@ -2025,7 +2025,7 @@ class _AReviewStep:
         with mock.patch.object(board_reader, "gate", open_gate), \
                 mock.patch.object(board_reader, "screens", asked), \
                 mock.patch.object(retake, "take", take), \
-                mock.patch("coscc.service_steps.Runner", StandIn), \
+                mock.patch("coscc.service.steps.Runner", StandIn), \
                 mock.patch.object(self.service, "_worktree", tree):
             with self.assertRaises(Invalid) as refused:
                 asyncio.run(go())

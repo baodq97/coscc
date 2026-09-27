@@ -1,6 +1,6 @@
 """The board: every unit of a workspace with its stage, what is running on it and its worktree.
 
-Split from `coscc/service.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit
-from coscc.service_common import (
+from coscc.service.common import (
     CONSEQUENCE,
     Invalid,
     _younger_than,

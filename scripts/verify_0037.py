@@ -76,7 +76,7 @@ OPENING = " lacks its opening: "
 # The fixed task the intent measured on 2026-09-24.
 PAID_TASK = (
     "In this repository, find the function that calls `worktrees.remove_if_finished` in "
-    "`coscc/service.py`, and count the lines of `coscc/runner/__init__.py`. Answer in two lines."
+    "`coscc/service/__init__.py`, and count the lines of `coscc/runner/__init__.py`. Answer in two lines."
 )
 PAID_RUNS = 3
 

@@ -7,7 +7,7 @@ Plain: no session, no quota, no network. Each claim prints PASS or FAIL:
   condition fails, 2 where a stage has too few steps after, and 2 without `--min-version`.
 - R6, R7, R10, R11: `coscc.rules_budget_test`, in a child process.
 - R13, R16: the `start` row carries `app_version`, `app_commit` and `pointed`
-  (`coscc.runner.runner_test`, `coscc.service_models_test`), in a child process.
+  (`coscc.runner.runner_test`, `coscc.service.models_test`), in a child process.
 - R14, R15: what the prompts of `impl`, `pr`, `ship`, `review` and Gebo carry and name,
   and that every path they name may be `Read` under the step's grant, in a child process.
 
@@ -341,10 +341,10 @@ def prove() -> int:
     ok &= unittests(
         "R13, R16",
         "coscc.runner.runner_test.TheStartRecordSaysWhatRanAndWhatWasNamed",
-        "coscc.service_models_test.AStageRunsOnTheModelSettingsNames.test_the_start_record_names_the_build_that_ran_it",
-        "coscc.service_models_test.AStageRunsOnTheModelSettingsNames."
+        "coscc.service.models_test.AStageRunsOnTheModelSettingsNames.test_the_start_record_names_the_build_that_ran_it",
+        "coscc.service.models_test.AStageRunsOnTheModelSettingsNames."
         "test_a_build_that_cannot_be_read_is_two_empty_strings_and_the_step_runs",
-        "coscc.integrate_service_test.GeboThroughTheService."
+        "coscc.service.integrate_service_test.GeboThroughTheService."
         "test_the_start_record_names_the_artifacts_it_pointed_at_and_the_build",
     )
     ok &= unittests(

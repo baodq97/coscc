@@ -1,6 +1,6 @@
 """What more than one part of `Service` uses, and what code outside it imports: the errors a
 request is refused with, and the words and states the board shows beside a unit. Split
-from `coscc/service.py` (`0095`), which re-exports every name.
+from `coscc/service/__init__.py` (`0095`), which re-exports every name.
 """
 
 from __future__ import annotations

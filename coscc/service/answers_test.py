@@ -1,4 +1,4 @@
-"""Tests for `AnswersMixin` in `coscc/service_answers.py`, split from `coscc/service_test.py` (`0095`).
+"""Tests for `AnswersMixin` in `coscc/service/answers.py`, split from `coscc/service/service_test.py` (`0095`).
 """
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.config import Config
-from coscc.service_common import STAGE_FILES, Invalid
+from coscc.service.common import STAGE_FILES, Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
-from coscc.service_test import create_sync
+from coscc.service.service_test import create_sync
 
 
 REVIEW_ONE = (

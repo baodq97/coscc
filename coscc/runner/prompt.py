@@ -34,7 +34,7 @@ def skill_for(stage: str) -> str:
     `included=['intent.md']` -- the same record a step with its full rules writes. Not
     fatal is only safe when the absence is small; the measurement says it was not.
 
-    **It refuses in `RunError`, not in `MissingRules`.** `coscc/service.py` maps this
+    **It refuses in `RunError`, not in `MissingRules`.** `coscc/service/__init__.py` maps this
     module's refusals with one `except RunError`, and `coscc/web/api.py` turns that into a 400
     that names what went wrong. A second exception type crossing that boundary is not a
     second kind of refusal, it is a 500: measured 2026-09-22 on a workspace whose harness
@@ -57,7 +57,7 @@ def _read(path: Path) -> str:
         return ""
 
 
-# The Answers section of an artifact, exactly as `coscc/service.py:900` and
+# The Answers section of an artifact, exactly as `coscc/service/__init__.py:900` and
 # `.claude/scripts/cos.mjs:194` read it: the byte range from the start of the first line
 # that is `## Answers` -- recognised with its own trailing whitespace stripped away -- to
 # the end of the file. `None` when no such line exists.

@@ -1,6 +1,6 @@
 """Integrating a branch with `main`, and running, driving and stopping one step of a unit.
 
-Split from `coscc/service.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate
-from coscc.service_common import (
+from coscc.service.common import (
     BRANCH_REMOTE,
     BRANCH_TRUNK,
     CONSEQUENCE,

@@ -1,6 +1,6 @@
 """The autopilot: the loop that asks `cos.mjs next` and starts the stages it names.
 
-Split from `coscc/service.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from coscc.git import fetches
 from coscc.github import integrate
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord, Busy
-from coscc.service_common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid
+from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid
 
 
 class AutopilotMixin:
