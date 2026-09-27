@@ -1,8 +1,8 @@
 """Tests for `NoticesMixin` in `coscc/service_notices.py` (`0113` R1, R6–R8, R13).
 
 The generator is read directly, with `beat` shortened: `httpx.ASGITransport` collects a whole
-response body, so a stream that never ends cannot be read through it (`api_test.py` reads the
-route's refusals only).
+response body, so a stream that lasts `notices.LIFETIME_SECONDS` is read through it only with
+that shortened (`api_test.py`).
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import time
 import unittest
 from pathlib import Path
 
+from coscc import auth, notices
 from coscc.config import Config
 from coscc.journal import BELL, Journal
 from coscc.service import Invalid, Service
@@ -46,8 +47,8 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         for s in self.streams:
             await s.aclose()
 
-    def follow(self, after=None, workspace="", beat=BEAT):
-        s = self.service.follow_notices(self.service.notice_scope(workspace), after, beat=beat)
+    def follow(self, after=None, workspace="", beat=BEAT, lifetime=None):
+        s = self.service.follow_notices(self.service.notice_scope(workspace), after, beat=beat, lifetime=lifetime)
         self.streams.append(s)
         return s
 
@@ -123,6 +124,26 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         s = self.follow()
         head, beat = await self.lines(s, 2, within=BEAT * 5)
         self.assertEqual(beat, {"type": "beat", "id": head["id"]})
+
+    async def test_a_stream_ends_once_its_lifetime_is_over_and_nothing_is_skipped(self):
+        # Review round 1, F1: the login door is asked once per request, so the stream ends.
+        s = self.follow(beat=60, lifetime=0.5)
+        await self.lines(s, 1)
+        began = time.monotonic()
+        mine = self.append(stop(self.key))
+        [line] = await self.notices(s, 1)
+        self.assertEqual(line["id"], mine)
+        with self.assertRaises(StopAsyncIteration):
+            await asyncio.wait_for(s.__anext__(), 3)
+        self.assertLess(time.monotonic() - began, 0.5 + 1.0)
+        # Written between two streams: the next, with `after`, hands it over.
+        between = self.append(stop(self.key, "0002_b"))
+        [again] = await self.notices(self.follow(after=mine), 1)
+        self.assertEqual(again["id"], between)
+
+    def test_a_stream_lasts_no_longer_than_an_open_socket(self):
+        self.assertLessEqual(notices.LIFETIME_SECONDS, auth.WS_RECHECK)
+        self.assertLess(notices.BEAT_SECONDS, notices.LIFETIME_SECONDS)
 
     async def test_one_workspace_sees_only_its_own(self):
         other = self.service._journal_key(str(self.other))

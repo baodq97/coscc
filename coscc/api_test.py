@@ -511,8 +511,8 @@ class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
 
 
 class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
-    """`0113` R12. The stream never ends, so only its refusals are read here; what it sends is
-    `service_notices_test.py`'s, which reads the generator itself."""
+    """`0113` R12. Its refusals, and how long a stream outlives the session it opened on; what
+    it sends is `service_notices_test.py`'s, which reads the generator itself."""
 
     async def asyncSetUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -520,8 +520,9 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
         root = Path(tmp.name)
         self.ws = root / "work" / "proj"
         self.ws.mkdir(parents=True)
-        self.app = build(Config(workspaces=(str(self.ws),), working_dir=str(root / "work"),
-                                data_dir=str(root / "data")))
+        self.config = Config(workspaces=(str(self.ws),), working_dir=str(root / "work"),
+                             data_dir=str(root / "data"))
+        self.app = build(self.config)
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
 
     async def asyncTearDown(self):
@@ -545,6 +546,42 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
         paths = {r.path for r in self.app.routes}
         self.assertIn("/api/notices/follow", paths)
         self.assertNotIn("/api/notices/follow", {path for _, path in auth.EXEMPT})
+
+    async def test_a_session_that_ended_hears_nothing_past_the_stream_it_was_on(self):
+        """Review round 1, F1: the login door asks for a live session once per request, so the
+        stream ends after `notices.LIFETIME_SECONDS` and the next connection meets the door."""
+        import asyncio
+        import io
+        import time
+
+        from coscc import auth, notices
+        from coscc.data import Data
+        from coscc.journal import Journal
+
+        data = Data(self.config.data_dir)
+        now = int(time.time())
+        data.auth_set_password("a hash nothing here verifies", now)
+        token = "t" * 43
+        data.auth_session_add(auth._sha(token), now, now + auth.SESSION_TTL)
+        guard = auth.Guard(self.app, data, err=io.StringIO())
+        cookie = {"cookie": f"{auth.COOKIE}={token}"}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=guard), base_url="http://t") as client:
+            with mock.patch.object(notices, "LIFETIME_SECONDS", 0.5):
+                going = asyncio.ensure_future(client.get("/api/notices/follow", headers=cookie))
+                began = time.monotonic()
+                await asyncio.sleep(0.1)
+                data.auth_session_delete(auth._sha(token))
+                r = await asyncio.wait_for(going, 5)
+                self.assertLess(time.monotonic() - began, 0.5 + 1.5)
+                self.assertEqual(r.status_code, 200)
+                self.assertEqual(json.loads(r.text.splitlines()[0])["type"], "head")
+                Journal(self.config.working_dir, self.config.data_dir).append({
+                    "kind": "autopilot-stop", "workspace": str(self.ws), "unit": "0001_a", "stage": "",
+                    "stop": "a", "reason": "r",
+                })
+                r = await client.get("/api/notices/follow", params={"after": "0"}, headers=cookie)
+                self.assertEqual(r.status_code, 401)
+                self.assertNotIn("notice", r.text)
 
 
 if __name__ == "__main__":

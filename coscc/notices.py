@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from coscc import autopilot
+from coscc.auth import WS_RECHECK
 
 # The run-log kinds a notice can come from; `Journal.notice_rows` narrows on them.
 SOURCE_KINDS = ("autopilot-stop", "questions", "end", "ship")
@@ -23,6 +24,11 @@ SOURCE_KINDS = ("autopilot-stop", "questions", "end", "ship")
 KINDS = ("autopilot-stop", "questions", "step-ended", "ship-refused", "shipped")
 # R8. Seconds between two `beat` lines of a quiet stream. Chosen by the spec, not measured.
 BEAT_SECONDS = 15.0
+# Seconds one stream lasts before it ends and its listener connects again with `after`.
+# `auth.Guard` asks for a live session once per request, so without an end a listener whose
+# session was logged out or cleared would go on hearing (review round 1, F1). The same bound
+# an open socket has.
+LIFETIME_SECONDS = WS_RECHECK
 # How many rows one read of the stream takes at most. Chosen, not measured.
 PAGE = 500
 

@@ -711,9 +711,10 @@ def build(config: Config | None = None) -> FastAPI:
 
     @api.get("/api/notices/follow")
     async def follow_notices_route(request: Request) -> Any:
-        """`0113` R1, R6, R8. NDJSON that never ends on its own: a `head` line when there is no
-        `after`, a `notice` line per run-log record past it that is one, and a `beat` line
-        after `notices.BEAT_SECONDS` without one. `workspace` narrows to one. Reads only (R13).
+        """`0113` R1, R6, R8. NDJSON: a `head` line when there is no `after`, a `notice` line
+        per run-log record past it that is one, and a `beat` line after `notices.BEAT_SECONDS`
+        without one. `workspace` narrows to one. Reads only (R13). It ends after
+        `notices.LIFETIME_SECONDS`, so a listener comes back through the login door (R12).
 
         Holds a connection per listener (`.claude/docs/coscc-notices.md`). A refusal is a 400
         before the stream starts; the first line is not waited for, since with `after` it may

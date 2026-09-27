@@ -466,7 +466,15 @@ def notices_through(browser, app, cut, journal, key: str, token: str, jar: Path,
         first, untold = write_notices(journal, key, f"{mode}-1")
         ok &= expect_notices(page, heard, first, untold, f"{mode}, connected")
 
+        # The server ends each stream after `notices.LIFETIME_SECONDS` and the page connects
+        # again, which is an open too: start right after one, so the next is that far away.
+        was = page.evaluate(NOTICE_STATE_JS)["opens"]
+        deadline = time.monotonic() + notices.LIFETIME_SECONDS + 10
+        while page.evaluate(NOTICE_STATE_JS)["opens"] == was and time.monotonic() < deadline:
+            page.wait_for_timeout(100)
         before = page.evaluate(NOTICE_STATE_JS)["opens"]
+        ok &= say(before > was, f"{mode}: the page connects again when the server ends its stream",
+                  f"still {was} after {notices.LIFETIME_SECONDS + 10:.0f} s")
         for nav in ("#nav-sessions", "#nav-board"):
             page.click(nav)
             page.wait_for_timeout(1500)

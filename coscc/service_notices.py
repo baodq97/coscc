@@ -19,8 +19,9 @@ class NoticesMixin:
     # -- notices (`0113` R1, R6–R8) -------------------------------------------
     #
     # One stream for every listener: the page's script, a terminal, an agent's session. It
-    # holds a connection per listener for as long as that listener stays; one whose peer
-    # vanished without closing (spec C6) holds it until a `beat` fails to write.
+    # holds a connection per listener for `notices.LIFETIME_SECONDS` at most, then ends, and
+    # the listener comes back through the login door with `after`; one whose peer vanished
+    # without closing (spec C6) holds it until then or until a `beat` fails to write.
 
     def notice_scope(self, workspace: str) -> str | None:
         """The journal key to narrow to, `None` for every workspace. A workspace the app does
@@ -34,10 +35,12 @@ class NoticesMixin:
 
     async def follow_notices(
         self, scope: str | None, after: int | None, beat: float = notices.BEAT_SECONDS,
+        lifetime: float | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """R6, R8. With no `after`, a `head` line first and nothing at or below it; with one,
-        every notice past it first. Then each notice as it lands, in `id` order and none
-        twice, and a `beat` after `beat` seconds without a line. Never ends on its own.
+        every notice past it first. Then each notice as it lands, in
+        `id` order and none twice, and a `beat` after `beat` seconds without a line. Ends
+        `lifetime` seconds in (`notices.LIFETIME_SECONDS`), once what has landed is sent.
 
         A record this process appends rings `BELL` and is read at once (R7, 5 s); one another
         process appends is read at the next wake, at most `beat` seconds on (R7, 20 s). The
@@ -46,6 +49,7 @@ class NoticesMixin:
         if journal is None:
             raise Invalid("there is no working folder, so there is no run log to follow")
         loop = asyncio.get_running_loop()
+        ends = loop.time() + (notices.LIFETIME_SECONDS if lifetime is None else lifetime)
         last = after
         if last is None:
             last = await asyncio.to_thread(journal.last_id)
@@ -70,6 +74,8 @@ class NoticesMixin:
                             said = loop.time()
                     if len(rows) < notices.PAGE:
                         break
+                if loop.time() >= ends:
+                    return
                 left = said + beat - loop.time()
                 if left <= 0:
                     try:
@@ -79,6 +85,6 @@ class NoticesMixin:
                     yield {"type": "beat", "id": head}
                     said = loop.time()
                     left = beat
-                await BELL.wait(ticket, left)
+                await BELL.wait(ticket, min(left, ends - loop.time()))
             finally:
                 BELL.disarm(ticket)
