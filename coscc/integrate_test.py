@@ -204,7 +204,7 @@ class Warnings(unittest.TestCase):
     def test_each_line_only_when_true(self):
         self.assertEqual(ig.warnings([], "accepted", False, "W"), [])
         self.assertIn("ship gate closes", ig.warnings([{"verdict": "pass"}], "accepted", False, "W")[0])
-        self.assertIn("offers review", ig.warnings([{"verdict": "changes-requested"}], "changes-requested", False, "W")[0])
+        self.assertIn("asks for changes", ig.warnings([{"verdict": "changes-requested"}], "changes-requested", False, "W")[0])
         self.assertEqual(ig.warnings([], "", True, "W"), ["W"])
 
     def test_a_press_that_may_fall_to_gebo_says_so(self):
@@ -229,6 +229,14 @@ class Warnings(unittest.TestCase):
         self.assertIn("the ship gate opens again once CI is green, with no review round", said)
         self.assertIn("If the unit's patch comes out unchanged — the same added, removed and context lines", said)
         self.assertIn("If it changes, the ship gate closes and another review round is needed", said)
+
+    def test_0121_changes_asked_and_a_clean_rebase_spends_no_round(self):
+        # `0121` R1, R2: a patch left unchanged goes back to impl; only a changed one costs a round.
+        said = ig.warnings([{"verdict": "changes-requested"}], "changes-requested", False, "W")[0]
+        self.assertIn("If integrating leaves the unit's patch unchanged", said)
+        self.assertIn("cos.mjs next still offers impl, and no review round is spent", said)
+        self.assertIn("If it changes the patch, next offers review once CI is green, and that round counts toward COS_REVIEW_ROUNDS", said)
+        self.assertNotIn("offers review, not impl", said)
 
 
 class Related(unittest.TestCase):

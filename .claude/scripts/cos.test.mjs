@@ -1010,7 +1010,7 @@ test('0024 b: changes asked, nothing new on the pull request: impl, though impl.
 
 test('0024 c: changes asked, a fix is on the head and CI is green: review, though review.md exists', () => {
   assert.equal(nextStep(asked(), { probe: movedTo(['src/a.py']) }).stage, 'review')
-  // A rebase counts as moved (spec Concern 4), by the ship gate's own rule.
+  // A rewrite whose patch cannot be compared still goes to review (`0121` R3).
   const rebased = greenProbe(undefined, { [`merge-base --is-ancestor ${SHA} ${HEAD2}`]: { code: 1, out: '', err: '' } }, { state: 'OPEN', headRefOid: HEAD2 })
   assert.equal(nextStep(asked(), { probe: rebased }).stage, 'review')
 })
@@ -3368,4 +3368,77 @@ test('0067 R9: a head that differs only under .cos/<unit>/ is clean', () => {
   writeFileSync(join(repo, '.cos', '0002_y', 'intent.md'), 'x\n')
   const other = commit('-m', 'another unit')
   assert.match(checkGate(passedAt(R), 'ship', { probe: realProbe(repo, other) }).need[0], /differs from the reviewed one in \.cos\/0002_y\/intent\.md$/)
+})
+
+// --- 0121: a rebase alone answers no finding ------------------------------------------
+
+// The 0115 case: two rounds asked for changes on `SHA`, with a `low` open beside a `medium`.
+const TWO_ASKED = [1, 2].map((n) => round(n, 'changes-requested', [rated('F1', 'low'), rated('F2', 'medium')])).join('\n')
+
+test('0121 R1: changes asked, then only a clean rebase — next offers impl and asks gh no checks', () => {
+  const u = asked(TWO_ASKED)
+  const calls = []
+  const n = nextStep(u, { probe: rebasedProbe({ calls }) })
+  assert.equal(n.stage, 'impl')
+  for (const said of [/aaaaaaa/, /ddddddd/, /unchanged/, /open findings of review round 2/]) assert.match(n.action, said)
+  assert.doesNotMatch(n.action, /[0-9a-f]{40}/)
+  assert.deepEqual(calls.filter((c) => c.startsWith('gh pr checks')), [])
+  for (const bucket of ['fail', 'pending']) {
+    assert.equal(nextStep(u, { probe: rebasedProbe({ checks: [{ name: 'tests', bucket }] }) }).stage, 'impl')
+  }
+})
+
+test('0121 R1: the 0115 case on a real repository — round 2 asked for changes, main moved, the branch was rebased, CI is green: impl', () => {
+  const { repo, sh, R, onMain } = rebaseRepo()
+  onMain(farFromTheHunk)
+  sh('rebase', '-q', 'main')
+  const H = sh('rev-parse', 'HEAD')
+  assert.notEqual(H, R)
+  const u = asked(TWO_ASKED.replaceAll(SHA, R))
+  assert.equal(nextStep(u, { probe: realProbe(repo, H) }).stage, 'impl')
+  // R6: the review gate is as it was — `next` chooses, the gate does not close.
+  assert.equal(checkGate(u, 'review', { probe: realProbe(repo, H) }).ok, true)
+})
+
+test('0121 R2: a rebase with a fix commit on top goes to review on green, impl on red, nothing while CI runs', () => {
+  const { repo, sh, commit, R, onMain } = rebaseRepo()
+  onMain(farFromTheHunk)
+  sh('rebase', '-q', 'main')
+  const file = join(repo, 'a.txt')
+  writeFileSync(file, readFileSync(file, 'utf8').replace('line 40\n', 'line 40, fixed by the unit\n'))
+  const H = commit('-m', 'the fix')
+  const u = asked(TWO_ASKED.replaceAll(SHA, R))
+  const n = nextStep(u, { probe: realProbe(repo, H) })
+  assert.equal(n.stage, 'review')
+  assert.match(n.action, /differs from the reviewed one in a\.txt/)
+  assert.equal(nextStep(u, { probe: realProbe(repo, H, [{ name: 'tests', bucket: 'fail' }]) }).stage, 'impl')
+  assert.equal(nextStep(u, { probe: realProbe(repo, H, [{ name: 'tests', bucket: 'pending' }]) }).stage, '')
+})
+
+test('0121 R2: a rebase whose patch differs in one file names it and goes to review', () => {
+  const patch = (c) => (c === SHA ? PATCH_R : hunk(28, 'line 28, changed by main'))
+  const n = nextStep(asked(TWO_ASKED), { probe: rebasedProbe({ patch }) })
+  assert.equal(n.stage, 'review')
+  assert.match(n.action, /was rewritten past aaaaaaa — its patch differs from the reviewed one in a\.txt/)
+})
+
+test('0121 R3: a rewrite that cannot be compared goes to review on green and says why', () => {
+  const noTrunk = rebasedProbe()
+  const git = noTrunk.git
+  noTrunk.git = (...a) => (a[0] === 'rev-parse' && a[3]?.endsWith('/main') ? { code: 1, out: '', err: '' } : git(...a))
+  const n = nextStep(asked(TWO_ASKED), { probe: noTrunk })
+  assert.equal(n.stage, 'review')
+  assert.match(n.action, /could not be compared with the reviewed one: there is no origin\/main and no main here/)
+})
+
+test('0121 R4: a head that was not rewritten asks git for no patch and no merge-base to trunk', () => {
+  for (const [files, stage] of [[['src/a.py'], 'review'], [['.cos/0001_x/review.md'], 'impl']]) {
+    const calls = []
+    const probe = movedTo(files)
+    const { git } = probe
+    probe.git = (...a) => (calls.push(a.join(' ')), git(...a))
+    assert.equal(nextStep(asked(TWO_ASKED), { probe }).stage, stage)
+    assert.deepEqual(calls.filter((c) => c.startsWith('diff --no-color')), [])
+    assert.deepEqual(calls.filter((c) => c.startsWith('merge-base ') && !c.startsWith('merge-base --is-ancestor ')), [])
+  }
 })
