@@ -88,6 +88,23 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         [line] = await self.notices(s, 1)
         self.assertEqual(line["id"], later)
 
+    async def test_an_after_past_every_row_is_a_head_and_what_lands_next_arrives(self):
+        # Review round 1, F2: a cursor kept from a run log since deleted or replaced.
+        now = self.append(stop(self.key))
+        s = self.follow(after=now + 1000)
+        [head] = await self.lines(s, 1)
+        self.assertEqual(head, {"type": "head", "id": now})
+        new = self.append(stop(self.key, "0002_b"))
+        [line] = await self.notices(s, 1)
+        self.assertEqual(line["id"], new)
+
+    async def test_an_after_at_the_last_row_is_no_head(self):
+        now = self.append(stop(self.key))
+        s = self.follow(after=now)
+        new = self.append(stop(self.key, "0002_b"))
+        [line] = await self.lines(s, 1)
+        self.assertEqual((line["type"], line["id"]), ("notice", new))
+
     async def test_after_zero_replays_the_whole_history(self):
         ids = [self.append(stop(self.key, u)) for u in ("0001_a", "0002_b")]
         got = await self.notices(self.follow(after=0), 2)

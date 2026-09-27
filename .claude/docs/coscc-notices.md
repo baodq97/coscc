@@ -10,8 +10,10 @@ It ends after `notices.LIFETIME_SECONDS` (30 s, `auth.WS_RECHECK`, the bound a s
 and the listener connects again with `after`: `auth.Guard` asks for a live session once per
 request, so that is how a listener whose session ended is refused.
 
-- `{"type": "head", "id": N}` first, when there is no `after`: nothing at or below `N`
-  follows. `after=0` replays the whole run log.
+- `{"type": "head", "id": N}` first, when there is no `after` or it is past every row:
+  nothing at or below `N` follows, and a listener sets its cursor to `N`. An `after` past
+  every row is a cursor from a run log since deleted or replaced, whose ids start again at
+  1. `after=0` replays the whole run log.
 - `{"type": "notice", "id", "at", "workspace", "unit", "stage", "kind", "text", "record"}`,
   one per run-log row past `after` that `notices.notice_of` makes a notice, by `id`, none
   twice. `kind` is one of `autopilot-stop`, `questions`, `step-ended`, `ship-refused`,
@@ -55,10 +57,8 @@ while :; do
         id=${line#'{"type": "notice", "id": '}
         printf '%s\n' "${id%%,*}" > "$COSCC_AFTER_FILE" ;;
       '{"type": "head", "id": '*)
-        if [ ! -s "$COSCC_AFTER_FILE" ]; then
-          id=${line#'{"type": "head", "id": '}
-          printf '%s\n' "${id%%\}*}" > "$COSCC_AFTER_FILE"
-        fi ;;
+        id=${line#'{"type": "head", "id": '}
+        printf '%s\n' "${id%%\}*}" > "$COSCC_AFTER_FILE" ;;
     esac
   done
   kill "$pid" 2>/dev/null

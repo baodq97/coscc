@@ -37,8 +37,8 @@ class NoticesMixin:
         self, scope: str | None, after: int | None, beat: float = notices.BEAT_SECONDS,
         lifetime: float | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        """R6, R8. With no `after`, a `head` line first and nothing at or below it; with one,
-        every notice past it first. Then each notice as it lands, in
+        """R6, R8. With no `after`, or one past every row, a `head` line first and nothing at
+        or below it; with one, every notice past it first. Then each notice as it lands, in
         `id` order and none twice, and a `beat` after `beat` seconds without a line. Ends
         `lifetime` seconds in (`notices.LIFETIME_SECONDS`), once what has landed is sent.
 
@@ -50,10 +50,15 @@ class NoticesMixin:
             raise Invalid("there is no working folder, so there is no run log to follow")
         loop = asyncio.get_running_loop()
         ends = loop.time() + (notices.LIFETIME_SECONDS if lifetime is None else lifetime)
-        last = after
-        if last is None:
-            last = await asyncio.to_thread(journal.last_id)
-            yield {"type": "head", "id": last}
+        head = await asyncio.to_thread(journal.last_id)
+        if after is None or after > head:
+            # An `after` past every row is a cursor from a run log since deleted or replaced,
+            # whose ids start again at 1: kept, it would hide every notice until the new log
+            # passed it (review round 1, F2). The `head` line sets the listener's cursor.
+            last = head
+            yield {"type": "head", "id": head}
+        else:
+            last = after
         said = loop.time()
         while True:
             ticket = BELL.arm()

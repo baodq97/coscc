@@ -330,6 +330,16 @@ new MutationObserver(ms => {
 }).observe(document, {childList: true, subtree: true});
 """
 
+# Review round 1, F2: both listeners start with a cursor from a run log that is gone, past
+# every row, and must be handed a `head` that sets it back. Once per browser profile.
+STALE_CURSOR = "999999999"
+STALE_INIT = """
+if (!localStorage.getItem("e2e_seeded")) {
+  localStorage.setItem("e2e_seeded", "1");
+  localStorage.setItem("coscc_notice_after", "%s");
+}
+""" % STALE_CURSOR
+
 NOTICE_STATE_JS = """
 () => ({dom: window.__probe_dom || {}, adds: window.__probe_adds || [], writes: window.__probe_writes || [],
         opens: window.__coscc_notice_opens || 0, cursor: localStorage.getItem('coscc_notice_after')})
@@ -432,6 +442,7 @@ def notices_through(browser, app, cut, journal, key: str, token: str, jar: Path,
     ok = True
     heard: list[tuple[float, dict]] = []
     after_file = where / f"after-{mode}"
+    after_file.write_text(STALE_CURSOR + "\n", encoding="utf-8")
     proc = subprocess.Popen(
         ["bash", "-c", listener_block()],
         env={**os.environ, "COSCC_BASE": app.base, "COSCC_JAR": str(jar), "COSCC_AFTER_FILE": str(after_file)},
@@ -449,18 +460,23 @@ def notices_through(browser, app, cut, journal, key: str, token: str, jar: Path,
     context = browser.new_context(viewport=SIZE)
     context.set_default_timeout(TIMEOUT_MS)
     context.add_cookies([{"name": auth.COOKIE, "value": token, "url": app.base}])
+    context.add_init_script(STALE_INIT)
     context.add_init_script(NOTICE_INIT)
     try:
         page = context.new_page()
         why = arrive(page, app.base, href("board", "proj"))
         deadline = time.monotonic() + 30
-        while not why and time.monotonic() < deadline and not (
-            page.evaluate(NOTICE_STATE_JS)["cursor"] and after_file.is_file() and after_file.read_text().strip()
-        ):
+
+        def cursors() -> tuple[str, str]:
+            return (page.evaluate(NOTICE_STATE_JS)["cursor"] or "",
+                    after_file.read_text().strip() if after_file.is_file() else "")
+
+        while not why and time.monotonic() < deadline and not all(c and c != STALE_CURSOR for c in cursors()):
             page.wait_for_timeout(200)
         if not why and time.monotonic() >= deadline:
-            why = "the page or the terminal never had its head"
-        if not say(not why, f"{mode}: the page and the terminal are listening", why):
+            why = f"the page or the terminal kept its cursor: {cursors()}"
+        if not say(not why, f"{mode}: the page and the terminal set a cursor past every row back to the head",
+                   why):
             return False
 
         first, untold = write_notices(journal, key, f"{mode}-1")

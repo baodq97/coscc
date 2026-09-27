@@ -186,8 +186,10 @@ def _css(color) -> str:
 # line at a time, outside Reflex: no state, no websocket, no `on_load`/`on_mount`, and a stack
 # appended to `document.body` that no hydration or route change touches. 40 s with no byte
 # (a `beat` comes every 15 s) aborts it; it connects again after 1 s, doubling to 30 s, with
-# `after` = the cursor — as it does each time the server ends the stream, every 30 s. The cursor moves only once the notice's node is in the DOM, and never
-# down, whichever tab writes it. A 401 goes to the login page and does not connect again.
+# `after` = the cursor — as it does each time the server ends the stream, every 30 s. The
+# cursor moves only once the notice's node is in the DOM, and a notice never moves it down,
+# whichever tab writes it; a `head` line sets it, since one comes only when there was none or
+# it was past every row. A 401 goes to the login page and does not connect again.
 _NOTICE_JS = """
 (function () {
   if (window.__coscc_notices) return;
@@ -292,7 +294,7 @@ _NOTICE_JS = """
             buf = buf.slice(i + 1);
             if (!line) continue;
             var m = JSON.parse(line);
-            if (m.type === "head") { if (cursor() === null) advance(m.id); }
+            if (m.type === "head") localStorage.setItem(KEY, String(m.id));
             else if (m.type === "notice") { show(m); advance(m.id); }
           }
           return pump();
