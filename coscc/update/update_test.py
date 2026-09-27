@@ -1,4 +1,4 @@
-"""`coscc/update.py`: identity, candidates, checked downloads, and `finish`.
+"""`coscc/update/__init__.py`: identity, candidates, checked downloads, and `finish`.
 
 `.cos/0068_updating-the-app-is-a-manual-reinstall` plan step 4. Nothing here goes to the
 network: `fetch_into` gets an opener that serves bytes from a dict, and `finish` runs a

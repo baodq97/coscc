@@ -148,7 +148,7 @@ _HARNESS = PACKAGE_HARNESS.name
 
 # The build stamp `scripts/build_wheel.sh` writes, and the only place an installed copy can
 # learn which commit it was built from (`.cos/0068_updating-the-app-is-a-manual-reinstall`
-# R1). `coscc/update.py` reads it under the same name.
+# R1). `coscc/update/__init__.py` reads it under the same name.
 BUILD_STAMP = "_build.json"
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
 

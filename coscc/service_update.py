@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from coscc import updater as updater_mod
+from coscc.update import updater as updater_mod
 from coscc.service_common import Invalid, NotUpdatable, OWNER, StaleCutList, Updating
 
 

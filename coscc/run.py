@@ -41,7 +41,7 @@ from pathlib import Path
 # Reflex, so it cannot disturb the ordering the two environment variables depend on.
 from coscc import frontend
 
-# The same: standard library only (`coscc/update.py`'s docstring says why it must be).
+# The same: standard library only (`coscc/update/__init__.py`'s docstring says why it must be).
 from coscc import update
 from coscc.config import LOOPBACK
 

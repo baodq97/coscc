@@ -1,7 +1,7 @@
 """Updating the app from the board: the pure half, and what `main` runs after uvicorn stops.
 
 `.cos/0068_updating-the-app-is-a-manual-reinstall`. The state machine that decides when to
-apply lives in `coscc/updater.py`; this module holds only what that machine and `run.main`
+apply lives in `coscc/update/updater.py`; this module holds only what that machine and `run.main`
 both need, and what can be tested without a server:
 
 - `identity` — which version and commit this process runs, and whether this install is the
@@ -13,7 +13,7 @@ both need, and what can be tested without a server:
 **Standard library only, and every import at the top.** `finish` runs after `uv tool
 install --force` has replaced the venv under this very process (R12 step 8): a module
 imported lazily from then on would be read from the new version, or from a half-written
-tree. `coscc/update_test.py` pins that nothing is imported while `finish` runs.
+tree. `coscc/update/update_test.py` pins that nothing is imported while `finish` runs.
 
 **The source is a constant.** No environment variable and no request reaches `SOURCE`, and
 `fetch_into` takes its opener as a Python argument so a test does not go to the network
@@ -51,7 +51,8 @@ INSTALL_TIMEOUT = 120
 # counts it as a failure.
 EXIT_CODE = 75
 
-_HERE = Path(__file__).resolve().parent
+# The package root, `coscc/`, one up from this package: where a wheel holds `_build.json`.
+_HERE = Path(__file__).resolve().parents[1]
 REPO = _HERE.parent
 # The same name `coscc.harness.BUILD_STAMP` checks for in a wheel.
 BUILD_STAMP = _HERE / "_build.json"

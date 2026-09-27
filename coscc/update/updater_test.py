@@ -1,4 +1,4 @@
-"""`coscc/updater.py`: waiting, cutting, the apply sequence, and what a restart reports.
+"""`coscc/update/updater.py`: waiting, cutting, the apply sequence, and what a restart reports.
 
 `.cos/0068_updating-the-app-is-a-manual-reinstall` plan step 7. The service is a stand-in
 that lists jobs from a Python list and records what was cut; nothing goes to the network,
@@ -16,7 +16,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc import update, updater
+from coscc import update
+from coscc.update import updater
 from coscc.config import Config
 
 SHA = "0123456789abcdef" * 2 + "01234567"

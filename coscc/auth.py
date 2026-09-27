@@ -98,7 +98,7 @@ LOCK_MAX = 3600.0
 # Chosen. Past this many addresses, rows with no lock and no failure in the window go.
 LIMITER_KEYS = 10000
 
-# The line the setup token is written on. `coscc/updater.py` reads a trial's output for it.
+# The line the setup token is written on. `coscc/update/updater.py` reads a trial's output for it.
 SETUP_LINE = re.compile(r"^coscc setup token: (\S+)$")
 
 _JSON = [(b"content-type", b"application/json")]

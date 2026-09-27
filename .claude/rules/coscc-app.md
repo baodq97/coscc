@@ -99,7 +99,7 @@ only from here.
 | a worktree per unit, `switch main`, fetches before a step; names from `main` in `impl`'s prompt | `.claude/rules/coscc-worktrees.md` | editing `coscc/git/worktrees.py`, `gitops.py`, `drift.py`, `fetches.py`, or `run_step`'s preparation |
 | `POST /api/units/integrate` force-pushes; `gh pr list` per board read and per `pr` step | `.claude/rules/coscc-integrate.md` | editing `coscc/github/integrate.py`, the `integrate` or `pr` grant, or the board's integration read |
 | `POST /api/units/review-comment` posts; a `pr` step rewrites its pull request | `.claude/rules/coscc-github.md` | editing `coscc/github/prcomment.py`, `coscc/github/prsync.py`, `/review-comment`, or `_sync_pr` |
-| `POST /api/update/*` stops work and restarts | `.claude/rules/coscc-update.md` | editing `coscc/update.py`, `coscc/updater.py`, `scripts/build_wheel.sh`, `/api/update/*` |
+| `POST /api/update/*` stops work and restarts | `.claude/rules/coscc-update.md` | editing `coscc/update/__init__.py`, `coscc/update/updater.py`, `scripts/build_wheel.sh`, `/api/update/*` |
 | `GET /api/board/events` hands out everything a step saw | `.claude/rules/coscc-events.md` | editing `coscc/runlog/events.py`, `/api/board/events`, `/follow`, or the watch pane |
 | `GET /api/notices/follow` holds a connection per listener | `.claude/docs/coscc-notices.md` | editing `coscc/runlog/notices.py`, `service_notices.py` or the notice script |
 | the `review`/`ship` gates call `gh`; the run button follows `next` | `.claude/rules/coscc-board.md` | editing `coscc/board.py` or the run button |

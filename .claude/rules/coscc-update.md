@@ -1,7 +1,7 @@
 ---
 paths:
-  - "coscc/update.py"
-  - "coscc/updater.py"
+  - "coscc/update/__init__.py"
+  - "coscc/update/updater.py"
   - "scripts/build_wheel.sh"
 ---
 

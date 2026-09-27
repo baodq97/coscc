@@ -27,7 +27,7 @@ from coscc.runner import Runner
 from coscc.sessions import Sessions
 from coscc.store import Store
 from coscc import steps as steps_mod
-from coscc import updater as updater_mod
+from coscc.update import updater as updater_mod
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
 # `coscc.service.<name>` still resolves; a patch reaches only the module that looks it up.
