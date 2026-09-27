@@ -1093,6 +1093,18 @@ class PrHasItsOwnTask(unittest.TestCase):
             self.assertEqual(by_stage["pr"]["pr_before"], "https://x/pull/7")
             self.assertNotIn("pr_before", by_stage["impl"])
 
+    def test_the_start_record_marks_a_recording_ship_and_nothing_else(self):
+        recording = (f"open: ship may proceed for {UNIT} — #95 was merged as abc1234 at "
+                     "2026-09-20T00:00:00Z: record it in ship.md; do not merge")
+        merging = f"open: ship may proceed for {UNIT} — merge with --match-head-commit abc1234"
+        for stage, said, mode in (("ship", recording, "record"), ("ship", merging, None), ("pr", recording, None)):
+            with tempfile.TemporaryDirectory() as d:
+                journal = Journal(d, d)
+                self.run_stage(d, stage, journal, gate_said=said)
+                start = journal.records(d, kind="start")[-1]
+                self.assertEqual(start.get("ship_mode"), mode, (stage, said))
+                self.assertEqual(mode is not None, "ship_mode" in start, (stage, said))
+
     def test_no_pull_request_before_is_the_empty_string(self):
         with tempfile.TemporaryDirectory() as d:
             journal = Journal(d, d)
