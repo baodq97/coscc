@@ -247,9 +247,11 @@ class AutopilotMixin:
                     autopilot.exhausted_of(records, key, name, "impl"),
                 )
                 # R10: a unit behind `main`, conflicting or red after integration is integrated
-                # first. Since `0112` R1 also after a `pass`: GitHub would refuse the merge, the
-                # rebase closes `ship`, and a new round opens it again — but only where the
-                # autopilot may ship, since otherwise a person merges and the round is theirs.
+                # first. Since `0112` R1 also after a `pass`, but only where the autopilot may
+                # ship, since otherwise a person merges and the round is theirs: GitHub would
+                # refuse the merge. A rebase that leaves the unit's patch unchanged opens `ship`
+                # again once CI is green (`0067`); one that changes it closes `ship` until a new
+                # round passes.
                 # CI red after the autopilot's own integration runs `impl` once if `next` names
                 # it, and is not integrated again (`0124` R1, R2) — nor once `main` has moved on
                 # or the pull request conflicts, which would open a new window (review F1).
