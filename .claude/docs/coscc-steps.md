@@ -81,7 +81,9 @@ Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/boa
   (`OpeningError`) is reopened once on the same session, with no tools and `max_turns=1`
   (`runner._opening_turn`), and asked for the artifact again. A Stop is refused for up to
   `OPENING_TIMEOUT` (180 s). `max_budget_usd` does not bound the turn: one that rewrote a
-  26,535-character plan cost about $1.1 (0127 spike ## U1). `end` carries `opening`
+  26,535-character plan cost about $1.1 (0127 spike ## U1), and a turn that ends at a
+  ceiling, `max_turns` or the budget, writes nothing even when its reply is whole: the
+  money is spent and the step stays `failed`. `end` carries `opening`
   (`repaired`, `none` or `withheld`) and the turn's cost as `closing`. When the turn's
   reply is written the step ends `done` with no `detail`, so the first reply survives only
   in the session's transcript, under the `end`'s `session_id`.

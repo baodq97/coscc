@@ -1362,6 +1362,37 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         verdict = asyncio.run(sessions.calls[1]["can_use_tool"]("Read", {"file_path": "/etc/passwd"}, None))
         self.assertEqual(type(verdict).__name__, "PermissionResultDeny")
 
+    def test_a_repair_turn_cut_at_max_turns_writes_nothing_however_it_opens(self):
+        # Review round 1, F1: an MCP call refused by `deny_all` ends the only turn, and what
+        # came before it opens right and says `accepted`.
+        sessions = self.Repairs(tries_tool=True, repair_terminal="max_turns")
+        out, [end], _, written, _ = self.go(sessions)
+        self.assertEqual(len(sessions.calls), 2)
+        self.assertIsNone(written)
+        self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
+        self.assertNotIn("opening_reason", end)
+        self.assertEqual(end["closing"], {"terminal": "max_turns", "turns": 1, "cost_usd": 1.1})
+        self.assertTrue(end["detail"].startswith("plan.md lacks its opening:"), end["detail"][:80])
+        self.assertIn(
+            "--- plan.md: the repair turn's reply was not written: it stopped at the ceiling: max_turns ---",
+            end["detail"],
+        )
+        self.assertEqual(out[-1][1]["outcome"], "failed")
+
+    def test_a_repair_turn_past_the_budget_writes_nothing_though_it_ran_whole(self):
+        # The CLI compares the cost after the turn has run (spec C3), so the reply is whole;
+        # it is refused all the same, and the step is not `done` past its budget.
+        sessions = self.Repairs(repair_terminal="error_max_budget_usd")
+        _, [end], _, written, _ = self.go(sessions)
+        self.assertEqual(len(sessions.calls), 2)
+        self.assertIsNone(written)
+        self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
+        self.assertEqual(end["cost_usd"], 3.1)
+        self.assertIn(
+            "--- plan.md: the repair turn's reply was not written: it stopped at the ceiling: error_max_budget_usd ---",
+            end["detail"],
+        )
+
     def test_a_repaired_reply_is_written_and_the_step_ends_done(self):
         section = "## Answers\n\n### Câu 1\nAnswered by: Lan. Date: 2026-09-26. Via: product.\n\ncó\n"
         existing = ("# Plan: x\nIntent: i. Status: draft.\n\nCŨ\n\n" + section).encode("utf-8")

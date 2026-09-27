@@ -834,16 +834,28 @@ class Runner:
                             OPENING_TIMEOUT,
                         )
                         closing, cost = _turn_cost(done, cost)
-                        # R4: the road every reply takes, and nothing of the first reply joined
-                        # to it. No `await` from here to the write.
-                        try:
-                            _write_artifact(directory, artifact, reply, blocks=again)
-                        except RunError as e:
-                            opening, said = "none", f"{artifact}: the repair turn's reply was not written: {e}"
+                        after = str((done or {}).get("terminal_reason") or "")
+                        # Review round 1, F1. A turn that stopped at a ceiling writes nothing
+                        # (R6). At `max_turns` it was cut off: an MCP tool still reaches a
+                        # session with `tools=[]` (`coscc/agent/policy.py:461-463`), and one
+                        # call refused by `deny_all` ends the only turn, so what came before it
+                        # may be a draft whose header says `accepted`. At the budget the turn
+                        # ran whole and the CLI compared the cost after (spec C3), so its reply
+                        # may be complete; it is refused all the same, because the reply's road
+                        # never ends a step past its ceiling `done`, and this one would be.
+                        if _hit_ceiling(after):
+                            opening, said = "none", f"{artifact}: the repair turn's reply was not written: it stopped at the ceiling: {after}"
                         else:
-                            outcome, error, detail, opening = "done", None, "", "repaired"
-                            if stage == "review":
-                                review_md = "round"
+                            # R4: the road every reply takes, and nothing of the first reply
+                            # joined to it. No `await` from here to the write.
+                            try:
+                                _write_artifact(directory, artifact, reply, blocks=again)
+                            except RunError as e:
+                                opening, said = "none", f"{artifact}: the repair turn's reply was not written: {e}"
+                            else:
+                                outcome, error, detail, opening = "done", None, "", "repaired"
+                                if stage == "review":
+                                    review_md = "round"
                 except asyncio.CancelledError as e:
                     if stopped():
                         task = asyncio.current_task()
