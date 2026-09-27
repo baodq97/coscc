@@ -211,6 +211,12 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             # `cos.mjs` sends neither, which reads as unheld with no moves.
             "hold": u.get("hold") or None,
             "hold_moves": [str(x) for x in u.get("holdMoves") or []],
+            # `0081` R4/R8. Whether the unit used its review rounds with findings still open,
+            # and how many rounds a person granted it, both as `cos.mjs` decided them. Copied,
+            # never derived: the route refuses and the page offers its button off
+            # `more_rounds` alone. An older `cos.mjs` sends neither, which reads as False and 0.
+            "more_rounds": bool(u.get("moreRounds")),
+            "rounds_granted": int(((u.get("artifacts") or {}).get("review.md") or {}).get("roundsGranted") or 0),
             # `0115` R4. On each row too, so whoever holds one row from this read -- the
             # answer route's journal, `autopilot.answer_completes` -- reads the same list.
             "after_answers": list(after_answers),

@@ -684,6 +684,43 @@ class TheHoldIsCarriedFromTheScript(unittest.TestCase):
         self.assertEqual((u["hold"], u["hold_moves"]), (None, []))
 
 
+_STUCK_REVIEW = "# Review: q\nAuthor: t. Status: changes-requested.\n" + "".join(
+    f"\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: changes-requested.\n\n### Findings\n\n- F1 [open] a\n"
+    for n in (1, 2, 3)
+)
+_MORE_ROUNDS = "\n## Answers\n\n### More rounds\nDecided by: owner. Date: 2026-09-27. Via: product.\nRounds: 1\n"
+
+
+class MoreRoundsAreCarriedFromTheScript(unittest.TestCase):
+    """`0081` R4/R8. `more_rounds` and `rounds_granted` are `cos.mjs`'s, copied and nothing more."""
+
+    def _stuck(self, tmp: str, name: str, review: str) -> None:
+        d = Path(tmp) / ".cos" / name
+        d.mkdir(parents=True)
+        (d / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n")
+        for f in ("spec.md", "plan.md", "impl.md"):
+            (d / f).write_text("Status: accepted.\n")
+        (d / "pr.md").write_text("PR: https://github.com/o/r/pull/3. Status: accepted.\n")
+        (d / "review.md").write_text(review)
+
+    def test_more_rounds_and_rounds_granted_are_copied_and_absent_reads_as_none(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ):
+            os.environ.pop("COS_REVIEW_ROUNDS", None)
+            self._stuck(tmp, "0001_given", _STUCK_REVIEW + _MORE_ROUNDS)
+            self._stuck(tmp, "0002_stuck", _STUCK_REVIEW)
+            got = {u["name"]: u for u in run(board.read(tmp))["units"]}
+        self.assertEqual((got["0001_given"]["more_rounds"], got["0001_given"]["rounds_granted"]), (False, 1))
+        self.assertEqual((got["0002_stuck"]["more_rounds"], got["0002_stuck"]["rounds_granted"]), (True, 0))
+
+    def test_an_older_script_reads_as_false_and_zero(self):
+        async def fake_run(argv, timeout):
+            return 0, '{"root": "r", "stages": [], "units": [{"name": "0001_x"}]}', ""
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
+            [u] = run(board.read(tmp))["units"]
+        self.assertEqual((u["more_rounds"], u["rounds_granted"]), (False, 0))
+
+
 class TheStagesAnAnsweredDraftRunsAgainAreCarriedFromTheScript(unittest.TestCase):
     """`0115` R4. `afterAnswers` is `cos.mjs`'s, copied onto the read and onto each unit."""
 
