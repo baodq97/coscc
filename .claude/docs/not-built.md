@@ -28,7 +28,8 @@ Read this before adding a route, a button or a grant, and before copying this ha
   every 5 minutes for a unit between `pr` and `ship`, through the same `run_step` a press
   uses, so the gate is asked there. It stops at an open question, where `next` awaits a
   person, at `ship` unless its own switch is on, at a Gebo `[needs-person]`, after a step
-  that did not end `done`, and where the gate refuses; and at a daily cap for the whole
+  that did not end `done` (a first `exhausted` one, not `ship`, runs once more: `0120`), and
+  where the gate refuses; and at a daily cap for the whole
   app. None of that makes a gate more than advice or a grant more than a reading of words,
   and a step the autopilot starts is not a person's approval of anything. It never
   releases. It refuses to turn on while the app listens beyond loopback, but whoever holds
