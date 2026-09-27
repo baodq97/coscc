@@ -23,6 +23,14 @@ Read this before changing `POST /api/settings/*`, `coscc/models.py`, `POST /api/
   shown on Settings as `impl:novel`), so one press can spend twice as much. `max` is refused
   from `models.json` and taken from an override, so anyone holding the password can set it.
   The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
+- **With `COS_EFFORT_TRIAL` on, Settings does not show the effort a routine `impl` runs at.**
+  Since `0123`, a unit whose name hashes to the `trial` arm (`coscc/efforttrial.py`) runs a
+  routine `impl` at `high`, between an override and `models.json`, while the `impl` row
+  still reads `medium (default)`: `models.table` never passes the trial's effort, on
+  purpose (spec C11). Only that step's `start` record says so, as `effort_source: trial`
+  beside `effort_trial: {arm, applied}`. Setting or changing an `effort:impl` or
+  `model:impl` override while the trial runs is taken at once, and drops each unit it
+  lands in the middle of out of `coscc effort measure`'s count (spec C6).
 - **`POST /api/settings/autopilot` lets the app start steps, and ship, on its own.** Since
   `0043`, `{cwd, name, value}` sets one of four, in `prefs`: `autopilot:<key>` and
   `autopilot_may_ship:<key>` (booleans, off), `max_parallel:<key>` (a whole number ≥ 1, 4),

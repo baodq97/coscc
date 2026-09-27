@@ -157,6 +157,12 @@ changes. The store is written only by `coscc knowledge gather`, at a terminal, w
 paid sessions (`coscc knowledge` alone prints the usage). Run `coscc knowledge baseline`
 before turning the flag on, or `coscc knowledge measure` refuses to compare.
 
+`COS_EFFORT_TRIAL=1` in the env file, and a restart, runs a routine `impl` at effort `high`
+for about half the units, chosen by name, and as before for the rest; unset, no step
+changes. An `effort:impl` override set on Settings still wins over the trial. Each such
+`impl` still has 120 turns / $8.0, so the half at `high` can cost more; removing the line
+and restarting stops it. `coscc effort measure` prints the verdict, at a terminal.
+
 **What does not come back by itself.** If the new version passes its trial but fails to
 start for real, there is no board left to say so and nothing rolls it back: `systemctl
 --user status coscc` shows it restarting. The log of that update ends with the command to
