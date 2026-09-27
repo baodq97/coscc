@@ -132,7 +132,8 @@ class AutopilotMixin:
         `asked`: the units this pass looked at, when it did not look at all of them; the
         others keep what they had. The log is an `autopilot-stop` record per change, `stop`
         empty once it cleared — what `verify_0043` reads to tell a person's press at a stop
-        from one outside them.
+        from one outside them. Since `0113` R3 the workspace's own stop, unit `""`, is logged
+        the same way, so a notice can say it.
         """
         before = self._autopilot_stops.get(key, {})
         if asked is None:
@@ -144,8 +145,6 @@ class AutopilotMixin:
         if journal is None:
             return
         for unit in sorted(set(before) | set(after)):
-            if not unit:
-                continue
             old, new = before.get(unit), after.get(unit)
             if (old or {}).get("kind") == (new or {}).get("kind"):
                 continue

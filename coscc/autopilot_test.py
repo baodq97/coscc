@@ -834,6 +834,37 @@ class MeasureExhausted(unittest.TestCase):
         self.assertEqual([v["stage"] for v in got["violations"]], ["plan"])
 
 
+class AWorkspaceStopIsNoUnitsStop(unittest.TestCase):
+    """`0113` C2. Since R3 the workspace's own stop is logged, as unit `""`; no measurement
+    that reads `autopilot-stop` may count it for a unit."""
+
+    def test_a_workspace_stop_record_changes_no_measurement(self):
+        since, until = ap.today(NOW - timedelta(days=1)), ap.today(NOW + timedelta(days=1))
+        logs = [
+            [answer_row(), stop_row("", 1), row("autopilot-pick", seconds=2), row("start", seconds=3)],
+            [answer_row(), stop_row("a", 1)],
+            [answer_row(), row("start", seconds=700), stop_row("full", 800)],
+            [ran_out_row(), ran_out_stop(1)],
+            [ran_out_row(), row("start", stage="plan", seconds=1), ran_out_row(2), ran_out_stop(3)],
+        ]
+        workspace = [stop_row("shortlist", 0.5, unit="", reason=ap.NO_SHORTLIST),
+                     stop_row("f", 1.5, unit="", reason="the autopilot's pass failed: boom"),
+                     stop_row("", 2.5, unit="")]
+        for rows in logs:
+            with_it = sorted(rows + workspace, key=lambda r: r["at"])
+            for measure in (ap.measure, ap.measure_reruns, ap.measure_exhausted):
+                self.assertEqual(measure(with_it, "w", since, until), measure(rows, "w", since, until),
+                                 f"{measure.__name__} on {[r['kind'] for r in rows]}")
+
+    def test_open_questions_is_the_stop_a_set(self):
+        asked = unit([{"artifact": "spec.md", "n": 1, "counted": True, "answered": False},
+                      {"artifact": "spec.md", "n": 2, "counted": True, "answered": True},
+                      {"artifact": "intent.md", "n": 1, "counted": False, "answered": False}])
+        self.assertEqual([q["n"] for q in ap.open_questions(asked)], [1])
+        self.assertEqual(ap.stop_for(asked, nxt(), None, False)["kind"], "a")
+        self.assertEqual(ap.open_questions(unit()), [])
+
+
 class VerifyScript(unittest.TestCase):
     """`scripts/verify_0104.py`'s exit codes, on a run log written through `Journal`."""
 
