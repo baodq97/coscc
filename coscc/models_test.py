@@ -71,6 +71,35 @@ class TheFiveStepsOfR6(unittest.TestCase):
                              ("base-d", "default", "medium"), label)
 
 
+class TheTrialTier(unittest.TestCase):
+    """`0123` R3, R4: override, then the trial, then `models.json`; the model as it was."""
+
+    DEFAULTS = {"impl": row("base-d", "medium"), "impl:novel": row("novel-d", "high")}
+
+    def test_without_a_trial_effort_resolve_is_what_it_was(self):
+        for label in (None, "routine", "novel"):
+            for efforts in ({}, {"impl": "low"}, {"impl:novel": "max"}):
+                for defaults in ({}, self.DEFAULTS):
+                    with self.subTest(label=label, efforts=efforts, defaults=defaults):
+                        args = ("impl", label, {"impl": "m"}, efforts, defaults, "env")
+                        self.assertEqual(models.resolve(*args), models.resolve(*args, trial_effort=None))
+
+    def test_the_trial_effort_sits_between_override_and_default(self):
+        plain = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, None)
+        tried = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, None, trial_effort="high")
+        self.assertEqual(tried[2:], ("high", "trial"))
+        self.assertEqual(tried[:2], plain[:2])
+        overridden = models.resolve("impl", "routine", {}, {"impl": "low"}, self.DEFAULTS, None,
+                                    trial_effort="high")
+        self.assertEqual(overridden[2:], ("low", "override"))
+        self.assertEqual(overridden[:2], plain[:2])
+
+    def test_the_settings_table_never_shows_the_trial(self):
+        defaults, _ = models.load_defaults()
+        t = models.table(STAGES, {}, {}, defaults, None, 1)
+        self.assertFalse([r for r in t["rows"] if r["effort_source"] == models.TRIAL])
+
+
 class TheTable(unittest.TestCase):
     def test_chat_comes_after_the_stages_in_their_order(self):
         t = models.table(STAGES, {}, {}, {}, None, 1)
