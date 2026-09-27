@@ -2710,15 +2710,8 @@ test('0106 R1: a held unit is no rerun, even with every question answered', () =
   assert.equal('rerun' in n, false)
 })
 
-test('0106 R1: a draft with no questions, or a draft impl, is no rerun', () => {
+test('0106 R1: a draft with no questions is no rerun', () => {
   assert.equal('rerun' in answeredTree({ 'intent.md': '# I\nType: feat. Status: draft.\n' }).next(), false)
-  const impl = answeredTree({
-    'intent.md': '# I\nType: feat. Status: accepted.\n',
-    'spec.md': '# S\nStatus: accepted.\n',
-    'plan.md': '# P\nStatus: accepted.\n',
-    'impl.md': '# Impl\nStatus: draft.\n\n## Open questions\n\n1. Một?\n\n## Answers\n' + answerBlock(1, 'A', 'x'),
-  })
-  assert.equal('rerun' in impl.next(), false)
 })
 
 test('0106 R1: a spec draft answered in full is rerun: spec', () => {
@@ -2733,6 +2726,68 @@ test('0106 R1: status --json and nextAction never carry rerun', () => {
   const { root, u } = answeredTree({ 'intent.md': DRAFT_INTENT + answerBlock(1, 'A', 'x') + answerBlock(2, 'A', 'y') })
   assert.equal('rerun' in nextAction(u), false)
   assert.equal(cli('--root', root, 'status', '--json').stdout.includes('rerun'), false)
+})
+
+// --- 0115: a draft impl.md asks a person, and runs again on the answer ------------
+
+// Every stage before `impl` accepted, so `decide` reaches `impl.md`.
+const BEFORE_IMPL = {
+  'intent.md': '# I\nType: feat. Status: accepted.\n',
+  'spec.md': '# S\nStatus: accepted.\n',
+  'plan.md': '# P\nStatus: accepted.\n',
+}
+const DRAFT_IMPL = '# Impl\nStatus: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n'
+const implTree = (impl, extra = {}) => answeredTree({ ...BEFORE_IMPL, 'impl.md': impl, ...extra })
+
+test('0115 R1: a draft impl with an open question is listed and counted', () => {
+  const { root } = implTree(DRAFT_IMPL)
+  const out = cli('--root', root, 'status', '--json')
+  assert.equal(out.status, 0, out.stderr)
+  const u = JSON.parse(out.stdout).units[0]
+  assert.deepEqual(u.questions.map(({ artifact, n, answered }) => ({ artifact, n, answered })), [
+    { artifact: 'impl.md', n: 1, answered: false },
+  ])
+  assert.equal(u.counted, 'impl.md')
+  assert.equal(u.open, 1)
+})
+
+test('0115 R3: a draft impl answered in full is rerun: impl', () => {
+  const { next } = implTree(`${DRAFT_IMPL}\n## Answers\n${answerBlock(1, 'A', 'x')}`)
+  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept impl.md', blocked: true, rerun: 'impl' })
+})
+
+test('0115 R3: a draft impl with one question unanswered is no rerun', () => {
+  const two = DRAFT_IMPL + '2. Đăng nhập rồi báo lại?\n'
+  const { u, next } = implTree(`${two}\n## Answers\n${answerBlock(1, 'A', 'x')}`)
+  assert.equal('rerun' in next(), false)
+  assert.equal(nextStep(u).rerun, undefined)
+})
+
+test('0115 R3: a draft impl with no questions is no rerun', () => {
+  assert.equal('rerun' in implTree('# Impl\nStatus: draft.\n\n## What is still open\n\nx\n').next(), false)
+})
+
+test('0115 R3: a paused or dropped unit with an answered draft impl is no rerun', () => {
+  const impl = `${DRAFT_IMPL}\n## Answers\n${answerBlock(1, 'A', 'x')}`
+  for (const [head, state] of [['Paused', 'paused'], ['Dropped', 'dropped']]) {
+    const intent = `${BEFORE_IMPL['intent.md']}\n## Answers\n${holdBlock(head, 'chờ')}`
+    const n = implTree(impl, { 'intent.md': intent }).next()
+    assert.equal(n.hold.state, state)
+    assert.equal('rerun' in n, false)
+  }
+})
+
+test('0115 R3: plan.md draft keeps the impl gate closed', () => {
+  const { root } = implTree(`${DRAFT_IMPL}\n## Answers\n${answerBlock(1, 'A', 'x')}`, { 'plan.md': '# P\nStatus: draft.\n' })
+  const out = cli('--root', root, 'gate', '0001_q', 'impl')
+  assert.equal(out.status, 1)
+  assert.match(out.stdout + out.stderr, /plan\.md is "draft"/)
+})
+
+test('0115 R4: status --json names the stages an answered draft runs again', () => {
+  const { root } = implTree(DRAFT_IMPL)
+  const data = JSON.parse(cli('--root', root, 'status', '--json').stdout)
+  assert.deepEqual(data.afterAnswers, ['intent', 'spec', 'spike', 'plan', 'impl'])
 })
 
 // --- `0111`: a rebase no longer leaves review with stale screenshots -------------
