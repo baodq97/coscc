@@ -281,6 +281,42 @@ class OnTheRealLoop(_Base):
         [record] = self.answers()
         self.assertEqual((record["stage"], record["artifact"], record["completes"]), ("impl", "impl.md", True))
 
+    async def impl_asks(self, slug: str) -> tuple[str, Path, str]:
+        unit = await self.unit(slug, "Status: accepted.\n\n## Open questions\n\n1. Một?")
+        d = self.service._unit_dir(self.ws, unit)
+        (d / "spec.md").write_text("# Spec: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8")
+        (d / "plan.md").write_text("# Plan: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8")
+        before = "# Impl: x\nAuthor: proof. Status: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
+        (d / "impl.md").write_text(before, encoding="utf-8")
+        return unit, d, before
+
+    async def test_0115_f2_an_answer_to_impl_md_is_refused_while_an_impl_step_runs(self):
+        # The step writes `impl.md` with its own tools, so a block appended now could be
+        # written over and nothing would say so (review.md F2).
+        unit, d, before = await self.impl_asks("impl-busy")
+        mark = self.service._take(self.key, unit, "step", "impl")
+        mark.phase = "running"
+        with self.assertRaisesRegex(Invalid, r"^impl\.md cannot be answered while the impl step that writes it is running"):
+            await self.service.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
+        self.assertEqual((d / "impl.md").read_text(encoding="utf-8"), before)
+        self.assertEqual(self.answers(), [])
+        # Another artifact of the same unit is not the step's to write.
+        await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+        self.service._release(self.key, unit, mark)
+        await self.service.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
+        self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md", "impl.md"])
+
+    async def test_0115_f2_a_prose_step_does_not_refuse_an_answer_to_its_artifact(self):
+        # A prose stage's artifact is written by the app, which reads `## Answers` on disk as
+        # it writes (`0025`), so an answer given meanwhile is kept.
+        unit, d, before = await self.impl_asks("intent-busy")
+        mark = self.service._take(self.key, unit, "step", "intent")
+        try:
+            await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+        finally:
+            self.service._release(self.key, unit, mark)
+        self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md"])
+
 
 class _Intents:
     """A session that rewrites `intent.md` as a draft, with no open questions unless `asks`."""

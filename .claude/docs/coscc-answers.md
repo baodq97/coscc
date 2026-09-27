@@ -120,4 +120,7 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or 
   `done` and in `end` (`answers_kept: false`) when that section is no longer the file's
   tail; nothing restores it. Since `0115` every `impl` step writes `impl.md` itself too, so
   the app reads its `## Answers` before the step and says `answers_lost` in the same way
-  when that section is no longer the file's tail; nothing restores it either.
+  when that section is no longer the file's tail; nothing restores it either. That compare
+  cannot see a block appended while the step ran, so `_append_one` refuses an answer to an
+  artifact while a step of the stage that writes it, any but the five prose stages, holds
+  the unit in this process; the Questions tab still offers the box and shows the refusal.
