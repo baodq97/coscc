@@ -577,6 +577,27 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0001_a", "impl", "autopilot"), ("0002_b", "integrate", "autopilot")])
         self.assertEqual(self.stops(), {})
 
+    async def test_0103_r6_a_red_branch_name_after_its_own_integration_stops_b_with_next_s_words(self):
+        """`0103` R6: #97's answer from `next` — no stage, a person needed — on a unit red after
+        the autopilot's own integration. Neither `impl` nor `integrate` runs, and the stop is
+        `b` with `next`'s words, not `e`."""
+        head = "feat/open-questions-wait-for-the-originator-even-when-precedent-answers-them"
+        action = (
+            f"{autopilot.NEEDS_A_PERSON} — {autopilot.CI_RED}97: branch-name — branch-name checks the branch "
+            f'name, and no rerun or impl can fix it: "{head}" is not a work branch: '
+            "the slug is 71 characters, over the 60 allowed"
+        )
+        self.add("0001_a", "", action=action, plan="- `a/x.py`", integration={"state": "red-after-integration"},
+                 rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
+        Journal(self.config.working_dir, self.config.data_dir).append({
+            "kind": "integration", "workspace": self.key, "unit": "0001_a", "stage": "integrate",
+            "outcome": "pushed", "mode": "mechanical", "started_by": "autopilot",
+        })
+        await self.pass_()
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self.stops(), {"0001_a": "b"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], action)
+
     async def _0124_impl_after_a_red_rebase(self, outcome: str = "done") -> Journal:
         """0115/#120 up to its `impl`: a `pass`, the autopilot's mechanical rebase, CI red on
         it, and `next` naming `impl` with `cos.mjs`'s words. Returns once that `impl` ended

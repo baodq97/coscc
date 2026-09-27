@@ -18,6 +18,15 @@ gate and needs another round, which does not count toward `COS_REVIEW_ROUNDS`. T
 compares against the `origin/main` it has and does not fetch: at a terminal, fetch it
 before asking, or a stale one reads as a changed patch.
 
+A red required check sends the work back to `impl`, except the harness's branch-name check
+(`0103`): when a job whose `run:` step calls `cos.mjs check-branch` is red and
+`check-branch` refuses the head GitHub reports, no commit and no rerun can turn it green.
+`next` then offers nothing and says `needs a person`, with the check and the line
+`check-branch` prints, and the autopilot stops `b` on it. The stop lifts only once `pr.md`
+names a pull request from a valid branch: renaming the branch and opening that pull request
+is the person's to do. When `next` cannot tell whether the name is why, the unit goes to
+`impl` with the red line and a clause saying so.
+
 A rebase before a round no longer spends that round on a UI unit's screenshots alone
 (`0111`). The rebase leaves `.screens/manifest.json` naming a head that is gone; before a
 board `review` step, `cos.mjs screens <unit> --repo <tree>` says so, and the app takes them

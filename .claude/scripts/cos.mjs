@@ -1450,14 +1450,30 @@ export function makeProbe(repoDir) {
       return null
     }
   }
-  return { git: (...args) => run('git', args), gh: (...args) => run('gh', args), ui, manifest }
+  // `0103`: every workflow of that repository as `{ path, text }`, `[]` with no
+  // `.github/workflows/` or one that cannot be read. A test's probe that has no `workflows`
+  // reads as having none.
+  const workflows = () => {
+    const dir = join(repoDir, '.github', 'workflows')
+    try {
+      return readdirSync(dir)
+        .filter((f) => /\.ya?ml$/.test(f))
+        .sort()
+        .map((f) => ({ path: `.github/workflows/${f}`, text: readFileSync(join(dir, f), 'utf8') }))
+    } catch {
+      return []
+    }
+  }
+  return { git: (...args) => run('git', args), gh: (...args) => run('gh', args), ui, manifest, workflows }
 }
 
 // `review` may begin only on an open pull request whose required checks are green
 // (`0015` spec, Answers, Câu 2). Nothing green to read is not read as green.
 //
-// `said.ci` records what CI said, once it was asked: `red`, `pending`, `none`, `unreadable`
-// or `green`. `nextStep` reads it to tell "back to impl" from "wait" without parsing a need.
+// `said.ci` records what CI said, once it was asked: `red`, `unfixable`, `pending`, `none`,
+// `unreadable` or `green`. `nextStep` reads it to tell "back to impl" from "wait" and from
+// "needs a person" without parsing a need. `unfixable` is a red check no rerun and no impl
+// can turn green (`0103`); `none` already meant no checks at all.
 function reviewNeeds(unit, probe, limit, said = {}) {
   const need = []
   const pr = unit.artifacts['pr.md']?.pr ?? null
@@ -1490,10 +1506,8 @@ function ciNeeds(probe, pr, said) {
     return [`#${pr.number} reports no required checks — nothing green to read is not green`]
   }
   const red = checks.filter((c) => c.bucket === 'fail' || c.bucket === 'cancel').map((c) => c.name)
-  if (red.length) {
-    said.ci = 'red'
-    return [`CI is red on #${pr.number}: ${red.join(', ')} — back to impl: fix on the branch and push`]
-  }
+  // Before the checks still running: one red check no rerun can fix settles it (`0103` R5).
+  if (red.length) return redNeeds(probe, pr, red, said)
   const waiting = checks.filter((c) => c.bucket !== 'pass' && c.bucket !== 'skipping').map((c) => c.name)
   if (waiting.length) {
     said.ci = 'pending'
@@ -1501,6 +1515,42 @@ function ciNeeds(probe, pr, said) {
   }
   said.ci = 'green'
   return []
+}
+
+// `0103`: a red check is impl's to fix, unless it is the harness's branch-name check and
+// `check-branch` refuses the head GitHub reports (R2). No rerun and no commit renames a
+// branch, so that one stops for a person, `said.ci` `unfixable` (R3). Every other goes back
+// to impl with the line the autopilot reads as `CI_RED`, byte for byte, and a clause after it
+// when whether the name is why cannot be told from here (R4). The head is asked for here and
+// only here: one more `gh` on a red read, none on any other (R7).
+function redNeeds(probe, pr, red, said) {
+  said.ci = 'red'
+  const line = `CI is red on #${pr.number}: ${red.join(', ')} — back to impl: fix on the branch and push`
+  const view = probe.gh('pr', 'view', String(pr.number), '--json', 'headRefName')
+  let head = null
+  try {
+    head = JSON.parse(view.out)?.headRefName
+  } catch {
+    head = null
+  }
+  if (typeof head !== 'string' || !head) {
+    const told = (view.err || view.out).trim() || `gh exited ${view.code} and said nothing`
+    return [`${line} — cannot read the branch of #${pr.number} (${told}), so whether its name is why cannot be told from here`]
+  }
+  const named = new Set(branchChecks(probe.workflows?.() ?? []))
+  const stuck = red.filter((name) => named.has(name))
+  const problem = branchProblem(head)
+  if (stuck.length && problem) {
+    said.ci = 'unfixable'
+    return [`needs a person — CI is red on #${pr.number}: ${red.join(', ')} — ${stuck.join(', ')} checks the branch name, and no rerun or impl can fix it: ${notAWorkBranch(head, problem)}`]
+  }
+  if (stuck.length) {
+    return [`${line} — ${stuck.join(', ')} checks the branch name, yet "${head}" passes check-branch here, so why it failed cannot be told from here`]
+  }
+  if (problem) {
+    return [`${line} — ${notAWorkBranch(head, problem)}, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here`]
+  }
+  return [line]
 }
 
 // The pull request as GitHub reports it, from one `gh pr view`: `{ state, head, merged }`,
@@ -1903,6 +1953,8 @@ function passLeftClosed(unit, probe, g) {
 //   - the review passed: `ship` if its gate is open, `impl` if a clean rebase is red,
 //     `review` again only if the patch moved after the pass (`0067`), or once when the pass
 //     left ship closed on its own head (`0125`), else nothing.
+// Wherever CI is read, a red check no impl can fix (`said.ci` `unfixable`) answers `''` with
+// the gate's `needs a person` line alone, before any reason of the branch's own (`0103` R3).
 // With no `probe` those three answer `''` and say `--repo` is missing, as the gates do.
 //
 // This names a stage; it opens nothing. A caller still asks `checkGate` before running it.
@@ -1912,6 +1964,7 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   const none = (action) => ({ blocked: true, action, stage: '' })
   const onReview = (prefix) => {
     const g = evaluate(unit, 'review', { probe, limit })
+    if (g.said.ci === 'unfixable') return none(g.need.join('; '))
     const reasons = [...prefix, ...g.need].join('; ')
     // `blocked` keeps `nextAction`'s meaning — the unit is not finished — not the gate's.
     if (g.ok) return { blocked: true, action: [...prefix, 'CI is green: write-review'].join('; '), stage: 'review' }
@@ -1937,6 +1990,7 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     const g = evaluate(unit, 'ship', { probe, limit })
     if (g.ok && g.said.merged) return recorded(g)
     if (g.ok) return { ...next, action: `${next.action} — merge with --match-head-commit ${g.said.head}` }
+    if (g.said.ci === 'unfixable') return none(g.need.join('; '))
     // `0083` R10: a UI unit whose pass lacks current screenshots is cured the same way.
     if (g.said.moved || g.said.screens) return again(g)
     // `0067` R5: a clean rebase CI failed on goes back to impl, never to another round.
@@ -1958,6 +2012,7 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     const g = evaluate(unit, 'ship', { probe, limit })
     // `0116`: `--delete-branch` in a worktree merges, then exits 1, and leaves this draft.
     if (g.ok && g.said.merged) return recorded(g)
+    if (g.said.ci === 'unfixable') return none(g.need.join('; '))
     if (g.said.moved || g.said.screens) return again(g)
     if (g.said.rebased && g.said.ci === 'red') return { blocked: true, action: g.need.join('; '), stage: 'impl' }
     if (!g.ok) return none(g.need.join('; '))
@@ -2121,6 +2176,71 @@ export function branchProblem(name) {
   if (slug.length > SLUG_MAX) return `the slug is ${slug.length} characters, over the ${SLUG_MAX} allowed`
   if (!SLUG_RE.test(slug)) return 'the slug takes lowercase letters, digits and single hyphens'
   return null
+}
+
+// The line `check-branch` prints for a name `branchProblem` refused. `0103`: the `review` gate
+// quotes it for a head CI refused, so the format lives here once.
+export const notAWorkBranch = (name, problem) => `"${name}" is not a work branch: ${problem}`
+
+// `0103` R2 (a): the check names of the jobs whose `run:` step calls `cos.mjs check-branch`,
+// read from each workflow's text, `{ path, text }`. Not a YAML parser, and not meant to be
+// one: a job it cannot read is not found, and a red check not found goes back to impl as it
+// did before (spec C4). The name is the job's own `name:`, else its key; a `name:` built from
+// `${{ }}` is not known here, so that job is not found either. A line that is only a comment
+// counts for nothing.
+export function branchChecks(files) {
+  const found = []
+  const calls = (text) => /\bcos\.mjs\s+check-branch\b/.test(text)
+  const indentOf = (line) => line.length - line.trimStart().length
+  const unquote = (v) => {
+    const m = v.match(/^"([^"]*)"\s*(#.*)?$/) ?? v.match(/^'([^']*)'\s*(#.*)?$/)
+    return m ? m[1] : v.replace(/\s+#.*$/, '').trim()
+  }
+  for (const { text } of files) {
+    const lines = text.split(/\r?\n/)
+    const start = lines.findIndex((l) => /^jobs:\s*(#.*)?$/.test(l))
+    if (start === -1) continue
+    let jobIndent = null
+    let job = null
+    let block = null
+    const close = () => {
+      if (job?.runs && typeof job.name === 'string' && job.name && !found.includes(job.name)) found.push(job.name)
+    }
+    for (const line of lines.slice(start + 1)) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+      const indent = indentOf(line)
+      if (indent === 0) break
+      // The lines of a `run: |` block, or of a `run:` whose value starts on the next line.
+      if (block !== null && indent > block) {
+        if (calls(trimmed)) job.runs = true
+        continue
+      }
+      block = null
+      jobIndent ??= indent
+      if (indent < jobIndent) break
+      if (indent === jobIndent) {
+        close()
+        const key = trimmed.match(/^("[^"]+"|'[^']+'|[^\s:#][^:]*?):\s*(#.*)?$/)
+        job = key ? { name: unquote(key[1]), child: null, runs: false } : null
+        continue
+      }
+      if (!job) continue
+      job.child ??= indent
+      const name = indent === job.child && trimmed.match(/^name:\s*(.*)$/)
+      if (name) {
+        job.name = name[1].includes('${{') || /^[|>]/.test(name[1]) ? null : unquote(name[1])
+        continue
+      }
+      const run = trimmed.match(/^(-\s+)?run:\s*(.*)$/)
+      if (!run) continue
+      const value = run[2]
+      if (!value || /^[|>]/.test(value)) block = indent + (run[1]?.length ?? 0)
+      else if (calls(value)) job.runs = true
+    }
+    close()
+  }
+  return found
 }
 
 // `vX.Y.Z`, or `vX.Y.Z-rc.N` for a prerelease. Leading zeros are refused so that one
@@ -2397,7 +2517,7 @@ function cmdCheckBranch(name) {
   }
   const problem = branchProblem(subject)
   if (problem) {
-    console.error(`"${subject}" is not a work branch: ${problem}`)
+    console.error(notAWorkBranch(subject, problem))
     return 1
   }
   console.log(subject)
