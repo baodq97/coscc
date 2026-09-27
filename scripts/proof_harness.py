@@ -14,11 +14,13 @@ broken" — which is the exit-code split both proofs are built around.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import secrets
 import socket
 import subprocess
 import sys
+import threading
 import time
 from contextlib import closing
 from pathlib import Path
@@ -123,14 +125,22 @@ class RealApp:
 
     `data_dir` defaults to `working_dir` so a proof run keeps its database in the same
     scratch folder and never touches the data root a real run would use.
+
+    `behind` (`0113`): a port to serve on instead of the bundle's, so a `Cut` can stand on the
+    bundle's address in front of it. The app is then started as `coscc.run` starts it — the
+    same guarded factory and `proxy_headers=False` — but through `uvicorn.run`, so the build
+    guard is not exercised (plan Risk 10). `base` stays the bundle's address; `direct` is
+    where the app itself answers.
     """
 
-    def __init__(self, config, working_dir: Path, data_dir: Path | None = None):
+    def __init__(self, config, working_dir: Path, data_dir: Path | None = None, behind: int | None = None):
         self.config = config
         self.working_dir = working_dir
         self.data_dir = working_dir if data_dir is None else data_dir
+        self.behind = behind
         self.proc: subprocess.Popen | None = None
         self.base = f"http://{config.host}:{config.port}"
+        self.direct = self.base if behind is None else f"http://{config.host}:{behind}"
 
     def start(self) -> "RealApp":
         env = {
@@ -139,9 +149,17 @@ class RealApp:
             "COS_DATA_DIR": str(self.data_dir),
             "COS_WORKSPACES": "",
         }
+        command = [sys.executable, "-m", "coscc.run"]
+        if self.behind is not None:
+            env["__REFLEX_MOUNT_FRONTEND_COMPILED_APP"] = "1"
+            command = [sys.executable, "-c", (
+                "import os, uvicorn; from coscc import frontend; from coscc.run import REPO; "
+                "os.environ[frontend.WEB_WORKDIR_VAR] = str(frontend.web_dir(REPO)); "
+                f"uvicorn.run('coscc.coscc:served', factory=True, host={self.config.host!r}, "
+                f"port={self.behind}, log_level='warning', proxy_headers=False)"
+            )]
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "coscc.run"],
-            cwd=REPO, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            command, cwd=REPO, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         )
         deadline = time.monotonic() + BOOT_TIMEOUT_S
         while time.monotonic() < deadline:
@@ -150,7 +168,7 @@ class RealApp:
                 print(f"the app exited before serving:\n{err}", file=sys.stderr)
                 raise SystemExit(EXIT_ENV)
             try:
-                if httpx.get(f"{self.base}/api/health", timeout=2).status_code == 200:
+                if httpx.get(f"{self.direct}/api/health", timeout=2).status_code == 200:
                     return self
             except httpx.HTTPError:
                 time.sleep(0.3)
@@ -166,7 +184,127 @@ class RealApp:
                 self.proc.wait(timeout=10)
         # A restart, and the broken scene, both need the address actually released —
         # a lingering server would let the next page connect and make the claim vacuous.
-        wait_closed(self.config.host, self.config.port)
+        wait_closed(self.config.host, self.config.port if self.behind is None else self.behind)
+
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, *exc):
+        self.stop()
+        return False
+
+
+def free_port(host: str) -> int:
+    with closing(socket.socket()) as s:
+        s.bind((host, 0))
+        return s.getsockname()[1]
+
+
+class Cut:
+    """`0113`, after `spike.md ## U2`'s `drive.py`: a TCP proxy from `listen` to `target` that a
+    proof can cut, on its own thread and loop so a sync proof can drive it. It carries the
+    page's `fetch` and Reflex's websocket alike.
+
+    `close()`: every socket is aborted and new ones are refused until `restore()`.
+    `stall()`: every socket open now, and every one opened until `restore()`, stops moving
+    bytes and is never closed — a slept laptop, dropped Wi-Fi. Only a reader's own watchdog
+    notices. Sockets opened after `restore()` relay as normal.
+    """
+
+    def __init__(self, host: str, listen: int, target: int):
+        self.host, self.listen, self.target = host, listen, target
+        self.down = False
+        self.outage = False
+        self.pairs: list[dict] = []
+        self.loop = asyncio.new_event_loop()
+        self._ready = threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._server = None
+
+    def _serve(self) -> None:
+        asyncio.set_event_loop(self.loop)
+        self._server = self.loop.run_until_complete(asyncio.start_server(self._handle, self.host, self.listen))
+        self._ready.set()
+        self.loop.run_forever()
+
+    async def _handle(self, reader, writer) -> None:
+        if self.down:
+            writer.transport.abort()
+            return
+        try:
+            up_r, up_w = await asyncio.open_connection(self.host, self.target)
+        except OSError:
+            writer.transport.abort()
+            return
+        pair = {"w": writer, "uw": up_w, "stalled": self.outage}
+        self.pairs.append(pair)
+
+        async def pipe(src, dst):
+            try:
+                while data := await src.read(65536):
+                    while pair["stalled"]:
+                        await asyncio.sleep(0.05)
+                    dst.write(data)
+                    await dst.drain()
+            except Exception:  # noqa: BLE001 - a cut socket is the point
+                pass
+            finally:
+                if not pair["stalled"]:
+                    dst.close()
+
+        await asyncio.gather(pipe(reader, up_w), pipe(up_r, writer))
+
+    def _do(self, fn) -> None:
+        async def go():
+            fn()
+
+        asyncio.run_coroutine_threadsafe(go(), self.loop).result(timeout=10)
+
+    def start(self) -> "Cut":
+        self._thread.start()
+        if not self._ready.wait(10):
+            raise SystemExit(EXIT_ENV)
+        return self
+
+    def close(self) -> None:
+        def go():
+            self.down = True
+            for p in self.pairs:
+                p["w"].transport.abort()
+                p["uw"].transport.abort()
+            self.pairs.clear()
+        self._do(go)
+
+    def stall(self) -> None:
+        def go():
+            self.outage = True
+            for p in self.pairs:
+                p["stalled"] = True
+        self._do(go)
+
+    def restore(self) -> None:
+        def go():
+            self.down = self.outage = False
+        self._do(go)
+
+    def stop(self) -> None:
+        async def go():
+            self._server.close()
+            for p in self.pairs:
+                p["w"].transport.abort()
+                p["uw"].transport.abort()
+            self.pairs.clear()
+            # A stalled relay waits for ever; it is cancelled here rather than left pending
+            # when the loop stops.
+            left = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            for t in left:
+                t.cancel()
+            await asyncio.gather(*left, return_exceptions=True)
+
+        asyncio.run_coroutine_threadsafe(go(), self.loop).result(timeout=10)
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self._thread.join(timeout=10)
+        wait_closed(self.host, self.listen)
 
     def __enter__(self):
         return self.start()
