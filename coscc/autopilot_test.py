@@ -665,6 +665,23 @@ class Reruns(unittest.TestCase):
             self.assertIn(stop["kind"], ap.STOP_KINDS)
 
 
+class ExhaustedOf(unittest.TestCase):
+    """`0120`: how many times a stage ran out, the count `stop_for`'s e reads."""
+
+    def test_counts_every_exhausted_end_of_the_stage_whoever_started_it(self):
+        rows = [row("end", stage="plan", outcome="exhausted", started_by="person", terminal="max_turns"),
+                row("end", stage="plan", outcome="exhausted", started_by="autopilot", budget_usd=1.0)]
+        self.assertEqual(ap.exhausted_of(rows, "w", "0001_a", "plan"), 2)
+
+    def test_another_workspace_unit_stage_or_outcome_is_not_counted(self):
+        rows = [row("end", stage="plan", outcome="exhausted", workspace="other"),
+                row("end", unit="0002_b", stage="plan", outcome="exhausted"),
+                row("end", stage="spec", outcome="exhausted"),
+                row("end", stage="plan", outcome="failed"),
+                row("start", stage="plan")]
+        self.assertEqual(ap.exhausted_of(rows, "w", "0001_a", "plan"), 0)
+
+
 class MeasuringReruns(unittest.TestCase):
     """`0106` R7: one sample log per class."""
 

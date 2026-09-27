@@ -452,6 +452,16 @@ def reruns_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stag
     return count
 
 
+def exhausted_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
+    """`0120`. How many steps of `stage` on `unit` ended `exhausted`. Whoever started them,
+    out of turns or out of budget alike, and over the whole run log (spec C1, C2)."""
+    return sum(
+        1 for r in records
+        if r.get("kind") == "end" and r.get("outcome") == "exhausted" and is_step(r)
+        and r.get("workspace") == workspace and r.get("unit") == unit and r.get("stage") == stage
+    )
+
+
 def answered_since_start(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> bool:
     """R3. Whether an `answer` record of `stage` on `unit` came after its last `start`. A run
     again that ends `draft` keeps its answered questions' numbers (`runner._ANSWERS_ADVICE`),
