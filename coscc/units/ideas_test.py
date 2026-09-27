@@ -44,6 +44,21 @@ class CreatingAnIdea(Fixture):
             ideas.create_idea(WS, "Bad_Slug", "b", self.data)
         self.assertIn("Invalid slug", str(caught.exception))
 
+    def test_a_brief_with_headings_of_its_own_is_kept_whole(self):
+        """Review round 1, F2: a brief pasted from a markdown file ran only to its first `## `."""
+        brief = "Backend adds an endpoint.\n\n## Why\n\nThe frontend needs it.\n\n## Not this\n\nAuth."
+        path = ideas.create_idea(WS, "one", brief, self.data)["path"]
+        ideas.append_unit(path, "api", "0001_backend")
+        text = ideas.read_text(path)
+        self.assertEqual(ideas.brief_of(text), brief)
+        self.assertEqual(ideas.read_units(text), [{"ref": "api/0001_backend", "depends_on": []}])
+
+    def test_a_brief_holding_the_units_heading_is_refused_before_a_number_is_taken(self):
+        with self.assertRaises(CannotCreate) as caught:
+            ideas.create_idea(WS, "one", "words\n## Units\n- api/0001_x.", self.data)
+        self.assertIn("## Units", str(caught.exception))
+        self.assertFalse((units.cos_dir(WS, self.data) / "ideas").exists())
+
     def test_an_empty_brief_is_refused_before_a_number_is_taken(self):
         with self.assertRaises(CannotCreate):
             ideas.create_idea(WS, "one", "   ", self.data)

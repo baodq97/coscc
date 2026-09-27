@@ -24,6 +24,8 @@ IDEA_ID_RE = re.compile(_ID)
 # `<ws>/ideas/NNNN_<slug>.md`: the one form a request may name an idea by (spec R11).
 IDEA_REF_RE = re.compile(rf"({_WS})/{IDEAS_DIR}/({_ID})\.md")
 UNIT_REF_RE = re.compile(rf"({_WS})/(\d{{4}}_[a-z0-9]+(?:-[a-z0-9]+)*)")
+_OWN_WORDS = "## In their own words"
+_UNITS = "## Units"
 # The line `append_unit` writes, read back by `read_units` and by `cos.mjs` `parseIdea`.
 _UNIT_LINE = re.compile(r"- (\S+?)(?:\. Depends on: (.+?))?\.?")
 
@@ -72,6 +74,9 @@ def create_idea(
     text = str(brief or "").strip()
     if not text:
         raise CannotCreate("an idea needs a brief: the originator's own words are the idea")
+    if any(line.rstrip() == _UNITS for line in text.splitlines()):
+        # `cos.mjs` and `read_units` take the first such line for the app's own section.
+        raise CannotCreate(f"a brief may not hold the line {_UNITS!r}: the idea's units are listed under it")
     store = root(workspace, data_dir)
     (store / COS_DIR).mkdir(parents=True, exist_ok=True)
     printed = _cos(store, "new-idea", str(slug or "").strip())
@@ -89,8 +94,8 @@ def create_idea(
         f.write(
             f"# Idea: {title}\n"
             f"Author: the originator. Status: accepted.\n\n"
-            f"## In their own words\n\n{text}\n\n"
-            f"## Units\n\n"
+            f"{_OWN_WORDS}\n\n{text}\n\n"
+            f"{_UNITS}\n\n"
         )
     return {"id": idea_id, "path": str(path)}
 
@@ -131,7 +136,7 @@ def read_units(text: str) -> list[dict[str, Any]]:
     inside = False
     for line in text.splitlines():
         if line.startswith("## "):
-            inside = line.rstrip() == "## Units"
+            inside = line.rstrip() == _UNITS
             continue
         if not inside or not line.strip():
             continue
@@ -143,11 +148,16 @@ def read_units(text: str) -> list[dict[str, Any]]:
 
 
 def brief_of(text: str) -> str:
-    """The originator's words: the idea's `## In their own words`, without its heading."""
+    """The originator's words: the idea's `## In their own words`, without its heading.
+
+    They run to `## Units`, not to the next `## `: `create_idea` writes the brief as it was
+    given, and one pasted from a markdown file has headings of its own (`0040` review round 1,
+    F2).
+    """
     lines = text.splitlines()
     try:
-        start = lines.index("## In their own words") + 1
+        start = lines.index(_OWN_WORDS) + 1
     except ValueError:
         return ""
-    end = next((i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines))
+    end = next((i for i in range(start, len(lines)) if lines[i].rstrip() == _UNITS), len(lines))
     return "\n".join(lines[start:end]).strip()
