@@ -1718,7 +1718,9 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
 // `0125` R3–R5: the one place two questions are answered — does the last pass leave `ship`
 // closed for the one reason another round cures, and was the round before it a pass on the
 // same head? `g` is the `ship` gate's `evaluate`. `null` when the first answer is no: only
-// `said.screens` sends an unchanged head back to `review`, and `said.moved` is a new head.
+// `said.screens` sends an unchanged head back to `review`, and `said.moved` a head the pull
+// request took past the reviewed commit. A pull request whose head is an ancestor of it is
+// behind by a push no round makes, so that `moved` is answered like `screens` (review F1).
 // Else `{ last, need, stop }`: `stop` is `null` while the one retry is still to come, or the
 // sentence the unit stops on. Same head is `changedSince`, the comparison `changes-requested`
 // makes, so a commit only under `.cos/<unit>/` does not make a new one. No limit is read:
@@ -1726,7 +1728,10 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
 function passLeftClosed(unit, probe, g) {
   const rounds = reviewOf(unit)
   const last = rounds.at(-1)
-  if (!g.said.screens || g.said.moved || last?.verdict !== 'pass') return null
+  if (last?.verdict !== 'pass') return null
+  const unpushed = () =>
+    g.said.head && g.said.head !== last.reviewed && probe.git('merge-base', '--is-ancestor', g.said.head, last.reviewed).code === 0
+  if (g.said.moved ? !unpushed() : !g.said.screens) return null
   const prev = rounds.at(-2)
   if (prev?.verdict !== 'pass' || !prev.reviewed) return { last, need: g.need, stop: null }
   const stop = (why = '') =>

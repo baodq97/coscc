@@ -3543,8 +3543,30 @@ test('0125 R4: a round whose reviewed commit is not here stops and says so', () 
   assert.match(broken.action, /^needs a person — git could not diff .*fatal: bad object/)
 })
 
+test('0125 review F1: a pull request behind the reviewed commit gets one retry, then stops', () => {
+  // BEHIND is the reviewed commit's parent: the round was taken on a commit not pushed yet.
+  const BEHIND = '6'.repeat(40)
+  const probe = greenProbe(undefined, {
+    [`merge-base --is-ancestor ${SHA} ${BEHIND}`]: NO,
+    [`merge-base --is-ancestor ${BEHIND} ${SHA}`]: ok(),
+  }, { state: 'OPEN', headRefOid: BEHIND })
+  const once = passedOn(SHA)
+  assert.equal(nextStep(once, { probe }).stage, 'review')
+  assert.match(checkGate(once, 'review', { probe }).retry.need.join('; '), /is not on the head of #7/)
+  const twice = nextStep(passedOn(SHA, SHA), { probe })
+  assert.equal(twice.stage, '')
+  assert.match(twice.action, /^needs a person — review rounds 1 and 2 both passed on aaaaaaa and ship is still closed: .*is not on the head of #7/)
+  // A head that is not an ancestor, a rebase, is a new head: another round, as before.
+  const rebased = greenProbe(undefined, {
+    [`merge-base --is-ancestor ${SHA} ${REB}`]: NO,
+    [`merge-base --is-ancestor ${REB} ${SHA}`]: NO,
+  }, { state: 'OPEN', headRefOid: REB })
+  assert.equal(nextStep(passedOn(SHA, SHA), { probe: rebased }).stage, 'review')
+})
+
 test('0125 R6: a commit outside .cos/ on the pull request head, or a rejected review, is the way out', () => {
-  const n = nextStep(passedOn(SHA, SHA), { probe: stuckProbe({ [`diff --name-only ${SHA}..${HEAD2}`]: ok('coscc/runner.py') }, HEAD2) })
+  // HEAD2 follows SHA, so it is not an ancestor of it; the default `ok()` would say it is.
+  const n = nextStep(passedOn(SHA, SHA), { probe: stuckProbe({ [`diff --name-only ${SHA}..${HEAD2}`]: ok('coscc/runner.py'), [`merge-base --is-ancestor ${HEAD2} ${SHA}`]: NO }, HEAD2) })
   assert.equal(n.stage, 'review')
   const rejected = branched({ ...CHAIN, 'review.md': reviewArt('rejected', passes(SHA, SHA)) })
   const r = nextStep(rejected, { probe: stuckProbe() })
