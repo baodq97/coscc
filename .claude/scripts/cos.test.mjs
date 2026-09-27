@@ -13,7 +13,7 @@ import {
   parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking, prText, prScope,
   UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe, stageAt,
   aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip, normalizePatch, openLines,
-  parseMoreRounds, reviewLimit, moreRounds,
+  parseMoreRounds, reviewLimit, moreRounds, branchChecks, notAWorkBranch,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -822,8 +822,12 @@ test('F4: the three closed cases, in the shapes gh pr checks --required --json n
   // exit 8 on the plain output, and the gate must not depend on which. With nothing
   // required it prints no JSON at all, only an error on stderr, exit 1.
   const u = unit(CHAIN)
-  const gh = (code, out, err = '') => ({ gh: () => ({ code, out, err }), git: () => ok() })
-  const red = '[{"bucket":"fail","name":"tests"},{"bucket":"pass","name":"branch-name"}]\n'
+  // `0103`: a red read also asks for the head's branch; a valid one adds nothing to the line.
+  const gh = (code, out, err = '') => ({
+    gh: (...a) => (a[1] === 'view' ? ok('{"headRefName":"feat/x"}\n') : { code, out, err }),
+    git: () => ok(),
+  })
+  const red ='[{"bucket":"fail","name":"tests"},{"bucket":"pass","name":"branch-name"}]\n'
   const running = '[{"bucket":"pending","name":"tests"},{"bucket":"pass","name":"branch-name"}]\n'
   for (const code of [0, 1]) {
     const g = checkGate(u, 'review', { probe: gh(code, red) })
@@ -3866,4 +3870,178 @@ test('0081 R9: a more rounds block changes no answer of the ship gate', () => {
   assert.equal(checkGate(stuck(withMore(used, MORE)), 'review', { probe: greenProbe(), limit: 3 }).ok, true)
   assert.deepEqual(ship(withMore(used, MORE)), ship(used))
   assert.equal(ship(withMore(used, MORE)).ok, false)
+})
+
+// --- 0103: a red check no rerun can fix just stops ---------------------------------------
+
+// `.github/workflows/pr.yml:26-37` under its first lines, copied so the proof still runs
+// where `.claude/` was copied without `.github/`.
+const PR_YML = {
+  path: '.github/workflows/pr.yml',
+  text: [
+    'name: pr', '', 'on:', '  pull_request:', '', 'permissions:', '  contents: read', '',
+    'jobs:',
+    '  branch-name:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7',
+    '      - name: The source branch follows the grammar in .claude/CLAUDE.md',
+    '        # `github.head_ref` is the branch the pull request comes from. The check is the',
+    '        # same one that runs locally, from the same file, so CI and `cos.mjs` cannot',
+    '        # disagree about what a valid name is.',
+    '        run: node .claude/scripts/cos.mjs check-branch "$HEAD_REF"',
+    '        env:',
+    '          HEAD_REF: ${{ github.head_ref }}',
+    '',
+  ].join('\n'),
+}
+// #97 as `spike.md ## U1` read it: `seq 30` and `seq 34`.
+const HEAD_97 = 'feat/open-questions-wait-for-the-originator-even-when-precedent-answers-them'
+const REASON_97 = 'the slug is 71 characters, over the 60 allowed'
+const RED_97 = [{ name: 'branch-name', bucket: 'fail' }, { name: 'tests', bucket: 'pending' }]
+const STOP_97 = `needs a person — CI is red on #7: branch-name — branch-name checks the branch name, and no rerun or impl can fix it: "${HEAD_97}" is not a work branch: ${REASON_97}`
+const RED_LINE = (names) => `CI is red on #7: ${names} — back to impl: fix on the branch and push`
+// Any probe, with `gh pr view --json headRefName` answering `head` (`null`: gh fails) and the
+// workflows `workflows`. Every `gh` call lands in `calls`.
+const headProbe = (probe, { head = HEAD_97, workflows = [PR_YML], calls = [] } = {}) => ({
+  ...probe,
+  gh: (...a) => {
+    calls.push(['gh', ...a].join(' '))
+    if (a.at(-1) !== 'headRefName') return probe.gh(...a)
+    return head === null ? { code: 1, out: '', err: 'HTTP 502: Bad Gateway' } : ok(JSON.stringify({ headRefName: head }))
+  },
+  workflows: () => workflows,
+})
+
+test('0103 R8: #97 — branch-name red while tests pend: next stops, needs a person, with the check and check-branch\'s line', () => {
+  const u = branched({ ...CHAIN, 'pr.md': { ...art('accepted'), pr: { url: 'https://github.com/o/r/pull/97', number: 97 } } })
+  assert.equal(branchProblem(HEAD_97), REASON_97)
+  const n = nextStep(u, { probe: headProbe(greenProbe(RED_97)) })
+  assert.equal(n.stage, '')
+  assert.equal(n.blocked, true)
+  assert.ok(n.action.startsWith('needs a person — '), n.action)
+  for (const part of ['#97', 'branch-name', REASON_97]) assert.ok(n.action.includes(part), part)
+  assert.equal(n.action, STOP_97.replace('#7', '#97'))
+  // `tests` still running is not waited on (R5), and nothing sends it to impl.
+  assert.doesNotMatch(n.action, /has not finished|back to impl/)
+})
+
+test('0103 R8: a code failure goes back to impl with the red line byte for byte', () => {
+  const checks = [{ name: 'branch-name', bucket: 'pass' }, { name: 'tests', bucket: 'fail' }]
+  const n = nextStep(branched(CHAIN), { probe: headProbe(greenProbe(checks), { head: 'feat/x' }) })
+  assert.deepEqual(n, { blocked: true, action: 'CI is red on #7: tests — back to impl: fix on the branch and push', stage: 'impl' })
+})
+
+test('0103 R4 a: a red branch-name check on a valid head goes to impl, saying why cannot be told from here', () => {
+  const n = nextStep(branched(CHAIN), { probe: headProbe(greenProbe([{ name: 'branch-name', bucket: 'fail' }]), { head: 'feat/x' }) })
+  assert.deepEqual(n, {
+    blocked: true,
+    action: `${RED_LINE('branch-name')} — branch-name checks the branch name, yet "feat/x" passes check-branch here, so why it failed cannot be told from here`,
+    stage: 'impl',
+  })
+})
+
+test('0103 R4 b, c: a bad head no red check runs check-branch for, or a head gh cannot read, goes to impl with the line kept and a clause after it', () => {
+  const u = branched(CHAIN)
+  const b = (names) => `${RED_LINE(names)} — "${HEAD_97}" is not a work branch: ${REASON_97}, but no red check runs cos.mjs check-branch in .github/workflows/, so whether that is why cannot be told from here`
+  // (b): the red check is another one, or no workflow names the red one.
+  for (const [checks, workflows, names] of [
+    [[{ name: 'tests', bucket: 'fail' }, { name: 'branch-name', bucket: 'pass' }], [PR_YML], 'tests'],
+    [[{ name: 'branch-name', bucket: 'fail' }], [], 'branch-name'],
+    [[{ name: 'branch-name', bucket: 'cancel' }], [{ path: '.github/workflows/x.yml', text: 'jobs:\n  branch-name:\n    steps:\n      - run: npm test\n' }], 'branch-name'],
+  ]) {
+    assert.deepEqual(nextStep(u, { probe: headProbe(greenProbe(checks), { workflows }) }), { blocked: true, action: b(names), stage: 'impl' })
+  }
+  // (c): gh cannot say which branch, so #97's checks go to impl as they did before `0103`.
+  const c = nextStep(u, { probe: headProbe(greenProbe(RED_97), { head: null }) })
+  assert.deepEqual(c, {
+    blocked: true,
+    action: `${RED_LINE('branch-name')} — cannot read the branch of #7 (HTTP 502: Bad Gateway), so whether its name is why cannot be told from here`,
+    stage: 'impl',
+  })
+  // An answer with no `headRefName` in it is no branch either.
+  assert.match(nextStep(u, { probe: { ...headProbe(greenProbe(RED_97)), gh: greenProbe(RED_97).gh } }).action, /cannot read the branch of #7 \(\{"state":"OPEN"/)
+})
+
+test('0103 R3: every branch of next that reads CI stops on the same line, and the review and ship gates close on it', () => {
+  const probe = () => headProbe(greenProbe(RED_97))
+  const rebased = () => headProbe(rebasedProbe({ checks: RED_97 }))
+  const stale = { ...reviewArt('accepted', round(1, 'pass')), stale: { stage: 'impl', date: '2026-09-26' } }
+  const passed = { ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) }
+  for (const [label, u, p] of [
+    ['pr done, no review', branched(CHAIN), probe()],
+    ['a stale review', branched({ ...CHAIN, 'review.md': stale }), probe()],
+    ['person-answered', tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}\n${ROUND3()}\n## Answers\n${fBlock('F2')}${fBlock('F3')}` }), probe()],
+    ['every open finding claimed', tree0028({ review: `${REVIEW_HEAD}${ROUND1}\n${ROUND2}` }), probe()],
+    ['review-incomplete', reviewOfRounds('draft', [cr(1), incompleteRound(2)]), probe()],
+    ['changes-requested with a fix', asked(), headProbe(movedTo(['src/a.py'], RED_97))],
+    ['ship after a clean rebase', branched(passed), rebased()],
+    ['ship-refused after a clean rebase', branched({ ...passed, 'ship.md': shipArt(shipDraft(1)) }), rebased()],
+  ]) {
+    assert.deepEqual(nextStep(u, { probe: p }), { blocked: true, action: STOP_97, stage: '' }, label)
+  }
+  assert.deepEqual(checkGate(branched(CHAIN), 'review', { probe: probe() }), { ok: false, need: [STOP_97] })
+  assert.deepEqual(checkGate(branched(passed), 'ship', { probe: rebased() }), { ok: false, need: [STOP_97] })
+})
+
+test('0103 R7: a red read asks gh once more for the head, a green read never does', () => {
+  const read = ['gh pr checks 7 --required --json name,bucket']
+  for (const [checks, more] of [
+    [[{ name: 'tests', bucket: 'pass' }], []],
+    [[{ name: 'tests', bucket: 'pending' }], []],
+    [[], []],
+    [[{ name: 'tests', bucket: 'fail' }], ['gh pr view 7 --json headRefName']],
+    [RED_97, ['gh pr view 7 --json headRefName']],
+  ]) {
+    const calls = []
+    checkGate(branched(CHAIN), 'review', { probe: headProbe(greenProbe(checks), { calls }) })
+    assert.deepEqual(calls, [...read, ...more])
+  }
+})
+
+test('0103 R2 a: branchChecks finds the job whose run step calls cos.mjs check-branch, by its name or its key, and nothing else', () => {
+  const wf = (text, path = '.github/workflows/x.yml') => ({ path, text })
+  assert.deepEqual(branchChecks([PR_YML]), ['branch-name'])
+  // The job's own `name:`, quoted or not, over its key; a `.yaml` file; a `run: |` block.
+  const named = wf('jobs:\n  names:\n    name: "Branch name" # the check\n    runs-on: x\n    steps:\n      - run: node .claude/scripts/cos.mjs check-branch "$H"\n')
+  assert.deepEqual(branchChecks([named]), ['Branch name'])
+  const block = wf("jobs:\n  a:\n    name: 'the branch'\n    steps:\n      - name: check\n        run: |\n          set -e\n          node .claude/scripts/cos.mjs check-branch \"$H\"\n  b:\n    steps:\n      - run: npm test\n", '.github/workflows/y.yaml')
+  assert.deepEqual(branchChecks([block]), ['the branch'])
+  assert.deepEqual(branchChecks([PR_YML, named, block]), ['branch-name', 'Branch name', 'the branch'])
+  // A step's `name:` is not the job's, at any indentation.
+  assert.deepEqual(branchChecks([wf('jobs:\n  b:\n    steps:\n    - name: a step\n      run: node cos.mjs check-branch x\n')]), ['b'])
+  for (const text of [
+    // A comment is not a call, inline or inside a block.
+    'jobs:\n  tests:\n    steps:\n      - name: not the job\n        # node .claude/scripts/cos.mjs check-branch\n        run: npm test\n  lint:\n    steps:\n    - name: x\n      run: |\n        # cos.mjs check-branch "$H"\n        echo ok\n',
+    // A name built from an expression is not known here (spec C4).
+    'jobs:\n  b:\n    name: ${{ matrix.os }} branch\n    steps:\n      - run: node cos.mjs check-branch x\n',
+    // The words anywhere but a `run:` step, or no `jobs:` at all.
+    'jobs:\n  b:\n    env:\n      X: node cos.mjs check-branch\n    steps:\n      - run: echo\n',
+    'name: cos.mjs check-branch\non: push\n',
+  ]) {
+    assert.deepEqual(branchChecks([wf(text)]), [], text)
+  }
+  // The workflow this repository runs, when it has one.
+  const real = makeProbe(REPO).workflows()
+  if (real.some((f) => f.path === PR_YML.path)) assert.ok(branchChecks(real).includes('branch-name'))
+})
+
+test('0103: makeProbe reads the workflows of the repository it is given, and none when it has none', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'cos-wf-'))
+  assert.deepEqual(makeProbe(repo).workflows(), [])
+  const dir = join(repo, '.github', 'workflows')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'pr.yml'), PR_YML.text)
+  writeFileSync(join(dir, 'b.yaml'), 'jobs: {}\n')
+  writeFileSync(join(dir, 'README.md'), 'not a workflow')
+  assert.deepEqual(makeProbe(repo).workflows(), [{ path: '.github/workflows/b.yaml', text: 'jobs: {}\n' }, PR_YML])
+  assert.deepEqual(branchChecks(makeProbe(repo).workflows()), ['branch-name'])
+})
+
+test('0103: check-branch prints notAWorkBranch\'s line unchanged', () => {
+  const out = cli('check-branch', HEAD_97)
+  assert.equal(out.status, 1)
+  assert.equal(out.stderr, `"${HEAD_97}" is not a work branch: ${REASON_97}\n`)
+  assert.equal(notAWorkBranch(HEAD_97, REASON_97), out.stderr.trimEnd())
+  assert.equal(cli('check-branch', 'feat/x').stdout, 'feat/x\n')
 })
