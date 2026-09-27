@@ -251,7 +251,7 @@ class Collapsing(unittest.TestCase):
 
     def test_0089_r14_every_label_is_english(self):
         """`0089` R14 (D62): the labels the pane shows are the app's own text (S6)."""
-        from coscc.screens_test import VIETNAMESE
+        from coscc.screens.screens_test import VIETNAMESE
 
         kinds = [
             {"kind": "text", "text": "x"}, {"kind": "text", "role": "user", "text": "x"},

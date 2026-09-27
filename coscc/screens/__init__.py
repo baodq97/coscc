@@ -25,14 +25,14 @@ from coscc.web import studio as s
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
 # `coscc.screens.<name>` still resolves; a patch reaches only the module that looks it up.
-from coscc.screens_common import (
+from coscc.screens.common import (
     P,
     _details,
     _MONO,
     _table,
     _mono,
 )
-from coscc.screens_chrome import (
+from coscc.screens.chrome import (
     _nav,
     _brand,
     _workspace_select,
@@ -44,7 +44,7 @@ from coscc.screens_chrome import (
     _event_row,
     _NOTICE_JS,
 )
-from coscc.screens_overview import (
+from coscc.screens.overview import (
     _empty_board,
     _overview,
     _workspace_card,
@@ -52,7 +52,7 @@ from coscc.screens_overview import (
     _activity_line,
     _activity_body,
 )
-from coscc.screens_board import (
+from coscc.screens.board import (
     _unit_card,
     _column,
     _start_unit,
@@ -68,7 +68,7 @@ from coscc.screens_board import (
     _collapsed_groups,
     _collapsed_group,
 )
-from coscc.screens_sessions import (
+from coscc.screens.sessions import (
     _message,
     _sessions,
     _activity,
@@ -83,7 +83,7 @@ from coscc.screens_sessions import (
     _cost,
     _unit_cost,
 )
-from coscc.screens_settings import (
+from coscc.screens.settings import (
     _settings_row,
     _knob_row,
     _name_list,
@@ -92,7 +92,7 @@ from coscc.screens_settings import (
     _autopilot_settings,
     _settings,
 )
-from coscc.screens_unit import (
+from coscc.screens.unit import (
     _cell_chip,
     _run_row,
     _question_row,
@@ -107,14 +107,14 @@ from coscc.screens_unit import (
     _unit_not_found,
     _detail_dialog,
 )
-from coscc.screens_backlog import (
+from coscc.screens.backlog import (
     _BACKLOG_ACTIONS,
     _BACKLOG_WIDE,
     _backlog_row,
     _backlog_editor,
     _backlog_screen,
 )
-from coscc.screens_dialogs import (
+from coscc.screens.dialogs import (
     _WATCH_JS,
     _WATCH_COLOR,
     _watch_row,

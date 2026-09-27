@@ -1,5 +1,5 @@
 """The frame every screen sits in: the sidebar, the top bar, the status bar and the banners.
-Split from `coscc/screens.py` (`0095`), which re-exports every name.
+Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ import reflex as rx
 
 from coscc.web import studio as s
 from coscc.state import NAVIGATION, Event
-from coscc.screens_common import P
+from coscc.screens.common import P
 
 
 # --- chrome ------------------------------------------------------------------

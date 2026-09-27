@@ -4,7 +4,7 @@ Plain: no session, no quota, no network once uv's and npm's caches are warm (a c
 exit 2, not 1). Needs `node`, `git`, `uv`, Playwright's chromium and `127.0.0.1:18783` free;
 any missing is exit 2. It clones this checkout into a temporary directory, with a bare
 directory as its `origin`, cuts a UI unit's branch there (one comment line in
-`coscc/screens.py`), takes its screenshots with `scripts/capture_screens.py /board` at X,
+`coscc/screens/__init__.py`), takes its screenshots with `scripts/capture_screens.py /board` at X,
 and then drives `Service.run_step(..., "review")` in-process, with the worktree, the gate and
 the comment poster stood in for as `scripts/verify_0085.py` does, and the session replaced by
 a stand-in that records that it was called and what `review.md` held then. This process's own
@@ -102,7 +102,7 @@ HEADER = "# Review: x\nSpec: spec.md. Author: t. Status: {status}.\n\n"
 
 def round_text(n: int, verdict: str, head: str, screens: str = "") -> str:
     return (f"## Round {n}\n\nReviewed: {head}. Verdict: {verdict}.\n\n### Findings\n\n"
-            f"- F1 [open] coscc/screens.py:1 — high — x\n\n### What was not reviewed\n\nnothing\n{screens}")
+            f"- F1 [open] coscc/screens/__init__.py:1 — high — x\n\n### What was not reviewed\n\nnothing\n{screens}")
 
 
 def chain(d: Path) -> None:
@@ -151,7 +151,7 @@ def build_tree(tmp: Path) -> Path:
     git(tree, "push", "-q", "origin", "main")
     git(tree, "fetch", "-q", "--prune", "origin")
     git(tree, "switch", "-q", "-c", BRANCH)
-    with (tree / "coscc" / "screens.py").open("a", encoding="utf-8") as f:
+    with (tree / "coscc" / "screens" / "__init__.py").open("a", encoding="utf-8") as f:
         f.write("# 0111 fixture: the unit's own change to a screen\n")
     git(tree, "commit", "-q", "-am", "fixture: a UI change")
     return tree

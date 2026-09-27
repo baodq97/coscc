@@ -159,7 +159,7 @@ class TheWatchPaneKeepsAWindow(unittest.TestCase):
     def test_the_four_notes_read_as_r13_says(self):
         """`0073` R13's four notes, in English since `0089` R14 (S6)."""
         from coscc import state as page
-        from coscc.screens_test import VIETNAMESE
+        from coscc.screens.screens_test import VIETNAMESE
 
         self.assertEqual(page.NO_RUN_NOTE, "no event stream: this step ran before events were recorded")
         purged = page._watch_note({"status": "purged", "purged_at": "2026-10-01T00:00:00+00:00"})

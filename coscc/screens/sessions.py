@@ -1,5 +1,5 @@
 """The Sessions, Activity and Cost screens.
-Split from `coscc/screens.py` (`0095`), which re-exports every name.
+Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
 """
 
 from __future__ import annotations
@@ -9,9 +9,9 @@ import reflex as rx
 from coscc.runlog import spend
 from coscc.web import studio as s
 from coscc.state import AnomalyRow, Message, SpendRow, TokenRow, WasteRow
-from coscc.screens_common import P, _MONO, _details, _mono, _table
-from coscc.screens_chrome import _event_row, _metrics
-from coscc.screens_board import _update_warning
+from coscc.screens.common import P, _MONO, _details, _mono, _table
+from coscc.screens.chrome import _event_row, _metrics
+from coscc.screens.board import _update_warning
 
 
 # --- sessions ----------------------------------------------------------------

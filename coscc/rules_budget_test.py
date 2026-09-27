@@ -31,7 +31,7 @@ APP_PATHS = ["coscc/**", "coscc/**/*", "rxconfig.py", "scripts/*.py"]
 
 # R7: files nearly every unit passes through. A rule scoped to one of them would be read by
 # nearly every step, which is what tier 2 already is. The spec's list, not measured.
-HOT = {"coscc/service/__init__.py", "coscc/runner/__init__.py", "coscc/state/__init__.py", "coscc/screens.py", "coscc/web/api.py"}
+HOT = {"coscc/service/__init__.py", "coscc/runner/__init__.py", "coscc/state/__init__.py", "coscc/screens/__init__.py", "coscc/web/api.py"}
 
 DOC_REF = re.compile(r"\.claude/docs/[\w./-]+\.md")
 
@@ -80,10 +80,7 @@ class TheUiStandardFollowsTheSplit(unittest.TestCase):
         split = [
             p.relative_to(REPO).as_posix()
             for name in ("screens", "state", "service")
-            for p in (
-                sorted((REPO / "coscc" / name).glob("*.py")) if (REPO / "coscc" / name).is_dir()
-                else sorted((REPO / "coscc").glob(f"{name}_*.py"))
-            )
+            for p in sorted((REPO / "coscc" / name).glob("*.py"))
             # `store.py` joined `service/` in `0129` without being split out of `service.py`.
             if not p.name.endswith("_test.py") and p.name not in ("__init__.py", "store.py")
         ]

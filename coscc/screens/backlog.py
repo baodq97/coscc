@@ -1,5 +1,5 @@
 """The Backlog screen: its rows, the editor and the shortlist.
-Split from `coscc/screens.py` (`0095`), which re-exports every name.
+Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import reflex as rx
 from coscc.web import present
 from coscc.web import studio as s
 from coscc.state import BacklogRow
-from coscc.screens_common import P, _MONO
+from coscc.screens.common import P, _MONO
 
 
 # On a phone the actions take their own line and *By* is not shown, so the unit keeps room.

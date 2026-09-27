@@ -1,6 +1,6 @@
 """A unit's dialog and its tabs: runs, questions, integration, outcome, run again, hold and
 review rounds.
-Split from `coscc/screens.py` (`0095`), which re-exports every name.
+Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ from coscc.web import present
 from coscc.web import studio as s
 from coscc.service import CONSEQUENCE
 from coscc.state import Cell, Question, Round, Run
-from coscc.screens_common import P, _details
-from coscc.screens_chrome import _banners
-from coscc.screens_settings import _settings_row
-from coscc.screens_sessions import _unit_cost
-from coscc.screens_board import _update_warning
+from coscc.screens.common import P, _details
+from coscc.screens.chrome import _banners
+from coscc.screens.settings import _settings_row
+from coscc.screens.sessions import _unit_cost
+from coscc.screens.board import _update_warning
 
 
 # --- the unit drawer ---------------------------------------------------------

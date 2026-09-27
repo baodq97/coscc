@@ -132,7 +132,7 @@ class WhatTheFingerprintCovers(unittest.TestCase):
         self.assertEqual(
             set(build._SOURCES), {
                 "coscc/coscc.py", "coscc/web/ui.py", "coscc/web/studio.py",
-                "coscc/screens.py", "coscc/state/__init__.py", "rxconfig.py",
+                "coscc/screens/__init__.py", "coscc/state/__init__.py", "rxconfig.py",
             } | set(self.split_modules())
         )
 
@@ -143,10 +143,7 @@ class WhatTheFingerprintCovers(unittest.TestCase):
         return [
             p.relative_to(repo).as_posix()
             for name in ("screens", "state")
-            for p in (
-                sorted((repo / "coscc" / name).glob("*.py")) if (repo / "coscc" / name).is_dir()
-                else sorted((repo / "coscc").glob(f"{name}_*.py"))
-            )
+            for p in sorted((repo / "coscc" / name).glob("*.py"))
             if not p.name.endswith("_test.py") and p.name != "__init__.py"
         ]
 

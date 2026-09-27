@@ -1,5 +1,5 @@
 """The pieces more than one screen draws with: a collapsible section, a table, monospace text.
-Split from `coscc/screens.py` (`0095`), which re-exports every name.
+Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
 """
 
 from __future__ import annotations

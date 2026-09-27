@@ -1,5 +1,5 @@
 """The Settings screen: knobs, grants, models and the autopilot's settings.
-Split from `coscc/screens.py` (`0095`), which re-exports every name.
+Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
 """
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ from reflex.style import set_color_mode
 from coscc.agent import models
 from coscc.web import studio as s
 from coscc.state import GrantRow, Knob, ModelRow
-from coscc.screens_common import P, _MONO, _details
-from coscc.screens_board import _update_panel
+from coscc.screens.common import P, _MONO, _details
+from coscc.screens.board import _update_panel
 
 
 # --- settings ----------------------------------------------------------------

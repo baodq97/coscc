@@ -37,7 +37,7 @@ class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
         from coscc import state
         from coscc.service import Invalid
 
-        from coscc.screens_test import VIETNAMESE
+        from coscc.screens.screens_test import VIETNAMESE
 
         async def refuse(*args):
             refuse.args = args
@@ -68,7 +68,7 @@ class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
         from unittest import mock
 
         from coscc import state
-        from coscc.screens_test import VIETNAMESE
+        from coscc.screens.screens_test import VIETNAMESE
 
         sent = []
 

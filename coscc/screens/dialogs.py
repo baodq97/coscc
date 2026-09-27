@@ -1,6 +1,6 @@
 """The dialogs outside a unit: watching a step, a workspace's form, removing one, the command
 palette and the mobile menu.
-Split from `coscc/screens.py` (`0095`), which re-exports every name.
+Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
 """
 
 from __future__ import annotations
@@ -9,8 +9,8 @@ import reflex as rx
 
 from coscc.web import studio as s
 from coscc.state import NAVIGATION, WatchEvent
-from coscc.screens_common import P, _MONO
-from coscc.screens_chrome import _nav, _workspace_select
+from coscc.screens.common import P, _MONO
+from coscc.screens.chrome import _nav, _workspace_select
 
 
 # --- watching a step (`0073`) -------------------------------------------------

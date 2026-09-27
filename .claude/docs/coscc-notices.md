@@ -1,7 +1,7 @@
 # Notices: `GET /api/notices/follow`, and listening from a terminal
 
 Read this before changing `coscc/runlog/notices.py`, `coscc/service/notices.py`, the route, or
-`_NOTICE_JS` in `coscc/screens_chrome.py` (`0113`).
+`_NOTICE_JS` in `coscc/screens/chrome.py` (`0113`).
 
 ## What it sends
 

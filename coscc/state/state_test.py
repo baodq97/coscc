@@ -28,11 +28,6 @@ def _split_from(name: str) -> list[Path]:
     """`0095`: `<name>.py` and the `<name>_*.py` modules it was split into, tests left out.
     Since `0129` they are the package `coscc/<name>/`, its `__init__.py` first."""
     here = Path(__file__).resolve().parents[1] / name
-    if not here.is_dir():
-        flat = here.parent
-        return [flat / f"{name}.py"] + [
-            p for p in sorted(flat.glob(f"{name}_*.py")) if not p.name.endswith("_test.py")
-        ]
     return [here / "__init__.py"] + [
         p for p in sorted(here.glob("*.py")) if not p.name.endswith("_test.py") and p.name != "__init__.py"
     ]

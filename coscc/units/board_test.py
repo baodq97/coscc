@@ -797,12 +797,13 @@ class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
             ).stdout.strip()
 
         git("init", "-q", "-b", "main")
-        (repo / ".claude" / "rules" / "ui-standard.md").write_text('---\npaths:\n  - "coscc/screens.py"\n---\n')
+        (repo / ".claude" / "rules" / "ui-standard.md").write_text('---\npaths:\n  - "coscc/screens/__init__.py"\n---\n')
         (repo / ".gitignore").write_text(".screens/\n")
         git("add", ".")
         git("commit", "-q", "-m", "first")
         git("switch", "-q", "-c", "fix/x")
-        (repo / "coscc" / "screens.py").write_text("# a screen\n")
+        (repo / "coscc" / "screens").mkdir()
+        (repo / "coscc" / "screens" / "__init__.py").write_text("# a screen\n")
         git("add", ".")
         git("commit", "-q", "-m", "a screen")
         taken = git("rev-parse", "HEAD")
@@ -819,7 +820,7 @@ class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
             ))
             got = run(board.screens(store, "0001_x", repo))
         self.assertEqual(got, {
-            "unit": "0001_x", "ui": ["coscc/screens.py"],
+            "unit": "0001_x", "ui": ["coscc/screens/__init__.py"],
             "manifest": {"head": taken, "dirty": False, "addresses": ["/board"], "hits": hits},
             "rewritten": True, "retake": True, "why": "",
         })

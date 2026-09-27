@@ -19,7 +19,7 @@ meaning in a wheel, where the two travel in the same file and cannot drift. That
 why no packaged fingerprint was built; `plan.md` records the decision.
 
 **What the fingerprint covers, and what it cannot.** The compiled bundle is decided by the
-component tree in `coscc/screens.py`, its state in `coscc/state/__init__.py` (with the modules
+component tree in `coscc/screens/__init__.py`, its state in `coscc/state/__init__.py` (with the modules
 each was split into, `0095`), the shared theme and presentation
 modules, `rxconfig.py` (which bakes in the backend address), and the Reflex version that
 compiled it. Those inputs are fingerprinted. Anything else
@@ -47,19 +47,19 @@ _SOURCES = (
     "coscc/coscc.py",
     "coscc/web/ui.py",
     "coscc/web/studio.py",
-    "coscc/screens.py",
+    "coscc/screens/__init__.py",
     "coscc/state/__init__.py",
     # `0095`: the modules `screens.py` and `state.py` were split into. `build_test` fails
     # when one is missing.
-    "coscc/screens_common.py",
-    "coscc/screens_chrome.py",
-    "coscc/screens_overview.py",
-    "coscc/screens_board.py",
-    "coscc/screens_sessions.py",
-    "coscc/screens_settings.py",
-    "coscc/screens_unit.py",
-    "coscc/screens_backlog.py",
-    "coscc/screens_dialogs.py",
+    "coscc/screens/common.py",
+    "coscc/screens/chrome.py",
+    "coscc/screens/overview.py",
+    "coscc/screens/board.py",
+    "coscc/screens/sessions.py",
+    "coscc/screens/settings.py",
+    "coscc/screens/unit.py",
+    "coscc/screens/backlog.py",
+    "coscc/screens/dialogs.py",
     "coscc/state/views.py",
     "coscc/state/workspaces.py",
     "coscc/state/watch.py",
