@@ -244,6 +244,7 @@ class AutopilotMixin:
                 # `0124`: not while its step runs, whose `start` is already in the window.
                 own = None if name in here else autopilot.after_own_integration(
                     info, integrations.get(name), autopilot.since_integration(records, key, name), nxt,
+                    autopilot.exhausted_of(records, key, name, "impl"),
                 )
                 # R10: a unit behind `main`, conflicting or red after integration is integrated
                 # first. Since `0112` R1 also after a `pass`: GitHub would refuse the merge, the

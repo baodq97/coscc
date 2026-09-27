@@ -196,6 +196,24 @@ class Stops(unittest.TestCase):
         ]
         self.assertEqual(ap.after_own_integration(red, mine, theirs, fix), ("impl", None))
 
+    def test_after_own_integration_0120_a_first_exhausted_impl_is_not_the_one(self):
+        """`0120` review F3: the autopilot's `impl` that ran out runs once more; the one after
+        it counts, and a second that runs out is not forgiven."""
+        red = {"state": "red-after-integration"}
+        mine = {"kind": "integration", "outcome": "pushed", "started_by": "autopilot"}
+        fix = nxt("impl", "CI is red on #7: t — back to impl")
+        start = {"kind": "start", "stage": "impl", "started_by": "autopilot"}
+        out = {"kind": "end", "stage": "impl", "outcome": "exhausted"}
+        done = {**out, "outcome": "done"}
+        still = ("", {"kind": "e", "reason": ap.STILL_RED})
+        self.assertEqual(ap.after_own_integration(red, mine, [start, out], fix, 1), ("impl", None))
+        self.assertEqual(ap.after_own_integration(red, mine, [start, out], fix), still)
+        self.assertEqual(ap.after_own_integration(red, mine, [start, out, start, done], fix, 1), still)
+        self.assertEqual(ap.after_own_integration(red, mine, [start, out, start, out], fix, 2), still)
+        # A person's `impl` that ran out was never counted, and forgives nothing.
+        theirs = [{**start, "started_by": "person"}, out, start, done]
+        self.assertEqual(ap.after_own_integration(red, mine, theirs, fix, 1), still)
+
     def test_is_ci_red_reads_the_words_inside_a_joined_action(self):
         self.assertTrue(ap.is_ci_red("CI is red on #7: tests — back to impl: fix on the branch and push"))
         # `onReview` and `rebased` join the gate's reasons with "; " (`cos.mjs` `nextStep`).

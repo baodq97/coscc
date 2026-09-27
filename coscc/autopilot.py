@@ -184,6 +184,7 @@ def after_own_integration(
     last_integration: dict[str, Any] | None,
     after: list[dict[str, Any]] | None,
     nxt: dict[str, Any],
+    exhausted: int = 0,
 ) -> tuple[str, dict[str, str] | None] | None:
     """`0124` R1–R3: what follows CI red on the autopilot's own pushed integration.
 
@@ -192,7 +193,9 @@ def after_own_integration(
     answer. `("impl", None)` runs the `impl` `next` names, once (R1); `("", stop)` is a stop
     `e` (R2, R3 b); `None` leaves the unit to the rest of the pass — a person's integration,
     or one CI is not red on. Gebo is never started again: no retry is the rule (`0043`
-    `spec.md ## Answers`, câu 1).
+    `spec.md ## Answers`, câu 1). `exhausted` is how many `impl` steps of the unit ended
+    `exhausted` (`exhausted_of`): while it is 1, the autopilot's `impl` that ran out is not
+    the one `impl`, which runs once more (`0120 intent.md ## Answers`, câu 4; review F3).
     """
     last_integration = last_integration or {}
     if started_by(last_integration) != "autopilot" or last_integration.get("outcome") != "pushed":
@@ -203,10 +206,17 @@ def after_own_integration(
     again = _stop("e", "CI is still red after the autopilot's last integration")
     if after is None:
         return ("", again) if red_state else None
-    ran = sum(
-        1 for r in after
-        if r.get("kind") == "start" and r.get("stage") == "impl" and started_by(r) == "autopilot"
-    )
+    ran, short, by = 0, 0, ""
+    for r in after:
+        if r.get("stage") != "impl":
+            continue
+        if r.get("kind") == "start":
+            by = started_by(r)
+            ran += 1 if by == "autopilot" else 0
+        elif r.get("kind") == "end" and r.get("outcome") == "exhausted" and by == "autopilot":
+            short += 1
+    if exhausted == 1:
+        ran -= min(short, 1)
     if ran >= IMPL_PER_INTEGRATION and (red_state or red_next):
         return ("", _stop("e", STILL_RED))
     if red_state and fixing:

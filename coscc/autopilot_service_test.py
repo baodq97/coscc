@@ -577,9 +577,10 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0001_a", "impl", "autopilot"), ("0002_b", "integrate", "autopilot")])
         self.assertEqual(self.stops(), {})
 
-    async def _0124_impl_after_a_red_rebase(self) -> Journal:
+    async def _0124_impl_after_a_red_rebase(self, outcome: str = "done") -> Journal:
         """0115/#120 up to its `impl`: a `pass`, the autopilot's mechanical rebase, CI red on
-        it, and `next` naming `impl` with `cos.mjs`'s words. Returns once that `impl` ended."""
+        it, and `next` naming `impl` with `cos.mjs`'s words. Returns once that `impl` ended
+        `outcome`."""
         self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
         red = f"{autopilot.CI_RED}120: tests — back to impl: fix on the branch and push"
         self.add("0001_a", "impl", action=red, plan="- `a/x.py`", integration={"state": "red-after-integration"},
@@ -599,10 +600,38 @@ class Scripted(_Base):
         self.assertEqual((len(self.launched), self.stops()), (1, {}))
         self.release.set()
         await self.settled()
-        log.finished(self.key, "0001_a", "impl", "done")
+        log.finished(self.key, "0001_a", "impl", outcome)
         stops = [r for r in log.records(kind="autopilot-stop") if r["unit"] == "0001_a" and r["stop"]]
         self.assertEqual(stops, [])
         return log
+
+    async def test_0120_f3_an_exhausted_impl_after_its_own_integration_runs_once_more(self):
+        """`0120` review F3: the `impl` `0124` runs ran out, so it is not the one `impl`; the
+        second that runs out stops `e` with `0120`'s words, not `STILL_RED`."""
+        log = await self._0124_impl_after_a_red_rebase("exhausted")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")] * 2)
+        self.assertEqual(self.stops(), {})
+        await self.settled()
+        log.started(self.key, "0001_a", "impl", "autonomous", started_by="autopilot")
+        log.finished(self.key, "0001_a", "impl", "exhausted")
+        await self.pass_()
+        self.assertEqual(len(self.launched), 2)
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        reason = self.service._autopilot_stops[self.key]["0001_a"]["reason"]
+        self.assertEqual(reason, "the last impl step ended exhausted")
+
+    async def test_0120_f3_the_impl_after_an_exhausted_one_is_the_one(self):
+        """`0124` R2 still holds once the `impl` run again ends `done` and CI is still red."""
+        log = await self._0124_impl_after_a_red_rebase("exhausted")
+        await self.pass_()
+        await self.settled()
+        log.started(self.key, "0001_a", "impl", "autonomous", started_by="autopilot")
+        log.finished(self.key, "0001_a", "impl", "done")
+        await self.pass_()
+        self.assertEqual(len(self.launched), 2)
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED)
 
     async def test_0124_r7_a_rebase_that_turns_ci_red_runs_impl_once_then_stops(self):
         """R7, the intent's outcome: sent to `impl`, not stopped; still red after it, stopped."""
