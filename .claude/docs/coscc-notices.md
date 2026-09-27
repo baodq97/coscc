@@ -1,7 +1,7 @@
 # Notices: `GET /api/notices/follow`, and listening from a terminal
 
-Read this before changing `coscc/notices.py`, `coscc/service_notices.py`, the route, or
-`_NOTICE_JS` in `coscc/screens_chrome.py` (`0113`).
+Read this before changing `coscc/runlog/notices.py`, `coscc/service/notices.py`, the route, or
+`_NOTICE_JS` in `coscc/screens/chrome.py` (`0113`).
 
 ## What it sends
 
@@ -81,7 +81,7 @@ session is seeded (`0113` plan, *Proof*).
 
 ## Hazards
 
-- **The cookie lives 30 days from its last use** (`coscc/auth.py`, `SESSION_TTL`), and the
+- **The cookie lives 30 days from its last use** (`coscc/web/auth.py`, `SESSION_TTL`), and the
   jar holds a live session: whoever reads that file can call every route. Once the session
   ends — its 30 days, a logout, `coscc reset-password` — a listener hears nothing past the
   end of the stream it is on, at most 30 s; its next connection is refused, it stops with
@@ -94,7 +94,7 @@ session is seeded (`0113` plan, *Proof*).
   many can pile up, is not measured (spec C6; the spike saw one still open 46 s after the
   cut). Nothing is lost by it.
 - **A record another process writes arrives up to 15 s late**; one this process writes rings
-  the bell and arrives at once. Measured in `service_notices_test.py`, not in production.
+  the bell and arrives at once. Measured in `service/notices_test.py`, not in production.
 - **An autopilot stop reaches the run log only when a pass runs**, every 5 minutes or after a
   step ends (spec C1): the stream is prompt about the log, not about the stop.
 - **`ship-refused` can be a merge that happened.** `why` is read off the files after the step;

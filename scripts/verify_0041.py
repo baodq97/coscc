@@ -249,7 +249,7 @@ def fake_gh(bindir: Path, stdout: str, code: int = 0) -> None:
 
 def lookup_and_prompt(tmp: Path, name: str, stdout: str, code: int = 0) -> tuple[dict, str]:
     """`pr_for_branch` against a fake `gh`, then the `pr` prompt `build_prompt` makes of it."""
-    from coscc import integrate
+    from coscc.github import integrate
     from coscc.runner import build_prompt
 
     bindir = tmp / name / "bin"
@@ -270,7 +270,7 @@ def lookup_and_prompt(tmp: Path, name: str, stdout: str, code: int = 0) -> tuple
 
 
 def claims_abc(tmp: Path) -> bool:
-    from coscc.policy import check_command, grant_for
+    from coscc.agent.policy import check_command, grant_for
 
     ok = True
     found = json.dumps([{"url": URL, "number": 7, "mergeable": "MERGEABLE", "headRefOid": HEAD}])
@@ -302,7 +302,7 @@ def claims_abc(tmp: Path) -> bool:
 
 def claim_d(tmp: Path) -> bool:
     """`--measure` against fixture logs written by the real journal and a fixture store."""
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     def fixture(name: str, steps: list[tuple[str, str, str, str]]) -> Path:
         root = tmp / "d" / name
@@ -428,7 +428,7 @@ async def paid_case(service, repo: Path, proof_repo: str, case: str, stamp: str)
 async def paid_mode(base: Path, proof_repo: str) -> bool:
     from coscc.config import Config
     from coscc.service import Service
-    from coscc.sessions import Sessions
+    from coscc.agent.sessions import Sessions
 
     work = base / "work"
     work.mkdir()

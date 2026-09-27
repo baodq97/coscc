@@ -1,0 +1,950 @@
+"""The JSON surface, as a FastAPI app that stands on its own.
+
+Standing alone is the point. Reflex mounts this exact object via `api_transformer`
+(`spec.md` R4), so the browser and the proof command reach the same routes in the same
+process — but because it is also a plain ASGI app, the proof drives it in-process through
+`httpx.ASGITransport` with no compiled frontend and no Node. That is what keeps `npm test`
+free of a JavaScript toolchain (`plan.md` step 1, check d).
+
+Nothing here reads the environment — `coscc.config` is the only reader — and no route
+returns configuration or runs anything the caller names. `spec.md` C3: a long-lived
+login credential is in this process, and those two habits are what keep it there.
+
+Nothing here decides anything either (`spec.md` R10). Every route translates a request
+into a `Service` call and a result back into JSON.
+
+Reflex reserves `/ping/`, `/_event` and `/_upload`. Nothing here may use them.
+
+**Every route here sits behind `coscc/web/auth.py`** (`0070`), which decides before this app
+sees a request: without a live session only `GET /api/health` gets through. The guard also
+serves `/login`, `/setup` and `/logout` itself — they are not routes of this app, and
+nothing here may use them either. One password, one user: whoever holds it or a live
+session cookie can call every route below. A name a body carries (`answered_by`, `by`,
+`stopped_by`, `recorded_by`) is written as sent; since `0082` one left out or empty is
+written as `service.OWNER`, the fixed word `owner`. Neither is an identity. Tests that
+build this app on its own, as `api_test.py` does, drive it without the guard.
+"""
+
+from __future__ import annotations
+
+import json
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+
+from coscc.config import Config, from_env
+from coscc.service import Invalid, NotUpdatable, Service, StaleCutList, Updating
+from coscc.agent.sessions import Refused, Sessions
+
+
+def _bad(message: str, status: int = 400) -> JSONResponse:
+    return JSONResponse({"error": message}, status_code=status)
+
+
+def _limit(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    try:
+        return max(1, min(200, int(raw)))
+    except ValueError:
+        return None
+
+
+def build(config: Config | None = None) -> FastAPI:
+    config = config or from_env()
+    sessions = Sessions(config)
+    service = Service(config, sessions)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # Every client is a CLI process holding a long-lived login credential
+        # (`.cos/0001_no-session-management/spec.md:121`). Shutdown is wired to the server's
+        # lifecycle rather than left to whoever remembers. Nothing to do on the way up.
+        yield
+        # `0034`. Steps first: each is a task that would otherwise write its `end` after
+        # its client had been closed under it. `shutdown` writes none, on purpose.
+        await service.shutdown()
+        await sessions.close_all()
+
+    api = FastAPI(title="coscc", lifespan=lifespan)
+    api.state.config = config
+    api.state.sessions = sessions
+    api.state.service = service
+
+    @api.get("/api/health")
+    async def health() -> dict[str, bool]:
+        return {"ok": True}
+
+    @api.get("/api/workspaces")
+    async def get_workspaces() -> Any:
+        return service.workspaces()
+
+    @api.post("/api/workspaces")
+    async def add_workspace(request: Request) -> Any:
+        """Adopt a directory under the working folder, or clone one into it.
+
+        The working folder itself is never a parameter — it comes from the environment
+        and nowhere else (`spec.md` R11). A body naming one is ignored, not overridden.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        try:
+            return await service.add_workspace(
+                str(body.get("name", "")),
+                label=str(body.get("label", "") or ""),
+                repo_url=(body.get("repo_url") or None),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.patch("/api/workspaces/{name}")
+    async def set_label(name: str, request: Request) -> Any:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        try:
+            return service.set_label(name, str(body.get("label", "") or ""))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.delete("/api/workspaces/{name}")
+    async def remove_workspace(name: str) -> Any:
+        """Removes the entry. The directory on disk is left alone (`spec.md` R18)."""
+        try:
+            return service.remove_workspace(name)
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/settings/models")
+    async def get_stage_models() -> Any:
+        """`0004_no-setting-says-which-model-runs-a-stage`: each stage, then chat, with its
+        agent count, its model and where that model came from."""
+        return await service.stage_models()
+
+    @api.post("/api/settings/models")
+    async def set_stage_model(request: Request) -> Any:
+        """`{name, model}` sets one row's model; `{name}` alone removes its override.
+
+        Behind the password like every route here, and it decides what every step spends:
+        whoever holds the password or a live session can move any stage's model. The trace
+        is a `setting` record in the run log.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        if not isinstance(body, dict):
+            return _bad("body must be a JSON object")
+        try:
+            return await service.set_stage_model(body.get("name"), body.get("model"))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/settings/efforts")
+    async def set_stage_effort(request: Request) -> Any:
+        """`0033`. `{name, effort}` sets one row's effort; `{name}` alone removes its override.
+
+        The same exposure as the model route, and `max` is accepted only here.
+        The trace is a `setting` record in the run log.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        if not isinstance(body, dict):
+            return _bad("body must be a JSON object")
+        try:
+            return await service.set_stage_effort(body.get("name"), body.get("effort"))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/settings/autopilot")
+    async def get_autopilot(request: Request) -> Any:
+        """`0043`. One workspace's autopilot switches, `max_parallel`, and the app's daily cap."""
+        try:
+            return service.autopilot_settings(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/settings/autopilot")
+    async def set_autopilot(request: Request) -> Any:
+        """`0043`. `{cwd, name, value}` sets one of the four; a wrong value is a 400 and
+        nothing is written.
+
+        Behind the password like every route here: whoever holds it or a live session can
+        turn the autopilot on, raise the cap, or let it ship to `main` under this machine's
+        `gh` login. Turning it on is refused while the app listens beyond loopback. The
+        trace is a `setting` record in the run log.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        if not isinstance(body, dict):
+            return _bad("body must be a JSON object")
+        try:
+            return service.set_autopilot(str(body.get("cwd", "")), body.get("name"), body.get("value"))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/workspaces/{name}/pull")
+    async def pull_workspace(name: str) -> Any:
+        try:
+            return await service.pull_workspace(name)
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/units")
+    async def create_unit(request: Request) -> Any:
+        """`0014` R1. Start a work unit. The first route that makes something.
+
+        `brief` is the originator's own words and becomes the unit's `idea.md`, which is
+        what the intent step reads. `write-intent` invariant 1 asks for exactly that, and
+        until now there was no way to give it to the app at all.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.create_unit(
+                str(body.get("cwd") or ""),
+                str(body.get("slug") or ""),
+                str(body.get("brief") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/units/answer")
+    async def answer_question(request: Request) -> Any:
+        """`0016` R2. A person answers one item under an artifact's `## Open questions`.
+
+        Appends a `### Câu N` block under `## Answers` at the end of that artifact and
+        writes nothing else. **The name is not checked**: whoever holds the password or a
+        live session can put words into an artifact under a name they chose, and the next
+        stage reads them as a person's decision.
+
+        Since `0028` `question` may also be `"F<n>"` with `artifact` `review.md`: a finding
+        the last review round confirmed needs a person. That appends `### F<n>`, and it does
+        more than a numbered answer does — `cos.mjs next` reads it to offer `review` again,
+        and the `ship` gate reads it to count an `[answered]` finding as closed.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.answer(
+                str(body.get("cwd") or ""),
+                str(body.get("unit") or ""),
+                str(body.get("artifact") or ""),
+                body.get("question"),
+                str(body.get("answer") or ""),
+                str(body.get("answered_by") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/units/precedent")
+    async def ask_jera(request: Request) -> Any:
+        """`0044`. **Opens one paid session**: Jera answers a unit's open questions from
+        precedent, `{cwd, unit}`. What it answers is appended under `## Answers` as
+        `Answered by: Jera`, and every later stage reads it as decided. Whoever holds the
+        password or a live session can press it; the default bind is `0.0.0.0`. Returns a
+        summary, not a stream: one turn has nothing to watch, and `/api/board/running` shows
+        the run while it lasts. A second press on the same unit while one runs is a 400.
+        """
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        try:
+            return await service.precedent(str(body.get("cwd") or ""), str(body.get("unit") or ""))
+        except Updating as e:
+            return _bad(str(e), 503)
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/units/outcome")
+    async def record_outcome(request: Request) -> Any:
+        """`0047` R1–R4. Record whether a finished unit met its intent's outcome.
+
+        Appends a `### Outcome` block under `intent.md`'s `## Answers` and writes nothing
+        else. `result` is `đạt`, `trượt` or `không đo được`. **Whoever holds the password
+        or a live session can record `đạt`**, as `owner` or under any name the body sends
+        (`0082`), and `measured_by` is a word they chose too. No gate reads the block; the board shows
+        it as the ground for keeping or dropping a unit.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.record_outcome(
+                str(body.get("cwd") or ""),
+                str(body.get("unit") or ""),
+                str(body.get("result") or ""),
+                str(body.get("measured_by") or ""),
+                str(body.get("source") or ""),
+                str(body.get("reason") or ""),
+                str(body.get("note") or ""),
+                str(body.get("recorded_by") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/units/hold")
+    async def hold_unit(request: Request) -> Any:
+        """`0045`. Pause, drop or resume a unit: body `{cwd, unit, to, reason, by}`.
+
+        Appends a `### Paused|Dropped|Resumed` block under `intent.md ## Answers` and a
+        `hold` row to the run log; `cos.mjs` then offers no stage and closes every gate.
+        **Whoever holds the password or a live session can pause every unit under a name
+        they chose**, and `to: "dropped"` closes the
+        unit's open pull request **with this machine's `gh` login** and removes its worktree.
+        It starts nothing, a resume included.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.hold(
+                str(body.get("cwd") or ""),
+                str(body.get("unit") or ""),
+                str(body.get("to") or ""),
+                str(body.get("reason") or ""),
+                str(body.get("by") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/units/more-rounds")
+    async def more_rounds(request: Request) -> Any:
+        """`0081`. Allow one more review round to a unit out of rounds: body `{cwd, unit, by?}`.
+
+        Appends a `### More rounds` block under `review.md ## Answers`; `cos.mjs` then adds
+        one round to that unit's limit and opens its `review` gate again. The `ship` gate is
+        unchanged. **Whoever holds the password or a live session can open a paid review
+        round, and the route starts nothing itself** — with the autopilot on, its next sweep
+        will.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.more_rounds(
+                str(body.get("cwd") or ""),
+                str(body.get("unit") or ""),
+                str(body.get("by") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    async def _object(request: Request) -> dict[str, Any] | JSONResponse:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        return body if isinstance(body, dict) else _bad("send a JSON object")
+
+    @api.post("/api/backlog/estimate")
+    async def backlog_estimate(request: Request) -> Any:
+        """`0074` R2, R6. A person's estimate: `{cwd, unit, value, effort, basis, by}`.
+
+        A new `estimate-value` row in the run log; no file is written and no gate reads it.
+        Whoever holds the password or a live session can write one under any name; the
+        default bind is `0.0.0.0`.
+        """
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        try:
+            return await service.record_estimate(
+                str(body.get("cwd") or ""), str(body.get("unit") or ""), body.get("value"),
+                body.get("effort"), body.get("basis"), body.get("by"),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/backlog/relation")
+    async def backlog_relation(request: Request) -> Any:
+        """`0074` R8. Add or remove one relation: `{cwd, unit, other, type, op, reason, by}`.
+
+        A `relation` row in the run log, nothing else. Behind the password like every route;
+        the default bind is `0.0.0.0`.
+        """
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        try:
+            return await service.record_relation(
+                *(str(body.get(k) or "") for k in ("cwd", "unit", "other", "type", "op", "reason", "by"))
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/backlog/shortlist")
+    async def backlog_shortlist(request: Request) -> Any:
+        """`0074` R10, R12. The whole shortlist, in order: `{cwd, units, reason, by}`.
+
+        A `shortlist` row in the run log; every later board step's `start` row reads it
+        (R14). Nothing runs because of it, and no gate or `next` reads it. Whoever holds the
+        password or a live session can rewrite it under any name; the default bind is `0.0.0.0`.
+        """
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        try:
+            return await service.record_shortlist(
+                str(body.get("cwd") or ""), body.get("units"), str(body.get("reason") or ""),
+                str(body.get("by") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/backlog/propose")
+    async def backlog_propose(request: Request) -> Any:
+        """`0074` R17, R18. **Opens one paid session** proposing estimates: `{cwd}`. Streams
+        NDJSON like `/api/board/run`. Whoever holds the password or a live session can press
+        it; the default bind is `0.0.0.0`. A second press while one runs is a 400.
+        """
+        body = await _object(request)
+        if isinstance(body, JSONResponse):
+            return body
+        stream = service.propose_estimates(str(body.get("cwd") or ""))
+        try:
+            first = await stream.__anext__()
+        except Updating as e:
+            return _bad(str(e), 503)
+        except Invalid as e:
+            return _bad(str(e))
+        except StopAsyncIteration:
+            return _bad("the proposal produced nothing")
+
+        async def lines() -> AsyncIterator[bytes]:
+            def out(obj: dict[str, Any]) -> bytes:
+                return json.dumps(obj).encode() + b"\n"
+
+            try:
+                for kind, payload in (first,):
+                    yield out({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
+                async for kind, payload in stream:
+                    if kind == "chunk":
+                        yield out({"type": "chunk", "text": payload})
+                    else:
+                        yield out({"type": "done", **payload})
+            except Exception as e:
+                yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
+    @api.post("/api/units/review-comment")
+    async def post_review_comment(request: Request) -> Any:
+        """`0021` R8, R9. Post one review round to the unit's pull request, once.
+
+        Writes to GitHub **under this machine's `gh` login**, for whoever holds the password
+        or a live session. What it posts is the round as it stands in
+        `review.md`; the request names a unit and a round number and nothing else, so no
+        caller can choose the words. A round already on the pull request comes back
+        `already` and is not posted twice. A failure is a 200 with `state: failed` and
+        gh's reason, because the request was valid and GitHub said no.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.post_review_comment(
+                str(body.get("cwd") or ""),
+                str(body.get("unit") or ""),
+                body.get("round"),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/units/branch")
+    async def start_branch(request: Request) -> Any:
+        """`0014` R4. Cut this unit's branch in the workspace.
+
+        The only route in this app that writes to somebody else's git.
+        `coscc/git/gitops.py` carries the list of what that is allowed to be, because
+        `coscc/agent/policy.py` covers sessions and this runs with the app's own authority.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return await service.start_branch(
+                str(body.get("cwd") or ""), str(body.get("unit") or "")
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/branch")
+    async def get_branch(request: Request) -> Any:
+        """Which branch the workspace is on."""
+        try:
+            return await service.branch_here(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/board")
+    async def get_board(request: Request) -> Any:
+        """R1. Every unit of one workspace, with all eight stages on each."""
+        try:
+            return await service.board(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/board/running")
+    async def get_board_running(request: Request) -> Any:
+        """`0051` R2. What has an agent working in one workspace now, and what ended unseen.
+
+        Cheap enough to ask every few seconds: memory and the run log, no `git` or `gh`.
+        Whoever holds the password or a live session sees which units have a paid session
+        open, and since when.
+        """
+        try:
+            return service.running(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/units/next")
+    async def get_next(request: Request) -> Any:
+        """`0024`. The one stage the run button may offer for a unit, as `cos.mjs next`
+        answered it: `{stage, action, blocked}`. Asks `gh` in the workspace, so it can wait
+        up to 60s. It names a stage and starts nothing; `/api/board/run` still asks the gate."""
+        q = request.query_params
+        try:
+            return await service.next_step(q.get("cwd", ""), q.get("unit", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/board/mode")
+    async def set_board_mode(request: Request) -> Any:
+        """R5. The only thing the board writes, and it writes it to the journal."""
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        try:
+            return await service.set_mode(
+                str(body.get("cwd", "")),
+                str(body.get("unit", "")),
+                str(body.get("stage", "")),
+                str(body.get("mode", "")),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/board/run")
+    async def run_step(request: Request) -> Any:
+        """R7. Streams NDJSON exactly as `/api/send` does — chunks, then one done.
+
+        The same rule applies about the status line: anything decidable before output is a
+        status code, and a refusal after streaming starts arrives as an `error` line.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+
+        cwd, unit = str(body.get("cwd", "")), str(body.get("unit", ""))
+        stage = str(body.get("stage", ""))
+        # `0054` R6. `rerun` only when the body says `true` itself; without it the call is
+        # the one it always was.
+        rerun = body.get("rerun") is True
+        extra = {"rerun": True, "note": str(body.get("note") or "")} if rerun else {}
+        stream = service.run_step(cwd, unit, stage, **extra)
+        try:
+            # Pull the first item here so a refusal that happens before any output is still
+            # a 400. An async generator does nothing until it is advanced.
+            first = await stream.__anext__()
+        except Updating as e:
+            return _bad(str(e), 503)
+        except Invalid as e:
+            return _bad(str(e))
+        except StopAsyncIteration:
+            return _bad("the step produced nothing")
+
+        async def lines() -> AsyncIterator[bytes]:
+            def out(obj: dict[str, Any]) -> bytes:
+                return json.dumps(obj).encode() + b"\n"
+
+            try:
+                for kind, payload in (first,):
+                    yield out({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
+                async for kind, payload in stream:
+                    if kind == "chunk":
+                        yield out({"type": "chunk", "text": payload})
+                    else:
+                        yield out({"type": "done", **payload})
+            except Exception as e:
+                yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
+    @api.post("/api/board/stop")
+    async def stop_step(request: Request) -> Any:
+        """`0034`. Stop the step running on one unit: `{cwd, unit, by}`.
+
+        Whoever holds the password or a live session can stop any step, under any name. `by` is what the `end` record's `stopped_by` says -- or
+        nothing at all when the cancel lands before the step's first turn, which leaves no
+        record -- and it is a claim, not an identity. It opens no gate and starts nothing.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        try:
+            return await service.stop_step(
+                str(body.get("cwd", "")), str(body.get("unit", "")), str(body.get("by", ""))
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/board/steps")
+    async def running_steps(request: Request) -> Any:
+        """`0034`. The board steps running now in one workspace, as the registry a Stop
+        reads holds them, and the integrations beside them, which no Stop reaches. This
+        process only. Not `/api/board/running`: that is `0051`'s
+        display of steps and integrations, and it says nothing a Stop would need.
+
+        `0114` R1: integrations are listed too, `kind: "integration"` beside a step's
+        `kind: "step"`, so whatever restarts the app on an empty list sees them."""
+        try:
+            return service.running_steps(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
+    def _ints(request: Request, *names: str) -> dict[str, int | None] | None:
+        """The named query parameters as integers, absent as `None`; `None` if one is not."""
+        out: dict[str, int | None] = {}
+        for name in names:
+            raw = request.query_params.get(name)
+            if raw is None or raw == "":
+                out[name] = None
+                continue
+            try:
+                out[name] = int(raw)
+            except ValueError:
+                return None
+        return out
+
+    @api.get("/api/board/events")
+    async def step_events(request: Request) -> Any:
+        """`0073` R7, R9. One page of a step's events: `cwd`, `unit`, `run`, and `before` and
+        `limit`, or `seq` for one event whole. Reads only.
+
+        Whoever holds the password or a live session reads everything the step saw --
+        commands, paths, thinking, tool output -- unfiltered."""
+        q = request.query_params
+        nums = _ints(request, "before", "limit", "seq")
+        if nums is None:
+            return _bad("before, limit and seq must be whole numbers")
+        try:
+            return service.events_page(
+                q.get("cwd", ""), q.get("unit", ""), q.get("run", ""),
+                before=nums["before"],
+                **({"limit": nums["limit"]} if nums["limit"] is not None else {}),
+                seq=nums["seq"],
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/board/events/follow")
+    async def follow_step_events(request: Request) -> Any:
+        """`0073` R8, R9. NDJSON: one `event` line per event past `after`, until the step's
+        `end`; a `cut` line (`from`) when this reader fell too far behind; one `status` line
+        for a step not running in this process. A refusal is a 400, as `/api/board/run`'s is."""
+        q = request.query_params
+        nums = _ints(request, "after")
+        if nums is None:
+            return _bad("after must be a whole number")
+        stream = service.follow_events(q.get("cwd", ""), q.get("unit", ""), q.get("run", ""), nums["after"] or 0)
+        try:
+            first = await stream.__anext__()
+        except Invalid as e:
+            return _bad(str(e))
+        except StopAsyncIteration:
+            return _bad("nothing to follow")
+
+        async def lines() -> AsyncIterator[bytes]:
+            def out(kind: str, payload: Any) -> list[bytes]:
+                if kind == "events":
+                    return [json.dumps({"type": "event", **e}).encode() + b"\n" for e in payload]
+                if kind == "cut":
+                    return [json.dumps({"type": "cut", "from": payload}).encode() + b"\n"]
+                return [json.dumps({"type": "status", **payload}).encode() + b"\n"]
+
+            try:
+                for line in out(*first):
+                    yield line
+                async for kind, payload in stream:
+                    for line in out(kind, payload):
+                        yield line
+            finally:
+                await stream.aclose()
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
+    @api.get("/api/notices/follow")
+    async def follow_notices_route(request: Request) -> Any:
+        """`0113` R1, R6, R8. NDJSON: a `head` line when there is no `after`, a `notice` line
+        per run-log record past it that is one, and a `beat` line after `notices.BEAT_SECONDS`
+        without one. `workspace` narrows to one. Reads only (R13). It ends after
+        `notices.LIFETIME_SECONDS`, so a listener comes back through the login door (R12).
+
+        Holds a connection per listener (`.claude/docs/coscc-notices.md`). A refusal is a 400
+        before the stream starts; the first line is not waited for, since with `after` it may
+        be a `beat` 15 s away."""
+        nums = _ints(request, "after")
+        if nums is None or (nums["after"] is not None and nums["after"] < 0):
+            return _bad("after must be a whole number")
+        try:
+            scope = service.notice_scope(request.query_params.get("workspace", ""))
+        except Invalid as e:
+            return _bad(str(e))
+        stream = service.follow_notices(scope, nums["after"])
+
+        async def lines() -> AsyncIterator[bytes]:
+            try:
+                async for line in stream:
+                    yield json.dumps(line).encode() + b"\n"
+            finally:
+                await stream.aclose()
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
+    @api.post("/api/units/integrate")
+    async def integrate_unit(request: Request) -> Any:
+        """`0035`. Integrate one unit onto `main`, on request. Streams like `/api/board/run`.
+
+        Whoever holds the password or a live session can make this machine's `gh` login
+        rebase a unit's pull request, or open a paid Gebo session. A refusal
+        (R12) is a 400 before anything changes.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        stream = service.integrate(str(body.get("cwd", "")), str(body.get("unit", "")))
+        try:
+            first = await stream.__anext__()
+        except Updating as e:
+            return _bad(str(e), 503)
+        except Invalid as e:
+            return _bad(str(e))
+        except StopAsyncIteration:
+            return _bad("the integration produced nothing")
+
+        async def lines() -> AsyncIterator[bytes]:
+            def out(obj: dict[str, Any]) -> bytes:
+                return json.dumps(obj).encode() + b"\n"
+
+            try:
+                for kind, payload in (first,):
+                    yield out({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
+                async for kind, payload in stream:
+                    if kind == "chunk":
+                        yield out({"type": "chunk", "text": payload})
+                    else:
+                        yield out({"type": "done", **payload})
+            except Exception as e:
+                yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
+    @api.get("/api/timeline")
+    async def get_timeline(request: Request) -> Any:
+        """R15. What happened to one unit, oldest first."""
+        try:
+            return service.timeline(
+                request.query_params.get("cwd", ""),
+                request.query_params.get("unit", ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/unit-history")
+    async def get_unit_history(request: Request) -> Any:
+        """`0013` R8. Every transition of one unit, and the projection over them.
+
+        Read-only, like every other GET here. `spec.md` C6 named what it widened when every
+        route was open to the network: one more readable route. Since `0070` it is readable
+        by whoever holds the password or a live session, like the rest.
+        """
+        try:
+            return service.unit_history(
+                request.query_params.get("cwd", ""),
+                request.query_params.get("unit", ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/units-with-history")
+    async def get_units_with_history(request: Request) -> Any:
+        """Every unit the log knows, including ones no longer in the working tree."""
+        try:
+            return service.units_with_history(request.query_params.get("cwd", ""))
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/sessions")
+    async def get_sessions(request: Request) -> Any:
+        """R1. Sessions of one project, and only that project."""
+        try:
+            return service.sessions_for(
+                request.query_params.get("cwd", ""),
+                limit=_limit(request.query_params.get("limit")),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.get("/api/history")
+    async def get_history(request: Request) -> Any:
+        """R6. Read back from the SDK's store, never from a copy of our own."""
+        try:
+            return service.history(
+                request.query_params.get("cwd", ""),
+                request.query_params.get("session_id", ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/send")
+    async def post_send(request: Request) -> Any:
+        """R2 and R3. Streams NDJSON: any number of `chunk` lines, then one `done` or `error`.
+
+        The status line is committed before the first chunk, so a refusal that happens
+        after streaming has begun arrives as an `error` line rather than an HTTP code.
+        Callers must read to the last line to know whether it worked.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+
+        cwd = str(body.get("cwd", ""))
+        text = str(body.get("text", ""))
+        session_id = body.get("session_id") or None
+
+        try:
+            # Only what can be decided before any output. See the docstring above.
+            service.check_send(cwd, text)
+        except Updating as e:
+            return _bad(str(e), 503)
+        except Invalid as e:
+            return _bad(str(e))
+
+        async def lines() -> AsyncIterator[bytes]:
+            def out(obj: dict[str, Any]) -> bytes:
+                return json.dumps(obj).encode() + b"\n"
+
+            try:
+                async for kind, payload in service.stream(cwd, text, session_id):
+                    if kind == "chunk":
+                        yield out({"type": "chunk", "text": payload})
+                    else:
+                        yield out({"type": "done", **payload})
+            except Refused as e:
+                yield out({"type": "error", "error": str(e)})
+            except Exception as e:  # surfaced as data; the process keeps serving
+                yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
+    # -- `0068`: updating the app --------------------------------------------
+    #
+    # Behind the password like every route here: whoever holds it or a live session can
+    # apply an update, cut running work with "apply now", cancel a wait or start a local
+    # build. What they cannot do is choose what gets installed. A body is read for
+    # `channel`, `mode`, `by` and `token` only; a URL, a path, a version or a ref in it is
+    # never read (R15), as `POST /api/workspaces` ignores a working folder sent to it.
+
+    def _refused(e: Invalid) -> JSONResponse:
+        if isinstance(e, StaleCutList):
+            return JSONResponse({"error": str(e), "cut_list": e.listing}, status_code=409)
+        if isinstance(e, NotUpdatable):
+            return _bad(str(e), 409)
+        if isinstance(e, Updating):
+            return _bad(str(e), 503)
+        return _bad(str(e))
+
+    async def _update_body(request: Request) -> dict[str, str] | None:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not isinstance(body, dict):
+            return None
+        return {k: str(body.get(k, "") or "") for k in ("channel", "mode", "by", "token")}
+
+    @api.get("/api/update")
+    async def get_update() -> Any:
+        """R1: what runs, and what the panel shows. R14's script reads `build_id` here."""
+        return service.update_status()
+
+    @api.get("/api/update/cut-list")
+    async def get_cut_list() -> Any:
+        try:
+            return service.update_cut_list()
+        except Invalid as e:
+            return _refused(e)
+
+    @api.post("/api/update/apply")
+    async def apply_update(request: Request) -> Any:
+        body = await _update_body(request)
+        if body is None:
+            return _bad("body must be a JSON object")
+        try:
+            return await service.update_apply(body["channel"], body["mode"], body["by"], body["token"])
+        except Invalid as e:
+            return _refused(e)
+
+    @api.post("/api/update/cancel")
+    async def cancel_update(request: Request) -> Any:
+        body = await _update_body(request)
+        if body is None:
+            return _bad("body must be a JSON object")
+        try:
+            return service.update_cancel(body["by"])
+        except Invalid as e:
+            return _refused(e)
+
+    @api.post("/api/update/build-local")
+    async def build_local(request: Request) -> Any:
+        body = await _update_body(request)
+        if body is None:
+            return _bad("body must be a JSON object")
+        try:
+            return service.update_build_local(body["by"])
+        except Invalid as e:
+            return _refused(e)
+
+    # No route for `/` and no static mount. The page is built from Python components
+    # (`spec.md` R8), and `/` has to fall through to Reflex's compiled-frontend mount —
+    # a route defined here would win over it and the page would never render.
+
+    return api

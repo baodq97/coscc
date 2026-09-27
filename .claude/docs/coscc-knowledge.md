@@ -2,9 +2,9 @@
 
 Unit 0090, agents relearn what earlier units already knew. `COS_KNOWLEDGE=1` hands `spec`,
 `spike` and `plan` the entries of `<COS_DATA_DIR>/knowledge/knowledge.md` that apply to the
-workspace (`coscc/knowledge.py`); `coscc knowledge gather` writes that file
-(`coscc/gather.py`); `coscc knowledge baseline` and `measure` decide whether it paid
-(`coscc/measure.py`).
+workspace (`coscc/knowledge/__init__.py`); `coscc knowledge gather` writes that file
+(`coscc/knowledge/gather.py`); `coscc knowledge baseline` and `measure` decide whether it paid
+(`coscc/knowledge/measure.py`).
 
 ## Gathering spends quota, and its ceiling is not a ceiling
 
@@ -48,7 +48,7 @@ source the session was given. It cannot tell a wrong entry from a right one (`sp
 a wrong entry now reaches every `spec`, `spike` and `plan`. The way back is to unset
 `COS_KNOWLEDGE` and restart; the store stays where it is and nothing reads it.
 
-Since `0108`, `coscc/admit.py` writes each entry's date and version and drops the rest into
+Since `0108`, `coscc/knowledge/admit.py` writes each entry's date and version and drops the rest into
 the batch's `dropped`; `coscc knowledge check` reads the store against `main`.
 
 - `check` checks that what an entry points at exists — a pinned version, a path, a name in

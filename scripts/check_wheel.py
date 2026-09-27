@@ -9,8 +9,8 @@
     1  it does not, and every missing thing is named on stderr
     2  no wheel was named, or the path is not there
 
-The decision lives in `coscc.harness.wheel_complaints`, not here, so the same answer is
-available to a test (`coscc/harness_test.py`) without running a subprocess. This file is
+The decision lives in `coscc.agent.harness.wheel_complaints`, not here, so the same answer is
+available to a test (`coscc/agent/harness_test.py`) without running a subprocess. This file is
 only the part that turns it into an exit code.
 
 **Why this exists as a file rather than as four lines of `grep` in a workflow.**
@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from coscc.harness import wheel_complaints  # noqa: E402
+from coscc.agent.harness import wheel_complaints  # noqa: E402
 
 
 def main(argv: list[str]) -> int:

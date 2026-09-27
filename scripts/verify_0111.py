@@ -4,7 +4,7 @@ Plain: no session, no quota, no network once uv's and npm's caches are warm (a c
 exit 2, not 1). Needs `node`, `git`, `uv`, Playwright's chromium and `127.0.0.1:18783` free;
 any missing is exit 2. It clones this checkout into a temporary directory, with a bare
 directory as its `origin`, cuts a UI unit's branch there (one comment line in
-`coscc/screens.py`), takes its screenshots with `scripts/capture_screens.py /board` at X,
+`coscc/screens/__init__.py`), takes its screenshots with `scripts/capture_screens.py /board` at X,
 and then drives `Service.run_step(..., "review")` in-process, with the worktree, the gate and
 the comment poster stood in for as `scripts/verify_0085.py` does, and the session replaced by
 a stand-in that records that it was called and what `review.md` held then. This process's own
@@ -16,7 +16,7 @@ FAIL (`spec.md` R11):
   `head` is Y, one `screens` record says `taken`, the stand-in was called, `review.md` was the
   fixture when it was, and `cos.mjs` `screensNeeds` finds nothing wrong with a round
   `Reviewed: Y` whose `### Screens` says `Taken at: Y`.
-- (b) The same with a commit on `main` that changes `coscc/ui.py`, Y to Z, over a `.web`
+- (b) The same with a commit on `main` that changes `coscc/web/ui.py`, Y to Z, over a `.web`
   left stale by (a) — the case the spike did not measure.
 - (c) The same, W, with `127.0.0.1:18783` held by this process: the step is refused, the
   stand-in is not called, one `screens` record says `failed`, `review.md` is unchanged.
@@ -57,7 +57,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts"))
 COS = REPO / ".claude" / "scripts" / "cos.mjs"
-HOST, PORT = "127.0.0.1", 18783  # `scripts/capture_screens.py:112`
+HOST, PORT = "127.0.0.1", 18783  # `scripts/capture_screens.py:113`
 BRANCH = "fix/fixture-screens"
 ADDRESS = "/board"
 EXIT_PASS, EXIT_BROKEN, EXIT_ENV = 0, 1, 2
@@ -102,7 +102,7 @@ HEADER = "# Review: x\nSpec: spec.md. Author: t. Status: {status}.\n\n"
 
 def round_text(n: int, verdict: str, head: str, screens: str = "") -> str:
     return (f"## Round {n}\n\nReviewed: {head}. Verdict: {verdict}.\n\n### Findings\n\n"
-            f"- F1 [open] coscc/screens.py:1 — high — x\n\n### What was not reviewed\n\nnothing\n{screens}")
+            f"- F1 [open] coscc/screens/__init__.py:1 — high — x\n\n### What was not reviewed\n\nnothing\n{screens}")
 
 
 def chain(d: Path) -> None:
@@ -151,7 +151,7 @@ def build_tree(tmp: Path) -> Path:
     git(tree, "push", "-q", "origin", "main")
     git(tree, "fetch", "-q", "--prune", "origin")
     git(tree, "switch", "-q", "-c", BRANCH)
-    with (tree / "coscc" / "screens.py").open("a", encoding="utf-8") as f:
+    with (tree / "coscc" / "screens" / "__init__.py").open("a", encoding="utf-8") as f:
         f.write("# 0111 fixture: the unit's own change to a screen\n")
     git(tree, "commit", "-q", "-am", "fixture: a UI change")
     return tree
@@ -215,7 +215,7 @@ def screens_records(data: Path) -> list[dict]:
 
 
 def through_the_service(tmp: Path) -> bool:
-    from coscc import board
+    from coscc.units import board
     from coscc.config import Config
     from coscc.service import Invalid, Service
 
@@ -261,7 +261,7 @@ def through_the_service(tmp: Path) -> bool:
     heads = {"X": x}
     for case, path, line in (
         ("a", "NOTES.txt", "a commit on main that touches no screen"),
-        ("b", "coscc/ui.py", "# 0111 fixture: a commit on main that changes a screen"),
+        ("b", "coscc/web/ui.py", "# 0111 fixture: a commit on main that changes a screen"),
     ):
         review_md.write_text(fixture, encoding="utf-8")
         new = advance_main(tree, path, line)

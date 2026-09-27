@@ -2806,6 +2806,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // `exitCode`, not `exit()`. With stdout a pipe, `process.exit` does not wait for the
   // write to drain, and a reader gets the first 64 KiB of the output and nothing after.
   // Measured 2026-09-23: once `status --json` carried each unit's questions (`0016`), this
-  // repository's output passed that size and `coscc/board.py` failed on truncated JSON.
+  // repository's output passed that size and `coscc/units/board.py` failed on truncated JSON.
   process.exitCode = run()
 }

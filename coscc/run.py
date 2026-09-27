@@ -10,7 +10,7 @@ Instead the compiled frontend is mounted into the same ASGI app that serves `/ap
 
 **Two kinds of install, and they get different answers to the same question.**
 `0011` gave this app a second shape: a wheel that carries its own compiled bundle under
-`coscc/_web/`, installed on a machine with no checkout and no Node. `coscc/frontend.py`
+`coscc/_web/`, installed on a machine with no checkout and no Node. `coscc/web/frontend.py`
 decides which of the two is in front of us, and the branch below is the whole difference:
 
 *A checkout* can rebuild, so a bundle that disagrees with the source is a real error with a
@@ -20,7 +20,7 @@ was.
 *A packaged install* cannot rebuild; there is no `reflex export` to run and no Node to run
 it with. Refusing there would leave a person holding a wheel that can never start. So the
 address baked into the bundle is rewritten to the address actually being served, and the
-app comes up. `coscc/frontend.py` explains what is rewritten and why the `.gz` sidecar
+app comes up. `coscc/web/frontend.py` explains what is rewritten and why the `.gz` sidecar
 matters as much as the `.js`.
 
 Build the frontend first, in a checkout:
@@ -39,10 +39,11 @@ from pathlib import Path
 
 # Safe at module level, and the helpers below need it there: it imports nothing from
 # Reflex, so it cannot disturb the ordering the two environment variables depend on.
-from coscc import frontend
+from coscc.web import frontend
 
-# The same: standard library only (`coscc/update.py`'s docstring says why it must be).
+# The same: standard library only (`coscc/update/__init__.py`'s docstring says why it must be).
 from coscc import update
+from coscc.config import LOOPBACK
 
 MOUNT_FLAG = "__REFLEX_MOUNT_FRONTEND_COMPILED_APP"
 
@@ -115,7 +116,7 @@ def main(argv: list[str] | None = None) -> None:
 def recover_steps(config) -> None:
     """`0092` R5. A recovery that fails is one line on stderr, and the app starts anyway: the
     steps keep reading "ended, unknown", as they did before it existed."""
-    from coscc import recovery
+    from coscc.runlog import recovery
 
     try:
         runs = recovery.recover_on_start(config)
@@ -129,7 +130,7 @@ def recover_steps(config) -> None:
 def purge_events(config) -> None:
     """`0073` R14. A purge that fails is one line on stderr, and the app starts anyway: the
     events are kept longer than asked, which is not a reason to have no board."""
-    from coscc import events
+    from coscc.runlog import events
 
     try:
         runs, freed = events.purge_on_start(config)
@@ -182,12 +183,12 @@ def _answer_and_stop(args: list[str]) -> None:
     if args[0] == "knowledge":
         # `0090` R9. The knowledge store's commands, here for the same reason as
         # `reset-password`: they need a shell on this machine, and no route reaches them.
-        from coscc import knowledge_cli
+        from coscc.knowledge import cli as knowledge_cli
 
         raise SystemExit(knowledge_cli.main(args[1:]))
     if args[0] == "effort":
         # `0123` R8. The effort trial's verdict, on the same terms as `knowledge`.
-        from coscc import effort_measure
+        from coscc.knowledge import effort_measure
 
         raise SystemExit(effort_measure.main(args[1:]))
     if args == ["reset-password"]:
@@ -206,11 +207,6 @@ def _answer_and_stop(args: list[str]) -> None:
         file=sys.stderr,
     )
     raise SystemExit(2)
-
-
-# Addresses that reach this machine and nowhere else. `0.0.0.0` and a bare interface
-# address are both absent on purpose: binding either is what the warning below is about.
-LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def banner(config) -> list[str]:
@@ -243,7 +239,7 @@ def _point_the_bundle_here(static: Path, config) -> None:
     """A packaged bundle is built once and served wherever it lands.
 
     Two things have to be true before it can serve at all, and the second one is the half
-    that was missed until a clean machine found it -- see `coscc/frontend.py`.
+    that was missed until a clean machine found it -- see `coscc/web/frontend.py`.
     """
     # Without this, Reflex recompiles on every start and ends that compile by shelling out
     # to Bun or npm, which a packaged install does not have. `Type=simple` makes that look
@@ -266,7 +262,7 @@ def _point_the_bundle_here(static: Path, config) -> None:
     except frontend.NoEnvChunk as missing:
         # The one failure that must stop the process. Serving on is the 2026-09-21
         # failure exactly: a page that renders, an API that is healthy, and a socket
-        # that never connects. `coscc/frontend.py` measurement 2.
+        # that never connects. `coscc/web/frontend.py` measurement 2.
         print(str(missing), file=sys.stderr)
         raise SystemExit(2)
     except OSError as denied:

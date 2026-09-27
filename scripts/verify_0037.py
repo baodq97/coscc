@@ -62,7 +62,7 @@ SONNET, OPUS = "claude-sonnet-5", "claude-opus-5"
 BASELINE_UNITS = {SONNET: ("0031_", "0032_", "0025_"), OPUS: ("0019_",)}
 OPUS_BASELINE_DAY = "2026-09-24"
 
-# What `coscc/runner.py` says when it refuses a prose stage's reply (`check_reply`,
+# What `coscc/runner/__init__.py` says when it refuses a prose stage's reply (`check_reply`,
 # `merge_review` and the Answers re-check). Matched by prefix on `end.detail`. Since `0099`
 # the opening check's reason starts with the artifact's name, so it is matched by `OPENING`.
 REFUSALS = (
@@ -76,7 +76,7 @@ OPENING = " lacks its opening: "
 # The fixed task the intent measured on 2026-09-24.
 PAID_TASK = (
     "In this repository, find the function that calls `worktrees.remove_if_finished` in "
-    "`coscc/service.py`, and count the lines of `coscc/runner.py`. Answer in two lines."
+    "`coscc/service/__init__.py`, and count the lines of `coscc/runner/__init__.py`. Answer in two lines."
 )
 PAID_RUNS = 3
 
@@ -370,9 +370,9 @@ def claim_a(tmp: Path) -> tuple[bool, dict[str, object]]:
     """The whole chain, with only the SDK client replaced. Returns options per stage."""
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
-    from coscc import sessions as sessions_mod
+    from coscc.agent import sessions as sessions_mod
     from coscc.config import Config
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
     from coscc.runner import Runner
 
     seen: dict[str, object] = {}
@@ -489,7 +489,7 @@ def claim_c() -> bool:
 
 def claim_d(tmp: Path) -> bool:
     """`--measure` against fixture logs written by the real journal."""
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     def fixture(name: str, after_denials: int, drop_one_after: bool = False) -> Path:
         root = tmp / name

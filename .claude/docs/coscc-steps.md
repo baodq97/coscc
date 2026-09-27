@@ -1,10 +1,10 @@
 # Board steps: what they record, stop and share
 
-Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/board/running`, `Service.run_step`, `coscc/steps.py` or `runner.describe_attempt`. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/board/running`, `Service.run_step`, `coscc/agent/steps.py` or `runner.describe_attempt`. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
 - **`/api/timeline` returns what a failed paid step replied.** A step whose reply
   could not be used (`0014`) keeps the last `REPLY_KEPT` characters of it, 2000
-  (`coscc/runner_reply.py:33`), and
+  (`coscc/runner/reply.py:33`), and
   that text reaches the board as `detail`, for whoever holds the password or a live
   session.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder

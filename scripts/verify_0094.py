@@ -3,11 +3,11 @@
 Plain: no session, no quota, no network. Each claim prints PASS or FAIL:
 
 - `measure_fixture` (R12): a temporary `cos.db` whose `runs` rows are written by
-  `coscc.journal.Journal` itself; `--measure` on it exits 0 where R1 holds, 1 where one
+  `coscc.runlog.journal.Journal` itself; `--measure` on it exits 0 where R1 holds, 1 where one
   condition fails, 2 where a stage has too few steps after, and 2 without `--min-version`.
 - R6, R7, R10, R11: `coscc.rules_budget_test`, in a child process.
 - R13, R16: the `start` row carries `app_version`, `app_commit` and `pointed`
-  (`coscc.runner_test`, `coscc.service_models_test`), in a child process.
+  (`coscc.runner.runner_test`, `coscc.service.models_test`), in a child process.
 - R14, R15: what the prompts of `impl`, `pr`, `ship`, `review` and Gebo carry and name,
   and that every path they name may be `Read` under the step's grant, in a child process.
 
@@ -63,7 +63,7 @@ WINDOW = 20      # R4: the last 20 steps before, per stage
 ENOUGH = 10      # R1.3 and C1
 DROP = 0.30      # R1.1, R1.2: at least 30% less
 EXIT_PASS, EXIT_BROKEN, EXIT_ENV = 0, 1, 2
-# `coscc/journal.py:68-75`, copied: this script does not import `coscc` for `--measure`.
+# `coscc/runlog/journal.py:68-75`, copied: this script does not import `coscc` for `--measure`.
 CONTEXT_FIELDS = ("input_tokens", "cache_creation_tokens", "cache_read_tokens")
 VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(-rc\.\d+)?$")
 SHA = re.compile(r"\b[0-9a-f]{40}\b")
@@ -282,7 +282,7 @@ def _fixture(data: Path, after_per_turn: dict[str, int], after_n: dict[str, int]
     """`runs` rows written by `Journal` itself: 12 steps per stage before at 30 000 tokens per
     turn, then `after_n` steps at `after_per_turn`, on a build carrying `app_version` 9.9.9."""
     sys.path.insert(0, str(REPO))
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     journal = Journal(data / "work" / "proj", data)
     key = str((data / "work" / "proj").resolve())
@@ -340,21 +340,21 @@ def prove() -> int:
     ok &= unittests("R6, R7, R10, R11", "coscc.rules_budget_test")
     ok &= unittests(
         "R13, R16",
-        "coscc.runner_test.TheStartRecordSaysWhatRanAndWhatWasNamed",
-        "coscc.service_models_test.AStageRunsOnTheModelSettingsNames.test_the_start_record_names_the_build_that_ran_it",
-        "coscc.service_models_test.AStageRunsOnTheModelSettingsNames."
+        "coscc.runner.runner_test.TheStartRecordSaysWhatRanAndWhatWasNamed",
+        "coscc.service.models_test.AStageRunsOnTheModelSettingsNames.test_the_start_record_names_the_build_that_ran_it",
+        "coscc.service.models_test.AStageRunsOnTheModelSettingsNames."
         "test_a_build_that_cannot_be_read_is_two_empty_strings_and_the_step_runs",
-        "coscc.integrate_service_test.GeboThroughTheService."
+        "coscc.service.integrate_service_test.GeboThroughTheService."
         "test_the_start_record_names_the_artifacts_it_pointed_at_and_the_build",
     )
     ok &= unittests(
         "R14, R15",
-        "coscc.runner_prompt_test.ThePointingStagesNameTheirFiles",
-        "coscc.runner_prompt_test.EveryPathAPromptNamesCanBeRead",
-        "coscc.runner_review_test.OpenFindings",
-        "coscc.runner_prompt_test.AFixRoundCarriesTheFindings",
-        "coscc.runner_prompt_test.TheStagesThatReadWholeInputsKeepTheirPrompt",
-        "coscc.integrate_test.ThePrompt",
+        "coscc.runner.prompt_test.ThePointingStagesNameTheirFiles",
+        "coscc.runner.prompt_test.EveryPathAPromptNamesCanBeRead",
+        "coscc.runner.review_test.OpenFindings",
+        "coscc.runner.prompt_test.AFixRoundCarriesTheFindings",
+        "coscc.runner.prompt_test.TheStagesThatReadWholeInputsKeepTheirPrompt",
+        "coscc.github.integrate_test.ThePrompt",
     )
     say("PASS — every claim holds." if ok else "FAIL — a claim did not hold.")
     return EXIT_PASS if ok else EXIT_BROKEN

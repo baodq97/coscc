@@ -1,0 +1,815 @@
+"""Integrating a unit whose pull request fell behind `main` (`0035`).
+
+Not a stage. `.claude/scripts/cos.mjs` defines the loop and this module adds nothing to it:
+it runs only on a unit `cos.mjs` says sits between `pr` and ship (`betweenPrAndShip`),
+only when a person presses the button, and it writes no artifact. What it leaves behind is
+one `integration` record in the run log per attempt (R9).
+
+Two roads:
+
+- **mechanical** (`behind`): `gh pr update-branch --rebase`, then the local branch follows
+  the new head. No session, no quota (R4).
+- **agent** (`conflicting`, `red-after-integration`): Gebo, a session under the
+  `integrate` grant in `coscc/agent/policy.py`, which may push only with a lease bound to the
+  head it began at (R5, R6). Since `0052` also a `behind` unit whose `update-branch`
+  exited non-zero: the press agreed to a Gebo session when the mechanical road cannot go
+  (`.cos/0052_*/spec.md ## Answers, câu 1`).
+
+Since `0052` a press fetches `origin/main` first, so a board that counted against a stale
+ref no longer refuses a unit as `current`; the board read itself still does not fetch.
+
+The pure functions come first; the `gh` calls after them; the session last.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+from pathlib import Path
+from typing import Any, AsyncIterator
+
+from coscc.agent.harness import child_env
+
+STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown")
+# R3: the three states with something to integrate. Since `0052` `current` carries a button
+# too, and a press on it is refused unless the fetch it begins with finds it behind.
+BUTTON_STATES = ("behind", "conflicting", "red-after-integration")
+GEBO_STATES = ("conflicting", "red-after-integration")
+OUTCOMES = ("pushed", "needs-person", "refused", "failed")
+# `0043` R3. Who started a step or an integration: the autopilot, or a request to a route —
+# a person on the board, `curl`, or an agent at a terminal, which the app cannot tell apart.
+# Kept here, the module with no imports of its own, so `runner.py` can share it.
+STARTED_BY = ("person", "autopilot")
+
+# Seconds. Chosen, not measured — the same figure as `board.GATE_TIMEOUT` and
+# `prcomment.TIMEOUT`.
+GH_TIMEOUT = 30.0
+# R4: how long the app waits for GitHub's rebase to show as a new head. Chosen, not measured.
+POLL_TRIES = 5
+POLL_DELAY = 2.0
+
+_RED = ("fail", "cancel")
+_PR_NUMBER = re.compile(r"\(#(\d+)\)\s*$")
+_NEEDS_PERSON = re.compile(r"^\s*(?:[-*]\s*)?\[needs-person\]\s*(.+?)\s*$")
+
+
+class IntegrateError(Exception):
+    """A `gh` call that failed, carrying `gh`'s own words."""
+
+
+def check_started_by(value: str) -> str:
+    """`value` when it is one of `STARTED_BY`; `ValueError` otherwise."""
+    if value not in STARTED_BY:
+        raise ValueError(f"started_by must be one of {', '.join(STARTED_BY)}, got {value!r}")
+    return value
+
+
+# --- pure --------------------------------------------------------------------
+
+
+def needs_checks(pr_row: dict | str, last_record: dict | None) -> bool:
+    """Whether `classify` needs the required checks: only when the pull request's head is
+    the one the last integration pushed. Most board reads therefore cost no extra `gh`."""
+    if not isinstance(pr_row, dict) or not last_record:
+        return False
+    after = str(last_record.get("head_after") or "")
+    return bool(after) and after == str(pr_row.get("headRefOid") or "")
+
+
+def classify(
+    pr_row: dict | str,
+    missing: int | str,
+    origin_sha: str,
+    last_record: dict | None,
+    checks: list | str | None = None,
+) -> dict[str, Any]:
+    """R1: one of `STATES`, with the reason. Errors arrive as strings and become `unknown`.
+
+    Order, as `plan.md` step 4 fixes it: an error; `CONFLICTING`; the integration's own
+    head with red required checks; commits missing; otherwise current. `UNKNOWN`
+    mergeability (GitHub still computing) goes by the count.
+    """
+    if isinstance(pr_row, str):
+        return {"state": "unknown", "reason": pr_row}
+    if isinstance(missing, str):
+        return {"state": "unknown", "reason": missing}
+    if str(pr_row.get("mergeable") or "") == "CONFLICTING":
+        return {"state": "conflicting", "reason": "GitHub reports the pull request as CONFLICTING"}
+    if needs_checks(pr_row, last_record):
+        if isinstance(checks, str):
+            return {"state": "unknown", "reason": checks}
+        red = [str(c.get("name") or "?") for c in (checks or []) if str(c.get("bucket") or "") in _RED]
+        if red:
+            return {
+                "state": "red-after-integration",
+                "reason": "required checks red on the head the last integration pushed: " + ", ".join(red),
+                "red": red,
+            }
+    if missing > 0:
+        return {"state": "behind", "reason": f"{missing} commit(s) behind origin/main {origin_sha[:7]}"}
+    return {"state": "current", "reason": ""}
+
+
+def origin_note(origin_sha: str, fetch: dict | None) -> str:
+    """`0052` R4: which `origin/main` a press counted against, and how it got there.
+
+    `fetch` is what `fetches.fetch` returned (`{outcome, attempts, age}`), or
+    `{"outcome": "failed", "detail": ...}`, or None when no fetch was tried.
+    """
+    ref = f"origin/main {origin_sha[:7] or 'unread'}"
+    if not fetch:
+        return ref
+    outcome = str(fetch.get("outcome") or "")
+    if outcome == "failed":
+        how = f"fetch failed: {fetch.get('detail') or 'git said nothing'}"
+    elif outcome == "joined":
+        how = "joined a running fetch"
+    elif outcome == "reused":
+        how = f"reused {fetch.get('age', 0)}s ago"
+    else:
+        how = outcome or "fetched"
+    return f"{ref} ({how})"
+
+
+def cut_integration(records: list[dict], unit: str, running: bool) -> dict | None:
+    """`0114` R3: the `start` of an integration this unit's run log opened and never closed.
+
+    `records` are the unit's, oldest first. `{at, head}` of its last `start` of `integrate`
+    when no `end` and no `integration` came after it and nothing runs for the unit in this
+    process (`running`); `None` otherwise. Only Gebo's road writes a `start`.
+    """
+    if running:
+        return None
+    cut = None
+    for r in records:
+        if r.get("unit") != unit:
+            continue
+        kind = r.get("kind")
+        if kind == "start" and r.get("stage") == "integrate":
+            cut = {"at": str(r.get("at") or ""), "head": str(r.get("head") or "")}
+        elif kind in ("end", "integration"):
+            cut = None
+    return cut
+
+
+def relation(
+    local: str, pr: str, local_in_pr: bool | None, pr_in_local: bool | None, newer: bool | None = True,
+) -> str:
+    """`0114` R5: how the local head stands to the pull request's head.
+
+    `local_in_pr` and `pr_in_local` are `gitops.is_ancestor`'s answers, `None` when git could
+    not give one. `""` then, since nothing is known.
+
+    `newer` (review F1) is `newer_base`'s answer, read only for heads that diverge. A local
+    head that is not on a newer `main` than the pull request's is `stale`, not `diverged`: the
+    pull request was rebased elsewhere, or the tree rewritten in place, and neither is a
+    rebase that was never pushed.
+    """
+    if local and local == pr:
+        return "same"
+    if local_in_pr is None or pr_in_local is None:
+        return ""
+    if local_in_pr:
+        return "behind"
+    if pr_in_local:
+        return "ahead"
+    if newer is None:
+        return ""
+    return "diverged" if newer else "stale"
+
+
+def newer_base(local_base: str, pr_base: str, pr_base_in_local_base: bool | None) -> bool | None:
+    """`0114` review F1: whether the local head's merge-base with `origin/main` strictly
+    descends the pull request's — what a rebase onto a newer `main` leaves. `None` when git
+    could not tell."""
+    if not local_base or not pr_base or pr_base_in_local_base is None:
+        return None
+    return local_base != pr_base and pr_base_in_local_base
+
+
+# `0114` R6: the relations that go the completion road, whatever the unit's state.
+COMPLETION = ("ahead", "diverged")
+STALE = "the pull request's head is on a base no older than the local head's, so the local head is not a rebase of it"
+
+
+def refusal(
+    *,
+    in_window: bool,
+    busy: str,
+    clean: bool | None,
+    branch_ok: bool | None,
+    local_head: str,
+    pr_head: str,
+    state: str,
+    origin: str = "",
+    relation: str = "",
+    relation_said: str = "",
+) -> str:
+    """R12: the first condition that does not hold, in the spec's order, or `""`.
+
+    `origin` is `origin_note`'s sentence; a `current` unit is then said to be current
+    against it (`0052` R4). The sentence still begins `the unit is current`.
+
+    `0114` R5: `relation` is how the two heads stand when they differ. `ahead` or `diverged`
+    is the completion road, which runs in every state; anything else is still refused, with
+    git's words (`relation_said`) when it could not tell, and `stale` with `STALE`.
+    """
+    if not in_window:
+        return "this unit is not between pr and ship with an open pull request"
+    if busy:
+        # `steps.describe`'s sentence (`0050` R3): what holds the unit, and since when.
+        return busy
+    if clean is None:
+        return "the unit has no worktree to integrate in"
+    if clean is not True:
+        return "the unit's worktree has uncommitted changes"
+    if branch_ok is not True:
+        return "the unit's worktree is not on the unit's branch"
+    if not pr_head:
+        # Nothing to compare the local head with: `gh` could not be read, so the state is
+        # `unknown` too. Said as that, not as a head mismatch against "none".
+        return f"the pull request's head could not be read, so the unit is {state or 'unknown'}: nothing to integrate"
+    if not local_head or local_head != pr_head:
+        if local_head and relation in COMPLETION:
+            return ""
+        if relation == "stale" and not relation_said:
+            relation_said = STALE
+        return (
+            f"the local head ({local_head[:7] or 'none'}) is not the pull request's head "
+            f"({pr_head[:7] or 'none'})" + (f": {relation_said}" if relation_said else "")
+        )
+    if state not in BUTTON_STATES:
+        if state == "current" and origin:
+            return f"the unit is current against {origin}, which has nothing to integrate"
+        return f"the unit is {state}, which has nothing to integrate"
+    return ""
+
+
+def warnings(
+    rounds: list[dict], review_status: str, gebo: bool, grant_warning: str, fallback: bool = False
+) -> list[str]:
+    """R13: what the page says before the button is pressed. `fallback`: the press goes the
+    mechanical road, and Gebo opens if GitHub refuses it (`0052`)."""
+    out: list[str] = []
+    # `0061` R11.1: the app cannot tell "behind but mergeable" (spike U1, U2), so the page
+    # says when integrating a passed unit is worth another round, and leaves it to a person.
+    # `0067` R8: only a rebase that changes the unit's patch costs that round; `cos.mjs`
+    # decides which, and this only says so. `0121`: after changes were asked, the same test
+    # decides between impl and a round that counts.
+    if rounds and str(rounds[-1].get("verdict") or "") == "pass":
+        out.append(
+            "The last review round passed. Integrating rewrites the reviewed commit. If the "
+            "unit's patch comes out unchanged — the same added, removed and context lines — "
+            "the ship gate opens again once CI is green, with no review round. If it changes, "
+            "the ship gate closes and another review round is needed — it does not count "
+            "toward COS_REVIEW_ROUNDS, but it is another paid session. Run ship first. "
+            "Integrate only when GitHub reports a conflict or refuses the merge because the "
+            "branch is behind main."
+        )
+    if review_status == "changes-requested":
+        out.append(
+            "review.md asks for changes. If integrating leaves the unit's patch unchanged — "
+            "the same added, removed and context lines — cos.mjs next still offers impl, and "
+            "no review round is spent. If it changes the patch, next offers review once CI is "
+            "green, and that round counts toward COS_REVIEW_ROUNDS."
+        )
+    if fallback:
+        out.append(
+            "If GitHub refuses the rebase, the app opens Gebo, a paid agent session, to rebase "
+            "this branch itself — pressing Integrate agrees to that session."
+        )
+    if gebo and grant_warning:
+        out.append(grant_warning)
+    return out
+
+
+def pr_number_of(subject: str) -> int | None:
+    """The `(#N)` GitHub's squash puts at the end of a subject, or None."""
+    m = _PR_NUMBER.search(subject or "")
+    return int(m.group(1)) if m else None
+
+
+def related(
+    main_commits: list[dict],
+    branch_files: list[str],
+    units: list[dict],
+    others: list[dict],
+    self_unit: str,
+) -> dict[str, list[dict]]:
+    """R7, both groups, computed by the app and never by Gebo.
+
+    `main_commits`: `{sha, subject, files}` on `origin/main` since the merge-base.
+    `units`: board unit dicts (`name`, `pr`). `others`: `{unit, files}` for the other
+    units in the window, `files` None when their head is not here to compare.
+    """
+    mine = set(branch_files)
+    by_pr = {
+        int(u["pr"]["number"]): u["name"]
+        for u in units
+        if isinstance(u.get("pr"), dict) and u["pr"].get("number") is not None
+    }
+    merged = []
+    for c in main_commits:
+        shared = sorted(mine & set(c.get("files") or []))
+        if not shared:
+            continue
+        n = pr_number_of(str(c.get("subject") or ""))
+        merged.append({
+            "sha": c.get("sha", ""),
+            "subject": c.get("subject", ""),
+            "unit": by_pr.get(n) if n is not None else None,
+            "files": shared,
+        })
+    open_ = []
+    for o in others:
+        if o.get("unit") == self_unit:
+            continue
+        files = o.get("files")
+        if files is None:
+            open_.append({"unit": o["unit"], "files": None})
+            continue
+        shared = sorted(mine & set(files))
+        if shared:
+            open_.append({"unit": o["unit"], "files": shared})
+    return {"merged": merged, "open": open_}
+
+
+def related_units(rel: dict[str, list[dict]]) -> list[str]:
+    """Every unit named by either group, once, in order."""
+    out: list[str] = []
+    for item in rel.get("merged", []) + rel.get("open", []):
+        name = item.get("unit")
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def read_paths(units_root: Path, own: str, rel: dict[str, list[dict]]) -> tuple[str, ...]:
+    """R7: Gebo's own unit folder, and intent/spec/plan of the related units — nothing else."""
+    paths = [str(units_root / own)]
+    for name in related_units(rel):
+        for f in ("intent.md", "spec.md", "plan.md"):
+            paths.append(str(units_root / name / f))
+    return tuple(paths)
+
+
+def parse_needs_person(reply: str) -> list[str]:
+    """Every `[needs-person] …` line in a reply, the text after the marker."""
+    out = []
+    for line in (reply or "").splitlines():
+        m = _NEEDS_PERSON.match(line)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+def record(
+    *,
+    workspace: str,
+    unit: str,
+    pr: int | None,
+    mode: str,
+    head_before: str,
+    head_after: str,
+    origin_sha: str,
+    outcome: str,
+    related_: dict | None = None,
+    report: str = "",
+    needs_person: list[str] | None = None,
+    detail: str = "",
+    fetch: dict | None = None,
+    merge_state: str = "",
+    update_branch: dict | None = None,
+    started_by: str = "person",
+    completion: dict | None = None,
+) -> dict[str, Any]:
+    """R9: the one record every integration leaves, whatever happened.
+
+    `0052` R5: `fetch` is how the press got its `origin/main` and `merge_state` what GitHub
+    said of the pull request then — observed, never decided on. `update_branch` is the exit
+    code and words of a refused `gh pr update-branch` that sent the press to Gebo. All three
+    keys are always written; a record from before `0052` has none of them.
+
+    `0043` R3: `started_by` is always written too; a record from before `0043` has none,
+    which reads as `person`.
+
+    `0114` R8: `completion` is `{relation, local_head, cut}` when the local head was not the
+    pull request's, or `None`; always written, like the keys of `0052`.
+    """
+    if outcome not in OUTCOMES:
+        raise ValueError(f"outcome must be one of {', '.join(OUTCOMES)}, got {outcome!r}")
+    check_started_by(started_by)
+    return {
+        "kind": "integration",
+        "workspace": workspace,
+        "unit": unit,
+        "stage": "integrate",
+        "pr": pr,
+        "mode": mode,
+        "head_before": head_before,
+        "head_after": head_after if outcome == "pushed" else "",
+        "origin_sha": origin_sha,
+        "outcome": outcome,
+        "related": related_ or {"merged": [], "open": []},
+        "report": report,
+        "needs_person": list(needs_person or []),
+        "detail": detail,
+        "fetch": _fetch_of(fetch),
+        "merge_state": merge_state,
+        "update_branch": (
+            {"code": update_branch.get("code"), "said": str(update_branch.get("said") or "")}
+            if update_branch else None
+        ),
+        "started_by": started_by,
+        "completion": _completion_of(completion),
+    }
+
+
+def _completion_of(completion: dict | None) -> dict | None:
+    if not completion:
+        return None
+    cut = completion.get("cut")
+    return {
+        "relation": str(completion.get("relation") or ""),
+        "local_head": str(completion.get("local_head") or ""),
+        "cut": {"at": str(cut.get("at") or ""), "head": str(cut.get("head") or "")} if cut else None,
+    }
+
+
+def _fetch_of(fetch: dict | None) -> dict | None:
+    if not fetch:
+        return None
+    if fetch.get("outcome") == "failed":
+        return {"outcome": "failed", "detail": str(fetch.get("detail") or "")}
+    return {"outcome": fetch.get("outcome"), "age": fetch.get("age")}
+
+
+def outcome_of_session(head_before: str, head_now: str, reply: str) -> str:
+    """What a Gebo session did, read from git and not from what it said (spec, design 4)."""
+    if head_now and head_now != head_before:
+        return "pushed"
+    if parse_needs_person(reply):
+        return "needs-person"
+    return "failed"
+
+
+def describe_for_review(rec: dict[str, Any]) -> str:
+    """R10: the section the next `review` prompt carries.
+
+    `0114` R8: a completion says what it pushed — local commits nobody had pushed — and
+    that the app opened the session for it, not a person."""
+    body = json.dumps(rec, ensure_ascii=False, indent=2)
+    if str((rec.get("completion") or {}).get("relation") or "") in COMPLETION:
+        return (
+            "# An integration since the last round\n\n"
+            "The app opened an agent session (Gebo) to push local commits on this branch that "
+            "had never been pushed — not a person, and this is no one's approval. The head you "
+            "review is the one it pushed. Read what those commits changed with the same care as "
+            "any other change. Its record, verbatim:\n\n"
+            f"```json\n{body}\n```\n"
+        )
+    who = "the app, mechanically" if rec.get("mode") == "mechanical" else "an agent session (Gebo)"
+    return (
+        "# An integration since the last round\n\n"
+        f"The branch was rebased onto `origin/main` by {who} — not by a person, and no "
+        "person approved how any conflict was resolved. The head you review is the one it "
+        "pushed. Read what it changed with the same care as any other change; a conflict "
+        "resolved by dropping one side can leave the tests green. Its record, verbatim:\n\n"
+        f"```json\n{body}\n```\n"
+    )
+
+
+def build_prompt(
+    *,
+    skill: str,
+    unit: str,
+    branch: str,
+    pr: int,
+    state: str,
+    reason: str,
+    head_before: str,
+    origin_sha: str,
+    rel: dict[str, list[dict]],
+    units_root: Path,
+    own_paths: dict[str, Path],
+    refused_update: dict | None = None,
+    completion: dict | None = None,
+) -> str:
+    """Gebo's prompt: its rules, what is wrong, where to start, and whose intent to read.
+
+    `own_paths`: the unit's own artifacts that exist, by name, each an absolute path.
+
+    `refused_update` (`0052`): the `{code, said}` of the app's own `update-branch`, when
+    that refusal is why this session was opened.
+
+    `completion` (`0114` R6): `{relation, local_head, cut}` when the tree holds commits the
+    pull request does not. The session then pushes them, or says why not, and nothing else.
+
+    The app does not rebase to find the conflicting files first (`plan.md` step 7): that
+    would write to the tree before the session began, and R12 wants it clean.
+    """
+    parts = [skill.strip(), ""]
+    parts.append(f"# This integration\n\nUnit: `{unit}`. Branch: `{branch}`. Pull request: #{pr}.")
+    parts.append(f"State: `{state}` — {reason}")
+    parts.append(f"Head at start: `{head_before}`. `origin/main` at start: `{origin_sha}`.")
+    parts.append(
+        f"The only push allowed: `git push --force-with-lease={branch}:{head_before} origin {branch}`."
+    )
+    if refused_update is not None:
+        parts.append("\n# The mechanical rebase was refused\n")
+        parts.append(
+            f"The app ran `gh pr update-branch {pr} --rebase` first. It exited "
+            f"{refused_update.get('code')}, and gh said:\n\n"
+            f"    {refused_update.get('said') or '(nothing)'}\n\n"
+            "That may be a conflict that shows only when rebasing, or something else: a "
+            "login, the network, a permission. The app cannot tell which from the exit code."
+        )
+    if completion is not None:
+        parts.append(_completion_section(completion, branch, head_before))
+    parts.append("\n# Units merged into main since the branch was cut, touching the same files\n")
+    if rel.get("merged"):
+        for m in rel["merged"]:
+            who = m.get("unit") or "no unit found"
+            parts.append(f"- `{str(m.get('sha'))[:7]}` {m.get('subject')} — unit: {who}; files: {', '.join(m['files'])}")
+    else:
+        parts.append("- none")
+    parts.append("\n# Other open units touching the same files (read only, never change them)\n")
+    if rel.get("open"):
+        for o in rel["open"]:
+            files = ", ".join(o["files"]) if o.get("files") is not None else "no local commit, files not compared"
+            parts.append(f"- {o['unit']}: {files}")
+    else:
+        parts.append("- none")
+    names = related_units(rel)
+    if names:
+        parts.append("\n# Artifacts you may read for their intent\n")
+        for name in names:
+            for f in ("intent.md", "spec.md", "plan.md"):
+                parts.append(f"- {units_root / name / f}")
+    # `0094` R14: named, not carried. `read_paths` already lets Gebo `Read` its own unit's folder.
+    parts.append("\n# This unit's own artifacts\n")
+    for path in own_paths.values():
+        parts.append(f"- {path}")
+    if own_paths:
+        parts.append("\nRead one when resolving a conflict needs what the unit meant.")
+    return "\n".join(parts) + "\n"
+
+
+def _completion_section(completion: dict, branch: str, pr_head: str) -> str:
+    """`0114` R6: what the completion road asks of Gebo, and all it allows."""
+    local = str(completion.get("local_head") or "")
+    how = str(completion.get("relation") or "")
+    lines = [
+        "\n# Commits that were never pushed\n",
+        f"This tree's head is `{local}`; the pull request's head is `{pr_head}`. Relation: `{how}`.",
+    ]
+    cut = completion.get("cut")
+    if cut:
+        lines.append(
+            f"An earlier integration of this unit began at {cut.get('at')} on head "
+            f"`{cut.get('head')}` and never ended."
+        )
+        if cut.get("head") != pr_head:
+            lines.append("The pull request's head has changed since that integration was cut.")
+    if how == "ahead":
+        lines.append(
+            f"`{local}` holds the pull request's head and adds to it. Push it with the one push "
+            "allowed above, and nothing else."
+        )
+    else:
+        lines.append(
+            f"Compare the two with `git range-diff origin/main {pr_head} {local}`. Push `{local}` "
+            "with the one push allowed above only when every difference is context a new base "
+            "brought. When any commit changes in anything else, push nothing and end with one "
+            "`[needs-person]` line naming each such commit."
+        )
+    lines.append(
+        f"Do not rebase, commit or reset: this road pushes `{local}` as it is, on `{branch}`, "
+        "or nothing."
+    )
+    return "\n".join(lines)
+
+
+# --- gh ----------------------------------------------------------------------
+
+
+async def _gh(argv: list[str], cwd: str) -> tuple[int, str, str]:
+    """One `gh` call, as `prcomment._gh` makes it: exit code and both streams."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "gh", *argv, cwd=cwd, env=child_env(),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as e:
+        raise IntegrateError(f"gh could not be started: {e}") from e
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=GH_TIMEOUT)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise IntegrateError(f"gh {' '.join(argv[:2])} did not answer within {GH_TIMEOUT:.0f}s") from None
+    return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
+
+
+def _said(out: str, err: str) -> str:
+    return (err.strip() or out.strip() or "gh failed and said nothing").splitlines()[-1]
+
+
+async def open_prs(root: str) -> list[dict]:
+    """Every open pull request in one call: number, head, head branch, mergeable."""
+    code, out, err = await _gh(
+        ["pr", "list", "--state", "open", "--json", "number,headRefOid,headRefName,mergeable",
+         "--limit", "200"],
+        root,
+    )
+    if code != 0:
+        raise IntegrateError(_said(out, err))
+    try:
+        rows = json.loads(out or "[]")
+    except ValueError as e:
+        raise IntegrateError(f"gh pr list did not return JSON: {e}") from e
+    return [r for r in rows if isinstance(r, dict)]
+
+
+async def required_checks(tree: str, n: int) -> list[dict]:
+    """The same call the `review` gate makes (`cos.mjs`, `pr checks --required`)."""
+    code, out, err = await _gh(["pr", "checks", str(int(n)), "--required", "--json", "name,bucket"], tree)
+    # `gh pr checks` exits 8 while checks are pending and 1 when one failed; both still
+    # print the JSON, which is what is read.
+    try:
+        rows = json.loads(out or "null")
+    except ValueError:
+        rows = None
+    if not isinstance(rows, list):
+        raise IntegrateError(_said(out, err) if code else "gh pr checks returned no list")
+    return [r for r in rows if isinstance(r, dict)]
+
+
+async def update_branch(tree: str, n: int) -> tuple[int, str]:
+    """`gh pr update-branch <n> --rebase`. `(exit code, what gh said)`; never raises on
+    refusal. `0052`: the code goes into the record and Gebo's prompt."""
+    code, out, err = await _gh(["pr", "update-branch", str(int(n)), "--rebase"], tree)
+    return code, (out.strip() or err.strip())
+
+
+async def merge_state(tree: str, n: int) -> str:
+    """`0052` R5: GitHub's `mergeStateStatus` for one pull request, or `""`. Observed only —
+    nothing decides on it — so it never raises (`spike.md ## U1` did not measure it)."""
+    try:
+        code, out, _ = await _gh(["pr", "view", str(int(n)), "--json", "mergeStateStatus"], tree)
+    except IntegrateError:
+        return ""
+    if code != 0:
+        return ""
+    try:
+        return str(json.loads(out).get("mergeStateStatus") or "")
+    except (ValueError, AttributeError):
+        return ""
+
+
+async def pr_head(tree: str, n: int) -> str:
+    """The pull request's head as GitHub has it now."""
+    code, out, err = await _gh(["pr", "view", str(int(n)), "--json", "headRefOid"], tree)
+    if code != 0:
+        raise IntegrateError(_said(out, err))
+    try:
+        return str(json.loads(out).get("headRefOid") or "")
+    except (ValueError, AttributeError) as e:
+        raise IntegrateError(f"gh pr view did not return JSON: {e}") from e
+
+
+async def pr_for_branch(tree: str, branch: str) -> dict:
+    """`0041` R2: the open pull request of one branch, asked before a `pr` step starts.
+
+    One of `{"state": "found", "url", "number", "mergeable", "head"}`, `{"state": "none",
+    "branch"}` or `{"state": "unknown", "reason"}`. Never raises: a lookup that fails
+    must not stop the step, only be said in its prompt. Not `open_prs`, which carries no
+    `url` — widening it would change every board read for this one caller.
+    """
+    if not branch:
+        return {"state": "unknown", "reason": "this checkout is on no branch"}
+    try:
+        code, out, err = await _gh(
+            ["pr", "list", "--head", branch, "--state", "open",
+             "--json", "url,number,mergeable,headRefOid", "--limit", "5"],
+            tree,
+        )
+    except IntegrateError as e:
+        return {"state": "unknown", "reason": str(e)}
+    if code != 0:
+        return {"state": "unknown", "reason": _said(out, err)}
+    try:
+        rows = json.loads(out or "[]")
+    except ValueError as e:
+        return {"state": "unknown", "reason": f"gh pr list did not return JSON: {e}"}
+    rows = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    if not rows:
+        return {"state": "none", "branch": branch}
+    row = rows[0]
+    return {
+        "state": "found",
+        "url": str(row.get("url") or ""),
+        "number": row.get("number"),
+        "mergeable": str(row.get("mergeable") or ""),
+        "head": str(row.get("headRefOid") or ""),
+    }
+
+
+# `0055` R7. Said in the two branches where the step ends with a pull request to put
+# pr.md onto; `coscc/service/__init__.py` `_sync_pr` is what does it.
+PR_SYNC_NOTE = (
+    "After this step ends, the app puts pr.md's title and body onto the pull request "
+    "itself; do not run `gh pr edit`."
+)
+
+
+def describe_pr_lookup(rec: dict) -> str:
+    """The prompt block `pr_for_branch`'s answer becomes. Pure."""
+    heading = "# The pull request, already looked up\n\n"
+    state = rec.get("state")
+    if state == "found":
+        text = (
+            f"The app asked `gh` before this step started. This unit's branch already has an "
+            f"open pull request:\n\n"
+            f"    {rec.get('url')}\n\n"
+            f"Number {rec.get('number')}, mergeable `{rec.get('mergeable') or 'UNKNOWN'}`, "
+            f"head `{rec.get('head')}`. Use this URL for `PR:` in pr.md. Do not run "
+            "`gh pr create` again: a second pull request for one branch is not what this "
+            "step is for.\n\n" + PR_SYNC_NOTE
+        )
+        if rec.get("mergeable") == "CONFLICTING":
+            text += (
+                "\n\nIt conflicts with `main`. Do not rebase, merge or pull — the grant "
+                "refuses it and it is not this step's work. Write the conflict under "
+                "`## Where` in pr.md, set `Status: accepted`, and stop: a person resolves "
+                "it with *Integrate* on the board."
+            )
+        return heading + text
+    if state == "none":
+        return heading + (
+            f"The app asked `gh` before this step started. There is no open pull request "
+            f"for the branch `{rec.get('branch')}`. Open one, as the rules above say.\n\n"
+            + PR_SYNC_NOTE
+        )
+    return heading + (
+        f"The app could not ask `gh` before this step started: {rec.get('reason') or 'no reason given'}. "
+        "Ask once yourself with `gh pr view --json url,number,mergeable` before opening one."
+    )
+
+
+# --- Gebo --------------------------------------------------------------------
+
+
+async def run_gebo(
+    sessions: Any,
+    *,
+    tree: str,
+    workspace: str,
+    prompt: str,
+    grant: Any,
+    read_also: tuple[str, ...],
+    lease: tuple[str, str],
+    model: str | None,
+) -> AsyncIterator[tuple[str, Any]]:
+    """One Gebo session, streamed. Not `Runner.run`: that requires an artifact written, and
+    Gebo writes none. Yields `("chunk", text)` and finally `("end", {reply, cost, ...})`."""
+    from coscc.runner import CLAUDE_CODE_PRESET, Denials, permission_gate
+
+    denials = Denials()
+    reply = ""
+    end: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"system_prompt": dict(CLAUDE_CODE_PRESET)}
+    if tree != workspace:
+        kwargs["workspace"] = workspace
+    if model is not None:
+        kwargs["model"] = model
+    async for kind, payload in sessions.stream(
+        tree,
+        prompt,
+        None,
+        max_turns=grant.max_turns,
+        can_use_tool=permission_gate(grant, tree, denials, None, read_also=read_also, lease=lease),
+        tools=list(grant.tools),
+        max_budget_usd=grant.max_budget_usd or None,
+        **kwargs,
+    ):
+        if kind == "chunk":
+            reply += payload
+            yield ("chunk", payload)
+        elif kind == "tool":
+            continue
+        elif kind == "session":
+            end["session_id"] = str(payload)
+        else:  # `done`, as `Runner.run` reads it
+            end.update(
+                session_id=payload.get("session_id", end.get("session_id", "")),
+                cost=payload.get("cost", {}) or {},
+                terminal_reason=str(payload.get("terminal_reason") or ""),
+                models_used=list(payload.get("models_used") or []),
+            )
+    end["reply"] = reply
+    end["denials"] = denials.count
+    end["denied"] = denials.reasons or None
+    yield ("end", end)

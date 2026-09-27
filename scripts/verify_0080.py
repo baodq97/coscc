@@ -213,7 +213,7 @@ def loop_unchanged(tmp: Path) -> bool | None:
 
 
 def measure_fixture(tmp: Path) -> bool:
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     closed, open_ = "2026-11-02T00:00:00+00:00", "2026-10-10T00:00:00+00:00"
     cases = (

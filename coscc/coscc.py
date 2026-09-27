@@ -1,7 +1,7 @@
 """The app: one shell, nine routes, one ASGI app, one port.
 
 It was "one loopback port" until `0011` made `0.0.0.0` the default. Since `0070` what
-uvicorn serves is `served()` below: this app behind `coscc/auth.py`, so every request —
+uvicorn serves is `served()` below: this app behind `coscc/web/auth.py`, so every request —
 the page, its socket and `/api` alike — needs the master password or a live session
 first.
 
@@ -11,9 +11,9 @@ one: the prototype's shape, on the real service. The old page's components and s
 gone rather than kept around, because two front ends are two things to fix every time and
 only one of them ever gets fixed (`spec.md` C3 records what that costs).
 
-What is left here is registration. The page is `coscc/screens.py`, its state is
-`coscc/state.py`, and the business logic is where it always was, in
-`coscc/service.py`.
+What is left here is registration. The page is `coscc/screens/__init__.py`, its state is
+`coscc/state/__init__.py`, and the business logic is where it always was, in
+`coscc/service/__init__.py`.
 
 The FastAPI app mounted here is the *same object* `state.py` reads its service from. Two
 instances would mean two `Sessions` registries, and knob 4 ("resume only what this app
@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc import place, screens, ui
+from coscc import screens
+from coscc.web import place, ui
 from coscc.state import API, StudioState
 
 # The theme lives in `rxconfig.py` through `RadixThemesPlugin`, because 0.9.11 deprecates
@@ -56,7 +57,7 @@ def served():
     the one position `.cos/0070_*/spike.md ## U1` measured to see every scope — CORS
     preflight included, which Reflex's own middleware answers before any transformer.
     """
-    from coscc.auth import Guard
+    from coscc.web.auth import Guard
     from coscc.data import Data
 
     return Guard(app(), Data(API.state.config.data_dir))

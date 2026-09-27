@@ -90,7 +90,7 @@ class TheVersionAnswer(unittest.TestCase):
         """`0090` R9: `coscc knowledge ...` is a terminal command, answered and exited."""
         from unittest import mock
 
-        from coscc import knowledge_cli
+        from coscc.knowledge import cli as knowledge_cli
 
         for code in (0, 2):
             with mock.patch.object(knowledge_cli, "main", return_value=code) as called, \
@@ -104,7 +104,7 @@ class TheVersionAnswer(unittest.TestCase):
         """`0123` R8: `coscc effort measure` is a terminal command, answered and exited."""
         from unittest import mock
 
-        from coscc import effort_measure
+        from coscc.knowledge import effort_measure
 
         for code in (0, 2):
             with mock.patch.object(effort_measure, "main", return_value=code) as called, \
@@ -160,7 +160,8 @@ class TheServerIsHeld(unittest.TestCase):
         import io
         from unittest import mock
 
-        from coscc import events, recovery, update
+        from coscc import update
+        from coscc.runlog import events, recovery
 
         order = [] if order is None else order
 
@@ -205,7 +206,7 @@ class TheServerIsHeld(unittest.TestCase):
         """`0073` R14: before the first request, and a purge that fails does not stop it."""
         from unittest import mock
 
-        from coscc import events
+        from coscc.runlog import events
 
         order: list[str] = []
         self.main_with(lambda server: None, order)
@@ -228,7 +229,7 @@ class TheServerIsHeld(unittest.TestCase):
         import io
         from unittest import mock
 
-        from coscc import recovery
+        from coscc.runlog import recovery
 
         def fails(config):
             raise RuntimeError("busy")

@@ -31,7 +31,7 @@ full:
   logged in. Get it from Anthropic's own instructions; there is nothing coscc-specific
   about that step.
 - **`node`, for the Board screen only.** Every read of the Board runs
-  `.claude/scripts/cos.mjs` as a child process (`coscc/board.py:90`), and that is
+  `.claude/scripts/cos.mjs` as a child process (`coscc/units/board.py:90`), and that is
   JavaScript. Without `node` on `PATH` the Board answers
   `could not run node: [Errno 2] No such file or directory: 'node'` and the other five
   screens carry on working. `scripts/install.sh` does not install it and does not refuse

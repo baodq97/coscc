@@ -27,7 +27,8 @@ from pathlib import Path
 
 import httpx
 
-from coscc import auth, build
+from coscc import build
+from coscc.web import auth
 from coscc.data import Data
 
 REPO = Path(__file__).resolve().parent.parent
@@ -84,7 +85,7 @@ def require_free_port(config) -> None:
     print(
         f"{config.host}:{config.port} is already in use — stop the running app first.\n"
         "A checkout's bundle hardcodes that address, so this proof cannot move to a free\n"
-        "port. (A packaged install rewrites it at startup instead — `coscc/frontend.py` —\n"
+        "port. (A packaged install rewrites it at startup instead — `coscc/web/frontend.py` —\n"
         "but these proofs measure a checkout.)",
         file=sys.stderr,
     )
@@ -153,7 +154,7 @@ class RealApp:
         if self.behind is not None:
             env["__REFLEX_MOUNT_FRONTEND_COMPILED_APP"] = "1"
             command = [sys.executable, "-c", (
-                "import os, uvicorn; from coscc import frontend; from coscc.run import REPO; "
+                "import os, uvicorn; from coscc.web import frontend; from coscc.run import REPO; "
                 "os.environ[frontend.WEB_WORKDIR_VAR] = str(frontend.web_dir(REPO)); "
                 f"uvicorn.run('coscc.coscc:served', factory=True, host={self.config.host!r}, "
                 f"port={self.behind}, log_level='warning', proxy_headers=False)"

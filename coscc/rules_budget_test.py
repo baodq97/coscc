@@ -1,7 +1,7 @@
 """`0094` R6, R7, R10, R11: what every session carries of this repository's rules stays small.
 
 `.claude/CLAUDE.md` reaches every session in a checkout, and each rule under
-`.claude/rules/` at least as a line of contents (`coscc/instructions.py`). The ceilings are
+`.claude/rules/` at least as a line of contents (`coscc/agent/instructions.py`). The ceilings are
 the spec's own choice, not a measurement (`.cos/0094_*/spec.md` C9). A unit that meets one
 moves detail down into `.claude/docs/`, which nothing loads, and points to it — or changes
 the ceiling here and says why. Red here is the point (C8): the files grew quietly until now.
@@ -13,7 +13,7 @@ import re
 import unittest
 from pathlib import Path
 
-from coscc.instructions import scoped_patterns
+from coscc.agent.instructions import scoped_patterns
 
 REPO = Path(__file__).resolve().parents[1]
 CLAUDE = REPO / ".claude" / "CLAUDE.md"
@@ -31,7 +31,7 @@ APP_PATHS = ["coscc/**", "coscc/**/*", "rxconfig.py", "scripts/*.py"]
 
 # R7: files nearly every unit passes through. A rule scoped to one of them would be read by
 # nearly every step, which is what tier 2 already is. The spec's list, not measured.
-HOT = {"coscc/service.py", "coscc/runner.py", "coscc/state.py", "coscc/screens.py", "coscc/api.py"}
+HOT = {"coscc/service/__init__.py", "coscc/runner/__init__.py", "coscc/state/__init__.py", "coscc/screens/__init__.py", "coscc/web/api.py"}
 
 DOC_REF = re.compile(r"\.claude/docs/[\w./-]+\.md")
 
@@ -73,17 +73,18 @@ class TheScopes(unittest.TestCase):
 class TheUiStandardFollowsTheSplit(unittest.TestCase):
     """`0095`: `screens.py`, `state.py` and `service.py` were split into modules of their own.
     A module the UI standard does not name is code it is not loaded for, and a unit that
-    changes only that module is not a UI unit to `coscc/board.py`."""
+    changes only that module is not a UI unit to `coscc/units/board.py`."""
 
     def test_every_module_they_were_split_into_is_named(self):
         named = set(scoped_patterns(UI.read_text(encoding="utf-8")))
         split = [
-            f"coscc/{p.name}"
+            p.relative_to(REPO).as_posix()
             for name in ("screens", "state", "service")
-            for p in sorted((REPO / "coscc").glob(f"{name}_*.py"))
-            if not p.name.endswith("_test.py")
+            for p in sorted((REPO / "coscc" / name).glob("*.py"))
+            # `store.py` joined `service/` in `0129` without being split out of `service.py`.
+            if not p.name.endswith("_test.py") and p.name not in ("__init__.py", "store.py")
         ]
-        self.assertIn("coscc/state_views.py", split)
+        self.assertIn("coscc/state/views.py", split)
         self.assertEqual([m for m in split if m not in named], [])
 
 

@@ -1,8 +1,8 @@
 ---
 paths:
-  - "coscc/sessions.py"
-  - "coscc/steps.py"
-  - "coscc/instructions.py"
+  - "coscc/agent/sessions.py"
+  - "coscc/agent/steps.py"
+  - "coscc/agent/instructions.py"
 ---
 
 # Sessions: their data root and what they load
@@ -35,9 +35,9 @@ paths:
   - A proxy or a key in the `env` block of `~/.claude/settings.json` is not used: it belongs
     in the service's env file (`docs/install.md`).
   - `CLAUDE.md`, `.claude/CLAUDE.md` and every rule without `paths:` reach the session
-    through `coscc/instructions.py`, in the system prompt — handed over as a file in the
+    through `coscc/agent/instructions.py`, in the system prompt — handed over as a file in the
     session's data root, never as an argument, since Linux refuses one argument past
-    128 KiB with `E2BIG` (`coscc/sessions.py` `_options`) and every session would fail to start.
+    128 KiB with `E2BIG` (`coscc/agent/sessions.py` `_options`) and every session would fail to start.
   - A rule **with** `paths:` — every file under `.claude/rules/` here — arrives only as one
     line telling the session to `Read` it, and nothing checks that it did (the `start` row's
     `instructions` lists what was sent, not what was read). Each such rule costs every

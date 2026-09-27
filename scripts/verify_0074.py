@@ -192,10 +192,10 @@ def tree_hash(root: Path) -> dict:
 async def proof(tmp: Path) -> bool:
     import httpx
 
-    from coscc import backlog
-    from coscc.api import build
+    from coscc.units import backlog
+    from coscc.web.api import build
     from coscc.config import Config
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     repo = tmp / "work" / "proj"
     repo.mkdir(parents=True)
@@ -327,7 +327,7 @@ async def proof(tmp: Path) -> bool:
 
 
 def measure_fixture(tmp: Path) -> bool:
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     ok = True
     for case, rank, now, want in (

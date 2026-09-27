@@ -149,7 +149,7 @@ This applies when the branch changes a file listed under `paths:` in
    a person, and nothing here may read as though a person approved the screens. Then one
    line per image: `- <path>.png — <W>×<H> — <address> — <what you saw>`.
 3. Each violation is an ordinary finding under `### Findings`, and the first word after its
-   severity is the rule's id: `- F3 [open] coscc/screens.py:120 — medium — S3 the card shows a full sha`.
+   severity is the rule's id: `- F3 [open] coscc/screens/__init__.py:120 — medium — S3 the card shows a full sha`.
    Such a finding **always blocks, even when rated `low`** — a screen that breaks the
    standard is something the person sees wrong.
 4. These are `high` findings and the round ends `changes-requested`: no manifest or no

@@ -8,7 +8,7 @@ stayed within the daily cap.
 No session, no quota, no network, and nothing written. It opens `<COS_DATA_DIR>/cos.db`
 (default `~/.cos`) with `mode=ro`, never through `Data`, reads every record of the run log —
 every workspace, since the cap is the app's — and hands them to
-`coscc.autopilot.measure_days`, which sums a day's spend with `spent_on`, the cap's own
+`coscc.units.autopilot.measure_days`, which sums a day's spend with `spent_on`, the cap's own
 sum. `--workspace` is the journal key: the workspace's resolved path, as the run log names
 it. Days are the machine's, as the cap counts them; each line also prints that day's bounds
 in UTC, since the intent counts UTC days. Run it on the machine the app runs on, and at a
@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from coscc import autopilot  # noqa: E402
+from coscc.units import autopilot  # noqa: E402
 
 CAP_PREF = "autopilot_daily_cap_usd"
 

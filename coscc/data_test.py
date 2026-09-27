@@ -444,7 +444,7 @@ class Preferences(unittest.TestCase):
 
 
 class TheLoginStore(unittest.TestCase):
-    """`0070` step 2. What the guard in `coscc/auth.py` stands on."""
+    """`0070` step 2. What the guard in `coscc/web/auth.py` stands on."""
 
     def test_prefs_never_see_the_password_hash(self):
         with tempfile.TemporaryDirectory() as d:
@@ -508,9 +508,9 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
         `Journal`, `Store` and `History` all take the data root as a second argument and
         all default it to `Data(None)`, which is `~/.cos`. That default is right in
         production and wrong in every test, and the docstring at
-        `coscc/journal.py:108-109` has said so since the class was written.
+        `coscc/runlog/journal.py:108-109` has said so since the class was written.
 
-        It happened anyway. `coscc/runner_test.py:321` read `Journal(Path(d) / "cos.db")`
+        It happened anyway. `coscc/runner/runner_test.py:323` read `Journal(Path(d) / "cos.db")`
         — one argument, where every other call in that file passes two — and for as long
         as the schema only ever grew, nothing noticed: the suite opened the developer's
         real database and quietly did nothing to it. `0013` took `SCHEMA_VERSION` to 2,
@@ -532,7 +532,8 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
         """
         watched = {"Journal", "Store", "History"}
         offenders = []
-        for path in sorted(Path(__file__).resolve().parent.glob("*_test.py")):
+        # Every test of the package, since `0129` put most of them in subpackages.
+        for path in sorted(Path(__file__).resolve().parent.rglob("*_test.py")):
             source = path.read_text(encoding="utf-8")
             for node in ast.walk(ast.parse(source, filename=str(path))):
                 if not isinstance(node, ast.Call):

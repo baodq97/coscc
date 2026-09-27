@@ -1,6 +1,6 @@
 # Routes that write into a unit's artifacts
 
-Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold` or `/more-rounds`, `POST /api/board/run`'s `rerun`, `coscc/hold.py`, `coscc/precedent.py`, `Service._append_answers` or `_append_to_answers`, `cos.mjs rerun`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/hold` or `/more-rounds`, `POST /api/board/run`'s `rerun`, `coscc/units/hold.py`, `coscc/agent/precedent.py`, `Service._append_answers` or `_append_to_answers`, `cos.mjs rerun`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
 - **`POST /api/units/answer` writes a stranger's words into a paid prompt.** Since `0016`
   it appends an answer to an artifact, and the next stage embeds that file. Since `0082` the
@@ -49,14 +49,14 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/
     reads past Jera's own `start`/`end` rows (`autopilot.is_step`), so a Jera run neither
     lifts nor sets the stop on a failed step.
 - **Re-running a prose stage keeps `## Answers` byte for byte; a reply's own attempt at
-  one is dropped, silently.** Since `0025` the runner (`coscc/runner_prompt.py`: `answers_section`,
+  one is dropped, silently.** Since `0025` the runner (`coscc/runner/prompt.py`: `answers_section`,
   `strip_answers`, `with_answers`) reads the section already on disk right before it
   writes — not at the step's start — and writes it back after the stage's own text, on
   all five prose stages: `idea`, `intent`, `spec`, `plan` and `review`. Whatever a reply
   says under its own `## Answers` heading — copied from the artifact, forged, or a model
   answering its own question — never reaches disk, and nothing records that a reply tried.
   A window remains between the answer route's read and the runner's: the two hold no lock
-  in common (the lock is `Service._answer_lock`, `coscc/service.py:135`, and `Runner` carries
+  in common (the lock is `Service._answer_lock`, `coscc/service/__init__.py:135`, and `Runner` carries
   no reference to it). Byte-identical is not meaning-identical: a re-run that renumbers
   `## Open questions` leaves `### Câu N` on disk pointing at whichever question now
   carries that number, not the one a person answered

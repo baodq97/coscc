@@ -428,10 +428,11 @@ def fake_client(seen: dict, current: dict, texts: dict):
 async def every_kind_of_session(tmp: Path) -> tuple[dict[str, object], dict[str, dict]]:
     """Options per label -- the nine stages, `chat`, `gebo` and `estimate` -- and what each
     one's prompt files held when its client was built."""
-    from coscc import integrate, policy
-    from coscc import sessions as sessions_mod
+    from coscc.agent import policy
+    from coscc.github import integrate
+    from coscc.agent import sessions as sessions_mod
     from coscc.config import Config
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
     from coscc.runner import Runner
     from coscc.service import Service
 
@@ -483,8 +484,8 @@ async def every_kind_of_session(tmp: Path) -> tuple[dict[str, object], dict[str,
 
 
 def claims_abc(tmp: Path) -> bool:
-    from coscc import instructions, policy
-    from coscc import sessions as sessions_mod
+    from coscc.agent import instructions, policy
+    from coscc.agent import sessions as sessions_mod
     from coscc.config import Config
 
     seen, texts = asyncio.run(every_kind_of_session(tmp))
@@ -558,8 +559,8 @@ def claim_d() -> bool:
         node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_prompt")
         return ast.get_source_segment(text, node) or ""
 
-    before = source(git("show", f"{base}:coscc/runner.py"))
-    now = source((REPO / "coscc" / "runner.py").read_text(encoding="utf-8"))
+    before = source(git("show", f"{base}:coscc/runner/__init__.py"))
+    now = source((REPO / "coscc" / "runner" / "__init__.py").read_text(encoding="utf-8"))
     return say(bool(before) and before == now,
                f"(d) build_prompt is the same as at the merge-base {base[:10]}")
 
@@ -629,8 +630,8 @@ def argument_limit() -> str:
 def claim_e(tmp: Path) -> bool:
     """R9, and F1: two real CLI sessions, one per way the block is carried, each with
     `CLAUDE.md` past the argument limit, reach the stand-in with the block's last word."""
-    from coscc import policy
-    from coscc import sessions as sessions_mod
+    from coscc.agent import policy
+    from coscc.agent import sessions as sessions_mod
     from coscc.config import Config
 
     bundled_cli()
@@ -696,9 +697,10 @@ def claim_g(tmp: Path) -> bool:
     """`--measure` against fixture databases the app's own journal and recorder wrote."""
     from claude_agent_sdk import SystemMessage
 
-    from coscc import events, policy
+    from coscc.agent import policy
+    from coscc.runlog import events
     from coscc.data import Data
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     home = tmp / "home"
     (home / ".claude" / "skills" / "mine").mkdir(parents=True)
@@ -814,7 +816,7 @@ async def _paid_session(cwd: str, prompt: str, tools: list[str], model: str,
                         preset: bool, gate=None, max_turns: int = 1) -> dict:
     from claude_agent_sdk import ResultMessage, SystemMessage
 
-    from coscc import sessions as sessions_mod
+    from coscc.agent import sessions as sessions_mod
     from coscc.config import Config
 
     tmp = tempfile.mkdtemp(prefix="verify_0088-paid-")
@@ -842,7 +844,7 @@ async def _paid_session(cwd: str, prompt: str, tools: list[str], model: str,
 
 
 def run_paid() -> int:
-    from coscc import policy
+    from coscc.agent import policy
 
     home = Path.home()
     before = user_state(home)
@@ -852,7 +854,7 @@ def run_paid() -> int:
         print(e)
         return EXIT_ENV
     drop_session_env(("ANTHROPIC_BASE_URL",))
-    defaults = json.loads((REPO / "coscc" / "models.json").read_text())["models"]
+    defaults = json.loads((REPO / "coscc" / "agent" / "models.json").read_text())["models"]
     try:
         settings = json.loads((home / ".claude" / "settings.json").read_text())
     except (OSError, ValueError):

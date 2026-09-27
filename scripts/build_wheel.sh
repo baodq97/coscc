@@ -62,7 +62,7 @@ uv run coscc-build >&2
 # `REFLEX_WEB_WORKDIR` names a *web directory*, and Reflex's static mount appends
 # `Dirs.STATIC` — `build/client` — to whatever it names (read from
 # reflex/utils/exec.py:376-380, 2026-09-22). Flattening the copy here would leave
-# `coscc/frontend.py` pointing that variable at a tree whose `build/client` does not exist,
+# `coscc/web/frontend.py` pointing that variable at a tree whose `build/client` does not exist,
 # and the page would 404 while the API stayed healthy.
 rm -rf coscc/_web
 mkdir -p coscc/_web/build/client
@@ -79,11 +79,11 @@ cp -r .web/backend/. coscc/_web/backend/
 # The second thing this app reads from outside `coscc/`, and the one that shipped missing
 # three times. `.cos/0012_installed-copy-runs-no-stage/intent.md` measured v0.2.2: the
 # Board answered 400 and every step ran with no rules in its prompt, because
-# `coscc/board.py` and `coscc/runner.py` were reaching for a `.claude/` that only exists in
+# `coscc/units/board.py` and `coscc/runner/__init__.py` were reaching for a `.claude/` that only exists in
 # a checkout.
 #
 # Two named directories, never `.claude/` whole: `.claude/settings.local.json` is a
-# personal file (`.gitignore`) and a release is published. `coscc/harness.py` refuses a
+# personal file (`.gitignore`) and a release is published. `coscc/agent/harness.py` refuses a
 # wheel that carries one. `rm -rf` first: a tree left over from an earlier build would be
 # copied into the wheel alongside the new one, and the packaged copy is the one that wins.
 rm -rf coscc/_harness
@@ -103,7 +103,7 @@ wheel=$(ls -t "$out"/*.whl | head -n 1)
 
 # Without the copy steps above, `uv build` still succeeds and the wheel still installs —
 # it is only missing something. This is the check that would notice; the decision lives in
-# `coscc.harness.wheel_complaints` (`.cos/0012_installed-copy-runs-no-stage/spec.md` C1).
+# `coscc.agent.harness.wheel_complaints` (`.cos/0012_installed-copy-runs-no-stage/spec.md` C1).
 uv run python scripts/check_wheel.py "$wheel" >&2
 
 echo "$wheel"

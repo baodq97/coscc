@@ -78,7 +78,7 @@ REAL_CALLS = {"n": 0}
 
 def _no_real_session() -> None:
     """Every real session this proof could reach goes through `Sessions.stream`."""
-    from coscc import sessions
+    from coscc.agent import sessions
 
     async def refuse(self, *a, **kw):  # noqa: ARG001
         REAL_CALLS["n"] += 1
@@ -115,9 +115,9 @@ def reply(*items: dict) -> str:
 async def proof(tmp: Path) -> bool:
     import httpx
 
-    from coscc.api import build
+    from coscc.web.api import build
     from coscc.config import Config
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     repo = tmp / "work" / "proj"
     repo.mkdir(parents=True)
@@ -279,12 +279,13 @@ def r14() -> bool:
 
 
 async def measure(cwd: str) -> int:
-    from coscc import board as board_reader
-    from coscc import models, precedent, units
+    from coscc.units import board as board_reader
+    from coscc import units
+    from coscc.agent import models, precedent
     from coscc.config import from_env
     from coscc.data import Data
-    from coscc.policy import grant_for
-    from coscc.sessions import Sessions
+    from coscc.agent.policy import grant_for
+    from coscc.agent.sessions import Sessions
 
     config = from_env()
     root = units.root(cwd, config.data_dir)

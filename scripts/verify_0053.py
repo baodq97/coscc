@@ -71,7 +71,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import argon2  # noqa: E402
 import httpx  # noqa: E402
 
-from coscc import auth  # noqa: E402
+from coscc.web import auth  # noqa: E402
 from coscc.config import from_env  # noqa: E402
 from coscc.data import Data  # noqa: E402
 from scripts.proof_harness import (  # noqa: E402
@@ -390,7 +390,7 @@ def seed_conversation(workspace: Path) -> None:
 
 def seed_cost(working: Path, data_dir: Path, workspace: Path, names: list[str]) -> None:
     """A finished, costed `plan` run for each of `names`, so Usage has rows to send."""
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     journal = Journal(working, data_dir)
     key = str(workspace.resolve())

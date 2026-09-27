@@ -16,7 +16,7 @@ a VM that people reach from elsewhere -- the originator decided it that day, aft
 shown what it costs. What it costs is written in `0011`'s `spec.md` C1 and is not softened
 here. Until `0070` nothing asked for a password, so every machine that could route to
 this port could use all of it, including the two controls that spend real Claude quota.
-Since `0070` the master password in `coscc/auth.py` stands in front; what binding every
+Since `0070` the master password in `coscc/web/auth.py` stands in front; what binding every
 interface still costs is the wire, and the startup banner in `coscc/run.py` says that out
 loud every time the address is not loopback.
 """
@@ -37,9 +37,14 @@ _ENV_PREFIX = "COS_"
 
 # `.cos/0076_a-step-can-migrate-the-running-apps-database`. The `cos.db` files a child of
 # this app must not open, separated by `os.pathsep`. Deliberately not a `COS_*` name: those
-# describe this app and are blanked for every child (`coscc/sessions.py` `child_env`),
+# describe this app and are blanked for every child (`coscc/agent/sessions.py` `child_env`),
 # while this one is written *for* the child and read by `coscc/data.py` in it.
 PROTECTED_DB_VAR = "COSCC_PROTECTED_DB"
+
+# Addresses that reach this machine and nowhere else. `0.0.0.0` and a bare interface
+# address are both absent on purpose: binding either is what `coscc/run.py`'s warning is
+# about. Here rather than in `run.py`, so the modules that read it import no entry point.
+LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def _flag(env: dict[str, str], name: str, default: bool) -> bool:
@@ -92,11 +97,11 @@ class Config:
     # no button. Set in the env file, never by a request.
     update_local_from: str | None = None
     # `.cos/0090_agents-relearn-what-earlier-units-already-knew` R1. On, `spec`, `spike`
-    # and `plan` carry what earlier units measured (`coscc/knowledge.py`). Off, every
+    # and `plan` carry what earlier units measured (`coscc/knowledge/__init__.py`). Off, every
     # prompt and every `start` record is what it was before (R2). Only the env file sets it.
     knowledge: bool = False
     # `.cos/0123_no-one-knows-if-each-stage-runs-at-the-right-effort` R1. On, a routine `impl`
-    # of about half the units runs at a higher effort (`coscc/efforttrial.py`). Off, every
+    # of about half the units runs at a higher effort (`coscc/knowledge/efforttrial.py`). Off, every
     # step, its `start` record and its calls to `cos.mjs` are what they were. Only the env
     # file sets it.
     effort_trial: bool = False
@@ -213,7 +218,7 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         workspaces=declared or fallback,
         working_dir=working_dir,
         data_dir=_dir(e, "DATA_DIR"),
-        # Empty is unset, for every setting. `coscc/sessions.py` `child_env` cannot remove
+        # Empty is unset, for every setting. `coscc/agent/sessions.py` `child_env` cannot remove
         # a `COS_*` name from a session, only override it with "", so a session started
         # from an app launched with `COS_PORT` set reads `COS_PORT=""` -- and `int("")`
         # errored seven tests in a unit's worktree (`0017` review, F1).

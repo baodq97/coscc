@@ -31,7 +31,7 @@ what this follows.
 import reflex as rx
 
 from coscc.config import from_env
-from coscc.ui import THEME
+from coscc.web.ui import THEME
 
 _c = from_env()
 
