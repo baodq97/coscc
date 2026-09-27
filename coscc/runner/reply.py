@@ -1,5 +1,5 @@
 """Checking what a session returned before it becomes an artifact: its opening line, its
-fences, and whether it was cut at a ceiling. Split from `coscc/runner.py` (`0095`).
+fences, and whether it was cut at a ceiling. Split from `coscc/runner/__init__.py` (`0095`).
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 """What a step is told: the stage's rules, the artifacts it reads, and the sections the
-app adds to them. Split from `coscc/runner.py` (`0095`), which re-exports every name.
+app adds to them. Split from `coscc/runner/__init__.py` (`0095`), which re-exports every name.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from typing import Any
 from coscc.agent import harness
 from coscc.knowledge import STAGES as KNOWLEDGE_STAGES
 from coscc.agent.policy import is_prose_stage
-from coscc.runner_review import (
+from coscc.runner.review import (
     INCOMPLETE_SECTIONS,
     _ROUND_RE,
     _header_status,
@@ -20,7 +20,7 @@ from coscc.runner_review import (
     _rounds,
     open_findings,
 )
-from coscc.runner_reply import RunError
+from coscc.runner.reply import RunError
 
 
 def skill_for(stage: str) -> str:
@@ -271,7 +271,7 @@ def _jera_answers(directory: Path, names: list[str]) -> str:
 # `0094` R14. The stages whose prompt names the unit's artifacts by path instead of carrying
 # them, and the one artifact each still carries whole. Every one of them may `Read` the
 # unit's folder (`Runner.run` hands it to `decide` as `unit_dir`), which is R15's condition;
-# `coscc/runner_prompt_test.py` `EveryPathAPromptNamesCanBeRead` fails the day one cannot.
+# `coscc/runner/prompt_test.py` `EveryPathAPromptNamesCanBeRead` fails the day one cannot.
 _EMBED: dict[str, tuple[str, ...]] = {
     "impl": ("plan.md",),
     "implement": ("plan.md",),

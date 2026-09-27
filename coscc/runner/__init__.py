@@ -36,7 +36,7 @@ from coscc.agent.sessions import Refused, Sessions
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
 # `coscc.runner.<name>` still resolves; a patch reaches only the module that looks it up.
-from coscc.runner_prompt import (
+from coscc.runner.prompt import (
     skill_for,
     _read,
     answers_section,
@@ -64,7 +64,7 @@ from coscc.runner_prompt import (
     compose_prompt,
     PROGRESS_FILE,
 )
-from coscc.runner_review import (
+from coscc.runner.review import (
     _ROUND_RE,
     _round_number,
     merge_review,
@@ -80,7 +80,7 @@ from coscc.runner_review import (
     closing_prompt,
     closing_round_problem,
 )
-from coscc.runner_reply import (
+from coscc.runner.reply import (
     STATUS_RE,
     RunError,
     _Stopped,
@@ -100,7 +100,7 @@ from coscc.runner_reply import (
     CEILING_MARKERS,
     _hit_ceiling,
 )
-from coscc.runner_attempt import (
+from coscc.runner.attempt import (
     Denials,
     CLAUDE_CODE_PRESET,
     permission_gate,

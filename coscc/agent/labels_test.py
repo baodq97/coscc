@@ -59,10 +59,10 @@ class TheDeclaredLabel(unittest.TestCase):
 
 class TheListedPaths(unittest.TestCase):
     def test_normalised_and_bounded_by_the_next_heading(self):
-        text = plan("routine", "- `./coscc/agent/sessions.py`: `_options` (dòng 262-321).\n- `coscc/runner.py:737-1005`.")
+        text = plan("routine", "- `./coscc/agent/sessions.py`: `_options` (dòng 262-321).\n- `coscc/runner/__init__.py:737-1005`.")
         found = labels.listed_paths(text)
         self.assertIn("coscc/agent/sessions.py", found)
-        self.assertIn("coscc/runner.py", found)
+        self.assertIn("coscc/runner/__init__.py", found)
         # Named only under `## Order of work`.
         self.assertNotIn("coscc/agent/policy.py", found)
 

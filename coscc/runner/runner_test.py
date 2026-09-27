@@ -5,8 +5,8 @@ Two properties carry the weight here. The prompt has to contain the stage before
 is `spec.md` R9 and the reason the zero-tool default can still be checked.
 
 Nothing here creates a session. What the guards do before a process is spawned is exactly
-what is worth testing cheaply. The prompt's own tests are in `coscc/runner_prompt_test.py`,
-and how a step ends is in `coscc/runner_ending_test.py` (`0095`).
+what is worth testing cheaply. The prompt's own tests are in `coscc/runner/prompt_test.py`,
+and how a step ends is in `coscc/runner/ending_test.py` (`0095`).
 """
 
 from __future__ import annotations

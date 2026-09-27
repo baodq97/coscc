@@ -1,4 +1,4 @@
-"""Tests for `coscc/runner_review.py`, split from `coscc/runner_test.py` (`0095`).
+"""Tests for `coscc/runner/review.py`, split from `coscc/runner/runner_test.py` (`0095`).
 
 A round merged into `review.md` keeps the rounds before it, and a closing round is
 checked before it is written.
@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import unittest
 
-from coscc.runner_review import merge_review
-from coscc.runner_test import REVIEW_R1, _REVIEW_TWO_ROUNDS, incomplete_reply
+from coscc.runner.review import merge_review
+from coscc.runner.runner_test import REVIEW_R1, _REVIEW_TWO_ROUNDS, incomplete_reply
 
 
 class MergeReview(unittest.TestCase):

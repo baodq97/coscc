@@ -1,5 +1,5 @@
 """What a step may do and what it left: the permission gate, the snapshot of a failed
-attempt, and writing the artifact. Split from `coscc/runner.py` (`0095`).
+attempt, and writing the artifact. Split from `coscc/runner/__init__.py` (`0095`).
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import claude_agent_sdk as sdk
 from coscc.git import gitops
 from coscc.agent import sessions as sessions_mod
 from coscc.agent.policy import Grant, decide
-from coscc.runner_reply import (
+from coscc.runner.reply import (
     ATTEMPT_EXCERPT,
     RunError,
     _unfence,
@@ -21,8 +21,8 @@ from coscc.runner_reply import (
     opening_problem,
     opening_reason,
 )
-from coscc.runner_prompt import answers_section, strip_answers, with_answers
-from coscc.runner_review import merge_review
+from coscc.runner.prompt import answers_section, strip_answers, with_answers
+from coscc.runner.review import merge_review
 
 
 class Denials:

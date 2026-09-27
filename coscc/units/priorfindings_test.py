@@ -11,7 +11,7 @@ from coscc.units.priorfindings import CAP_BYTES
 
 PLAN = (
     "# Plan: x\nIntent: intent.md. Status: accepted.\n\n"
-    "## Files that change\n\n- `coscc/service.py`. The call.\n- `coscc/runner.py:297-317`.\n\n"
+    "## Files that change\n\n- `coscc/service.py`. The call.\n- `coscc/runner/__init__.py:297-317`.\n\n"
     "## Order of work\n\n1. `coscc/state.py` is not a file this plan changes.\n"
 )
 
@@ -36,18 +36,18 @@ class WhichLinesAreKept(unittest.TestCase):
     def test_the_path_is_matched_whole_and_backticks_are_dropped(self):
         section, _ = priorfindings.select({"0054_a": review([
             "- F1 [open] coscc/service.py.bak:3 — low — a longer path",
-            "- F2 [fixed abc1234] `coscc/runner.py:12` — high — in backticks",
+            "- F2 [fixed abc1234] `coscc/runner/__init__.py:12` — high — in backticks",
             "- F3 [open] coscc/state.py:4 — high — named only under Order of work",
             "- F4 [open] S3 — high — no path at all",
             "  - F5 [open] coscc/service.py:1 — high — indented, not a finding line",
         ])}, PLAN)
-        self.assertEqual(section, "- 0054 Round 1 F2 [fixed abc1234] `coscc/runner.py:12` — high — in backticks")
+        self.assertEqual(section, "- 0054 Round 1 F2 [fixed abc1234] `coscc/runner/__init__.py:12` — high — in backticks")
 
     def test_only_the_finding_line_is_taken_not_what_follows_it(self):
         section, _ = priorfindings.select(
-            {"0054_a": review(["- F1 [open] coscc/runner.py:1 — high — short", "  more words", "Why: long"])}, PLAN
+            {"0054_a": review(["- F1 [open] coscc/runner/__init__.py:1 — high — short", "  more words", "Why: long"])}, PLAN
         )
-        self.assertEqual(section.splitlines(), ["- 0054 Round 1 F1 [open] coscc/runner.py:1 — high — short"])
+        self.assertEqual(section.splitlines(), ["- 0054 Round 1 F1 [open] coscc/runner/__init__.py:1 — high — short"])
 
     def test_a_line_outside_a_round_or_under_answers_is_not_read(self):
         section, record = priorfindings.select(
@@ -68,12 +68,12 @@ class TheOrderAndTheCap(unittest.TestCase):
         section, record = priorfindings.select({
             "0080_b": review(["- F1 [open] coscc/service.py:1 — high — b1"],
                              ["- F1 [fixed abc1234] coscc/service.py:1 — high — b1",
-                              "- F2 [open] coscc/runner.py:2 — high — b2",
-                              "- F2 [open] coscc/runner.py:2 — high — b2"]),
+                              "- F2 [open] coscc/runner/__init__.py:2 — high — b2",
+                              "- F2 [open] coscc/runner/__init__.py:2 — high — b2"]),
             "0035_a": review(["- F2 [open] coscc/service.py:9 — low — a1"]),
         }, PLAN)
         self.assertEqual(section.splitlines(), [
-            "- 0080 Round 2 F2 [open] coscc/runner.py:2 — high — b2",
+            "- 0080 Round 2 F2 [open] coscc/runner/__init__.py:2 — high — b2",
             "- 0035 Round 1 F2 [open] coscc/service.py:9 — low — a1",
             "- 0080 Round 2 F1 [fixed abc1234] coscc/service.py:1 — high — b1",
         ])
@@ -83,11 +83,11 @@ class TheOrderAndTheCap(unittest.TestCase):
         # `write-review` carries every finding forward: three rounds state F1 three times.
         section, record = priorfindings.select({"0054_a": review(
             ["- F1 [open] coscc/service.py:1 — high — x"],
-            ["- F1 [open] coscc/service.py:1 — high — x", "- F2 [open] coscc/runner.py:5 — low — y"],
-            ["- F1 [fixed abc1234] coscc/service.py:1 — high — x", "- F2 [open] coscc/runner.py:5 — low — y"],
+            ["- F1 [open] coscc/service.py:1 — high — x", "- F2 [open] coscc/runner/__init__.py:5 — low — y"],
+            ["- F1 [fixed abc1234] coscc/service.py:1 — high — x", "- F2 [open] coscc/runner/__init__.py:5 — low — y"],
         )}, PLAN)
         self.assertEqual(section.splitlines(), [
-            "- 0054 Round 3 F2 [open] coscc/runner.py:5 — low — y",
+            "- 0054 Round 3 F2 [open] coscc/runner/__init__.py:5 — low — y",
             "- 0054 Round 3 F1 [fixed abc1234] coscc/service.py:1 — high — x",
         ])
         self.assertEqual((record["lines"], record["dropped"]), (2, 0))
@@ -132,10 +132,10 @@ class ReadingTheStore(unittest.TestCase):
         (self.cos / "0070_b" / "review.md").write_bytes(b"## Round 1\n\n- F1 [open] coscc/service.py:1 \xff\n")
         (self.cos / "0080_c").mkdir()
         (self.cos / "0080_c" / "review.md").write_text(
-            review(["- F1 [open] coscc/runner.py:1 — high — from 0080_c"]), encoding="utf-8"
+            review(["- F1 [open] coscc/runner/__init__.py:1 — high — from 0080_c"]), encoding="utf-8"
         )
         got = priorfindings.for_step(self.cos, ["0054_a", "0070_b", "0080_c"], self.plan, "0110_me")
-        self.assertEqual(got["prior_findings"], "- 0080 Round 1 F1 [open] coscc/runner.py:1 — high — from 0080_c")
+        self.assertEqual(got["prior_findings"], "- 0080 Round 1 F1 [open] coscc/runner/__init__.py:1 — high — from 0080_c")
         self.assertEqual(got["prior_findings_record"]["unreadable"], 2)
         self.assertNotIn("error", got["prior_findings_record"])
 

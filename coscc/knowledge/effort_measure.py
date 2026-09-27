@@ -6,7 +6,7 @@ rule, and imports nothing of the web app. Run it at a terminal: inside a step `c
 tripwire (`.claude/rules/coscc-sessions.md`).
 
 The arm is read from the `start` records, never worked out again from a name (spec Design,
-part 2). The fields are the ones `coscc/runner.py` writes, by the names in
+part 2). The fields are the ones `coscc/runner/__init__.py` writes, by the names in
 `coscc/knowledge/efforttrial.py`: rename one there and this reads nothing, silently
 (`.claude/rules/coscc-data.md`), which `coscc/knowledge/effort_measure_test.py` guards by writing its
 fixture through the same names.

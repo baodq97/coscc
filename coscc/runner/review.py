@@ -1,12 +1,12 @@
 """A review's rounds and findings: merging a round into `review.md`, reading which findings
-are open, and checking a closing round. Split from `coscc/runner.py` (`0095`).
+are open, and checking a closing round. Split from `coscc/runner/__init__.py` (`0095`).
 """
 
 from __future__ import annotations
 
 import re
 
-from coscc.runner_reply import HEADER_STATUS_RE, RunError, check_reply
+from coscc.runner.reply import HEADER_STATUS_RE, RunError, check_reply
 
 
 # One `## Round N` section of review.md: from its heading to the next `## ` heading.

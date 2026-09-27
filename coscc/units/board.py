@@ -30,7 +30,7 @@ from typing import Any
 
 # Which copy of the harness, and where it is, is `coscc/agent/harness.py`'s question and is not
 # asked again here. Until 0012 this module computed `parent.parent / ".claude"` for itself
-# and `coscc/runner.py` computed the same thing separately -- one formula in two places,
+# and `coscc/runner/__init__.py` computed the same thing separately -- one formula in two places,
 # which is how a single packaging omission arrived as two unrelated-looking symptoms.
 from coscc.agent import harness
 from coscc.agent.harness import child_env as _child_env

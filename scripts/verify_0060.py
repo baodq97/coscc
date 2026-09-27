@@ -20,7 +20,7 @@ Two modes:
        version at `01699b8` refused ran in the window (after `--confirmed`)
     1  either did not hold (or, for the proof, a claim did not)
     2  the environment could not answer: no `cos.db`, no transcripts, no session in the
-       window, no `git` or `bash`, or `git show 01699b8:coscc/agent/policy.py` failed
+       window, no `git` or `bash`, or `git show 01699b8:coscc/policy.py` failed
 
 It does **not** import `coscc`. `0060 spec.md` C5: classifying with the filter's own
 reader would hide exactly the misreadings it exists to count. It has a simpler reader of
@@ -326,8 +326,8 @@ def bash_calls(path: str) -> list[dict]:
 
 
 def load_old_policy(tmp: Path):
-    """`coscc/agent/policy.py` as it was at `01699b8`, never copied into this script (R11)."""
-    out = subprocess.run(["git", "-C", str(REPO), "show", f"{OLD_COMMIT}:coscc/agent/policy.py"],
+    """`coscc/policy.py` as it was at `01699b8`, now `coscc/agent/policy.py`, never copied into this script (R11)."""
+    out = subprocess.run(["git", "-C", str(REPO), "show", f"{OLD_COMMIT}:coscc/policy.py"],
                          capture_output=True, text=True)
     if out.returncode != 0:
         return None, out.stderr.strip() or f"git show {OLD_COMMIT} failed"

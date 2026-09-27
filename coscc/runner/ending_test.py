@@ -1,5 +1,5 @@
-"""Tests for `Runner` in `coscc/runner.py`: how a step ends, split from
-`coscc/runner_test.py` (`0095`).
+"""Tests for `Runner` in `coscc/runner/__init__.py`: how a step ends, split from
+`coscc/runner/runner_test.py` (`0095`).
 
 An answer that comes in pieces is written whole. A step that fails, is stopped, dies, runs
 out of turns or touches what it may not still leaves a record that says so, and writes no
@@ -19,11 +19,11 @@ from unittest import mock
 from coscc.agent import harness
 from coscc.git import gitops
 from coscc.runlog.journal import Journal
-from coscc.runner_reply import RunError
+from coscc.runner.reply import RunError
 from coscc.runner import Runner
-from coscc.runner_prompt import answers_section, build_prompt, skill_for
-from coscc.runner_attempt import snapshot
-from coscc.runner_test import (
+from coscc.runner.prompt import answers_section, build_prompt, skill_for
+from coscc.runner.attempt import snapshot
+from coscc.runner.runner_test import (
     REVIEW_R1,
     SPIKE_REPLY,
     STAGES,

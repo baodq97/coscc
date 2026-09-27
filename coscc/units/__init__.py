@@ -25,7 +25,7 @@ records that it is there so the app can read a `.cos/` elsewhere with this repos
 rules. This module only changes which directory that is.
 
 **One function answers where units live, and that is the whole of R3.** `coscc/units/board.py`,
-`coscc/runner.py` and `coscc/service.py` each computed a unit's path for themselves before
+`coscc/runner/__init__.py` and `coscc/service.py` each computed a unit's path for themselves before
 this. Three copies of one formula is precisely the shape of `0012`, where two modules each
 worked out where `.claude/` was and one packaging omission arrived as two unrelated-looking
 symptoms (`coscc/agent/harness.py:47-50`).
@@ -211,7 +211,7 @@ def create(
     command, refused with exit 2, and arrives on the page as `CannotCreate`.
 
     `brief` is the originator's own words and is written as `idea.md`. That is not a new
-    mechanism: `idea` is the loop's optional first stage, and `coscc/runner.py:112-121`
+    mechanism: `idea` is the loop's optional first stage, and `coscc/runner/__init__.py:112-121`
     already puts the stage before `intent` into the intent step's prompt. It is also what
     `write-intent` invariant 1 asks for — *"The originator states the problem in their own
     words first"* — landing in the one file that exists for it.

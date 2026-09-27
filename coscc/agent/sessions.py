@@ -866,7 +866,7 @@ class Sessions:
                             # Said out loud so a caller assembling an artifact from the reply
                             # knows where one piece of text ends and the next begins. The
                             # runner keeps every piece and cuts the artifact at its own title
-                            # line (`0099`). See `coscc/runner.py` for what is done with it.
+                            # line (`0099`). See `coscc/runner/__init__.py` for what is done with it.
                             yield ("tool", getattr(block, "name", "") or "tool")
                     if message.session_id:
                         resolved = message.session_id

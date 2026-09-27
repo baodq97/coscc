@@ -51,7 +51,7 @@ _HERE = Path(coscc.__file__).resolve().parent
 PACKAGE_HARNESS = _HERE / "_harness"
 
 # The checkout's own copy, one level up beside `coscc/`. This is the `parent.parent` that
-# `coscc/units/board.py:31` and `coscc/runner.py:39` each computed for themselves until 0012 --
+# `coscc/units/board.py:31` and `coscc/runner/__init__.py:39` each computed for themselves until 0012 --
 # one bug that arrived as two symptoms, because two places held the same formula.
 CHECKOUT_HARNESS = _HERE.parent / ".claude"
 
@@ -65,7 +65,7 @@ class MissingRules(RuntimeError):
     """The rules for a step could not be found, carrying the paths that were searched.
 
     Raised rather than returned. Until 0012 this case returned an empty string and the
-    step ran anyway (`coscc/runner.py`, *"Missing is not fatal"*), which is how a step came
+    step ran anyway (`coscc/runner/__init__.py`, *"Missing is not fatal"*), which is how a step came
     to spend real quota on a prompt with no rules in it and leave a record indistinguishable
     from one that had them. `spec.md` C2 records that this reverses a decision that had
     reasons written down.

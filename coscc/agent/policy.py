@@ -424,7 +424,7 @@ def beyond_reading(grant: Grant) -> tuple[str, ...]:
     Reading is neither of those, and `plan` was required to read long before it was
     allowed to.
 
-    So the guard in `coscc/runner.py` asks this rather than asking whether the grant is
+    So the guard in `coscc/runner/__init__.py` asks this rather than asking whether the grant is
     empty. The old question — empty or not — read as *no tools* and meant *no capability*;
     the two stopped being the same thing on 2026-09-23.
     """
@@ -1410,7 +1410,7 @@ def _read_paths_in(tool: str, tool_input: dict) -> list:
     """Every path a read tool was given, plus the fixed prefix of an absolute `Glob` pattern.
 
     No `path` at all is fine: the SDK then searches the session's `cwd`, which is the
-    workspace (`coscc/runner.py`). Reading a pattern this way is best-effort — `0020`
+    workspace (`coscc/runner/__init__.py`). Reading a pattern this way is best-effort — `0020`
     plan, Risk 3 — and `TheReadBoundaryIsNotASandbox` below pins what it does not see.
     """
     out: list = list(_paths_in(tool_input))

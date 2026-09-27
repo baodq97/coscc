@@ -249,8 +249,8 @@ class TheCommand(Fixture):
 
     def test_files_and_first_reach_the_fields(self):
         self.step("2026-09-24T10:00:00", "0001_a", turns=4, run="r1")
-        self.calls("r1", self.use("a", "Read", file_path="/w/coscc/runner.py"))
-        code, out, _ = self.main("--since", "2026-09-24", "--files", "coscc/runner.py", "--first", "5")
+        self.calls("r1", self.use("a", "Read", file_path="/w/coscc/runner/__init__.py"))
+        code, out, _ = self.main("--since", "2026-09-24", "--files", "coscc/runner/__init__.py", "--first", "5")
         self.assertEqual(code, 0)
         self.assertEqual((json.loads(out)["touched_steps"], json.loads(out)["touched_turns_mean"]), (1, 4))
 

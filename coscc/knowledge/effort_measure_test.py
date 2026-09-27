@@ -1,6 +1,6 @@
 """`0123` plan step 7: `coscc effort measure`, on a `cos.db` built by the app's own schema.
 
-The records are written with the field names `coscc/runner.py` writes, `effort_trial` and
+The records are written with the field names `coscc/runner/__init__.py` writes, `effort_trial` and
 `ci_red` by `coscc/knowledge/efforttrial.py`'s constants, so a rename there turns this red (plan Risk 5).
 """
 

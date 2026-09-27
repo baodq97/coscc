@@ -21,7 +21,7 @@ The first use of this is the git import, and it can supply neither an actor nor 
 arrives with both fields `UNKNOWN`, deliberately and visibly. `spec.md` C1 says so: the
 provenance this unit builds is true of work done **after** it, not of work already in git.
 
-**A unit has a sequence of sessions, not a session.** `coscc/runner.py:271-274` passes
+**A unit has a sequence of sessions, not a session.** `coscc/runner/__init__.py:271-274` passes
 `session_id=None` on every step, so eight stages make eight sessions; `coscc/agent/sessions.py:185`
 sets `fork_session=False`, so one chat keeps one id across many turns. Those are different
 mechanisms and `sessions_of()` keeps them apart: one multi-turn session is one row, and a

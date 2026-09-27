@@ -1,4 +1,4 @@
-"""Tests for `coscc/runner_prompt.py`, split from `coscc/runner_test.py` (`0095`).
+"""Tests for `coscc/runner/prompt.py`, split from `coscc/runner/runner_test.py` (`0095`).
 
 The prompt has to contain the stage before it (`0001` `spec.md` R4), and each section
 the app adds reaches only the stages it is for.
@@ -13,7 +13,7 @@ from unittest import mock
 
 from coscc.agent import policy
 from coscc.agent.policy import decide
-from coscc.runner_prompt import (
+from coscc.runner.prompt import (
     answers_section,
     build_prompt,
     compose_prompt,
@@ -21,7 +21,7 @@ from coscc.runner_prompt import (
     strip_answers,
     with_answers,
 )
-from coscc.runner_test import REVIEW_R1, STAGES, UNIT, _golden_unit, incomplete_reply, make_unit
+from coscc.runner.runner_test import REVIEW_R1, STAGES, UNIT, _golden_unit, incomplete_reply, make_unit
 
 
 class AnAgentsAnswerIsSaidToBeOne(unittest.TestCase):
@@ -36,7 +36,7 @@ class AnAgentsAnswerIsSaidToBeOne(unittest.TestCase):
 
     def prompts(self, by: str, via: str, stage: str) -> tuple[str, str]:
         """The prompt, and the same prompt built with this unit's section switched off."""
-        from coscc import runner_prompt
+        from coscc.runner import prompt as runner_prompt
 
         with tempfile.TemporaryDirectory() as d:
             make_unit(Path(d), intent_md="Status: accepted.\nINTENT", spec_md=self.SPEC.format(by=by, via=via),
@@ -436,7 +436,7 @@ class ADraftImplSeesItsOwnAnswers(unittest.TestCase):
     )
 
     def prompt(self, d: str, impl_md: str, stage: str = "impl") -> str:
-        from coscc import runner_prompt
+        from coscc.runner import prompt as runner_prompt
 
         make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP", impl_md=impl_md)
         # `implement` is an alias with no skill of its own; the rules are not what is tested.
@@ -444,7 +444,7 @@ class ADraftImplSeesItsOwnAnswers(unittest.TestCase):
             return compose_prompt(d, Path(d) / ".cos" / UNIT, UNIT, stage, STAGES, "impl.md")[0]
 
     def test_impl_prompt_carries_its_answers_verbatim(self):
-        from coscc.runner_prompt import _IMPL_ANSWERS_ADVICE
+        from coscc.runner.prompt import _IMPL_ANSWERS_ADVICE
 
         for stage in ("impl", "implement"):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
@@ -463,7 +463,7 @@ class ADraftImplSeesItsOwnAnswers(unittest.TestCase):
             self.assertNotIn("the app writes it back", prompt)
 
     def test_impl_without_answers_has_no_such_block(self):
-        from coscc.runner_prompt import _IMPL_ANSWERS_ADVICE
+        from coscc.runner.prompt import _IMPL_ANSWERS_ADVICE
 
         with tempfile.TemporaryDirectory() as d:
             prompt = self.prompt(d, self.IMPL)
@@ -596,7 +596,7 @@ class ShipIsNotToldItIsInARepository(unittest.TestCase):
 class ImplAndShipKeepTheirTaskByteForByte(unittest.TestCase):
     """`0041` plan step 1 / `spec.md` R1: `pr` gets its own *Your task*, and the two stages
     that write their own artifact beside it keep theirs exactly as they were. Copied from
-    `coscc/runner.py` before `0041` touched it."""
+    `coscc/runner/__init__.py` before `0041` touched it."""
 
     def task(self, d, stage):
         directory = make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
@@ -635,7 +635,7 @@ class ImplAndShipKeepTheirTaskByteForByte(unittest.TestCase):
 def _golden_prompt(stage: str) -> str:
     """The prompt `stage` gets on `_golden_unit`, the rules replaced by a marker and the
     temporary root by `<ROOT>`, so the text is the same on every machine and every run."""
-    from coscc import runner_prompt
+    from coscc.runner import prompt as runner_prompt
 
     with tempfile.TemporaryDirectory() as d:
         directory = _golden_unit(Path(d))
@@ -661,7 +661,7 @@ def _golden_prompt(stage: str) -> str:
 class TheStagesThatReadWholeInputsKeepTheirPrompt(unittest.TestCase):
     """`0094` plan step 4: `idea`, `intent`, `spec`, `spike` and `plan` are outside R14, so
     their prompt is the one `build_prompt` made before `0094`, byte for byte. The digests
-    were taken from `_golden_prompt` on `fc409f3`, before `coscc/runner.py` changed. A later
+    were taken from `_golden_prompt` on `fc409f3`, before `coscc/runner/__init__.py` changed. A later
     unit that changes one of these prompts on purpose takes the new digest and says so."""
 
     BEFORE = {
@@ -875,7 +875,7 @@ class WhatEarlierUnitsMeasured(unittest.TestCase):
         return "RULES for implement" if stage == "implement" else skill_for(stage)
 
     def test_no_knowledge_is_every_prompt_byte_for_byte(self):
-        from coscc import runner_prompt
+        from coscc.runner import prompt as runner_prompt
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
             directory = self.unit(d)
@@ -912,7 +912,7 @@ class WhatEarlierUnitsMeasured(unittest.TestCase):
                     self.assertIn("knowledge", included)
 
     def test_no_other_stage_carries_it_even_when_handed_it(self):
-        from coscc import runner_prompt
+        from coscc.runner import prompt as runner_prompt
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
             directory = self.unit(d)
@@ -933,7 +933,7 @@ class WhatEarlierReviewsSaid(unittest.TestCase):
     rules = staticmethod(WhatEarlierUnitsMeasured.rules)
 
     def test_no_stage_but_impl_carries_it_even_when_handed_it(self):
-        from coscc import runner_prompt
+        from coscc.runner import prompt as runner_prompt
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
             directory = self.unit(d)
@@ -976,7 +976,7 @@ class ThePlanMapAndTheCommands(unittest.TestCase):
     grant's words; this module places both for `impl` only, and every other stage's prompt is
     what it was, byte for byte (R11)."""
 
-    MAP = "- `coscc/runner.py` — 2000 lines\n  - 307 def compose_prompt MAP-MARKER"
+    MAP = "- `coscc/runner/__init__.py` — 2000 lines\n  - 307 def compose_prompt MAP-MARKER"
     WORDS = ("git", "npm", "COMMAND-MARKER")
 
     unit = WhatEarlierUnitsMeasured.unit
@@ -984,7 +984,7 @@ class ThePlanMapAndTheCommands(unittest.TestCase):
     rules = staticmethod(WhatEarlierUnitsMeasured.rules)
 
     def test_no_stage_but_impl_carries_them_even_when_handed_them(self):
-        from coscc import runner_prompt
+        from coscc.runner import prompt as runner_prompt
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
             directory = self.unit(d)

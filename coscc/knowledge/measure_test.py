@@ -1,6 +1,6 @@
 """`0090` plan step 7: `baseline` and `measure`, on a `cos.db` built by the app's own schema.
 
-The records are written with the field names `coscc/runner.py` and `coscc/knowledge/gather.py` use
+The records are written with the field names `coscc/runner/__init__.py` and `coscc/knowledge/gather.py` use
 (`knowledge`, `mode`, `gather.KIND`), so a rename there turns this red (plan Risk 6).
 """
 

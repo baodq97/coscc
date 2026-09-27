@@ -193,7 +193,7 @@ class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
             self.assertEqual([(r["findings"], r["findings_open"]) for r in u["rounds"]], [(2, 2), (2, 1)])
 
     def test_the_script_and_the_runner_cut_rounds_at_the_same_place(self):
-        """`0021` plan, Risk 8. `coscc/runner.py` `_rounds` is an older second reading of
+        """`0021` plan, Risk 8. `coscc/runner/__init__.py` `_rounds` is an older second reading of
         round edges; until it goes, the text posted and the text preserved must match."""
         from coscc.runner import _rounds
 

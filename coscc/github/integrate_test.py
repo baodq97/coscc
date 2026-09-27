@@ -245,21 +245,21 @@ class Related(unittest.TestCase):
 
     def test_both_groups(self):
         commits = [
-            {"sha": "1" * 40, "subject": "feat: a (#41)", "files": ["coscc/runner.py", "README.md"]},
-            {"sha": "2" * 40, "subject": "fix: b (#99)", "files": ["coscc/runner.py"]},
+            {"sha": "1" * 40, "subject": "feat: a (#41)", "files": ["coscc/runner/__init__.py", "README.md"]},
+            {"sha": "2" * 40, "subject": "fix: b (#99)", "files": ["coscc/runner/__init__.py"]},
             {"sha": "3" * 40, "subject": "docs: c (#42)", "files": ["docs/x.md"]},
-            {"sha": "4" * 40, "subject": "no number", "files": ["coscc/runner.py"]},
+            {"sha": "4" * 40, "subject": "no number", "files": ["coscc/runner/__init__.py"]},
         ]
         others = [
-            {"unit": "0036_b", "files": ["coscc/runner.py"]},
+            {"unit": "0036_b", "files": ["coscc/runner/__init__.py"]},
             {"unit": "0037_c", "files": ["other.py"]},
             {"unit": "0038_d", "files": None},
-            {"unit": "0035_x", "files": ["coscc/runner.py"]},
+            {"unit": "0035_x", "files": ["coscc/runner/__init__.py"]},
         ]
-        rel = ig.related(commits, ["coscc/runner.py"], self.UNITS, others, "0035_x")
+        rel = ig.related(commits, ["coscc/runner/__init__.py"], self.UNITS, others, "0035_x")
         self.assertEqual([(m["subject"], m["unit"]) for m in rel["merged"]],
                          [("feat: a (#41)", "0030_a"), ("fix: b (#99)", None), ("no number", None)])
-        self.assertEqual(rel["open"], [{"unit": "0036_b", "files": ["coscc/runner.py"]},
+        self.assertEqual(rel["open"], [{"unit": "0036_b", "files": ["coscc/runner/__init__.py"]},
                                        {"unit": "0038_d", "files": None}])
         self.assertEqual(ig.related_units(rel), ["0030_a", "0036_b", "0038_d"])
 
@@ -500,7 +500,7 @@ class TheReviewPromptCarriesTheIntegration(unittest.TestCase):
         import tempfile
 
         from coscc.runner import build_prompt
-        from coscc.runner_test import STAGES, UNIT, make_unit
+        from coscc.runner.runner_test import STAGES, UNIT, make_unit
 
         note = ig.describe_for_review({"mode": "mechanical", "head_after": NEW})
         with tempfile.TemporaryDirectory() as d:

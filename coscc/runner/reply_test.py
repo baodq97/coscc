@@ -1,4 +1,4 @@
-"""Tests for `coscc/runner_reply.py`, split from `coscc/runner_test.py` (`0095`).
+"""Tests for `coscc/runner/reply.py`, split from `coscc/runner/runner_test.py` (`0095`).
 
 A reply is checked before it becomes a file: its `Status:` line, its opening and its
 fences.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 
-from coscc.runner_reply import RunError, check_reply
+from coscc.runner.reply import RunError, check_reply
 
 
 class AReplyIsCheckedBeforeItBecomesAFile(unittest.TestCase):

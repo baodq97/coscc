@@ -8,7 +8,7 @@ with a fake `gh` first on `PATH` (the pull request's head is the unit's branch, 
 green) and a `git` shim that logs every argv before running the real `git`:
 
     (a) R3   a branch changing `coscc/screens.py` is a UI unit; one changing only
-             `coscc/runner.py`, or only the unit's own `.cos/` files, is not
+             `coscc/runner/__init__.py`, or only the unit's own `.cos/` files, is not
     (b) R10  a UI unit whose passing round has no `### Screens` cannot ship, the reason
              names `### Screens`, and `next` offers `review`
     (c) R10  each condition broken once — no word "agent", the wrong `Standard:`, no
@@ -249,7 +249,7 @@ class Fixture:
         self.git("symbolic-ref", "HEAD", "refs/heads/main")
         (self.repo / ".claude" / "rules").mkdir(parents=True)
         shutil.copyfile(REPO / UI_STANDARD, self.repo / UI_STANDARD)
-        self.commit({"README.md": "fixture\n", "coscc/screens.py": "# screens\n", "coscc/runner.py": "# runner\n"}, "main")
+        self.commit({"README.md": "fixture\n", "coscc/screens.py": "# screens\n", "coscc/runner/__init__.py": "# runner\n"}, "main")
         self.git("push", "-q", "origin", "main")
         self.git("fetch", "-q", "origin")
 
@@ -323,7 +323,7 @@ def screens(taken: int = 0, by: str = "an agent session (write-review)", standar
 
 SCREENS_PY = {"coscc/screens.py": "# screens, changed\n"}
 SCREENS_PY_AGAIN = {"coscc/screens.py": "# screens, changed again\n"}
-RUNNER_PY = {"coscc/runner.py": "# runner, changed\n"}
+RUNNER_PY = {"coscc/runner/__init__.py": "# runner, changed\n"}
 
 
 def proof(old: Path, tmp: Path, real_git: str) -> list[bool]:
@@ -338,8 +338,8 @@ def proof(old: Path, tmp: Path, real_git: str) -> list[bool]:
     stray, _ = fx.unit("not-ancestor", [SCREENS_PY], screens=screens(taken=side))
     after, _ = fx.unit("changed-after", [SCREENS_PY, SCREENS_PY_AGAIN], screens=screens(taken=0))
     valid, valid_shas = fx.unit("valid", [SCREENS_PY, RUNNER_PY], screens=screens(taken=0))
-    s_low, _ = fx.unit("s-low", [RUNNER_PY], findings=["- F1 [open] coscc/runner.py:1 — low — S3 shows a full sha"])
-    low, _ = fx.unit("low", [RUNNER_PY], findings=["- F1 [open] coscc/runner.py:1 — low — a word could be shorter"])
+    s_low, _ = fx.unit("s-low", [RUNNER_PY], findings=["- F1 [open] coscc/runner/__init__.py:1 — low — S3 shows a full sha"])
+    low, _ = fx.unit("low", [RUNNER_PY], findings=["- F1 [open] coscc/runner/__init__.py:1 — low — a word could be shorter"])
 
     def ship(unit: str) -> tuple[int, str]:
         code, out, err, _ = fx.cos(COS, "gate", unit, "ship")
@@ -349,7 +349,7 @@ def proof(old: Path, tmp: Path, real_git: str) -> list[bool]:
     got = {u: ship(u) for u in (plain, own, bare)}
     results.append(claim(
         got[plain][0] == 0 and got[own][0] == 0 and got[bare][0] == 1 and "coscc/screens.py" in got[bare][1],
-        "(a) R3: coscc/screens.py makes a UI unit; coscc/runner.py or the unit's own .cos/ files do not",
+        "(a) R3: coscc/screens.py makes a UI unit; coscc/runner/__init__.py or the unit's own .cos/ files do not",
         "; ".join(f"{u}: exit {c} {t.strip()[:160]!r}" for u, (c, t) in got.items()),
     ))
 
@@ -484,7 +484,7 @@ def measured(tmp: Path, name: str, today: date, window: dict[str, str] | None, v
             subprocess.run(["git", "-C", str(repo), *GIT_ID, *args], check=True, env=env, capture_output=True)
 
     subprocess.run(["git", "-C", str(repo), "symbolic-ref", "HEAD", "refs/heads/main"], check=True)
-    commit({UI_STANDARD: (REPO / UI_STANDARD).read_text(encoding="utf-8"), "coscc/screens.py": "#\n", "coscc/runner.py": "#\n"},
+    commit({UI_STANDARD: (REPO / UI_STANDARD).read_text(encoding="utf-8"), "coscc/screens.py": "#\n", "coscc/runner/__init__.py": "#\n"},
            "chore: base (#1)", "2026-09-20T00:00:00Z")
     if window is not None:
         commit(window, "feat(0090): a change (#90)", "2026-10-10T00:00:00Z")
@@ -519,7 +519,7 @@ def measure_claims(tmp: Path, real_git: str) -> list[bool]:
     ui = {"coscc/screens.py": "# x\n"}
     for name, today, window, valid, neighbour, want, text in [
         ("early", before, ui, True, False, EXIT_ENV, "before 2026-12-01: exit 2"),
-        ("none", after, {"coscc/runner.py": "# x\n"}, True, False, EXIT_BROKEN, "no UI unit in the window: exit 1"),
+        ("none", after, {"coscc/runner/__init__.py": "# x\n"}, True, False, EXIT_BROKEN, "no UI unit in the window: exit 1"),
         ("valid", after, ui, True, False, EXIT_PASS, "one UI unit with valid screens: exit 0"),
         ("missing", after, ui, False, False, EXIT_BROKEN, "one UI unit without screens: exit 1"),
         ("neighbour", after, ui, True, True, EXIT_PASS,

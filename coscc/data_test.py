@@ -510,7 +510,7 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
         production and wrong in every test, and the docstring at
         `coscc/runlog/journal.py:108-109` has said so since the class was written.
 
-        It happened anyway. `coscc/runner_test.py:323` read `Journal(Path(d) / "cos.db")`
+        It happened anyway. `coscc/runner/runner_test.py:323` read `Journal(Path(d) / "cos.db")`
         — one argument, where every other call in that file passes two — and for as long
         as the schema only ever grew, nothing noticed: the suite opened the developer's
         real database and quietly did nothing to it. `0013` took `SCHEMA_VERSION` to 2,

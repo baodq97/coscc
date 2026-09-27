@@ -5,7 +5,7 @@ câu 8, 9 and 10. Both read `cos.db` with `sqlite3` in `mode=ro`, as `scripts/ve
 does, and the store's own three files; they import nothing of the web app. Run them at a
 terminal: inside a step `cos.db` is a tripwire (`.claude/rules/coscc-sessions.md`).
 
-The fields read here are the ones `coscc/runner.py` and `coscc/knowledge/gather.py` write, by the
+The fields read here are the ones `coscc/runner/__init__.py` and `coscc/knowledge/gather.py` write, by the
 names in `coscc/knowledge/__init__.py` and `coscc/knowledge/gather.py`: rename one there and this reads
 nothing, silently (`.claude/rules/coscc-data.md`), which `coscc/knowledge/measure_test.py` guards by
 writing its fixture through the same names.

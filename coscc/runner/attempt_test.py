@@ -1,4 +1,4 @@
-"""Tests for `coscc/runner_attempt.py`, split from `coscc/runner_test.py` (`0095`).
+"""Tests for `coscc/runner/attempt.py`, split from `coscc/runner/runner_test.py` (`0095`).
 
 What a failed attempt left, as the next step and the board are told it.
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import unittest
 
-from coscc.runner_attempt import describe_attempt
+from coscc.runner.attempt import describe_attempt
 
 
 class DescribeAttemptRendersTheRecord(unittest.TestCase):
