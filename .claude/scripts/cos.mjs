@@ -1734,14 +1734,16 @@ function passLeftClosed(unit, probe, g) {
   if (g.said.moved ? !unpushed() : !g.said.screens) return null
   const prev = rounds.at(-2)
   if (prev?.verdict !== 'pass' || !prev.reviewed) return { last, need: g.need, stop: null }
-  const stop = (why = '') =>
-    `needs a person — ${why}review rounds ${prev.n} and ${last.n} both passed on ${last.reviewed.slice(0, 7)} and ship is still closed: ${g.need.join('; ')}`
+  const short = (r) => r.reviewed.slice(0, 7)
+  // Where git cannot compare the two rounds, the sentence does not say they share a head.
+  const stop = (why = '', known = true) =>
+    `needs a person — ${why}review rounds ${prev.n} and ${last.n} ${known || prev.reviewed === last.reviewed ? `both passed on ${short(last)}` : `passed on ${short(prev)} and ${short(last)}, not known to be one head,`} and ship is still closed: ${g.need.join('; ')}`
   // Another round cannot bring back a commit that is not here (spec C3).
   if (probe.git('cat-file', '-e', `${prev.reviewed}^{commit}`).code !== 0) {
-    return { last, need: g.need, stop: stop(`the reviewed commit ${prev.reviewed} of review round ${prev.n} is not in this repository; `) }
+    return { last, need: g.need, stop: stop(`the reviewed commit ${prev.reviewed} of review round ${prev.n} is not in this repository; `, false) }
   }
   const since = changedSince(probe, unit, prev.reviewed, last.reviewed)
-  if (since.error) return { last, need: g.need, stop: stop(`${since.error}; `) }
+  if (since.error) return { last, need: g.need, stop: stop(`${since.error}; `, false) }
   if (!since.rewritten && !since.files.length) return { last, need: g.need, stop: stop() }
   return { last, need: g.need, stop: null }
 }

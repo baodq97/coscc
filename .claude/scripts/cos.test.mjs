@@ -3543,6 +3543,16 @@ test('0125 R4: a round whose reviewed commit is not here stops and says so', () 
   assert.match(broken.action, /^needs a person — git could not diff .*fatal: bad object/)
 })
 
+test('0125 review F2: where git cannot compare the two rounds, the stop does not say they share a head', () => {
+  const u = passedOn(SHA, REB)
+  const gone = nextStep(u, { probe: stuckProbe({ [`cat-file -e ${SHA}^{commit}`]: NO }, REB) })
+  const broken = nextStep(u, { probe: stuckProbe({ [`diff --name-only ${SHA}..${REB}`]: { code: 128, out: '', err: 'fatal: bad object' } }, REB) })
+  for (const { action } of [gone, broken]) {
+    assert.doesNotMatch(action, /both passed/)
+    assert.match(action, /review rounds 1 and 2 passed on aaaaaaa and ddddddd, not known to be one head, and ship is still closed: /)
+  }
+})
+
 test('0125 review F1: a pull request behind the reviewed commit gets one retry, then stops', () => {
   // BEHIND is the reviewed commit's parent: the round was taken on a commit not pushed yet.
   const BEHIND = '6'.repeat(40)
