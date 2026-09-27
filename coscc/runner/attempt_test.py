@@ -77,3 +77,29 @@ class ThePromptSaysWhatAReviewThatWroteNothingOpened(unittest.TestCase):
     def test_no_opened_key_adds_nothing(self):
         text = describe_attempt({"attempt": None, "latest": self.LATEST, "earlier": []})
         self.assertNotIn("closing turn", text)
+
+
+class AReplyWithoutItsOpeningIsRefusedByItsClass(unittest.TestCase):
+    """`0127` spec *Design* 1: the refusal a repair turn follows is told apart by its class,
+    and says what it said before."""
+
+    def test_a_reply_without_its_opening_raises_an_opening_error(self):
+        import tempfile
+        from pathlib import Path
+
+        from coscc.runner.attempt import _write_artifact
+        from coscc.runner.reply import OpeningError, RunError
+
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(OpeningError) as caught:
+                _write_artifact(Path(d), "plan.md", "## Files that change\n\nStatus: accepted.\n", blocks=2)
+            self.assertEqual(caught.exception.problem, "no `# Plan:` title")
+            self.assertEqual(
+                str(caught.exception),
+                "plan.md lacks its opening: no `# Plan:` title (the session replied in 2 blocks)",
+            )
+            # The other refusals keep their plain class.
+            with self.assertRaises(RunError) as other:
+                _write_artifact(Path(d), "plan.md", "  ")
+            self.assertNotIsInstance(other.exception, OpeningError)
+            self.assertFalse((Path(d) / "plan.md").exists())
