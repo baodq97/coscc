@@ -28,7 +28,13 @@ are numbered without a gap, and nothing outside `.cos/<unit>/` reached the branc
 Exit 1 means do not merge: fix what it names. If it says code landed after the pass, that
 code goes back to `write-review` — it was never reviewed. It also exits 1 (`0112`) when
 the pull request is behind the `origin/main` this repository knows (it does not fetch):
-integrate, then another review round.
+integrate first. A rebase that leaves the unit's patch unchanged — only line numbers and
+`index` lines may differ — opens `ship` once CI is green, with no round (`0067`); the open
+line is then followed by a second one ending `no review round is needed`. CI red on such a
+rebase sends the unit back to `impl`, not to a round. A rebase that changes any added,
+removed or context line closes the gate until another round passes, and that round does not
+count toward `COS_REVIEW_ROUNDS`. `.claude/docs/branches.md`, *When the pull request falls
+behind*, has the detail.
 
 The open line ends `— merge with --match-head-commit <sha>`. That is the head the gate
 checked. Copy it; do not read the head again yourself.
