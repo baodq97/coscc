@@ -462,6 +462,14 @@ def is_prose_stage(stage: str) -> bool:
 # arrived at a session created with `tools=[]`, because `--tools` names the built-in set and
 # nothing else. A callback sits on the path every call takes, whatever declared it.
 
+# `0130`. A step's session is closed once its turn ends, so a command left running in the
+# background is one nobody reads the end of. The words are the ones `0130 spike.md ## U1`
+# refused with, after which the model ran the command again in the foreground, same turn.
+BACKGROUND_REFUSAL = (
+    "this session ends when your turn ends and nothing wakes it when a background command "
+    "finishes; run the command in the foreground"
+)
+
 # `0060`: the line is read the way bash reads it, not split as raw text. Until then `;`, `|`
 # and `&&` were split on wherever they stood, quotes and heredoc bodies included, and
 # `$(`, `` ` `` and `${` were refused wherever they stood, single quotes included. The
@@ -1318,6 +1326,11 @@ def decide(
         return f"this step was not granted {tool}"
 
     if tool in EXEC_TOOLS:
+        # `0130` R1. Only the calls the CLI asks about reach here: one it takes for read-only
+        # runs in the background without asking (`0130 spike.md ## U1`, result 2), which is
+        # what `sessions.FOREGROUND_ENV` closes.
+        if tool_input.get("run_in_background"):
+            return f"run_in_background is refused: {BACKGROUND_REFUSAL}"
         # `0060`: the unit's name opens a `/tmp` directory to redirects. Writes there are
         # outside the boundary the write tools are held to below.
         from pathlib import Path
