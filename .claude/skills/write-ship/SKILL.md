@@ -44,8 +44,8 @@ checked. Copy it; do not read the head again yourself.
 An earlier step may have merged it and stopped before `ship.md` was accepted — a
 `--delete-branch` that exited 1 after the merge does this — or a person merged it. The gate
 then opens with `— #<n> was merged as <sha> at <mergedAt>: record it in ship.md; do not
-merge` (`0116`). It checked only that the last round passed and that the merge commit is
-here and on `origin/main`: not the branch, CI, or whether the head moved after the pass.
+merge` (`0116`). It checked the review as it always does, and that the merge commit is here
+and on `origin/main` — not the branch, CI, or whether the head moved after the pass.
 
 - Do not run `gh pr merge`. There is nothing left to merge.
 - Read `gh pr view <url> --json mergeCommit,mergedAt,headRefOid`.
