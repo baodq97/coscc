@@ -158,6 +158,39 @@ def _answers_block(directory: Path, artifact: str, repeat_content: bool) -> str 
     )
 
 
+# `0115` R6. Not `_ANSWERS_ADVICE`: an `impl` step writes `impl.md` itself, so nothing writes
+# the section back after it, and saying the app does would be false. The same words wherever
+# the block appears, so a test can check for one fixed string.
+_IMPL_ANSWERS_ADVICE = (
+    "This is a person's decision, already made. Cite it as `impl.md ## Answers, câu N` "
+    "rather than reporting it back as if you had found it yourself. You write `impl.md` "
+    "yourself: do not edit, move or add a block to its `## Answers` section, and put "
+    "everything you write into `impl.md` above that section, leaving it the end of the file "
+    "byte for byte. A question already answered keeps its number; a new question takes a "
+    "number not yet used anywhere in the file."
+)
+
+
+def _impl_answers_block(directory: Path) -> str | None:
+    """`0115` R6: an `impl` step is told what a person answered its own `impl.md`: its
+    `## Open questions` and `## Answers`, each verbatim, and `_IMPL_ANSWERS_ADVICE`. `None`
+    when `impl.md` cannot be read or has no `## Answers` section. The rest of `impl.md` stays
+    named by path only (spec Design 4)."""
+    try:
+        raw = (directory / "impl.md").read_bytes()
+    except OSError:
+        return None
+    section = answers_section(raw)
+    if section is None:
+        return None
+    return (
+        "# The answers already given to this artifact\n\n"
+        f"{_open_questions(raw.decode('utf-8', errors='replace'))}\n\n"
+        f"{section.decode('utf-8', errors='replace')}\n\n"
+        f"{_IMPL_ANSWERS_ADVICE}"
+    )
+
+
 # `0044` R15. The header `Service.precedent` writes (`Answered by: Jera. … Via: precedent.`).
 _JERA_META = re.compile(r"^Answered by:\s*Jera\.", re.IGNORECASE)
 _BLOCK_HEAD = re.compile(r"^###\s+(.+?)\s*$")
@@ -486,6 +519,13 @@ def compose_prompt(
     own_answers = False
     if is_prose_stage(stage) and not writes_own and stage != "review":
         block = _answers_block(directory, artifact, repeat_content=stage != "intent")
+        if block:
+            own_answers = True
+            parts.append(block)
+    # `0115` R6. A draft `impl.md` that asked a person carries the answers; the step that
+    # runs next is told them, and that the section is not its to touch.
+    if stage in ("impl", "implement"):
+        block = _impl_answers_block(directory)
         if block:
             own_answers = True
             parts.append(block)
