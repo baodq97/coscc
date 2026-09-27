@@ -1103,6 +1103,60 @@ class Scripted(_Base):
         self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"],
                          {"unit": "0001_a", "kind": "f", "reason": "finish and accept plan.md"})
 
+    # --- `0127`, a prose step whose reply lacked its opening runs once more ---------
+
+    def unopened(self, unit, stage):
+        Journal(self.config.working_dir, self.config.data_dir).finished(
+            self.key, unit, stage, "failed", detail=f"{stage}.md lacks its opening: no `Status:` line in its header")
+
+    async def test_0127_r8_a_first_opening_failure_runs_its_stage_again(self):
+        self.unopened("0001_a", "plan")
+        self.add("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "plan", "autopilot")])
+        self.assertEqual(self.stops(), {})
+
+    async def test_0127_r8_the_rerun_that_fails_the_same_way_stops_e(self):
+        self.unopened("0001_a", "plan")
+        self.add("0001_a", "plan")
+        await self.pass_()
+        self.release.set()
+        await self.settled()
+        self.unopened("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+                         "the last plan step ended failed")
+        self.assertEqual((len(self.picks()), len(self.launched)), (1, 1))
+
+    async def test_0127_r8_the_two_counts_are_apart(self):
+        self.ran_out("0001_a", "plan")
+        self.add("0001_a", "plan")
+        await self.pass_()
+        self.release.set()
+        await self.settled()
+        self.unopened("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual((len(self.launched), self.stops()), (2, {}))
+        await self.settled()
+        Journal(self.config.working_dir, self.config.data_dir).finished(
+            self.key, "0001_a", "plan", "failed", detail="the session returned nothing")
+        await self.pass_()
+        self.assertEqual(self.stops(), {"0001_a": "e"})
+        self.assertEqual(len(self.launched), 2)
+
+    async def test_0127_r8_the_rerun_branch_passes_the_count_too(self):
+        # As `0120`'s: no answer since the last start, so the stop is `f`, not the `e` a count
+        # left at 0 would give.
+        self.add_rerun("0001_a", "plan", "start")
+        Journal(self.config.working_dir, self.config.data_dir).append(
+            {"kind": "start", "workspace": self.key, "unit": "0001_a", "stage": "plan", "started_by": "autopilot"})
+        self.unopened("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"],
+                         {"unit": "0001_a", "kind": "f", "reason": "finish and accept plan.md"})
+
 
 class ResumedAtStartUp(unittest.TestCase):
     """R5 c. The Reflex lifespan task, since the real stack never runs `api.py`'s.

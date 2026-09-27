@@ -235,9 +235,12 @@ class AutopilotMixin:
                     found[name] = {"unit": name, "kind": "f", "reason": str(e)}
                     reasons[name] = ("running", here[name]) if name in here else autopilot.reason_for({}, "", found[name])
                     continue
-                # `0120`: a first `exhausted` step of a stage other than `ship` runs again once.
-                ran_out = autopilot.exhausted_of(records, key, name, str((last.get(name) or {}).get("stage") or ""))
-                stop = autopilot.stop_for(u, nxt, last.get(name), settings["autopilot_may_ship"], ran_out)
+                # `0120`: a first `exhausted` step of a stage other than `ship` runs again once;
+                # `0127`: so does a first prose step whose reply lacked its opening.
+                last_stage = str((last.get(name) or {}).get("stage") or "")
+                ran_out = autopilot.exhausted_of(records, key, name, last_stage)
+                unopened = autopilot.unopened_of(records, key, name, last_stage)
+                stop = autopilot.stop_for(u, nxt, last.get(name), settings["autopilot_may_ship"], ran_out, unopened)
                 stage = nxt.get("stage") or ""
                 info = u.get("integration") or {}
                 # `0124`: not while its step runs, whose `start` is already in the window.
@@ -281,6 +284,7 @@ class AutopilotMixin:
                     elif not autopilot.answered_since_start(records, key, name, nxt["rerun"]):
                         stop = autopilot.stop_for(
                             u, {**nxt, "rerun": ""}, last.get(name), settings["autopilot_may_ship"], ran_out,
+                            unopened,
                         )
                     else:
                         stage, rerun = nxt["rerun"], True
