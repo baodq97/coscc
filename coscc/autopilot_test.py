@@ -85,6 +85,39 @@ class Stops(unittest.TestCase):
             self.assertEqual(got["kind"], "e", outcome)
         self.assertIsNone(ap.stop_for(unit(), nxt("pr", "x"), {"kind": "end", "stage": "impl", "outcome": "done"}, True))
 
+    def test_e_0120_a_first_exhausted_step_is_no_stop(self):
+        ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
+        self.assertIsNone(ap.stop_for(unit(), nxt("plan", "write-plan"), ran_out, False, exhausted=1))
+
+    def test_e_0120_a_second_exhausted_step_stops_with_the_same_words(self):
+        ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
+        self.assertEqual(ap.stop_for(unit(), nxt("plan", "write-plan"), ran_out, False, exhausted=2),
+                         {"kind": "e", "reason": "the last plan step ended exhausted"})
+
+    def test_e_0120_an_exhausted_ship_stops_the_first_time(self):
+        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
+        self.assertEqual(ap.stop_for(unit(), nxt("ship", "write-ship"), ran_out, True, exhausted=1)["kind"], "e")
+
+    def test_e_0120_failed_cancelled_and_stopped_stop_whatever_the_count(self):
+        for outcome in ("failed", "cancelled", "stopped"):
+            last = {"kind": "end", "stage": "plan", "outcome": outcome}
+            self.assertEqual(ap.stop_for(unit(), nxt("plan", "write-plan"), last, False, exhausted=1)["kind"], "e", outcome)
+
+    def test_e_0120_a_first_exhausted_step_still_meets_every_other_stop(self):
+        ran_out = {"kind": "end", "stage": "plan", "outcome": "exhausted"}
+        qs =[{"artifact": "plan.md", "n": 1, "answered": False, "counted": True}]
+        cases = [
+            (unit(qs), nxt("plan", "write-plan"), ran_out, "a"),
+            (unit(), nxt("", "answer F1", waiting=["F1"]), ran_out, "b"),
+            (unit(), nxt("", "finish and accept plan.md"), ran_out, "f"),
+            (unit(), nxt("", "paused — x", hold={"state": "paused"}), ran_out, None),
+            (unit(), nxt("ship", "write-ship"), {**ran_out, "stage": "review"}, "c"),
+        ]
+        for row_, next_, last, kind in cases:
+            got = ap.stop_for(row_, next_, last, False, exhausted=1)
+            self.assertEqual((got or {}).get("kind"), kind, next_)
+            self.assertEqual(got, ap.stop_for(row_, next_, {**last, "outcome": "done"}, False), next_)
+
     def test_e_an_integration_that_failed_or_that_the_autopilot_had_refused(self):
         failed = {"kind": "integration", "outcome": "failed", "detail": "gh down"}
         self.assertEqual(ap.stop_for(unit(), nxt("review", "x"), failed, True)["kind"], "e")

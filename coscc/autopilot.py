@@ -83,13 +83,15 @@ def stop_for(
     nxt: dict[str, Any],
     last: dict[str, Any] | None,
     may_ship: bool,
+    exhausted: int = 0,
 ) -> dict[str, str] | None:
     """The first of R6's stops that holds for one unit, as `{kind, reason}`, or `None`.
 
     `unit_row` is the unit as `Service.board` has it; `nxt` is `Service.next_step`'s answer;
     `last` the unit's latest `end`, `integration` or `screens` (`0111`) record, or `None`. `None` back means no
     stop, which is not the same as something to run: a finished, rejected or held unit, and
-    one waiting on CI, have neither.
+    one waiting on CI, have neither. `exhausted` is how many steps of `last`'s stage ended
+    `exhausted` (`exhausted_of`); left at 0, an exhausted step stops as before `0120`.
     """
     stage = str(nxt.get("stage") or "")
     action = str(nxt.get("action") or "")
@@ -120,9 +122,13 @@ def stop_for(
     if kind == "integration" and outcome == "needs-person":
         said = "; ".join(str(x) for x in (last or {}).get("needs_person") or []) or "no reason given"
         return _stop("d", f"the last integration needs a person: {said}")
-    # e. The unit's last step did not end `done`; no retry (`spec.md ## Answers`, câu 1). An
-    # integration that failed, or that the autopilot started and was refused, is the same.
-    if kind == "end" and outcome != "done":
+    # e. The unit's last step did not end `done`. The first time a stage other than `ship` ends
+    # `exhausted` is no stop: it runs again once, and the second time stops; `ship` stops the
+    # first time (`0120 intent.md ## Answers`, câu 3, 4). Otherwise no retry (`spec.md
+    # ## Answers`, câu 1): `failed`, `cancelled`, `stopped`, and an integration that failed or
+    # that the autopilot started and was refused.
+    ran_out_once = outcome == "exhausted" and (last or {}).get("stage") != "ship" and exhausted == 1
+    if kind == "end" and outcome != "done" and not ran_out_once:
         return _stop("e", f"the last {last.get('stage')} step ended {outcome or 'without an outcome'}")
     if kind == "integration" and (
         outcome == "failed" or (outcome == "refused" and last.get("started_by") == "autopilot")
