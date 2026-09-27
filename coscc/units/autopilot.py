@@ -57,6 +57,8 @@ FINISHED = "finished"
 CLOSED = "closed — "
 # `0040` R7: `impl` waits on another unit's merge, `cos.mjs` `WAITING_ON`.
 WAITING_ON = "waiting on "
+# `0126` R4: a `ship` that records a merge already made and merges nothing, `cos.mjs` `mergedLine`.
+RECORDING = "record it in ship.md; do not merge"
 
 _NUMBER = re.compile(r"^(\d+)")
 
@@ -76,6 +78,12 @@ def is_ci_red(said: str) -> bool:
     """`0124` R2: `next` sends the unit back to `impl` because CI is red. Read anywhere in
     the words, since `onReview` and `rebased` put the gate's reason after their own."""
     return CI_RED in (said or "")
+
+
+def is_recording_ship(said: str) -> bool:
+    """`0126` R4: `next`'s action or the gate's open line names a `ship` that only records a
+    merge already made. Both take the words from `mergedLine`, never beside a merge pin."""
+    return RECORDING in (said or "")
 
 
 def is_step(record: dict[str, Any]) -> bool:

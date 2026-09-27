@@ -17,6 +17,9 @@ from coscc.agent.policy import GRANTS, NOVEL_CEILINGS
 COS_MJS = Path(__file__).resolve().parents[2] / ".claude" / "scripts" / "cos.mjs"
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
+# `0126`: `next`'s two actions for `ship`, one after the merge and one before it.
+RECORDING_SHIP = "write-ship — #95 was merged as abc1234 at 2026-09-20T00:00:00Z: record it in ship.md; do not merge"
+MERGING_SHIP = "write-ship — merge with --match-head-commit abc1234"
 
 
 def at(delta: timedelta = timedelta()) -> str:
@@ -42,6 +45,12 @@ class TheWordsAreCosMjs(unittest.TestCase):
         self.assertIn(f"action: '{ap.FINISHED}'", text)
         self.assertIn("`" + ap.CLOSED + "${s.name} rejected`", text)
         self.assertIn(f"export const WAITING_ON = '{ap.WAITING_ON}'", text)
+        self.assertIn(": " + ap.RECORDING + "`", text)
+
+    def test_is_recording_ship_reads_the_merged_line_and_not_the_merge_pin(self):
+        self.assertTrue(ap.is_recording_ship(RECORDING_SHIP))
+        self.assertFalse(ap.is_recording_ship(MERGING_SHIP))
+        self.assertFalse(ap.is_recording_ship(""))
 
 
 class AUnitWaitingOnADependency(unittest.TestCase):
