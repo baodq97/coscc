@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator
 
 from coscc import backlog
 from coscc import board as board_reader
-from coscc import drift, events, fetches, gitops
+from coscc import drift, efforttrial, events, fetches, gitops
 from coscc import harness, integrate, knowledge
 from coscc import planmap, priorfindings, retake
 from coscc.board import Unavailable
@@ -889,6 +889,10 @@ class StepsMixin:
                 failed = journal.failed_attempts(key, unit, stage)
             except Busy as e:
                 raise Invalid(str(e)) from e
+            # `0123` R7. A return to `impl` with the trial on asks `next` once whether CI sent it
+            # back; `_ci_red` never raises, so nothing here refuses the step.
+            if "trial_record" in config and (config.get("impl_run") or 0) > 1:
+                config["trial_record"][efforttrial.CI_RED] = await self._ci_red(cwd, unit, work)
             end_fields = None
             if rounds_before is not None:
                 async def end_fields() -> dict[str, Any]:

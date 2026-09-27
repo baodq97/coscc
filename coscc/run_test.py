@@ -100,6 +100,29 @@ class TheVersionAnswer(unittest.TestCase):
             self.assertEqual(caught.exception.code, code)
             called.assert_called_once_with(["show"])
 
+    def test_effort_measure_is_reached_from_the_command_line(self):
+        """`0123` R8: `coscc effort measure` is a terminal command, answered and exited."""
+        from unittest import mock
+
+        from coscc import effort_measure
+
+        for code in (0, 2):
+            with mock.patch.object(effort_measure, "main", return_value=code) as called, \
+                    mock.patch("uvicorn.Server", side_effect=AssertionError("a server")):
+                with self.assertRaises(SystemExit) as caught:
+                    run.main(["effort", "measure", "--workspace", "coscc-1"])
+            self.assertEqual(caught.exception.code, code)
+            called.assert_called_once_with(["measure", "--workspace", "coscc-1"])
+
+    def test_the_usage_names_effort(self):
+        import contextlib
+        import io
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+            run.main(["--verison"])
+        self.assertIn("effort measure", err.getvalue())
+
 
 class ResetPassword(unittest.TestCase):
     """`0070` R10: the way back from a forgotten password, at a shell on this machine."""

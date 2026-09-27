@@ -23,6 +23,12 @@ and effort are looked up separately, variant first, then the base row (spec R6).
 taken only from an override, never from `models.json` (spec R7): only a person who chose it
 spends it.
 
+**The effort trial** (`0123_no-one-knows-if-each-stage-runs-at-the-right-effort`). `resolve`
+may be handed a `trial_effort`, and then the effort is looked up override, trial, default:
+an `effort:<name>` override still wins (spec R4), and the model is looked up as before. Only
+a board step of `impl` with `COS_EFFORT_TRIAL` on hands one in (`coscc/efforttrial.py`);
+`table` never does, so Settings shows what it showed before (spec C11).
+
 **What it does not hold is the list of stages.** That list is `cos.mjs`'s, and the caller
 passes it in (`coscc/board.py` `stages`). A key here that `cos.mjs` does not name is
 reported as a problem, never shown as a stage — `.claude/CLAUDE.md` forbids a second copy
@@ -57,6 +63,8 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 OVERRIDE_ONLY = "max"
 
 OVERRIDE = "override"
+# `0123`. The effort came from the trial, between an override and the default.
+TRIAL = "trial"
 DEFAULT = "default"
 ENV = "COS_MODEL"
 NONE = "none"
@@ -140,11 +148,15 @@ def resolve(
     effort_overrides: dict[str, str],
     defaults: dict[str, dict[str, str | None]],
     env_model: str | None,
+    trial_effort: str | None = None,
 ) -> tuple[str | None, str, str | None, str]:
     """`(model, model_source, effort, effort_source)` for one row, in spec R6's order.
 
     The `<name>:novel` keys are consulted only when `label` is `novel`; whether such a row
     may exist at all is `table`'s question, not this one's.
+
+    `trial_effort` (`0123` R3) is taken, as `TRIAL`, when no key has an effort override.
+    `None` leaves everything as it was.
     """
     keys = ([name + NOVEL_SUFFIX] if label == NOVEL else []) + [name]
 
@@ -159,6 +171,8 @@ def resolve(
     model, model_source = pick("model", model_overrides)
     if model is None and env_model:
         model, model_source = env_model, ENV
+    if trial_effort and not any(effort_overrides.get(key) for key in keys):
+        return model, model_source, trial_effort, TRIAL
     effort, effort_source = pick("effort", effort_overrides)
     return model, model_source, effort, effort_source
 

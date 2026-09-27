@@ -253,6 +253,7 @@ class Runner:
         started_by: str = "person",
         knowledge: str = "",
         knowledge_record: dict[str, Any] | None = None,
+        trial_record: dict[str, Any] | None = None,
         rerun: bool = False,
         rerun_note: str = "",
         prior_findings: str = "",
@@ -317,6 +318,10 @@ class Runner:
         `knowledge` and `knowledge_record` are `0090` R3/R4's: the slice of the store
         `service.run_step` read, for the prompt, and its `{version, entries, bytes}`, for
         `start`. `None` leaves the record without the field, which is what the flag off is.
+
+        `trial_record` is `0123` R6/R7's: `{effort_trial, ci_red}` as `service.run_step` worked
+        them out for an `impl` step, for `start` and nowhere else. `None` leaves the record
+        without either field, which is what the flag off is.
 
         `rerun` and `rerun_note` are `0054` R7's: a stage a person ran again from the board,
         and their note, into the prompt and into `start`. False leaves both as they were.
@@ -430,6 +435,8 @@ class Runner:
                 **({"shortlist": shortlist} if shortlist is not None else {}),
                 # `0090` R4. Beside `model`, and only when the flag was on for this stage.
                 **({"knowledge": knowledge_record} if knowledge_record is not None else {}),
+                # `0123` R6/R7. The same: only an `impl` step with the flag on.
+                **(trial_record or {}),
                 # `0110` R7. Every `impl` start from this build, `bytes: 0` when nothing
                 # matched, so `verify_0110` tells "nothing to hand" from an older build.
                 **(

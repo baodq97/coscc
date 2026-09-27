@@ -14,7 +14,7 @@ from coscc import board as board_reader
 from coscc.board import Unavailable
 from coscc.data import Data
 from coscc.journal import BadRecord, Busy, Journal
-from coscc import labels, models
+from coscc import efforttrial, labels, models
 from coscc.run import LOOPBACK
 from coscc.runner import SESSIONS_PER_STEP
 from coscc.service_common import Invalid
@@ -68,6 +68,11 @@ class ModelsMixin:
         is spent. The label chooses a configuration and nothing else (spec R11).
 
         `Busy` from the run log is left to the caller, as `failed_attempts` is.
+
+        `0123` R2-R6. With `COS_EFFORT_TRIAL` on and `stage` `impl`, the unit's arm picks
+        whether the trial's effort is handed to `resolve`, and `trial_record` says which arm
+        and whether it was taken. Off, or any other stage, `resolve` is called as before and
+        there is no `trial_record` key, so `Runner.run` is handed nothing new.
         """
         try:
             plan_text: str | None = (Path(directory) / "plan.md").read_text(encoding="utf-8", errors="replace")
@@ -75,11 +80,19 @@ class ModelsMixin:
             plan_text = None
         history = [r for r in journal.records(key, unit) if r.get("stage") == "impl"]
         label_declared, label, label_source = labels.label_for(stage, stages, plan_text, history)
+        trial = self.config.effort_trial and stage == efforttrial.STAGE
+        arm = efforttrial.arm(unit) if trial else None
+        trial_kw = {"trial_effort": efforttrial.effort_for(stage, label, arm)} if arm else {}
         model, model_source, effort, effort_source = models.resolve(
             stage, label, self._model_overrides()[0], self._effort_overrides()[0],
-            models.load_defaults()[0], self.config.model,
+            models.load_defaults()[0], self.config.model, **trial_kw,
+        )
+        trial_record = (
+            {"trial_record": {efforttrial.FIELD: {"arm": arm, "applied": effort_source == models.TRIAL}}}
+            if arm else {}
         )
         return {
+            **trial_record,
             "model": model, "model_source": model_source,
             "effort": effort, "effort_source": effort_source,
             "label_declared": label_declared, "label": label, "label_source": label_source,
@@ -89,6 +102,16 @@ class ModelsMixin:
                 sum(1 for r in history if r.get("kind") == "start") + 1 if stage == "impl" else None
             ),
         }
+
+    async def _ci_red(self, cwd: str, unit: str, repo: str) -> bool | None:
+        """`0123` R7. Whether `cos.mjs next` sends `unit` back to `impl` because CI is red, read
+        with `autopilot.is_ci_red`; `None` when it could not be asked. Never raises: the answer
+        is recorded and refuses nothing."""
+        try:
+            found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo)
+            return autopilot.is_ci_red(str(found.get("action") or ""))
+        except Exception:  # noqa: BLE001 — R7, recorded as null
+            return None
 
     async def _findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, Any]:
         """`0033` R10. The findings in the rounds a `review` step added, off the board —

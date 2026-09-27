@@ -185,6 +185,11 @@ def _answer_and_stop(args: list[str]) -> None:
         from coscc import knowledge_cli
 
         raise SystemExit(knowledge_cli.main(args[1:]))
+    if args[0] == "effort":
+        # `0123` R8. The effort trial's verdict, on the same terms as `knowledge`.
+        from coscc import effort_measure
+
+        raise SystemExit(effort_measure.main(args[1:]))
     if args == ["reset-password"]:
         from coscc.config import from_env
         from coscc.data import Data
@@ -195,7 +200,7 @@ def _answer_and_stop(args: list[str]) -> None:
         return
     print(
         f"coscc: unrecognised argument {args[0]!r}\n"
-        "usage: coscc [--version | reset-password | knowledge ...]\n"
+        "usage: coscc [--version | reset-password | knowledge ... | effort measure ...]\n"
         "everything else is configuration, and it is read from the environment "
         "(COS_HOST, COS_PORT, COS_WORKING_DIR, ...) -- see docs/install.md",
         file=sys.stderr,

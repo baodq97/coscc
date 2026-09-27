@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import tempfile
 import unittest
 from pathlib import Path
@@ -201,6 +202,13 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
             self.assertEqual(novel[field], impl[field], field)
         for stage in ("pr:novel", "review:novel", "ship:novel"):
             self.assertNotIn(stage, stages)
+
+    def test_settings_are_the_same_with_the_trial_on(self):
+        """`0123` spec C11: Settings never shows the trial, whatever arm anything is in."""
+        on = Service(dataclasses.replace(self.service.config, effort_trial=True), self.probe)
+        self.assertEqual(asyncio.run(on.stage_models()), asyncio.run(self.service.stage_models()))
+        asyncio.run(self.service.set_stage_effort("impl", "low"))
+        self.assertEqual(asyncio.run(on.stage_models()), asyncio.run(self.service.stage_models()))
 
     def test_a_grants_tools_and_commands_are_also_lists(self):
         """`0082` F2: the page lists them; the joined strings stay in the API as they were."""

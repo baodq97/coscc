@@ -228,6 +228,20 @@ class TheKnowledgeFlag(unittest.TestCase):
                 self.assertTrue(from_env({"COS_KNOWLEDGE": raw}).knowledge)
 
 
+class TheEffortTrialFlag(unittest.TestCase):
+    """`.cos/0123_no-one-knows-if-each-stage-runs-at-the-right-effort` R1: off unless turned on."""
+
+    def test_the_effort_trial_is_off_unless_the_env_file_turns_it_on(self):
+        self.assertFalse(Config().effort_trial)
+        self.assertFalse(from_env({}).effort_trial)
+        for raw in ("", "0"):
+            with self.subTest(raw=raw):
+                self.assertFalse(from_env({"COS_EFFORT_TRIAL": raw}).effort_trial)
+        for raw in ("1", "true", "yes", "on"):
+            with self.subTest(raw=raw):
+                self.assertTrue(from_env({"COS_EFFORT_TRIAL": raw}).effort_trial)
+
+
 class TheProtectedDatabases(unittest.TestCase):
     """`0076` R4. Every test passes `env`; none reads the environment around it."""
 
