@@ -36,7 +36,7 @@ leave the file behind:
    ask once: `gh pr view --json url,number,mergeable`. If one is open for this branch, use
    its URL and skip step 2 — never open a second pull request for one branch.
 2. **Open it.** Write `pr.md` with its three body sections, `Status: draft` and no `PR:`
-   yet, then:
+   yet, and `## Scope of the diff` left empty — there is no pull request yet to count. Then:
 
    ```
    git push -u origin HEAD
@@ -47,8 +47,10 @@ leave the file behind:
    remote has never seen, and in a non-interactive session it has no way to ask. The title
    and body this puts up are temporary — the first commit's subject, and a `pr.md` still
    `draft` — and step 5 replaces both.
-3. **Record it at once.** As soon as you have the URL, put `PR: <url>` in the header and
-   set `Status: accepted`.
+3. **Record it at once.** As soon as you have the URL — from step 1 or step 2 — run
+   `gh pr view <url> --json files,changedFiles,additions,deletions`, write
+   `## Scope of the diff` from what it returned in the grammar under `## Output`, then put
+   `PR: <url>` in the header and set `Status: accepted`.
 4. **Then read the checks, once.** `gh pr checks <number> --required`, without `--watch`.
    Write under `## Where` what it said — `pending`, `green` or `red` — exactly as it said
    it. Pending is not green, and a repository with no required checks never opens the
@@ -106,13 +108,35 @@ carries the URL again, the branch, and the state of the required checks when thi
 written. `Status` is `draft`, `accepted` or `rejected`; `draft` only between steps 2 and 3
 above, or when no pull request could be opened (invariant 5).
 
+`## Scope of the diff` has one grammar, which `cos.mjs pr-text` reads and the app compares
+with GitHub after the step:
+
+```markdown
+## Scope of the diff
+
+<changedFiles> files, +<additions>/-<deletions>
+- `<path>`
+- `<path>`
+
+<prose, if any>
+```
+
+- The first non-blank line is exactly that, plain ASCII, no bold, `files` even for one.
+- Right after it, one `` - `<path>` `` line for each entry of `files`, each path once.
+- Prose, the source sentence of invariant 6 among it, only after the list.
+- When `files` has fewer entries than `changedFiles`, list only what `gh` returned, and
+  add a sentence after the list giving both numbers.
+
 ## Invariants
 
 1. **The URL is real and was returned by `gh`** — by the command that opened the PR, or by
    `gh pr view` or the app's lookup for one already open. Never compose one from a pattern.
 2. **`PR: <url>` is in the header.** Without it the `review` gate is closed with
    `pr.md names no pull request`.
-3. **`## Scope of the diff` names files and counts**, both taken from `git diff --stat`.
+3. **`## Scope of the diff` names files and counts**, both from step 3's
+   `gh pr view <url> --json files,changedFiles,additions,deletions`, never from `git diff`
+   against any ref: GitHub counts from the merge-base with the remote base,
+   which is what the reader of the pull request sees.
 4. **`## What a reviewer should look at first` names the risky part**, not the largest
    part. If `impl.md` recorded a departure from the plan, that is usually it. The reviewer
    is a separate agent session that reads this first.

@@ -437,7 +437,32 @@ export function prText(text) {
   const statusAt = m ? text.slice(0, m.index).split('\n').length - 1 : -1
   const kept = lines.filter((_, i) => i !== statusAt && i !== titleAt)
   while (kept.length && /^\s*$/.test(kept[0])) kept.shift()
-  return { title, body: kept.join('\n'), url: parsePr(text)?.url ?? null }
+  return { title, body: kept.join('\n'), url: parsePr(text)?.url ?? null, scope: prScope(text) }
+}
+
+// `0122` R2, R3. What `pr.md ## Scope of the diff` states, in write-pr's grammar: the first
+// non-blank line `<N> files, +<A>/-<D>`, then one `` - `<path>` `` per file, then prose.
+// `null` with no such heading, a first line in any other form, or a path listed twice.
+// Regexes and comparisons only, so no string makes it throw; a bug here is a red test, not
+// a silent `null`.
+export function prScope(text) {
+  const lines = text.split('\n').map((l) => l.replace(/\r$/, ''))
+  const at = lines.findIndex((l) => /^## Scope of the diff\s*$/.test(l))
+  if (at === -1) return null
+  const next = lines.findIndex((l, i) => i > at && l.startsWith('## '))
+  const part = lines.slice(at + 1, next === -1 ? lines.length : next)
+  let i = part.findIndex((l) => l.trim() !== '')
+  const m = i === -1 ? null : part[i].match(/^(\d+) files, \+(\d+)\/-(\d+)\s*$/)
+  if (!m) return null
+  for (i += 1; i < part.length && part[i].trim() === ''; i++);
+  const paths = []
+  for (; i < part.length; i++) {
+    const p = part[i].match(/^- `([^`]+)`\s*$/)
+    if (!p) break
+    paths.push(p[1])
+  }
+  if (new Set(paths).size !== paths.length) return null
+  return { files: Number(m[1]), additions: Number(m[2]), deletions: Number(m[3]), paths }
 }
 
 const ROUND_HEAD = /^## Round (\d+)\s*$/

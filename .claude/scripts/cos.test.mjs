@@ -10,7 +10,7 @@ import {
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
-  parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking, prText,
+  parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking, prText, prScope,
   UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe, stageAt,
   aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip, normalizePatch, openLines,
 } from './cos.mjs'
@@ -1973,6 +1973,64 @@ test('0055 R2: pr-text writes nothing and leaves status as it was', () => {
   const before = [cli('--root', root, 'status', '--json').stdout, listing()]
   assert.equal(cli('--root', root, 'pr-text', '0001_a').status, 0)
   assert.deepEqual([cli('--root', root, 'status', '--json').stdout, listing()], before)
+})
+
+// --- 0122: the scope pr.md states, read beside its title and body -----------------
+
+const SCOPED = PR_MD.replace(
+  '## Scope of the diff\n\n',
+  '## Scope of the diff\n\n3 files, +120/-7\n- `a.py`\n- `docs/b c.md`\n- `.claude/x.mjs`\n\nCounted by gh pr view.\n\n',
+)
+
+test('0122 R3: a scope written to its grammar is read as counts and paths', () => {
+  assert.deepEqual(prText(SCOPED).scope, {
+    files: 3, additions: 120, deletions: 7, paths: ['a.py', 'docs/b c.md', '.claude/x.mjs'],
+  })
+  assert.deepEqual(prScope('## Scope of the diff\n1 files, +0/-0\n'), { files: 1, additions: 0, deletions: 0, paths: [] })
+})
+
+test('0122 R3: no Scope of the diff heading is a null scope', () => {
+  assert.equal(prScope(''), null)
+  assert.equal(prScope('# PR: x\nStatus: accepted.\n\n## Where\n\n3 files, +1/-1\n'), null)
+  assert.equal(prScope('### Scope of the diff\n\n3 files, +1/-1\n'), null)
+  assert.equal(prText(PR_MD).scope, null, 'an empty section is no scope')
+  assert.equal(prScope('x\n## Scope of the diff'), null, 'a heading on the last line')
+})
+
+test('0122 R3: the old git diff --stat line is a null scope', () => {
+  // `.cos/0014_product-cannot-start-a-work-unit/pr.md:19`, verbatim.
+  const old = PR_MD.replace('## Scope of the diff\n\n', '## Scope of the diff\n\n`git diff --stat main...HEAD`: **27 file, +2413 −84**.\n\n')
+  assert.equal(prText(old).scope, null)
+  for (const line of ['1 file, +1/-1', '**3 files, +1/-1**', '3 files, +1/−1', '3 files, +1/-1 from main']) {
+    assert.equal(prScope(`## Scope of the diff\n\n${line}\n`), null, line)
+  }
+})
+
+test('0122 R3: a path listed twice is a null scope', () => {
+  assert.equal(prScope('## Scope of the diff\n\n2 files, +1/-1\n- `a.py`\n- `b.py`\n- `a.py`\n'), null)
+})
+
+test('0122 R3: prose after the list is not a path, and the body is kept byte for byte', () => {
+  const text = SCOPED.replace('Counted by gh pr view.', 'Counted by gh pr view.\n- `z.py`')
+  assert.deepEqual(prScope(text).paths, ['a.py', 'docs/b c.md', '.claude/x.mjs'])
+  assert.deepEqual(prScope('## Scope of the diff\n\n1 files, +1/-1\n- `a.py`\n## Next\n- `b.py`\n').paths, ['a.py'])
+  assert.equal(prText(SCOPED).body, SCOPED.split('\n').slice(3).join('\n'))
+})
+
+test('0122 R3: a file with \\r\\n reads the same scope', () => {
+  const crlf = SCOPED.replace(/\n/g, '\r\n')
+  assert.deepEqual(prText(crlf).scope, prText(SCOPED).scope)
+  assert.equal(prText(crlf).body, SCOPED.split('\n').slice(3).join('\r\n'))
+})
+
+test('0122 R3: pr-text prints scope beside title, body, url and status', () => {
+  const root = prTree({ '0001_a': SCOPED })
+  const out = cli('--root', root, 'pr-text', '0001_a')
+  assert.equal(out.status, 0, out.stderr)
+  const got = JSON.parse(out.stdout)
+  assert.deepEqual(got, { unit: '0001_a', ...prText(SCOPED), status: 'accepted' })
+  assert.deepEqual(Object.keys(got).sort(), ['body', 'scope', 'status', 'title', 'unit', 'url'])
+  assert.equal(got.scope.files, 3)
 })
 
 // --- a UI unit ships only with screenshots a review looked at (0083) ----------

@@ -17,7 +17,7 @@ from coscc import board as board_reader
 from coscc import gitops
 from coscc import hold as hold_rules
 from coscc import policy
-from coscc import prcomment, prsync
+from coscc import prcomment, prscope, prsync
 from coscc import precedent as precedent_mod
 from coscc.board import Unavailable
 from coscc.gitops import GitError
@@ -128,9 +128,11 @@ class AnswersMixin:
         `pr-sync` row says how it went, `existed` from the lookup before the step -- `None`
         when that lookup could not answer, never a guess; a row
         that cannot be written is dropped, as `_post_round` drops one. `pr.md` is never
-        touched.
+        touched. `0122` R4: once `prsync` has run, whatever it said, `prscope` reads the pull
+        request's own counts and the row carries them as `scope`, with a verdict no gate reads.
         """
         url, outcome, detail = "", "failed", ""
+        scope: dict[str, Any] | None = None
         try:
             text = await board_reader.pr_text(self._units_root(cwd), unit)
             url = str(text.get("url") or "")
@@ -141,11 +143,10 @@ class AnswersMixin:
             elif not url or not prcomment.PR_URL_RE.match(url):
                 outcome, detail = "skipped", f"pr.md names no pull request URL: {url!r}"
             else:
-                result = await prsync.sync(
-                    url, text.get("title"), str(text.get("body") or ""),
-                    str(Path(cwd).expanduser().resolve()),
-                )
+                where = str(Path(cwd).expanduser().resolve())
+                result = await prsync.sync(url, text.get("title"), str(text.get("body") or ""), where)
                 outcome, detail = result.state, result.reason
+                scope = await prscope.read(url, text.get("scope"), where)
         except Unavailable as e:
             detail = str(e)
         except Exception as e:  # noqa: BLE001 — R5: the step is done whatever this does
@@ -159,6 +160,8 @@ class AnswersMixin:
         }
         if outcome in ("failed", "skipped"):
             record["detail"] = detail
+        if scope is not None:
+            record["scope"] = scope
         journal = self._journal()
         if journal is not None:
             try:
