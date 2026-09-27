@@ -18,7 +18,7 @@ def _child(row: rx.Var[ChildRow]) -> rx.Component:
             row.missing,
             rx.text(row.unit, size="2", font_family="ui-monospace, monospace"),
             rx.link(row.unit, href=row.href, size="2", data_testid="idea-child",
-                    font_family="ui-monospace, monospace", overflow_wrap="anywhere"),
+                    font_family="ui-monospace, monospace", white_space="nowrap"),
         )),
         rx.table.cell(rx.text(row.repo, size="2")),
         rx.table.cell(rx.text(row.stage, size="2")),
