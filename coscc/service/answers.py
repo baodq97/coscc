@@ -28,7 +28,7 @@ from coscc.runner import STATUS_RE
 from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
-from coscc.units import BadUnit, CannotCreate
+from coscc.units import BadUnit, CannotCreate, ideas
 from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
 
 
@@ -213,7 +213,9 @@ class AnswersMixin:
         """`0017` R8. One lock per workspace, held across numbering and making the tree."""
         return self._create_locks.setdefault(units.key(cwd), asyncio.Lock())
 
-    async def create_unit(self, cwd: str, slug: str, brief: str = "") -> dict[str, Any]:
+    async def create_unit(
+        self, cwd: str, slug: str, brief: str = "", idea: str = "", depends_on: str = ""
+    ) -> dict[str, Any]:
         """`0014` R1. Start a work unit, in the product's store rather than the repository.
 
         The number and the slug grammar are `cos.mjs`'s, through `coscc/units/__init__.py`. Nothing
@@ -223,8 +225,16 @@ class AnswersMixin:
         Since `0017` it also opens the unit's own worktree, detached at the workspace's
         `main`. A worktree that cannot be opened does not undo the unit: the result says
         why under `worktree.error`, and the next step that needs the tree tries again.
+
+        `0040` R11: with `idea`, the unit is one side of a shared idea. Everything is checked
+        before a number is taken; the unit gets no `idea.md`, and the idea gets one line under
+        `## Units`. A failed append leaves a unit the idea does not list, which `cos.mjs`
+        reports and whose `impl` it keeps shut. Without `idea`, nothing here changed.
         """
         self._workspace_or_refuse(cwd)
+        if depends_on and not idea:
+            raise Invalid("depends_on needs an idea: it names a unit already under the idea's Units.")
+        linked = self._idea_link(cwd, idea, brief, depends_on) if idea else None
         root = Path(cwd).expanduser().resolve()
         async with self._create_lock(cwd):
             reserve = [root]
@@ -246,6 +256,12 @@ class AnswersMixin:
                 }
             except (CannotCreate, BadUnit) as e:
                 raise Invalid(str(e)) from e
+            if linked is not None:
+                try:
+                    ideas.append_unit(linked["path"], linked["ws"], made["unit"], depends_on)
+                except OSError as e:
+                    raise Invalid(f"{made['unit']} was made, but {idea} could not list it: {e}") from e
+                made["idea"] = idea
             try:
                 made["worktree"] = await worktrees.ensure(
                     cwd, made["unit"], None, self.config.data_dir

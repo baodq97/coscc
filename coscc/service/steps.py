@@ -1011,6 +1011,17 @@ class StepsMixin:
 
                 async def end_fields() -> dict[str, Any]:
                     return {"answers_kept": _answers_kept(kept_in, kept_from)}
+            # `0040` R12, R13. Only for a unit an idea lists, and only for `intent` and `impl`;
+            # every other step is handed no key, so its prompt and its gate are what they were.
+            link_kw: dict[str, Any] = {}
+            if stage == "intent":
+                idea_note = self._idea_note(cwd, unit)
+                if idea_note:
+                    link_kw["idea_note"] = idea_note
+            if stage in ("impl", "implement"):
+                sibling_paths, siblings_note = await self._siblings(cwd, unit)
+                if siblings_note:
+                    link_kw.update(siblings_note=siblings_note, read_also=sibling_paths)
             runner = Runner(self.sessions, journal, app=self._app_identity())
             # `0034` R11. The registry is what the page lists and what a Stop finds; the mark
             # taken above is what everything else asks. The same start time for both, and no
@@ -1066,6 +1077,7 @@ class StepsMixin:
                     **prior_kw,
                     **plan_kw,
                     **unfinished_kw,
+                    **link_kw,
                     **config,
                     # Only named for a spike, so a stand-in `run` without it keeps working.
                     **({"watch": work} if scratch is not None else {}),

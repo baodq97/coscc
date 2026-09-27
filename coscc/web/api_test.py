@@ -1647,3 +1647,108 @@ class ARerunIsReadOffTheBodyOnlyWhenItSaysTrue(unittest.IsolatedAsyncioTestCase)
             (("/tmp", "0001_a", "pr"), {}),
             (("/tmp", "0001_a", "pr"), {"rerun": True, "note": "ghi chú"}),
         ])
+
+
+class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
+    """`0040` R10, R11, R15. Two temporary git repositories, registered as `proj` and `api`."""
+
+    async def asyncSetUp(self):
+        import subprocess
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.app = build(Config(workspaces=(), working_dir=str(self.root / "work"), data_dir=str(self.root / "data")))
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
+        self.addAsyncCleanup(self.client.aclose)
+        self.cwd = {}
+        for name in ("proj", "api"):
+            repo = self.root / "work" / name
+            repo.mkdir(parents=True)
+            for args in (["init", "-q", "-b", "main"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "0"]):
+                subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+            r = await self.client.post("/api/workspaces", json={"name": name})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.cwd[name] = r.json()["path"]
+
+    async def post(self, route: str, **body):
+        return await self.client.post(route, json=body)
+
+    async def board(self, ws: str) -> dict:
+        r = await self.client.get("/api/board", params={"cwd": self.cwd[ws]})
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    async def test_post_api_ideas_makes_0001_and_an_empty_brief_is_400(self):
+        r = await self.post("/api/ideas", cwd=self.cwd["proj"], slug="one-feature", brief="both sides")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((r.json()["id"], r.json()["ref"]), ("0001_one-feature", "proj/ideas/0001_one-feature.md"))
+        self.assertEqual((await self.post("/api/ideas", cwd=self.cwd["proj"], slug="x", brief="  ")).status_code, 400)
+
+    async def test_what_an_idea_refuses_is_refused_before_a_unit_is_made(self):
+        idea = (await self.post("/api/ideas", cwd=self.cwd["proj"], slug="f", brief="b")).json()["ref"]
+        for body in (
+            {"idea": idea, "brief": "a second copy of the idea"},
+            {"idea": idea, "depends_on": "api/0009_nothing"},
+            {"idea": "proj/ideas/0009_none.md"},
+            {"idea": "not-a-ref"},
+            {"depends_on": "api/0001_x"},
+        ):
+            r = await self.post("/api/units", cwd=self.cwd["api"], slug="x", **body)
+            self.assertEqual(r.status_code, 400, body)
+        self.assertEqual((await self.board("api"))["units"], [])
+
+    async def test_post_api_units_with_a_brief_alone_is_unchanged(self):
+        r = await self.post("/api/units", cwd=self.cwd["proj"], slug="plain", brief="words")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertNotIn("idea", r.json())
+        from coscc import units
+
+        self.assertTrue((units.unit_dir(self.cwd["proj"], r.json()["unit"], self.root / "data") / "idea.md").is_file())
+
+    async def test_a_feature_split_over_two_workspaces_is_navigable_both_ways_through_the_apps_routes(self):
+        from coscc import units
+        from coscc.web import place
+
+        idea = (await self.post("/api/ideas", cwd=self.cwd["proj"], slug="one-feature", brief="backend adds, frontend calls")).json()
+        back = await self.post("/api/units", cwd=self.cwd["api"], slug="backend-adds-api", idea=idea["ref"])
+        self.assertEqual(back.status_code, 200, back.text)
+        back_ref = f"api/{back.json()['unit']}"
+        front = await self.post("/api/units", cwd=self.cwd["proj"], slug="frontend-calls-api", idea=idea["ref"], depends_on=back_ref)
+        self.assertEqual(front.status_code, 200, front.text)
+        # A unit opened from an idea has no `idea.md`, and the idea lists both.
+        data = self.root / "data"
+        self.assertFalse((units.unit_dir(self.cwd["api"], back.json()["unit"], data) / "idea.md").exists())
+        # The frontend's intent, as the intent step is told to write it; the plan accepted.
+        front_dir = units.unit_dir(self.cwd["proj"], front.json()["unit"], data)
+        (front_dir / "intent.md").write_text(
+            f"# Intent: f\nAuthor: t. Type: feat. Status: accepted.\nIdea: {idea['ref']}. Repo: proj. Depends on: {back_ref}.\n",
+            encoding="utf-8",
+        )
+        (front_dir / "spec.md").write_text("# S\nStatus: skipped.\n", encoding="utf-8")
+        (front_dir / "plan.md").write_text("# P\nStatus: accepted.\n", encoding="utf-8")
+        (units.unit_dir(self.cwd["api"], back.json()["unit"], data) / "intent.md").write_text(
+            f"# Intent: b\nAuthor: t. Type: feat. Status: accepted.\nIdea: {idea['ref']}. Repo: api.\n", encoding="utf-8",
+        )
+
+        proj = await self.board("proj")
+        self.assertEqual(proj["ideas"][0]["units"], [
+            {"ref": back_ref, "depends_on": []},
+            {"ref": f"proj/{front.json()['unit']}", "depends_on": [back_ref]},
+        ])
+        [f] = proj["units"]
+        self.assertEqual((f["why"], f["waits_for"], f["state"]["state"]), ("dependency", [back_ref], "awaiting"))
+        [b] = (await self.board("api"))["units"]
+        self.assertEqual((b["idea"], b["repo"]), (idea["ref"], "api"))
+        self.assertEqual(b["problems"], [])
+
+        # Both ways, as the page writes the addresses.
+        ws, idea_id = idea["ref"].split("/ideas/")
+        self.assertEqual(place.href(place.Place("idea", ws, idea=idea_id[:-3])), "/idea?ws=proj&id=0001_one-feature")
+        self.assertEqual(place.href(place.Place("unit", "api", back.json()["unit"])), f"/unit?ws=api&id={back.json()['unit']}")
+        page = await self.app.state.service.idea(self.cwd["proj"], "0001_one-feature")
+        self.assertEqual([(r["ref"], r["repo"], r["waits_for"]) for r in page["units"]], [
+            (back_ref, "api", []),
+            (f"proj/{front.json()['unit']}", "proj", [back_ref]),
+        ])
+        self.assertEqual(page["brief"], "backend adds, frontend calls")
