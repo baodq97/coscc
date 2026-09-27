@@ -261,6 +261,9 @@ class Runner:
         plan_map: str = "",
         plan_map_record: dict[str, Any] | None = None,
         unfinished_round: dict[str, Any] | None = None,
+        idea_note: str = "",
+        siblings_note: str = "",
+        read_also: tuple[str, ...] = (),
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -337,6 +340,10 @@ class Runner:
 
         `unfinished_round` is `0027` R6's: the `{n, dropped}` of a last review round
         `cos.mjs` read as unfinished, for a `review` step's prompt and nowhere else.
+
+        `idea_note`, `siblings_note` and `read_also` are `0040` R12/R13's: the shared idea an
+        `intent` step's prompt carries, and the sibling checkouts an `impl` step may read, as a
+        prompt block and as paths the read boundary lets through (never writes, never `git -C`).
         """
         check_started_by(started_by)
         grant = grant_for_step(stage, label)
@@ -382,6 +389,8 @@ class Runner:
             plan_map=plan_map,
             commands=grant.commands if stage in ("impl", "implement") else (),
             unfinished_round=unfinished_round,
+            idea_note=idea_note,
+            siblings_note=siblings_note,
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
@@ -474,7 +483,12 @@ class Runner:
         # that finished (even one that merely hit its ceiling) carries no error here.
         error: dict[str, str] | None = None
         # `0039` R11: a spike writes only its `cwd`; the worktree and the unit are read.
-        gate_args = (None, (watch, str(directory))) if watch else (str(directory),)
+        # `0040` R13: only when a sibling was named, so every other step's gate is what it was.
+        gate_args = (
+            (None, (watch, str(directory))) if watch
+            else (str(directory), tuple(read_also)) if read_also
+            else (str(directory),)
+        )
         # `0034`. Set when the task is cancelled with no Stop behind it: the app is going
         # down, and no `end` is what says so.
         shutting_down = False

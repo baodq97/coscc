@@ -1323,7 +1323,9 @@ def decide(
         from pathlib import Path
 
         unit = Path(unit_dir).name if unit_dir else ""
-        reason = check_command(grant, str(tool_input.get("command", "")), lease, unit)
+        reason = check_command(grant, str(tool_input.get("command", "")), lease, unit) or _git_into(
+            str(tool_input.get("command", "")), workspace, read_also
+        )
         if reason:
             return reason
 
@@ -1362,6 +1364,51 @@ def decide(
                 )
             if not _inside(raw, roots, roots[0]):
                 return f"reading outside the workspace is not allowed: {raw}"
+    return ""
+
+
+# The options that point `git` at another repository, each with its value.
+_GIT_ELSEWHERE = ("-C", "--git-dir", "--work-tree")
+
+
+def _git_into(command: str, workspace: str, read_also: tuple[str, ...]) -> str:
+    """`0040` R13: why a `git` pointed into a path `read_also` names is refused, or "".
+
+    `read_also` widens reading, and `git -C <sibling> commit` would be a write there that no
+    write tool made. `_words` drops `-C` and its value, so the deny list never sees it; this
+    reads them. `cd <sibling> && git …` needs `cd`, which no grant holds. The rest is still
+    the read boundary, which is not a sandbox (`.claude/rules/coscc-policy.md`).
+    """
+    from pathlib import Path
+
+    if not read_also:
+        return ""
+    parsed = _read(command)
+    if isinstance(parsed, _Unreadable):
+        return ""
+    try:
+        roots = [Path(p).expanduser().resolve() for p in read_also]
+        base = Path(workspace).expanduser().resolve()
+    except OSError:
+        return "a path this step may read could not be resolved"
+    for simple in parsed.commands:
+        words = list(simple.words)
+        k = 0
+        while k < len(words) - 1 and _ASSIGNMENT.match(words[k]):
+            k += 1
+        if not words or words[k].rsplit("/", 1)[-1] != "git":
+            continue
+        rest = words[k + 1:]
+        i = 0
+        # git's own options, in front of the subcommand; `-c` takes a value too.
+        while i < len(rest) and rest[i].startswith("-"):
+            name, eq, value = rest[i].partition("=")
+            if (name in _GIT_ELSEWHERE or name == "-c") and not eq:
+                value = rest[i + 1] if i + 1 < len(rest) else ""
+                i += 1
+            if name in _GIT_ELSEWHERE and value and _inside(value, roots, base):
+                return f"git may not be pointed at {value}: this step may read that repository, not change it"
+            i += 1
     return ""
 
 

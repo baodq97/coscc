@@ -43,7 +43,7 @@ class AnswersMixin:
         round that did not make it as *not on the PR* with the reason.
         """
         try:
-            data = await board_reader.read(self._units_root(cwd))
+            data = await board_reader.read(self._units_root(cwd), peers=self._peers())
         except Unavailable as e:
             return [{"round": None, "state": "failed", "url": "", "reason": str(e)}]
         found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -71,7 +71,7 @@ class AnswersMixin:
             raise Invalid(f"a round is named by its number, got {round_n!r}") from None
         async with self._comment_lock:
             try:
-                data = await board_reader.read(self._units_root(cwd))
+                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -354,7 +354,7 @@ class AnswersMixin:
         skipped: list[dict[str, Any]] = []
         async with self._answer_lock:
             try:
-                data = await board_reader.read(self._units_root(cwd))
+                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
             except Unavailable as e:
                 raise Invalid(str(e)) from e
 
@@ -558,7 +558,7 @@ class AnswersMixin:
         text = str(note or "").strip("\n")
         async with self._answer_lock:
             try:
-                data = await board_reader.read(self._units_root(cwd))
+                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
             except Unavailable as e:
                 raise Invalid(str(e)) from e
 
@@ -715,7 +715,7 @@ class AnswersMixin:
         mark = self._take(key, unit, "hold") if held is None else None
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd))
+                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -773,7 +773,7 @@ class AnswersMixin:
         mark = self._take(key, unit, "more-rounds") if held is None else None
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd))
+                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)

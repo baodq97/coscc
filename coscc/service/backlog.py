@@ -42,7 +42,7 @@ class BacklogMixin:
         if journal is None:
             raise Invalid("no working folder is set, so nothing can be recorded — set COS_WORKING_DIR")
         try:
-            data = await board_reader.read(self._units_root(cwd))
+            data = await board_reader.read(self._units_root(cwd), peers=self._peers())
         except Unavailable as e:
             raise Invalid(str(e)) from e
         return journal, self._journal_key(cwd), data
@@ -132,7 +132,7 @@ class BacklogMixin:
         started = ended = False
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd))
+                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
                 rows = journal.records(key)
             except Unavailable as e:
                 raise Invalid(str(e)) from e
@@ -277,7 +277,7 @@ class BacklogMixin:
         started = ended = False
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd))
+                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)

@@ -351,9 +351,15 @@ def compose_prompt(
     plan_map: str = "",
     commands: tuple[str, ...] = (),
     unfinished_round: dict[str, Any] | None = None,
+    idea_note: str = "",
+    siblings_note: str = "",
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole (`spec.md` R4), and
     the ones it names by path only (`0094` R16).
+
+    `idea_note` (`0040` R12) is the shared idea a unit was opened from, placed for `intent`
+    only, and `siblings_note` (R13) the sibling checkouts `impl` may read, placed for `impl`
+    only; `""`, or any other stage, adds not one byte.
 
     `rerun` (`0054` R7) is true only for a stage a person ran again from the board, with
     `rerun_note` their note; false adds not one byte.
@@ -435,6 +441,13 @@ def compose_prompt(
             included.append(name)
             parts.append(f"# The {earlier} it follows\n\n{text}")
             break
+
+    # `0040` R12, R13. Right after the stage before: a child unit has no `idea.md`, and the
+    # idea it shares stands where that would have.
+    if idea_note and stage == "intent":
+        parts.append(f"# The idea this unit was opened from\n\n{idea_note.rstrip()}")
+    if siblings_note and stage in ("impl", "implement"):
+        parts.append(f"# The sibling repositories this step may read\n\n{siblings_note.rstrip()}")
 
     # `0039` R14. The loop above takes one artifact, and two stages need a second. `plan`
     # follows `spike` when one ran, but the requirements it orders are still in `spec.md`.

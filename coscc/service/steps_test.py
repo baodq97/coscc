@@ -513,7 +513,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
     def _after_end_with(self, why: str, stage: str = "ship") -> list[dict]:
         from coscc.units import board as board_reader
 
-        async def read(root, timeout=None):
+        async def read(root, timeout=None, peers=()):
             return {"units": [{"name": self.unit, "why": why, "questions": []}]}
 
         with mock.patch.object(board_reader, "read", read):
@@ -537,11 +537,11 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
 
         real = board_reader.read
 
-        async def broken(root, timeout=board_reader.TIMEOUT):
+        async def broken(root, timeout=board_reader.TIMEOUT, peers=()):
             # Only once the step's `end` is written: the gate before it reads the board too.
             if "end" in [r["kind"] for r in self.records()]:
                 raise board_reader.Unavailable("node is missing")
-            return await real(root, timeout)
+            return await real(root, timeout, peers)
 
         with mock.patch.object(board_reader, "read", broken):
             _, payload = self._run()[-1]

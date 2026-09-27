@@ -253,7 +253,7 @@ class StepsMixin:
             raise Invalid("name a work unit")
         directory = self._unit_dir(cwd, unit)
         try:
-            data = await board_reader.read(self._units_root(cwd))
+            data = await board_reader.read(self._units_root(cwd), peers=self._peers())
         except Unavailable as e:
             raise Invalid(str(e)) from e
         found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -629,7 +629,7 @@ class StepsMixin:
     async def _cleanup(self, cwd: str, unit: str) -> dict[str, Any]:
         """R10 after a `ship` step. Never raises; says what it did or why not."""
         try:
-            data = await board_reader.read(self._units_root(cwd))
+            data = await board_reader.read(self._units_root(cwd), peers=self._peers())
         except Unavailable as e:
             return {"removed": False, "reason": str(e)}
         found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -650,7 +650,7 @@ class StepsMixin:
             journal = self._journal()
             if journal is None:
                 return
-            data = await board_reader.read(self._units_root(cwd))
+            data = await board_reader.read(self._units_root(cwd), peers=self._peers())
             found = next((u for u in data["units"] if u["name"] == unit), None)
             if found is None:
                 return
@@ -680,7 +680,7 @@ class StepsMixin:
         # `0045` R15. Asked first with no `--repo`, which reads files only: a held unit is
         # answered here, before `_worktree` could reopen the tree a drop just removed.
         try:
-            held = await board_reader.next_step(self._units_root(cwd), unit, repo=None)
+            held = await board_reader.next_step(self._units_root(cwd), unit, repo=None, peers=self._peers())
         except Unavailable as e:
             raise Invalid(str(e)) from e
         if held.get("hold"):
@@ -699,7 +699,7 @@ class StepsMixin:
         else:
             repo = cwd
         try:
-            found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo)
+            found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo, peers=self._peers())
         except Unavailable as e:
             raise Invalid(str(e)) from e
         return {
@@ -742,7 +742,7 @@ class StepsMixin:
             )
 
         try:
-            data = await board_reader.read(self._units_root(cwd))
+            data = await board_reader.read(self._units_root(cwd), peers=self._peers())
         except Unavailable as e:
             raise Invalid(str(e)) from e
 
@@ -802,7 +802,7 @@ class StepsMixin:
         rid: str | None = None
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd))
+                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
             except Unavailable as e:
                 raise Invalid(str(e)) from e
 
@@ -873,7 +873,7 @@ class StepsMixin:
                 # `work` is the checkout the `review` and `ship` gates read git and the pull
                 # request from (`0015`). The store has no git to read.
                 allowed, said = await board_reader.gate(
-                    self._units_root(cwd), unit, stage, repo=work
+                    self._units_root(cwd), unit, stage, repo=work, peers=self._peers()
                 )
             except Unavailable as e:
                 raise Invalid(str(e)) from e

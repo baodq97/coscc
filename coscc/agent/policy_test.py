@@ -1127,3 +1127,45 @@ class TheLabelDecidesImplsCeilings(unittest.TestCase):
         """
         novel = grant_for_step("impl", "novel")
         self.assertGreater(novel.max_budget_usd, novel.max_turns * 0.0568)
+
+
+class ASiblingCheckoutIsReadNotChanged(unittest.TestCase):
+    """`0040` R13. `impl` reads the other repositories of its idea through `read_also`."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tree = Path(tmp.name) / "tree"
+        self.sibling = Path(tmp.name) / "api"
+        for d in (self.tree, self.sibling):
+            d.mkdir()
+        (self.sibling / "api.py").write_text("x = 1\n")
+        self.also = (str(self.sibling),)
+
+    def test_impl_may_read_a_sibling_checkout(self):
+        self.assertEqual(decide(IMPL, "Read", {"file_path": str(self.sibling / "api.py")}, str(self.tree), None, self.also), "")
+        self.assertEqual(decide(IMPL, "Grep", {"pattern": "x", "path": str(self.sibling)}, str(self.tree), None, self.also), "")
+
+    def test_impl_may_not_write_or_edit_there(self):
+        for tool in ("Write", "Edit"):
+            said = decide(IMPL, tool, {"file_path": str(self.sibling / "api.py")}, str(self.tree), None, self.also)
+            self.assertIn("outside the workspace", said, tool)
+
+    def test_git_c_into_a_sibling_is_refused(self):
+        for command in (
+            f"git -C {self.sibling} commit -am x",
+            f"git -C {self.sibling}/sub status",
+            f"git -c user.name=x -C {self.sibling} status",
+            f"git --git-dir={self.sibling}/.git log",
+            f"git --work-tree {self.sibling} checkout .",
+            f"npm test && git -C {self.sibling} push",
+        ):
+            said = decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also)
+            self.assertIn("may not be pointed at", said, command)
+
+    def test_git_c_elsewhere_and_git_without_it_still_run(self):
+        for command in (f"git -C {self.tree} status", "git status", f"cat {self.sibling}/api.py", "git log -C"):
+            self.assertEqual(decide(IMPL, "Bash", {"command": command}, str(self.tree), None, self.also), "", command)
+
+    def test_without_read_also_git_c_reads_as_it_did(self):
+        self.assertEqual(decide(IMPL, "Bash", {"command": f"git -C {self.sibling} status"}, str(self.tree)), "")
