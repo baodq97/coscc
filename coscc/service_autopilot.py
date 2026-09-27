@@ -130,7 +130,7 @@ class AutopilotMixin:
         """Keep the stops a pass found, and log each unit's that changed (R9, R11).
 
         `asked`: the units this pass looked at, when it did not look at all of them; the
-        others keep what they had. The log is an `autopilot-stop` record per change, `stop`
+        others keep what they had, the workspace's own stop among them. The log is an `autopilot-stop` record per change, `stop`
         empty once it cleared — what `verify_0043` reads to tell a person's press at a stop
         from one outside them. Since `0113` R3 the workspace's own stop, unit `""`, is logged
         the same way, so a notice can say it.
@@ -139,7 +139,7 @@ class AutopilotMixin:
         if asked is None:
             after = dict(found)
         else:
-            after = {**{u: s for u, s in before.items() if u and u not in asked}, **found}
+            after = {**{u: s for u, s in before.items() if u not in asked}, **found}
         self._autopilot_stops[key] = after
         journal = self._journal()
         if journal is None:

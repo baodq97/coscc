@@ -788,6 +788,16 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.logged(), [("", "f")])
 
+    async def test_a_unit_s_launch_failing_keeps_the_workspace_stop_and_logs_only_the_unit(self):
+        # Review round 1, F3: a call that looked at one unit did not look at the workspace.
+        workspace = {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST}
+        self.service._autopilot_set_stops(self.key, {"": workspace})
+        self.service._autopilot_set_stops(
+            self.key, {"0001_a": {"unit": "0001_a", "kind": "f", "reason": "said"}}, {"0001_a"},
+        )
+        self.assertEqual(self.service._autopilot_stops[self.key][""], workspace)
+        self.assertEqual(self.logged(), [("", "shortlist"), ("0001_a", "f")])
+
     # --- `0104`, the shortlist's order -----------------------------------------
 
     def one_at_a_time(self):
