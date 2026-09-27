@@ -400,6 +400,24 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         default = sdk.ClaudeAgentOptions().effort
         self.assertEqual(_options(Config(), "/p", None).effort, default)
 
+    # `0130` R5. The values and where each was measured are in `sessions.FOREGROUND_ENV`.
+    FOREGROUND = {
+        "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
+        "BASH_DEFAULT_TIMEOUT_MS": "600000",
+        "BASH_MAX_TIMEOUT_MS": "600000",
+    }
+
+    def test_a_session_holding_bash_runs_commands_in_the_foreground(self):
+        env = _options(Config(), "/p", None, tools=["Read", "Bash"]).env
+        self.assertEqual({k: env.get(k) for k in self.FOREGROUND}, self.FOREGROUND)
+
+    def test_a_session_without_bash_gets_no_foreground_ceiling(self):
+        for tools in (["Read"], []):
+            with self.subTest(tools=tools):
+                env = _options(Config(), "/p", None, tools=tools).env
+                self.assertFalse(set(self.FOREGROUND) & set(env))
+        self.assertFalse(set(self.FOREGROUND) & set(_child_env("/p")))
+
     # `0091`. One screenshot is one stdout line; every session gets the same ceiling on it.
 
     def test_the_installed_sdk_has_a_max_buffer_size_field(self):
