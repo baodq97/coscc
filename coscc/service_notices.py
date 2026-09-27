@@ -1,0 +1,84 @@
+"""Following the notices (`0113`): the run log's records a listener is told of, as they land.
+
+A mixin with no fields, like the others `Service` inherits. It reads and writes nothing but
+the lines it hands out (R13); `coscc/notices.py` decides what each record says.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any, AsyncIterator
+
+from coscc import notices
+from coscc.journal import BELL, Busy
+from coscc.service_common import Invalid
+
+
+class NoticesMixin:
+
+    # -- notices (`0113` R1, R6–R8) -------------------------------------------
+    #
+    # One stream for every listener: the page's script, a terminal, an agent's session. It
+    # holds a connection per listener for as long as that listener stays; one whose peer
+    # vanished without closing (spec C6) holds it until a `beat` fails to write.
+
+    def notice_scope(self, workspace: str) -> str | None:
+        """The journal key to narrow to, `None` for every workspace. A workspace the app does
+        not have is refused, as is a stream with no run log to read."""
+        if self._journal() is None:
+            raise Invalid("there is no working folder, so there is no run log to follow")
+        if not workspace:
+            return None
+        self._workspace_or_refuse(workspace)
+        return self._journal_key(workspace)
+
+    async def follow_notices(
+        self, scope: str | None, after: int | None, beat: float = notices.BEAT_SECONDS,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """R6, R8. With no `after`, a `head` line first and nothing at or below it; with one,
+        every notice past it first. Then each notice as it lands, in `id` order and none
+        twice, and a `beat` after `beat` seconds without a line. Never ends on its own.
+
+        A record this process appends rings `BELL` and is read at once (R7, 5 s); one another
+        process appends is read at the next wake, at most `beat` seconds on (R7, 20 s). The
+        ticket is armed before each read, so a ring during the read is not missed."""
+        journal = self._journal()
+        if journal is None:
+            raise Invalid("there is no working folder, so there is no run log to follow")
+        loop = asyncio.get_running_loop()
+        last = after
+        if last is None:
+            last = await asyncio.to_thread(journal.last_id)
+            yield {"type": "head", "id": last}
+        said = loop.time()
+        while True:
+            ticket = BELL.arm()
+            try:
+                while True:
+                    try:
+                        rows = await asyncio.to_thread(
+                            journal.notice_rows, last, notices.SOURCE_KINDS, scope, notices.PAGE,
+                        )
+                    except Busy:
+                        # Read again at the next wake; nothing is skipped past.
+                        rows = []
+                    for rid, record in rows:
+                        last = rid
+                        found = notices.notice_of(rid, record)
+                        if found is not None:
+                            yield found
+                            said = loop.time()
+                    if len(rows) < notices.PAGE:
+                        break
+                left = said + beat - loop.time()
+                if left <= 0:
+                    try:
+                        head = await asyncio.to_thread(journal.last_id)
+                    except Busy:
+                        head = last
+                    yield {"type": "beat", "id": head}
+                    said = loop.time()
+                    left = beat
+                await BELL.wait(ticket, left)
+            finally:
+                BELL.disarm(ticket)

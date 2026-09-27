@@ -709,6 +709,33 @@ def build(config: Config | None = None) -> FastAPI:
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
 
+    @api.get("/api/notices/follow")
+    async def follow_notices_route(request: Request) -> Any:
+        """`0113` R1, R6, R8. NDJSON that never ends on its own: a `head` line when there is no
+        `after`, a `notice` line per run-log record past it that is one, and a `beat` line
+        after `notices.BEAT_SECONDS` without one. `workspace` narrows to one. Reads only (R13).
+
+        Holds a connection per listener (`.claude/docs/coscc-notices.md`). A refusal is a 400
+        before the stream starts; the first line is not waited for, since with `after` it may
+        be a `beat` 15 s away."""
+        nums = _ints(request, "after")
+        if nums is None or (nums["after"] is not None and nums["after"] < 0):
+            return _bad("after must be a whole number")
+        try:
+            scope = service.notice_scope(request.query_params.get("workspace", ""))
+        except Invalid as e:
+            return _bad(str(e))
+        stream = service.follow_notices(scope, nums["after"])
+
+        async def lines() -> AsyncIterator[bytes]:
+            try:
+                async for line in stream:
+                    yield json.dumps(line).encode() + b"\n"
+            finally:
+                await stream.aclose()
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
     @api.post("/api/units/integrate")
     async def integrate_unit(request: Request) -> Any:
         """`0035`. Integrate one unit onto `main`, on request. Streams like `/api/board/run`.

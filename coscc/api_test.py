@@ -510,6 +510,43 @@ class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((line["type"], line["status"]), ("status", "ended"))
 
 
+class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0113` R12. The stream never ends, so only its refusals are read here; what it sends is
+    `service_notices_test.py`'s, which reads the generator itself."""
+
+    async def asyncSetUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        self.ws = root / "work" / "proj"
+        self.ws.mkdir(parents=True)
+        self.app = build(Config(workspaces=(str(self.ws),), working_dir=str(root / "work"),
+                                data_dir=str(root / "data")))
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_notice_refusals_are_400(self):
+        for params in ({"after": "x"}, {"after": "-1"}, {"after": "1.5"}, {"workspace": "/etc"},
+                       {"workspace": str(self.ws.parent / "other")}):
+            r = await self.client.get("/api/notices/follow", params=params)
+            self.assertEqual(r.status_code, 400, params)
+            self.assertIn("error", r.json())
+
+    async def test_no_working_folder_is_400(self):
+        app = build(_tmp_config(self))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
+            self.assertEqual((await client.get("/api/notices/follow")).status_code, 400)
+
+    async def test_the_notice_route_is_behind_the_login(self):
+        from coscc import auth
+
+        paths = {r.path for r in self.app.routes}
+        self.assertIn("/api/notices/follow", paths)
+        self.assertNotIn("/api/notices/follow", {path for _, path in auth.EXEMPT})
+
+
 if __name__ == "__main__":
     unittest.main()
 
