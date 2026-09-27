@@ -17,6 +17,9 @@ from coscc.agent.policy import GRANTS, NOVEL_CEILINGS
 COS_MJS = Path(__file__).resolve().parents[2] / ".claude" / "scripts" / "cos.mjs"
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
+# `0126`: `next`'s two actions for `ship`, one after the merge and one before it.
+RECORDING_SHIP = "write-ship — #95 was merged as abc1234 at 2026-09-20T00:00:00Z: record it in ship.md; do not merge"
+MERGING_SHIP = "write-ship — merge with --match-head-commit abc1234"
 
 
 def at(delta: timedelta = timedelta()) -> str:
@@ -42,6 +45,12 @@ class TheWordsAreCosMjs(unittest.TestCase):
         self.assertIn(f"action: '{ap.FINISHED}'", text)
         self.assertIn("`" + ap.CLOSED + "${s.name} rejected`", text)
         self.assertIn(f"export const WAITING_ON = '{ap.WAITING_ON}'", text)
+        self.assertIn(": " + ap.RECORDING + "`", text)
+
+    def test_is_recording_ship_reads_the_merged_line_and_not_the_merge_pin(self):
+        self.assertTrue(ap.is_recording_ship(RECORDING_SHIP))
+        self.assertFalse(ap.is_recording_ship(MERGING_SHIP))
+        self.assertFalse(ap.is_recording_ship(""))
 
 
 class AUnitWaitingOnADependency(unittest.TestCase):
@@ -111,6 +120,36 @@ class Stops(unittest.TestCase):
     def test_e_0120_an_exhausted_ship_stops_the_first_time(self):
         ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
         self.assertEqual(ap.stop_for(unit(), nxt("ship", "write-ship"), ran_out, True, exhausted=1)["kind"], "e")
+
+    def test_e_0126_an_exhausted_ship_is_no_stop_before_a_recording_ship(self):
+        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
+        for count in (1, 3):
+            self.assertIsNone(ap.stop_for(unit(), nxt("ship", RECORDING_SHIP), ran_out, True, exhausted=count), count)
+
+    def test_e_0126_an_exhausted_ship_still_stops_before_a_merging_ship(self):
+        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
+        self.assertEqual(ap.stop_for(unit(), nxt("ship", MERGING_SHIP), ran_out, True, exhausted=1),
+                         {"kind": "e", "reason": "the last ship step ended exhausted"})
+
+    def test_e_0126_a_recording_ship_that_ran_out_stops(self):
+        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
+        self.assertEqual(ap.stop_for(unit(), nxt("ship", RECORDING_SHIP), ran_out, True, exhausted=1, recorded=True),
+                         {"kind": "e", "reason": "the last ship step ended exhausted"})
+
+    def test_e_0126_failed_cancelled_and_stopped_ships_stop_before_a_recording_ship(self):
+        for outcome in ("failed", "cancelled", "stopped"):
+            last = {"kind": "end", "stage": "ship", "outcome": outcome}
+            self.assertEqual(ap.stop_for(unit(), nxt("ship", RECORDING_SHIP), last, True, exhausted=1)["kind"], "e", outcome)
+
+    def test_e_0126_a_recording_ship_still_meets_c(self):
+        ran_out = {"kind": "end", "stage": "ship", "outcome": "exhausted"}
+        self.assertEqual(ap.stop_for(unit(), nxt("ship", RECORDING_SHIP), ran_out, False, exhausted=1)["kind"], "c")
+
+    def test_skips_exhausted_only_for_a_ship_end(self):
+        self.assertFalse(ap.skips_exhausted(nxt("ship", RECORDING_SHIP), {"kind": "end", "stage": "plan", "outcome": "exhausted"}, False))
+        self.assertFalse(ap.skips_exhausted(nxt("ship", RECORDING_SHIP), {"kind": "integration", "stage": "ship", "outcome": "exhausted"}, False))
+        self.assertFalse(ap.skips_exhausted(nxt("ship", RECORDING_SHIP), None, False))
+        self.assertTrue(ap.skips_exhausted(nxt("ship", RECORDING_SHIP), {"kind": "end", "stage": "ship", "outcome": "exhausted"}, False))
 
     def test_e_0120_failed_cancelled_and_stopped_stop_whatever_the_count(self):
         for outcome in ("failed", "cancelled", "stopped"):

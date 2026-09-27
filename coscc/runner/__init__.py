@@ -33,6 +33,7 @@ from coscc.agent import sessions as sessions_mod
 from coscc.runlog.journal import Journal
 from coscc.agent.policy import beyond_reading, grant_for_step, is_prose_stage
 from coscc.agent.sessions import Refused, Sessions
+from coscc.units.autopilot import is_recording_ship
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
 # `coscc.runner.<name>` still resolves; a patch reaches only the module that looks it up.
@@ -465,6 +466,9 @@ class Runner:
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
         # the way `0037` picks by `system_prompt`. Only `pr` carries it.
         pr_extra = {"pr_before": pr_before or ""} if stage == "pr" else {}
+        # `0126` R3: the autopilot tells a recording `ship` that ran out from a merging one by
+        # this field. Only a `ship` whose gate named the merge already made carries it.
+        ship_extra = {"ship_mode": "record"} if stage == "ship" and is_recording_ship(gate_said) else {}
 
         # `0037`: the same condition that decides whether a gate and a tool list are sent.
         preset = CLAUDE_CODE_PRESET if grant.opens_anything else None
@@ -529,6 +533,7 @@ class Runner:
                 # is what it was.
                 **({"rerun": True, "rerun_note": rerun_note} if rerun else {}),
                 **pr_extra,
+                **ship_extra,
                 # `0092` R5: whose step this is, so the next start can tell one this process
                 # still runs from one the app went down under.
                 **({"run": recorder.run, "pid": os.getpid()} if recorder is not None else {}),
