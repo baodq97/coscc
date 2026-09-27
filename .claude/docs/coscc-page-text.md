@@ -1,6 +1,6 @@
 # What the page stopped explaining
 
-Read this before adding words to a screen, or removing the one sentence a screen keeps beside a button. Since `0082` (`.cos/0082_*/spec.md ## Answers, câu 5`) the page says one sentence per place; `.cos/0082_*/impl.md` holds the table, paragraph by paragraph, of what left the page and where it is said now.
+Read this before adding words to a screen, or removing the one sentence a screen keeps beside a button. The page says one sentence per place (0082 spec ## Answers, câu 5); 0082 impl holds the table, paragraph by paragraph, of what left the page and where it is said now.
 
 - **The page says one sentence per place, and these are no longer on it.** *Cut this unit's
   branch* fetches `main` first and cuts nothing if that fetch fails; the app never pushes,

@@ -12,7 +12,7 @@ It is also where the loop turns over. A control band breached in production is w
 the next `intent.md`, and this file is where the band is stated — so there is something for
 a later observation to be breached *against*.
 
-Since `0015` this is also the stage that merges. `pr` stops at an open pull request; the
+This is also the stage that merges (`0015`). `pr` stops at an open pull request; the
 merge waits for a review round that passed.
 
 ## Before merging
@@ -26,7 +26,7 @@ dropped, the rounds
 are numbered without a gap, and nothing outside `.cos/<unit>/` reached the branch — local,
 `origin`, or the pull request's head as GitHub reports it — after the reviewed commit.
 Exit 1 means do not merge: fix what it names. If it says code landed after the pass, that
-code goes back to `write-review` — it was never reviewed. Since `0112` it also exits 1 when
+code goes back to `write-review` — it was never reviewed. It also exits 1 (`0112`) when
 the pull request is behind the `origin/main` this repository knows (it does not fetch):
 integrate, then another review round.
 
@@ -83,7 +83,7 @@ round the gate read.
 
 1. **`## What went out` names the merge commit on `main`** as `gh pr view <url> --json
    mergeCommit,mergedAt` reported it.
-2. **`## What went out` lists what went out unfixed.** Since `0061` an `[open]` finding the
+2. **`## What went out` lists what went out unfixed.** An `[open]` finding the
    review rated `low` does not block the merge; it goes out with it. Under the words
    "không chặn", list each one — id, location and what — or write "không có". Take the
    list from the unit's `nonBlocking` field in

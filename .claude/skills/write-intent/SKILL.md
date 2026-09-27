@@ -80,9 +80,9 @@ Author: <name>. Type: <type>. Status: accepted.
    not know, so a wrong one stops the branch from being named at all.
 8. Accept it and commit it. `accepted` means you judged it finished, not that the originator
    approved it — they still have to read it, and nothing in the repository makes them.
-9. Interrogation still comes first. Accepting your own file removes the check that used to
-   catch a thin intent, so the questions in invariant 2 are now the only thing standing in
-   for it — ask them before writing, not after.
+9. Interrogation comes first. You accept your own file, and no other step checks for a thin
+   intent: the questions in invariant 2 are the only check there is — ask them before
+   writing, not after.
 10. A question with a block under `## Answers` in the artifact that holds it has been
     decided. Do not ask it again. Cite it as `<artifact> ## Answers, câu N`. The words of
     an answer are a person's, not yours: quote them, and do not restate them as your own
@@ -103,7 +103,7 @@ tell whether the outcome was met without asking anyone.
 
 `write-spec`, once this file is accepted and committed.
 
-You may run it yourself. Nothing now separates the two stages, so the separation has to come
+You may run it yourself. Nothing separates the two stages, so the separation has to come
 from you: finish the intent, commit it, and re-read it before writing a spec against it.
 Never run `write-spec` on a `draft` — a file you have not judged finished cannot authorize
 the thing after it.

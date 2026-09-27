@@ -16,16 +16,16 @@ paths:
   - *Build from origin/main* runs `scripts/build_wheel.sh` of the configured workspace's
     upstream `main` under this user — `uv sync`, Reflex fetching Node/Bun, all of it.
   - The source of a release is a constant and a wheel is installed only after its sha256
-    matched, but that checksum comes from the same release (`.cos/0068_*/spec.md` C5).
+    matched, but that checksum comes from the same release (0068 spec C5).
   - After a trial run on `127.0.0.1`, the app calls `Service.shutdown` and
     `Sessions.close_all` itself (the lifespan never runs on the real stack,
-    `.cos/0068_*/spike.md ## U5`), stops uvicorn from inside, installs offline in `main`, and
+    0068 spike ## U5), stops uvicorn from inside, installs offline in `main`, and
     exits 75: systemd logs it as a failure and `NRestarts` grows, which `install.sh` reads as
     a crash loop at 2 (C7, unmeasured).
   - A new version that passes the trial and still fails to start is not rolled back by
     anything; the update's log holds the command, and restoring `updates/cos.db.bak` loses
     what the new version wrote (C1, C8).
-  - The trace is the `update` rows in the run log (workspace `""`, `by` `owner` from the board since `0082`) and
+  - The trace is the `update` rows in the run log (workspace `""`, `by` `owner` when started from the board) and
     `<COS_DATA_DIR>/updates/logs/`. The password is what stands in front;
     `COS_HOST=127.0.0.1` still narrows who can try it.
 - **The trial logs in.** It clears the password on its copy of `cos.db` with

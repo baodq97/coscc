@@ -26,7 +26,7 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or 
   Via: precedent.`. Whoever holds the password or a live session can press it, as often as
   they like: `_take` stops only a second run on the same unit. What stands between Jera
   and a later stage is the app's filter, and it cannot see everything:
-  - The category is Jera's word (`.cos/0044_*/spec.md` C2). A question about permissions
+  - The category is Jera's word (0044 spec C2). A question about permissions
     that Jera files as `other` is answered and written.
   - The store is every answer in force in the workspace, Leif's included (C3), and the
     *Decision preferences* text, all sent word for word; nothing checks either for a
@@ -56,11 +56,11 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome` or 
   says under its own `## Answers` heading — copied from the artifact, forged, or a model
   answering its own question — never reaches disk, and nothing records that a reply tried.
   A window remains between the answer route's read and the runner's: the two hold no lock
-  in common (`_answer_lock` is `Service`'s, `coscc/service.py:131`, and `Runner` carries
+  in common (the lock is `Service._answer_lock`, `coscc/service.py:131`, and `Runner` carries
   no reference to it). Byte-identical is not meaning-identical: a re-run that renumbers
   `## Open questions` leaves `### Câu N` on disk pointing at whichever question now
   carries that number, not the one a person answered
-  (`.cos/0025_rerunning-a-stage-erases-what-was-added-to-it/spec.md` C1). `impl.md` is
+  (0025 spec C1). `impl.md` is
   still overwritten whole — a session writes it with its own tools, and this unit never
   covered it.
 - **`POST /api/units/outcome` writes the ground for keeping or dropping a unit.** Since

@@ -53,7 +53,7 @@ other. There is no second copy of it.
 Style references: GitHub and Linear. Where a rule below leaves a choice open, do what they
 do.
 
-These rules come from the words of `.cos/0083_*/intent.md ## Answers, câu 2`, not from
+These rules come from the words of 0083 intent ## Answers, câu 2, not from
 screenshots: the five screenshots that answer mentions were never committed (spec C5).
 
 ## Rules
@@ -85,16 +85,16 @@ paragraph where a list of findings belongs.
 
 **S6. The app's own text is English.** Labels, buttons and messages the app writes are in
 English. The content of an artifact shown on the screen (the Vietnamese prose under `.cos/`)
-is data, not the app's text, and does not count (`.cos/0083_*/spec.md ## Answers, câu 1`).
+is data, not the app's text, and does not count (0083 spec ## Answers, câu 1).
 A violation looks like: a button reading "Đăng xuất" or "Áp dụng ngay", or an English
 screen with a Vietnamese error message.
 
 **S7. Do not ask for a name once there is a one-person login.** The session already says
 who is there.
 A violation looks like: a "Your name" field beside *Send this answer*, *Stop* or *Pause*.
-Those fields (`Answered by:`, `stopped_by`, the backlog's, hold's and update's `by`) were
-typed names until `0082`; since then the app writes the fixed word `owner` when a request
-names nobody (`.cos/0082_*/spec.md ## Answers, câu 1`). `owner` is not an identity: it says
+The app writes the fixed word `owner` into those fields (`Answered by:`, `stopped_by`, the
+backlog's, hold's and update's `by`) when a request names nobody (0082 spec ## Answers,
+câu 1). `owner` is not an identity: it says
 someone held the password or a live session, not who.
 
 **S8. A disabled button says why, or is hidden.** A control that cannot be used either
@@ -106,7 +106,7 @@ A violation looks like: a greyed *Run* with no sentence saying what it waits for
 - **Who takes the screenshots.** The `impl` of a unit that changes a file listed above,
   with `uv run python scripts/capture_screens.py <address>...`, after its last commit that
   touches such a file. It writes PNGs and a `manifest.json` into `.screens/`, which git
-  ignores. Since `0111`, also the app, before a `review` step, when the branch's head was
+  ignores. Also the app (`0111`), before a `review` step, when the branch's head was
   rewritten after `impl` took them: the same command, with the addresses `impl` chose.
 - **Who looks.** The `review` agent, by opening each PNG with `Read`. It is an agent looking
   at screenshots, not a person, and its `### Screens` section says so.

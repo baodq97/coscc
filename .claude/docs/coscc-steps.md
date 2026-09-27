@@ -2,8 +2,9 @@
 
 Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/board/running`, `Service.run_step`, `coscc/steps.py` or `runner.describe_attempt`. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
-- **`/api/timeline` returns what a failed paid step replied.** Since `0014` a step whose
-  reply could not be used keeps the last 2000 characters of it (`coscc/runner_reply.py:33`), and
+- **`/api/timeline` returns what a failed paid step replied.** A step whose reply
+  could not be used (`0014`) keeps the last `REPLY_KEPT` characters of it, 2000
+  (`coscc/runner_reply.py:33`), and
   that text reaches the board as `detail`, for whoever holds the password or a live
   session.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder
@@ -68,7 +69,7 @@ Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/boa
   session with no tools and `max_turns=1` (`runner._closing_turn`), before `end` is
   written. The step is sealed first, so a Stop is refused for up to `CLOSING_TIMEOUT`
   (180 s, chosen). `max_budget_usd` does not bound that turn: the CLI compares the whole
-  session's cost after the turn ran (`.cos/0085_*/spike.md ## U2`), and one after a
+  session's cost after the turn ran (0085 spike ## U2), and one after a
   13-turn session cost $0.57 on its own. `end` carries it as `closing.cost_usd`, and
   `cost_usd` is the session's whole total. The turn runs under a handle with no recorder,
   so the watch pane never shows it. Whatever it writes is the session's own words, as an

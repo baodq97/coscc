@@ -139,7 +139,7 @@ them later is already written down under `## Concerns`.
 Otherwise `write-plan`, once this file is accepted and committed. If the spec was skipped instead,
 `write-plan` runs on the accepted intent alone and records the reason.
 
-You may run it yourself. Nothing now separates the two stages, so the separation has to come
+You may run it yourself. Nothing separates the two stages, so the separation has to come
 from you: finish the spec, commit it, and re-read it before planning against it. Never run
 `write-plan` on a `draft` — a file you have not judged finished cannot authorize the thing
 after it.
