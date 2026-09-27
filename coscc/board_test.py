@@ -721,7 +721,7 @@ class ThePrTextIsCopiedFromTheScript(unittest.TestCase):
             got = run(board.pr_text(tmp, "0001_a"))
         self.assertEqual(got, {
             "unit": "0001_a", "title": "a title", "body": "## Where\n\nchecks pending.\n",
-            "url": "https://github.com/o/r/pull/7", "status": "accepted",
+            "url": "https://github.com/o/r/pull/7", "scope": None, "status": "accepted",
         })
 
     def test_a_unit_without_pr_md_is_an_answer_with_code_one(self):
