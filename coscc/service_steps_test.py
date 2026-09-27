@@ -12,7 +12,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import prscope, units
+from coscc import units
+from coscc.github import prscope
 from coscc.git import fetches, worktrees
 from coscc.config import Config
 from coscc.service_common import Invalid, describe_base, step_cwd
@@ -1454,7 +1455,7 @@ class APrStepIsHandedItsPullRequest(unittest.TestCase):
 
     def _run_pr(self, stdout: str, code: int = 0) -> tuple[str, dict, str]:
         from coscc import board as board_reader
-        from coscc.integrate_test import fake_gh, on_path
+        from coscc.github.integrate_test import fake_gh, on_path
         from coscc.journal import Journal
 
         unit = self._typed_unit()
@@ -1575,7 +1576,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
 
     def _run(self, text, gh, stage="pr", hold=False, prepare=None):
         from coscc import board as board_reader
-        from coscc import integrate, prcomment
+        from coscc.github import integrate, prcomment
 
         unit = self._typed_unit()
         self._git("branch", "fix/a-problem")
@@ -1749,7 +1750,7 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
 
     def kwargs_of(self, service: Service, stage: str) -> dict:
         from coscc import board as board_reader
-        from coscc import integrate
+        from coscc.github import integrate
         from coscc import service as service_mod
         from coscc.runner import RunError
 

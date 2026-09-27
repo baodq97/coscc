@@ -14,7 +14,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import hold, prcomment, steps
+from coscc import hold, steps
+from coscc.github import prcomment
 from coscc.git import worktrees
 from coscc.config import Config
 from coscc.service import Invalid, Service

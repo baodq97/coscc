@@ -32,7 +32,8 @@ from typing import Any, Awaitable, Callable
 import asyncio
 
 import coscc
-from coscc import config, prcomment, units
+from coscc import config, units
+from coscc.github import prcomment
 from coscc.git import fetches, gitops
 from coscc.data import Data
 from coscc.frontend import WEB_WORKDIR_VAR

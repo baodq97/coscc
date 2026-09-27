@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from coscc import prcomment
+from coscc.github import prcomment
 
 
 @dataclass(frozen=True)

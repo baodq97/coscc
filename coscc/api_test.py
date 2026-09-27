@@ -1141,7 +1141,7 @@ class PostingAReviewRoundOverHttp(unittest.IsolatedAsyncioTestCase):
             self.comments.append({"body": stdin, "url": f"{self.PR_URL}#c1"})
             return 0, f"{self.PR_URL}#c1\n", ""
 
-        from coscc import prcomment
+        from coscc.github import prcomment
 
         patcher = mock.patch.object(prcomment, "_gh", gh)
         patcher.start()

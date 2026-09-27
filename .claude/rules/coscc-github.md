@@ -1,8 +1,8 @@
 ---
 paths:
-  - "coscc/prsync.py"
-  - "coscc/prcomment.py"
-  - "coscc/prscope.py"
+  - "coscc/github/prsync.py"
+  - "coscc/github/prcomment.py"
+  - "coscc/github/prscope.py"
 ---
 
 # What the app writes to GitHub on its own
@@ -14,12 +14,12 @@ paths:
   body is only ever the round's own text, and the marker on its last line stops a second
   copy. The trace is a `pr-comment` row in Activity and the comment itself. `run_step` also
   posts on its own after writing a review round, which can hold the `done` row for two `gh`
-  calls of `prcomment.TIMEOUT` (`coscc/prcomment.py:38`) each on a slow network.
+  calls of `prcomment.TIMEOUT` (`coscc/github/prcomment.py:38`) each on a slow network.
 - **Every `pr` step that is not stopped rewrites its pull request's title and body under
   this machine's `gh` login.** After the step, `_sync_pr` reads `cos.mjs pr-text` and, when
   `pr.md` is `accepted` and names a pull request URL, runs `gh pr view` and — unless both
   already match — `gh pr edit` on the pull request `pr.md` names, then one read-only
-  `gh pr view --json changedFiles,additions,deletions,files` (`coscc/prscope.py`), holding
+  `gh pr view --json changedFiles,additions,deletions,files` (`coscc/github/prscope.py`), holding
   the `done` row for up to three calls of `prcomment.TIMEOUT` each (chosen, not measured).
   - It overwrites whatever a person changed on GitHub since, and keeps the old text nowhere
     (0055 spec C1). A `pr.md` edited by hand to name another repository's pull

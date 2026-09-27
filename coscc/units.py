@@ -15,7 +15,7 @@ in the tree, and `scripts/verify_0021.py` is the check for them.
 where the team reads, and a round that found a high-severity problem looked, there, exactly
 like a round that found nothing (`0021` intent). Only text already in `review.md` goes out,
 verbatim, as an ordinary comment the app posts under this machine's `gh` login
-(`coscc/prcomment.py`). It is not an approval, and no gate reads it.
+(`coscc/github/prcomment.py`). It is not an approval, and no gate reads it.
 
 **Nothing here re-implements the loop.** `.claude/CLAUDE.md` says `cos.mjs` is the one
 place it is defined and nothing may hold a second copy. Numbering a unit and validating a

@@ -354,7 +354,7 @@ def prove() -> int:
         "coscc.runner_review_test.OpenFindings",
         "coscc.runner_prompt_test.AFixRoundCarriesTheFindings",
         "coscc.runner_prompt_test.TheStagesThatReadWholeInputsKeepTheirPrompt",
-        "coscc.integrate_test.ThePrompt",
+        "coscc.github.integrate_test.ThePrompt",
     )
     say("PASS — every claim holds." if ok else "FAIL — a claim did not hold.")
     return EXIT_PASS if ok else EXIT_BROKEN

@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from coscc import prcomment
+from coscc.github import prcomment
 
 FIELDS = "changedFiles,additions,deletions,files"
 COUNTS = ("files", "additions", "deletions")

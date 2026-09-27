@@ -7,7 +7,7 @@ import json
 import re
 import unittest
 
-from coscc import prcomment
+from coscc.github import prcomment
 
 UNIT = "0015_review-cannot-stop-a-merge"
 URL = "https://github.com/o/r/pull/33"

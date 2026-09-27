@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from coscc import integrate
+from coscc.github import integrate
 from coscc.git import fetches
 from coscc import service as service_mod
 from coscc.config import Config

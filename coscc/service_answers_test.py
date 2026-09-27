@@ -89,14 +89,14 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.unit = self.made["unit"]
 
     def _post(self, gh, n):
-        from coscc import prcomment
+        from coscc.github import prcomment
 
         with mock.patch.object(prcomment, "_gh", gh):
             return asyncio.run(self.service.post_review_comment(str(self.repo), self.unit, n))
 
     def _run_review(self, gh):
         from coscc import board as board_reader
-        from coscc import prcomment
+        from coscc.github import prcomment
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, "open: review may proceed"
@@ -162,7 +162,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertIn("Bad credentials", done["comments"][0]["reason"])
 
     def test_another_stage_never_calls_gh(self):
-        from coscc import prcomment
+        from coscc.github import prcomment
 
         class Spec:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
@@ -207,7 +207,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertEqual(len(gh.posts()), 1)
 
     def test_two_presses_at_once_still_make_one_comment(self):
-        from coscc import prcomment
+        from coscc.github import prcomment
 
         gh = FakeGh()
 

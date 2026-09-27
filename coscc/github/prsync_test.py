@@ -6,7 +6,7 @@ import asyncio
 import json
 import unittest
 
-from coscc import prsync
+from coscc.github import prsync
 
 URL = "https://github.com/o/r/pull/7"
 TITLE = "the pr body is taken from pr.md"

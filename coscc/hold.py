@@ -18,7 +18,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from coscc import prcomment, units
+from coscc import units
+from coscc.github import prcomment
 from coscc.git import gitops, worktrees
 from coscc.git.gitops import GitError
 from coscc.units import BadUnit

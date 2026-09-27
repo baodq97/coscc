@@ -97,8 +97,8 @@ only from here.
 | the login door, `EXEMPT`, proxies, hashing limits | `.claude/rules/coscc-auth.md` | editing `coscc/auth.py`, `coscc/run.py`, or adding any route |
 | scratch `COS_DATA_DIR`, `COSCC_PROTECTED_DB`; what a session loads of `~/.claude/` and the project | `.claude/rules/coscc-sessions.md` | editing `coscc/sessions.py`, `coscc/steps.py`, `coscc/instructions.py`, or adding a rule |
 | a worktree per unit, `switch main`, fetches before a step; names from `main` in `impl`'s prompt | `.claude/rules/coscc-worktrees.md` | editing `coscc/git/worktrees.py`, `gitops.py`, `drift.py`, `fetches.py`, or `run_step`'s preparation |
-| `POST /api/units/integrate` force-pushes; `gh pr list` per board read and per `pr` step | `.claude/rules/coscc-integrate.md` | editing `coscc/integrate.py`, the `integrate` or `pr` grant, or the board's integration read |
-| `POST /api/units/review-comment` posts; a `pr` step rewrites its pull request | `.claude/rules/coscc-github.md` | editing `coscc/prcomment.py`, `coscc/prsync.py`, `/review-comment`, or `_sync_pr` |
+| `POST /api/units/integrate` force-pushes; `gh pr list` per board read and per `pr` step | `.claude/rules/coscc-integrate.md` | editing `coscc/github/integrate.py`, the `integrate` or `pr` grant, or the board's integration read |
+| `POST /api/units/review-comment` posts; a `pr` step rewrites its pull request | `.claude/rules/coscc-github.md` | editing `coscc/github/prcomment.py`, `coscc/github/prsync.py`, `/review-comment`, or `_sync_pr` |
 | `POST /api/update/*` stops work and restarts | `.claude/rules/coscc-update.md` | editing `coscc/update.py`, `coscc/updater.py`, `scripts/build_wheel.sh`, `/api/update/*` |
 | `GET /api/board/events` hands out everything a step saw | `.claude/rules/coscc-events.md` | editing `coscc/events.py`, `/api/board/events`, `/follow`, or the watch pane |
 | `GET /api/notices/follow` holds a connection per listener | `.claude/docs/coscc-notices.md` | editing `coscc/notices.py`, `service_notices.py` or the notice script |

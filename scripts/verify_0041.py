@@ -249,7 +249,7 @@ def fake_gh(bindir: Path, stdout: str, code: int = 0) -> None:
 
 def lookup_and_prompt(tmp: Path, name: str, stdout: str, code: int = 0) -> tuple[dict, str]:
     """`pr_for_branch` against a fake `gh`, then the `pr` prompt `build_prompt` makes of it."""
-    from coscc import integrate
+    from coscc.github import integrate
     from coscc.runner import build_prompt
 
     bindir = tmp / name / "bin"

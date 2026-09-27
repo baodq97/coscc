@@ -13,7 +13,7 @@ from typing import Any
 
 from coscc import autopilot, backlog
 from coscc.git import fetches
-from coscc import integrate
+from coscc.github import integrate
 from coscc.git.gitops import GitError
 from coscc.journal import BadRecord, Busy
 from coscc.service_common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid

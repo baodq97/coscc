@@ -260,7 +260,7 @@ def unit_state(
         return _state("paused")
     if int(unit.get("open") or 0) > 0 or why in ("needs-person", "awaits-person"):
         return _state("needs-you")
-    # R5(d). The buckets `integrate.classify` reads as red (`coscc/integrate.py:52`). A held
+    # R5(d). The buckets `integrate.classify` reads as red (`coscc/github/integrate.py:52`). A held
     # answer that is `gh`'s error has no `checks`, and reads as not read (R7).
     red = [str(c.get("name") or "") for c in (ci or {}).get("checks") or [] if c.get("bucket") in ("fail", "cancel")]
     line = None

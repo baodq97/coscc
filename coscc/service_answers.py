@@ -18,7 +18,7 @@ from coscc.git import gitops
 from coscc import hold as hold_rules
 from coscc import more_rounds as more_rounds_rules
 from coscc import policy
-from coscc import prcomment, prscope, prsync
+from coscc.github import prcomment, prscope, prsync
 from coscc import precedent as precedent_mod
 from coscc.board import Unavailable
 from coscc.git.gitops import GitError

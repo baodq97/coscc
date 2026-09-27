@@ -6,7 +6,7 @@ import asyncio
 import json
 import unittest
 
-from coscc import prscope
+from coscc.github import prscope
 
 URL = "https://github.com/o/r/pull/7"
 SCOPE = {"files": 2, "additions": 10, "deletions": 3, "paths": ["a.py", "b/c.md"]}

@@ -1,4 +1,4 @@
-"""`0035` plan step 4: the pure half of `coscc/integrate.py`, one table per function."""
+"""`0035` plan step 4: the pure half of `coscc/github/integrate.py`, one table per function."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import integrate as ig
+from coscc.github import integrate as ig
 
 HEAD = "a" * 40
 NEW = "b" * 40

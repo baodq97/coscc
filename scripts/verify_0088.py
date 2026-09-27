@@ -428,7 +428,8 @@ def fake_client(seen: dict, current: dict, texts: dict):
 async def every_kind_of_session(tmp: Path) -> tuple[dict[str, object], dict[str, dict]]:
     """Options per label -- the nine stages, `chat`, `gebo` and `estimate` -- and what each
     one's prompt files held when its client was built."""
-    from coscc import integrate, policy
+    from coscc import policy
+    from coscc.github import integrate
     from coscc import sessions as sessions_mod
     from coscc.config import Config
     from coscc.journal import Journal

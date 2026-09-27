@@ -16,7 +16,8 @@ from coscc import autopilot, backlog
 from coscc import board as board_reader
 from coscc import efforttrial, events
 from coscc.git import drift, fetches, gitops
-from coscc import harness, integrate, knowledge
+from coscc import harness, knowledge
+from coscc.github import integrate
 from coscc import planmap, priorfindings, retake
 from coscc.board import Unavailable
 from coscc.data import Data, now as _now

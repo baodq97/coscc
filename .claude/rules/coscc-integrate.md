@@ -1,6 +1,6 @@
 ---
 paths:
-  - "coscc/integrate.py"
+  - "coscc/github/integrate.py"
 ---
 
 # Integrate, and the `gh` calls around the pull request
@@ -41,7 +41,7 @@ paths:
     `pushed` whenever Gebo's tree does not end on the moved head, and the tree is moved to
     it — the session is paid for either way.
   - Every press costs one fetch through the fetch coordinator (`coscc/git/fetches.py`) and one
-    `gh pr view` for `mergeStateStatus` (up to `GH_TIMEOUT`, `coscc/integrate.py:47`), both
+    `gh pr view` for `mergeStateStatus` (up to `GH_TIMEOUT`, `coscc/github/integrate.py:47`), both
     before the lock and the answer. The fetch moves `refs/remotes/origin/main` for every
     worktree of the workspace. `merge_state` is written to the row and decides nothing.
     Behind the password like every route; every attempt, refused ones included, is one
