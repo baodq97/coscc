@@ -34,7 +34,7 @@ app = rx.App(api_transformer=API, style=ui.GLOBAL_STYLE)
 # `0056`: one shell under static routes (nine since `0093`), each arriving through `StudioState.arrive`.
 # Static, not `/unit/[unit]`: 0.9.12 builds no page for a dynamic route and serves it
 # through the SPA fallback with a 404 (`.cos/0056_*/spike.md ## U1`).
-for route in ("/", *(f"/{s}" for s in place.SCREENS[1:]), "/unit"):
+for route in ("/", *(f"/{s}" for s in place.SCREENS[1:]), "/unit", "/idea"):
     app.add_page(screens.index, route=route, title="CoS Studio", on_load=StudioState.arrive)
 
 

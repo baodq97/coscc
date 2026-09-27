@@ -441,6 +441,30 @@ def _unit_not_found() -> rx.Component:
     )
 
 
+def _link_row(label: str, text: rx.Var[str], href: rx.Var[str], testid: str) -> rx.Component:
+    return rx.hstack(
+        s.text(label, size="1", width="72px", flex_shrink="0"),
+        rx.cond(href != "",
+                rx.link(text, href=href, size="2", data_testid=testid, overflow_wrap="anywhere"),
+                rx.text(text, size="2", data_testid=testid)),
+        align="center", width="100%", spacing="2",
+    )
+
+
+def _links() -> rx.Component:
+    """`0040` R15 (4). The idea a unit was opened from, its repository, and what it waits on."""
+    u = P.current_unit
+    return rx.cond(
+        (u.idea_ref != "") | (u.repo != "") | (u.waits_for != ""),
+        rx.vstack(
+            rx.cond(u.idea_ref != "", _link_row("Idea", u.idea_ref, u.idea_href, "unit-idea")),
+            rx.cond(u.repo != "", _link_row("Repo", u.repo, rx.Var.create(""), "unit-repo")),
+            rx.cond(u.waits_for != "", _link_row("Waits for", u.waits_for, u.waits_for_href, "unit-waits-for")),
+            spacing="1", width="100%", padding_bottom="6px", border_bottom=f"1px solid {s.LINE}",
+        ),
+    )
+
+
 def _detail_dialog() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
@@ -494,6 +518,8 @@ def _detail_dialog() -> rx.Component:
                 ),
                 rx.tabs.content(
                     rx.vstack(
+                        # `0040` R15 (4). First in the tab, so a phone sees them (knowledge K12).
+                        _links(),
                         rx.cond(
                             P.current_unit.problems != "",
                             rx.callout(P.current_unit.problems, icon="triangle_alert",

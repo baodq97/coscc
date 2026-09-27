@@ -762,7 +762,10 @@ export function reviewRounds(env = process.env) {
   return Number(raw)
 }
 
-export function readUnit(dir, name) {
+// `ctx` is where `0040`'s references resolve: `cosDir`, the store `ideas/…` and `NNNN_…`
+// name, and `peers`, the stores `<ws>/…` names. `links: false` reads a unit another one
+// depends on, whose own links are not followed — so no chain of them can loop.
+export function readUnit(dir, name, { peers = new Map(), cosDir = dirname(dir), links = true } = {}) {
   const unit = { name, artifacts: {}, problems: [] }
   let intentText = null
   // `0054`. Each artifact's text, kept for the stale check below and never attached.
@@ -894,6 +897,7 @@ export function readUnit(dir, name) {
     if (by) unit.artifacts[file].stale = { stage: by.stage, date: by.date }
   }
 
+  if (links && intentText !== null) resolveLinks(unit, intentText, { peers, cosDir })
   return unit
 }
 
@@ -902,12 +906,196 @@ export function readUnit(dir, name) {
 // than executing the copy it finds there. A workspace is a repository cloned from a URL a
 // user typed, so its `.claude/scripts/cos.mjs` is someone else's code; running it would
 // hand it everything this process has.
-export function readAll(cosDir = COS) {
+//
+// `ideas/` is not a unit (`0040` R2): it holds the ideas several units share, and `readIdeas`
+// reads it.
+export function readAll(cosDir = COS, { peers = new Map() } = {}) {
   if (!existsSync(cosDir)) return []
   return readdirSync(cosDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => readUnit(join(cosDir, e.name), e.name))
+    .filter((e) => e.isDirectory() && e.name !== IDEAS)
+    .map((e) => readUnit(join(cosDir, e.name), e.name, { peers, cosDir }))
     .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+// --- one idea, several units, several repositories (`0040`) -------------------
+
+// A workspace name, as the app's `valid_name` has it (`coscc/service/store.py:48-69`). It
+// holds no `/`, so a reference splits on it.
+const WS_RE = /^[A-Za-z0-9._-]{1,64}$/
+export const validWs = (s) => WS_RE.test(s ?? '') && s !== '.' && s !== '..'
+
+const IDEAS = 'ideas'
+const IDEA_FILE_RE = /^(\d{4})_([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/
+
+// `ideas/NNNN_<slug>.md` in the unit's own store, `<ws>/ideas/NNNN_<slug>.md` in a peer's,
+// told apart by how many `/` the reference holds (spec, the reference grammar). `null` when
+// it is neither.
+export function parseIdeaRef(ref) {
+  const parts = String(ref ?? '').split('/')
+  const [ws, dir, file] = parts.length === 2 ? [null, ...parts] : parts.length === 3 ? parts : []
+  if (dir !== IDEAS || !IDEA_FILE_RE.test(file ?? '') || (ws !== null && !validWs(ws))) return null
+  return { ws, file }
+}
+
+// `NNNN_<slug>` in the unit's own store, or `<ws>/NNNN_<slug>`.
+export function parseUnitRef(ref) {
+  const parts = String(ref ?? '').split('/')
+  const [ws, name] = parts.length === 1 ? [null, parts[0]] : parts.length === 2 ? parts : []
+  if (!UNIT_RE.test(name ?? '') || (ws !== null && !validWs(ws))) return null
+  return { ws, name }
+}
+
+// One field of `intent.md`'s header, above its first `## `, so the body may mention it
+// freely. The value runs to whitespace, less one closing `.`; a list is joined by `, `.
+function headerField(text, key) {
+  const lines = text.split(/\r?\n/)
+  const first = lines.findIndex((l) => l.startsWith('## '))
+  const header = (first === -1 ? lines : lines.slice(0, first)).slice(1).join('\n')
+  const m = header.match(new RegExp(`(?:^|\\s)${key}:[ \\t]*([^\\s,]+(?:,[ \\t]*[^\\s,]+)*)`, 'm'))
+  return m ? m[1].replace(/\.$/, '') : null
+}
+
+// R4: `null` for each field the header does not carry.
+export function parseLinks(text) {
+  const deps = headerField(text, 'Depends on')
+  return { idea: headerField(text, 'Idea'), repo: headerField(text, 'Repo'), dependsOn: deps === null ? null : deps.split(/,[ \t]*/) }
+}
+
+// The line the app appends under `## Units` for each unit opened from the idea (R3).
+const UNIT_LINE = /^- (\S+?)(?:\. Depends on: (.+?))?\.?$/
+
+// R3: an idea file, with every line under `## Units` it cannot read reported, not guessed.
+export function parseIdea(text) {
+  const units = []
+  const problems = []
+  const status = parseStatus(text)
+  if (status === null) problems.push('carries no Status line')
+  const lines = section(text, 'Units')
+  if (lines === null) problems.push('has no ## Units section')
+  for (const line of lines ?? []) {
+    if (!line.trim()) continue
+    const m = line.trimEnd().match(UNIT_LINE)
+    const deps = m?.[2] ? m[2].split(/,\s*/) : []
+    if (!m || !parseUnitRef(m[1])?.ws || deps.some((d) => !parseUnitRef(d)?.ws)) {
+      problems.push(`## Units: "${line.trim()}" is not "- <ws>/NNNN_<slug>", with ". Depends on: <ws>/NNNN_<slug>" or not`)
+      continue
+    }
+    units.push({ ref: m[1], dependsOn: deps })
+  }
+  return { title: text.match(/^# Idea:[ \t]*(.+)$/m)?.[1].trim() ?? null, status, units, problems }
+}
+
+// Every file under `<cosDir>/ideas/`, by name. Only called when that directory exists.
+export function readIdeas(cosDir) {
+  const dir = join(cosDir, IDEAS)
+  return readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((e) => {
+      if (!e.isFile() || !IDEA_FILE_RE.test(e.name)) {
+        return { id: e.name, title: null, status: null, units: [], problems: ['not a file named NNNN_<slug>.md'] }
+      }
+      return { id: e.name.slice(0, -'.md'.length), ...parseIdea(readFileSync(join(dir, e.name), 'utf8')) }
+    })
+}
+
+// R5: the store a reference names. The unit's own for no `<ws>`, and for its own `Repo:`
+// when no `--peer` says otherwise; a peer's only when `--peer` names it.
+function storeOf(ws, repo, { peers, cosDir }) {
+  if (ws !== null && peers.has(ws)) return { dir: join(peers.get(ws), '.cos') }
+  if (ws === null || ws === repo) return { dir: cosDir }
+  return { why: `no --peer ${ws}: pass --peer ${ws}=<dir>` }
+}
+
+// `readUnit` keeps what it learned about a unit's links here rather than on the unit, so
+// `status --json` carries `idea`, `repo` and `dependsOn` and nothing else (R4). `needs` is
+// every reason the idea shuts `impl` (R9); `waiting`, every dependency not merged (R7).
+const LINKS = new WeakMap()
+const linksOf = (unit) => LINKS.get(unit) ?? { needs: [], waiting: [] }
+
+// R8: merged is `ship.md: accepted`, read off the file. No `gh` and no `git`: `spike.md ## U1`
+// of `0040` could not measure `gh pr view` run from another repository's checkout.
+function dependency(raw, unit, repo, ctx) {
+  const ref = parseUnitRef(raw)
+  if (!ref) return { ref: raw, merged: null, why: 'not NNNN_<slug> or <ws>/NNNN_<slug>' }
+  if (ref.name === unit.name && (ref.ws === null || ref.ws === repo)) return { ref: raw, merged: null, why: 'a unit cannot depend on itself' }
+  const store = storeOf(ref.ws, repo, ctx)
+  if (store.why) return { ref: raw, merged: null, why: store.why }
+  const dir = join(store.dir, ref.name)
+  if (!existsSync(dir)) return { ref: raw, merged: null, why: `unreadable: ${dir} does not exist` }
+  const other = readUnit(dir, ref.name, { links: false })
+  if (other.hold?.state === 'dropped') return { ref: raw, merged: false, why: 'dropped' }
+  const rejected = STAGES.find((s) => statusOf(other, s.file) === 'rejected')
+  if (rejected) return { ref: raw, merged: false, why: `rejected: its ${rejected.file} is rejected` }
+  if (statusOf(other, 'ship.md') === 'accepted') return { ref: raw, merged: true, why: 'merged' }
+  return { ref: raw, merged: false, why: 'not merged: its ship.md is not accepted' }
+}
+
+// The unit's line under the idea's `## Units`, or why it cannot be had (R6).
+function ideaLine(idea, unit, repo, ctx) {
+  const ref = parseIdeaRef(idea)
+  if (!ref) return { why: 'not ideas/NNNN_<slug>.md or <ws>/ideas/NNNN_<slug>.md' }
+  if (repo === null) return { why: 'intent.md declares no Repo:, so its line under ## Units cannot be found' }
+  const store = storeOf(ref.ws, repo, ctx)
+  if (store.why) return { why: store.why }
+  const path = join(store.dir, IDEAS, ref.file)
+  if (!existsSync(path)) return { why: `${path} does not exist` }
+  const line = parseIdea(readFileSync(path, 'utf8')).units.find((u) => u.ref === `${repo}/${unit.name}`)
+  return line ? { line } : { why: `it does not list ${repo}/${unit.name} under ## Units` }
+}
+
+// R4–R9. Each field is attached only when the header carries it, so every unit that has
+// none reads as it did, byte for byte. A broken link is a problem and closes nothing but
+// `impl` (R6, R9).
+function resolveLinks(unit, intentText, ctx) {
+  const { idea, repo, dependsOn } = parseLinks(intentText)
+  if (idea === null && repo === null && dependsOn === null) return
+  const needs = []
+  if (idea !== null) unit.idea = idea
+  if (repo !== null) {
+    unit.repo = repo
+    if (!validWs(repo)) unit.problems.push(`intent.md: Repo: "${repo}" is not a workspace name`)
+  }
+  if (dependsOn !== null) {
+    unit.dependsOn = dependsOn.map((ref) => dependency(ref, unit, repo, ctx))
+    for (const d of unit.dependsOn) if (d.merged === null) unit.problems.push(`intent.md: Depends on: ${d.ref} — ${d.why}`)
+  }
+  if (idea !== null) {
+    const found = ideaLine(idea, unit, repo, ctx)
+    if (found.why) {
+      unit.problems.push(`intent.md: Idea: ${idea} — ${found.why}`)
+      needs.push(`Idea: ${idea} cannot be read: ${found.why}`)
+    } else {
+      // R9: both copies agree, or `impl` stays shut. A reference with no `<ws>` is the unit's own.
+      const full = (r) => (parseUnitRef(r)?.ws === null ? `${repo}/${r}` : r)
+      const listed = found.line.dependsOn.map(full).sort()
+      const declared = (dependsOn ?? []).map(full).sort()
+      if (listed.join(', ') !== declared.join(', ')) {
+        needs.push(`${idea} lists ${repo}/${unit.name} with Depends on: ${listed.join(', ') || 'nothing'}, but intent.md declares ${declared.join(', ') || 'none'} — the two must match`)
+      }
+    }
+  }
+  LINKS.set(unit, { needs, waiting: (unit.dependsOn ?? []).filter((d) => d.merged !== true) })
+}
+
+// The reasons `impl` is shut for a unit's links: R9 first, then one line per dependency (R7).
+function linkNeeds(unit) {
+  const { needs, waiting } = linksOf(unit)
+  return [...needs, ...waiting.map((d) => `waits on ${d.ref}: ${d.why}`)]
+}
+
+// The words `next` opens its action with while `impl` waits on a dependency. The autopilot
+// reads this prefix (`coscc/units/autopilot.py`), and its test reads it back from here.
+export const WAITING_ON = 'waiting on '
+
+// R7: an answer that would run `impl` while a dependency is not merged runs nothing, and
+// says what it waits on. One whose idea link is broken says so (R9). Every other answer is
+// returned as it came.
+function waitOnDependencies(unit, answer) {
+  if (answer.stage !== 'impl') return answer
+  const { needs, waiting } = linksOf(unit)
+  if (waiting.length) return { blocked: true, action: `${WAITING_ON}${waiting.map((d) => d.ref).join(', ')} to merge`, stage: '', why: 'dependency' }
+  if (needs.length) return { blocked: true, action: `fix the idea link — ${needs[0]}`, stage: '', why: 'unreadable' }
+  return answer
 }
 
 // --- deciding ----------------------------------------------------------------
@@ -994,8 +1182,12 @@ export function nextAction(unit, limit = REVIEW_ROUNDS) {
 const RERUN_STAGES = ['intent', 'spec', 'spike', 'plan', 'impl']
 
 // `nextAction`, plus `why`: which rule answered, so `nextStep` refines the answer without
-// reading the English of `action` back.
+// reading the English of `action` back. `0040` R7: `impl` waits on the unit's dependencies.
 function decide(unit, limit) {
+  return waitOnDependencies(unit, decideFiles(unit, limit))
+}
+
+function decideFiles(unit, limit) {
   // `0081` R3: every comparison below, and every "N of M rounds used", reads this unit's.
   limit = reviewLimit(unit, limit)
   // `plan.md: done` closed five units under the three-stage loop, and it stays terminal.
@@ -1898,6 +2090,8 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   const said = {}
   if (!need.length && target.name === 'review') need.push(...reviewNeeds(unit, probe, limit, said))
   if (!need.length && target.name === 'ship') need.push(...shipNeeds(unit, probe, said))
+  // `0040` R7, R9: files alone, whatever else is missing, and only for `impl`.
+  if (target.name === 'impl') need.push(...linkNeeds(unit))
 
   return { ok: need.length === 0, need, said }
 }
@@ -1958,7 +2152,14 @@ function passLeftClosed(unit, probe, g) {
 // With no `probe` those three answer `''` and say `--repo` is missing, as the gates do.
 //
 // This names a stage; it opens nothing. A caller still asks `checkGate` before running it.
-export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
+//
+// `0040` R7: every road to `impl` here — a red check sends the work back to it too — waits on
+// the unit's dependencies, and only a wait carries `why`.
+export function nextStep(unit, opts = {}) {
+  return waitOnDependencies(unit, stepOf(unit, opts))
+}
+
+function stepOf(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   const base = decide(unit, limit)
   const { why, ...next } = base
   const none = (action) => ({ blocked: true, action, stage: '' })
@@ -1979,6 +2180,7 @@ export function nextStep(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
 
   // `0045` R3: a held unit is answered from the files, before anything reaches for `probe`.
   if (why === 'paused' || why === 'dropped') return next
+  if (why === 'dependency') return base
 
   // `0054` R5: a stale `review` or `ship` is due the way a missing one is, CI permitting.
   const due = why === 'missing' || why === 'stale'
@@ -2342,8 +2544,11 @@ export function stageAt(unit, next) {
   return (last ?? STAGES.find((s) => !s.optional && !s.when)).name
 }
 
-function cmdStatus(json, cosDir, limit) {
-  const units = readAll(cosDir)
+function cmdStatus(json, cosDir, limit, peers = new Map()) {
+  const units = readAll(cosDir, { peers })
+  // `0040` R3: only a store that holds `ideas/` carries the key, so every other one's output
+  // is what it was, byte for byte.
+  const ideas = existsSync(join(cosDir, IDEAS)) ? readIdeas(cosDir) : null
   // `0100` R4: `status` carries `why` as well, so the board reads which rule answered
   // rather than the English of `action`. `next` still prints `nextAction`, without it.
   // `rerun` (`0106`) is for `next` and the autopilot only, so `status` drops it.
@@ -2356,12 +2561,14 @@ function cmdStatus(json, cosDir, limit) {
   if (json) {
     // The stage list ships with the data so a reader never has to keep its own copy of it,
     // and so do the stages an answered draft runs again (`0115` R4).
-    console.log(JSON.stringify({ root: cosDir, stages: STAGES, afterAnswers: RERUN_STAGES, units: rows }, null, 2))
+    console.log(JSON.stringify({ root: cosDir, stages: STAGES, afterAnswers: RERUN_STAGES, units: rows, ...(ideas ? { ideas } : {}) }, null, 2))
     return 0
   }
 
+  const ideaProblems = (ideas ?? []).flatMap((i) => i.problems.map((p) => `${IDEAS}/${i.id}: ${p}`))
   if (!units.length) {
     console.log('No work units yet. `write-intent` opens one.')
+    for (const p of ideaProblems) console.log(`  - ${p}`)
     return 0
   }
 
@@ -2373,7 +2580,7 @@ function cmdStatus(json, cosDir, limit) {
   }
   console.log(`\nA accepted · d draft · c changes-requested · s skipped · D done · x rejected · ${dash} not started`)
 
-  const problems = rows.flatMap((u) => u.problems.map((p) => `${u.name}: ${p}`))
+  const problems = [...rows.flatMap((u) => u.problems.map((p) => `${u.name}: ${p}`)), ...ideaProblems]
   if (problems.length) {
     console.log('\nProblems (report these, do not infer past them):')
     for (const p of problems) console.log(`  - ${p}`)
@@ -2387,9 +2594,9 @@ function cmdStatus(json, cosDir, limit) {
 // The stage a run button may offer, as one line of JSON: `{unit, stage, action, blocked}`.
 // Exit 0 whatever the stage is — "nothing to run" is an answer, not a failure. Exit 2 is
 // misuse: no unit named, or no such unit.
-function cmdNext(unitName, cosDir, repoDir, limit) {
+function cmdNext(unitName, cosDir, repoDir, limit, peers = new Map()) {
   if (!unitName) {
-    console.error('usage: cos.mjs next <NNNN_slug> [--repo <dir>]')
+    console.error('usage: cos.mjs next <NNNN_slug> [--repo <dir>] [--peer <ws>=<dir>]...')
     return 2
   }
   const dir = join(cosDir, unitName)
@@ -2398,13 +2605,14 @@ function cmdNext(unitName, cosDir, repoDir, limit) {
     return 2
   }
   const probe = repoDir ? makeProbe(repoDir) : null
-  const unit = readUnit(dir, unitName)
-  const { stage, action, blocked, waiting, dropped, rerun } = nextStep(unit, { probe, limit })
+  const unit = readUnit(dir, unitName, { peers, cosDir })
+  const { stage, action, blocked, waiting, dropped, rerun, why } = nextStep(unit, { probe, limit })
   // `waiting` only when a person is awaited (`0028`), `dropped` only when the last round left
   // out an earlier finding (`0027`), `hold` only when the unit is held (`0045`), `rerun` only
-  // when a draft's questions are all answered (`0106`), so every other answer is unchanged.
+  // when a draft's questions are all answered (`0106`), `why` only when `impl` waits on a
+  // dependency (`0040`), so every other answer is unchanged.
   const hold = unit.hold ? { hold: unit.hold } : {}
-  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...(dropped?.length ? { dropped } : {}), ...hold, ...(rerun ? { rerun } : {}) }))
+  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...(dropped?.length ? { dropped } : {}), ...hold, ...(rerun ? { rerun } : {}), ...(why === 'dependency' ? { why } : {}) }))
   return 0
 }
 
@@ -2425,9 +2633,9 @@ export function openLines(stage, unitName, { head = null, rebased = null, retry 
   return lines
 }
 
-function cmdGate(unitName, stage, cosDir, repoDir, limit) {
+function cmdGate(unitName, stage, cosDir, repoDir, limit, peers = new Map()) {
   if (!unitName || !stage) {
-    console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}> [--repo <dir>]`)
+    console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}> [--repo <dir>] [--peer <ws>=<dir>]...`)
     return 2
   }
   const dir = join(cosDir, unitName)
@@ -2436,7 +2644,7 @@ function cmdGate(unitName, stage, cosDir, repoDir, limit) {
     return 2
   }
   const probe = repoDir ? makeProbe(repoDir) : null
-  const { ok, need, head, rebased, retry, merged } = checkGate(readUnit(dir, unitName), stage, { probe, limit })
+  const { ok, need, head, rebased, retry, merged } = checkGate(readUnit(dir, unitName, { peers, cosDir }), stage, { probe, limit })
   if (ok) {
     for (const line of openLines(stage, unitName, { head, rebased, retry, merged })) console.log(line)
     return 0
@@ -2686,22 +2894,38 @@ const LOCAL_ONLY = new Set(['check-branch', 'check-tag', 'check-version'])
 // is, and a directory without one contributes nothing. The path printed stays relative to
 // the root, because the root is the only place anything is created.
 function cmdNewPath(slug, cosDir, reserveFrom = []) {
+  if (refuseSlug(slug, 'new-path')) return 2
+  const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))].flatMap((d) => readAll(d))
+  console.log(`.cos/${nextNumber(taken)}_${slug}`)
+  return 0
+}
+
+// Whether `slug` was refused, having said why. `new-path` and `new-idea` hold one rule.
+function refuseSlug(slug, cmd) {
   if (!slug) {
-    console.error('usage: cos.mjs new-path <slug>')
-    return 2
+    console.error(`usage: cos.mjs ${cmd} <slug>`)
+    return true
   }
   if (!SLUG_RE.test(slug)) {
     console.error(`Invalid slug "${slug}".`)
     console.error('  Lowercase letters, digits and single hyphens only; no underscore,')
     console.error('  because the underscore separates the number from the slug.')
-    return 2
+    return true
   }
   if (slug.length > SLUG_MAX) {
     console.error(`Invalid slug "${slug}": it is ${slug.length} characters, over the ${SLUG_MAX} a branch allows.`)
-    return 2
+    return true
   }
-  const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))].flatMap((d) => readAll(d))
-  console.log(`.cos/${nextNumber(taken)}_${slug}`)
+  return false
+}
+
+// `0040` R1: an idea's path, numbered on its own from `0001`, the highest in `ideas/` plus
+// one. Like `new-path`, it prints the path and creates nothing.
+function cmdNewIdea(slug, cosDir) {
+  if (refuseSlug(slug, 'new-idea')) return 2
+  const dir = join(cosDir, IDEAS)
+  const taken = existsSync(dir) ? readdirSync(dir).map((f) => f.match(IDEA_FILE_RE)).filter(Boolean).map((m) => Number(m[1])) : []
+  console.log(`.cos/${IDEAS}/${String(Math.max(0, ...taken) + 1).padStart(4, '0')}_${slug}.md`)
   return 0
 }
 
@@ -2723,21 +2947,38 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // `--reserve-from <dir>`, repeatable, stripped the same way and from any position.
   // `--repo <dir>`, once, the same way: the repository whose git and pull request the
   // `review` and `ship` gates read.
+  // `--peer <ws>=<dir>` (`0040` R5), repeatable, the same way: another store, the kind of
+  // directory `--root` takes, read only to resolve a reference that names `<ws>`.
   const reserveFrom = []
   let repoArg = null
+  const peers = new Map()
   const words = []
   for (let i = 0; i < afterRoot.length; i++) {
     const flag = afterRoot[i]
-    if (flag !== '--reserve-from' && flag !== '--repo') {
+    if (flag !== '--reserve-from' && flag !== '--repo' && flag !== '--peer') {
       words.push(flag)
       continue
     }
     if (!afterRoot[i + 1]) {
-      console.error(`${flag} needs a directory`)
+      console.error(flag === '--peer' ? '--peer needs <ws>=<dir>' : `${flag} needs a directory`)
       process.exit(2)
     }
     if (flag === '--repo') repoArg = afterRoot[++i]
-    else reserveFrom.push(afterRoot[++i])
+    else if (flag === '--reserve-from') reserveFrom.push(afterRoot[++i])
+    else {
+      const given = afterRoot[++i]
+      const eq = given.indexOf('=')
+      const [name, dir] = eq === -1 ? [given, ''] : [given.slice(0, eq), given.slice(eq + 1)]
+      if (!validWs(name) || !dir) {
+        console.error(`--peer "${given}" is not <ws>=<dir>, <ws> 1-64 letters, digits, dot, dash or underscore`)
+        process.exit(2)
+      }
+      if (peers.has(name)) {
+        console.error(`--peer names "${name}" twice`)
+        process.exit(2)
+      }
+      peers.set(name, resolve(dir))
+    }
   }
   const [cmd, ...rest] = words
 
@@ -2754,10 +2995,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
 
   const run = {
-    status: () => cmdStatus(rest.includes('--json'), cosDir, limit),
-    gate: () => cmdGate(rest[0], rest[1], cosDir, repoDir, limit),
-    next: () => cmdNext(rest[0], cosDir, repoDir, limit),
+    status: () => cmdStatus(rest.includes('--json'), cosDir, limit, peers),
+    gate: () => cmdGate(rest[0], rest[1], cosDir, repoDir, limit, peers),
+    next: () => cmdNext(rest[0], cosDir, repoDir, limit, peers),
     'new-path': () => cmdNewPath(rest[0], cosDir, reserveFrom),
+    'new-idea': () => cmdNewIdea(rest[0], cosDir),
     'unit-branch': () => cmdUnitBranch(rest[0], cosDir),
     'pr-text': () => cmdPrText(rest[0], cosDir),
     rerun: () => cmdRerun(rest[0], rest[1], cosDir, limit),
@@ -2770,7 +3012,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!run) {
     console.error('usage: cos.mjs [--root <dir>] <command>')
     console.error('  reading a .cos/ (these take --root):')
-    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>]')
+    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>]')
+    console.error('    status, gate and next also take --peer <ws>=<dir>, once per workspace')
     console.error('  describing this checkout (these do not):')
     console.error('    check-branch [name] | check-tag <tag> | check-version')
     process.exit(2)
@@ -2800,6 +3043,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // asks the same questions, and where `screens` (`0111`) reads the manifest. Nothing else asks.
   if (repoArg !== null && cmd !== 'gate' && cmd !== 'next' && cmd !== 'screens') {
     console.error(`--repo applies only to \`gate\` and \`next\`, and to \`screens\`, not to \`${cmd}\`.`)
+    process.exit(2)
+  }
+
+  // `--peer` resolves a unit's links, which only these three read.
+  if (peers.size && cmd !== 'status' && cmd !== 'gate' && cmd !== 'next') {
+    console.error(`--peer applies only to \`status\`, \`gate\` and \`next\`, not to \`${cmd}\`.`)
     process.exit(2)
   }
 

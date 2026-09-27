@@ -218,6 +218,26 @@ def build(config: Config | None = None) -> FastAPI:
                 str(body.get("cwd") or ""),
                 str(body.get("slug") or ""),
                 str(body.get("brief") or ""),
+                # `0040` R11. A unit opened from a shared idea: no brief, one line under `## Units`.
+                idea=str(body.get("idea") or ""),
+                depends_on=str(body.get("depends_on") or ""),
+            )
+        except Invalid as e:
+            return _bad(str(e))
+
+    @api.post("/api/ideas")
+    async def create_idea(request: Request) -> Any:
+        """`0040` R10. Start an idea several units share, in the store of `cwd`. Writes only
+        into the app's own store, as `POST /api/units` does, behind the same login door."""
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("send JSON")
+        if not isinstance(body, dict):
+            return _bad("send a JSON object")
+        try:
+            return service.create_idea(
+                str(body.get("cwd") or ""), str(body.get("slug") or ""), str(body.get("brief") or "")
             )
         except Invalid as e:
             return _bad(str(e))

@@ -977,6 +977,53 @@ class AStepWorksInItsUnitsWorktree(unittest.TestCase):
             self.assertEqual(probe.answers["workspace"], "PermissionResultDeny")
 
 
+class AnImplReadsItsSiblings(unittest.TestCase):
+    """`0040` R13. `read_also` reaches the gate; the note reaches the prompt."""
+
+    def _run(self, **kw):
+        class Probe:
+            def __init__(self):
+                self.answers, self.prompt = {}, ""
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, can_use_tool=None, **_):
+                self.prompt = text
+                for name, (tool, inp) in self.calls.items():
+                    self.answers[name] = type(await can_use_tool(tool, inp, None)).__name__
+                yield ("done", {"session_id": "s-impl", "cost": {}})
+
+        probe = Probe()
+        with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as sib:
+            (Path(sib) / "api.py").write_text("x = 1\n", encoding="utf-8")
+            probe.calls = {
+                "read": ("Read", {"file_path": f"{sib}/api.py"}),
+                "write": ("Write", {"file_path": f"{sib}/api.py", "content": "y"}),
+                "git": ("Bash", {"command": f"git -C {sib} status"}),
+            }
+            directory = make_unit(Path(ws), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+            r = Runner(sessions=probe, journal=None)
+
+            async def go():
+                return [ev async for ev in r.run(
+                    workspace=ws, directory=directory, journal_key=ws, unit=UNIT,
+                    stage="impl", artifact="impl.md", stages=STAGES, mode="autonomous",
+                    **{k: (v.format(sib=sib) if isinstance(v, str) else tuple(x.format(sib=sib) for x in v)) for k, v in kw.items()},
+                )]
+
+            asyncio.run(go())
+        return probe
+
+    def test_a_sibling_is_read_and_neither_written_nor_pointed_at_by_git(self):
+        probe = self._run(read_also=("{sib}",), siblings_note="- api: {sib} at abc1234")
+        self.assertEqual(probe.answers, {"read": "PermissionResultAllow", "write": "PermissionResultDeny", "git": "PermissionResultDeny"})
+        self.assertIn("# The sibling repositories this step may read", probe.prompt)
+        self.assertIn("at abc1234", probe.prompt)
+
+    def test_a_unit_with_no_idea_runs_impl_with_the_read_also_it_had(self):
+        probe = self._run()
+        self.assertEqual(probe.answers["read"], "PermissionResultDeny")
+        self.assertNotIn("sibling repositories", probe.prompt)
+
+
 class PrHasItsOwnTask(unittest.TestCase):
     """`0041` R1 and R2: `pr` is told where its file goes, where its shape is, the order
     that writes it before anything waits, and when to stop."""

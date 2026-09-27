@@ -276,6 +276,9 @@ def unit_state(
         or (unit.get("integration") or {}).get("state") == "red-after-integration"
     ):
         return _state("error", ci=line if red else None)
+    # `0040` R7. `impl` waits on another unit's merge: a wait, not a stage to run.
+    if why == "dependency":
+        return _state("awaiting", "Awaiting a dependency")
     # `0054`. A `review` or `ship` made stale by a rerun waits on CI as a missing one does
     # (`cos.mjs` `nextStep`); a stale `pr.md` in the window is a stage to run, not a wait.
     due = why == "missing" or (why == "stale" and unit.get("at") in ("review", "ship"))

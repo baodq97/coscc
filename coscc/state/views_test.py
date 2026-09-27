@@ -596,3 +596,27 @@ class ACostNobodyKnowsIsNeverShownAsNothing(unittest.TestCase):
         self.assertEqual(cost_note({"unknown": 0}), COST_NOTE)
         self.assertEqual(cost_note({}), COST_NOTE)
         self.assertEqual(cost_note({"unknown": 3}), "Added up from each finished run; 3 run(s) with unknown cost")
+
+
+class TheLinksOfAUnitOpenedFromAnIdea(unittest.TestCase):
+    """`0040` R15 (3, 4). Copied from `Service.board`, with the addresses they link to."""
+
+    def test_a_card_whose_next_why_is_dependency_shows_waits_for_ref(self):
+        from coscc.state.views import Unit, _card, link_fields
+
+        u = {"idea": "proj/ideas/0001_f.md", "repo": "proj", "waits_for": ["api/0001_b"]}
+        fields = link_fields(u, "proj")
+        self.assertEqual(fields["idea_href"], "/idea?ws=proj&id=0001_f")
+        self.assertEqual(fields["waits_for_href"], "/unit?ws=api&id=0001_b")
+        self.assertEqual(_card(Unit(id="0006_x", **fields)).waits_for, "api/0001_b")
+
+    def test_a_childs_overview_links_to_its_idea_and_to_the_unit_it_waits_for(self):
+        from coscc.state.views import child_rows, link_fields
+
+        self.assertEqual(link_fields({"idea": "ideas/0001_f.md"}, "api")["idea_href"], "/idea?ws=api&id=0001_f")
+        self.assertEqual(link_fields({}, "api"), {"idea_ref": "", "idea_href": "", "repo": "", "waits_for": "", "waits_for_href": ""})
+        [row, gone] = child_rows({"units": [
+            {"ref": "api/0001_b", "unit": "0001_b", "repo": "api", "stage": "impl", "state": "Ready", "waits_for": []},
+            {"ref": "old/0002_c", "unit": "0002_c", "repo": "old", "missing": True, "state": "missing"},
+        ]})
+        self.assertEqual((row.href, gone.href, gone.missing), ("/unit?ws=api&id=0001_b", "", True))

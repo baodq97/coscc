@@ -34,6 +34,11 @@ paths:
   The prompts of `impl`, `pr`, `ship`, `review` and Gebo name the unit's artifacts by path
   and rely on this boundary letting them `Read` the unit's folder; narrowing it turns
   `coscc/runner/prompt_test.py` `EveryPathAPromptNamesCanBeRead` red, which is the point.
+- **`impl` reads a sibling repository and cannot be kept from writing it** (`0040` R13).
+  `read_also` widens reading to the other checkouts of the unit's idea. `_git_into` refuses a
+  `git` whose `-C` chain, `--git-dir`, `--work-tree`, `-c` value or `GIT_*=` assignment lands
+  there, or is a variable. A path a subcommand takes (`git worktree add <sibling>/x`) and
+  `python` are not read (`test_the_known_limit_of_git_into`).
 - **A redirect may write under `/tmp`, outside the write boundary.** `check_command` reads a
   line as bash does and lets a redirect write to `/dev/null`, to another descriptor, or below
   `/tmp/<a directory whose name carries the unit's NNNN_slug>/` — for `impl`, `pr` and

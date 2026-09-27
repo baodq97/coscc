@@ -254,6 +254,30 @@ def make_fixture(api: httpx.Client, proj: Path) -> None:
             (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
 
 
+def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
+    """`0040`. `proj/ideas/0001_one-feature.md`, `api/0001_backend-adds-api` opened from it, and
+    `proj/0006_frontend-calls-api`, whose `impl` waits on the api unit: it has no `ship.md`."""
+    idea = api.post("/api/ideas", json={"cwd": str(proj), "slug": "one-feature", "brief": "The backend adds an API; the frontend calls it."})
+    if idea.status_code != 200:
+        raise RuntimeError(f"could not make the idea: {idea.text}")
+    ref = idea.json()["ref"]
+    back = api.post("/api/units", json={"cwd": str(other), "slug": "backend-adds-api", "idea": ref})
+    if back.status_code != 200:
+        raise RuntimeError(f"could not open the api unit: {back.text}")
+    back_ref = f"api/{back.json()['unit']}"
+    Path(back.json()["path"], "intent.md").write_text(
+        f"# Intent: backend adds api\nAuthor: the originator. Type: feat. Status: accepted.\nIdea: {ref}. Repo: api.\n", encoding="utf-8")
+    front = api.post("/api/units", json={"cwd": str(proj), "slug": "frontend-calls-api", "idea": ref, "depends_on": back_ref})
+    if front.status_code != 200:
+        raise RuntimeError(f"could not open the frontend unit: {front.text}")
+    for file, text in {
+        "intent.md": f"# Intent: frontend calls api\nAuthor: the originator. Type: feat. Status: accepted.\nIdea: {ref}. Repo: proj. Depends on: {back_ref}.\n",
+        "spec.md": "# Spec: frontend calls api\nIntent: intent.md. Author: t. Status: skipped.\n",
+        "plan.md": "# Plan: frontend calls api\nIntent: intent.md. Author: t. Status: accepted.\n",
+    }.items():
+        Path(front.json()["path"], file).write_text(text, encoding="utf-8")
+
+
 def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     """`0089` R16: one ended `plan` run of `0004_finished` in the running app's run log, keyed
     as `Service._journal_key` keys it. `at` is when it is written, so the page reads "just now"."""
@@ -443,8 +467,14 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                 if added.status_code != 200:
                     print(f"could not adopt the workspace: {added.text}", file=sys.stderr)
                     return EXIT_BROKEN
+                other = make_repo(work, outside, name="api", remote="api.git")
+                added = api.post("/api/workspaces", json={"name": "api"})
+                if added.status_code != 200:
+                    print(f"could not adopt the second workspace: {added.text}", file=sys.stderr)
+                    return EXIT_BROKEN
                 try:
                     make_fixture(api, proj)
+                    make_idea_fixture(api, proj, other)
                     seed_runs(work, data_dir, proj)
                 except RuntimeError as e:
                     print(str(e), file=sys.stderr)

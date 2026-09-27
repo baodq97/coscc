@@ -6,6 +6,7 @@ Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a 
 from __future__ import annotations
 
 import uuid
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit
+from coscc.service.store import valid_name
 from coscc.service.common import (
     CONSEQUENCE,
     Invalid,
@@ -38,6 +40,13 @@ from coscc.service.common import (
 # `0051` spec, answer 4: an `ended, unknown` row stops being shown this long after it began,
 # unless a later `start` of the same unit retired it first.
 UNKNOWN_END_FOR = timedelta(hours=24)
+
+
+def waits_for(unit: dict[str, Any]) -> list[str]:
+    """`0040` R15 (3). The units `impl` waits on, when `cos.mjs` said it waits; else none."""
+    if unit.get("why") != "dependency":
+        return []
+    return [d["ref"] for d in unit.get("depends_on") or [] if d.get("merged") is not True]
 
 
 def _attach_comment_state(units_: list[dict[str, Any]], records: list[dict[str, Any]]) -> None:
@@ -161,6 +170,37 @@ class BoardMixin:
         """
         return units.root(cwd, self.config.data_dir)
 
+    def _peer_table(self) -> tuple[list[tuple[str, Path]], list[str]]:
+        """`0040` R14. Every workspace as `(name, store root)`, and what was left out and why.
+
+        A name two workspaces share is passed for neither: a reference to it could mean
+        either store, and `cos.mjs` refuses a name given twice. A name `valid_name` refuses
+        (an env workspace's basename can be one) could not be a reference at all.
+        """
+        rows = self.workspaces()["workspaces"]
+        count = Counter(str(r["name"]) for r in rows)
+        peers: list[tuple[str, Path]] = []
+        problems: list[str] = []
+        for name, n in count.items():
+            if n > 1:
+                problems.append(f"Two workspaces are named {name}, so neither is linked by that name.")
+        for r in rows:
+            name = str(r["name"])
+            if count[name] == 1 and valid_name(name):
+                peers.append((name, self._units_root(r["path"])))
+        return peers, problems
+
+    def _peers(self) -> list[tuple[str, Path]]:
+        return self._peer_table()[0]
+
+    def _workspace_name(self, cwd: str) -> str:
+        """The name the app shows for `cwd`, or "" when it is not one of the workspaces."""
+        here = Path(cwd).expanduser().resolve()
+        for r in self.workspaces()["workspaces"]:
+            if Path(r["path"]).expanduser().resolve() == here:
+                return str(r["name"])
+        return ""
+
     def _unit_dir(self, cwd: str, unit: str) -> Path:
         try:
             return units.unit_dir(cwd, unit, self.config.data_dir)
@@ -175,10 +215,20 @@ class BoardMixin:
         a board starts disagreeing with the files it claims to describe.
         """
         self._workspace_or_refuse(cwd)
+        peers, peer_problems = self._peer_table()
         try:
-            data = await board_reader.read(self._units_root(cwd))
+            data = await board_reader.read(self._units_root(cwd), peers=peers)
         except Unavailable as e:
             raise Invalid(str(e)) from e
+        # `0040` R14, R15. Only when there is something to say, so every other payload is
+        # what it was.
+        if peer_problems:
+            data["peer_problems"] = peer_problems
+        name = self._workspace_name(cwd)
+        for unit in data["units"]:
+            if unit.get("repo") and name and unit["repo"] != name:
+                unit["problems"] = [*unit["problems"], f"Repo: {unit['repo']} is not this workspace, {name}."]
+            unit["waits_for"] = waits_for(unit)
 
         journal = self._journal()
         key = self._journal_key(cwd)

@@ -33,6 +33,8 @@ class Place:
     ws: str = ""
     unit: str = ""
     tab: str = "overview"
+    # `0040` R15. `/idea?ws=<home>&id=NNNN_<slug>`: one idea, like `unit` not in `SCREENS`.
+    idea: str = ""
 
 
 def read(path: str, query: str) -> Place:
@@ -45,6 +47,8 @@ def read(path: str, query: str) -> Place:
     def one(key: str) -> str:
         return (params.get(key) or [""])[0]
 
+    if screen == "idea":
+        return Place("idea", one("ws"), idea=one("id"))
     if screen != "unit":
         return Place(screen, one("ws"))
     return Place("unit", one("ws"), one("id"), one("tab") or "overview")
@@ -55,6 +59,8 @@ def href(place: Place) -> str:
     one place has one address and `arrive` can compare two by their text."""
     path = "/" if place.screen == "overview" else f"/{place.screen}"
     pairs = [("ws", place.ws)] if place.ws else []
+    if place.screen == "idea" and place.idea:
+        pairs.append(("id", place.idea))
     if place.screen == "unit":
         if place.unit:
             pairs.append(("id", place.unit))

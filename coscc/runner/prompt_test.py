@@ -66,6 +66,36 @@ class AnAgentsAnswerIsSaidToBeOne(unittest.TestCase):
             self.assertNotIn("Answers an agent gave", prompt)
 
 
+class AChildUnitsIntentCarriesItsIdea(unittest.TestCase):
+    """`0040` R12. A unit opened from a shared idea has no `idea.md`; the idea arrives by link."""
+
+    NOTE = "BACKEND-ADDS-FRONTEND-CALLS\n\nIdea: proj/ideas/0001_f.md.\nRepo: api.\n"
+
+    def test_a_brief_opened_units_intent_prompt_is_byte_identical(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), idea_md="# Idea: x\nStatus: accepted.\n\nTHE-BRIEF\n")
+            args = (d, Path(d) / ".cos" / UNIT, UNIT, "intent", STAGES, "intent.md")
+            prompt, included = build_prompt(*args)
+            self.assertEqual((prompt, included), build_prompt(*args, idea_note="", siblings_note=""))
+            self.assertIn("THE-BRIEF", prompt)
+            self.assertNotIn("The idea this unit was opened from", prompt)
+
+    def test_a_childs_intent_prompt_carries_the_idea_text_and_the_three_header_lines(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d))
+            args = (d, Path(d) / ".cos" / UNIT, UNIT, "intent", STAGES, "intent.md")
+            prompt, _ = build_prompt(*args, idea_note=self.NOTE)
+            self.assertIn("# The idea this unit was opened from\n\nBACKEND-ADDS-FRONTEND-CALLS", prompt)
+            self.assertIn("Idea: proj/ideas/0001_f.md.\nRepo: api.", prompt)
+
+    def test_neither_note_reaches_another_stage(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI", plan_md="Status: accepted.\nP")
+            for stage in ("spec", "plan", "review"):
+                args = (d, Path(d) / ".cos" / UNIT, UNIT, stage, STAGES, f"{stage}.md")
+                self.assertEqual(build_prompt(*args), build_prompt(*args, idea_note=self.NOTE, siblings_note="S"), stage)
+
+
 class ThePromptCarriesTheStageBefore(unittest.TestCase):
     def test_the_previous_artifact_is_included_verbatim(self):
         with tempfile.TemporaryDirectory() as d:

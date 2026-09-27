@@ -76,6 +76,14 @@ class WhatIsReadIsWhatIsWritten(unittest.TestCase):
     def test_unit_without_id_is_read_as_such(self):
         self.assertEqual(_read("/unit?ws=a"), Place("unit", "a"))
 
+    def test_place_reads_and_writes_idea_with_ws_and_id(self):
+        """`0040` R15."""
+        p = Place("idea", "proj", idea="0001_one-feature")
+        self.assertEqual(place.href(p), "/idea?ws=proj&id=0001_one-feature")
+        self.assertEqual(_read(place.href(p)), p)
+        self.assertEqual(_read("/idea/?ws=proj&id=0001_x&tab=questions"), Place("idea", "proj", idea="0001_x"))
+        self.assertNotIn("idea", place.SCREENS)
+
     def test_a_name_with_a_space_or_ampersand_survives(self):
         for name in ("my project", "a&b", "x=y", "ü"):
             with self.subTest(name=name):

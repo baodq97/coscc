@@ -17,6 +17,7 @@ node .claude/scripts/cos.mjs status [--json]       # where every unit stands
 node .claude/scripts/cos.mjs gate <unit> <stage> [--repo <dir>]   # 0 open · 1 blocked, with reasons · 2 misuse
 node .claude/scripts/cos.mjs next <unit> [--repo <dir>]           # JSON: the one stage to run now, or "" and why
 node .claude/scripts/cos.mjs new-path <slug>       # allocates the number, validates the slug
+node .claude/scripts/cos.mjs new-idea <slug>       # an idea several units share: .claude/docs/ideas.md
 node .claude/scripts/cos.mjs unit-branch <unit>    # the branch name this unit's Type implies
 node .claude/scripts/cos.mjs pr-text <unit>        # JSON: title and body pr.md puts on its pull request
 node .claude/scripts/cos.mjs rerun <unit> [<stage>] # JSON: stages the board may run again, or its ### Rerun block
@@ -25,10 +26,11 @@ node .claude/scripts/cos.mjs check-tag <tag>       # prints: release | prereleas
 node .claude/scripts/cos.mjs check-version         # the five places a version is declared
 ```
 
-The first seven take `--root <dir>` and read another repository's `.cos/`; the last three
+The first eight take `--root <dir>` and read another repository's `.cos/`; the last three
 refuse it, and `new-path` alone also takes `--reserve-from <dir>` (repeatable) to count
-that directory's numbers as taken. `gate` and `next` take `--repo <dir>`, the checkout whose
-branch and pull request the `review` and `ship` gates read: with `--root` and no `--repo`
+that directory's numbers as taken. `status`, `next` and `gate` take `--peer <ws>=<dir>`
+(repeatable), the stores a unit's links name. `gate` and `next` take `--repo <dir>`, the
+checkout whose branch and pull request the `review` and `ship` gates read: with `--root` and no `--repo`
 those two gates stay closed. `next` names a stage and opens nothing — ask `gate` before
 running it. `COS_REVIEW_ROUNDS` (default 3) is how many review rounds may ask for changes
 before the loop needs a person.

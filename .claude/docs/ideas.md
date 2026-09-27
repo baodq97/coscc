@@ -1,0 +1,69 @@
+# One idea, several units, several repositories
+
+Read this before writing an `intent.md` that carries `Idea:`, `Repo:` or `Depends on:`, or
+before changing how `cos.mjs` reads them. Added by `0040`, which merged `0003`'s design into it.
+
+## The files
+
+An idea is one file, `.cos/ideas/NNNN_<slug>.md`, numbered on its own from `0001` by
+`cos.mjs new-idea <slug>`, which prints the path and creates nothing. It lives in the store of
+the workspace it was started in, its home. Its text is in that file and nowhere else.
+
+```
+# Idea: <title>
+Author: the originator. Status: accepted.
+
+## In their own words
+
+<brief>
+
+## Units
+
+- <ws>/<NNNN_slug>
+- <ws>/<NNNN_slug>. Depends on: <ws>/<NNNN_slug>.
+```
+
+The app appends one line under `## Units` for each unit opened from the idea, and rewrites
+nothing above it. `readAll` passes over `ideas/`; `status --json` carries an `ideas` key only
+when the store has that directory.
+
+A unit opened from an idea is an ordinary unit in its own repository's workspace, with no
+`idea.md`. Its `intent.md` declares, in the header:
+
+```
+Idea: <ws>/ideas/NNNN_<slug>.md. Repo: <ws>. Depends on: <ws>/NNNN_<slug>.
+```
+
+`Depends on:` only when the idea's line has one, and then the same list. `status --json`
+attaches `idea`, `repo` and `dependsOn` to a unit only when its header carries them.
+
+## References
+
+- a workspace name is the app's (`valid_name`): 1–64 letters, digits, `.`, `-`, `_`; no `/`.
+- a unit: `<ws>/NNNN_<slug>`, or `NNNN_<slug>` in the same store.
+- an idea: `<ws>/ideas/NNNN_<slug>.md`, or `ideas/NNNN_<slug>.md` in the same store.
+
+`<ws>` resolves through `--peer <ws>=<dir>` on `status`, `next` and `gate`, `<dir>` being the
+kind of directory `--root` takes. A peer's store is read only to resolve a reference that
+names it; its units are never listed, and a peer unit's own links are not followed. With no
+`--peer` for it, the unit's own `Repo:` is its own store. The app passes one `--peer` per
+workspace, leaving out a name two workspaces share.
+
+## What the gate does
+
+A broken link — no idea file, no `--peer`, a unit the idea does not list — is a problem in
+`status` and closes nothing but `impl`.
+
+`impl` stays shut while any `Depends on:` unit is not merged, and `next` answers
+`stage: ""`, `why: "dependency"`, `action: "waiting on <ref> to merge"`. Merged means that
+unit's `ship.md` is `Status: accepted`. Neither `gh` nor `git` is asked: `0040`
+`spike.md ## U1` could not measure `gh pr view` run from another repository's checkout, and
+`write-ship` accepts only once `## What went out` names the merge commit.
+
+`impl` also stays shut when `Idea:` cannot be read, or when the idea's line for the unit and
+the header disagree on `Depends on:`. The rule cannot rest on one copy an agent wrote; the
+line under `## Units` is the app's.
+
+The `impl` session may read the checkouts of the other workspaces the idea lists and of
+its dependencies, and may not write there; `git -C` into one is refused. `python` could still
+write there — the read boundary is not a sandbox (`.claude/rules/coscc-policy.md`).

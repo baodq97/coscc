@@ -1594,5 +1594,45 @@ class TheStateNameIsUnchanged(unittest.TestCase):
         self.assertEqual(state.StudioState.get_name(), "coscc___state____studio_state")
 
 
+class ADependencyChosenOnAnIdeaCanBeTakenBack(unittest.TestCase):
+    """`0040` review round 1, F3: *Depends on* is optional, so once one is chosen the select
+    offers its way back to none, and reading the page again forgets one no longer listed."""
+
+    def _page(self):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(cwd="/a", idea_id="", idea_note="", idea_units=[], idea_title="", idea_brief="",
+                               idea_ref="", idea_workspaces=[], idea_depends=[], child_ws="", child_depends="")
+
+    def _load(self, page, refs):
+        import asyncio
+        from unittest import mock
+
+        from coscc.state.ideas import IdeasMixin
+
+        said = {"title": "t", "brief": "b", "ref": "a/ideas/0001_x.md", "workspaces": ["a", "b"],
+                "units": [{"ref": r, "unit": r.split("/")[1], "repo": r.split("/")[0]} for r in refs]}
+        service = mock.Mock(idea=mock.AsyncMock(return_value=said))
+        with mock.patch("coscc.state.SERVICE", service):
+            asyncio.run(IdeasMixin._load_idea(page, "0001_x"))
+
+    def test_the_select_offers_no_dependency_and_choosing_it_clears_the_field(self):
+        from coscc.state.ideas import NO_DEPENDENCY, IdeasMixin
+
+        page = self._page()
+        self._load(page, ["b/0001_api"])
+        self.assertEqual(page.idea_depends, [NO_DEPENDENCY, "b/0001_api"])
+        IdeasMixin.set_child_depends(page, "b/0001_api")
+        self.assertEqual(page.child_depends, "b/0001_api")
+        IdeasMixin.set_child_depends(page, NO_DEPENDENCY)
+        self.assertEqual(page.child_depends, "")
+
+    def test_an_idea_with_no_unit_offers_no_select_and_a_stale_choice_is_forgotten(self):
+        page = self._page()
+        page.child_depends = "b/0001_gone"
+        self._load(page, [])
+        self.assertEqual((page.idea_depends, page.child_depends), ([], ""))
+
+
 if __name__ == "__main__":
     unittest.main()
