@@ -112,6 +112,23 @@ The command builds a bundle for its own port into `<repo>/.web`, overwriting the
 worktree had, and builds that one again at the end (about 26 s); its last line says whether
 it did. If that rebuild failed, run the command it prints before any browser proof.
 
+## Work only a person can do
+
+Since `0115`, a draft `impl.md` can wait on a person and run again on the answer.
+
+- Work only a person can do, that this step is waiting on while `impl.md` is `draft`, goes
+  under `## Open questions`, one item each, `N. …?` at column 0: run a command at a terminal
+  and paste what it printed, a measurement, a login, a sum of real money. That is the only
+  place the app reads it from; a person answers it on the board.
+- `## What is still open` holds what waits on nobody's answer.
+- `## Needs a person` keeps its meaning above: `- F<k>:` claims in a review round, answered
+  in `review.md`.
+- Once `## Open questions` is written, keep the heading even when no question is left open.
+- The `## Answers` section at the end of the file is the app's. When the prompt carries
+  *The answers already given to this artifact*, cite each as `impl.md ## Answers, câu N`,
+  write everything above that section, and never edit, move or add to it. An answered
+  question keeps its number; a new one takes a number not yet used in the file.
+
 ## Output
 
 One file, `impl.md`, in the unit's directory.
@@ -130,14 +147,19 @@ Intent: intent.md. Plan: plan.md. Author: <name>. Status: accepted.
 
 ## What is still open
 
+## Open questions
+
+1. <what only a person can do, and what to bring back>?
+
 ## Needs a person
 
 - F<k>: <what the grant lacks, or what costs real money>
 ```
 
-`## Screens` is present only on a UI unit (`## Screens` above). `## Needs a person` is
-present only on a run a review sent back, and only when a finding is left that this stage
-cannot close. Omit each otherwise.
+`## Screens` is present only on a UI unit (`## Screens` above). `## Open questions` is
+present once this step has waited on a person (*Work only a person can do*), and then stays,
+even with no question left open. `## Needs a person` is present only on a run a review sent
+back, and only when a finding is left that this stage cannot close. Omit each otherwise.
 
 `Status` is `draft`, `accepted`, `rejected` or `done`.
 
