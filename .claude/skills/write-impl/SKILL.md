@@ -28,7 +28,7 @@ stage runs again on the same branch. Fix what the review or CI named, commit, an
 this stage. Then record in `impl.md` which commit fixed which finding. The step after is
 `write-review` once CI is green — not `write-pr`, which already ran.
 
-**A finding rated `low`.** Since `0061` a review rates each finding `high`, `medium` or
+**A finding rated `low`.** A review rates each finding `high`, `medium` or
 `low`, and an `[open]` `low` does not block (`write-review`, *Severity, and what blocks*).
 Fix every finding that blocks. Fix a `low` too when you can — the next round marks it
 `[fixed <sha>]` — but nothing requires it: `cos.mjs next` does not wait for one, and it

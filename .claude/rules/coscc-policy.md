@@ -13,9 +13,9 @@ paths:
   `test_the_known_limit_of_the_deny_list`). `ship`'s grant holds `git` and `gh` with this
   machine's login and lands the change on `main` after the `ship` gate opens.
 - **The `pr` and `ship` grants reach further than this repository.** Their capability is
-  this machine's `gh` login, so they reach every repository that login reaches. Since
-  `0082` (`.cos/0082_*/spec.md ## Answers, câu 5`) the page keeps one sentence beside the
-  button saying so (`service.CONSEQUENCE`); the full warning string is `policy.py`'s, still
+  this machine's `gh` login, so they reach every repository that login reaches. The page
+  keeps one sentence beside the button saying so (`service.CONSEQUENCE`; 0082 spec ## Answers,
+  câu 5); the full warning string is `policy.py`'s, still
   in `/api/board` as `warning`, and this bullet is its place in the documentation. Do not
   remove the sentence.
 - **The mode grants nothing, so the default button hands `pr` and `ship` their full grant.**

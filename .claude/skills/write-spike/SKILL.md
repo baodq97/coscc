@@ -37,8 +37,8 @@ Never run `git`. Never write into the worktree, into `.cos/`, or into the unit's
 
 ## The progress file
 
-A spike can run out of turns or budget before its last reply. Since `0080` it keeps what it
-has measured in a file as it goes, so that nothing measured is lost with the reply.
+A spike can run out of turns or budget before its last reply. It keeps what it has measured
+in a file as it goes (`0080`), so that nothing measured is lost with the reply.
 
 1. Your first `Write`, before any probe, creates `spike.md` in your working directory,
    with the whole header — `Spec: spec.md. Author: ᛈ Perthro. Round: <N>. Status:

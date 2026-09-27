@@ -9,7 +9,7 @@ Read this section before anything else, because it is the reason this stage is t
 one in the loop.
 
 **There is no separation of duties here, and this file must not pretend otherwise.**
-Since `0015` the review happens **before** the merge, and a separate agent session sits in
+The review happens **before** the merge (`0015`), and a separate agent session sits in
 the chair — not the session that wrote the code. That makes this a step that can say "not
 yet", and the `ship` gate will not open until it says "pass". It does not make it a
 person's approval: it is still an agent judging an agent, and `Concluded by:` has to say
@@ -39,8 +39,9 @@ rewritten or removed.
    value. At a terminal, `git rev-parse HEAD`. Never guess.
 3. List every finding, each with a severity (below). Carry forward **every** finding any
    earlier round raised, marked `[fixed <sha>]` with the commit that fixed it, or `[open]`
-   — a `low` one too. Dropping one is refused by the `ship` gate, and since `0027` a
-   `changes-requested` round that drops one is not counted against `COS_REVIEW_ROUNDS`:
+   — a `low` one too. Dropping one is refused by the `ship` gate, and a
+   `changes-requested` round that drops one is not counted against `COS_REVIEW_ROUNDS`
+   (`0027`):
    `cos.mjs next` sends the unit to this stage again, naming the ids it dropped.
 4. If any finding that blocks is `[open]`: `Verdict: changes-requested`, header
    `Status: changes-requested`. The fixes are made on the same branch, pushed, CI goes
@@ -48,7 +49,7 @@ rewritten or removed.
 5. If every finding not closed is one that does not block: `Verdict: pass`, header
    `Status: accepted`. That is what opens `ship`.
 
-**A round the app wrote as `incomplete`.** Since `0085`, a review run from the board that
+**A round the app wrote as `incomplete`.** A review run from the board (`0085`) that
 hits its turn or budget ceiling before its reply is written gets one closing turn with no
 tools, and the app writes what it says as a round with `Verdict: incomplete` under
 `Status: draft`: `### Reviewed so far`, `### Findings`, `### What was not reviewed`. That
@@ -58,7 +59,7 @@ then write round N+1 as a full round for the head you are handed now, carrying f
 every finding of the incomplete round and of every earlier one. Never write
 `Verdict: incomplete` yourself: only the app's closing turn does.
 
-**Severity, and what blocks.** Since `0061` every finding carries `high`, `medium` or
+**Severity, and what blocks.** Every finding carries `high`, `medium` or
 `low` between two em dashes (`—`, U+2014) right after its location:
 `- F2 [open] path/to/file.py:40 — low — what`. `cos.mjs` reads only that token. A hyphen,
 an en dash, a word in another language or no token at all reads as no severity, and a
@@ -125,8 +126,8 @@ never brings the loop closer to `needs a person`. A round left with nothing but 
 that do not block passes, so no round is ever counted for `low` findings alone.
 
 **A rebase that changes the patch voids a pass.** `gh pr update-branch --rebase` rewrites
-every commit on the branch, so the reviewed commit is no longer on it. Since `0067` the
-`ship` gate then compares the unit's patch at the new head with the reviewed one: if only
+every commit on the branch, so the reviewed commit is no longer on it. The `ship`
+gate then compares the unit's patch at the new head with the reviewed one (`0067`): if only
 line numbers and `index` lines differ, it opens once CI is green and no round is needed. If
 any added, removed or context line differs, it stays closed. So bring the branch up to date
 with `main` **before** a round, not between a pass and the merge. If the gate names a patch

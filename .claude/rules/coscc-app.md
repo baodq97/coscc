@@ -34,7 +34,7 @@ the page and forgetting to rebuild is possible at all.
 
 ## Shape
 
-One shell under nine static routes (`/cost` since `0093`): `/` Overview, `/workspaces`,
+One shell under nine static routes: `/` Overview, `/workspaces`,
 `/board`, `/backlog`, `/sessions`, `/activity`, `/cost`, `/settings`, and `/unit` — the Board with a unit's dialog open,
 `?ws=<workspace name>&id=<unit>&tab=<tab>`. `coscc/place.py` reads and writes the address;
 `StudioState.arrive`, every route's `on_load`, is the only handler that sets `screen`,
@@ -68,8 +68,8 @@ locked position: no tools, no commands, one turn, no budget.
   the column is `cos.mjs`'s `at` (`0100`).
 - **The five prose stages get no write tools and no commands, in any mode.** `plan`,
   `review` and `spec` may read, in every mode, inside the read boundary. A session that
-  cannot write a file needs the app to write its artifact from the reply. Since `0082` the
-  page no longer says so (`spec.md ## Answers, câu 5`); this bullet is where it is said,
+  cannot write a file needs the app to write its artifact from the reply. The page does
+  not say so (0082 spec ## Answers, câu 5); this bullet is where it is said,
   because otherwise it looks like the agent wrote the file.
   `.cos/0005_hand-driven-invisible-loop/plan.md` Risk 1 records why.
 - **A `coscc/_harness/` left in a checkout shadows `.claude/`.** Both are gitignored and
