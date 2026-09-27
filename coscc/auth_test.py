@@ -588,7 +588,52 @@ class HashConcurrency(Door):
         self.assertEqual(self.guard.limiter.wait("10.0.2.9"), 0)
 
 
+class Rechecks:
+    """Stands in for the name `asyncio` inside `coscc.auth` (`0079` spec R1, R5): every
+    attribute is the real one but `sleep`, where the socket watcher parks until a test
+    lets it take one look. A sleep of any other length is recorded and fails the test."""
+
+    def __init__(self):
+        self.parked = asyncio.Event()
+        self.go = asyncio.Event()
+        self.odd: list[float] = []
+
+    def __getattr__(self, name):
+        return getattr(asyncio, name)
+
+    async def sleep(self, delay, result=None):
+        self.parked.set()
+        if delay != auth.WS_RECHECK:
+            self.odd.append(delay)
+            raise AssertionError(f"auth slept {delay}, not WS_RECHECK")
+        await self.go.wait()
+        self.go.clear()
+        return result
+
+
 class Sockets(Door):
+    """The socket watcher is stepped one look at a time through `Rechecks`, and every wait
+    is on an event: under load a stretch of real time was not enough (`0079`). A ceiling of
+    20 s only turns a hang into a failure."""
+
+    async def look(self, rechecks: Rechecks, task: asyncio.Future) -> None:
+        """One look of the watcher: once it is parked, let it go, and wait until it is
+        parked again or the socket has closed."""
+        try:
+            await asyncio.wait_for(rechecks.parked.wait(), 20)
+        except asyncio.TimeoutError:
+            self.fail("the watcher never reached asyncio.sleep(WS_RECHECK)")
+        self.assertEqual(rechecks.odd, [])
+        rechecks.parked.clear()
+        rechecks.go.set()
+        parked = asyncio.ensure_future(rechecks.parked.wait())
+        done, _ = await asyncio.wait(
+            {parked, task}, timeout=20, return_when=asyncio.FIRST_COMPLETED
+        )
+        parked.cancel()
+        self.assertTrue(done, "the watcher's look neither ended nor closed the socket")
+        self.assertEqual(rechecks.odd, [])
+
     async def test_a_socket_closes_after_its_session_ends(self):
         """spec R8, at the ASGI layer: handshake refused without a cookie, accepted with
         one, and closed once the session is gone — the app sees a disconnect."""
@@ -600,25 +645,28 @@ class Sockets(Door):
         inbox: asyncio.Queue = asyncio.Queue()
         inbox.put_nowait({"type": "websocket.connect"})
         sent: list = []
+        accepted = asyncio.Event()
 
         async def send(message):
             sent.append(message)
+            if message["type"] == "websocket.accept":
+                accepted.set()
 
-        with mock.patch.object(auth, "WS_RECHECK", 0.05):
+        rechecks = Rechecks()
+        with mock.patch.object(auth, "asyncio", rechecks):
             task = asyncio.ensure_future(self.guard(
                 ws_scope("/_event/?EIO=4&transport=websocket", cookie=cookie), inbox.get, send
             ))
-            for _ in range(100):
-                if sent:
-                    break
-                await asyncio.sleep(0.01)
+            await asyncio.wait_for(accepted.wait(), 20)
             self.assertEqual(sent, [{"type": "websocket.accept"}])
+            self.heard.clear()
             inbox.put_nowait({"type": "websocket.receive", "text": "hello"})
-            await asyncio.sleep(0.1)
+            await asyncio.wait_for(self.heard.wait(), 20)
             self.assertEqual(self.events[-1]["type"], "websocket.receive")
 
             self.data.auth_clear()
-            await asyncio.wait_for(task, 1)
+            await self.look(rechecks, task)
+            await asyncio.wait_for(task, 20)
         self.assertEqual(sent[-1], {"type": "websocket.close", "code": 1008})
         self.assertEqual(self.events[-1]["type"], "websocket.disconnect")
 
