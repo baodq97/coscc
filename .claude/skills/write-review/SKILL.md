@@ -124,12 +124,15 @@ passes, or one that ends `needs-person`, costs nothing, so reviewing again after
 never brings the loop closer to `needs a person`. A round left with nothing but findings
 that do not block passes, so no round is ever counted for `low` findings alone.
 
-**A rebase voids a pass.** The `ship` gate requires the reviewed commit to be an ancestor
-of the branch, and `gh pr update-branch --rebase` rewrites every commit on it. So bring
-the branch up to date with `main` **before** a round, not between a pass and the merge. If
-it happens anyway — `main` moved and the merge was refused as out of date — the order is:
-rebase, wait for green, append another round that reviews the new head (carrying every
-finding forward), then `ship`. The earlier pass stays in the history as it was written.
+**A rebase that changes the patch voids a pass.** `gh pr update-branch --rebase` rewrites
+every commit on the branch, so the reviewed commit is no longer on it. Since `0067` the
+`ship` gate then compares the unit's patch at the new head with the reviewed one: if only
+line numbers and `index` lines differ, it opens once CI is green and no round is needed. If
+any added, removed or context line differs, it stays closed. So bring the branch up to date
+with `main` **before** a round, not between a pass and the merge. If the gate names a patch
+that differs after a pass, the order is: wait for green, append another round that reviews
+the new head (carrying every finding forward), then `ship`. The earlier pass stays in the
+history as it was written.
 
 ## Screens
 
