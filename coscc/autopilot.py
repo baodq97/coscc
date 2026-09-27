@@ -155,7 +155,9 @@ IMPL_PER_INTEGRATION = 1
 STILL_RED = "CI is still red after the impl that followed the autopilot's last integration"
 
 
-def since_integration(records: Iterable[dict[str, Any]], workspace: str, unit: str) -> list[dict[str, Any]] | None:
+def since_integration(
+    records: Iterable[dict[str, Any]], workspace: str, unit: str,
+) -> list[dict[str, Any]] | None:
     """`0124`. The unit's records after its latest `integration`, up to the first `review`
     `start` after it — or `None` when it has no `integration`, or that `start` has come."""
     after: list[dict[str, Any]] | None = None
