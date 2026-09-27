@@ -19,7 +19,7 @@ page matched one of the six patterns of `S3` and `S4` that can be measured (`sca
 A hit is reported, never an exit code.
 
 The app runs on a temporary data root with one workspace, `proj`, a clone of a bare
-directory, and four units in it, always the same, so a spec can name its addresses:
+directory, and five units in it, always the same, so a spec can name its addresses:
 
     0001_fresh-intent      an accepted intent, nothing else
     0002_open-question     an intent with one open question nobody answered
@@ -29,6 +29,9 @@ directory, and four units in it, always the same, so a spec can name its address
                            deadline (2026-09-20) has passed and two open questions
                            (`0082` R19); one `plan` run of it, ended, in the run log
                            (`0089` R16), so `/`, `/activity` and its Timeline show a time
+    0005_unfinished-review every artifact up to a review.md whose round 2 asked for
+                           changes and left out F1 of round 1 (`0027`); pr.md names
+                           github.com/o/r/pull/2
 
 The run log holds, since `0092`, a `spec` run that ended `done` for $0.52 and an `impl` run
 that ended `failed` after 109 turns with no known cost on `0002_open-question`, and an
@@ -128,6 +131,7 @@ PATTERNS = (
 
 INTENT = "# Intent: {title}\nAuthor: capture_screens. Type: feat. Status: accepted.\n\n## Problem\n\n{problem}\n"
 ROUND = "\n## Round 1\n\nReviewed: {sha}. Verdict: pass.\n\n### Findings\n\n### What was not reviewed\n\nNothing.\n"
+ASKED = "\n## Round {n}\n\nReviewed: {sha}. Verdict: changes-requested.\n\n### Findings\n\n{findings}\n\n### What was not reviewed\n\nNothing.\n"
 FIXTURE = {
     "fresh-intent": {"intent.md": INTENT.format(title="fresh intent", problem="Một intent vừa được chấp nhận.")},
     # `0044`: question 1 answered by Jera, question 2 left to a person by its last run
@@ -156,6 +160,18 @@ FIXTURE = {
         + "\n## Open questions\n\n1. Có cần đo lại sau một tuần không?\n2. Ai đọc kết quả?\n",
         "spec.md": "# Spec: finished\nAuthor: capture_screens. Status: accepted.\n",
         "plan.md": "# Plan: finished\nAuthor: capture_screens. Status: done.\n",
+    },
+    # `0027` review F1: a last round that does not count, so the unit's dialog lists the id
+    # it left out.
+    "unfinished-review": {
+        "intent.md": INTENT.format(title="unfinished review", problem="Một vòng review bỏ sót một finding."),
+        "spec.md": "# Spec: unfinished review\nIntent: intent.md. Author: capture_screens. Status: accepted.\n",
+        "plan.md": "# Plan: unfinished review\nAuthor: capture_screens. Status: accepted.\n",
+        "impl.md": "# Impl: unfinished review\nAuthor: capture_screens. Status: accepted.\n",
+        "pr.md": "# PR: unfinished review\nPR: https://github.com/o/r/pull/2. Author: capture_screens. Status: accepted.\n",
+        "review.md": "# Review: unfinished review\nAuthor: capture_screens. Status: changes-requested.\n"
+        + ASKED.format(n=1, sha="b" * 40, findings="- F1 [open] a.py:1 — medium — Thiếu test.\n- F2 [open] b.py:2 — low — Tên chưa rõ.")
+        + ASKED.format(n=2, sha="c" * 40, findings="- F2 [open] b.py:2 — low — Tên chưa rõ."),
     },
 }
 
@@ -228,7 +244,7 @@ def run_build(env: dict[str, str]) -> bool:
 
 
 def make_fixture(api: httpx.Client, proj: Path) -> None:
-    """The four units, numbered 0001–0004 in this order, through the app's own route."""
+    """The five units, numbered 0001–0005 in this order, through the app's own route."""
     for name, files in FIXTURE.items():
         made = api.post("/api/units", json={"cwd": str(proj), "slug": name, "brief": f"The {name.replace('-', ' ')} fixture."})
         if made.status_code != 200:
