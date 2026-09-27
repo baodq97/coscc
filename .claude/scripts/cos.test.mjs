@@ -12,7 +12,7 @@ import {
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
   parseUnmeasured, parseSpike, SPIKE_ROUNDS, parseHold, HOLD_MOVES, nonBlocking, prText,
   UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe, stageAt,
-  aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip,
+  aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip, normalizePatch, openLines,
 } from './cos.mjs'
 
 const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
@@ -3002,4 +3002,300 @@ test('0112 review F1: status offers no acceptance of a ship.md naming its Round,
   // With no repository, `next` says it needs one, as the gate does.
   assert.equal(nextStep(u).stage, '')
   assert.match(nextStep(u).action, /--repo/)
+})
+
+// --- 0067: a clean rebase does not void a passing review ------------------------------
+
+const REB = 'd'.repeat(40)
+const hunk = (at, context = 'line 28', blob = '1111111..2222222') =>
+  `diff --git a/a.txt b/a.txt\nindex ${blob} 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -${at},7 +${at},7 @@ def f():\n line 27\n ${context}\n line 29\n-line 30\n+line 30, changed\n line 31\n line 32\n line 33\n`
+const PATCH_R = hunk(27)
+// A pass on `SHA`, then a rebase to `REB`: the reviewed commit is on none of the three refs.
+// `patch(commit)` is what `git diff` prints for the unit at that commit, `base(commit)` what
+// `git merge-base` does; every call, git's and gh's, lands in `calls`.
+const rebasedProbe = ({ patch = (c) => (c === SHA ? PATCH_R : hunk(28, 'line 28', '3333333..4444444')), base = () => ok(`${'f'.repeat(40)}\n`), checks = [{ name: 'tests', bucket: 'pass' }], calls = [] } = {}) => ({
+  gh: (...a) => {
+    calls.push(['gh', ...a].join(' '))
+    return a[1] === 'view' ? ok(JSON.stringify({ state: 'OPEN', headRefOid: REB })) : ok(JSON.stringify(checks))
+  },
+  git: (...a) => {
+    calls.push(a.join(' '))
+    if (a[0] === 'merge-base' && a[1] === '--is-ancestor') return a[2] === SHA ? { code: 1, out: '', err: '' } : ok()
+    if (a[0] === 'merge-base') return base(a[1])
+    if (a[0] === 'diff' && a[1] === '--no-color') return ok(patch(a.at(-4)))
+    return ok()
+  },
+})
+const passedOnce = () => branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')) })
+
+test('0067 R1: normalizePatch drops index lines and hunk numbers, and keeps every other byte', () => {
+  const text = [
+    'diff --git a/a.txt b/a.txt', 'index 1111111..2222222 100644', '--- a/a.txt', '+++ b/a.txt',
+    '@@ -27,7 +27,7 @@ def f():', ' line 27', '+index 1111111..2222222', '- @@ -1 +1 @@', '\\ No newline at end of file',
+    'diff --git a/b.bin b/b.bin', `index ${'1'.repeat(40)}..${'2'.repeat(40)}`, 'GIT binary patch', 'literal 7', 'zcmZQzWMXDwWn^Ms0000A0RR91', '',
+    '@@ -1 +1 @@', '',
+  ].join('\n')
+  assert.equal(normalizePatch(text), [
+    'diff --git a/a.txt b/a.txt', '--- a/a.txt', '+++ b/a.txt',
+    '@@ @@ def f():', ' line 27', '+index 1111111..2222222', '- @@ -1 +1 @@', '\\ No newline at end of file',
+    'diff --git a/b.bin b/b.bin', 'GIT binary patch', 'literal 7', 'zcmZQzWMXDwWn^Ms0000A0RR91', '',
+    '@@ @@', '',
+  ].join('\n'))
+  // Only the numbers differ: equal once normalized. A line of context differs: not.
+  assert.equal(normalizePatch(hunk(27)), normalizePatch(hunk(28, 'line 28', 'abcdef0..0fedcba')))
+  assert.notEqual(normalizePatch(hunk(27)), normalizePatch(hunk(27, 'line 28, changed by main')))
+})
+
+test('0067 R1: a merge-base that names no commit is an error, never a clean rebase', () => {
+  const u = passedOnce()
+  for (const [base, said] of [
+    [() => ok(''), /its patch could not be compared with the reviewed one: git merge-base printed no commit/],
+    [() => ok('not a sha\n'), /git merge-base printed no commit/],
+    [() => ({ code: 1, out: '', err: 'fatal: no merge base' }), /could not be compared .*fatal: no merge base/],
+  ]) {
+    const g = checkGate(u, 'ship', { probe: rebasedProbe({ base }) })
+    assert.equal(g.ok, false)
+    assert.match(g.need[0], /rewritten after the pass \(a rebase does this\): review its new head in another round/)
+    assert.match(g.need[0], said)
+    assert.equal(nextStep(u, { probe: rebasedProbe({ base }) }).stage, 'review')
+  }
+  // Two empty patches are equal, so an empty one from a failing diff must not be read as one.
+  const failing = rebasedProbe()
+  const git = failing.git
+  failing.git = (...a) => (a[0] === 'diff' && a[1] === '--no-color' ? { code: 128, out: '', err: 'fatal: bad object' } : git(...a))
+  assert.match(checkGate(u, 'ship', { probe: failing }).need[0], /could not be compared .*fatal: bad object/)
+})
+
+test('0067 R2: a rewritten ref whose patch is unchanged opens ship once CI is green, and the gate names both commits', () => {
+  const u = passedOnce()
+  assert.deepEqual(checkGate(u, 'ship', { probe: rebasedProbe() }), { ok: true, need: [], head: REB, rebased: { reviewed: SHA, head: REB } })
+  // The reviewed patch is taken once, for all three refs: four merge-bases, not six.
+  const calls = []
+  checkGate(u, 'ship', { probe: rebasedProbe({ calls }) })
+  assert.equal(calls.filter((c) => c.startsWith('merge-base ') && !c.includes('--is-ancestor')).length, 4)
+  assert.equal(calls.filter((c) => c.startsWith('gh pr checks')).length, 1)
+  const n = nextStep(u, { probe: rebasedProbe() })
+  assert.equal(n.stage, 'ship')
+  assert.match(n.action, new RegExp(`--match-head-commit ${REB}$`))
+})
+
+test('0067 R3: red, pending, none or unreadable CI on a clean rebase closes ship with said.ci and never said.moved', () => {
+  const u = passedOnce()
+  const unreadable = rebasedProbe()
+  const gh = unreadable.gh
+  unreadable.gh = (...a) => (a[1] === 'checks' ? { code: 1, out: '', err: 'HTTP 401' } : gh(...a))
+  for (const [probe, said, stage] of [
+    [rebasedProbe({ checks: [{ name: 'tests', bucket: 'fail' }] }), /^CI is red on #7: tests — back to impl/, 'impl'],
+    [rebasedProbe({ checks: [{ name: 'tests', bucket: 'pending' }] }), /^CI has not finished on #7: tests/, ''],
+    [rebasedProbe({ checks: [] }), /^#7 reports no required checks/, ''],
+    [unreadable, /^cannot read the required checks of #7: HTTP 401$/, ''],
+  ]) {
+    const g = checkGate(u, 'ship', { probe })
+    assert.equal(g.ok, false)
+    assert.equal(g.need.length, 1)
+    assert.match(g.need[0], said)
+    assert.doesNotMatch(g.need[0], /rewritten/)
+    // Neither `moved` nor `screens`: `next` sends it back to impl on red, and waits otherwise.
+    const n = nextStep(u, { probe })
+    assert.equal(n.stage, stage)
+    assert.match(n.action, said)
+  }
+})
+
+test('0067 R4: a patch that differs names its files, one that cannot be compared quotes git, and both still ask for a round', () => {
+  const u = passedOnce()
+  const other = 'diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-x\n+y\n'
+  const extra = 'diff --git a/c.txt b/c.txt\nnew file mode 100644\n--- /dev/null\n+++ b/c.txt\n@@ -0,0 +1 @@\n+z\n'
+  const patch = (c) => (c === SHA ? `${PATCH_R}${other}` : `${hunk(28, 'line 28, changed by main')}${other}${extra}`)
+  const g = checkGate(u, 'ship', { probe: rebasedProbe({ patch }) })
+  assert.equal(g.ok, false)
+  assert.match(g.need[0], /^the reviewed commit a{40} is not on refs\/heads\/feat\/x — the branch was rewritten after the pass/)
+  assert.match(g.need[0], / — its patch differs from the reviewed one in a\.txt, c\.txt$/)
+  assert.equal(nextStep(u, { probe: rebasedProbe({ patch }) }).stage, 'review')
+  // Quoted paths are named by their path.
+  const quoted = (c) => (c === SHA ? PATCH_R : `${PATCH_R}diff --git "a/sp ace\\t.txt" "b/sp ace\\t.txt"\n+x\n`)
+  assert.match(checkGate(u, 'ship', { probe: rebasedProbe({ patch: quoted }) }).need[0], /differs from the reviewed one in sp ace\\t\.txt$/)
+  const noTrunk = rebasedProbe()
+  const git = noTrunk.git
+  noTrunk.git = (...a) => (a[0] === 'rev-parse' && a[3]?.endsWith('/main') ? { code: 1, out: '', err: '' } : git(...a))
+  const lost = checkGate(u, 'ship', { probe: noTrunk })
+  assert.match(lost.need[0], /could not be compared with the reviewed one: there is no origin\/main and no main here/)
+  assert.equal(nextStep(u, { probe: noTrunk }).stage, 'review')
+})
+
+test('0067 R7: a unit not rebased asks git no merge-base to trunk, no patch diff and gh no checks', () => {
+  const u = passedOnce()
+  const calls = []
+  const probe = greenProbe()
+  const { git, gh } = probe
+  probe.git = (...a) => (calls.push(a.join(' ')), git(...a))
+  probe.gh = (...a) => (calls.push(['gh', ...a].join(' ')), gh(...a))
+  assert.deepEqual(checkGate(u, 'ship', { probe }), { ok: true, need: [], head: SHA })
+  assert.deepEqual(calls.filter((c) => c.startsWith('merge-base ') && !c.startsWith('merge-base --is-ancestor ')), [])
+  assert.deepEqual(calls.filter((c) => c.startsWith('diff --no-color')), [])
+  assert.deepEqual(calls.filter((c) => c.startsWith('gh pr checks')), [])
+})
+
+test('0067 R5: next offers ship on a green clean rebase, impl on red, nothing while CI runs or reports none — never review', () => {
+  const u = passedOnce()
+  assert.equal(nextStep(u, { probe: rebasedProbe() }).stage, 'ship')
+  assert.equal(nextStep(u, { probe: rebasedProbe({ checks: [{ name: 'tests', bucket: 'fail' }] }) }).stage, 'impl')
+  for (const checks of [[{ name: 'tests', bucket: 'pending' }], []]) {
+    const n = nextStep(u, { probe: rebasedProbe({ checks }) })
+    assert.equal(n.stage, '')
+    assert.notEqual(n.stage, 'review')
+  }
+})
+
+test('0067 R5: a ship refused as not up to date and then rebased clean is offered ship again; another refusal still stops', () => {
+  const u = (refused) => branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')), 'ship.md': shipArt(shipDraft(1, refused)) })
+  assert.deepEqual(nextStep(u(), { probe: rebasedProbe() }), { blocked: true, action: `write-ship — merge with --match-head-commit ${REB}`, stage: 'ship' })
+  assert.equal(nextStep(u(), { probe: rebasedProbe({ checks: [{ name: 'tests', bucket: 'fail' }] }) }).stage, 'impl')
+  assert.equal(nextStep(u(), { probe: rebasedProbe({ checks: [{ name: 'tests', bucket: 'pending' }] }) }).stage, '')
+  // Refused for something else: a clean rebase does not cure it.
+  assert.deepEqual(nextStep(u('you do not have permission to merge'), { probe: rebasedProbe() }), {
+    blocked: true, action: 'ship was refused: you do not have permission to merge — finish and accept ship.md', stage: '',
+  })
+  // Not rebased at all: `0112` R6 b stands.
+  assert.match(nextStep(u(), { probe: greenProbe() }).action, /^ship was refused: the head branch is not up to date/)
+})
+
+test('0067 R6: gate prints a second line naming the reviewed commit and the new head, with no full sha', () => {
+  assert.deepEqual(openLines('ship', '0001_x', { head: SHA }), [`open: ship may proceed for 0001_x — merge with --match-head-commit ${SHA}`])
+  assert.deepEqual(openLines('impl', '0001_x', {}), ['open: impl may proceed for 0001_x'])
+  const [first, second, ...rest] = openLines('ship', '0001_x', { head: REB, rebased: { reviewed: SHA, head: REB } })
+  assert.equal(first, `open: ship may proceed for 0001_x — merge with --match-head-commit ${REB}`)
+  assert.equal(second, "the reviewed commit aaaaaaa was rebased to ddddddd and the unit's patch is unchanged — no review round is needed")
+  assert.doesNotMatch(second, /[0-9a-f]{40}/)
+  assert.deepEqual(rest, [])
+})
+
+// R9: the cases `spec.md ## Answers, câu 1` measured, on a real repository. `a.txt` has 60
+// lines and the unit changes line 30; `.cos/0001_x/` is the unit's own. Only `gh` is faked.
+const LINE30 = 'line 30, changed by the unit'
+const swap = (from, to) => (l) => { l[l.indexOf(from)] = to }
+function rebaseRepo({ binary = false } = {}) {
+  const repo = mkdtempSync(join(tmpdir(), 'cos-0067-'))
+  const sh = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.name=T', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8' })
+    assert.equal(r.status, 0, r.stderr)
+    return r.stdout.trim()
+  }
+  const file = join(repo, 'a.txt')
+  const edit = (fn) => {
+    const l = readFileSync(file, 'utf8').split('\n').slice(0, -1)
+    fn(l)
+    writeFileSync(file, `${l.join('\n')}\n`)
+  }
+  const commit = (...flags) => {
+    sh('add', '-A')
+    sh('commit', '-q', ...flags)
+    return sh('rev-parse', 'HEAD')
+  }
+  // The unit's change, on whatever is checked out.
+  const theUnit = (bin = [0, 1, 2, 0, 254, 9]) => {
+    edit(swap('line 30', LINE30))
+    if (binary) writeFileSync(join(repo, 'b.bin'), Buffer.from(bin))
+    mkdirSync(join(repo, '.cos', '0001_x'), { recursive: true })
+    writeFileSync(join(repo, '.cos', '0001_x', 'review.md'), 'round 1\n')
+  }
+  sh('init', '-q', '-b', 'main')
+  writeFileSync(file, `${Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join('\n')}\n`)
+  if (binary) writeFileSync(join(repo, 'b.bin'), Buffer.from([0, 1, 2, 0, 255]))
+  commit('-m', 'first')
+  sh('switch', '-q', '-c', 'feat/x')
+  theUnit()
+  const R = commit('-m', 'the unit')
+  // `main` moves, and `origin/main` with it, as a fetch would.
+  const onMain = (fn) => {
+    sh('switch', '-q', 'main')
+    edit(fn)
+    commit('-m', 'main moves')
+    sh('update-ref', 'refs/remotes/origin/main', 'main')
+    sh('switch', '-q', 'feat/x')
+  }
+  return { repo, sh, commit, theUnit, R, onMain }
+}
+const realProbe = (repo, head, checks = [{ name: 'tests', bucket: 'pass' }]) => ({
+  ...makeProbe(repo),
+  gh: (...a) => (a[1] === 'view' ? ok(JSON.stringify({ state: 'OPEN', headRefOid: head })) : ok(JSON.stringify(checks))),
+})
+const passedAt = (R) => branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass').replace(SHA, R)) })
+const farFromTheHunk = (l) => l.splice(5, 0, 'inserted by main')
+
+test('0067 R9: main inserts a line far from the hunk — a clean rebase, ship opens on green, next offers ship', () => {
+  const { repo, sh, R, onMain } = rebaseRepo()
+  onMain(farFromTheHunk)
+  sh('rebase', '-q', 'main')
+  const H = sh('rev-parse', 'HEAD')
+  assert.notEqual(H, R)
+  const u = passedAt(R)
+  assert.deepEqual(checkGate(u, 'ship', { probe: realProbe(repo, H) }), { ok: true, need: [], head: H, rebased: { reviewed: R, head: H } })
+  const n = nextStep(u, { probe: realProbe(repo, H) })
+  assert.equal(n.stage, 'ship')
+  assert.match(n.action, new RegExp(`--match-head-commit ${H}$`))
+})
+
+test('0067 R9: main changes a line of the 3-line context — not clean, next offers review', () => {
+  const { repo, sh, R, onMain } = rebaseRepo()
+  onMain(swap('line 28', 'line 28, changed by main'))
+  sh('rebase', '-q', 'main')
+  const H = sh('rev-parse', 'HEAD')
+  const u = passedAt(R)
+  const g = checkGate(u, 'ship', { probe: realProbe(repo, H) })
+  assert.equal(g.ok, false)
+  assert.match(g.need[0], /its patch differs from the reviewed one in a\.txt$/)
+  assert.equal(nextStep(u, { probe: realProbe(repo, H) }).stage, 'review')
+})
+
+test('0067 R9: a conflict resolved on the adjacent line — not clean', () => {
+  const { repo, sh, commit, theUnit, R, onMain } = rebaseRepo()
+  onMain(swap('line 31', 'line 31, changed by main'))
+  // What resolving the conflict ends on: the new main, and the unit's line 30 applied again.
+  sh('switch', '-q', '-C', 'feat/x', 'main')
+  theUnit()
+  const H = commit('-m', 'the unit, resolved')
+  const g = checkGate(passedAt(R), 'ship', { probe: realProbe(repo, H) })
+  assert.equal(g.ok, false)
+  assert.match(g.need.join('\n'), /its patch differs from the reviewed one in a\.txt/)
+})
+
+test('0067 R9: a binary file the unit changes comes out different while the text is identical — not clean, and the file is named', () => {
+  const { repo, sh, commit, R, onMain } = rebaseRepo({ binary: true })
+  onMain(farFromTheHunk)
+  sh('rebase', '-q', 'main')
+  const clean = sh('rev-parse', 'HEAD')
+  assert.equal(checkGate(passedAt(R), 'ship', { probe: realProbe(repo, clean) }).ok, true)
+  writeFileSync(join(repo, 'b.bin'), Buffer.from([0, 1, 2, 0, 254, 8]))
+  const H = commit('--amend', '--no-edit')
+  const g = checkGate(passedAt(R), 'ship', { probe: realProbe(repo, H) })
+  assert.equal(g.ok, false)
+  assert.match(g.need[0], /its patch differs from the reviewed one in b\.bin$/)
+})
+
+test('0067 R9: red, pending or none on a clean rebase closes ship, and next never offers review', () => {
+  const { repo, sh, R, onMain } = rebaseRepo()
+  onMain(farFromTheHunk)
+  sh('rebase', '-q', 'main')
+  const H = sh('rev-parse', 'HEAD')
+  const u = passedAt(R)
+  for (const [checks, stage] of [[[{ name: 'tests', bucket: 'fail' }], 'impl'], [[{ name: 'tests', bucket: 'pending' }], ''], [[], '']]) {
+    assert.equal(checkGate(u, 'ship', { probe: realProbe(repo, H, checks) }).ok, false)
+    assert.equal(nextStep(u, { probe: realProbe(repo, H, checks) }).stage, stage)
+  }
+})
+
+test('0067 R9: a head that differs only under .cos/<unit>/ is clean', () => {
+  const { repo, sh, commit, R, onMain } = rebaseRepo()
+  onMain(farFromTheHunk)
+  sh('rebase', '-q', 'main')
+  writeFileSync(join(repo, '.cos', '0001_x', 'review.md'), 'round 1\nround 2\n')
+  writeFileSync(join(repo, '.cos', '0001_x', 'ship.md'), 'draft\n')
+  const H = commit('-m', 'the unit records its round')
+  assert.equal(checkGate(passedAt(R), 'ship', { probe: realProbe(repo, H) }).ok, true)
+  // Another unit's files are the unit's patch like any other.
+  mkdirSync(join(repo, '.cos', '0002_y'))
+  writeFileSync(join(repo, '.cos', '0002_y', 'intent.md'), 'x\n')
+  const other = commit('-m', 'another unit')
+  assert.match(checkGate(passedAt(R), 'ship', { probe: realProbe(repo, other) }).need[0], /differs from the reviewed one in \.cos\/0002_y\/intent\.md$/)
 })
