@@ -41,6 +41,20 @@ class TheWordsAreCosMjs(unittest.TestCase):
         self.assertIn("`" + ap.NEEDS_A_PERSON + " — review used", text)
         self.assertIn(f"action: '{ap.FINISHED}'", text)
         self.assertIn("`" + ap.CLOSED + "${s.name} rejected`", text)
+        self.assertIn(f"export const WAITING_ON = '{ap.WAITING_ON}'", text)
+
+
+class AUnitWaitingOnADependency(unittest.TestCase):
+    """`0040` R7, plan Risk 6. `next` answers `stage: ""` while `impl` waits on a merge."""
+
+    def test_a_unit_waiting_on_a_dependency_is_passed_over_not_stopped_and_no_notice_is_sent(self):
+        said = nxt("", ap.WAITING_ON + "api/0001_backend to merge")
+        # No stop is what keeps a notice from going out: only a stop is recorded and told.
+        self.assertIsNone(ap.stop_for(unit(), said, None, False))
+        self.assertEqual(ap.reason_for(said, "", None), ("dependency", said["action"]))
+        self.assertIn("dependency", ap.REASONS)
+        # Anything else with no stage is still the stop `f` it was.
+        self.assertEqual(ap.stop_for(unit(), nxt("", "fix the idea link — x"), None, False)["kind"], "f")
 
 
 class Stops(unittest.TestCase):

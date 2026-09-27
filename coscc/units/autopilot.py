@@ -42,7 +42,7 @@ NOT_STEPS = ("precedent",)
 STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap", "shortlist", "reruns", "full")
 
 # `0104` R6. Why a unit ranked higher on the shortlist was passed over, and nothing else.
-REASONS = ("held", "finished", "closed", "stop", "ci", "running", "overlap", "ship-busy", "missing")
+REASONS = ("held", "finished", "closed", "stop", "ci", "running", "overlap", "ship-busy", "missing", "dependency")
 # `0111`. The stop `e` of a unit whose screenshots could not be taken again before `review`.
 SCREENS_FAILED = "the screenshots could not be taken again before review"
 # `0104` R3. The workspace's stop line when there is no shortlist to follow.
@@ -55,8 +55,16 @@ CI_RED = "CI is red on #"
 NEEDS_A_PERSON = "needs a person"
 FINISHED = "finished"
 CLOSED = "closed — "
+# `0040` R7: `impl` waits on another unit's merge, `cos.mjs` `WAITING_ON`.
+WAITING_ON = "waiting on "
 
 _NUMBER = re.compile(r"^(\d+)")
+
+
+def is_waiting_on_dependency(said: str) -> bool:
+    """`0040` R7: `next` holds `impl` back until a dependency merges. Not a stop, like CI
+    pending: nothing a person does here would move it, and the next pass asks again."""
+    return (said or "").startswith(WAITING_ON)
 
 
 def is_ci_pending(said: str) -> bool:
@@ -151,6 +159,8 @@ def stop_for(
     # `0106` R2: a draft whose questions are all answered is a stage to run again, not a
     # stop. Whether it may be is the pass's to say (`reruns_of`, `answered_since_start`).
     if not stage and nxt.get("rerun"):
+        return None
+    if not stage and is_waiting_on_dependency(action):
         return None
     # f. Nothing to run, and not because CI is still running.
     if not stage and not is_ci_pending(action):
@@ -424,6 +434,8 @@ def reason_for(
         return ("closed", action)
     if is_ci_pending(action):
         return ("ci", action)
+    if is_waiting_on_dependency(action):
+        return ("dependency", action)
     raise ValueError(f"no reason for a unit with no stage and no stop: {action or 'nothing said'}")
 
 
