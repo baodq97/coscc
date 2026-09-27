@@ -39,6 +39,22 @@ behind*, has the detail.
 The open line ends `— merge with --match-head-commit <sha>`. That is the head the gate
 checked. Copy it; do not read the head again yourself.
 
+## When the pull request is already merged
+
+An earlier step may have merged it and stopped before `ship.md` was accepted — a
+`--delete-branch` that exited 1 after the merge does this — or a person merged it. The gate
+then opens with `— #<n> was merged as <sha> at <mergedAt>: record it in ship.md; do not
+merge` (`0116`). It checked only that the last round passed and that the merge commit is
+here and on `origin/main`: not the branch, CI, or whether the head moved after the pass.
+
+- Do not run `gh pr merge`. There is nothing left to merge.
+- Read `gh pr view <url> --json mergeCommit,mergedAt,headRefOid`.
+- Write `ship.md` as below, `Round:` being the passing round the gate read.
+- `## What went out` names the merge commit and `mergedAt`, says the merge happened in an
+  earlier step and this one only records it, and names the pull request's last head. If that
+  head is not the last round's `Reviewed:` commit, say so: code nobody reviewed went out.
+- Invariants 2 to 8 hold as they are.
+
 ## Merging
 
 ```
