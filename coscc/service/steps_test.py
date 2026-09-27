@@ -834,7 +834,9 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
             self.calls = 0
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
-            self.calls += 1
+            # `0127`: a prose stage reads `# Ship:` as no title and reopens this session
+            # once to repair it. That is the same step, so only a new session is counted.
+            self.calls += session_id is None
             yield ("chunk", "# Ship: no\nAuthor: t. Status: accepted.\n\n## Body\n")
             yield ("done", {"session_id": "s", "cost": {}})
 

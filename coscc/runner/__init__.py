@@ -83,6 +83,8 @@ from coscc.runner.review import (
 from coscc.runner.reply import (
     STATUS_RE,
     RunError,
+    OpeningError,
+    opening_prompt,
     _Stopped,
     HEADER_STATUS_RE,
     REPLY_KEPT,
@@ -124,6 +126,11 @@ SESSIONS_PER_STEP = 1
 # measured 9.8 s, and the longest closing turn `## U2` measured took 25.5 s.
 CLOSING_TIMEOUT = 180.0
 
+# `0127` R2. How long the repair turn may take. Chosen from `spike.md ## U1`: rewriting the
+# 26,535-character plan of `0129` took 94.5 s and 92.7 s, and its spec 79.2 s. The text came
+# at once at the end of the turn, so a turn cut here leaves nothing to write.
+OPENING_TIMEOUT = 180.0
+
 
 async def _closing_turn(
     sessions: Sessions,
@@ -157,6 +164,42 @@ async def _closing_turn(
         elif kind == "done":
             done = payload
     return text, done
+
+
+async def _opening_turn(
+    sessions: Sessions,
+    cwd: str,
+    prompt: str,
+    session_id: str,
+    denials: Denials,
+    **kw: Any,
+) -> tuple[str, int, dict[str, Any] | None]:
+    """`0127` R2. The reply of one more turn on a prose step's own session, how many pieces
+    of text it said (`0099` R5), and its `done`.
+
+    `_closing_turn`'s shape: the same session id, a new handle with no recorder, no tools, a
+    callback that refuses every call, one turn.
+    """
+
+    async def deny_all(tool: str, tool_input: dict, context: Any):
+        reason = "the opening turn holds no tools"
+        denials.record(tool, reason, tool_input)
+        return sdk.PermissionResultDeny(message=reason)
+
+    text, blocks, done = "", 0, None
+    async for kind, payload in sessions.stream(
+        cwd, prompt, session_id, max_turns=1, can_use_tool=deny_all, tools=[],
+        step=sessions_mod.StepHandle(), **kw,
+    ):
+        if kind == "chunk":
+            text += payload
+            if payload.strip():
+                blocks += 1
+        elif kind == "tool":
+            text = _after_tool(text)
+        elif kind == "done":
+            done = payload
+    return text, blocks, done
 
 
 def _turn_cost(done: dict[str, Any] | None, cost: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -524,6 +567,10 @@ class Runner:
         # (the closing turn's), `none` or `withheld`. `closing` is set only when that turn ran.
         review_md: str | None = None
         closing: dict[str, Any] | None = None
+        # `0127` R5-R7. The refusal of a reply that lacked its opening, which a repair turn
+        # may follow, and what came of that turn: `repaired`, `none` or `withheld`.
+        unopened: OpeningError | None = None
+        opening: str | None = None
         before: tuple[str, str] | None = None
         tree_changed = False
 
@@ -645,6 +692,7 @@ class Runner:
             # so it goes into the attempt record's `error` exactly like any other one.
             error = {"type": type(e).__name__, "message": str(e)}
             detail = str(e)
+            unopened = e if isinstance(e, OpeningError) else None
             # What the session said, kept. Until `0014` a prose step that produced an
             # unusable reply threw it away: the money was spent, the artifact was not
             # written, and the only record was the reason. A reply with no `Status:` line
@@ -753,6 +801,63 @@ class Runner:
                     closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
                     review_md, said = "none", f"review.md: the closing turn failed: {type(e).__name__}: {e}"
                 if said:
+                    detail = f"{detail}\n--- {said} ---" if detail else said
+            # `0127` R2. A prose step whose reply was refused for its opening alone gets one
+            # more turn on its own session, with no tools, asking for the artifact again. Not
+            # a spike, which has its progress file (`0080`), and not a step at its ceiling,
+            # which `0120` and `0085` already cover. Here, and wrapped, for the reasons the
+            # closing turn is: the `end` row never depends on it (spec *Design* 1).
+            #
+            # Sealed first, as the closing turn is, so a Stop is refused until the turn is over;
+            # `OPENING_TIMEOUT` bounds it, and the budget does not (spec C3).
+            opening_pending: BaseException | None = None
+            if (
+                unopened is not None and is_prose_stage(stage) and grant.app_writes_artifact
+                and not watch and outcome == "failed" and not shutting_down
+            ):
+                said = ""
+                try:
+                    if not session_id:
+                        opening, said = "none", f"{artifact}: the opening was not repaired: the session has no id"
+                    elif not steps.seal(running):
+                        opening = "withheld"
+                    else:
+                        reply, again, done = await asyncio.wait_for(
+                            _opening_turn(
+                                self.sessions, cwd, opening_prompt(artifact, unopened.problem), session_id, denials,
+                                max_budget_usd=grant.max_budget_usd or None,
+                                **({"workspace": workspace} if cwd != workspace else {}),
+                                **({"model": model} if model is not None else {}),
+                                **({"effort": effort} if effort is not None else {}),
+                                **({"system_prompt": dict(preset)} if preset else {}),
+                            ),
+                            OPENING_TIMEOUT,
+                        )
+                        closing, cost = _turn_cost(done, cost)
+                        # R4: the road every reply takes, and nothing of the first reply joined
+                        # to it. No `await` from here to the write.
+                        try:
+                            _write_artifact(directory, artifact, reply, blocks=again)
+                        except RunError as e:
+                            opening, said = "none", f"{artifact}: the repair turn's reply was not written: {e}"
+                        else:
+                            outcome, error, detail, opening = "done", None, "", "repaired"
+                            if stage == "review":
+                                review_md = "round"
+                except asyncio.CancelledError as e:
+                    if stopped():
+                        task = asyncio.current_task()
+                        if task is not None:
+                            task.uncancel()
+                        opening = "withheld"
+                    else:
+                        shutting_down = True
+                        opening_pending = e
+                except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
+                    closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
+                    opening, said = "none", f"{artifact}: the repair turn failed: {type(e).__name__}: {e}"
+                if said:
+                    # R6: under the first refusal and what the session first replied.
                     detail = f"{detail}\n--- {said} ---" if detail else said
             # `0034` review round 1, F2. The outcome is decided here, so the door closes
             # here: a Stop that arrives while the attempt record is captured below is
@@ -863,11 +968,16 @@ class Runner:
                     # `0085` R6: only a review's; `closing` only when that turn ran.
                     **({"review_md": review_md} if stage == "review" else {}),
                     **({"closing": closing} if closing is not None else {}),
+                    # `0127` R5-R7: only once a reply lacked its opening.
+                    **({"opening": opening} if opening is not None else {}),
+                    **({"opening_reason": str(unopened)} if opening == "repaired" else {}),
                 )
             if progress_pending is not None:
                 raise progress_pending
             if closing_pending is not None:
                 raise closing_pending
+            if opening_pending is not None:
+                raise opening_pending
             if pending is not None:
                 if not stop_came:
                     raise pending
