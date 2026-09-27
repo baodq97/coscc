@@ -9,9 +9,10 @@ import asyncio
 import dataclasses
 import sys
 
-from coscc import events as events_mod
-from coscc import present, spend
-from coscc.journal import COST_USD, TOKEN_FIELDS
+from coscc.runlog import events as events_mod
+from coscc import present
+from coscc.runlog import spend
+from coscc.runlog.journal import COST_USD, TOKEN_FIELDS
 from coscc.service import reason_beside, shown_state
 
 

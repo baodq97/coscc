@@ -13,7 +13,7 @@ from coscc import autopilot
 from coscc import board as board_reader
 from coscc.board import Unavailable
 from coscc.data import Data
-from coscc.journal import BadRecord, Busy, Journal
+from coscc.runlog.journal import BadRecord, Busy, Journal
 from coscc import efforttrial, labels, models
 from coscc.config import LOOPBACK
 from coscc.runner import SESSIONS_PER_STEP

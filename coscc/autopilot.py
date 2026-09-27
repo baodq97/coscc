@@ -17,7 +17,8 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
-from coscc import labels, spend
+from coscc import labels
+from coscc.runlog import spend
 from coscc.policy import GRANTS, NOVEL_CEILINGS, grant_for, grant_for_step
 
 # R2. Defaults, `intent.md ## Answers`, câu 2 and 3.

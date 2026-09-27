@@ -14,7 +14,8 @@ from typing import Any, AsyncIterator
 
 from coscc import autopilot, backlog
 from coscc import board as board_reader
-from coscc import efforttrial, events
+from coscc import efforttrial
+from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc import harness, knowledge
 from coscc.github import integrate
@@ -22,7 +23,7 @@ from coscc import planmap, priorfindings, retake
 from coscc.board import Unavailable
 from coscc.data import Data, now as _now
 from coscc.git.gitops import GitError
-from coscc.journal import BadRecord, Busy, Journal
+from coscc.runlog.journal import BadRecord, Busy, Journal
 from coscc.policy import grant_for
 from coscc.runner import RunError, Runner, answers_section, describe_attempt
 from coscc import steps as steps_mod

@@ -21,7 +21,7 @@ from unittest import mock
 
 from coscc import efforttrial, harness, policy
 from coscc.git import gitops
-from coscc.journal import Journal
+from coscc.runlog.journal import Journal
 from coscc.policy import decide, grant_for
 from coscc.runner import (
     ATTEMPT_EXCERPT,
@@ -1498,7 +1498,7 @@ class RecordingChangesNothing(unittest.TestCase):
             return out[-1][1]["outcome"], (directory / "spec.md").read_bytes(), same, raw
 
     def test_with_and_without_a_recorder_the_step_is_the_same(self):
-        from coscc import events
+        from coscc.runlog import events
 
         plain = self._once(None)
         recorded = self._once(lambda data: events.Recorder("r-1", data, "/w", "/w/ws", UNIT, "spec"))

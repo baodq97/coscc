@@ -9,9 +9,9 @@ import asyncio
 from typing import Any, AsyncIterator
 
 from coscc import backlog
-from coscc import events
+from coscc.runlog import events
 from coscc.data import Data
-from coscc.journal import Busy
+from coscc.runlog.journal import Busy
 from coscc.service_common import Invalid
 
 

@@ -453,7 +453,7 @@ class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
     nothing. Neither is exempt from the login (`auth_test` walks every route for that)."""
 
     async def asyncSetUp(self):
-        from coscc import events
+        from coscc.runlog import events
         from coscc.data import Data
 
         self.app = build(_tmp_config(self))
@@ -554,9 +554,10 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
         import io
         import time
 
-        from coscc import auth, notices
+        from coscc import auth
+        from coscc.runlog import notices
         from coscc.data import Data
-        from coscc.journal import Journal
+        from coscc.runlog.journal import Journal
 
         data = Data(self.config.data_dir)
         now = int(time.time())
@@ -1582,7 +1583,7 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ok.status_code, 200)
 
     async def test_a_change_is_stored_started_and_logged_with_old_and_new(self):
-        from coscc.journal import Journal
+        from coscc.runlog.journal import Journal
         client = await self.client_for("127.0.0.1")
         got = await client.post("/api/settings/autopilot", json={"cwd": "/tmp", "name": "autopilot", "value": True})
         self.assertEqual(got.status_code, 200, got.text)

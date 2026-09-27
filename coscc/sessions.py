@@ -364,7 +364,7 @@ class StepHandle:
     # `0076`. The step's own `COS_DATA_DIR`, set before the client is built and removed by
     # `stream` once the client is closed, however the step ended.
     scratch: Path | None = None
-    # `0073`. The step's `coscc/events.py` recorder, set by `Service.run_step`. `_stream`
+    # `0073`. The step's `coscc/runlog/events.py` recorder, set by `Service.run_step`. `_stream`
     # hands it every message before anything else reads it; chat has no handle, so none.
     recorder: Any = None
 

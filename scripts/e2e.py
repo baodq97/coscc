@@ -35,9 +35,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx  # noqa: E402
 
-from coscc import auth, hold, notices  # noqa: E402
+from coscc import auth, hold
+from coscc.runlog import notices  # noqa: E402
 from coscc.config import from_env  # noqa: E402
-from coscc.journal import Journal  # noqa: E402
+from coscc.runlog.journal import Journal  # noqa: E402
 from scripts.proof_harness import (  # noqa: E402
     EXIT_BROKEN,
     EXIT_PASS,

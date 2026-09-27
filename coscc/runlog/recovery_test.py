@@ -15,9 +15,9 @@ from unittest import mock
 
 from claude_agent_sdk import AssistantMessage, TextBlock
 
-from coscc import events, recovery
+from coscc.runlog import events, recovery
 from coscc.data import Data
-from coscc.journal import Journal
+from coscc.runlog.journal import Journal
 
 UNIT = "0009_x"
 

@@ -344,7 +344,7 @@ def loop(tmp: Path) -> bool:
 
 
 def measure_fixture(tmp: Path) -> bool:
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     head = "b" * 40
     good = HEADER.format(status="changes-requested") + full_round(1, "changes-requested", head)

@@ -20,7 +20,7 @@ import math
 import re
 from typing import Any, Iterable
 
-from coscc import journal
+from coscc.runlog import journal
 from coscc.hold import _line_problem
 
 VALUES = range(1, 6)

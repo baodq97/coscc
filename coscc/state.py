@@ -26,7 +26,7 @@ import dataclasses
 import reflex as rx
 from reflex_base.event.context import EventContext
 
-from coscc import events as events_mod
+from coscc.runlog import events as events_mod
 from coscc import place, present
 from coscc.api import build
 from coscc.service import COLLAPSED_STATES, Invalid, describe_base

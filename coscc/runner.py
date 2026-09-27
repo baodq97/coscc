@@ -30,7 +30,7 @@ import claude_agent_sdk as sdk
 from coscc import instructions, steps
 from coscc.github.integrate import check_started_by
 from coscc import sessions as sessions_mod
-from coscc.journal import Journal
+from coscc.runlog.journal import Journal
 from coscc.policy import beyond_reading, grant_for_step, is_prose_stage
 from coscc.sessions import Refused, Sessions
 

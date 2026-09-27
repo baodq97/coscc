@@ -1,11 +1,12 @@
-"""Tests for `coscc/notices.py`: which records are notices, and what their sentence says (`0113` R2)."""
+"""Tests for `coscc/runlog/notices.py`: which records are notices, and what their sentence says (`0113` R2)."""
 
 from __future__ import annotations
 
 import json
 import unittest
 
-from coscc import autopilot, notices
+from coscc import autopilot
+from coscc.runlog import notices
 
 WS = "/home/someone/work/proj"
 SHA = "0123456789abcdef0123456789abcdef01234567"

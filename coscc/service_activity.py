@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from coscc import events
-from coscc import spend
+from coscc.runlog import events
+from coscc.runlog import spend
 from coscc.data import Data
-from coscc.journal import COST_FIELDS, COST_USD, Busy, add_cost, zero_cost
+from coscc.runlog.journal import COST_FIELDS, COST_USD, Busy, add_cost, zero_cost
 from coscc.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, TERMINAL_ONLY, grant_for_step
 from coscc import labels
 from coscc.service_common import Invalid, STAGE_FILES, consequence

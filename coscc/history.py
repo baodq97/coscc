@@ -82,7 +82,7 @@ class History:
     """The transition log and the file log for one working folder.
 
     `data` is passed in for the same reason `Journal` takes it: a test that forgets it
-    writes into the real `~/.cos` (`coscc/journal.py:108-109`). The two new tables inherit
+    writes into the real `~/.cos` (`coscc/runlog/journal.py:108-109`). The two new tables inherit
     that hazard unchanged.
 
     `machine` is the state set every write is validated against and every row records. It
@@ -248,7 +248,7 @@ class History:
 
         Ordered by `id`. `at` is second-resolution, so two transitions recorded in the
         same second would have no order at all if it were the key — the same reasoning as
-        `coscc/journal.py`.
+        `coscc/runlog/journal.py`.
         """
         sql = f"SELECT id, {', '.join(_TRANSITION_COLUMNS)} FROM transitions WHERE root = ?"
         args: list[Any] = [self._root]

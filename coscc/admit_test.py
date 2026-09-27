@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc import admit, knowledge, units
-from coscc.journal import Journal
+from coscc.runlog.journal import Journal
 
 
 def lock(**versions: str) -> str:

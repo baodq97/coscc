@@ -1,4 +1,4 @@
-"""`coscc/turnstats.py` (`0096` plan step 1), on a `cos.db` and a unit store in a temporary
+"""`coscc/runlog/turnstats.py` (`0096` plan step 1), on a `cos.db` and a unit store in a temporary
 directory. The marks of `spec.md` R1 and R3 on the real run log are checked at a terminal."""
 
 from __future__ import annotations
@@ -12,7 +12,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc import config, turnstats, units
+from coscc import config, units
+from coscc.runlog import turnstats
 from coscc.data import Data
 
 

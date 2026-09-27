@@ -21,9 +21,10 @@ from pathlib import Path
 
 from claude_agent_sdk import AssistantMessage, TextBlock
 
-from coscc import backlog, events, recovery, steps
+from coscc import backlog, steps
+from coscc.runlog import events, recovery
 from coscc.data import Data
-from coscc.journal import Journal, last_runs, timelines_of, totals_of
+from coscc.runlog.journal import Journal, last_runs, timelines_of, totals_of
 from coscc.runner import Runner
 from coscc.state import _cell_label, _usd
 

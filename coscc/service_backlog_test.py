@@ -26,7 +26,7 @@ class TheUnitHistoryReadPath(unittest.TestCase):
     """`0013` R8. The log read through the one place logic lives.
 
     Written against a temporary working folder and data root rather than this repository's
-    real `~/.cos` — `coscc/journal.py:108-109` names that hazard and the two new tables
+    real `~/.cos` — `coscc/runlog/journal.py:108-109` names that hazard and the two new tables
     inherit it unchanged.
     """
 
@@ -511,7 +511,7 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         self.assertEqual(second["shortlist"]["record"]["n"], 1)
 
     def test_r14_a_busy_run_log_still_starts_the_step(self):
-        from coscc.journal import Busy, Journal
+        from coscc.runlog.journal import Busy, Journal
 
         real = Journal.records
 
@@ -603,7 +603,7 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
             yield ("done", {"session_id": "s1", "cost": {"cost_usd": 0.02, "turns": 1}})
 
     def setUp(self):
-        from coscc.journal import Journal
+        from coscc.runlog.journal import Journal
 
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)

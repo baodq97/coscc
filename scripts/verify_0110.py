@@ -2,7 +2,7 @@
 handed the findings earlier reviews raised on its files.
 
 Plain: no session, no quota, no network. A temporary `cos.db` whose `runs` rows are written
-by `coscc.journal.Journal` itself, with its clock patched, and `--measure` run on it. Each
+by `coscc.runlog.journal.Journal` itself, with its clock patched, and `--measure` run on it. Each
 case prints PASS or FAIL:
 
 - no `ship` `done` of `0110` yet, or only one another stage followed → `chưa merge`, exit 2;
@@ -235,7 +235,7 @@ class _Fixture:
 
     def __init__(self, data: Path) -> None:
         sys.path.insert(0, str(REPO))
-        from coscc import journal as journal_mod
+        from coscc.runlog import journal as journal_mod
 
         self.mod = journal_mod
         self.journal = journal_mod.Journal(data / "work" / "proj", data)

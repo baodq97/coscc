@@ -390,7 +390,7 @@ def seed_conversation(workspace: Path) -> None:
 
 def seed_cost(working: Path, data_dir: Path, workspace: Path, names: list[str]) -> None:
     """A finished, costed `plan` run for each of `names`, so Usage has rows to send."""
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     journal = Journal(working, data_dir)
     key = str(workspace.resolve())

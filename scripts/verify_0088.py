@@ -432,7 +432,7 @@ async def every_kind_of_session(tmp: Path) -> tuple[dict[str, object], dict[str,
     from coscc.github import integrate
     from coscc import sessions as sessions_mod
     from coscc.config import Config
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
     from coscc.runner import Runner
     from coscc.service import Service
 
@@ -697,9 +697,10 @@ def claim_g(tmp: Path) -> bool:
     """`--measure` against fixture databases the app's own journal and recorder wrote."""
     from claude_agent_sdk import SystemMessage
 
-    from coscc import events, policy
+    from coscc import policy
+    from coscc.runlog import events
     from coscc.data import Data
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     home = tmp / "home"
     (home / ".claude" / "skills" / "mine").mkdir(parents=True)

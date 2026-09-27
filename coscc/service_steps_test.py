@@ -486,7 +486,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         return asyncio.run(go())
 
     def records(self) -> list[dict]:
-        from coscc.journal import Journal
+        from coscc.runlog.journal import Journal
 
         return Journal(self.config.working_dir, self.config.data_dir).records(self.key, self.unit)
 
@@ -1456,7 +1456,7 @@ class APrStepIsHandedItsPullRequest(unittest.TestCase):
     def _run_pr(self, stdout: str, code: int = 0) -> tuple[str, dict, str]:
         from coscc import board as board_reader
         from coscc.github.integrate_test import fake_gh, on_path
-        from coscc.journal import Journal
+        from coscc.runlog.journal import Journal
 
         unit = self._typed_unit()
         self._git("branch", "fix/a-problem")
@@ -2092,7 +2092,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
     def _unrecorded(self, result: dict) -> str:
         from coscc import board as board_reader
         from coscc import retake
-        from coscc.journal import Busy, Journal
+        from coscc.runlog.journal import Busy, Journal
 
         async def asked(*a, **kw):
             return {"retake": True, "manifest": self.OLD}

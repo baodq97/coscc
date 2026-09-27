@@ -258,7 +258,7 @@ def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     as `Service._journal_key` keys it. `at` is when it is written, so the page reads "just now"."""
     import uuid
 
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     journal, key = Journal(work, data_dir), str(proj.resolve())
     journal.started(key, "0004_finished", "plan", "manual")
@@ -275,7 +275,7 @@ def seed_runs(work: Path, data_dir: Path, proj: Path) -> None:
     """`0092` spec Design, *Screens*: a run whose cost is unknown on two units and one whose
     cost is known, written where the app reads its run log, under the key it reads by."""
     from coscc.data import Data
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     journal, key = Journal(work, Data(data_dir)), str(proj.resolve())
     journal.started(key, "0002_open-question", "spec", "manual")

@@ -39,7 +39,7 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
-from coscc.journal import TOKEN_FIELDS
+from coscc.runlog.journal import TOKEN_FIELDS
 
 # R4. Characters a text field keeps, and an `input` keeps once it is JSON. Chosen, not
 # measured.
@@ -476,7 +476,7 @@ def purge_on_start(config: Any) -> tuple[int, int]:
     """What `coscc/run.py` calls before the server is built: a `Data` and a `Journal` built
     from `config` the way `Service` builds them, and nothing else of the app."""
     from coscc.data import Data
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     data = Data(config.data_dir)
     journal = Journal(config.working_dir, data) if config.working_dir else None

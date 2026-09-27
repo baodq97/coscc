@@ -302,7 +302,7 @@ def claims_abc(tmp: Path) -> bool:
 
 def claim_d(tmp: Path) -> bool:
     """`--measure` against fixture logs written by the real journal and a fixture store."""
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     def fixture(name: str, steps: list[tuple[str, str, str, str]]) -> Path:
         root = tmp / "d" / name

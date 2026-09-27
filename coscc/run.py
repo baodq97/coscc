@@ -116,7 +116,7 @@ def main(argv: list[str] | None = None) -> None:
 def recover_steps(config) -> None:
     """`0092` R5. A recovery that fails is one line on stderr, and the app starts anyway: the
     steps keep reading "ended, unknown", as they did before it existed."""
-    from coscc import recovery
+    from coscc.runlog import recovery
 
     try:
         runs = recovery.recover_on_start(config)
@@ -130,7 +130,7 @@ def recover_steps(config) -> None:
 def purge_events(config) -> None:
     """`0073` R14. A purge that fails is one line on stderr, and the app starts anyway: the
     events are kept longer than asked, which is not a reason to have no board."""
-    from coscc import events
+    from coscc.runlog import events
 
     try:
         runs, freed = events.purge_on_start(config)

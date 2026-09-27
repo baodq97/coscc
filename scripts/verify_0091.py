@@ -308,7 +308,7 @@ def transport_claims(tmp: Path) -> bool | None:
 
 def measure_fixture(tmp: Path) -> bool:
     from coscc.data import Data
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     closed, open_ = "2026-10-17T00:00:00+07:00", "2026-10-10T00:00:00+00:00"
     big, small = ".screens/settings-1440x900.png", ".screens/settings-390x844.png"

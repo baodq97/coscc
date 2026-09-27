@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from coscc import autopilot as ap
-from coscc.journal import Journal
+from coscc.runlog.journal import Journal
 from coscc.policy import GRANTS, NOVEL_CEILINGS
 
 COS_MJS = Path(__file__).resolve().parent.parent / ".claude" / "scripts" / "cos.mjs"

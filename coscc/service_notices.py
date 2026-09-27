@@ -1,7 +1,7 @@
 """Following the notices (`0113`): the run log's records a listener is told of, as they land.
 
 A mixin with no fields, like the others `Service` inherits. It reads and writes nothing but
-the lines it hands out (R13); `coscc/notices.py` decides what each record says.
+the lines it hands out (R13); `coscc/runlog/notices.py` decides what each record says.
 """
 
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, AsyncIterator
 
-from coscc import notices
-from coscc.journal import BELL, Busy
+from coscc.runlog import notices
+from coscc.runlog.journal import BELL, Busy
 from coscc.service_common import Invalid
 
 

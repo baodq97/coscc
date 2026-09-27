@@ -19,7 +19,7 @@ from datetime import date
 from pathlib import Path
 from unittest import mock
 
-from coscc import events as events_mod
+from coscc.runlog import events as events_mod
 from coscc import harness, units
 from coscc.git import fetches, gitops, worktrees
 from coscc.config import Config

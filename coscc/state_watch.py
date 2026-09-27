@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import reflex as rx
 
-from coscc import events as events_mod
+from coscc.runlog import events as events_mod
 from coscc.service import Invalid
 from coscc.state_views import (
     NO_RUN_NOTE,

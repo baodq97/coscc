@@ -16,7 +16,7 @@ from unittest import mock
 
 from coscc import autopilot
 from coscc.config import Config
-from coscc.journal import Busy, Journal
+from coscc.runlog.journal import Busy, Journal
 from coscc.service import Invalid, Service
 from coscc.sessions import Sessions
 

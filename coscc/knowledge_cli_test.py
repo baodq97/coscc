@@ -14,7 +14,7 @@ from unittest import mock
 
 from coscc import admit, gather, knowledge, knowledge_cli, units
 from coscc.admit_test import lock, make_repo
-from coscc.journal import Journal
+from coscc.runlog.journal import Journal
 
 REPO = Path(__file__).resolve().parents[1]
 SLOT = "proj-aaaaaaaaaaaa"

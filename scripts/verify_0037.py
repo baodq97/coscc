@@ -372,7 +372,7 @@ def claim_a(tmp: Path) -> tuple[bool, dict[str, object]]:
 
     from coscc import sessions as sessions_mod
     from coscc.config import Config
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
     from coscc.runner import Runner
 
     seen: dict[str, object] = {}
@@ -489,7 +489,7 @@ def claim_c() -> bool:
 
 def claim_d(tmp: Path) -> bool:
     """`--measure` against fixture logs written by the real journal."""
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     def fixture(name: str, after_denials: int, drop_one_after: bool = False) -> Path:
         root = tmp / name

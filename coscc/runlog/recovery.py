@@ -34,7 +34,7 @@ import os
 from typing import Any
 
 from coscc.data import Data
-from coscc.journal import Journal
+from coscc.runlog.journal import Journal
 
 DETAIL = "the app went down while the step ran"
 

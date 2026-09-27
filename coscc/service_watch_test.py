@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from coscc import events as events_mod
+from coscc.runlog import events as events_mod
 from coscc.config import Config
 from coscc.service_common import Invalid
 from coscc.service import Service

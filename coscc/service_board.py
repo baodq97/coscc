@@ -17,7 +17,7 @@ from coscc import precedent as precedent_mod
 from coscc.board import Unavailable
 from coscc.data import now as _now
 from coscc.git.gitops import GitError
-from coscc.journal import Busy, Journal, last_runs, timelines_of, totals_of
+from coscc.runlog.journal import Busy, Journal, last_runs, timelines_of, totals_of
 from coscc.policy import grant_for
 from coscc import steps as steps_mod
 from coscc import units

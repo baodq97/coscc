@@ -23,7 +23,7 @@ from coscc import precedent as precedent_mod
 from coscc.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.history import UNKNOWN, BadTransition
-from coscc.journal import BadRecord, Busy
+from coscc.runlog.journal import BadRecord, Busy
 from coscc.runner import STATUS_RE
 from coscc import steps as steps_mod
 from coscc import units

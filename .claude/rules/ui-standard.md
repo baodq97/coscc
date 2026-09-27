@@ -10,7 +10,7 @@ paths:
   - "coscc/backlog.py"
   - "coscc/updater.py"
   - "coscc/update.py"
-  - "coscc/events.py"
+  - "coscc/runlog/events.py"
   - "coscc/screens_backlog.py"
   - "coscc/screens_board.py"
   - "coscc/screens_chrome.py"

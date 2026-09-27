@@ -508,7 +508,7 @@ class NothingReachesTheRealHomeDirectory(unittest.TestCase):
         `Journal`, `Store` and `History` all take the data root as a second argument and
         all default it to `Data(None)`, which is `~/.cos`. That default is right in
         production and wrong in every test, and the docstring at
-        `coscc/journal.py:108-109` has said so since the class was written.
+        `coscc/runlog/journal.py:108-109` has said so since the class was written.
 
         It happened anyway. `coscc/runner_test.py:322` read `Journal(Path(d) / "cos.db")`
         — one argument, where every other call in that file passes two — and for as long

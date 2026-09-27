@@ -652,7 +652,7 @@ class Data:
 
     # -- a step's events (`0073`) -------------------------------------------
     #
-    # Written by `coscc/events.py`'s recorder from a thread, read by `Service.events_page`.
+    # Written by `coscc/runlog/events.py`'s recorder from a thread, read by `Service.events_page`.
     # Nothing here reads `runs`, and no route writes through these.
 
     def step_run_open(

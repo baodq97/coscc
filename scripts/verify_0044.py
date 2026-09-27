@@ -117,7 +117,7 @@ async def proof(tmp: Path) -> bool:
 
     from coscc.api import build
     from coscc.config import Config
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     repo = tmp / "work" / "proj"
     repo.mkdir(parents=True)

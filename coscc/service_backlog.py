@@ -17,7 +17,7 @@ from coscc import precedent as precedent_mod
 from coscc.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.history import History, settled_edits
-from coscc.journal import BadRecord, Busy, Journal, timelines_of, totals_of
+from coscc.runlog.journal import BadRecord, Busy, Journal, timelines_of, totals_of
 from coscc.policy import grant_for
 from coscc import models
 from coscc.runner import CEILING_MARKERS, Denials, permission_gate

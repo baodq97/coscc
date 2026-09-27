@@ -5,7 +5,7 @@ and prints one JSON object: turns, cost and time per `impl` step, the share of s
 that ran `impl` twice or more, and the `changes-requested` rounds per shipped unit. With
 `--outcome` it then says whether R7 holds.
 
-    uv run python -m coscc.turnstats --workspace <path> [--since T] [--until T] [--outcome]
+    uv run python -m coscc.runlog.turnstats --workspace <path> [--since T] [--until T] [--outcome]
         [--files PATH... [--first N]]
 
 `--files` adds `0095` R9's `touched_*` fields: the `impl` steps that aimed a `Read` or `Grep`
@@ -301,7 +301,7 @@ def outcome(fields: dict[str, Any]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m coscc.turnstats", description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(prog="python -m coscc.runlog.turnstats", description=__doc__.split("\n\n")[0])
     parser.add_argument("--workspace", required=True, help="the repository the steps ran for")
     parser.add_argument("--since", help="first start time counted, as the run log writes it")
     parser.add_argument("--until", help="first start time not counted")

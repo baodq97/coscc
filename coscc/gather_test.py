@@ -19,7 +19,7 @@ from unittest import mock
 
 from coscc import admit, gather, knowledge, units
 from coscc.admit_test import lock, make_repo
-from coscc.journal import Journal
+from coscc.runlog.journal import Journal
 
 # Set by `setUpModule`: the slots of two repositories, `other-` sorting before `proj-`.
 A = B = ""

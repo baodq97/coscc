@@ -81,7 +81,7 @@ def _gather(config, opts: dict[str, str | bool], say: Callable[[str], None]) -> 
         # Like Jera: a batch that spent and could not be recorded is money nobody can count.
         say("coscc knowledge gather: no working folder is set, so nothing it spends can be recorded — set COS_WORKING_DIR")
         return 2
-    from coscc.journal import Journal
+    from coscc.runlog.journal import Journal
 
     # Before the plan, so a dry run refuses a run log or a git it cannot read too (`0108` R12).
     journal = Journal(config.working_dir, config.data_dir)

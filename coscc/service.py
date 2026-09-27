@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-from coscc import events
+from coscc.runlog import events
 from coscc.config import Config
 from coscc.data import now as _now
 from coscc.runner import Runner

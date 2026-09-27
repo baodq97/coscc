@@ -34,7 +34,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from coscc import autopilot, spend  # noqa: E402
+from coscc import autopilot
+from coscc.runlog import spend  # noqa: E402
 
 UNTIL = "2026-10-31"
 

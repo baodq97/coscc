@@ -15,13 +15,14 @@ from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from coscc import present, spend
+from coscc import present
+from coscc.runlog import spend
 from coscc.config import Config
 from coscc.data import DB_FILENAME
 from coscc.service import Service
 from coscc.sessions import Sessions
 
-REPO = str(Path(__file__).resolve().parent.parent)
+REPO = str(Path(__file__).resolve().parents[2])
 
 TZ = timezone(timedelta(hours=7))
 

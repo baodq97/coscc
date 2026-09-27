@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from coscc import sessions
-from coscc.journal import Journal
+from coscc.runlog.journal import Journal
 
 
 @dataclass

@@ -1,7 +1,7 @@
 """`0093` proof: the *Cost* screen's figures are the `runs` table's, within 1%, on a real `cos.db`.
 
 No session, no quota, no network, and nothing written. It opens `<COS_DATA_DIR>/cos.db`
-(default `~/.cos`) with `mode=ro`, never through `Data`, and imports only `coscc.spend` —
+(default `~/.cos`) with `mode=ro`, never through `Data`, and imports only `coscc.runlog.spend` —
 the model the page draws from. For each `(root, workspace)` holding an `end` row it reads
 that workspace's records in `id` order (a row whose JSON will not parse is skipped, as
 `Journal.records` skips it), builds the model, and runs the spec's reference queries
@@ -29,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from coscc import spend  # noqa: E402
+from coscc.runlog import spend  # noqa: E402
 
 SUM = "SELECT SUM(json_extract(record, '$.cost_usd')) FROM runs WHERE root = ? AND workspace = ? AND kind = 'end'"
 QUERIES = {

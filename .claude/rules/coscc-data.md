@@ -3,7 +3,7 @@ paths:
   - "coscc/config.py"
   - "coscc/units.py"
   - "coscc/data.py"
-  - "coscc/journal.py"
+  - "coscc/runlog/journal.py"
 ---
 
 # The two roots

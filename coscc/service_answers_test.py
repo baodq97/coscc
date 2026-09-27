@@ -112,7 +112,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
             return asyncio.run(go())
 
     def _pr_rows(self):
-        from coscc.journal import Journal
+        from coscc.runlog.journal import Journal
 
         j = Journal(self.service.config.working_dir, self.service.config.data_dir)
         return j.records(str(self.repo.resolve()), kind="pr-comment")
@@ -134,7 +134,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
     def test_the_end_record_counts_the_findings_of_the_added_round(self):
         # `0033` R10: round 2 has two findings, one of them still open.
-        from coscc.journal import Journal
+        from coscc.runlog.journal import Journal
 
         self._run_review(FakeGh())
         j = Journal(self.service.config.working_dir, self.service.config.data_dir)
@@ -143,7 +143,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
     def test_0093_the_end_record_carries_the_added_rounds_verdicts(self):
         # R9: the one round this step added, round 2, asks for changes.
-        from coscc.journal import Journal
+        from coscc.runlog.journal import Journal
 
         self._run_review(FakeGh())
         j = Journal(self.service.config.working_dir, self.service.config.data_dir)

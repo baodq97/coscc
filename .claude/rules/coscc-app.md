@@ -100,8 +100,8 @@ only from here.
 | `POST /api/units/integrate` force-pushes; `gh pr list` per board read and per `pr` step | `.claude/rules/coscc-integrate.md` | editing `coscc/github/integrate.py`, the `integrate` or `pr` grant, or the board's integration read |
 | `POST /api/units/review-comment` posts; a `pr` step rewrites its pull request | `.claude/rules/coscc-github.md` | editing `coscc/github/prcomment.py`, `coscc/github/prsync.py`, `/review-comment`, or `_sync_pr` |
 | `POST /api/update/*` stops work and restarts | `.claude/rules/coscc-update.md` | editing `coscc/update.py`, `coscc/updater.py`, `scripts/build_wheel.sh`, `/api/update/*` |
-| `GET /api/board/events` hands out everything a step saw | `.claude/rules/coscc-events.md` | editing `coscc/events.py`, `/api/board/events`, `/follow`, or the watch pane |
-| `GET /api/notices/follow` holds a connection per listener | `.claude/docs/coscc-notices.md` | editing `coscc/notices.py`, `service_notices.py` or the notice script |
+| `GET /api/board/events` hands out everything a step saw | `.claude/rules/coscc-events.md` | editing `coscc/runlog/events.py`, `/api/board/events`, `/follow`, or the watch pane |
+| `GET /api/notices/follow` holds a connection per listener | `.claude/docs/coscc-notices.md` | editing `coscc/runlog/notices.py`, `service_notices.py` or the notice script |
 | the `review`/`ship` gates call `gh`; the run button follows `next` | `.claude/rules/coscc-board.md` | editing `coscc/board.py` or the run button |
 | two roots, and what `--measure` reads | `.claude/rules/coscc-data.md` | editing `coscc/config.py`, `units.py`, `data.py`, `journal.py`, or a run-log field |
 | `/api/timeline` returns a failed reply; `pull` within one process; a failed step's tail; `POST /api/board/stop`; units at the same time; `GET /api/board/running` | `.claude/docs/coscc-steps.md` | editing `/api/timeline`, `/api/board/stop`, `/api/board/running`, `Service.run_step`, `runner.describe_attempt` or `journal.failed_attempts` |

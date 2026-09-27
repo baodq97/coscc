@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.journal import BELL, BadRecord, Busy, Journal, last_runs, totals_of
+from coscc.runlog.journal import BELL, BadRecord, Busy, Journal, last_runs, totals_of
 
 WRITERS = 4
 PER_WRITER = 5
@@ -492,7 +492,7 @@ class AnEndClosesTheRunItNames(unittest.TestCase):
 
 WRITER = """
 import sys
-from coscc.journal import Journal
+from coscc.runlog.journal import Journal
 j = Journal(sys.argv[1], sys.argv[1])
 tag = sys.argv[2]
 for i in range({per_writer}):
@@ -502,7 +502,7 @@ for i in range({per_writer}):
 
 class FourProcessesLoseNothing(unittest.TestCase):
     def test_every_record_survives_concurrent_writers(self):
-        repo = Path(__file__).resolve().parent.parent
+        repo = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory() as d:
             procs = [
                 subprocess.Popen(
@@ -595,7 +595,7 @@ class AppendCheckedReadsAndWritesInOneTransaction(unittest.TestCase):
         self.assertEqual(len(errors), 1)
 
     def test_timelines_is_timelines_of_the_same_rows(self):
-        from coscc.journal import timelines_of
+        from coscc.runlog.journal import timelines_of
 
         self.j.started("w", "u", "spec", "manual")
         self.j.finished("w", "u", "spec", "done", cost_usd=0.5, turns=2)

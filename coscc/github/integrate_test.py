@@ -519,7 +519,7 @@ class TheLatestIntegrationSinceTheLastRound(unittest.TestCase):
     def test_order_decides(self):
         import tempfile
 
-        from coscc.journal import Journal
+        from coscc.runlog.journal import Journal
         from coscc.service import integration_since_review
 
         with tempfile.TemporaryDirectory() as d:

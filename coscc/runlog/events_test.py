@@ -23,9 +23,9 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
-from coscc import events
+from coscc.runlog import events
 from coscc.data import Busy, Data
-from coscc.journal import Journal
+from coscc.runlog.journal import Journal
 
 
 def assistant(mid, *blocks):
