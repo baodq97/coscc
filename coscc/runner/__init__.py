@@ -159,6 +159,31 @@ async def _closing_turn(
     return text, done
 
 
+def _turn_cost(done: dict[str, Any] | None, cost: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """`0085` R7. The `closing` field of one more turn on a step's session, and the step's
+    cost once that turn is counted in. `0127`'s repair turn is costed the same way.
+
+    A `ResultMessage` came back when `terminal_reason` is set. Its cost is the whole
+    session's (`spike.md ## U2`, point 2), so it replaces the main one rather than adding
+    to it, and the turn's own share is the difference.
+    """
+    after = str((done or {}).get("terminal_reason") or "")
+    if not after:
+        return {"cost_unknown": True}, cost
+    total = ((done or {}).get("cost") or {}).get("cost_usd")
+    before_usd = cost.get("cost_usd")
+    closing = {
+        "terminal": after,
+        "turns": ((done or {}).get("cost") or {}).get("turns"),
+        "cost_usd": (
+            round(total - before_usd, 6)
+            if total is not None and before_usd is not None
+            else None
+        ),
+    }
+    return closing, ({**cost, "cost_usd": total} if total is not None else cost)
+
+
 async def _from_progress(
     cwd: str,
     watch: str,
@@ -703,26 +728,7 @@ class Runner:
                             ),
                             CLOSING_TIMEOUT,
                         )
-                        after = str((done or {}).get("terminal_reason") or "")
-                        if after:
-                            # R7. A `ResultMessage` came back. Its cost is the whole session's
-                            # (`spike.md ## U2`, point 2), so it replaces the main one rather
-                            # than adding to it, and the turn's own share is the difference.
-                            total = ((done or {}).get("cost") or {}).get("cost_usd")
-                            before_usd = cost.get("cost_usd")
-                            closing = {
-                                "terminal": after,
-                                "turns": ((done or {}).get("cost") or {}).get("turns"),
-                                "cost_usd": (
-                                    round(total - before_usd, 6)
-                                    if total is not None and before_usd is not None
-                                    else None
-                                ),
-                            }
-                            if total is not None:
-                                cost = {**cost, "cost_usd": total}
-                        else:
-                            closing = {"cost_unknown": True}
+                        closing, cost = _turn_cost(done, cost)
                         # R5, judged on the text, never on `after`. No `await` from here to
                         # the write, the rule the reply's road keeps.
                         problem = closing_round_problem(_read(directory / artifact), reply, head)
