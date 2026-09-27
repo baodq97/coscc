@@ -684,6 +684,25 @@ class TheHoldIsCarriedFromTheScript(unittest.TestCase):
         self.assertEqual((u["hold"], u["hold_moves"]), (None, []))
 
 
+class TheStagesAnAnsweredDraftRunsAgainAreCarriedFromTheScript(unittest.TestCase):
+    """`0115` R4. `afterAnswers` is `cos.mjs`'s, copied onto the read and onto each unit."""
+
+    def test_every_unit_carries_the_stages_an_answered_draft_runs_again(self):
+        data = run(board.read(REPO))
+        self.assertIn("impl", data["after_answers"])
+        self.assertTrue(data["units"])
+        for u in data["units"]:
+            self.assertEqual(u["after_answers"], data["after_answers"], u["name"])
+
+    def test_an_older_script_sends_none_and_reads_as_none(self):
+        async def fake_run(argv, timeout):
+            return 0, '{"root": "r", "stages": [], "units": [{"name": "0001_x"}]}', ""
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
+            data = run(board.read(tmp))
+        self.assertEqual((data["after_answers"], data["units"][0]["after_answers"]), ([], []))
+
+
 PR_MD = (
     "# PR: a title\n"
     "Intent: intent.md. Impl: impl.md. PR: https://github.com/o/r/pull/7. Author: a. Status: accepted.\n"

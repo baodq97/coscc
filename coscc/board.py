@@ -143,6 +143,9 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
         raise Unavailable(f"the harness script did not return JSON: {e}") from e
 
     stages = data.get("stages") or []
+    # `0115` R4. The stages whose answered draft runs again, as `cos.mjs` lists them; the app
+    # keeps no copy. An older `cos.mjs` sends none, which reads as no such stage.
+    after_answers = [str(s) for s in data.get("afterAnswers") or []]
     units = [
         {
             "name": u.get("name", ""),
@@ -208,6 +211,9 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
             # `cos.mjs` sends neither, which reads as unheld with no moves.
             "hold": u.get("hold") or None,
             "hold_moves": [str(x) for x in u.get("holdMoves") or []],
+            # `0115` R4. On each row too, so whoever holds one row from this read -- the
+            # answer route's journal, `autopilot.answer_completes` -- reads the same list.
+            "after_answers": list(after_answers),
         }
         for u in data.get("units") or []
     ]
@@ -215,6 +221,7 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT) -> dict[str, An
     return {
         "workspace": str(path),
         "stages": [s["name"] for s in stages],
+        "after_answers": after_answers,
         "units": units,
         "count": len(units),
         # A workspace can be perfectly healthy and hold no units at all. Saying so is not
