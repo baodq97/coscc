@@ -21,7 +21,7 @@ const art = (status) => ({ status, skipReason: null })
 // A probe that answers the way git and gh would, without either. `checks` is what
 // `gh pr checks --json name,bucket` prints; `git` maps an argument string to an answer.
 const ok = (out = '') => ({ code: 0, out, err: '' })
-// `view` is what `gh pr view --json state,headRefOid` prints; `null` means the head is the
+// `view` is what `gh pr view --json state,headRefOid,mergeCommit,mergedAt` prints; `null` means the head is the
 // reviewed commit (`SHA`, declared further down), so the diff to it is empty.
 const greenProbe = (checks = [{ name: 'tests', bucket: 'pass' }], git = {}, view = null) => ({
   gh: (...args) =>
@@ -904,7 +904,7 @@ test('F2: ship reads the pull request head, not only the refs here, and pins the
 
   const missing = greenProbe(undefined, { [`cat-file -e ${HEAD}^{commit}`]: { code: 1, out: '', err: '' } }, open)
   assert.match(checkGate(u, 'ship', { probe: missing }).need[0], /not in this repository — someone pushed from elsewhere: fetch/)
-  assert.match(checkGate(u, 'ship', { probe: greenProbe(undefined, {}, { state: 'MERGED', headRefOid: SHA }) }).need[0], /#7 is MERGED, not open/)
+  assert.match(checkGate(u, 'ship', { probe: greenProbe(undefined, {}, { state: 'CLOSED', headRefOid: SHA }) }).need[0], /#7 is CLOSED, not open/)
   const offline = { gh: () => ({ code: 1, out: '', err: 'error connecting to api.github.com' }), git: () => ok() }
   assert.match(checkGate(u, 'ship', { probe: offline }).need[0], /cannot read the head of #7: error connecting/)
 })
@@ -3590,4 +3590,116 @@ test('0125 R7: the one retry does not read COS_REVIEW_ROUNDS', () => {
   assert.deepEqual(at(1), at(10))
   assert.deepEqual(at(1), nextStep(u, { probe: stuckProbe() }))
   assert.equal(at(1).stage, '')
+})
+
+// --- 0116: a pull request merged before ship.md was written ------------------------------
+
+const MERGE = '9'.repeat(40)
+const MERGED_AT = '2026-09-20T13:33:07Z'
+const mergedView = (over = {}) => ({ state: 'MERGED', headRefOid: SHA, mergeCommit: { oid: MERGE }, mergedAt: MERGED_AT, ...over })
+// A pull request GitHub reports merged as `MERGE`, which is here and on origin/main unless
+// `git` says otherwise. Every call, git's and gh's, lands in `calls`.
+const mergedProbe = ({ view = mergedView(), git = {}, checks, calls = [] } = {}) => {
+  const probe = greenProbe(checks, git, view)
+  return {
+    gh: (...a) => (calls.push(['gh', ...a].join(' ')), probe.gh(...a)),
+    git: (...a) => (calls.push(a.join(' ')), probe.git(...a)),
+  }
+}
+const GONE = {
+  'rev-parse --verify --quiet refs/heads/feat/x': NO,
+  'rev-parse --verify --quiet refs/remotes/origin/feat/x': NO,
+}
+
+test('0116 R1: a merged pull request opens ship to record it when its branch is gone, local and origin', () => {
+  const calls = []
+  const g = checkGate(passedOnce(), 'ship', { probe: mergedProbe({ git: GONE, calls }) })
+  assert.deepEqual(g, { ok: true, need: [], merged: { number: 7, commit: MERGE, at: MERGED_AT, head: SHA } })
+  // One reading of the pull request, the merge commit asked for twice, and nothing else.
+  assert.deepEqual(calls, [
+    'gh pr view 7 --json state,headRefOid,mergeCommit,mergedAt',
+    `cat-file -e ${MERGE}^{commit}`,
+    `merge-base --is-ancestor ${MERGE} refs/remotes/origin/main`,
+  ])
+})
+
+test('0116 R1: a merged pull request opens ship to record it while its branch is still here', () => {
+  const u = passedOnce()
+  assert.deepEqual(checkGate(u, 'ship', { probe: mergedProbe() }), { ok: true, need: [], merged: { number: 7, commit: MERGE, at: MERGED_AT, head: SHA } })
+  // Nothing that speaks of a merge still to come closes it: red CI, a head behind origin/main,
+  // code after the pass, a UI unit's screenshots. The head it merged is carried for ship.md.
+  const calls = []
+  const late = mergedProbe({
+    view: mergedView({ headRefOid: HEAD2 }),
+    checks: [{ name: 'tests', bucket: 'fail' }],
+    git: {
+      [`merge-base --is-ancestor ${TRUNK} ${HEAD2}`]: NO,
+      [`diff --name-only ${SHA}..${HEAD2}`]: ok('src/a.py'),
+      [`diff --name-only origin/main...${HEAD2}`]: ok('coscc/screens.py'),
+    },
+    calls,
+  })
+  const g = checkGate(u, 'ship', { probe: { ...late, ui: () => UI } })
+  assert.equal(g.ok, true)
+  assert.equal(g.merged.head, HEAD2)
+  assert.equal('head' in g, false)
+  assert.deepEqual(calls.filter((c) => c.startsWith('gh pr checks') || c.startsWith('rev-parse') || c.startsWith('diff')), [])
+})
+
+test('0116 R1: the open line names the pull request, the merge commit and when it merged, and no --match-head-commit', () => {
+  const g = checkGate(passedOnce(), 'ship', { probe: mergedProbe({ git: GONE }) })
+  const lines = openLines('ship', '0001_x', g)
+  assert.deepEqual(lines, [`open: ship may proceed for 0001_x — #7 was merged as ${MERGE} at ${MERGED_AT}: record it in ship.md; do not merge`])
+  assert.doesNotMatch(lines.join('\n'), /--match-head-commit/)
+})
+
+test('0116 R2: a merge commit that cannot be read, is not here, or is not on origin/main closes ship: fetch, then ask again', () => {
+  const u = passedOnce()
+  for (const [probe, said] of [
+    [mergedProbe({ view: mergedView({ mergeCommit: null }) }), /^cannot read the merge commit of #7: gh gave mergeCommit none and mergedAt 2026-09-20T13:33:07Z — fetch, then ask again$/],
+    [mergedProbe({ view: mergedView({ mergeCommit: { oid: 'abc' } }) }), /^cannot read the merge commit of #7: gh gave mergeCommit abc and/],
+    [mergedProbe({ view: mergedView({ mergedAt: '' }) }), new RegExp(`^cannot read the merge commit of #7: gh gave mergeCommit ${MERGE} and mergedAt none — fetch, then ask again$`)],
+    [mergedProbe({ git: { ...GONE, [`cat-file -e ${MERGE}^{commit}`]: NO } }), new RegExp(`^the merge commit ${MERGE} of #7 is not in this repository — fetch, then ask again$`)],
+    [mergedProbe({ git: { [`merge-base --is-ancestor ${MERGE} refs/remotes/origin/main`]: NO } }), new RegExp(`^the merge commit ${MERGE} of #7 is not on origin/main here — fetch, then ask again$`)],
+  ]) {
+    const g = checkGate(u, 'ship', { probe })
+    assert.deepEqual([g.ok, g.need.length], [false, 1])
+    assert.match(g.need[0], said)
+    assert.doesNotMatch(g.need[0], /MERGED, not open/)
+    const n = nextStep(u, { probe })
+    assert.deepEqual([n.stage, n.blocked], ['', true])
+    assert.match(n.action, said)
+  }
+})
+
+test('0116 R3: a pull request closed without merging still closes ship with the old sentence, and the unit is not finished', () => {
+  const u = passedOnce()
+  for (const git of [{}, GONE]) {
+    const probe = mergedProbe({ view: { state: 'CLOSED', headRefOid: SHA, mergeCommit: null, mergedAt: null }, git })
+    assert.deepEqual(checkGate(u, 'ship', { probe }), { ok: false, need: ['#7 is CLOSED, not open — there is nothing to merge'] })
+    assert.deepEqual(nextStep(u, { probe }), { blocked: true, action: '#7 is CLOSED, not open — there is nothing to merge', stage: '' })
+  }
+})
+
+test('0116 R4: next offers write-ship for a merged pull request when ship.md is missing, stale or a refused draft, and never says MERGED, not open', () => {
+  const action = `write-ship — #7 was merged as ${MERGE} at ${MERGED_AT}: record it in ship.md; do not merge`
+  const stale = { ...art('accepted'), stale: { stage: 'review', date: '2026-09-26' } }
+  const refused = shipArt(shipDraft(1, 'failed to delete local branch fix/x: cannot switch to main'))
+  for (const ship of [undefined, stale, refused]) {
+    const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')), ...(ship ? { 'ship.md': ship } : {}) })
+    for (const git of [{}, GONE]) {
+      const n = nextStep(u, { probe: mergedProbe({ git }) })
+      assert.deepEqual(n, { blocked: true, action, stage: 'ship' })
+      assert.doesNotMatch(n.action, /MERGED, not open/)
+    }
+  }
+})
+
+test('0116 R5: an accepted ship.md is finished for a merged pull request without asking gh, with or without a repository', () => {
+  const u = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')), 'ship.md': art('accepted') })
+  const calls = []
+  for (const probe of [mergedProbe({ calls }), null]) {
+    assert.deepEqual(nextStep(u, { probe }), { blocked: false, action: 'finished', stage: '' })
+  }
+  assert.deepEqual(calls, [])
 })
