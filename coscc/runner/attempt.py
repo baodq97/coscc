@@ -12,7 +12,7 @@ import claude_agent_sdk as sdk
 
 from coscc.git import gitops
 from coscc.agent import sessions as sessions_mod
-from coscc.agent.policy import Grant, decide
+from coscc.agent.policy import BACKGROUND_REFUSAL, Grant, decide
 from coscc.runner.reply import (
     ATTEMPT_EXCERPT,
     OpeningError,
@@ -38,6 +38,8 @@ class Denials:
 
     def __init__(self) -> None:
         self.count = 0
+        # `0130` R3. Of `count`, the refusals of a run in the background.
+        self.background = 0
         self.reasons: list[str] = []
         # `0073`. Told of every refusal, with what was asked, when a step has a recorder.
         # `KEEP` still bounds only `reasons`, so the `end` record's `denied` is unchanged.
@@ -45,6 +47,8 @@ class Denials:
 
     def record(self, tool: str, reason: str, tool_input: Any = None) -> None:
         self.count += 1
+        if BACKGROUND_REFUSAL in reason:
+            self.background += 1
         if len(self.reasons) < self.KEEP:
             self.reasons.append(f"{tool}: {reason}")
         if self.listener is not None:
