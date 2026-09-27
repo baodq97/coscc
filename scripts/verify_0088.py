@@ -854,7 +854,7 @@ def run_paid() -> int:
         print(e)
         return EXIT_ENV
     drop_session_env(("ANTHROPIC_BASE_URL",))
-    defaults = json.loads((REPO / "coscc" / "models.json").read_text())["models"]
+    defaults = json.loads((REPO / "coscc" / "agent" / "models.json").read_text())["models"]
     try:
         settings = json.loads((home / ".claude" / "settings.json").read_text())
     except (OSError, ValueError):
