@@ -1,7 +1,7 @@
 """What a run-log record says to whoever is listening (`0113`), with no I/O.
 
 `notice_of` is the one place a record becomes a notice: which of the five kinds of R2 it is,
-and the sentence shown for it. The stream (`service_notices.py`), the page's script and a
+and the sentence shown for it. The stream (`service/notices.py`), the page's script and a
 terminal all read what it returns and decide nothing more.
 
 A notice only tells (R13): nothing here writes, and no sentence reads as anyone's approval.

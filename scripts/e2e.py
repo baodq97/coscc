@@ -532,7 +532,7 @@ def notices_through(browser, app, cut, journal, key: str, token: str, jar: Path,
 def notices_reach_the_page_and_a_terminal_through_close_and_stall(browser, config) -> bool:
     """`0113` R14. The app behind a `Cut` on the bundle's address; the page as built and the
     terminal command of `.claude/docs/coscc-notices.md`, both through it. Records are written
-    from this process, so they take R7's 20 s road; the 5 s one is `service_notices_test.py`'s."""
+    from this process, so they take R7's 20 s road; the 5 s one is `service/notices_test.py`'s."""
     if not (shutil.which("bash") and shutil.which("curl")):
         return say(False, "bash and curl are on PATH, for the terminal listener")
     root = Path(tempfile.mkdtemp(prefix="cos-e2e-notices-work-")).resolve()

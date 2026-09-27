@@ -46,7 +46,7 @@ navigation does not cancel is the `cos.mjs next` ask `load_next` waits on: it ru
 own task (`_ASKING`), and the next arrival at that unit waits for it instead of asking
 again. A proof that drives the state in-process has no browser to
 follow a redirect: it arrives where the button would have sent it (`arrive_at`).
-Components in `screens*.py`, state in `state*.py`, logic behind `Service` (`service*.py`).
+Components in `screens/`, state in `state/`, logic behind `Service` (`service/`).
 **A handler that decides anything is a bug in `Service`, not in the page.**
 
 `policy.py` is the grant table, keyed by stage; the mode is recorded but grants nothing. It
@@ -101,7 +101,7 @@ only from here.
 | `POST /api/units/review-comment` posts; a `pr` step rewrites its pull request | `.claude/rules/coscc-github.md` | editing `coscc/github/prcomment.py`, `coscc/github/prsync.py`, `/review-comment`, or `_sync_pr` |
 | `POST /api/update/*` stops work and restarts | `.claude/rules/coscc-update.md` | editing `coscc/update/__init__.py`, `coscc/update/updater.py`, `scripts/build_wheel.sh`, `/api/update/*` |
 | `GET /api/board/events` hands out everything a step saw | `.claude/rules/coscc-events.md` | editing `coscc/runlog/events.py`, `/api/board/events`, `/follow`, or the watch pane |
-| `GET /api/notices/follow` holds a connection per listener | `.claude/docs/coscc-notices.md` | editing `coscc/runlog/notices.py`, `service_notices.py` or the notice script |
+| `GET /api/notices/follow` holds a connection per listener | `.claude/docs/coscc-notices.md` | editing `coscc/runlog/notices.py`, `service/notices.py` or the notice script |
 | the `review`/`ship` gates call `gh`; the run button follows `next` | `.claude/rules/coscc-board.md` | editing `coscc/units/board.py` or the run button |
 | two roots, and what `--measure` reads | `.claude/rules/coscc-data.md` | editing `coscc/config.py`, `units.py`, `data.py`, `journal.py`, or a run-log field |
 | `/api/timeline` returns a failed reply; `pull` within one process; a failed step's tail; `POST /api/board/stop`; units at the same time; `GET /api/board/running` | `.claude/docs/coscc-steps.md` | editing `/api/timeline`, `/api/board/stop`, `/api/board/running`, `Service.run_step`, `runner.describe_attempt` or `journal.failed_attempts` |
@@ -109,5 +109,5 @@ only from here.
 | `POST /api/settings/models` and `/efforts`; `POST /api/backlog/*` | `.claude/docs/coscc-settings.md` | editing `/api/settings/*`, `coscc/agent/models.py`, `/api/backlog/*` or `coscc/units/backlog.py` |
 | `spike` runs arbitrary code | `.claude/docs/coscc-spike.md` | editing the `spike` grant, its scratch directory, or its progress-file write |
 | what the page stopped explaining in `0082` | `.claude/docs/coscc-page-text.md` | adding words to a screen, or removing a sentence the page says beside a button |
-| `coscc knowledge gather` spends quota past its ceiling; a wrong entry reaches every plan; baseline before the flag | `.claude/docs/coscc-knowledge.md` | editing `coscc/knowledge/__init__.py`, `gather.py`, `admit.py`, `measure.py`, `knowledge_cli.py`, the `knowledge` grant, or running `coscc knowledge` |
+| `coscc knowledge gather` spends quota past its ceiling; a wrong entry reaches every plan; baseline before the flag | `.claude/docs/coscc-knowledge.md` | editing `coscc/knowledge/__init__.py`, `gather.py`, `admit.py`, `measure.py`, `knowledge/cli.py`, the `knowledge` grant, or running `coscc knowledge` |
 | every proof's cost; `capture_screens.py` overwrites `.web` | `.claude/docs/coscc-proofs.md` | running `npm run e2e`, a measuring script under `scripts/` or `scripts/capture_screens.py`, or writing a proof |

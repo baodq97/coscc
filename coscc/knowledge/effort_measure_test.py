@@ -271,7 +271,7 @@ class TheCommand(Fixture):
 
 class OnlyATerminalReachesIt(unittest.TestCase):
     """R8: no route, no autopilot pass and no service call imports the measurement. Read from
-    the source, as `knowledge_cli_test.py` reads it for `coscc knowledge`."""
+    the source, as `cli_test.py` reads it for `coscc knowledge`."""
 
     MEASURE = "coscc.knowledge.effort_measure"
 

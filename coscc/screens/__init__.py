@@ -172,7 +172,7 @@ def index() -> rx.Component:
         _command_dialog(), _mobile_dialog(), _watch_dialog(),
         rx.script(_RECONNECT_JS),
         rx.script(_WATCH_JS),
-        # `0113` R9: the notices, outside Reflex's state and socket (`screens_chrome.py`).
+        # `0113` R9: the notices, outside Reflex's state and socket (`chrome.py`).
         rx.script(_NOTICE_JS),
         # No `on_mount`: it runs again on every path change (`.cos/0056_*/spike.md ## U3`).
         # The first read is `StudioState.arrive`, every route's `on_load`.

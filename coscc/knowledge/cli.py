@@ -1,7 +1,7 @@
 """`coscc knowledge ...`: the terminal's only way into the knowledge store (`0090` R9).
 
 Reached from `coscc/run.py` alone, imported there lazily, like `reset-password`. No route,
-button or autopilot pass reaches this module (`knowledge_cli_test.py` holds that), so the
+button or autopilot pass reaches this module (`cli_test.py` holds that), so the
 one command here that spends quota, `gather --yes`, needs a shell on this machine. `check`
 (`0108` R10) spends nothing and writes nothing.
 

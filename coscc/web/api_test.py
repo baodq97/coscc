@@ -512,7 +512,7 @@ class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
 
 class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
     """`0113` R12. Its refusals, and how long a stream outlives the session it opened on; what
-    it sends is `service_notices_test.py`'s, which reads the generator itself."""
+    it sends is `service/notices_test.py`'s, which reads the generator itself."""
 
     async def asyncSetUp(self):
         tmp = tempfile.TemporaryDirectory()
