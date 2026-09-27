@@ -15,7 +15,9 @@ way a person does: it reads the setup token off the guard's stderr, posts `/setu
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 import io
 import re
 import tempfile
@@ -738,6 +740,38 @@ class Sockets(Door):
         sent = await ws_handshake(self.guard, "/_event/?EIO=4&transport=websocket", cookie=cookie)
         self.assertEqual(sent[0], {"type": "websocket.accept"})
         self.assertEqual(self.data.auth_state(auth._sha(cookie))[1]["last_used_at"], int(start))
+
+
+class SocketsWaitOnEvents(unittest.TestCase):
+    """`0079` spec R1 and R2, held by the suite rather than by a reader: `Sockets` and
+    `Rechecks` sleep for no positive time, and every ceiling is the file's 20 s."""
+
+    def test_the_socket_tests_wait_on_events_not_on_the_clock(self):
+        sleeps, ceilings = [], []
+        for cls in (Sockets, Rechecks):
+            for node in ast.walk(ast.parse(inspect.getsource(cls))):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+                if name == "sleep":
+                    sleeps.append(node)
+                if name == "wait_for" and len(node.args) > 1:
+                    ceilings.append(node.args[1])
+                if name in ("wait_for", "wait"):
+                    ceilings += [k.value for k in node.keywords if k.arg == "timeout"]
+
+        def zero(node):
+            return (len(node.args) == 1 and not node.keywords
+                    and isinstance(node.args[0], ast.Constant) and node.args[0].value == 0)
+
+        def ceiling(node):
+            return (isinstance(node, ast.Constant) and isinstance(node.value, (int, float))
+                    and node.value >= 20)
+
+        self.assertEqual([ast.unparse(n) for n in sleeps if not zero(n)], [])
+        self.assertGreater(len(ceilings), 0)
+        self.assertEqual([ast.unparse(n) for n in ceilings if not ceiling(n)], [])
 
 
 if __name__ == "__main__":
