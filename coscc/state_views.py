@@ -229,6 +229,9 @@ class Unit:
     hold_by: str = ""
     hold_date: str = ""
     hold_moves: list[str] = dataclasses.field(default_factory=list)
+    # `0081` R8. Whether `cos.mjs` says the unit used its review rounds with findings still
+    # open, copied from the board. The page offers *Allow one more review round* off this alone.
+    more_rounds: bool = False
     # `0074`. The unit's place in the shortlist in effect, 0 when it has none, and its
     # relations in one line (R9). Labels only.
     shortlist_rank: int = 0
