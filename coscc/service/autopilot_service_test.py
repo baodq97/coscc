@@ -1157,6 +1157,51 @@ class Scripted(_Base):
         self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"],
                          {"unit": "0001_a", "kind": "f", "reason": "finish and accept plan.md"})
 
+    # --- `0126`, an old exhausted `ship` before one that only records ---------------
+
+    RECORDING = "write-ship — #95 was merged as abc1234 at 2026-09-20T00:00:00Z: record it in ship.md; do not merge"
+    MERGING = "write-ship — merge with --match-head-commit abc1234"
+
+    def shipped(self, unit, **start):
+        Journal(self.config.working_dir, self.config.data_dir).append(
+            {"kind": "start", "workspace": self.key, "unit": unit, "stage": "ship", "started_by": "person", **start})
+        self.ran_out(unit, "ship")
+
+    def ran_out_at(self, unit):
+        ends = Journal(self.config.working_dir, self.config.data_dir).records(kind="end")
+        return [e for e in ends if e.get("unit") == unit and e.get("outcome") == "exhausted"][-1]["at"]
+
+    async def test_0126_r1_an_old_exhausted_ship_starts_a_recording_ship(self):
+        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.shipped("0001_a")
+        self.add("0001_a", "ship", action=self.RECORDING)
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([("0001_a", "ship", "autopilot")], {}))
+        [pick] = self.picks()
+        self.assertEqual((pick["stage"], pick["past_exhausted"]), ("ship", {"at": self.ran_out_at("0001_a")}))
+
+    async def test_0126_r2_an_old_exhausted_ship_still_stops_a_merging_ship(self):
+        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.shipped("0001_a")
+        self.add("0001_a", "ship", action=self.MERGING)
+        await self.pass_()
+        self.assertEqual((self.launched, self.picks(), self.stops()), ([], [], {"0001_a": "e"}))
+        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+                         "the last ship step ended exhausted")
+
+    async def test_0126_r3_a_recording_ship_that_ran_out_is_not_run_again(self):
+        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.shipped("0001_a", ship_mode="record")
+        self.add("0001_a", "ship", action=self.RECORDING)
+        await self.pass_()
+        self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
+
+    async def test_0126_r5_a_pick_with_nothing_skipped_has_no_past_exhausted(self):
+        self.add("0001_a", "plan")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0001_a", "plan", "autopilot")])
+        self.assertNotIn("past_exhausted", self.picks()[0])
+
 
 class ResumedAtStartUp(unittest.TestCase):
     """R5 c. The Reflex lifespan task, since the real stack never runs `api.py`'s.

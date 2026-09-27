@@ -209,12 +209,20 @@ class AutopilotMixin:
                     data = await self.board(cwd)
             last: dict[str, dict[str, Any]] = {}
             integrations: dict[str, dict[str, Any]] = {}
+            # `0126` R3: the `start` of the step each unit's last `end` closed, the latest of
+            # that unit and stage before it, so a recording `ship` that ran out is told apart.
+            starts: dict[tuple[str, str], dict[str, Any]] = {}
+            began: dict[str, dict[str, Any] | None] = {}
             for r in records:
+                if r.get("workspace") == key and r.get("kind") == "start" and autopilot.is_step(r):
+                    starts[(str(r.get("unit") or ""), str(r.get("stage") or ""))] = r
                 # `0111`: a retake of the screenshots that failed is the unit's last word too.
                 if r.get("workspace") == key and r.get("kind") in ("end", "integration", "screens") and autopilot.is_step(r):
                     last[str(r.get("unit") or "")] = r
                     if r.get("kind") == "integration":
                         integrations[str(r.get("unit") or "")] = r
+                    if r.get("kind") == "end":
+                        began[str(r.get("unit") or "")] = starts.get((str(r.get("unit") or ""), str(r.get("stage") or "")))
 
             running = self._autopilot_running(key)
             here = {r["unit"]: r["stage"] for r in running}
@@ -240,7 +248,11 @@ class AutopilotMixin:
                 last_stage = str((last.get(name) or {}).get("stage") or "")
                 ran_out = autopilot.exhausted_of(records, key, name, last_stage)
                 unopened = autopilot.unopened_of(records, key, name, last_stage)
-                stop = autopilot.stop_for(u, nxt, last.get(name), settings["autopilot_may_ship"], ran_out, unopened)
+                # `0126` R3. No `start` found reads as no recording `ship` (spec C5).
+                recorded = (began.get(name) or {}).get("ship_mode") == "record"
+                stop = autopilot.stop_for(
+                    u, nxt, last.get(name), settings["autopilot_may_ship"], ran_out, unopened, recorded,
+                )
                 stage = nxt.get("stage") or ""
                 info = u.get("integration") or {}
                 # `0124`: not while its step runs, whose `start` is already in the window.
@@ -284,7 +296,7 @@ class AutopilotMixin:
                     elif not autopilot.answered_since_start(records, key, name, nxt["rerun"]):
                         stop = autopilot.stop_for(
                             u, {**nxt, "rerun": ""}, last.get(name), settings["autopilot_may_ship"], ran_out,
-                            unopened,
+                            unopened, recorded,
                         )
                     else:
                         stage, rerun = nxt["rerun"], True
@@ -300,9 +312,13 @@ class AutopilotMixin:
                 if not stage:
                     continue
                 files = self._autopilot_files(cwd, name) if stage in autopilot.CODE_STAGES else None
+                # `0126` R5: the exhausted `ship` this pick went past. Not once the stage became
+                # `integrate`, which skipped nothing.
+                skipped = stage == "ship" and autopilot.skips_exhausted(nxt, last.get(name), recorded)
                 candidates.append({
                     "unit": name, "stage": stage, "files": files, "need": autopilot.reservation(stage), "rank": rank,
                     "rerun": rerun,
+                    "past_exhausted": {"at": last[name].get("at")} if skipped else None,
                 })
 
             for r in running:
@@ -347,6 +363,7 @@ class AutopilotMixin:
                     journal.append({
                         "kind": "autopilot-pick", "workspace": key, "unit": c["unit"], "stage": c["stage"],
                         "pass": run_id, "rank": c["rank"], "shortlist": shortlist, "passed": over,
+                        **({"past_exhausted": c["past_exhausted"]} if c.get("past_exhausted") else {}),
                     })
                 except (BadRecord, Busy) as e:
                     self._autopilot_set_stops(key, {**found, "": {
