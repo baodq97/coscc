@@ -1623,9 +1623,15 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
             self._flow("sid-5", process=cli)
             await self.s.suspend_all()
         self.assertEqual(cli.returncode, -9)  # `_shut`'s SIGKILL: the tree under it is orphaned
+        def running(pid):
+            # A process being reaped vanishes between any two reads: ESRCH, not ENOENT.
+            try:
+                return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+            except OSError:
+                return False
+
         for _ in range(100):
-            alive = [p for p, _ in left if Path(f"/proc/{p}").exists()
-                     and Path(f"/proc/{p}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"]
+            alive = [p for p, _ in left if running(p)]
             if not alive:
                 break
             await asyncio.sleep(0.02)
