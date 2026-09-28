@@ -166,6 +166,28 @@ class ThePage(unittest.TestCase):
         self.assertIn("column-", board)
         self.assertIn("lane-label", board)
 
+    def test_0133_the_board_puts_the_lanes_before_the_forms(self):
+        """`0133` R5, R10, Design *the order of `/board`*."""
+        board = _render(screens._board())
+        order = ["autopilot-strip", "board-grid", "done-group", "running-steps", "new-unit-slug",
+                 "new-idea-slug"]
+        # Where each is drawn, not where the toolbar's buttons name it.
+        at = [board.replace('\\"', '"').find(f'id:"{name}"') for name in order]
+        self.assertNotIn(-1, at, dict(zip(order, at)))
+        self.assertEqual(at, sorted(at), dict(zip(order, at)))
+        for said in ("board-new-unit", "board-new-idea", "done-count"):
+            self.assertIn(said, board)
+        # An empty lane's; the empty board's "Nothing here yet." stays.
+        for gone in ("paused-group", '"Nothing here"'):
+            self.assertNotIn(gone, board.replace('\\"', '"'))
+
+    def test_0133_the_autopilot_stops_sit_in_a_closed_part(self):
+        """`0133` R11: a `details` is closed until opened."""
+        strip = _render(screens._autopilot_strip())
+        for said in ("autopilot-stops", " stops", "details", "autopilot-stop"):
+            self.assertIn(said, strip)
+        self.assertNotIn("open:", strip.replace('\\"', '"'))
+
     def test_f2_a_grants_tools_are_a_list_behind_details(self):
         settings = _render(screens._settings())
         self.assertNotIn("tools: ", settings)

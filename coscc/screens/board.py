@@ -368,7 +368,8 @@ def _autopilot_stop_row(stop: rx.Var[AutopilotStop]) -> rx.Component:
 
 
 def _autopilot_strip() -> rx.Component:
-    """`0043` R9. Shown while the autopilot is on: the cap line, and one row per stop."""
+    """`0043` R9. Shown while the autopilot is on: the cap line, and one row per stop behind
+    their count."""
     return rx.cond(
         P.autopilot_on,
         rx.vstack(
@@ -380,7 +381,17 @@ def _autopilot_strip() -> rx.Component:
                 width="100%", align="center", wrap="wrap",
             ),
             rx.cond(P.autopilot_refused != "", s.text(P.autopilot_refused, size="1")),
-            rx.foreach(P.autopilot_stops, _autopilot_stop_row),
+            # `0133` R11: the stops in a closed part, so the strip does not push the lanes down.
+            rx.cond(
+                P.autopilot_stops.length() > 0,
+                rx.el.details(
+                    rx.el.summary(s.text(P.autopilot_stops.length().to_string() + " stops",
+                                         size="1", as_="span"), cursor="pointer"),
+                    rx.vstack(rx.foreach(P.autopilot_stops, _autopilot_stop_row),
+                              spacing="2", margin_top="8px", width="100%"),
+                    id="autopilot-stops", width="100%",
+                ),
+            ),
             padding="12px 16px", background=rx.color("iris", 3), border_radius="10px",
             spacing="2", width="100%", role="status", id="autopilot-strip",
         ),
@@ -459,14 +470,17 @@ def _release_panel() -> rx.Component:
     )
 
 
+def _focus(target: str):
+    """`0133` R10. Moves focus to a form's first field, below the board."""
+    return rx.call_script(f"document.getElementById('{target}').focus()")
+
+
 def _board() -> rx.Component:
+    """`0133` Design: the toolbar, the autopilot strip, the lanes, the folded groups, what is
+    running, the release panel (`0046`), and the two forms last, so nothing above the lanes
+    pushes them down (R10)."""
     return rx.vstack(
         s.heading("Work board", "From an idea to something real. One clear step at a time."),
-        rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
-        rx.cond(P.has_workspace, _start_idea(), rx.fragment()),
-        _autopilot_strip(),
-        _running_steps(),
-        _release_panel(),
         rx.flex(
             rx.input(rx.input.slot(rx.icon("search", size=15)), id="work-search",
                      placeholder="Search work...", value=P.query, on_change=P.search_work,
@@ -491,9 +505,20 @@ def _board() -> rx.Component:
                 ),
                 value=P.board_view, on_change=P.set_board_view, size="1",
             ),
+            rx.cond(P.has_workspace, rx.button(rx.icon("plus", size=14), "New unit", id="board-new-unit",
+                                               on_click=_focus("new-unit-slug"), size="1", variant="soft")),
+            rx.cond(P.has_workspace, rx.button(rx.icon("lightbulb", size=14), "New idea", id="board-new-idea",
+                                               on_click=_focus("new-idea-slug"), size="1", variant="soft")),
+            # `0133` R5. The done units are a number here, and a link to their group.
+            rx.cond(P.group_counts["done"] > 0, rx.button(
+                P.group_counts["done"].to_string() + " done", id="done-count",
+                on_click=rx.call_script(
+                    "var d=document.getElementById('done-group');d.open=true;d.scrollIntoView({block:'start'})"),
+                size="1", variant="ghost")),
             width="100%", align="center", gap="12px", wrap="wrap",
         ),
-        rx.cond(
+        _autopilot_strip(),
+        rx.box(rx.cond(
             P.cards.length() == 0,
             _empty_board(),
             rx.cond(
@@ -522,16 +547,21 @@ def _board() -> rx.Component:
                     ),
                 ),
             ),
-        ),
+        ), width="100%", min_width="0", id="board-lanes-area"),
         _collapsed_groups(),
+        _running_steps(),
+        _release_panel(),
+        rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
+        rx.cond(P.has_workspace, _start_idea(), rx.fragment()),
         spacing="5", width="100%",
     )
 
 
 def _collapsed_groups() -> rx.Component:
-    """`0100` R8 (`intent.md ## Answers, câu 4`). Done, paused and dropped units, each in a
-    closed group with its count at the foot of the board; a group of none is not drawn. The
-    search and the filter leave in a group what they leave in the List (review F2)."""
+    """`0100` R8 (`intent.md ## Answers, câu 4`). Done and dropped units, each in a closed
+    group with its count at the foot of the board; a group of none is not drawn. A paused
+    unit stays in its lane (`0133` spec C2). The search and the filter leave in a group what
+    they leave in the List (review F2)."""
     return rx.vstack(
         *(_collapsed_group(state, label) for state, label in
           (("done", "Done"), ("dropped", "Dropped"))),
