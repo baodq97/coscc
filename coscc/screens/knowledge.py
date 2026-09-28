@@ -55,13 +55,19 @@ def _metric_row(row: rx.Var[KnowledgeMetric]) -> rx.Component:
     )
 
 
+def _badges(*children) -> rx.Component:
+    """Beside a section's title, wrapping under it on a phone rather than past the panel."""
+    return rx.flex(*children, wrap="wrap", gap="6px", width="100%")
+
+
 def _knowledge() -> rx.Component:
     return rx.vstack(
         s.heading("Knowledge", "What earlier units measured, and whether it helps."),
         rx.cond(P.kn_log_note != "", rx.callout(P.kn_log_note, icon="info", color_scheme="amber",
                                                  variant="surface", width="100%")),
         s.panel(
-            s.section_head("Entries", s.badge(P.kn_checked, "gray")),
+            s.section_head("Entries"),
+            _badges(s.badge(P.kn_checked, "gray")),
             rx.cond(
                 P.kn_note != "",
                 s.text(P.kn_note, size="1"),
@@ -76,9 +82,9 @@ def _knowledge() -> rx.Component:
                 _table(["Unit", "Stage", "When", "Arm", "Carried", "Withheld"], P.kn_steps, _step_row,
                        "No step has run with the store on yet.", id="knowledge-steps")),
         s.panel(
-            s.section_head("Measure", s.badge("Verdict: " + P.kn_verdict, "iris"),
-                           s.badge("Fewer turns: " + P.kn_reduction, "gray"),
-                           s.badge("Due " + P.kn_deadline, "gray")),
+            s.section_head("Measure"),
+            _badges(s.badge("Verdict: " + P.kn_verdict, "iris"), s.badge("Fewer turns: " + P.kn_reduction, "gray"),
+                    s.badge("Due " + P.kn_deadline, "gray")),
             _table(["Metric", "On", "Off"], P.kn_metrics, _metric_row, "", id="knowledge-measure"),
         ),
         spacing="5", width="100%",

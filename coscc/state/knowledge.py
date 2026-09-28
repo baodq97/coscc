@@ -75,10 +75,12 @@ def knowledge_fields(page: dict) -> dict:
         status, color = ((NOT_CHECKED, "gray") if broken is None else ("pass", "grass") if not broken
                          else ("broken", "red"))
         sources = e.get("sources") or []
+        # R25, S3: a `workspace:` scope names its slot, which only the details show.
+        own = e["scope"][len("workspace:"):] if e["scope"].startswith("workspace:") else ""
         entries.append(KnowledgeEntry(
-            id=e["id"], scope=e["scope"], statement=e["statement"],
+            id=e["id"], scope="workspace" if own else e["scope"], statement=e["statement"],
             sources=[" · ".join(x for x in (s.get("unit"), s.get("file"), s.get("anchor")) if x) for s in sources],
-            slots=", ".join(sorted({s.get("slot") or "" for s in sources} - {""})),
+            slots=", ".join(sorted(({s.get("slot") or "" for s in sources} | {own}) - {""})),
             measured=present.day(e.get("measured")), status=status, reason=str(broken or ""), color=color,
         ))
     last = page.get("last_gather")

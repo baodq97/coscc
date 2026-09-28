@@ -1557,6 +1557,8 @@ class KnowledgeIsReadWhereItIsShown(unittest.TestCase):
         self.assertEqual([(e.status, e.color) for e in f["kn_entries"]], [("not checked yet", "gray"), ("broken", "red")])
         self.assertEqual((f["kn_entries"][0].sources, f["kn_entries"][0].slots),
                          (["0001_a · plan.md · ## Order"], "proj-aaaaaaaaaaaa"))
+        # The slot of a `workspace:` scope is in the details only (S3).
+        self.assertEqual((f["kn_entries"][1].scope, f["kn_entries"][1].slots), ("workspace", "proj-aaaaaaaaaaaa"))
         self.assertTrue(f["kn_checked"].endswith("on origin/main " + "a" * 12))
         self.assertNotIn("a" * 13, f["kn_checked"])
         self.assertNotIn("T00:00", f["kn_checked"] + f["kn_gathers"][0].at + f["kn_steps"][0].at)
