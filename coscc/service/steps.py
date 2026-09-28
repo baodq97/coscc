@@ -20,7 +20,7 @@ from coscc.git import drift, fetches, gitops
 from coscc import knowledge
 from coscc.agent import agents, harness
 from coscc.agent import submit as submit_mod
-from coscc.github import integrate
+from coscc.github import integrate, prmachine
 from coscc.units import planmap, priorfindings, retake
 from coscc.units.board import Unavailable
 from coscc.data import Data, now as _now
@@ -936,6 +936,17 @@ class StepsMixin:
             if not allowed:
                 raise Refused(said, gate_reasons)
 
+            # `0136` R12, R13. `pr` and `ship` run no session: the PR machine pushes, opens or
+            # merges, and records each move through its guard. The mark is this frame's, as for
+            # any refusal above, and is given back by the `finally` below.
+            # A `pr` run again (`0054`) has its block appended as any rerun, and the note reaches
+            # no prompt: the app writes `pr.md` again from the unit's metadata.
+            if stage in prmachine.STAGES:
+                if rerun:
+                    await self._append_to_answers(self._unit_dir(cwd, unit) / "intent.md", "\n" + rerun_block, "a rerun")
+                yield ("done", await self._mechanical(cwd, key, unit, stage, tree, started_by, again=rerun))
+                return
+
             if stage == "impl" and tree is not None:
                 # R6. A tree that cannot run its tests turns every `impl` red from the start, so
                 # the step is not started on one. Tried once more first: a network blip is the
@@ -1040,19 +1051,9 @@ class StepsMixin:
                 shortlist = backlog.stamp(journal.records(key, kind="shortlist"), unit)
             except Exception as e:  # noqa: BLE001 — recorded as the reason
                 shortlist = {"rank": None, "of": None, "record": None, "error": str(e) or type(e).__name__}
-            # `0041` R2. The unit's open pull request, for `pr` only, after the gate and before
-            # any money is spent. One `gh pr list`, up to `integrate.GH_TIMEOUT`; a lookup that
-            # fails still starts the step, and its prompt says so.
+            # `0041` R2's lookup was for a `pr` session; since `0136` R12 `pr` has none, and the
+            # PR machine asks `gh pr list` itself.
             pr_note, pr_before = "", None
-            if stage == "pr":
-                if tree is not None:
-                    lookup = await integrate.pr_for_branch(work, tree.get("branch") or "")
-                else:
-                    lookup = {"state": "unknown", "reason": "this workspace is not a git checkout"}
-                # `None` when the lookup could not answer, so `_sync_pr` does not read that as
-                # "no pull request" (`0055` review F2); the `start` record still gets `""`.
-                pr_note = integrate.describe_pr_lookup(lookup)
-                pr_before = None if lookup.get("state") == "unknown" else lookup.get("url", "")
             # `0090` R1-R4. The store, read once, only with the flag on and only for the stages
             # that receive it; off, nothing is read and `Runner.run` is handed no key at all, so
             # its prompt and its `start` record are what they were (R2). A store that cannot be
@@ -1067,12 +1068,12 @@ class StepsMixin:
                 if arm == knowledge.ON and stage in knowledge.STAGES:
                     knowledge_kw.update(await asyncio.to_thread(
                         knowledge.for_step, self.config.data_dir, units.slot(cwd), work))
-            # `0054` R3, R8. After the last refusal that reads nothing more, before any money
-            # is spent. `pr.md`'s `## Answers` is read first: the `pr` session writes that file
-            # itself, so only a comparison afterwards can tell whether the section survived.
-            # `0115` R7: every `impl` step writes `impl.md` itself too, rerun or not.
+            # `0115` R7. After the last refusal that reads nothing more, before any money is
+            # spent: every `impl` step writes `impl.md` itself, so only a comparison afterwards
+            # can tell whether its `## Answers` survived. (`0054` R8 read `pr.md`'s too, while a
+            # `pr` session wrote it.)
             answers_before: bytes | None = None
-            if (rerun and stage == "pr") or stage == "impl":
+            if stage == "impl":
                 try:
                     answers_before = answers_section((directory / row["file"]).read_bytes())
                 except OSError:
@@ -1318,23 +1319,12 @@ class StepsMixin:
                     item = ("done", {**item[1], "base": base})
                     if item[1].get("outcome") != "stopped":
                         item = ("done", {**item[1], **await self._ingest(cwd, unit, item[1], artifact)})
-                    if stage == "ship" and tree is not None and item[1].get("outcome") == "done":
-                        # R10. Only if `cos.mjs` now says `finished` and GitHub says merged;
-                        # otherwise nothing is touched and the board tries again later.
-                        item = ("done", {**item[1], "cleanup": await self._cleanup(cwd, unit)})
                     if rounds_before is not None and item[1].get("outcome") == "done":
                         # After `Runner` has written `review.md` (`runner.py:442`), never
                         # before: the artifact does not wait on GitHub (`0021` R6).
                         item = (
                             "done",
                             {**item[1], "comments": await self._post_new_rounds(cwd, unit, rounds_before)},
-                        )
-                    if stage == "pr" and item[1].get("outcome") != "stopped":
-                        # `0055` R3. After `pr.md` is on disk, like the rounds above; a
-                        # stopped step posts nothing (`0034` R9, `spec.md ## Answers, câu 2`).
-                        item = (
-                            "done",
-                            {**item[1], "pr_sync": await self._sync_pr(cwd, unit, kwargs.get("pr_before"))},
                         )
                     if (
                         answers_before is not None and item[1].get("outcome") == "done"
@@ -1396,11 +1386,86 @@ class StepsMixin:
                     # `done`, and after the mark is given back: the board read it costs holds
                     # neither the reader's `done` nor the unit.
                     await self._after_end(cwd, unit, stage, running.workspace)
-                if ended_done and not going_down and stage == "ship" and self.config.knowledge:
-                    # `0131` R1. Once, in the background: nothing here waits for it.
-                    self._gather_soon(cwd, unit, running.workspace)
             finally:
                 self._finishing.pop(rid, None)
+
+    def _pr_machine(self) -> prmachine.Machine:
+        """`0136`. The PR machine over the same history and run log as every other transition."""
+        meta = self._unit_meta()
+        return prmachine.Machine(meta.history, self._journal() or Journal(meta.root, self.config.data_dir))
+
+    async def _mechanical(
+        self, cwd: str, key: str, unit: str, stage: str, tree: dict[str, Any] | None, started_by: str,
+        again: bool = False,
+    ) -> dict[str, Any]:
+        """`0136` R12, R13: one `pr` or `ship`, with no session, no `start` and no `end` row;
+        what it did is its transitions and, for `ship`, the `ship` row notices read (`0113`).
+        Returns the `done` item a session's step would have ended with."""
+        if tree is None:
+            raise Invalid(f"{stage} needs the unit's git worktree, and this workspace is not a git repository")
+        work = Path(tree["path"])
+        try:
+            expected = await asyncio.to_thread(
+                units.branch_name, cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
+            branch = await gitops.current_branch(work)
+        except (CannotCreate, BadUnit, GitError) as e:
+            raise Invalid(str(e)) from e
+        u = prmachine.Unit(key, unit, self._unit_dir(cwd, unit), str(work), branch, expected,
+                           expected.partition("/")[0] or None)
+        machine = self._pr_machine()
+        if stage == "pr":
+            out = await machine.open_pr(u, again=again)
+        else:
+            out = await machine.ship(u, authority="code" if started_by == "autopilot" else "person")
+        artifact = prmachine.PR_FILE if stage == "pr" else prmachine.SHIP_FILE
+        done: dict[str, Any] = {
+            "unit": unit, "stage": stage, "outcome": "done" if out.ok else "failed",
+            "artifact": artifact if out.ok else None, "session_id": None, "included": [],
+            "error": out.detail or ", ".join(out.reasons), "cost": {}, "model": None,
+            "model_source": None, "mechanical": out.as_dict(),
+        }
+        if stage == "pr" and out.ok:
+            # `0055` R3, `0122` R4: the title and body the app wrote go onto a pull request it
+            # found open rather than created, and the scope is read once, as after a session.
+            done["pr_sync"] = await self._sync_pr(cwd, unit, out.url if out.result in ("found", "already") else "")
+        if stage == "ship":
+            merged = out.result in ("merged", "recorded", "already")
+            refused = not merged and prmachine.state(machine.history, key, unit)["state"] == "merge-requested"
+            if merged or refused:
+                try:
+                    self._journal().append({"kind": "ship", "workspace": key, "unit": unit, "stage": "ship",
+                                            "result": "shipped" if merged else "refused"})
+                except (BadRecord, Busy, AttributeError):
+                    pass
+            if merged:
+                done["cleanup"] = await self._cleanup(cwd, unit)
+                if self.config.knowledge:
+                    # `0131` R1. Once, in the background: nothing here waits for it.
+                    self._gather_soon(cwd, unit, key)
+        return done
+
+    async def reconcile_prs(self) -> list[dict[str, Any]]:
+        """`0136` spec Design "Đối soát sau khởi động lại": every unit left at
+        `merge-requested` is read once from GitHub; a merged one is recorded and none is
+        merged. Never raises: a start-up that cannot read goes on as it would have."""
+        try:
+            machine = self._pr_machine()
+            with machine.history.data.connect() as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT workspace, unit FROM transitions WHERE root = ? AND guard = 'ship-ready' "
+                    "AND artifact = ?", (str(machine.history.working_dir), prmachine.SHIP_FILE),
+                ).fetchall()
+            pending = []
+            for r in rows:
+                ws, unit = r["workspace"], r["unit"]
+                if prmachine.state(machine.history, ws, unit)["state"] != "merge-requested":
+                    continue
+                tree = worktrees.path(ws, unit, self.config.data_dir)
+                pending.append(prmachine.Unit(ws, unit, self._unit_dir(ws, unit),
+                                              str(tree if tree.is_dir() else ws), "", "", None))
+            return [o.as_dict() for o in await machine.reconcile(pending)]
+        except Exception as e:  # noqa: BLE001 — a start-up is never stopped by this
+            return [{"result": "failed", "detail": str(e) or type(e).__name__}]
 
     async def stop_step(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
         """Stop one running board step (`0034` R2, R5, R6). The route and the page's

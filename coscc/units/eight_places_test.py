@@ -17,6 +17,8 @@ from unittest import mock
 
 from coscc.agent.submit_test import a_head, finding, submits
 from coscc.agent import harness
+from coscc.github.prmachine_test import HEAD, FakeGh, run
+from coscc.github.prmachine_test import Fixture as _PrFixture
 from coscc.config import Config
 from coscc.service import Service
 from coscc.service.service_test import create_sync
@@ -445,6 +447,43 @@ class Place6(_Jera):
         self.assertEqual(self._rows(), [])
 
 
+class Place7(_PrFixture):
+    """§6, 7: "The reviewed sha and the merge pin are copied by the model out of prompt prose."
+    Now `ship` is the PR machine's (R13): guard `ship-ready` reads the head the app recorded
+    when the review run opened (R3 c) and the head its own `gh pr view` found, and the merge is
+    pinned to that read (R10). Here `review.md` and `ship.md` name other commits."""
+
+    PROSE = "## Round 1\nReviewed: {sha}. Verdict: pass.\n\n### Findings\n\nNone.\n"
+
+    def test_the_merge_is_pinned_to_the_head_the_guard_read_not_the_one_the_prose_names(self):
+        gh = FakeGh()
+        m = self.machine(gh)
+        run(m.open_pr(self.unit()))
+        self.a_round(head=HEAD)
+        (self.directory / "review.md").write_text(self.PROSE.format(sha="0" * 40), encoding="utf-8")
+        (self.directory / "ship.md").write_text("# Ship\nStatus: draft.\nmerge with --match-head-commit " + "0" * 40 + "\n")
+        out = run(m.ship(self.unit()))
+        self.assertEqual(out.result, "merged")
+        [merge] = [c for c in gh.calls if c[:2] == ["pr", "merge"]]
+        self.assertEqual(merge[-1], HEAD)
+        [requested] = [r for r in self.rows("ship.md") if r["to_state"] == "draft"]
+        self.assertEqual(requested["guard"], "ship-ready")
+        self.assertEqual({k: json.loads(requested["inputs"])[k] for k in ("head", "reviewed_head")},
+                         {"head": HEAD, "reviewed_head": HEAD})
+
+    def test_prose_naming_the_head_does_not_stand_for_a_round_of_it(self):
+        # The pull request moved on after the round the app holds; `review.md` claims the new head.
+        gh = FakeGh(head="b" * 40)
+        m = self.machine(gh)
+        run(m.open_pr(self.unit()))
+        self.a_round(head=HEAD)
+        (self.directory / "review.md").write_text(self.PROSE.format(sha="b" * 40), encoding="utf-8")
+        out = run(m.ship(self.unit()))
+        self.assertEqual((out.result, out.guard), ("refused", "ship-ready"))
+        self.assertIn("head-moved", out.reasons)
+        self.assertEqual([c for c in gh.calls if c[:2] == ["pr", "merge"]], [])
+
+
 class Place8(unittest.TestCase):
     """§6, 8: "The autopilot matches English substrings of `cos.mjs`'s messages." Now `next`
     and the gate hand out codes from `guards.REASONS` beside their words, and the autopilot
@@ -490,6 +529,21 @@ class Place8(unittest.TestCase):
         )
         self.assertEqual((nxt["stage"], nxt["action"], nxt["reasons"]), ("", "all done", ["finished"]))
         self._read_as(nxt, "finished")
+
+
+class TheEightPlacesAreAllHere(unittest.TestCase):
+    """R17: one case per place of `docs/architecture/fsm.md` §6, each carrying its number and
+    its words, and no ninth."""
+
+    def test_there_is_one_class_per_place_and_each_quotes_its_place(self):
+        places = sorted(n for n, v in globals().items() if n.startswith("Place") and isinstance(v, type))
+        self.assertEqual(places, [f"Place{n}" for n in range(1, 9)])
+        fsm = (Path(__file__).resolve().parents[2] / "docs" / "architecture" / "fsm.md").read_text(encoding="utf-8")
+        for n in range(1, 9):
+            doc = globals()[f"Place{n}"].__doc__ or ""
+            with self.subTest(place=n):
+                self.assertTrue(doc.startswith(f"§6, {n}: "), doc[:40])
+                self.assertIn(f"\n{n}. ", fsm)
 
 
 if __name__ == "__main__":

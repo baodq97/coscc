@@ -87,11 +87,38 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         async def no_sync(*a, **k):
             return {}
 
+        # `0136` R12: `pr` runs no session. The PR machine is the real one, with `gh`, the
+        # push and the head in memory; `write` None is a `gh` that cannot be reached.
+        from coscc.git import gitops
+        from coscc.github import prmachine
+        from coscc.github.prmachine_test import FakeGh
+
+        gh = FakeGh()
+        if write is None:
+            async def gh(argv, cwd):  # noqa: F811
+                seen.append({"gh": argv})
+                return 1, "", "error connecting to api.github.com"
+
+        async def pushed(*a):
+            return None
+
+        async def head(*a):
+            return SHA
+
+        def machine():
+            meta = self.service._unit_meta()
+            return prmachine.Machine(meta.history, self.service._journal(), gh=gh, push=pushed, head=head)
+
+        async def on_branch(*a, **k):
+            return "feat/awaiting-ship"
+
         async def go():
             async for item in self.service.run_step(self.cwd, self.unit, stage, **kw):
                 self.items.append(item)
 
-        with mock.patch("coscc.service.steps.Runner", StandIn), \
+        with mock.patch.object(self.service, "_pr_machine", machine), \
+                mock.patch.object(gitops, "current_branch", on_branch), \
+                mock.patch("coscc.service.steps.Runner", StandIn), \
                 mock.patch.object(self.service, "_worktree", tree), \
                 mock.patch.object(self.service, "_sync_pr", no_sync), \
                 mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \
@@ -109,20 +136,20 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         self.assertEqual([o["stage"] for o in offers["offers"]], ["intent", "spec", "plan", "pr"])
         self.assertEqual(next(o for o in offers["offers"] if o["stage"] == "pr")["later"], ["review", "ship"])
 
-    def test_without_rerun_no_key_reaches_the_runner_and_intent_is_untouched(self):
+    def test_without_rerun_no_runner_is_made_and_intent_is_untouched(self):
+        # `0136` R12: no session at all, rerun or not.
         (self.dir / "review.md").unlink()
         self.run_step("pr")
-        self.assertNotIn("rerun", self.seen[-1])
-        self.assertNotIn("rerun_note", self.seen[-1])
+        self.assertEqual(self.seen, [])
+        self.assertEqual(self.items[-1][1]["outcome"], "done")
         self.assertEqual(self.intent(), ARTIFACTS["intent.md"])
 
     def test_r10_rerun_pr_then_next_is_review_and_ship_is_closed(self):
         open_before, said_before = self.ask(board_reader.gate(self.store, self.unit, "ship"))
         self.assertNotIn("stale", said_before)
         self.run_step("pr", rerun=True, note="Sửa tiêu đề: nêu R10.")
-        kw = self.seen[-1]
-        self.assertEqual((kw["rerun"], kw["rerun_note"]), (True, "Sửa tiêu đề: nêu R10."))
-        self.assertEqual(self.items[-1][0], "done")
+        self.assertEqual(self.seen, [])
+        self.assertEqual((self.items[-1][0], self.items[-1][1]["outcome"]), ("done", "done"))
         # Exactly one block, appended: not one byte above it moved.
         text = self.intent()
         self.assertTrue(text.startswith(ARTIFACTS["intent.md"]))
@@ -148,21 +175,16 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         got = service_mod.unit_state({**row, "open": 0}, None, None)
         self.assertEqual((got["state"], got["ci"]), ("awaiting", {"read": False, "red": [], "at": ""}))
 
-    def test_the_prompt_the_runner_builds_carries_the_note(self):
-        from coscc.runner import compose_prompt
-
+    def test_the_note_reaches_no_session_and_no_file(self):
+        # Was *the prompt the runner builds carries the note*: `0136` R12 leaves no prompt.
         self.run_step("pr", rerun=True, note="NOTE-0054")
-        kw = self.seen[-1]
-        prompt = compose_prompt(
-            kw["cwd"], kw["directory"], kw["unit"], kw["stage"], kw["stages"], kw["artifact"],
-            writes_own=True, rerun=kw["rerun"], rerun_note=kw["rerun_note"],
-        )[0]
-        self.assertIn("NOTE-0054", prompt)
-        self.assertIn("# Why this stage runs again", prompt)
+        self.assertEqual(self.seen, [])
+        self.assertNotIn("NOTE-0054", self.intent())
+        self.assertNotIn("NOTE-0054", (self.dir / "pr.md").read_text(encoding="utf-8"))
 
     def test_a_rerun_that_never_ran_leaves_the_stage_offered_again(self):
-        with self.assertRaises(Invalid):
-            self.run_step("pr", write=None, rerun=True)
+        self.run_step("pr", write=None, rerun=True)
+        self.assertEqual(self.items[-1][1]["outcome"], "failed")
         self.assertEqual(self.intent().count("### Rerun"), 1)
         nxt = self.ask(board_reader.next_step(self.store, self.unit))
         self.assertEqual(nxt["stage"], "pr")
@@ -185,18 +207,20 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
 
     def test_an_empty_note_is_not_refused(self):
         self.run_step("pr", rerun=True, note="   ")
-        self.assertEqual(self.seen[-1]["rerun_note"], "")
+        self.assertEqual(self.items[-1][1]["outcome"], "done")
 
-    def test_pr_md_that_loses_its_answers_is_said_to(self):
+    def test_pr_md_written_again_keeps_its_answers(self):
+        # Was *pr.md that loses its answers is said to*: the app writes `pr.md` now, and
+        # keeps its `## Answers` below what it writes, so none is lost to say.
         (self.dir / "pr.md").write_text(PR_MD + ANSWERS, encoding="utf-8")
         self.run_step("pr", rerun=True)
-        self.assertEqual(self.items[-1][1].get("answers_kept"), False)
-        self.assertTrue(self.items[-1][1].get("answers_lost"))
+        text = (self.dir / "pr.md").read_text(encoding="utf-8")
+        self.assertTrue(text.endswith(ANSWERS))
+        self.assertNotEqual(text, PR_MD + ANSWERS)
 
     def test_pr_md_that_keeps_its_answers_says_nothing_lost(self):
         (self.dir / "pr.md").write_text(PR_MD + ANSWERS, encoding="utf-8")
-        self.run_step("pr", write="# PR: x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nmới\n" + ANSWERS, rerun=True)
-        self.assertEqual(self.items[-1][1].get("answers_kept"), True)
+        self.run_step("pr", rerun=True)
         self.assertNotIn("answers_lost", self.items[-1][1])
 
 
