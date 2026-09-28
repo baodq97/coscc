@@ -136,8 +136,9 @@ def _agent_field(row: rx.Var[AgentRow], field: str, value, source, width: str) -
 
 
 def _agent_row(row: rx.Var[AgentRow]) -> rx.Component:
-    """`0036` R2. One agent: its four fields, each with its source, saved as one form."""
-    return rx.form(
+    """`0036` R2. One agent: its four fields, each with its source, saved as one form.
+    The plain element, not `rx.form`, which would add a Radix package to the bundle."""
+    return rx.el.form(
         rx.el.input(type="hidden", name="key", value=row.key),
         rx.hstack(
             rx.text(row.glyph, font_family=_RUNIC, size="4", aria_hidden="true"),
