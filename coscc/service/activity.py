@@ -5,6 +5,7 @@ Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a 
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from coscc.runlog import events
@@ -239,12 +240,14 @@ class ActivityMixin:
     def _import_report(self) -> dict[str, Any]:
         """`0135` R4. Every field an import could not read, its workspace by name (S3), not a
         failed ingest: the card shows that one. A database that cannot be read is `problem`,
-        in place of a Settings screen that does not load at all."""
+        in place of a Settings screen that does not load at all. What went wrong goes to the
+        log, not the screen: `Busy` and `Incompatible` name the database's path (S3)."""
         names = {self._journal_key(r["path"]): str(r["name"]) for r in self.workspaces()["workspaces"]}
         try:
             found = self._unit_meta().unknowns()
         except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
-            return {"rows": [], "problem": f"The import report could not be read: {e}"}
+            print(f"coscc: the import report could not be read: {e}", file=sys.stderr)
+            return {"rows": [], "problem": "The import report could not be read."}
         return {
             "rows": [{**r, "workspace": names.get(r["workspace"], "a removed workspace")} for r in found],
             "problem": "",

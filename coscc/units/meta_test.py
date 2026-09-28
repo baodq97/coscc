@@ -9,12 +9,14 @@ for the same answer on every field R5 lists.
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from coscc.agent import harness
 from coscc.data import Data
@@ -292,6 +294,16 @@ class TheImportReport(unittest.TestCase):
         asyncio.run(self.service.create_unit(self.cwd, "a-problem", "x"))
         asyncio.run(self.service.board(self.cwd))
         self.assertEqual(self.service.settings()["import_report"], {"rows": [], "problem": ""})
+
+    def test_a_database_that_cannot_be_read_is_one_sentence_without_its_path(self):
+        from coscc.data import Busy
+
+        busy = Busy(self.service.config.data_dir + "/cos.db")
+        with mock.patch("coscc.units.meta.UnitMeta.unknowns", side_effect=busy), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            report = self.service.settings()["import_report"]
+        self.assertEqual(report, {"rows": [], "problem": "The import report could not be read."})
+        self.assertIn("cos.db", log.getvalue())
 
 
 if __name__ == "__main__":
