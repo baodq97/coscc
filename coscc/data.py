@@ -72,7 +72,13 @@ from typing import Any, Iterator
 # person's own decisions and delegations, entered only on the Settings screen. The refusal
 # applies once more (that unit's `spec.md` ## Concerns): **a build from before `0137`
 # answers `500` on a database this one has touched.**
-SCHEMA_VERSION = 5
+#
+# 6 added the `unit_*` tables and `idea_meta` for `.cos/0135_unit-state-lives-in-markdown`:
+# a unit's metadata moved out of its markdown and into this file. The refusal applies once
+# more, and costs more than before (that unit's `spec.md` C7): **a build from before `0135`
+# answers `500` on a database this one has touched, and the answers and holds recorded
+# since exist only here** — a build that reads them from the markdown does not see them.
+SCHEMA_VERSION = 6
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -273,6 +279,118 @@ CREATE TABLE IF NOT EXISTS decisions (
     withdrawn  TEXT NOT NULL,
     created_at TEXT NOT NULL
 )""",
+    """-- `0135` R1, R2: one row per directory under a store's `.cos/`, whatever its name --
+-- `number` and `slug` are NULL for one that does not match NNNN_<slug>. `type` is the
+-- word `intent.md` declares, or `unknown` until one is read. `lane` is `full` for every
+-- unit and nothing reads it to decide (spec R2). Status is not here: it is the fold over
+-- `transitions`, as `0013` R1 has it.
+CREATE TABLE IF NOT EXISTS unit_meta (
+    root        TEXT NOT NULL,
+    workspace   TEXT NOT NULL,
+    unit        TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    lane        TEXT NOT NULL DEFAULT 'full',
+    number      INTEGER,
+    slug        TEXT,
+    imported_at TEXT NOT NULL,
+    PRIMARY KEY (root, workspace, unit)
+)""",
+    """-- `intent.md`'s `Idea:`, `Repo:` and each `Depends on:`, in the order written. Replaced
+-- whole each time the intent is read. `repo` is here because the unit's line under its
+-- idea's `## Units` is found by it.
+CREATE TABLE IF NOT EXISTS unit_links (
+    root      TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    unit      TEXT NOT NULL,
+    kind      TEXT NOT NULL CHECK (kind IN ('idea', 'repo', 'depends')),
+    ref       TEXT NOT NULL,
+    pos       INTEGER NOT NULL
+)""",
+    """CREATE INDEX IF NOT EXISTS unit_links_scope ON unit_links (root, workspace, unit)""",
+    """-- One row per file under `.cos/ideas/`, as `cos.mjs meta` read it: `units` and
+-- `problems` are its JSON lists.
+CREATE TABLE IF NOT EXISTS idea_meta (
+    root      TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    idea      TEXT NOT NULL,
+    title     TEXT,
+    status    TEXT,
+    units     TEXT NOT NULL,
+    problems  TEXT NOT NULL,
+    PRIMARY KEY (root, workspace, idea)
+)""",
+    """-- The questions under an artifact's `## Open questions`, replaced per artifact on each
+-- read. Whether the section is there at all is `unit_seen.questions`.
+CREATE TABLE IF NOT EXISTS unit_questions (
+    root      TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    unit      TEXT NOT NULL,
+    artifact  TEXT NOT NULL,
+    n         INTEGER NOT NULL,
+    text      TEXT NOT NULL
+)""",
+    """CREATE INDEX IF NOT EXISTS unit_questions_scope ON unit_questions (root, workspace, unit)""",
+    """-- `0135` R8: a person's answer, to a question (`ref` its number) or to a review finding
+-- (`ref` `F<k>`). Appended and never edited; the last for a `ref` is the one in force.
+-- `once_key` is what makes the import re-runnable, as `transitions_once`.
+CREATE TABLE IF NOT EXISTS unit_answers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    root        TEXT NOT NULL,
+    workspace   TEXT NOT NULL,
+    unit        TEXT NOT NULL,
+    artifact    TEXT NOT NULL,
+    ref         TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    answered_by TEXT NOT NULL,
+    date        TEXT NOT NULL,
+    via         TEXT NOT NULL,
+    once_key    TEXT NOT NULL DEFAULT ''
+)""",
+    """CREATE INDEX IF NOT EXISTS unit_answers_scope ON unit_answers (root, workspace, unit, id)""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS unit_answers_once
+    ON unit_answers (once_key) WHERE once_key <> ''""",
+    """-- `0135` R8: a hold decision, `state` `paused`, `dropped` or `active`. Appended; the hold
+-- in force is the fold `cos.mjs` makes over the rows by `HOLD_MOVES`.
+CREATE TABLE IF NOT EXISTS unit_holds (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    root       TEXT NOT NULL,
+    workspace  TEXT NOT NULL,
+    unit       TEXT NOT NULL,
+    state      TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    via        TEXT NOT NULL,
+    once_key   TEXT NOT NULL DEFAULT ''
+)""",
+    """CREATE INDEX IF NOT EXISTS unit_holds_scope ON unit_holds (root, workspace, unit, id)""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS unit_holds_once
+    ON unit_holds (once_key) WHERE once_key <> ''""",
+    """-- `0135` R3: a field that could not be read, and why. `raw` is the word read, when there
+-- was one (a status outside the artifact's set). `field` `ingest` is an ingest that failed
+-- (R7); the board shows it, `/settings` does not.
+CREATE TABLE IF NOT EXISTS unit_unknowns (
+    root      TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    unit      TEXT NOT NULL,
+    artifact  TEXT NOT NULL,
+    field     TEXT NOT NULL,
+    reason    TEXT NOT NULL,
+    raw       TEXT,
+    at        TEXT NOT NULL
+)""",
+    """CREATE INDEX IF NOT EXISTS unit_unknowns_scope ON unit_unknowns (root, workspace, unit)""",
+    """-- `0135` R7: the text of each artifact as last read, by its SHA-256, so an ingest reads
+-- only what changed. `questions` is 1 when it had a `## Open questions` section.
+CREATE TABLE IF NOT EXISTS unit_seen (
+    root      TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    unit      TEXT NOT NULL,
+    artifact  TEXT NOT NULL,
+    sha256    TEXT NOT NULL,
+    questions INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (root, workspace, unit, artifact)
+)""",
 )
 
 
@@ -456,7 +574,7 @@ class Data:
         # An equal number is the whole common path: one pragma read, and nothing else.
         # A lower number re-runs `_create`, and that is the whole migration mechanism:
         # every statement in `_SCHEMA` is `IF NOT EXISTS`, so a v1 database meets the
-        # tables 2, 3, 4 and 5 added and keeps every row it already had. This works for *adding*. A
+        # tables 2, 3, 4, 5 and 6 added and keeps every row it already had. This works for *adding*. A
         # version that has to change or drop a column will need a real migration here, and
         # will not be able to reuse this path.
 
