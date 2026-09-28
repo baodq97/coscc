@@ -151,6 +151,52 @@ class ResetPassword(unittest.TestCase):
             self.assertEqual(data.auth_state("s"), (False, None))
 
 
+class TheStateCommand(unittest.TestCase):
+    """`0135` R11: the snapshot at a terminal, so `cos.mjs gate` can still be asked there."""
+
+    def test_coscc_state_prints_what_cos_mjs_state_reads(self):
+        import contextlib
+        import io
+        import json
+        import shutil
+        import subprocess
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from coscc import units
+        from coscc.agent import harness
+        from coscc.data import Data
+
+        fixture = Path(__file__).resolve().parent / "units" / "testdata" / "meta_store"
+        with tempfile.TemporaryDirectory() as d:
+            work, data_dir = Path(d) / "work", Path(d) / "data"
+            (work / "proj").mkdir(parents=True)
+            data = Data(data_dir)
+            with data.connect() as conn:
+                conn.execute("INSERT INTO workspaces (root, name, added_at) VALUES (?, 'proj', 't')", (str(work),))
+            store = units.root(work / "proj", data_dir)
+            shutil.copytree(fixture, store)
+            out = io.StringIO()
+            env = {"COS_DATA_DIR": str(data_dir), "COS_WORKING_DIR": str(work)}
+            with mock.patch.dict("os.environ", env), contextlib.redirect_stdout(out), \
+                    self.assertRaises(SystemExit) as done:
+                run.main(["state", "proj"])
+            self.assertEqual(done.exception.code, 0)
+            snapshot = json.loads(out.getvalue())
+            self.assertEqual(snapshot["workspace"], "proj")
+            gate = subprocess.run(
+                ["node", str(harness.script()), "--root", str(store), "--state", "-", "gate", "0013_open-question", "plan"],
+                input=out.getvalue(), capture_output=True, text=True, env=harness.child_env(),
+            )
+            self.assertEqual(gate.returncode, 1)
+            self.assertIn("spec.md", gate.stderr)
+            with mock.patch.dict("os.environ", env), contextlib.redirect_stderr(io.StringIO()), \
+                    self.assertRaises(SystemExit) as refused:
+                run.main(["state", "nobody"])
+            self.assertEqual(refused.exception.code, 2)
+
+
 class TheServerIsHeld(unittest.TestCase):
     """`0068` plan step 5. `main` keeps its own `uvicorn.Server`, registers it for the
     updater, and after `run()` returns installs only when a hand-off was left."""

@@ -199,14 +199,62 @@ def _answer_and_stop(args: list[str]) -> None:
         data.auth_clear()
         print(f"coscc: password and sessions removed from {data.db_path}")
         return
+    if args[0] == "state" and len(args) == 2:
+        raise SystemExit(_state(args[1]))
     print(
         f"coscc: unrecognised argument {args[0]!r}\n"
-        "usage: coscc [--version | reset-password | knowledge ... | effort measure ...]\n"
+        "usage: coscc [--version | reset-password | state <workspace> | knowledge ... | effort measure ...]\n"
         "everything else is configuration, and it is read from the environment "
         "(COS_HOST, COS_PORT, COS_WORKING_DIR, ...) -- see docs/install.md",
         file=sys.stderr,
     )
     raise SystemExit(2)
+
+
+def _state(target: str) -> int:
+    """`0135` R11. The snapshot `cos.mjs --state` reads, for the workspace named `target`
+    (its name on the board, or its path), on stdout: so `cos.mjs gate` can still be asked at
+    a terminal, as `uv run coscc state coscc | node .claude/scripts/cos.mjs --root <store>
+    --state - gate <unit> <stage>`. It writes nothing but what the app would write on its
+    first read: a store not imported yet is imported first (`UnitMeta.import_store`).
+    Every workspace is named in it, as `Service._peer_table` names them: a name two share,
+    or one `valid_name` refuses, for neither.
+    """
+    import json
+    from collections import Counter
+    from pathlib import Path
+
+    from coscc import units
+    from coscc.config import from_env
+    from coscc.data import Data
+    from coscc.service.store import valid_name
+    from coscc.units.meta import MetaError, UnitMeta
+
+    config = from_env()
+    if not config.working_dir:
+        print("coscc: state needs COS_WORKING_DIR — the database keys every unit by it", file=sys.stderr)
+        return 2
+    data = Data(config.data_dir)
+    with data.connect() as conn:
+        rows = [(str(r["name"]), str(Path(r["root"]) / r["name"])) for r in conn.execute("SELECT root, name FROM workspaces")]
+    rows += [(Path(p).name, p) for p in config.workspaces]
+    count = Counter(name for name, _ in rows)
+    names = {name: units.key(path) for name, path in rows if count[name] == 1 and valid_name(name)}
+    wanted = names.get(target) or next((units.key(p) for _, p in rows if units.key(p) == units.key(target)), None)
+    if wanted is None:
+        print(f"coscc: no workspace named {target!r} — one of {', '.join(sorted(names)) or 'none'}", file=sys.stderr)
+        return 2
+    meta = UnitMeta(config.working_dir, data)
+    try:
+        for key in {wanted, *names.values()}:
+            store = units.root(key, config.data_dir)
+            if (store / units.COS_DIR).is_dir():
+                meta.import_store(key, store)
+    except MetaError as e:
+        print(f"coscc: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps(meta.snapshot(wanted, names), ensure_ascii=False))
+    return 0
 
 
 def banner(config) -> list[str]:
