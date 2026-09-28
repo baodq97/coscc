@@ -835,13 +835,16 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         return f"D{n}"
 
     async def test_a_delegated_answer_ends_with_its_delegation_line(self):
+        # A row since `0135`: its text ends with the line, and the file keeps every byte.
         before = self.intent.read_bytes()
         d = self.decide()
         got = await self.post(answered_by="Leif (CoS)", delegation=d)
         self.assertEqual(got.status_code, 200, got.text)
-        tail = self.intent.read_bytes()[len(before):].decode("utf-8")
-        self.assertIn("Answered by: Leif (CoS). Date: ", tail)
-        self.assertTrue(tail.endswith(f"Via: product.\n\nTách ra. MARK-0016\n\nTheo ủy quyền: {d}\n"), tail)
+        self.assertEqual(self.intent.read_bytes(), before)
+        self.assertEqual(
+            self.rows(),
+            [("intent.md", "2", "Leif (CoS)", "product", f"Tách ra. MARK-0016\n\nTheo ủy quyền: {d}")],
+        )
 
     async def test_a_delegation_that_is_missing_expired_withdrawn_wrong_kind_wrong_agent_or_wrong_workspace_is_refused_and_writes_nothing(self):
         from datetime import date
@@ -862,6 +865,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(got.status_code, 400, (said, got.text))
             self.assertIn(said, got.json()["error"])
             self.assertEqual(hashlib.sha256(self.intent.read_bytes()).hexdigest(), before, said)
+            self.assertEqual(self.rows(), [], said)
 
     async def test_an_answer_without_delegation_is_written_as_before(self):
         from datetime import date
@@ -869,10 +873,10 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         before = self.intent.read_bytes()
         got = await self.post()
         self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(self.intent.read_bytes(), before)
         self.assertEqual(
-            self.intent.read_bytes()[len(before):].decode("utf-8"),
-            f"\n## Answers\n\n### Câu 2\nAnswered by: Phong. Date: {date.today().isoformat()}. Via: product.\n\n"
-            "Tách ra. MARK-0016\n",
+            self.rows(columns="artifact, ref, answered_by, date, via, text"),
+            [("intent.md", "2", "Phong", date.today().isoformat(), "product", "Tách ra. MARK-0016")],
         )
 
 

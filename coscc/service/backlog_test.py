@@ -858,7 +858,10 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
         done = self.ask()
         self.assertEqual(done["written"], [{"artifact": "spec.md", "n": 1}])
         self.assertIn(f"#### {added}\nSource: chat 2026-09-28\nScope: this workspace", self.sessions.prompt)
-        self.assertIn(f"Tiền lệ: {leif}; {added}", self.spec.read_text(encoding="utf-8"))
+        # `0135` R8: Jera's answer is a row, where it was once a block of `spec.md`.
+        with self.service._unit_meta().data.connect() as conn:
+            [row] = conn.execute("SELECT text FROM unit_answers WHERE via = 'precedent'").fetchall()
+        self.assertIn(f"Tiền lệ: {leif}; {added}", row["text"])
 
     def test_jera_ending_wakes_the_autopilot(self):
         """`0101` R4, a refusal after the mark included."""
