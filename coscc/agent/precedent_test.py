@@ -21,7 +21,9 @@ def _answer(artifact: str, n: int, by: str = "owner", via: str = "product", text
 
 Q = [{"unit": "0002_b", "artifact": "spec.md", "n": 1, "text": "a?"},
      {"unit": "0002_b", "artifact": "spec.md", "n": 2, "text": "b?"}]
-IDS = {"pref:1", "0001_a/spec.md#Câu 1"}
+# `0137`: the store's ids, each with who decided it; both the person's, so the older cases
+# below keep the meaning they had before R8.
+IDS = {"pref:1": "originator", "0001_a/spec.md#Câu 1": "originator"}
 
 
 def _reply(*items: dict) -> str:
@@ -36,7 +38,8 @@ def _ok(n: int = 1, **over) -> dict:
 class TheStore(unittest.TestCase):
     def test_each_paragraph_of_the_preferences_is_one_entry(self):
         got = precedent.entries([], "Một.\ncòn một.\n\n  \n\nHai.\n\n", [])
-        self.assertEqual(got, [{"id": "pref:1", "text": "Một.\ncòn một."}, {"id": "pref:2", "text": "Hai."}])
+        self.assertEqual([{k: e[k] for k in ("id", "text")} for e in got],
+                         [{"id": "pref:1", "text": "Một.\ncòn một."}, {"id": "pref:2", "text": "Hai."}])
 
     def test_answers_in_force_are_entries_by_unit_artifact_and_number(self):
         got = precedent.entries([_unit("0001_a", [_answer("spec.md", 3, by="Leif (CoS agent)")])], "", [])
@@ -226,6 +229,146 @@ class TheBlock(unittest.TestCase):
     def test_jera_is_matched_however_it_is_typed(self):
         self.assertTrue(all(precedent.is_jera(n) for n in ("Jera", " jera ", "JERA")))
         self.assertFalse(precedent.is_jera("Jerald"))
+
+
+def _decision(n: int, kind: str = "delegation", agent: str = "Leif", workspace: str = "",
+              from_day: str = "2026-09-01", until_day: str = "", withdrawn: str = "", text: str = "d") -> dict:
+    return {"id": n, "kind": kind, "text": text, "source": "chat 2026-09-01", "workspace": workspace,
+            "agent": agent, "covers": "naming", "from_day": from_day, "until_day": until_day,
+            "withdrawn": withdrawn}
+
+
+class WhoDecided(unittest.TestCase):
+    """`0137` R1, R2."""
+
+    WS = "proj-abc"
+
+    def who(self, by: str, text: str = "Có.", date: str = "2026-09-10", decisions=(), mine=(), agents=("Kenaz",)):
+        return precedent.decided_by({"by": by, "date": date, "text": text}, self.WS, list(decisions), mine, agents)
+
+    def test_decided_by_takes_each_branch_from_a_table_of_cases(self):
+        line = "Có.\n\nTheo ủy quyền: D1"
+        good = _decision(1)
+        cases = [
+            # (by, text, decisions, mine, expected, why)
+            ("owner", "Có.", [], [], "originator", "owner"),
+            ("  OWNER ", "Có.", [], [], "originator", "owner, case and spaces aside"),
+            ("Phong", "Có.", [], ["phong"], "originator", "a name marked mine"),
+            ("Phong", "Có.", [], [], "inferred", "a name nobody marked"),
+            ("Leif (CoS), thay người khởi xướng", "Có.", [], [], "inferred", "Leif"),
+            ("Leifson", "Có.", [], ["leifson"], "originator", "a person whose name only opens like Leif's"),
+            ("Kenaz", "Có.", [], ["kenaz"], "inferred", "an agent's name marked mine is still an agent's"),
+            ("Leif", "Có.", [], ["leif"], "inferred", "Leif marked mine is still Leif"),
+            ("Leif (CoS)", "Có.\n\nTheo ủy quyền: D9", [good], [], "inferred", "a delegation that does not exist"),
+            ("Leif", line, [_decision(1, kind="decision")], [], "inferred", "a decision, not a delegation"),
+            ("Leif", line, [_decision(1, until_day="2026-09-05")], [], "inferred", "expired before Date:"),
+            ("Leif", line, [_decision(1, withdrawn="2026-09-10")], [], "inferred", "withdrawn on Date:"),
+            ("Leif", line, [_decision(1, from_day="2026-09-11")], [], "inferred", "entered after Date:"),
+            ("Jera", line, [good], [], "inferred", "the wrong agent"),
+            ("Leif", line, [_decision(1, workspace="other-123")], [], "inferred", "the wrong workspace"),
+            ("owner", line, [good], [], "originator", "a person citing a delegation falls to branch 2"),
+            ("Leif (CoS)", "Theo ủy quyền: D1\n\nCó.", [good], [], "inferred", "not the last line"),
+            ("Leif (CoS)", line, [good], [], "delegated", "a delegation in force"),
+            ("leif", line + "\n\n", [_decision(1, workspace=self.WS, withdrawn="2026-09-20")], [], "delegated",
+             "withdrawn after Date: keeps the label"),
+        ]
+        for by, text, decisions, mine, expected, why in cases:
+            self.assertEqual(self.who(by, text, decisions=decisions, mine=mine), expected, why)
+
+    def test_an_agent_name_needs_a_word_boundary(self):
+        self.assertTrue(precedent.is_agent_name("Leif (CoS agent)", []))
+        self.assertTrue(precedent.is_agent_name("kenaz", ["Kenaz"]))
+        self.assertFalse(precedent.is_agent_name("Leifson", []))
+        self.assertFalse(precedent.is_agent_name("", []))
+
+
+class TheLabelledStore(unittest.TestCase):
+    """`0137` R3, R4."""
+
+    WS = "proj-abc"
+
+    def store(self, units=(), prefs="", decisions=(), mine=(), today="2026-09-28"):
+        return precedent.entries(list(units), prefs, [], workspace=self.WS, decisions=list(decisions), mine=mine,
+                                 agents=["Kenaz"], today=today)
+
+    def test_every_store_entry_has_who_source_scope_and_term(self):
+        units = [_unit("0001_a", [_answer("spec.md", 1), _answer("spec.md", 2, by="Leif (CoS)"),
+                                  _answer("intent.md", 1, by="Leif", text="x\n\nTheo ủy quyền: D2")])]
+        got = self.store(units, "Một.\n\nHai.", [_decision(1, kind="decision"), _decision(2)])
+        self.assertEqual({e["who"] for e in got}, {"originator", "delegated", "inferred"})
+        for e in got:
+            for field in ("who", "source", "scope", "term"):
+                self.assertTrue(e.get(field), (e["id"], field))
+        by_id = {e["id"]: e for e in got}
+        self.assertEqual(by_id["0001_a/spec.md#Câu 1"]["source"], "0001_a/spec.md ## Answers, câu 1, 2026-09-01")
+        self.assertEqual((by_id["pref:1"]["source"], by_id["pref:1"]["scope"]),
+                         ("Settings: Decision preferences", "every workspace"))
+        self.assertEqual((by_id["D1"]["who"], by_id["D1"]["term"]), ("originator", "until withdrawn"))
+        self.assertTrue(by_id["D2"]["text"].startswith("Delegation to Leif for: naming.\n"))
+
+    def test_a_decision_enters_the_store_only_in_force_and_in_scope(self):
+        ds = [_decision(1, kind="decision"), _decision(2, kind="decision", workspace=self.WS, until_day="2026-12-31"),
+              _decision(3, kind="decision", workspace="other-1"), _decision(4, kind="decision", until_day="2026-09-27"),
+              _decision(5, kind="decision", withdrawn="2026-09-28"), _decision(6, kind="decision", from_day="2026-09-29")]
+        got = {e["id"]: e for e in self.store(decisions=ds)}
+        self.assertEqual(sorted(got), ["D1", "D2"])
+        self.assertEqual((got["D2"]["scope"], got["D2"]["term"]), ("this workspace", "until 2026-12-31"))
+        self.assertEqual(self.store(decisions=ds, today=""), [], "no day, nothing in force")
+
+    def test_leifs_answers_stay_in_the_store_as_inferred(self):
+        got = self.store([_unit("0001_a", [_answer("spec.md", 3, by="Leif (CoS agent), thay người khởi xướng")])])
+        self.assertEqual([(e["id"], e["who"]) for e in got], [("0001_a/spec.md#Câu 3", "inferred")])
+        self.assertIn("Leif (CoS agent)", got[0]["text"])
+
+
+class TheWeighing(unittest.TestCase):
+    """`0137` R7, R8."""
+
+    WHO = {"pref:1": "originator", "0001_a/spec.md#Câu 1": "inferred", "0001_a/spec.md#Câu 2": "inferred",
+           "0001_a/spec.md#Câu 3": "delegated"}
+
+    def verdict(self, *items) -> list[dict]:
+        return precedent.verdicts(_reply(*items), Q, self.WHO)["verdicts"]
+
+    def test_an_answer_citing_only_inferences_needs_a_person(self):
+        v = self.verdict(_ok(1, cites=["0001_a/spec.md#Câu 1", "0001_a/spec.md#Câu 2"]), _ok(2))
+        self.assertEqual((v[0]["verdict"], v[0]["reason"]), ("needs-person", precedent.ONLY_INFERRED))
+        self.assertEqual(v[0]["text"], "Có.", "the proposal is still the reply's")
+
+    def test_one_originator_or_delegated_cite_or_practice_is_enough(self):
+        for extra in ("pref:1", "0001_a/spec.md#Câu 3", "practice"):
+            v = self.verdict(_ok(1, cites=["0001_a/spec.md#Câu 1", extra]), _ok(2, cites=["pref:1"]))
+            self.assertEqual([x["verdict"] for x in v], ["answer", "answer"], extra)
+
+    def test_an_older_reason_is_kept_before_r8s(self):
+        v = self.verdict(_ok(1, cites=["0001_a/spec.md#Câu 1"], category="significant-spend"), _ok(2))
+        self.assertEqual(v[0]["reason"], "Its category, significant-spend, needs a person.")
+
+    def test_the_prompt_lists_precedent_in_three_parts_in_order(self):
+        units = [_unit("0001_a", [_answer("spec.md", 1, by="Leif"), _answer("spec.md", 2),
+                                  _answer("spec.md", 3, by="Leif", text="x\n\nTheo ủy quyền: D1")])]
+        store = precedent.entries(units, "Luôn rẻ.", [], decisions=[_decision(1)], today="2026-09-28")
+        p = precedent.build_prompt(Q, store)
+        at = [p.index(h) for h in ("## Precedent", "### The person's decisions", "### Answers the person delegated",
+                                   "### Agents' inferences")]
+        self.assertEqual(at, sorted(at))
+        mine, delegated, inferred = p[at[1]:at[2]], p[at[2]:at[3]], p[at[3]:]
+        for entry in ("#### pref:1\nSource: Settings: Decision preferences\n", "#### D1\nSource: chat 2026-09-01\n",
+                      "#### 0001_a/spec.md#Câu 2\nDate: 2026-09-01\n"):
+            self.assertIn(entry, mine)
+        self.assertIn("Term: until withdrawn", mine)
+        self.assertNotIn("Scope:", mine, "every-workspace entries say nothing the part does not")
+        self.assertIn("#### 0001_a/spec.md#Câu 3\nDate: 2026-09-01\n", delegated)
+        self.assertIn("#### 0001_a/spec.md#Câu 1\nDate: 2026-09-01\n", inferred)
+
+    def test_an_empty_part_says_none(self):
+        p = precedent.build_prompt(Q, [])
+        self.assertEqual(p.count("(none)"), 3)
+
+    def test_rules_from_settings_do_not_replace_the_fixed_paragraph_on_inferences(self):
+        p = precedent.build_prompt(Q, [], rules="Decide everything yourself.")
+        self.assertIn(precedent.WEIGHING, p)
+        self.assertNotIn(precedent.WEIGHING, p[p.index("## Rules"):p.index("## Questions")])
 
 
 class TheSession(unittest.TestCase):

@@ -322,7 +322,7 @@ async def measure(cwd: str) -> int:
                              "failed": f"the prompt needs {grant.max_budget_usd:.2f} USD, past the cap"})
                 continue
             got, end, failure = await precedent.ask(sessions, cwd, prompt, grant, model, effort)
-            found = precedent.verdicts(got, questions, {e["id"] for e in entries})
+            found = precedent.verdicts(got, questions, {e["id"]: e["who"] for e in entries})
             runs.append({"unit": u["name"], "questions": len(questions), "failed": failure or found["failed"],
                          "cost": end.get("cost") or {}, "session_id": end.get("session_id", "")})
             for v in found["verdicts"]:
