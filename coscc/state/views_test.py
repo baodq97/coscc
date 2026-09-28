@@ -545,7 +545,7 @@ class TheBoardShowsTheGuardAndWhoseDecision(unittest.TestCase):
     def test_a_transition_shows_its_guards_label_and_authority_and_keeps_the_rest_in_details(self):
         from coscc.state import _moves
 
-        new, old = _moves([
+        old, new = _moves([
             {"id": 9, "artifact": "ship.md", "from_state": "draft", "to_state": "accepted",
              "at": "2026-09-29T10:00:00", "guard": "merge-read", "authority": "code", "run": "r-1",
              "guard_label": "A merge is recorded only from a read that names its merge commit.",
@@ -556,10 +556,10 @@ class TheBoardShowsTheGuardAndWhoseDecision(unittest.TestCase):
         self.assertEqual(
             (new.change, new.guard_label, new.authority, new.guard, new.head, new.run, new.key),
             ("draft → accepted", "A merge is recorded only from a read that names its merge commit.",
-             "the app", "merge-read", "f" * 40, "r-1", "move-9"),
+             "By the app", "merge-read", "f" * 40, "r-1", "move-9"),
         )
         self.assertEqual((old.guard_label, old.authority, old.key),
-                         ("No guard was recorded for this change.", "unknown", "move-1"))
+                         ("No guard was recorded for this change.", "Author not recorded", "move-1"))
 
     def test_an_answered_question_says_whose_decision_it_is_and_an_open_one_says_nothing(self):
         from coscc.state import _questions
@@ -569,7 +569,7 @@ class TheBoardShowsTheGuardAndWhoseDecision(unittest.TestCase):
             {"artifact": "spec.md", "n": 2, "text": "b", "answered": True, "authority": "delegated"},
             {"artifact": "spec.md", "n": 3, "text": "c", "answered": False, "authority": "person"},
         ]})
-        self.assertEqual((a.authority, b.authority, c.authority), ("an agent", "their delegate", ""))
+        self.assertEqual((a.authority, b.authority, c.authority), ("By an agent", "By their delegate", ""))
 
     def test_the_card_carries_the_code_the_autopilot_held_it_back_with(self):
         from coscc.state import Unit, _card

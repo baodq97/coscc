@@ -161,7 +161,8 @@ class Question:
     needs_person: bool = False
     proposal: str = ""
     reason: str = ""
-    # `0136` R15. Whose the answer in force is, in words (`AUTHORITY_LABEL`); `""` unanswered.
+    # `0136` R15. Whose decision the answer in force is, in words (`AUTHORITY_LABEL`); `""`
+    # while unanswered.
     authority: str = ""
 
 
@@ -912,23 +913,26 @@ class Move:
     key: str = ""
 
 
-# `0136` R15. Each authority in words, for a reader rather than a column name.
+# `0136` R15. Each authority in words, for a reader rather than a column name; a row from
+# before `0136`, or an answer imported unclassified, says nobody recorded one.
 AUTHORITY_LABEL = {
-    "person": "a person", "delegated": "their delegate", "agent": "an agent", "code": "the app",
+    "person": "By a person", "delegated": "By their delegate", "agent": "By an agent", "code": "By the app",
 }
+NO_AUTHORITY = "Author not recorded"
 
 
 def _moves(rows: list[dict]) -> list[Move]:
-    """`0136` R20. The timeline's transitions, as `Service.timeline` sent them. Copies."""
+    """`0136` R20. The timeline's transitions, as `Service.timeline` sent them, newest first so
+    the decisions of late reach the top. Copies."""
     out = []
-    for i, r in enumerate(rows):
+    for i, r in reversed(list(enumerate(rows))):
         authority = str(r.get("authority") or "")
         out.append(Move(
             artifact=str(r.get("artifact") or ""),
             change=f"{r.get('from_state') or '—'} → {r.get('to_state') or '—'}",
             at=present.when(r.get("at")),
             guard_label=str(r.get("guard_label") or "") or "No guard was recorded for this change.",
-            authority=AUTHORITY_LABEL.get(authority, "unknown"),
+            authority=AUTHORITY_LABEL.get(authority, NO_AUTHORITY),
             guard=str(r.get("guard") or ""),
             head=str(r.get("head") or ""),
             run=str(r.get("run") or ""),
@@ -1255,7 +1259,7 @@ def _questions(unit: dict) -> tuple[int, list[Question]]:
             needs_person=bool(q.get("needs_person")),
             proposal=str(q.get("proposal") or ""),
             reason=str(q.get("reason") or ""),
-            authority=(AUTHORITY_LABEL.get(str(q.get("authority") or ""), "unknown")
+            authority=(AUTHORITY_LABEL.get(str(q.get("authority") or ""), NO_AUTHORITY)
                        if q.get("answered") else ""),
         )
         for q in unit.get("questions") or []

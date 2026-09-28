@@ -81,7 +81,7 @@ def _move_row(move: rx.Var[Move]) -> rx.Component:
             s.badge(move.artifact, "gray"),
             rx.text(move.change, size="2", weight="medium"),
             rx.spacer(),
-            s.badge("by " + move.authority, "iris"),
+            s.badge(move.authority, "gray"),
             spacing="2", wrap="wrap", align="center", width="100%",
         ),
         s.text(move.guard_label, size="1"),
@@ -113,7 +113,7 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
             # `0044` R10: whose answer is in force, or that Jera left it to a person.
             rx.cond(q.by_jera, s.badge("Answered by Jera", "iris")),
             # `0136` R15: whose decision the answer in force is, as the app recorded it.
-            rx.cond(q.authority != "", s.badge("Decided by " + q.authority, "gray")),
+            rx.cond(q.authority != "", s.badge(q.authority, "gray")),
             rx.cond(q.needs_person, s.badge("Needs a person", "red")),
             width="100%", align="center",
         ),
@@ -760,7 +760,7 @@ def _detail_dialog() -> rx.Component:
                             P.moves.length() > 0,
                             rx.vstack(
                                 s.eyebrow("TRANSITIONS"),
-                                s.text("Each change of state, oldest first, and the rule that allowed it.",
+                                s.text("Each change of state, newest first, and the rule that allowed it.",
                                        size="1"),
                                 rx.foreach(P.moves, _move_row),
                                 spacing="1", width="100%", align="start", margin_top="12px",
