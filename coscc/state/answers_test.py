@@ -198,9 +198,11 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
 
         page = self.page()
         self.press(page, "intent.md#1", broken)
-        for part in ("RuntimeError", "disk", "intent.md", "not known whether"):
+        for part in ("RuntimeError", "disk", "not known whether", "Questions tab"):
             self.assertIn(part, page.error)
         self.assertNotIn("Nothing was written", page.error)
+        # Review F12: the answer is a row since `0135` R8, so the file is no place to look.
+        self.assertNotIn("open intent.md", page.error)
         self.assertEqual(page.answer_text, "yes")
         self.assertEqual(page.answering_key, "")
 
