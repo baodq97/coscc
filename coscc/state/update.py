@@ -1,4 +1,4 @@
-"""Updating the app from the board: the channel's state, the cut list and the buttons.
+"""Updating the app from the board: the channel's state and the buttons.
 
 Split from `coscc/state/__init__.py` (`0095`). `StudioState` inherits it, so its vars and handlers
 keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
@@ -10,7 +10,7 @@ from __future__ import annotations
 import reflex as rx
 
 from coscc.web import present
-from coscc.service import Invalid, StaleCutList
+from coscc.service import Invalid
 from coscc.state.views import _channel_line, _job_line
 
 
@@ -43,11 +43,6 @@ class UpdateMixin(rx.State, mixin=True):
     upd_local_line: str = ""
     upd_actions: list[str] = []
     upd_commit_full: str = ""
-    # R10's confirmation: what "áp dụng ngay" would cut, and the token of that list.
-    cut_open: bool = False
-    cut_channel: str = ""
-    cut_items: list[str] = []
-    cut_token: str = ""
 
     # -- `0068`: updating the app. Every rule is `Updater`'s, behind `Service`; a refusal
     # arrives here as its words.
@@ -88,46 +83,11 @@ class UpdateMixin(rx.State, mixin=True):
 
     @rx.event
     async def apply_update(self, channel: str):
-        """R7: apply, or wait for what is running (R9)."""
+        """R7; `0138` R1: the one Apply. It waits only for a mechanical integration or a
+        retake, then pauses every session and restarts."""
         from coscc.state import SERVICE
         try:
-            await SERVICE.update_apply(channel, "wait", "", "")
-        except Invalid as e:
-            self._fail(e)
-        self._load_update()
-
-    @rx.event
-    def show_cut_list(self, channel: str):
-        """R10: what "apply now" would cut, shown before anything is cut."""
-        from coscc.state import SERVICE
-        try:
-            listing = SERVICE.update_cut_list()
-        except Invalid as e:
-            self._fail(e)
-            return
-        self._show_cut(channel, listing)
-
-    def _show_cut(self, channel: str, listing: dict) -> None:
-        self.cut_channel = channel
-        self.cut_items = [f"{i['action']}: {_job_line(i)}"
-                          for i in listing.get("items") or []]
-        self.cut_token = str(listing.get("token") or "")
-        self.cut_open = True
-
-    @rx.event
-    def close_cut_list(self):
-        self.cut_open = False
-
-    @rx.event
-    async def confirm_apply_now(self):
-        from coscc.state import SERVICE
-        try:
-            await SERVICE.update_apply(self.cut_channel, "now", "", self.cut_token)
-            self.cut_open = False
-        except StaleCutList as e:
-            # The list changed since it was shown: show the new one, cut nothing.
-            self.notice = str(e)
-            self._show_cut(self.cut_channel, e.listing)
+            await SERVICE.update_apply(channel, "")
         except Invalid as e:
             self._fail(e)
         self._load_update()

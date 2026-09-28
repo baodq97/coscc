@@ -36,14 +36,6 @@ class NotUpdatable(Invalid):
     """`0068` R2: this install is not the shape an update can be applied to. A 409."""
 
 
-class StaleCutList(Invalid):
-    """`0068` R10: the list a person confirmed is not the list running now."""
-
-    def __init__(self, message: str, listing: dict[str, Any]):
-        super().__init__(message)
-        self.listing = listing
-
-
 def _younger_than(at: str, oldest: datetime) -> bool:
     """Whether a run-log `at` is after `oldest`. One that will not parse is not shown."""
     try:
@@ -170,7 +162,6 @@ CONSEQUENCE = {
     "estimate": "Opens one paid session that proposes estimates.",
     "precedent": "Opens one paid session; its answers reach later stages as decided.",
     "drop": "Closes this unit's open pull request with this machine's gh login.",
-    "apply-now": "Stops every running step and chat turn, then restarts the app.",
     # `0046` R16. The whole warning is `release.WARNING`, in `/api/board` (S2).
     "release": "Commits, pushes, merges and tags on main with this machine's gh login.",
 }

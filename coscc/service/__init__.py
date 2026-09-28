@@ -38,7 +38,6 @@ from coscc.service.common import (
     Invalid,
     Updating,
     NotUpdatable,
-    StaleCutList,
     _younger_than,
     step_cwd,
     describe_base,
@@ -122,6 +121,9 @@ from coscc.service.release import (
 from coscc.service.knowledge import (
     KnowledgeMixin,
 )
+from coscc.service.resume import (
+    ResumeMixin,
+)
 
 
 @dataclass
@@ -142,6 +144,7 @@ class Service(
     IdeasMixin,
     ReleaseMixin,
     KnowledgeMixin,
+    ResumeMixin,
 ):
     config: Config
     sessions: Sessions
@@ -159,7 +162,7 @@ class Service(
     # A capture a session runs does not take it (spec C1). One process only, like `pull`.
     _screens_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     # `0111` review round 1, F3. The retake running now, if any, `{workspace, unit, started}`
-    # by an id that never leaves this process: read only by `_update_jobs`.
+    # by an id that never leaves this process: read only by `_update_waited`.
     _retakes: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
     # `0017` R8. Per workspace, created on first use.
     _create_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)

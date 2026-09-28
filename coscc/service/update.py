@@ -9,12 +9,11 @@ import asyncio
 from typing import Any
 
 from coscc.update import updater as updater_mod
-from coscc.service.common import Invalid, NotUpdatable, OWNER, StaleCutList, Updating
+from coscc.runlog.journal import BadRecord, Busy
+from coscc.service.common import Invalid, NotUpdatable, OWNER, Updating
 
 
 def _as_invalid(e: updater_mod.Refused) -> Invalid:
-    if isinstance(e, updater_mod.Stale):
-        return StaleCutList(str(e), e.listing)
     if isinstance(e, updater_mod.Updating):
         return Updating(str(e))
     if isinstance(e, updater_mod.NotHere):
@@ -56,12 +55,13 @@ def update_words(status: dict[str, Any]) -> dict[str, Any]:
     local_line = _LOCAL_LINE.get(ls, "").format(v=local.get("version") or "")
     actions: list[str] = []
     if state == "pending":
-        line = "An update waits for the running work to finish."
+        # `0138` R12: the only two things an update still waits for, in one sentence.
+        line = updater_mod.WAITING_WARNING
         actions.append("cancel")
     else:
         for channel, ready in (("release", rs == "ready"), ("local", ls == "ready")):
             if ready:
-                actions += [f"apply-{channel}", f"now-{channel}"]
+                actions.append(f"apply-{channel}")
     if ls not in ("unconfigured", "building", "blocked", ""):
         actions.append("build-local")
     return {"line": line, "local_line": local_line, "actions": actions}
@@ -80,82 +80,72 @@ class UpdateMixin:
         except updater_mod.Refused as e:
             raise _as_invalid(e) from e
 
-    def _update_jobs(self) -> list[dict[str, Any]]:
-        """R8. What this process is running now, besides the updater's own build."""
+    def _refuse_mechanical_while_updating(self) -> None:
+        """`0138` R3: a mechanical integration or a retake, refused once Apply is pressed."""
+        try:
+            self.updater.refuse_mechanical_while_updating()
+        except updater_mod.Refused as e:
+            raise _as_invalid(e) from e
+
+    def _update_waited(self) -> list[dict[str, Any]]:
+        """`0138` R2, R3. What an Apply waits for: a mechanical integration and a screenshot
+        retake (spec.md ## Answers, câu 1, Jera's inference), and since `0131` a knowledge
+        gather, whose sessions are not the app's. A Gebo session, a step, an
+        estimate, Jera and chat are paused by `suspend_sessions` instead (C10)."""
         jobs: list[dict[str, Any]] = []
-        for r in self.steps.all():
-            jobs.append({
-                "kind": "step", "id": f"step:{r.workspace}:{r.unit}", "workspace": r.workspace,
-                "unit": r.unit, "stage": r.stage, "started": r.started_at,
-            })
         for entry in self._running.values():
-            if entry["stage"] == "integrate":
+            if entry["stage"] == "integrate" and entry.get("kind") != "gebo":
                 jobs.append({
                     "kind": "integration", "id": f"integration:{entry['workspace']}:{entry['unit']}",
                     "workspace": entry["workspace"], "unit": entry["unit"], "stage": "integrate",
                     "started": entry["started"],
                 })
-            elif entry["stage"] == "precedent":
-                # `0044`. Waited for like an estimate, never cut: its money is spent either way.
-                jobs.append({
-                    "kind": "integration", "id": f"precedent:{entry['workspace']}:{entry['unit']}",
-                    "workspace": entry["workspace"], "unit": entry["unit"], "stage": "precedent",
-                    "started": entry["started"],
-                })
             elif entry["stage"] == "knowledge":
-                # `0131` R1. A gather after a ship: waited for, never cut, its money spent either way.
+                # `0131` R1. A gather after a ship: waited for, never paused, because it runs on
+                # a `Sessions` of its own that `suspend_sessions` does not reach (`0138`).
                 jobs.append({
                     "kind": "integration", "id": f"knowledge:{entry['workspace']}:{entry['unit']}",
                     "workspace": entry["workspace"], "unit": entry["unit"], "stage": "knowledge",
                     "started": entry["started"],
                 })
-            elif entry["stage"] == "estimate":
-                # `0074`. Waited for like an integration, never cut: its money is spent either way.
-                jobs.append({
-                    "kind": "integration", "id": f"estimate:{entry['workspace']}",
-                    "workspace": entry["workspace"], "unit": "", "stage": "estimate",
-                    "started": entry["started"],
-                })
         for entry in self._retakes.values():
-            # `0111` review round 1, F3. Waited for like an integration, never cut: no Stop
-            # reaches it, and `retake.take` puts `.screens/` back only if it gets to.
+            # `0111` review round 1, F3. No Stop reaches it, and `retake.take` puts `.screens/`
+            # back only if it gets to.
             jobs.append({
                 "kind": "integration", "id": f"screens:{entry['workspace']}:{entry['unit']}",
                 "workspace": entry["workspace"], "unit": entry["unit"], "stage": "screens",
                 "started": entry["started"],
             })
-        for turn in self.sessions.in_flight():
-            jobs.append({"kind": "chat", "id": f"chat:{turn['id']}", "turn": turn["id"],
-                         "session_id": turn["session_id"], "workspace": turn["workspace"],
-                         "started": turn["started"]})
         return jobs
 
-    async def _update_cut(self, job: dict[str, Any], by: str) -> bool:
-        """R10. A step through Stop's own road; a chat turn closed. Never an integration."""
-        if job["kind"] == "step":
+    async def suspend_sessions(self, by: str) -> list[dict[str, Any]]:
+        """`0138` R4-R6. Every session paused, and one `suspend` row written for each, before
+        this process hands off. With no working folder there is nowhere to write one, and
+        the sessions end as a restart ends them."""
+        records = await self.sessions.suspend_all()
+        journal = self._journal()
+        written: list[dict[str, Any]] = []
+        for record in records:
+            owner = record.get("owner") or {}
+            if journal is None:
+                break
             try:
-                await self._stop_running(job["workspace"], job["unit"], by)
-            except Invalid:
-                return False  # already ended, or writing its artifact: it is waited for
-            return True
-        if job["kind"] == "chat":
-            return await self.sessions.cut_turn(job["turn"])
-        return False
+                written.append(journal.suspended(
+                    str(owner.get("workspace") or ""), str(owner.get("unit") or ""),
+                    str(owner.get("stage") or ""), by=by, **record,
+                ))
+            except (BadRecord, Busy):
+                continue
+        return written
 
     def update_status(self) -> dict[str, Any]:
         """`Updater.status`, unchanged, with `0082` R9's `line`, `local_line` and `actions`."""
         status = self.updater.status()
         return {**status, **update_words(status)}
 
-    def update_cut_list(self) -> dict[str, Any]:
+    async def update_apply(self, channel: str, by: str) -> dict[str, Any]:
         try:
-            return self.updater.cut_list()
-        except updater_mod.Refused as e:
-            raise _as_invalid(e) from e
-
-    async def update_apply(self, channel: str, mode: str, by: str, token: str) -> dict[str, Any]:
-        try:
-            return await self.updater.apply(channel, mode, (by or "").strip() or OWNER, token)
+            return await self.updater.apply(channel, (by or "").strip() or OWNER)
         except updater_mod.Refused as e:
             raise _as_invalid(e) from e
 

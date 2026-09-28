@@ -133,6 +133,28 @@ def cut(path: Path, until: int) -> dict[str, Any]:
     }
 
 
+def ceilings_left(
+    max_turns: int, max_budget_usd: float | None, record: dict[str, Any]
+) -> tuple[int, float | None, str]:
+    """`0138` R10. `(max_turns, max_budget_usd, used_up)` for a session taken up again.
+
+    The CLI counts both ceilings from zero in every process (`spike.md ## U4`), so what the
+    part before the cut used is taken off the grant's: its API calls, and what it had cost
+    when the CLI exited. With that cost unknown the budget is the grant's whole (spec C9).
+    `used_up` is the `terminal` a step reaching its ceiling today would have, or `""`.
+    """
+    turns = int(max_turns) - int(record.get("api_calls") or 0)
+    budget = float(max_budget_usd) if max_budget_usd else None
+    if budget is not None and record.get("spent_usd") is not None:
+        budget = round(budget - float(record["spent_usd"]), 6)
+    used_up = (
+        "error_max_turns" if turns <= 0
+        else "error_max_budget_usd" if budget is not None and budget <= 0
+        else ""
+    )
+    return turns, budget, used_up
+
+
 def spent_after(path: Path, until: int) -> float | None:
     """`totalCostUSD` of the last `cost-state` line past the boundary: what the whole session
     had cost when the CLI exited (`spike.md ## U4`). `None` when the CLI wrote none, as one

@@ -55,9 +55,14 @@ def _alive(pid: int) -> bool:
 def _recover_one(data: Data, row: dict[str, Any]) -> bool:
     run = str(row["run"])
     journal = Journal(row["root"], data)
-    records = journal.records(row["workspace"], row["unit"], kinds=("start", "end"))
+    records = journal.records(row["workspace"], row["unit"], kinds=("start", "end", "suspend"))
     starts = [r for r in records if r.get("kind") == "start" and r.get("run") == run]
     if any(r.get("kind") == "end" and r.get("run") == run for r in records):
+        return False
+    if any(r.get("kind") == "suspend" and (r.get("owner") or {}).get("run") == run for r in records):
+        # `0138`. An update paused it, and its step goes on under a new `run`: that one writes
+        # the `end`. Only this run's own row is closed.
+        data.step_run_close(run, row["last_at"] or row["started_at"], row["lost"])
         return False
     if not starts or not isinstance(starts[-1].get("pid"), int):
         return False

@@ -19,7 +19,7 @@ NAMES = {
     "service": (
         "CI_REFRESH", "COLLAPSED_STATES", "CONSEQUENCE", "Invalid", "NotUpdatable",
         "OUTCOME_RESULTS", "RETAKE_REFUSED", "Runner", "STAGE_FILES", "STATE_COLOR",
-        "STATE_LABEL", "Service", "StaleCutList", "Updating", "_now", "attention_reason",
+        "STATE_LABEL", "Service", "Updating", "_now", "attention_reason",
         "date", "describe_base", "events", "integration_since_review", "outcome_label",
         "reason_beside", "shown_state", "step_cwd", "unit_state",
     ),

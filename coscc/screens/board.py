@@ -258,9 +258,6 @@ def _update_actions(channel: str, line) -> rx.Component:
         rx.cond(P.upd_actions.contains(f"apply-{channel}"),
                 rx.button("Apply", id=f"update-apply-{channel}", on_click=P.apply_update(channel),
                           size="1", variant="soft")),
-        rx.cond(P.upd_actions.contains(f"now-{channel}"),
-                rx.button("Apply now…", id=f"update-now-{channel}", on_click=P.show_cut_list(channel),
-                          size="1", variant="soft", color_scheme="red")),
         *([rx.cond(P.upd_actions.contains("build-local"),
                    rx.button("Build from origin/main", id="update-build-local", on_click=P.build_local,
                              size="1", variant="soft"))] if channel == "local" else []),
@@ -295,22 +292,6 @@ def _update_panel() -> rx.Component:
                                 rx.button("Stop waiting", id="update-cancel", on_click=P.cancel_update,
                                           size="1", variant="soft", margin_top="6px")),
                         id="update-pending", margin_top="10px",
-                    ),
-                ),
-                rx.cond(
-                    P.cut_open,
-                    rx.box(
-                        s.text("Applying now:", size="2"),
-                        rx.cond(P.cut_items.length() == 0, s.text("stops nothing", size="1")),
-                        rx.foreach(P.cut_items, lambda i: s.text(i, size="1")),
-                        s.text(CONSEQUENCE["apply-now"], size="1", id="update-now-consequence"),
-                        rx.hstack(
-                            rx.button("Apply now", id="update-confirm-now",
-                                      on_click=P.confirm_apply_now, size="1", color_scheme="red"),
-                            rx.button("Cancel", on_click=P.close_cut_list, size="1", variant="soft"),
-                            spacing="2", margin_top="6px",
-                        ),
-                        id="update-cut-list", margin_top="10px",
                     ),
                 ),
                 rx.cond(P.upd_error != "", rx.box(

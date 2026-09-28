@@ -476,20 +476,28 @@ def words_of(text: str) -> str:
 
 
 async def ask(sessions: Any, cwd: str, prompt: str, grant: Any, model: str | None,
-              effort: str | None) -> tuple[str, dict[str, Any], str]:
+              effort: str | None, owner: dict[str, Any] | None = None,
+              resume: dict[str, Any] | None = None) -> tuple[str, dict[str, Any], str]:
     """One tool-less session, as `Service.propose_estimates` runs its own. `(reply, end,
     failure)`: `end` holds `session_id`, `cost` and `terminal_reason`; `failure` is `""`
-    unless the session broke or stopped at a ceiling, which counts as broken."""
+    unless the session broke or stopped at a ceiling, which counts as broken.
+
+    `owner` and `resume` are `0138`'s, as `Sessions.stream` takes them: a session an update
+    pauses raises `Suspended` out of here, and one taken up again goes on from its row."""
     from coscc.runner import CEILING_MARKERS, Denials, permission_gate
-    from coscc.agent.sessions import StepHandle
+    from coscc.agent.sessions import StepHandle, Suspended
+    from coscc.service.resume import nothing, resume_kwargs
 
     reply, end, failure = "", {}, ""
+    given = resume_kwargs(resume, grant, prompt)
+    used_up = given.pop("used_up", "")
     try:
-        async for kind, payload in sessions.stream(
-            cwd, prompt, None, max_turns=grant.max_turns, tools=[],
+        async for kind, payload in nothing() if used_up else sessions.stream(
+            cwd, given.pop("text"), given.pop("session_id"), tools=[],
             # `tools=[]` still lets MCP tools through (`sessions.py`); the gate refuses them.
-            can_use_tool=permission_gate(grant, cwd, Denials()),
-            max_budget_usd=grant.max_budget_usd, step=StepHandle(),
+            can_use_tool=permission_gate(grant, cwd, Denials()), step=StepHandle(),
+            **given,
+            **({"owner": owner} if owner is not None else {}),
             **({"model": model} if model is not None else {}),
             **({"effort": effort} if effort is not None else {}),
         ):
@@ -501,9 +509,11 @@ async def ask(sessions: Any, cwd: str, prompt: str, grant: Any, model: str | Non
                 end.update(session_id=payload.get("session_id", end.get("session_id", "")),
                            cost=payload.get("cost") or {},
                            terminal_reason=str(payload.get("terminal_reason") or ""))
+    except Suspended:
+        raise
     except Exception as e:  # noqa: BLE001 — recorded as the reason
         failure = f"the session failed: {e}"
-    terminal = end.get("terminal_reason", "")
+    terminal = end.get("terminal_reason", "") or used_up
     if not failure and any(m in terminal for m in CEILING_MARKERS):
         failure = f"the session stopped at a ceiling ({terminal}); nothing was written"
     return reply, end, failure
