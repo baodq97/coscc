@@ -230,8 +230,11 @@ STATE_COLOR = {
     "awaiting": "cyan",
     "ready": "gray",
 }
-# The states the board folds into a closed group at its foot rather than a stage column (R8).
+# The states `Running` is never laid over, and the reason is never shown beside (R8).
 COLLAPSED_STATES = ("done", "paused", "dropped")
+# `0133` spec C2. The states the board folds into a closed group at its foot rather than a
+# stage lane: a paused unit stays in its lane, since it waits on a person.
+FOLDED_STATES = ("done", "dropped")
 
 
 def _state(state: str, label: str = "", ci: dict[str, Any] | None = None) -> dict[str, Any]:

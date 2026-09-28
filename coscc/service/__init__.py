@@ -53,6 +53,7 @@ from coscc.service.common import (
     STATE_LABEL,
     STATE_COLOR,
     COLLAPSED_STATES,
+    FOLDED_STATES,
     _state,
     unit_state,
     shown_state,

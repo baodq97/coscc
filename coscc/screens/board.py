@@ -1,4 +1,4 @@
-"""The Board screen: its columns and cards, starting a unit, what is running, the update panel
+"""The Board screen: its lanes and cards, starting a unit, what is running, the update panel
 and the autopilot strip.
 Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
 """
@@ -11,91 +11,69 @@ from coscc.web import studio as s
 from coscc.service import CONSEQUENCE
 from coscc.state import AutopilotStop, Card
 from coscc.screens.common import P, _MONO, _details
-from coscc.screens.overview import _activity_line, _empty_board
+from coscc.screens.overview import _empty_board
 
 
 def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
-    """One card. `grouped` for a card in a collapsed group, which names its stage (`0100` R8):
-    in a column, the column does."""
+    """`0133` R3, R4. One line: the unit's number, its title cut to fit, and its state in words
+    unless it is *Ready*. `grouped` for a card in a folded group, which names its stage
+    (`0100` R8): in a lane, the lane does."""
     return rx.el.button(
         rx.hstack(
-            s.text(unit.id, size="1", font_family="ui-monospace, monospace"),
-            rx.spacer(),
+            s.text(unit.id.split("_")[0], size="1", font_family=_MONO, flex_shrink="0"),
             rx.cond(unit.mode == "autonomous",
-                    rx.icon("sparkles", size=14, color=rx.color("iris", 10))),
-            width="100%",
-        ),
-        rx.text(unit.title, size="2", weight="medium", line_height="1.6",
-                color=s.INK, margin_top="13px"),
-        s.text("Next: " + unit.summary, size="1", line_height="1.7", margin_top="7px",
-               display=rx.cond(P.density == "compact", "none", "block")),
-        rx.hstack(
-            # `0100` R9. The one state badge, as the service decided it. `attention_reason`
-            # stays in the dialog (spec C3); a paused or dropped hold is this badge's word.
-            s.badge(unit.state_label, unit.state_color),
+                    rx.icon("sparkles", size=13, color=rx.color("iris", 10), flex_shrink="0")),
+            rx.text(unit.title, size="2", weight="medium", color=s.INK, white_space="nowrap",
+                    overflow="hidden", text_overflow="ellipsis", min_width="0", flex="1"),
+            # `0100` R9. The state, as the service decided it; a paused or dropped hold is
+            # this badge's word. `attention_reason` stays in the dialog (spec C3).
+            rx.cond(unit.state != "ready", s.badge(unit.state_label, unit.state_color)),
             *([s.badge(unit.at, "gray")] if grouped else []),
-            rx.cond(unit.has_problem, s.badge("problem", "red")),
-            # `0016` R8. How many, beside the state they put the unit in.
-            # `0082` R11: only while the service says the unit can still be answered.
-            rx.cond((unit.open_questions > 0) & unit.answerable,
-                    s.badge(unit.open_questions.to_string() + " waiting on you", "amber")),
-            # `0035` R1. Only for a unit in the window; the button lives on the unit screen.
-            # `0052`: `current` has a button too, and still reads gray on the card.
-            rx.cond(unit.integration_state != "",
-                    s.badge("main: " + unit.integration_state,
-                            rx.cond(unit.integrate_button & (unit.integration_state != "current"),
-                                    "amber", "gray"))),
-            # `0047` R8. The label is the service's; the page only shows it.
-            rx.cond(unit.outcome_text != "",
-                    s.badge("outcome: " + unit.outcome_text, unit.outcome_color)),
-            # `0074`. Its place in the shortlist; changes nothing about the run button.
-            rx.cond(unit.shortlist_rank > 0, s.badge("#" + unit.shortlist_rank.to_string(), "iris")),
-            # `0040` R15 (3). `impl` waits on another unit's merge; the dialog links to it.
-            rx.cond(unit.waits_for != "", s.badge("waits for " + unit.waits_for, "cyan")),
-            rx.spacer(),
-            rx.center(rx.text(unit.owner, size="1", weight="medium"),
-                      width="27px", height="27px", border_radius="50%",
-                      background=rx.color("gray", 4), color=s.MUTED, flex_shrink="0"),
-            # `0082` D57, R17: the badges wrap inside the card instead of running past it.
-            width="100%", align="center", margin_top="18px", flex_wrap="wrap", row_gap="6px",
+            # `0133` R7: the badges `0016`, `0035`, `0047`, `0074`, `0082` and `0040` put here
+            # live in the dialog's header (`_unit_badges`).
+            width="100%", align="center", spacing="2",
         ),
-        # `0074` R9. Its relations, on both units' cards.
-        rx.cond(unit.relations_text != "",
-                s.text(unit.relations_text, size="1", margin_top="7px", overflow_wrap="anywhere")),
-        # `0051`. One line per session on this unit, from `Service.running` alone (R8).
-        rx.foreach(unit.live, lambda line: _activity_line(line, unit.id)),
-        id="unit-" + unit.id, data_testid="work-card", type="button",
-        aria_label="Open " + unit.title, on_click=P.open_unit(unit.id),
-        padding=rx.cond(P.density == "compact", "12px", "17px"),
-        background=s.CANVAS, border=f"1px solid {s.LINE}", border_radius="11px",
-        width="100%", cursor="pointer", text_align="left", font_family="inherit",
-        box_shadow=f"0 2px 3px {rx.color('gray', 3)}",
-        transition="border-color 150ms ease, transform 150ms ease",
-        _hover={"border_color": rx.color("iris", 7), "transform": "translateY(-2px)"},
-        _focus_visible={"outline": f"2px solid {s.ACCENT}", "outline_offset": "3px"},
+        id="unit-" + unit.id, data_testid="work-card", data_state=unit.state, type="button",
+        title=unit.id + " · " + unit.title, aria_label="Open " + unit.id + " " + unit.title,
+        on_click=P.open_unit(unit.id),
+        # `0133` Design: the density changes only the padding.
+        padding=rx.cond(P.density == "compact", "3px 8px", "5px 10px"),
+        background=s.CANVAS, border=f"1px solid {s.LINE}", border_radius="8px",
+        border_left=rx.cond(unit.state == "needs-you", f"3px solid {rx.color('amber', 9)}",
+                            f"1px solid {s.LINE}"),
+        width="100%", min_width="0", cursor="pointer", text_align="left", font_family="inherit",
+        # In a lane, a card with a state word takes two places, so its title is still read.
+        **({} if grouped else {"grid_column": rx.breakpoints(
+            initial="auto", md=rx.cond(unit.state != "ready", "span 2", "auto"))}),
+        transition="border-color 150ms ease",
+        _hover={"border_color": rx.color("iris", 7)},
+        _focus_visible={"outline": f"2px solid {s.ACCENT}", "outline_offset": "2px"},
     )
 
 
-def _column(stage: rx.Var[str]) -> rx.Component:
-    """`0100` R1. One stage's column. The stages are the board read's, never a list here."""
+def _lane(stage: rx.Var[str]) -> rx.Component:
+    """`0133` R1, R2. One stage's lane: its name and count, then its cards wrapping in the
+    width left, so the board is never wider than the page. The stages are the board read's,
+    never a list here (R8)."""
     count = P.stage_counts[stage]
-    return rx.vstack(
+    return rx.flex(
         rx.hstack(
             rx.text(stage, size="2", weight="medium"),
             s.text(count.to_string(), size="1"),
-            rx.spacer(), width="100%", align="center", padding="2px 4px 8px",
+            width=rx.breakpoints(initial="100%", md="112px"), flex_shrink="0", align="center",
+            padding_top="4px", data_testid="lane-label",
         ),
-        # `0053` R8: every column walks the one `cards` list and draws its own shown ones
-        # (`spike.md ## U2`), so no card reaches the page twice.
-        rx.foreach(P.cards, lambda c: rx.cond(
-            (c.at == stage) & P.board_ids.contains(c.id), _unit_card(c), rx.fragment())),
-        rx.cond(count == 0,
-                rx.center(s.text("Nothing here", size="1", text_align="center"),
-                          padding="26px 10px", border=f"1px dashed {s.LINE}",
-                          border_radius="10px", width="100%")),
-        spacing="3", align="stretch", width="264px", min_width="264px", flex_shrink="0",
-        padding="12px", border_radius="13px", background=s.SURFACE,
-        # So a proof can ask which column a card is in (`0001_product-describes-a-state-it-
+        rx.grid(
+            # `0053` R8: every lane walks the one `cards` list and draws its own shown ones
+            # (`spike.md ## U2`), so no card reaches the page twice.
+            rx.foreach(P.cards, lambda c: rx.cond(
+                (c.at == stage) & P.board_ids.contains(c.id), _unit_card(c), rx.fragment())),
+            grid_template_columns=rx.breakpoints(initial="1fr", md="repeat(auto-fill, minmax(160px, 1fr))"),
+            gap="6px", flex="1", min_width="0", width="100%",
+        ),
+        direction=rx.breakpoints(initial="column", md="row"), gap="10px", width="100%",
+        min_width="0", padding="3px 0", border_bottom=f"1px solid {s.LINE}",
+        # So a proof can ask which lane a card is in (`0001_product-describes-a-state-it-
         # is-not-in` R4).
         data_testid="column-" + stage,
     )
@@ -393,7 +371,8 @@ def _autopilot_stop_row(stop: rx.Var[AutopilotStop]) -> rx.Component:
 
 
 def _autopilot_strip() -> rx.Component:
-    """`0043` R9. Shown while the autopilot is on: the cap line, and one row per stop."""
+    """`0043` R9. Shown while the autopilot is on: the cap line, and one row per stop behind
+    their count."""
     return rx.cond(
         P.autopilot_on,
         rx.vstack(
@@ -405,7 +384,17 @@ def _autopilot_strip() -> rx.Component:
                 width="100%", align="center", wrap="wrap",
             ),
             rx.cond(P.autopilot_refused != "", s.text(P.autopilot_refused, size="1")),
-            rx.foreach(P.autopilot_stops, _autopilot_stop_row),
+            # `0133` R11: the stops in a closed part, so the strip does not push the lanes down.
+            rx.cond(
+                P.autopilot_stops.length() > 0,
+                rx.el.details(
+                    rx.el.summary(s.text(P.autopilot_stops.length().to_string() + " stops",
+                                         size="1", as_="span"), cursor="pointer"),
+                    rx.vstack(rx.foreach(P.autopilot_stops, _autopilot_stop_row),
+                              spacing="2", margin_top="8px", width="100%"),
+                    id="autopilot-stops", width="100%",
+                ),
+            ),
             padding="12px 16px", background=rx.color("iris", 3), border_radius="10px",
             spacing="2", width="100%", role="status", id="autopilot-strip",
         ),
@@ -484,14 +473,17 @@ def _release_panel() -> rx.Component:
     )
 
 
+def _focus(target: str):
+    """`0133` R10. Moves focus to a form's first field, below the board."""
+    return rx.call_script(f"document.getElementById('{target}').focus()")
+
+
 def _board() -> rx.Component:
+    """`0133` Design: the toolbar, the autopilot strip, the lanes, the folded groups, what is
+    running, the release panel (`0046`), and the two forms last, so nothing above the lanes
+    pushes them down (R10)."""
     return rx.vstack(
         s.heading("Work board", "From an idea to something real. One clear step at a time."),
-        rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
-        rx.cond(P.has_workspace, _start_idea(), rx.fragment()),
-        _autopilot_strip(),
-        _running_steps(),
-        _release_panel(),
         rx.flex(
             rx.input(rx.input.slot(rx.icon("search", size=15)), id="work-search",
                      placeholder="Search work...", value=P.query, on_change=P.search_work,
@@ -516,9 +508,20 @@ def _board() -> rx.Component:
                 ),
                 value=P.board_view, on_change=P.set_board_view, size="1",
             ),
+            rx.cond(P.has_workspace, rx.button(rx.icon("plus", size=14), "New unit", id="board-new-unit",
+                                               on_click=_focus("new-unit-slug"), size="1", variant="soft")),
+            rx.cond(P.has_workspace, rx.button(rx.icon("lightbulb", size=14), "New idea", id="board-new-idea",
+                                               on_click=_focus("new-idea-slug"), size="1", variant="soft")),
+            # `0133` R5. The done units are a number here, and a link to their group.
+            rx.cond(P.group_counts["done"] > 0, rx.button(
+                P.group_counts["done"].to_string() + " done", id="done-count",
+                on_click=rx.call_script(
+                    "var d=document.getElementById('done-group');d.open=true;d.scrollIntoView({block:'start'})"),
+                size="1", variant="ghost")),
             width="100%", align="center", gap="12px", wrap="wrap",
         ),
-        rx.cond(
+        _autopilot_strip(),
+        rx.box(rx.cond(
             P.cards.length() == 0,
             _empty_board(),
             rx.cond(
@@ -527,12 +530,11 @@ def _board() -> rx.Component:
                         s.text("Try a different search or choose All work.", margin_top="8px")),
                 rx.cond(
                     P.board_view == "Board",
-                    # `0100` Design 6. One column per stage; wider than the screen, it
-                    # scrolls sideways, as GitHub Projects' board does.
-                    rx.hstack(
-                        rx.foreach(P.stages, _column),
-                        spacing="3", width="100%", align="start", overflow_x="auto",
-                        padding_bottom="8px", id="board-grid",
+                    # `0133` R1: lanes wrap their cards, so the board is never wider than
+                    # the page.
+                    rx.vstack(
+                        rx.foreach(P.stages, _lane),
+                        spacing="0", width="100%", min_width="0", id="board-grid",
                     ),
                     s.panel(
                         rx.foreach(P.cards, lambda u: rx.cond(P.shown_ids.contains(u.id), rx.button(
@@ -548,19 +550,24 @@ def _board() -> rx.Component:
                     ),
                 ),
             ),
-        ),
+        ), width="100%", min_width="0", id="board-lanes-area"),
         _collapsed_groups(),
-        spacing="5", width="100%",
+        _running_steps(),
+        _release_panel(),
+        rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
+        rx.cond(P.has_workspace, _start_idea(), rx.fragment()),
+        spacing="4", width="100%",
     )
 
 
 def _collapsed_groups() -> rx.Component:
-    """`0100` R8 (`intent.md ## Answers, câu 4`). Done, paused and dropped units, each in a
-    closed group with its count at the foot of the board; a group of none is not drawn. The
-    search and the filter leave in a group what they leave in the List (review F2)."""
+    """`0100` R8 (`intent.md ## Answers, câu 4`). Done and dropped units, each in a closed
+    group with its count at the foot of the board; a group of none is not drawn. A paused
+    unit stays in its lane (`0133` spec C2). The search and the filter leave in a group what
+    they leave in the List (review F2)."""
     return rx.vstack(
         *(_collapsed_group(state, label) for state, label in
-          (("done", "Done"), ("paused", "Paused"), ("dropped", "Dropped"))),
+          (("done", "Done"), ("dropped", "Dropped"))),
         spacing="3", width="100%",
     )
 

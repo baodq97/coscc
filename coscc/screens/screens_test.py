@@ -119,6 +119,75 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("COS_", _render(screens._autopilot_settings()))
         self.assertNotIn("COS_", _render(screens._autopilot_strip()))
 
+    def test_0133_the_dialog_overview_carries_every_field_the_card_let_go(self):
+        """`0133` R7: every field a card showed before `0133` is read by the dialog's header or
+        its overview tab, which is open without a further click."""
+        dialog = _render(screens._detail_dialog()).replace('\\"', '"')
+        for field in ("open_questions", "answerable", "integration_state", "outcome_text",
+                      "shortlist_rank", "owner", "relations_text", "mode", "problems",
+                      "waits_for", "summary", "title", "state_label", "id"):
+            self.assertRegex(dialog, r'current_unit\w*\?\.\["' + field + r'"\]', field)
+        self.assertIn("waiting on you", dialog)
+        self.assertIn("unit-badges", dialog)
+
+    def test_0133_a_card_is_one_line_with_its_number_title_and_state_word(self):
+        """`0133` R3, R4, R7."""
+        from coscc.screens.common import P
+
+        card = _render(screens._unit_card(P.cards[0])).replace('\\"', '"')
+        self.assertRegex(card, r"data-state|dataState")
+        self.assertRegex(card, r"text-overflow|textOverflow")
+        self.assertIn('["state_label"]', card)
+        for gone in ("Next: ", "waiting on you", "main: ", "outcome: ", "waits for ",
+                     '["relations_text"]', '["live"]'):
+            self.assertNotIn(gone, card)
+
+    def test_0133_the_lanes_come_from_the_board_read_and_no_screen_names_a_stage(self):
+        """`0133` R8. With `StudioStateStages` (`state_test.py`), which builds the board's
+        counts on two made-up stages."""
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parents[2]
+        mjs = (repo / ".claude" / "scripts" / "cos.mjs").read_text(encoding="utf-8")
+        stages = re.findall(r"name: '(\w+)'", mjs.split("const STAGES = [", 1)[1].split("\n]", 1)[0])
+        self.assertEqual(len(stages), 9)
+        named = re.compile(r"""["'](%s)["']""" % "|".join(stages))
+        found = []
+        for path in sorted((repo / "coscc" / "screens").glob("*.py")):
+            if path.name.endswith("_test.py"):
+                continue
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                # A screen's name, not a stage's.
+                if named.search(line) and '("idea", _idea_screen())' not in line:
+                    found.append(f"{path.name}:{n}: {line.strip()}")
+        self.assertEqual(found, [])
+        board = _render(screens._board())
+        self.assertRegex(board, r'"iterable": "[\w.]*\.stages_rx_state_"')
+        self.assertIn("column-", board)
+        self.assertIn("lane-label", board)
+
+    def test_0133_the_board_puts_the_lanes_before_the_forms(self):
+        """`0133` R5, R10, Design *the order of `/board`*."""
+        board = _render(screens._board())
+        order = ["autopilot-strip", "board-grid", "done-group", "running-steps", "new-unit-slug",
+                 "new-idea-slug"]
+        # Where each is drawn, not where the toolbar's buttons name it.
+        at = [board.replace('\\"', '"').find(f'id:"{name}"') for name in order]
+        self.assertNotIn(-1, at, dict(zip(order, at)))
+        self.assertEqual(at, sorted(at), dict(zip(order, at)))
+        for said in ("board-new-unit", "board-new-idea", "done-count"):
+            self.assertIn(said, board)
+        # An empty lane's; the empty board's "Nothing here yet." stays.
+        for gone in ("paused-group", '"Nothing here"'):
+            self.assertNotIn(gone, board.replace('\\"', '"'))
+
+    def test_0133_the_autopilot_stops_sit_in_a_closed_part(self):
+        """`0133` R11: a `details` is closed until opened."""
+        strip = _render(screens._autopilot_strip())
+        for said in ("autopilot-stops", " stops", "details", "autopilot-stop"):
+            self.assertIn(said, strip)
+        self.assertNotIn("open:", strip.replace('\\"', '"'))
+
     def test_f2_a_grants_tools_are_a_list_behind_details(self):
         settings = _render(screens._settings())
         self.assertNotIn("tools: ", settings)
