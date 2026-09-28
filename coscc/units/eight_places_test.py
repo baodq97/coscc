@@ -86,6 +86,27 @@ class Place1(unittest.TestCase):
         self.assertEqual((row["to_state"], row["guard"], row["authority"]), ("accepted", "stage-result", "agent"))
         self.assertTrue(self._plan_gate())
 
+    def test_the_spec_needs_a_spike_for_the_u_ids_its_object_names_not_its_file(self):
+        """R4: the `U<n>` of the stage result, carried to `cos.mjs` in the snapshot."""
+        class Replies:
+            async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
+                yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Concerns\n\n- none\n")
+                await submits(kw, judgement="ready", unmeasured=["U1"])
+                yield ("done", {"session_id": "sess-1", "cost": {}})
+
+        self.service.sessions = Replies()
+
+        async def go():
+            return [item async for item in self.service.run_step(str(self.repo), self.unit, "spec")]
+
+        self.assertEqual(asyncio.run(go())[-1][1]["outcome"], "done")
+        repo = str(self.repo)
+        said = asyncio.run(board_reader.next_step(
+            self.service._units_root(repo), self.unit, state=self.service._snapshot(repo, [self.unit]),
+        ))
+        self.assertEqual(said["stage"], "spike")
+        self.assertFalse(self._plan_gate())
+
     def test_a_run_that_submits_nothing_moves_nothing_whatever_its_file_says(self):
         class Silent:
             prompts: list[str] = []

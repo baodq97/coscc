@@ -415,6 +415,15 @@ class UnitMeta:
                 a = artifact(r)
                 if a is not None and r["to_state"] != self.machine.absent:
                     a["status"] = r["to_state"]
+            # `0136` R4: the last stage result of each stage, which `cos.mjs` reads a spec's
+            # `U<n>` and a spike's verdicts from rather than from the file.
+            for r in rows(
+                "SELECT workspace, unit, stage, object FROM stage_results WHERE id IN "
+                "(SELECT MAX(id) FROM stage_results WHERE {where} GROUP BY workspace, unit, stage)"
+            ):
+                a = artifact({"workspace": r["workspace"], "unit": r["unit"], "artifact": f"{r['stage']}.md"})
+                if a is not None:
+                    a["result"] = json.loads(r["object"])
             for r in rows("SELECT workspace, unit, artifact, questions FROM unit_seen WHERE {where}"):
                 a = artifact(r)
                 if a is not None and r["questions"]:

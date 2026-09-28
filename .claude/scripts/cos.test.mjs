@@ -1579,6 +1579,31 @@ test('parseSpike reads verdicts and blocks per U<n>, and stops at ## Answers (R6
   assert.equal(parseSpike('## U1\nVerdict: holds.\n').round, null)
 })
 
+test('0136 R4: a stage result decides the spec\'s U<n> and the spike\'s verdicts, not the files', () => {
+  const dir = unitDir({
+    'intent.md': INTENT_0039,
+    'spec.md': specText('- **C1.** nothing unmeasured here.'),
+    'spike.md': spikeText(1, [['U1', 'holds']]),
+  })
+  const read = (spec, spike) => {
+    const state = stateOfRoots(dirname(dirname(dir)))
+    const entry = (state.units[`${state.workspace}/0039_x`] = entryFrom(unitMeta(dir)))
+    entry.artifacts['spec.md'].result = { stage: 'spec', judgement: 'ready', questions: [], ...spec }
+    if (spike) entry.artifacts['spike.md'].result = { stage: 'spike', judgement: 'ready', questions: [], ...spike }
+    return readUnit(dir, '0039_x', { state })
+  }
+  // The file names no U<n>; the object does, so the unit needs a spike.
+  const asked = read({ unmeasured: ['U1'] }, { verdicts: [{ id: 'U1', verdict: 'fails' }] })
+  assert.deepEqual(asked.artifacts['spec.md'].unmeasured.ids, ['U1'])
+  // The file says U1 holds; the object says it fails, so plan stays shut.
+  assert.equal(checkGate(asked, 'plan').ok, false)
+  assert.match(checkGate(asked, 'plan').need.join('\n'), /U1: spike\.md measured that it does not hold/)
+  const held = read({ unmeasured: ['U1'] }, { verdicts: [{ id: 'U1', verdict: 'holds' }] })
+  assert.equal(checkGate(held, 'plan').ok, true)
+  // With no U<n> in the object, `unmeasured` is absent, as it is for a file with none.
+  assert.ok(!('unmeasured' in read({ unmeasured: [] }).artifacts['spec.md']))
+})
+
 test('parseSpike reads Round: from the header line only, never from a fenced block', () => {
   const text =
     '# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Status: accepted.\n\n' +

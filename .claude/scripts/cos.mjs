@@ -861,14 +861,25 @@ export function readUnit(dir, name, { state } = {}) {
     if (file === 'impl.md') unit.artifacts[file].needsPerson = parseNeedsPerson(text)
     // `0039`: attached only when there is something to attach, so that `status --json` of
     // every unit that never used `[unmeasured]` stays what it was, byte for byte (R4).
-    if (file === 'spec.md') {
+    // `0136` R4: a stage result the app received decides a spec's `U<n>` and a spike's
+    // verdicts; the file is read only for a unit whose run handed back none.
+    const result = known.artifacts?.[file]?.result ?? null
+    if (file === 'spec.md' && result) {
+      const ids = [...(result.unmeasured ?? [])]
+      if (ids.length) unit.artifacts[file].unmeasured = { ids, problems: [] }
+    } else if (file === 'spec.md') {
       const unmeasured = parseUnmeasured(text)
       if (unmeasured.ids.length || unmeasured.problems.length) {
         unit.artifacts[file].unmeasured = unmeasured
         unit.problems.push(...unmeasured.problems)
       }
     }
-    if (file === 'spike.md') unit.artifacts[file].spike = parseSpike(text)
+    if (file === 'spike.md') {
+      const parsed = parseSpike(text)
+      unit.artifacts[file].spike = result
+        ? { round: parsed.round, items: Object.fromEntries((result.verdicts ?? []).map((v) => [v.id, { verdict: v.verdict, hasBlock: true }])) }
+        : parsed
+    }
     // `0112` R5: attached only when it says something, as `unmeasured` above, so that
     // `status --json` of every `ship.md` written before it stays what it was.
     if (file === 'ship.md') {
