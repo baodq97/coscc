@@ -118,6 +118,11 @@ def _source(peers: Peers, state: dict[str, Any] | None) -> tuple[list[str], str 
     return _peer_args(peers), None
 
 
+async def _ask(argv: list[str], timeout: float, stdin: str | None) -> tuple[int, str, str]:
+    """`_run`, handed stdin only when there is a snapshot to hand it."""
+    return await (_run(argv, timeout) if stdin is None else _run(argv, timeout, stdin))
+
+
 def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
     """`0040`. Each `{ref, merged, why}` of the unit's `Depends on:`, as `cos.mjs` resolved it."""
     return [
@@ -165,7 +170,7 @@ async def read(
 
     source, stdin = _source(peers, state)
     try:
-        code, out_text, err_text = await _run(
+        code, out_text, err_text = await _ask(
             [str(script), "--root", str(path), *source, "status", "--json"], timeout, stdin
         )
     except (OSError, ValueError) as e:
@@ -359,7 +364,7 @@ async def gate(
         argv = [str(script), "--root", str(path), *source, "gate", unit, stage]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
-        code, out_text, err_text = await _run(argv, timeout, stdin)
+        code, out_text, err_text = await _ask(argv, timeout, stdin)
     except (OSError, ValueError) as e:
         raise Unavailable(
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"
@@ -401,7 +406,7 @@ async def next_step(
         argv = [str(script), "--root", str(path), *source, "next", unit]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
-        code, out_text, err_text = await _run(argv, timeout, stdin)
+        code, out_text, err_text = await _ask(argv, timeout, stdin)
     except (OSError, ValueError) as e:
         raise Unavailable(
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"

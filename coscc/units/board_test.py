@@ -886,6 +886,29 @@ def _store(d: Path, units: dict[str, dict[str, str]], ideas: dict[str, str] | No
 _TO_IMPL = {"spec.md": "# S\nStatus: skipped.\n", "plan.md": "# P\nStatus: accepted.\n"}
 
 
+class TheSnapshotReachesTheScriptOnStdin(unittest.TestCase):
+    """`0135`. Given a snapshot, `--state -` and no `--peer`, and the JSON on stdin."""
+
+    def test_read_next_and_gate_hand_the_snapshot_on_stdin(self):
+        seen: list[tuple[list[str], str]] = []
+
+        async def fake_run(argv, timeout, stdin=None):
+            seen.append((argv, stdin))
+            return 0, '{"stages": [], "units": []}' if "status" in argv else '{"stage": ""}', ""
+
+        snapshot = {"workspace": "proj", "workspaces": ["proj"], "units": {}, "ideas": {}}
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
+            peers = [("proj", Path(d) / "p")]
+            run(board.read(d, peers=peers, state=snapshot))
+            run(board.next_step(d, "0001_x", peers=peers, state=snapshot))
+            run(board.gate(d, "0001_x", "impl", peers=peers, state=snapshot))
+        self.assertEqual(len(seen), 3)
+        for argv, stdin in seen:
+            self.assertEqual(argv[argv.index("--root") + 2 : argv.index("--root") + 4], ["--state", "-"])
+            self.assertNotIn("--peer", argv)
+            self.assertEqual(json.loads(stdin), snapshot)
+
+
 class PeersReachTheScript(unittest.TestCase):
     """`0040` R14. Each workspace is one `--peer`, before the command, beside `--root`."""
 
