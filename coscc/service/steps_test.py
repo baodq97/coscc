@@ -1064,7 +1064,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
     class Impl(AnImplStepRunsUnderThePlansLabel.Impl):
         pass
 
-    def _unit(self, effort_trial: bool, plan: str | None = ROUTINE):
+    def _unit(self, effort_trial: bool, plan: str | None = ROUTINE, knowledge: bool = False):
         """A fresh workspace, service and unit, so two runs of one test do not share a log."""
         self.made_count += 1
         root = Path(self._tmp.name) / str(self.made_count)
@@ -1076,6 +1076,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
                 working_dir=str(root / "work"),
                 data_dir=str(root / "data"),
                 effort_trial=effort_trial,
+                knowledge=knowledge,
             ),
             self.Impl(self),
         )
@@ -1236,6 +1237,20 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         self.assertIn("ci_red", start)
         self.assertIsNone(start["ci_red"])
         self.assertEqual(len(self.seen), 1)
+
+    def test_ci_red_is_recorded_with_only_cos_knowledge_on(self):
+        # `0131` R19: the same field, the effort trial off.
+        from coscc import knowledge
+
+        self._unit(effort_trial=False, knowledge=True)
+        self._run()
+        self.action = "CI is red on #7: tests — back to impl: fix on the branch and push"
+        self._run()
+        first, second = self._starts()
+        self.assertNotIn("ci_red", first)
+        self.assertIs(second["ci_red"], True)
+        self.assertNotIn("effort_trial", second)
+        self.assertEqual(second[knowledge.TRIAL_FIELD], {"arm": knowledge.arm(self.made["unit"])})
 
     def test_a_first_impl_asks_nothing(self):
         self._unit(effort_trial=True)
@@ -1815,6 +1830,13 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
         (self.repo / ".git").mkdir(parents=True)
         self.data = self.root / "data"
         self.seen: list[dict] = []
+        from coscc import knowledge
+
+        # `0131` R16: the `on` arm unless a test says otherwise, so what the store hands on is
+        # what is checked.
+        forced = mock.patch.object(knowledge, "arm", lambda unit: knowledge.ON)
+        forced.start()
+        self.addCleanup(forced.stop)
 
     def service(self, on: bool) -> Service:
         config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
@@ -1886,8 +1908,9 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
                     kw = self.kwargs_of(service, stage)
                     self.assertNotIn("knowledge", kw)
                     self.assertNotIn("knowledge_record", kw)
+                    self.assertNotIn("knowledge_trial", kw)
 
-    def test_on_spec_spike_and_plan_get_the_entries_of_this_workspace(self):
+    def test_on_spec_spike_plan_and_impl_get_the_entries_of_this_workspace(self):
         from coscc import knowledge
 
         service = self.service(True)
@@ -1903,11 +1926,51 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
     def test_on_no_other_stage_gets_a_key(self):
         service = self.service(True)
         self.write_store("tool:x")
-        for stage in ("idea", "intent", "impl", "pr", "review", "ship"):
+        for stage in ("idea", "intent", "pr", "review", "ship"):
             with self.subTest(stage=stage):
                 kw = self.kwargs_of(service, stage)
                 self.assertNotIn("knowledge", kw)
                 self.assertNotIn("knowledge_record", kw)
+
+    def test_every_start_carries_knowledge_trial_with_the_flag_on(self):
+        # `0131` R18, whichever arm.
+        from coscc import knowledge
+
+        service = self.service(True)
+        self.write_store("tool:x")
+        for arm in (knowledge.ON, knowledge.OFF):
+            with mock.patch.object(knowledge, "arm", lambda unit, arm=arm: arm):
+                for stage in self.ALL:
+                    with self.subTest(arm=arm, stage=stage):
+                        self.assertEqual(self.kwargs_of(service, stage)["knowledge_trial"], {"arm": arm})
+
+    def test_an_off_arm_unit_reads_no_store_at_any_stage(self):
+        # `0131` R17.
+        from coscc import knowledge
+
+        service = self.service(True)
+        self.write_store("tool:x")
+        with mock.patch.object(knowledge, "arm", lambda unit: knowledge.OFF), \
+                mock.patch.object(knowledge, "load", side_effect=AssertionError("read in the off arm")):
+            for stage in self.ALL:
+                with self.subTest(stage=stage):
+                    kw = self.kwargs_of(service, stage)
+                    self.assertNotIn("knowledge", kw)
+                    self.assertNotIn("knowledge_record", kw)
+                    self.assertEqual(kw["knowledge_trial"], {"arm": knowledge.OFF})
+
+    def test_impl_receives_the_store_on_every_run(self):
+        # `0131` R14: the run after a review or a red CI too.
+        service = self.service(True)
+        self.write_store("tool:x")
+        first = self.kwargs_of(service, "impl")
+        journal = service._journal()
+        journal.started(service._journal_key(str(self.repo)), self.unit, "impl", "manual")
+        second = self.kwargs_of(service, "impl")
+        self.assertEqual((first["impl_run"], second["impl_run"]), (1, 2))
+        for kw in (first, second):
+            self.assertIn("Fact 1.", kw["knowledge"])
+            self.assertEqual(kw["knowledge_record"]["ids"], ["K1"])
 
     def test_on_with_nothing_applicable_is_an_empty_section_and_zero_entries(self):
         service = self.service(True)
@@ -1934,6 +1997,129 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
         self.assertEqual(kw["knowledge"], "")
         self.assertEqual((kw["knowledge_record"]["entries"], kw["knowledge_record"]["bytes"]), (0, 0))
         self.assertIn("FileNotFoundError", kw["knowledge_record"]["error"])
+
+
+class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
+    """`0131` plan step 7, R1. `_drive` schedules one gather of the unit when a `ship` ends
+    `done` with the flag on, and none otherwise; the gather runs on its own `Sessions` and is
+    a job an update waits for. No session opens: `gather_unit` is a stand-in throughout."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        (self.repo / ".git").mkdir(parents=True)
+
+    def service(self, on: bool) -> Service:
+        config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
+                        data_dir=str(self.root / "data"), knowledge=on)
+        service = Service(config, Sessions(config))
+        self.unit = create_sync(service, str(self.repo), "a-problem", "words")["unit"]
+        return service
+
+    def drive(self, service: Service, stage: str, outcome: str) -> list[tuple]:
+        """One step whose runner ends `outcome`, and every `_gather_soon` it made."""
+        from coscc.units import board as board_reader
+        from coscc.github import integrate
+
+        class StandIn:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def run(self, **kw):
+                yield ("done", {"outcome": outcome})
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, f"open: {stage} may proceed"
+
+        async def tree(*a, **kw):
+            return {"path": str(self.repo), "branch": "feat/a-problem", "base": None}
+
+        async def nothing(*a, **kw):
+            return {}
+
+        async def no_pr(*a, **kw):
+            return {"state": "none", "url": ""}
+
+        scheduled: list[tuple] = []
+
+        async def go():
+            async for _ in service.run_step(str(self.repo), self.unit, stage):
+                pass
+            # `_drive` runs as its own task; wait for it, and anything it left, to end.
+            others = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            await asyncio.gather(*others, return_exceptions=True)
+
+        with mock.patch.object(board_reader, "gate", open_gate), \
+                mock.patch("coscc.service.steps.Runner", StandIn), \
+                mock.patch.object(service, "_worktree", tree), \
+                mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \
+                mock.patch.object(integrate, "pr_for_branch", no_pr), \
+                mock.patch.object(service, "_ingest", nothing), \
+                mock.patch.object(service, "_cleanup", nothing), \
+                mock.patch.object(service, "_after_end", nothing), \
+                mock.patch.object(service, "_sync_pr", nothing), \
+                mock.patch.object(service, "_gather_soon", lambda *a: scheduled.append(a)):
+            asyncio.run(go())
+        return scheduled
+
+    def test_a_done_ship_schedules_one_gather_of_that_unit(self):
+        service = self.service(True)
+        scheduled = self.drive(service, "ship", "done")
+        self.assertEqual(scheduled, [(str(self.repo), self.unit, service._journal_key(str(self.repo)))])
+
+    def test_a_failed_ship_or_the_flag_off_schedules_none(self):
+        for on, stage, outcome in ((True, "ship", "failed"), (False, "ship", "done"), (True, "pr", "done")):
+            with self.subTest(on=on, stage=stage, outcome=outcome):
+                self.assertEqual(self.drive(self.service(on), stage, outcome), [])
+
+    def test_a_gather_after_ship_runs_on_its_own_sessions(self):
+        from coscc.knowledge import gather
+
+        service = self.service(True)
+        membership = service.sessions.membership
+        seen = {}
+
+        async def stand_in(data_dir, journal, sessions, model, slot, unit, path, say):
+            seen.update(sessions=sessions, slot=slot, unit=unit, path=path)
+            sessions.membership = lambda d: False  # what `gather` does to the one it is handed
+            return {"outcome": "saved"}
+
+        with mock.patch.object(gather, "gather_unit", stand_in):
+            got = asyncio.run(service._gather_unit(str(self.repo), self.unit, service._journal_key(str(self.repo))))
+        self.assertEqual(got, {"outcome": "saved"})
+        self.assertIsInstance(seen["sessions"], Sessions)
+        self.assertIsNot(seen["sessions"], service.sessions)
+        self.assertIs(service.sessions.membership, membership)
+        self.assertEqual((seen["slot"], seen["unit"], seen["path"]), (units.slot(str(self.repo)), self.unit, str(self.repo)))
+
+    def test_a_gather_is_a_job_the_update_waits_for(self):
+        from coscc.knowledge import gather
+
+        service = self.service(True)
+        key = service._journal_key(str(self.repo))
+
+        async def go():
+            release = asyncio.Event()
+
+            async def stand_in(*a, **kw):
+                await release.wait()
+                return {"outcome": "saved"}
+
+            with mock.patch.object(gather, "gather_unit", stand_in):
+                service._gather_soon(str(self.repo), self.unit, key)
+                await asyncio.sleep(0)
+                during = [j for j in service._update_jobs() if j["stage"] == "knowledge"]
+                release.set()
+                await asyncio.gather(*service._gathers)
+            after = [j for j in service._update_jobs() if j["stage"] == "knowledge"]
+            return during, after
+
+        during, after = asyncio.run(go())
+        self.assertEqual([(j["kind"], j["unit"], j["workspace"]) for j in during], [("integration", self.unit, key)])
+        self.assertEqual(after, [])
+        self.assertEqual(service._gathers, set())
 
 
 class RunStepHandsOnWhatEarlierReviewsSaid(RunStepHandsOnTheKnowledgeStore):

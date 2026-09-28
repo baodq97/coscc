@@ -1,9 +1,12 @@
-"""`coscc knowledge ...`: the terminal's only way into the knowledge store (`0090` R9).
+"""`coscc knowledge ...`: the terminal's way into the knowledge store (`0090` R9).
 
 Reached from `coscc/run.py` alone, imported there lazily, like `reset-password`. No route,
-button or autopilot pass reaches this module (`cli_test.py` holds that), so the
-one command here that spends quota, `gather --yes`, needs a shell on this machine. `check`
-(`0108` R10) spends nothing and writes nothing.
+button or autopilot pass reaches this module (`cli_test.py` holds that), so the one command
+here that spends quota, `gather --yes`, needs a shell on this machine. Since `0131` the app
+also gathers by itself after a ship, through `coscc/service/knowledge.py` and not through here.
+
+`show` (`0131` R13, which took `0108`'s `check` into it) and `measure` (R22) spend nothing and
+fetch `origin/main` first; both write `knowledge.HEALTH` and nothing else.
 
 Exit codes: 0 done, 1 failed with a reason, 2 misuse or refused.
 """
@@ -11,6 +14,7 @@ Exit codes: 0 done, 1 failed with a reason, 2 misuse or refused.
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import sys
 from typing import Callable
 
@@ -19,10 +23,8 @@ from coscc.knowledge import admit, gather, measure
 
 USAGE = (
     "usage: coscc knowledge gather [--all] [--yes] [--model M]\n"
-    "       coscc knowledge baseline [--workspace SLOT]\n"
     "       coscc knowledge measure [--workspace SLOT]\n"
-    "       coscc knowledge show\n"
-    "       coscc knowledge check"
+    "       coscc knowledge show"
 )
 
 
@@ -47,8 +49,11 @@ def _options(args: list[str], flags: set[str], valued: set[str]) -> dict[str, st
 
 
 def show(data_dir, say: Callable[[str], None]) -> int:
-    """The store's path, header and entries by scope, and for each workspace the app knows
-    how many entries apply and how many its prompt would carry (plan Risk 8)."""
+    """`0131` R13. The store's path, header and entries by scope; each entry checked on an
+    `origin/main` fetched now, written to `knowledge.HEALTH`; and for each workspace how many
+    entries apply, how many pass on which `origin/main`, and how many its prompt would carry.
+    A broken entry is never counted as applying. `1` an entry is broken or a fetch failed, `2`
+    the store, the run log or git cannot be read."""
     directory = knowledge.path_of(data_dir)
     path = directory / knowledge.STORE
     say(f"store: {path}")
@@ -59,21 +64,61 @@ def show(data_dir, say: Callable[[str], None]) -> int:
         return 0
     except (OSError, UnicodeDecodeError) as e:
         say(f"the store cannot be read: {type(e).__name__}: {e}")
-        return 1
+        return 2
+    db = measure._db(data_dir)
+    try:
+        if not db.is_file():
+            raise FileNotFoundError(str(db))
+        rows = [r for r in measure.read_rows(db) if r.get("kind") == "end"]
+    except (OSError, sqlite3.Error) as e:
+        say(f"the run log cannot be read: {type(e).__name__}: {e}")
+        return 2
+    if not admit.git_runs():
+        say("git cannot be run")
+        return 2
     parsed = knowledge.parse(text)
+    entries = parsed["entries"]
     h = parsed["header"]
     say(f"Version: {h['version']}. Gathered: {h['gathered']}. Max id: K{h['max_id']}.")
-    say(f"entries: {len(parsed['entries'])}" + (f", unreadable blocks: {len(parsed['skipped'])}" if parsed["skipped"] else ""))
+    say(f"entries: {len(entries)}" + (f", unreadable blocks: {len(parsed['skipped'])}" if parsed["skipped"] else ""))
     scopes: dict[str, int] = {}
-    for e in parsed["entries"]:
+    for e in entries:
         scopes[e["scope"]] = scopes.get(e["scope"], 0) + 1
     for scope, n in sorted(scopes.items()):
         say(f"  {scope}: {n}")
-    for s in sorted({s["slot"] for s in gather.sources(data_dir)}):
-        applicable = len(knowledge.for_workspace(parsed["entries"], s))
-        _, record = knowledge.slice_for(text, s)
-        say(f"{s}: {applicable} apply, {record['entries']} carried ({record['bytes']}/{knowledge.CAP_BYTES} bytes)")
-    return 0
+
+    paths = admit.workspaces(rows)
+    wanted = sorted({e["scope"][len("workspace:"):] for e in entries if e["scope"].startswith("workspace:")})
+    fetched = {slot: paths[slot] for slot in wanted if slot in paths} if wanted else dict(paths)
+    try:
+        shas = asyncio.run(_fresh(fetched))
+    except admit.GitError as e:
+        say(f"coscc knowledge show: nothing was checked, and {knowledge.HEALTH} is as it was: {e}")
+        return 1
+    try:
+        found = admit.health(entries, fetched, admit.Reader("origin/main"))
+    except admit.GitError as e:
+        say(f"coscc knowledge show: {e}")
+        return 2
+    admit.save_health(data_dir, shas, found)
+    for why in parsed["skipped"]:
+        say(f"{why}: fail: cannot be checked")
+    for e in entries:
+        verdict = found[f"K{e['id']}"]
+        say(f"K{e['id']} {e['scope']}: " + (f"fail: {verdict}" if verdict else "pass"))
+    good = [e for e in entries if not found[f"K{e['id']}"]]
+    for s in sorted({s["slot"] for s in gather.sources(data_dir)} | set(fetched)):
+        mine = knowledge.for_workspace(good, s)
+        broken = len(knowledge.for_workspace(entries, s)) - len(mine)
+        _, record, _ = knowledge._slice(mine)
+        on = f"origin/main {shas[s][:12]}" if s in shas else "no origin/main fetched"
+        say(f"{s}: {len(mine)} apply ({broken} broken, not counted), {len(mine)} pass on {on}, "
+            f"{record['entries']} carried ({record['bytes']}/{knowledge.CAP_BYTES} bytes)")
+    return 1 if parsed["skipped"] or len(good) < len(entries) else 0
+
+
+async def _fresh(paths: dict[str, str]) -> dict[str, str]:
+    return {slot: await admit.fresh_main(path) for slot, path in sorted(paths.items())}
 
 
 def _gather(config, opts: dict[str, str | bool], say: Callable[[str], None]) -> int:
@@ -131,18 +176,12 @@ def main(argv: list[str], say: Callable[[str], None] | None = None) -> int:
         if command == "gather":
             opts = _options(rest, {"--all", "--yes"}, {"--model"})
             return _gather(from_env(), opts, say)
-        if command == "baseline":
-            opts = _options(rest, set(), {"--workspace"})
-            return measure.run_baseline(from_env().data_dir, opts.get("--workspace") or None, say)
         if command == "measure":
             opts = _options(rest, set(), {"--workspace"})
             return measure.run_measure(from_env().data_dir, opts.get("--workspace") or None, say)
         if command == "show":
             _options(rest, set(), set())
             return show(from_env().data_dir, say)
-        if command == "check":
-            _options(rest, set(), set())
-            return admit.check(from_env().data_dir, say)
         raise _Misuse(f"unrecognised command {command!r}")
     except _Misuse as e:
         print(f"coscc knowledge: {e}\n{USAGE}", file=sys.stderr)

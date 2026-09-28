@@ -294,5 +294,113 @@ class ReadingForAStep(unittest.TestCase):
             self.assertNotIn("error", got["knowledge_record"])
 
 
+class ASourceOfSpecOrPlan(unittest.TestCase):
+    def test_a_spec_or_plan_source_takes_a_heading_anchor(self):
+        # `0131` R3: `## <heading>` for `spec.md` and `plan.md`; the other two keep theirs.
+        batch = [f"{SLOT}/0131_a/spec.md", f"{SLOT}/0131_a/plan.md"]
+        for good in (f"{SLOT}/0131_a/spec.md ## Requirements", f"{SLOT}/0131_a/plan.md ## Order of work"):
+            with self.subTest(source=good):
+                self.assertEqual(knowledge.validate("", entry(1, source=good), [], batch, SLOT, 0), [])
+                self.assertEqual(knowledge.label_of(good), good.split(" ")[0])
+        for bad, why in ((f"{SLOT}/0131_a/spec.md Round 1", "not ## <heading>"),
+                         (f"{SLOT}/0131_a/plan.md ##", "not ## <heading>"),
+                         (f"{SLOT}/0131_a/intent.md ## Problem",
+                          "is not <workspace>/<unit>/<spec.md|plan.md|spike.md|review.md> <anchor>"),
+                         (f"{SLOT}/0131_a/spike.md ## Requirements", "not ## U<n>")):
+            with self.subTest(source=bad):
+                reasons = knowledge.validate("", entry(1, source=bad), [], batch + [f"{SLOT}/0131_a/spike.md"], SLOT, 0)
+                self.assertTrue(any(why in r for r in reasons), reasons)
+
+
+class TheArm(unittest.TestCase):
+    def test_arm_is_the_first_byte_of_the_prefixed_name(self):
+        import hashlib
+
+        from coscc.knowledge import efforttrial
+
+        names = [f"{n:04d}_a-unit" for n in range(64)]
+        for name in names:
+            byte = hashlib.sha256(("knowledge:" + name).encode("utf-8")).digest()[0]
+            self.assertEqual(knowledge.arm(name), knowledge.ON if byte % 2 == 0 else knowledge.OFF)
+        # C1: not the effort trial's split under another name.
+        apart = [n for n in names if (knowledge.arm(n) == knowledge.ON) != (efforttrial.arm(n) == efforttrial.TRIAL_ARM)]
+        self.assertTrue(apart)
+        self.assertLess(len(apart), len(names))
+
+
+class CheckedOnTheStepsHead(unittest.TestCase):
+    """`0131` R9, R10, on a real repository with one commit."""
+
+    def setUp(self):
+        from coscc.knowledge.admit_test import lock, make_repo
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = make_repo(self.root / "proj", ("2026-09-20T00:00:00+00:00", {
+            ".python-version": "3.14\n", "uv.lock": lock(**{"claude-agent-sdk": "0.2.159"}),
+            "coscc/knowledge/gather.py": "def batches():\n    pass\n"}))
+        self.data = str(self.root / "data")
+
+    def write(self, *blocks: str) -> None:
+        knowledge.save(knowledge.path_of(self.data) / knowledge.STORE, store(*blocks, max_id=len(blocks)))
+
+    def ws(self, n: int, ref: str) -> str:
+        return entry(n, scope=f"workspace:{SLOT}").replace("\nMeasured:", f"\nRef: {ref}\nMeasured:")
+
+    def head(self) -> str:
+        import subprocess
+
+        return subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+
+    def test_for_step_withholds_an_entry_whose_ref_is_not_at_head(self):
+        self.write(self.ws(1, "coscc/knowledge/gather.py::batches"), self.ws(2, "coscc/screens.py"),
+                   self.ws(3, "coscc/knowledge/gather.py::gather"))
+        got = knowledge.for_step(self.data, SLOT, self.repo)
+        self.assertIn("## K1", got["knowledge"])
+        self.assertNotIn("## K2", got["knowledge"])
+        self.assertNotIn("## K3", got["knowledge"])
+        self.assertEqual(got["knowledge_record"]["withheld"], [
+            {"id": "K2", "reason": "coscc/screens.py is not on HEAD"},
+            {"id": "K3", "reason": "gather is not in coscc/knowledge/gather.py on HEAD"},
+        ])
+
+    def test_for_step_withholds_a_tool_entry_pinned_at_another_version(self):
+        self.write(entry(1, scope="tool:claude-agent-sdk 0.2.158"), entry(2, scope="tool:claude-agent-sdk 0.2.159"),
+                   entry(3, scope="tool:gh 2.0"), entry(4, scope="tool:gh"))
+        got = knowledge.for_step(self.data, SLOT, self.repo)
+        self.assertEqual(got["knowledge_record"]["ids"], ["K2", "K4"])
+        self.assertEqual(got["knowledge_record"]["withheld"], [
+            {"id": "K1", "reason": "version 0.2.158, HEAD has 0.2.159"},
+            {"id": "K3", "reason": "no pin"},
+        ])
+
+    def test_for_step_withholds_every_workspace_entry_when_git_cannot_run(self):
+        from coscc.knowledge import admit
+
+        self.write(entry(1, scope="tool:claude-agent-sdk 0.2.158"), self.ws(2, "coscc/knowledge/gather.py"))
+        with mock.patch.object(admit, "_git", side_effect=admit.GitError("git did not finish in 60s")):
+            got = knowledge.for_step(self.data, SLOT, self.repo)
+        record = got["knowledge_record"]
+        self.assertEqual((record["ids"], record["head"]), (["K1"], ""))
+        self.assertEqual(record["withheld"], [{"id": "K2", "reason": "git did not finish in 60s"}])
+        self.assertNotIn("error", record)
+        # Not a repository at all: the same, and the step still runs.
+        got = knowledge.for_step(self.data, SLOT, self.root)
+        self.assertEqual(got["knowledge_record"]["ids"], ["K1"])
+        self.assertIn("HEAD of", got["knowledge_record"]["withheld"][0]["reason"])
+
+    def test_for_step_records_ids_withheld_and_head(self):
+        self.write(entry(1, scope="tool:claude-agent-sdk 0.2.159"), self.ws(2, "coscc/knowledge/gather.py"),
+                   self.ws(3, "gone.py"), entry(4, scope=f"workspace:{OTHER}"))
+        got = knowledge.for_step(self.data, SLOT, self.repo)
+        record = got["knowledge_record"]
+        self.assertEqual(set(record), {"version", "entries", "bytes", "ids", "withheld", "head"})
+        self.assertEqual((record["ids"], record["entries"], record["head"]), (["K1", "K2"], 2, self.head()))
+        self.assertEqual(record["withheld"], [{"id": "K3", "reason": "gone.py is not on HEAD"}])
+        self.assertEqual(record["version"], knowledge.version_of(got["knowledge"]))
+
+
 if __name__ == "__main__":
     unittest.main()

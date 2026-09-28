@@ -2,13 +2,14 @@
 
 `0090_agents-relearn-what-earlier-units-already-knew`. One Markdown file under
 `COS_DATA_DIR`, in no repository (`spec.md` R5), beside the manifest of the sources it was
-gathered from (R11) and the baseline `coscc knowledge measure` compares against (R15). A
-person can read it and edit it by hand; a block this module cannot read is skipped, never a
-reason to read nothing.
+gathered from (R11) and, since `0131`, `HEALTH`: what the last check on a fetched
+`origin/main` found of each entry (R12). A person can read it and edit it by hand; a block
+this module cannot read is skipped, never a reason to read nothing.
 
 `coscc/knowledge/gather.py` writes it, only through `validate` and `save`. `Service.run_step` reads it
-once per `spec`, `spike` or `plan` step, only while `COS_KNOWLEDGE` is on, and hands the
-slice this workspace receives to `runner.compose_prompt`, which does not read the disk.
+once per `spec`, `spike`, `plan` or `impl` step, only while `COS_KNOWLEDGE` is on and the unit
+is in the `ON` arm (`0131` R14-R17), and hands the slice this workspace receives, less what is
+no longer true of the step's `HEAD` (R9), to `runner.compose_prompt`, which does not read the disk.
 
 Every function here but `load`, `save` and `for_step` is pure.
 """
@@ -25,7 +26,8 @@ from typing import Any, Iterable
 from coscc.data import Data
 
 # `spec.md` R3, C3. The stages that receive the store; `review` is deliberately not one.
-STAGES = ("spec", "spike", "plan")
+# `0131` R14: `impl` too, on every run of it.
+STAGES = ("spec", "spike", "plan", "impl")
 
 # `spec.md` R6, C4: the bytes of entries one workspace receives. Chosen, not measured.
 CAP_BYTES = 8192
@@ -36,22 +38,34 @@ ENTRY_BYTES = 600
 DIR = "knowledge"
 STORE = "knowledge.md"
 SOURCES = "sources.json"
-BASELINE = "baseline.json"
+# `0131` R12. `{sha: {slot: sha}, at, entries: {"K<n>": "" | why}}`, rewritten whole by `save`.
+HEALTH = "health.json"
+
+# `0131` R16, R18. The `start` field every step carries while `COS_KNOWLEDGE` is on, and its
+# two arms; `coscc/knowledge/measure.py` reads them back by these names.
+TRIAL_FIELD = "knowledge_trial"
+ON, OFF = "on", "off"
 
 TITLE = "# Knowledge"
-SOURCE_FILES = ("spike.md", "review.md")
+# `0131` R3: `spec.md` and `plan.md` too.
+SOURCE_FILES = ("plan.md", "review.md", "spec.md", "spike.md")
 
 _HEADER = re.compile(r"^Version:\s*(\d+)\.\s+Gathered:\s*(\S*?)\.\s+Max id:\s*K(\d+)\.\s*$")
 _ENTRY_HEAD = re.compile(r"^## K(\d+)\s*$")
 _SCOPE = re.compile(r"^(?:tool:\S+(?: \S.*)?|workspace:\S+)$")
 _SOURCE = re.compile(
     r"^(?P<label>(?P<slot>[A-Za-z0-9._-]+)/(?P<unit>\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*)/"
-    r"(?P<file>spike\.md|review\.md))\s+(?P<anchor>\S.*?)\s*$"
+    r"(?P<file>spike\.md|review\.md|spec\.md|plan\.md))\s+(?P<anchor>\S.*?)\s*$"
 )
+_HEADING = re.compile(r"^## \S.*$")
 _ANCHORS = {
     "spike.md": re.compile(r"^## U\d+$"),
     "review.md": re.compile(r"^Round \d+(?: F\d+)?$"),
+    "spec.md": _HEADING,
+    "plan.md": _HEADING,
 }
+_WANT = {"spike.md": "## U<n>", "review.md": "Round <n> or Round <n> F<n>",
+         "spec.md": "## <heading>", "plan.md": "## <heading>"}
 _FIELDS = ("Scope:", "Source:", "Ref:", "Measured:")
 
 
@@ -189,6 +203,12 @@ def for_workspace(entries: Iterable[dict[str, Any]], slot: str) -> list[dict[str
     ]
 
 
+def arm(unit: str) -> str:
+    """`0131` R16. `ON` when the first byte of the SHA-256 of `"knowledge:" + unit` is even.
+    The prefix keeps it apart from `efforttrial.arm`, which hashes the bare name (C1)."""
+    return ON if hashlib.sha256(("knowledge:" + unit).encode("utf-8")).digest()[0] % 2 == 0 else OFF
+
+
 def version_of(section: str) -> str:
     """R4: the first twelve hex of the sha256 of what went into the prompt."""
     return hashlib.sha256(section.encode("utf-8")).hexdigest()[:12]
@@ -201,7 +221,13 @@ def slice_for(text: str, slot: str) -> tuple[str, dict[str, Any]]:
     A store edited by hand past the cap gives the newest entries first, whole, and puts
     them back in id order. `validate` keeps a gathered store under it, so this is the
     guard for the file a person wrote."""
-    applicable = sorted(for_workspace(parse(text)["entries"], slot), key=lambda e: e["id"])
+    section, record, _ = _slice(for_workspace(parse(text)["entries"], slot))
+    return section, record
+
+
+def _slice(entries: Iterable[dict[str, Any]]) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+    """`slice_for` of entries already chosen for a workspace, and the ones it carries."""
+    applicable = sorted(entries, key=lambda e: e["id"])
     chosen = applicable
     if len(entries_text(chosen).encode("utf-8")) > CAP_BYTES:
         chosen, used = [], 0
@@ -216,7 +242,7 @@ def slice_for(text: str, slot: str) -> tuple[str, dict[str, Any]]:
         "version": version_of(section),
         "entries": len(chosen),
         "bytes": len(section.encode("utf-8")),
-    }
+    }, chosen
 
 
 def label_of(source: str) -> str:
@@ -225,13 +251,18 @@ def label_of(source: str) -> str:
     return m.group("label") if m else ""
 
 
+def parts_of(source: str) -> dict[str, str] | None:
+    """`{slot, unit, file, anchor}` of a `Source:` value, `None` when it has not that shape."""
+    m = _SOURCE.match(source.strip())
+    return {k: m.group(k) for k in ("slot", "unit", "file", "anchor")} if m else None
+
+
 def _source_problem(source: str) -> str:
     m = _SOURCE.match(source.strip())
     if not m:
-        return "is not <workspace>/<unit>/<spike.md|review.md> <anchor>"
+        return "is not <workspace>/<unit>/<spec.md|plan.md|spike.md|review.md> <anchor>"
     if not _ANCHORS[m.group("file")].match(m.group("anchor")):
-        want = "## U<n>" if m.group("file") == "spike.md" else "Round <n> or Round <n> F<n>"
-        return f"has the anchor {m.group('anchor')!r}, not {want}"
+        return f"has the anchor {m.group('anchor')!r}, not {_WANT[m.group('file')]}"
     return ""
 
 
@@ -370,12 +401,22 @@ def save(path: str | os.PathLike[str], text: str) -> None:
         raise
 
 
-def for_step(data_dir: str | os.PathLike[str] | None, slot: str) -> dict[str, Any]:
+def for_step(data_dir: str | os.PathLike[str] | None, slot: str,
+             worktree: str | os.PathLike[str] | None = None) -> dict[str, Any]:
     """`{knowledge, knowledge_record}` for `Runner.run`, read once. Never raises: a store
     that cannot be read (absent, refused, not UTF-8, a bug here) is no section and a record
-    carrying `error`, and the step runs as it would have."""
+    carrying `error`, and the step runs as it would have.
+
+    `0131` R9, R10. Each entry is checked on `HEAD` of `worktree`, the tree the step works on,
+    and one no longer true of it is withheld: a `workspace:` entry whose `Ref:` is not there, a
+    `tool:` entry whose version is not the pin there. The record says which were carried
+    (`ids`), which withheld and why (`withheld`) and the `HEAD` read (`head`, `""` for none).
+    When git cannot answer, every `workspace:` entry is withheld with its reason and every
+    `tool:` entry is carried: R9 names only the first."""
     try:
-        section, record = slice_for(load(path_of(data_dir) / STORE), slot)
+        applicable = for_workspace(parse(load(path_of(data_dir) / STORE))["entries"], slot)
+        kept, withheld, head = _checked(applicable, str(worktree or ""))
+        section, record, chosen = _slice(kept)
     except Exception as e:  # noqa: BLE001 — recorded, never a reason to refuse the step
         return {
             "knowledge": "",
@@ -384,4 +425,67 @@ def for_step(data_dir: str | os.PathLike[str] | None, slot: str) -> dict[str, An
                 "error": f"{type(e).__name__}: {e}",
             },
         }
+    record.update(ids=[f"K{e['id']}" for e in chosen], withheld=withheld, head=head)
     return {"knowledge": section, "knowledge_record": record}
+
+
+def _checked(entries: list[dict[str, Any]], worktree: str
+             ) -> tuple[list[dict[str, Any]], list[dict[str, str]], str]:
+    """`(kept, withheld, head)` of `for_step`, against `HEAD` of `worktree`."""
+    # Here, not at the top: `admit` imports this module.
+    from coscc.knowledge import admit
+
+    reader = admit.Reader("HEAD")
+    broken = ""
+    head = ""
+    try:
+        head = ((admit._git(worktree, "rev-parse", "--verify", "HEAD^{commit}") or "").strip()
+                if worktree else "")
+        if not head:
+            broken = f"HEAD of {worktree or 'the step'} cannot be read"
+    except admit.GitError as e:
+        broken = str(e)
+    pinned: dict[str, str] | None = None
+    kept: list[dict[str, Any]] = []
+    withheld: list[dict[str, str]] = []
+
+    def hold(e: dict[str, Any], why: str) -> None:
+        withheld.append({"id": f"K{e['id']}", "reason": why})
+
+    for e in entries:
+        if e["scope"].startswith("tool:"):
+            rest = e["scope"][len("tool:"):].split()
+            if len(rest) < 2 or broken:
+                kept.append(e)
+                continue
+            try:
+                if pinned is None:
+                    pinned = reader.pins(worktree, "HEAD")
+            except admit.GitError:
+                kept.append(e)
+                continue
+            found = pinned.get(admit.tool_name(e["scope"]))
+            if not found:
+                hold(e, "no pin")
+            elif found != rest[1]:
+                hold(e, f"version {rest[1]}, HEAD has {found}")
+            else:
+                kept.append(e)
+            continue
+        if broken:
+            hold(e, broken)
+            continue
+        refs = e.get("refs") or []
+        if not refs:
+            hold(e, "no Ref:")
+            continue
+        try:
+            missing = [why for ok, why in (reader.ref_exists(worktree, r) for r in refs) if not ok]
+        except admit.GitError as err:
+            hold(e, str(err))
+            continue
+        if missing:
+            hold(e, "; ".join(missing))
+        else:
+            kept.append(e)
+    return kept, withheld, head

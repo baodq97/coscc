@@ -102,6 +102,13 @@ class UpdateMixin:
                     "workspace": entry["workspace"], "unit": entry["unit"], "stage": "precedent",
                     "started": entry["started"],
                 })
+            elif entry["stage"] == "knowledge":
+                # `0131` R1. A gather after a ship: waited for, never cut, its money spent either way.
+                jobs.append({
+                    "kind": "integration", "id": f"knowledge:{entry['workspace']}:{entry['unit']}",
+                    "workspace": entry["workspace"], "unit": entry["unit"], "stage": "knowledge",
+                    "started": entry["started"],
+                })
             elif entry["stage"] == "estimate":
                 # `0074`. Waited for like an integration, never cut: its money is spent either way.
                 jobs.append({

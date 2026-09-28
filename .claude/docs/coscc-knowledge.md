@@ -1,86 +1,95 @@
 # The knowledge store: what no test here catches
 
-Unit 0090, agents relearn what earlier units already knew. `COS_KNOWLEDGE=1` hands `spec`,
-`spike` and `plan` the entries of `<COS_DATA_DIR>/knowledge/knowledge.md` that apply to the
-workspace (`coscc/knowledge/__init__.py`); `coscc knowledge gather` writes that file
-(`coscc/knowledge/gather.py`); `coscc knowledge baseline` and `measure` decide whether it paid
-(`coscc/knowledge/measure.py`).
+Unit 0090, agents relearn what earlier units already knew; unit 0131, the store goes stale
+after one gather. `COS_KNOWLEDGE=1` hands `spec`, `spike`, `plan` and `impl` of half the units
+the entries of `<COS_DATA_DIR>/knowledge/knowledge.md` that apply to the workspace
+(`coscc/knowledge/__init__.py`); a gather writes that file (`coscc/knowledge/gather.py`), by
+itself after every `ship` that ends `done`, or at a terminal; `coscc knowledge measure` says
+whether the store paid (`coscc/knowledge/measure.py`).
 
-## Gathering spends quota, and its ceiling is not a ceiling
+## The app spends quota by itself
+
+- With the flag on, every `ship` step the board runs that ends `done` starts one gather of
+  that unit's `spec.md`, `plan.md`, `spike.md` and `review.md` in the background
+  (`coscc/service/knowledge.py`). Nobody is asked. It costs up to batches × $2.00 per ship,
+  and one session's excess over that. A ship merged from a terminal starts none.
+- A gather after a ship is one `knowledge` row in `cos.db`, `mode: unit`, with `outcome`
+  `saved`, `unchanged`, `refused` or `failed`, its `sessions` and its `cost_usd`. More than
+  one such row for one unit is a bug that multiplies the cost.
+- A unit of one batch is never repaired: after its first session one more could pass the
+  ceiling of $2.00, so a refused reply is `failed`, and its sources are not sent again
+  automatically. `coscc knowledge gather` at a terminal sends them, and anything else the
+  manifest does not hold.
+- A gather waits for another to end, one at a time for the whole store. A terminal
+  `gather` is refused while one runs. An update of the app waits for a gather too; the money
+  of one cut short is spent and the store is as it was.
+- A failed gather after a ship changes no byte of the store, the manifest or `health.json`.
+  A terminal `gather` still saves every batch that passes, which `--all` resumes from.
+- The session runs in the store's directory with its own `Sessions`, whose membership is
+  narrowed to that directory. It has no tool; give the grant one and the session reads
+  everything there.
+- The way back: unset `COS_KNOWLEDGE` and restart. The store stays where it is, nothing
+  reads it, and no ship gathers.
+
+## A terminal gather
 
 - Each batch is one paid session under the grant `knowledge` (1 turn, $2.00, chosen, not
   measured). The CLI compares the session's cost after the turn has run (`0085`
-  `spike.md ## U2`), so one batch can pass $2.00; the figure `gather` prints before
-  `--yes` is batches × $2.00, not a bound.
-- Nobody has counted the `spike.md` and `review.md` files the history holds, so what
-  `gather --all` costs is unknown until it prints its batch count.
-- Since `0107`, `gather --all` saves the store after every batch that passes and records
-  which sources passed in `<COS_DATA_DIR>/knowledge/gather-all.json`. Running `--all` again
-  goes on from the batch that failed; deleting that file by hand is the only way to start
-  over, and there is no flag for it. While the file is there, `gather` without `--all` is
-  refused. It lives beside the store, in no repository: lose it and the next `--all` starts
-  over and pays again, but the store is not harmed.
-- A reply the check refuses is sent back to be repaired, at most twice (`gather.REPAIRS`),
-  but only while the sum of what the run spent plus one more $2.00 session stays under the
-  figure it printed. So a run of one batch — a daily `gather`, or the last batch of an
-  `--all` run again — is never repaired: it fails at the first refusal. A session that
-  broke, stopped at its ceiling or replied with no JSON is not repaired either.
-- What a run spends can pass the figure it printed by one session's excess over $2.00: the
-  check comes before a session opens, and a session's own cost is known only after it ran.
-- A batch that fails every repair stops the run. It is sent again by the next run, since
-  neither the manifest nor the progress record names it; read its `reason` in the
-  `knowledge` rows of `cos.db` (`attempt` 1 to 3) and decide.
-- A store edited by hand into a block `parse` cannot read — no `Scope:`, no `Source:`, no
-  statement, or a `## ` heading that is not `## K<n>` — refuses every `gather`, dry run
-  included, until the block is fixed or removed: a save renders only what was read. So
-  does a line outside every entry but the title and the header, such as a note under it.
-- Entries under no header refuse `gather` too: the header's `Max id` is the only record of
-  an id given out and since dropped. New ids also start above every id a `done`
-  `knowledge` row of the run log dropped, but only rows under this `COS_WORKING_DIR`; a
-  header edited below an id deleted by hand is caught by nothing.
-- The session runs in the store's directory and `Sessions.membership` is narrowed to it.
-  It has no tool; give the grant one and the session reads everything there.
+  `spike.md ## U2`), so one batch can pass $2.00; the figure `gather` prints before `--yes`
+  is batches × $2.00, not a bound.
+- `gather --all` reads every unit's four files, `spec.md` and `plan.md` included, so it
+  costs more than it did before `0131`. It saves the store after every batch that passes and
+  records which sources passed in `<COS_DATA_DIR>/knowledge/gather-all.json`; running it again
+  goes on from the batch that failed. Deleting that file by hand is the only way to start
+  over. While it is there, `gather`, and every gather after a ship, is refused.
+- A reply the check refuses is sent back to be repaired, at most twice, but only while what
+  was spent plus one more $2.00 session stays under the figure printed.
+- A store edited by hand into a block `parse` cannot read, a line outside every entry, or
+  entries under no header refuse every gather until fixed by hand.
 
-## What the check does not check
+## Every read of `Ref:` is of a fetched `origin/main`
 
-`knowledge.validate` holds the byte caps, the ids, the scopes and that every `Source:` is a
-source the session was given. It cannot tell a wrong entry from a right one (`spec.md` C2):
-a wrong entry now reaches every `spec`, `spike` and `plan`. The way back is to unset
-`COS_KNOWLEDGE` and restart; the store stays where it is and nothing reads it.
+A gather, `show` and `measure` fetch `origin/main` of every workspace they read first, and a
+fetch that fails stops them: a gather opens no session, the commands exit 1. In the app the
+fetch goes through `coscc/git/fetches.py`; at a terminal through a table of that process
+alone, so it may race the app for the ref, and only one retry covers it.
 
-Since `0108`, `coscc/knowledge/admit.py` writes each entry's date and version and drops the rest into
-the batch's `dropped`; `coscc knowledge check` reads the store against `main`.
+`coscc knowledge show` checks every entry on that `origin/main`, writes
+`<COS_DATA_DIR>/knowledge/health.json` (`{sha: {slot: sha}, at, entries: {K<n>: "" | why}}`),
+and prints for each workspace how many entries apply, pass, and are carried. It exits 1 when
+an entry is broken and 2 when the store, the run log or git cannot be read. `check` is gone.
 
-- `check` checks that what an entry points at exists — a pinned version, a path, a name in
-  a file — never that its sentence is still true. An entry about a file that still exists
-  passes whatever it says of it.
+- A check reads what an entry points at — a pinned version, a path, a name in a file —
+  never whether its sentence is still true.
 - A tool no workspace pins in `.python-version` or `uv.lock` — `gh`, `git`, the Claude Code
   CLI, a model id — cannot enter the store: every such entry is dropped `unpinned`.
-- The version is what `main` declared on the day of the newest source, not what ran; a unit
-  that raised a dependency on its own branch is recorded at the old one.
-- The "not measured" markers are eleven fixed phrases (`admit.MARKERS`); a source saying the
-  same in other words is not caught.
-- `check` reads the run log of every `COS_WORKING_DIR`, `gather` only its own, and both read
-  the local `main`, which may be behind `origin/main`; `check` prints the sha it read.
+- No unit may be the only source of more than two entries; the older ones are dropped
+  `one-unit`. The share of `tool:` entries is no longer a rule, so nothing but the prompt
+  stops the store filling with `workspace:` entries the code already says.
 
-## The order, after the unit ships
+## What a step is handed
 
-1. `coscc knowledge baseline` — before the flag. `measure` refuses a baseline written after
-   the first step that carried the store.
-2. `coscc knowledge gather --all`, which spends nothing and prints batches and the ceiling.
-3. `coscc knowledge gather --all --yes`.
-4. `COS_KNOWLEDGE=1` in the service's env file, then restart.
-5. `coscc knowledge check`: 0 every entry passes and at least half are `tool:`. Run it again
-   before 2026-10-02 and after every raise of `reflex` or `claude-agent-sdk`: an entry pinned
-   at the old version fails, and the way back is another `gather`.
+Each step of the `on` arm checks the entries on the `HEAD` of its own worktree and withholds
+the ones no longer true there: a `Ref:` that is gone, a `tool:` version that is not the pin.
+Its `start` row's `knowledge` says which it carried (`ids`), which it withheld and why, and
+the `HEAD` it read. When git cannot answer, every `workspace:` entry is withheld and every
+`tool:` one carried. An entry true on `main` but not yet on the branch is withheld too, so
+the Knowledge page may call an entry passing that some steps did not receive.
 
-The store of an unfinished `--all` is a real store holding only the batches that passed, and
-the first save of a new `--all` has already replaced the old one. Turn the flag on before
-`gather-all.json` is gone and `spec`, `spike` and `plan` are handed that part. Nothing stops
-it.
+## The measure
 
-The later the flag goes on, the more units ran `spec` without it and are left out as mixed
-(`spec.md` C8). `measure` reads the deadline, 2026-10-16, as a UTC day.
+Every step of every unit, with the flag on, carries `knowledge_trial: {arm}`: `on` when the
+first byte of the SHA-256 of `"knowledge:" + <unit>` is even. The `off` arm never reads the
+store. `coscc knowledge measure [--workspace SLOT]` compares the arms over every stage of the
+units shipped by 2026-10-16 (UTC), with no cut at ten, adds what gathering cost in their
+window to the `on` arm, and prints the verdict with the `origin_main` it fetched. `baseline`
+and `baseline.json` are gone. A unit that started before the flag is in no arm; a unit whose
+steps carry two arms, or none on some, is excluded and listed.
 
-`measure` reads the `knowledge` field of `start` rows and the `mode` of `knowledge` rows by
-name: rename either and it reads nothing, silently (`.claude/rules/coscc-data.md`).
+The Knowledge page shows the same measure without fetching, the entries with what the last
+`health.json` said of each, the last gather, and the last 20 steps that carried an arm. It
+has no button.
+
+`measure` reads `knowledge_trial`, `knowledge`, `ci_red` and the `mode` and `cost_usd` of
+`knowledge` rows by name: rename one and it reads nothing, silently
+(`.claude/rules/coscc-data.md`).

@@ -119,6 +119,9 @@ from coscc.service.ideas import (
 from coscc.service.release import (
     ReleaseMixin,
 )
+from coscc.service.knowledge import (
+    KnowledgeMixin,
+)
 
 
 @dataclass
@@ -138,6 +141,7 @@ class Service(
     NoticesMixin,
     IdeasMixin,
     ReleaseMixin,
+    KnowledgeMixin,
 ):
     config: Config
     sessions: Sessions
@@ -197,6 +201,8 @@ class Service(
     _autopilot_runs: dict[str, dict[str, tuple[str, asyncio.Task]]] = field(default_factory=dict, init=False, repr=False)
     _autopilot_stops: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict, init=False, repr=False)
     _autopilot_pending: set[asyncio.Task] = field(default_factory=set, init=False, repr=False)
+    # `0131` R1. The gathers after a ship running now, kept so none is collected mid-run.
+    _gathers: set[asyncio.Task] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # No working folder means no store, and the app behaves as it did before one existed.

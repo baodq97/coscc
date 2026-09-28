@@ -35,7 +35,7 @@ the page and forgetting to rebuild is possible at all.
 ## Shape
 
 One shell under nine static routes: `/` Overview, `/workspaces`,
-`/board`, `/backlog`, `/sessions`, `/activity`, `/cost`, `/settings`, and `/unit` — the Board with a unit's dialog open,
+`/board`, `/backlog`, `/sessions`, `/activity`, `/cost`, `/knowledge`, `/settings`, and `/unit` — the Board with a unit's dialog open,
 `?ws=<workspace name>&id=<unit>&tab=<tab>`. `coscc/web/place.py` reads and writes the address;
 `StudioState.arrive`, every route's `on_load`, is the only handler that sets `screen`,
 `cwd`, `unit_id` and `detail_tab` — a navigation button only returns `rx.redirect`. A new
@@ -110,5 +110,5 @@ only from here.
 | `POST /api/settings/models` and `/efforts`; `POST /api/backlog/*` | `.claude/docs/coscc-settings.md` | editing `/api/settings/*`, `coscc/agent/models.py`, `/api/backlog/*` or `coscc/units/backlog.py` |
 | `spike` runs arbitrary code | `.claude/docs/coscc-spike.md` | editing the `spike` grant, its scratch directory, or its progress-file write |
 | what the page stopped explaining in `0082` | `.claude/docs/coscc-page-text.md` | adding words to a screen, or removing a sentence the page says beside a button |
-| `coscc knowledge gather` spends quota past its ceiling; a wrong entry reaches every plan; baseline before the flag | `.claude/docs/coscc-knowledge.md` | editing `coscc/knowledge/__init__.py`, `gather.py`, `admit.py`, `measure.py`, `knowledge/cli.py`, the `knowledge` grant, or running `coscc knowledge` |
+| a gather spends quota past its ceiling, and after every done `ship` by itself; a wrong entry reaches every plan | `.claude/docs/coscc-knowledge.md` | editing `coscc/knowledge/__init__.py`, `gather.py`, `admit.py`, `measure.py`, `knowledge/cli.py`, the `knowledge` grant, or running `coscc knowledge` |
 | every proof's cost; `capture_screens.py` overwrites `.web` | `.claude/docs/coscc-proofs.md` | running `npm run e2e`, a measuring script under `scripts/` or `scripts/capture_screens.py`, or writing a proof |

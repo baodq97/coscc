@@ -19,7 +19,7 @@ from unittest import mock
 
 from coscc import knowledge, units
 from coscc.knowledge import admit, gather
-from coscc.knowledge.admit_test import lock, make_repo
+from coscc.knowledge.admit_test import failing_fetch, lock, make_repo, no_fetch
 from coscc.runlog.journal import Journal
 
 # Set by `setUpModule`: the slots of two repositories, `other-` sorting before `proj-`.
@@ -29,7 +29,10 @@ AT = "2026-09-25T00:00:00+00:00"
 
 
 def setUpModule():
-    global A, B, _REPOS_DIR
+    global A, B, _REPOS_DIR, _NO_FETCH
+    # `0131` R11: every gather fetches `origin/main` first; here that moves nothing.
+    _NO_FETCH = no_fetch()
+    _NO_FETCH.start()
     _REPOS_DIR = tempfile.TemporaryDirectory()
     for name in ("proj", "other"):
         repo = make_repo(Path(_REPOS_DIR.name) / name, ("2026-09-01T00:00:00+00:00", {
@@ -40,6 +43,7 @@ def setUpModule():
 
 def tearDownModule():
     _REPOS_DIR.cleanup()
+    _NO_FETCH.stop()
 
 
 class Replies:
@@ -97,14 +101,14 @@ class Fixture(unittest.TestCase):
             self.journal.finished(str(repo), "0000_known", "plan", "done", at=AT)
 
     def unit(self, slot: str, unit: str, dated: str = AT, **files: str) -> Path:
-        """The files, and for each `spike.md` or `review.md` the `done` `end` row that dates it
-        at `dated`; `dated=""` writes none."""
+        """The files, and for each `spec.md`, `plan.md`, `spike.md` or `review.md` the `done`
+        `end` row that dates it at `dated`; `dated=""` writes none."""
         d = self.data / "units" / slot / ".cos" / unit
         d.mkdir(parents=True, exist_ok=True)
         for name, body in files.items():
             (d / name.replace("_", ".")).write_text(body, encoding="utf-8")
             stage = name.split("_")[0]
-            if dated and stage in ("spike", "review"):
+            if dated and stage in ("spike", "review", "spec", "plan"):
                 self.journal.finished(str(REPOS[slot]), unit, stage, "done", at=dated)
         return d
 
@@ -125,14 +129,16 @@ class Fixture(unittest.TestCase):
 
 
 class TheSources(Fixture):
-    def test_only_spike_and_review_of_units_with_their_answers_cut(self):
+    def test_spec_plan_spike_and_review_of_units_with_their_answers_cut(self):
+        # `0131` R3: `spec.md` and `plan.md` too; `intent.md` still not.
         self.unit(A, "0001_a", spike_md="# Spike\n## U1\nmeasured\n\n## Answers\n\n### Câu 1\nsecret\n",
-                  review_md="# Review\nRound 1\n", plan_md="# Plan\n", intent_md="# Intent\n")
+                  review_md="# Review\nRound 1\n", plan_md="# Plan\n", spec_md="# Spec\n", intent_md="# Intent\n")
         (self.data / "units" / A / ".cos" / "notaunit").mkdir()
         (self.data / "units" / A / ".cos" / "notaunit" / "spike.md").write_text("x")
         found = gather.sources(str(self.data))
-        self.assertEqual([s["label"] for s in found], [f"{A}/0001_a/review.md", f"{A}/0001_a/spike.md"])
-        spike = found[1]
+        self.assertEqual([s["label"] for s in found],
+                         [f"{A}/0001_a/{f}" for f in ("plan.md", "review.md", "spec.md", "spike.md")])
+        spike = found[3]
         self.assertNotIn("## Answers", spike["text"])
         self.assertNotIn("secret", spike["text"])
         self.assertEqual(spike["sha"], gather.digest(spike["text"]))
@@ -178,7 +184,7 @@ class TheSources(Fixture):
             "- `Scope: tool:<name>` carries no version, and a `tool:` entry has no `Ref:`.",
             "- A `workspace:` entry carries at least one `Ref:`: a file's path from the repository's "
             "root, optionally followed by `::` and a name that file holds. An entry whose `Ref:` is "
-            "not on `main` is dropped.",
+            "not on `origin/main` is dropped.",
             "- Write no `Measured:` line and no version: the code writes the date from the run log "
             "and the version from the workspace's pins.",
             "- Copy a source's label without the parenthesis after it.",
@@ -186,6 +192,16 @@ class TheSources(Fixture):
             with self.subTest(line=line[:40]):
                 self.assertIn(line + "\n", prompt)
         self.assertNotIn("Measured: YYYY-MM-DD", prompt)
+
+    def test_the_prompt_asks_for_a_rewrite_not_only_additions(self):
+        # `0131` R4, the sentence `spike.md ## U1` tried, word for word; `PROMPT_RULES` stay (C3).
+        prompt = gather.build_prompt(A, 3, "", [{"label": f"{A}/0001_a/plan.md", "text": "x"}])
+        self.assertIn("- Rewrite the store, do not only add to it: merge entries on one subject into one more "
+                      "general statement, and one unit may not be the only source of more than 2 entries.\n", prompt)
+        self.assertIn("`## <heading>`, a heading of that file copied whole, for a `spec.md` or a `plan.md`", prompt)
+        self.assertIn("Source: <workspace>/<unit>/<spec.md|plan.md|spike.md|review.md> <anchor>\n", prompt)
+        for rule in gather.PROMPT_RULES:
+            self.assertIn(f"- {rule}\n", prompt)
 
 
 class AGather(Fixture):
@@ -278,7 +294,7 @@ class AGather(Fixture):
             "\n## K1\nScope: tool:x\nMeasured: 2026-09-25\nwritten by hand, no source\n"
             "\n## Notes\nkept by a person\n")
         knowledge.save(self.dir / knowledge.STORE, written)
-        for mode in gather.MODES:
+        for mode in ("new", "all"):
             with self.subTest(mode=mode):
                 s = Replies(reply(entry(2, self.src)))
                 with self.assertRaises(gather.Refused) as refused:
@@ -320,14 +336,18 @@ class AGather(Fixture):
         self.assertEqual((s.prompts, self.rows(), self.store()), ([], [], written))
 
     def test_new_ids_start_above_every_id_a_gather_dropped_whatever_the_header_says(self):
-        self.run_gather(Replies(reply(entry(1, self.src) + "\n\n" + entry(2, self.src) + "\n\n" + entry(3, self.src))))
+        # Three units, so no entry is dropped as one unit's third (`0131` R5).
+        self.unit(A, "0004_d", spike_md="# Spike\n## U1\nd\n")
+        self.unit(A, "0005_e", spike_md="# Spike\n## U1\ne\n")
+        d, e = f"{A}/0004_d/spike.md ## U1", f"{A}/0005_e/spike.md ## U1"
+        self.run_gather(Replies(reply(entry(1, self.src) + "\n\n" + entry(2, d) + "\n\n" + entry(3, e))))
         self.unit(A, "0002_b", review_md="# Review\n## Round 1\nF1 x\n")
         self.assertEqual(self.run_gather(Replies(reply(
-            entry(1, self.src) + "\n\n" + entry(2, self.src), [{"id": "K3", "reason": "wrong"}]))), 0)
+            entry(1, self.src) + "\n\n" + entry(2, d), [{"id": "K3", "reason": "wrong"}]))), 0)
         # A person edits the header down to K2, below the dropped K3.
         knowledge.save(self.dir / knowledge.STORE, self.store().replace("Max id: K3.", "Max id: K2."))
         self.unit(A, "0003_c", review_md="# Review\n## Round 1\nF1 y\n")
-        s = Replies(reply(entry(1, self.src) + "\n\n" + entry(2, self.src) + "\n\n" + entry(3, f"{A}/0003_c/review.md Round 1 F1")))
+        s = Replies(reply(entry(1, self.src) + "\n\n" + entry(2, d) + "\n\n" + entry(3, f"{A}/0003_c/review.md Round 1 F1")))
         self.assertEqual(self.run_gather(s), 1)
         self.assertIn("from K4 upward", s.prompts[0])
         self.assertIn("K3 is new but not above the store's Max id K3", self.rows()[-1]["reason"])
@@ -625,6 +645,119 @@ class AllRebuilds(Fixture):
                 with self.assertRaises(ValueError) as failed:
                     gather.plan_of(str(self.data), "all")
                 self.assertIn(str(self.dir / gather.PROGRESS), str(failed.exception))
+
+
+class AUnitAfterItShips(Fixture):
+    """`0131` R1-R4, R7, R8, R11: `gather_unit`, as the app runs it after a `ship`."""
+
+    def setUp(self):
+        super().setUp()
+        self.unit(A, "0001_a", spec_md="# Spec\n## Requirements\nR1 x\n", plan_md="# Plan\n## Order of work\ny\n",
+                  spike_md="# Spike\n## U1\nmeasured\n", review_md="# Review\nRound 1\nF1 z\n",
+                  intent_md="# Intent\nnot a source\n")
+        self.unit(A, "0002_b", spike_md="# Spike\n## U1\nanother unit\n")
+        self.unit(B, "0001_a", spike_md="# Spike\n## U1\nanother workspace\n")
+        self.src = f"{A}/0001_a/plan.md ## Order of work"
+
+    def run_unit(self, sessions, unit: str = "0001_a") -> dict:
+        return asyncio.run(gather.gather_unit(str(self.data), self.journal, sessions, "m", A, unit,
+                                              str(REPOS[A]), self.said.append))
+
+    def test_a_unit_gather_reads_spec_plan_spike_and_review_of_that_unit_only(self):
+        s = Replies(reply(entry(1, self.src)))
+        self.assertEqual(self.run_unit(s)["outcome"], "saved")
+        [prompt] = s.prompts
+        for f in ("spec.md", "plan.md", "spike.md", "review.md"):
+            self.assertIn(f"### {A}/0001_a/{f} (measured 2026-09-25)", prompt)
+        for other in (f"{A}/0001_a/intent.md", f"{A}/0002_b/", f"{B}/0001_a/"):
+            self.assertNotIn(f"### {other}", prompt)
+        # The manifest now has that unit's sources, so a `new` at a terminal does not send them again.
+        self.assertEqual(sorted(self.manifest()), [f"{A}/0001_a/{f}" for f in ("plan.md", "review.md", "spec.md", "spike.md")])
+
+    def test_a_unit_gather_writes_exactly_one_knowledge_record(self):
+        s = Replies(reply(entry(1, self.src)))
+        record = self.run_unit(s)
+        [row] = self.rows()
+        self.assertEqual({k: row[k] for k in record}, record)
+        self.assertEqual((row["mode"], row["unit"], row["workspace"], row["outcome"]), ("unit", "0001_a", A, "saved"))
+        self.assertNotIn("reason", row)
+        self.assertEqual(row["cost_usd"], 0.25)
+        self.assertEqual([(x["batch"], x["attempt"], x["outcome"], x["session_id"], x["cost_usd"]) for x in row["sessions"]],
+                         [(1, 1, "done", "s1", 0.25)])
+        sha = admit._git(str(REPOS[A]), "rev-parse", "origin/main").strip()
+        self.assertEqual(row["origin_main"], {A: sha})
+        health = json.loads((self.dir / knowledge.HEALTH).read_text())
+        self.assertEqual((health["sha"], health["entries"]), ({A: sha}, {"K1": ""}))
+
+    def test_a_unit_gather_that_fails_its_second_batch_leaves_the_store_byte_for_byte(self):
+        # `spike.md ## U1`: a unit's sources can take two batches. Over `BATCH_BYTES`, the spec
+        # is a batch of its own.
+        self.unit(A, "0001_a", spec_md="# Spec\n## Requirements\n" + "x" * gather.BATCH_BYTES + "\n")
+        before = knowledge.render({"version": 4, "gathered": "t", "max_id": 7},
+                                  knowledge.parse(entry(7, f"{B}/0001_a/spike.md ## U1"))["entries"])
+        knowledge.save(self.dir / knowledge.STORE, before)
+        refused = reply(entry(1, self.src))  # K1 is not above Max id K7
+        s = Replies(reply(entry(7, f"{B}/0001_a/spike.md ## U1") + "\n\n" + entry(8, self.src)),
+                    refused, refused, refused)
+        record = self.run_unit(s)
+        self.assertEqual(len(s.prompts), 4)
+        self.assertEqual(record["outcome"], "failed")
+        self.assertIn("K1 is new but not above", record["reason"])
+        self.assertEqual(self.store(), before)
+        self.assertEqual(self.manifest(), {})
+        self.assertFalse((self.dir / knowledge.HEALTH).exists())
+        self.assertEqual(len(self.rows()), 1)
+        self.assertEqual(self.rows()[0]["dropped"], [])
+
+    def test_a_one_batch_unit_is_not_repaired_and_its_one_record_says_why(self):
+        # Plan Risk 5: after one session, one more could pass the ceiling of one batch.
+        s = Replies(reply(entry(1, f"{A}/0009_x/spike.md ## U1")), reply(entry(1, self.src)))
+        record = self.run_unit(s)
+        self.assertEqual((record["outcome"], len(s.prompts), len(self.rows())), ("failed", 1, 1))
+        self.assertIn("no further session opened", record["reason"])
+        self.assertIn("0009_x", record["reason"])
+        self.assertEqual([x["outcome"] for x in record["sessions"]], ["failed"])
+
+    def test_a_failed_fetch_stops_the_gather_before_any_session(self):
+        s = Replies(reply(entry(1, self.src)))
+        with failing_fetch():
+            record = self.run_unit(s)
+        self.assertEqual((record["outcome"], s.prompts, self.store()), ("refused", [], ""))
+        self.assertIn("could not read from remote repository", record["reason"])
+        self.assertEqual(len(self.rows()), 1)
+        # At a terminal the same: `1`, and nothing opened.
+        with failing_fetch():
+            self.assertEqual(self.run_gather(s, "new"), 1)
+        self.assertEqual(s.prompts, [])
+
+    def test_a_second_gather_waits_for_the_lock_instead_of_being_refused(self):
+        s = Replies(reply(entry(1, self.src)))
+
+        async def go():
+            held = gather._Lock(self.dir).__enter__()
+            task = asyncio.create_task(gather.gather_unit(
+                str(self.data), self.journal, s, "m", A, "0001_a", str(REPOS[A]), self.said.append))
+            await asyncio.sleep(0.1)
+            waited = (task.done(), list(s.prompts))
+            held.__exit__()
+            return waited, await task
+
+        with mock.patch.object(gather, "LOCK_POLL", 0.01):
+            waited, record = asyncio.run(go())
+        self.assertEqual(waited, (False, []))
+        self.assertEqual(record["outcome"], "saved")
+
+    def test_a_unit_gather_is_refused_while_an_all_is_unfinished(self):
+        gather.save_progress(self.dir / gather.PROGRESS, {"started": "t", "done": {}, "rebuilt_recorded": True})
+        s = Replies(reply(entry(1, self.src)))
+        record = self.run_unit(s)
+        self.assertEqual((record["outcome"], s.prompts), ("refused", []))
+        self.assertIn(str(self.dir / gather.PROGRESS), record["reason"])
+
+    def test_a_unit_with_no_source_is_unchanged_and_spends_nothing(self):
+        s = Replies()
+        record = self.run_unit(s, "0009_none")
+        self.assertEqual((record["outcome"], record["cost_usd"], s.prompts), ("unchanged", 0.0, []))
 
 
 if __name__ == "__main__":

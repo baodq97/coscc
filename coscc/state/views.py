@@ -26,6 +26,8 @@ NAVIGATION = (
     ("activity", "Activity & usage", "chart-no-axes-combined"),
     # `0093` R1.
     ("cost", "Cost", "circle-dollar-sign"),
+    # `0131` R24.
+    ("knowledge", "Knowledge", "book-open"),
     ("settings", "Settings", "settings-2"),
 )
 
