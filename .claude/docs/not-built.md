@@ -15,6 +15,11 @@ Read this before adding a route, a button or a grant, and before copying this ha
   an agent's claim confirmed by another agent, not proof that the finding could not be
   fixed. Anyone copying this template should make that trade on purpose rather than
   inherit it.
+- **A release is not an approval, and nothing starts one** (`0046`). Two presses on the
+  board, *Prepare* and *Merge and tag*; no board read, timer, green check or finished step
+  presses either, and the autopilot never does. They are the app's own first commit, push
+  and tag, under this machine's `gh` login, for whoever holds the password or a live
+  session; no ruleset protects the tag (`.claude/rules/coscc-release.md`).
 - **Hooks.** Every gate is advisory: nothing forces a session to run `cos.mjs`, or to stop
   when it exits non-zero. A `PreToolUse` hook blocking `Write` while `plan.md` is `draft`
   would be one file. The same holds for the merge: in the app, the `pr` grant refuses the

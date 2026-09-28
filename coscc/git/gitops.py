@@ -838,19 +838,15 @@ async def push_branch(tree: Path, expected: Path, branch: str, timeout: float = 
         ["git", "-C", str(tree), "push", "--", "origin", f"refs/heads/{branch}:refs/heads/{branch}"], timeout)
 
 
-async def tag_commit(tree: Path, expected: Path, tag: str, sha: str, timeout: float = BRANCH_TIMEOUT) -> str:
-    """A lightweight tag on a full SHA (spec, Design: `check-version` reads it on `HEAD`)."""
+async def push_tag(tree: Path, expected: Path, tag: str, sha: str, timeout: float = FETCH_TIMEOUT) -> str:
+    """`push origin <sha>:refs/tags/<tag>`: a lightweight tag made on the remote, the push that
+    builds the release (R10.4, R10.5). No local tag first, so a refused push leaves none
+    behind to hide the release that still needs one; a fetch brings it back. No force, so a
+    tag already there is refused."""
     _release_tree(tree, expected)
     _release_tag(tag)
     _require_shas(sha)
-    return await _run(["git", "-C", str(tree), "tag", "--", tag, sha], timeout)
-
-
-async def push_tag(tree: Path, expected: Path, tag: str, timeout: float = FETCH_TIMEOUT) -> str:
-    """`push origin refs/tags/<tag>`, the push that builds the release (R10.5)."""
-    _release_tree(tree, expected)
-    _release_tag(tag)
-    return await _run(["git", "-C", str(tree), "push", "--", "origin", f"refs/tags/{tag}"], timeout)
+    return await _run(["git", "-C", str(tree), "push", "--", "origin", f"{sha}:refs/tags/{tag}"], timeout)
 
 
 async def detach_here(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOUT) -> str:

@@ -39,6 +39,8 @@ paths:
   - "coscc/state/answers.py"
   - "coscc/state/backlog.py"
   - "coscc/state/rerun.py"
+  - "coscc/state/release.py"
+  - "coscc/service/release.py"
   - "coscc/state/update.py"
   - "coscc/state/views.py"
   - "coscc/state/watch.py"

@@ -98,6 +98,7 @@ only from here.
 | scratch `COS_DATA_DIR`, `COSCC_PROTECTED_DB`; what a session loads of `~/.claude/` and the project | `.claude/rules/coscc-sessions.md` | editing `coscc/agent/sessions.py`, `coscc/agent/steps.py`, `coscc/agent/instructions.py`, or adding a rule |
 | a worktree per unit, `switch main`, fetches before a step; names from `main` in `impl`'s prompt | `.claude/rules/coscc-worktrees.md` | editing `coscc/git/worktrees.py`, `gitops.py`, `drift.py`, `fetches.py`, or `run_step`'s preparation |
 | `POST /api/units/integrate` force-pushes; `gh pr list` per board read and per `pr` step | `.claude/rules/coscc-integrate.md` | editing `coscc/github/integrate.py`, the `integrate` or `pr` grant, or the board's integration read |
+| `POST /api/release/*` commits, pushes, merges and tags; what a board read with a release costs | `.claude/rules/coscc-release.md` | editing `coscc/github/release.py`, `coscc/service/release.py`, the release routes or the release gitops |
 | `POST /api/units/review-comment` posts; a `pr` step rewrites its pull request | `.claude/rules/coscc-github.md` | editing `coscc/github/prcomment.py`, `coscc/github/prsync.py`, `/review-comment`, or `_sync_pr` |
 | `POST /api/update/*` stops work and restarts | `.claude/rules/coscc-update.md` | editing `coscc/update/__init__.py`, `coscc/update/updater.py`, `scripts/build_wheel.sh`, `/api/update/*` |
 | `GET /api/board/events` hands out everything a step saw | `.claude/rules/coscc-events.md` | editing `coscc/runlog/events.py`, `/api/board/events`, `/follow`, or the watch pane |

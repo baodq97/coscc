@@ -842,11 +842,13 @@ class Releasing(unittest.TestCase):
         self.assertEqual(self.git(self.remote, "rev-parse", "refs/heads/chore/release-0-2-0"), head)
         run(gitops.detach_here(self.tree, self.tree))
         self.assertEqual(run(gitops.current_branch(self.tree)), "")
-        run(gitops.tag_commit(self.tree, self.tree, "v0.2.0", head))
         self.assertFalse(run(gitops.remote_has_tag(self.tree, "v0.2.0")))
-        run(gitops.push_tag(self.tree, self.tree, "v0.2.0"))
+        run(gitops.push_tag(self.tree, self.tree, "v0.2.0", head))
         self.assertTrue(run(gitops.remote_has_tag(self.tree, "v0.2.0")))
         self.assertEqual(self.git(self.remote, "rev-parse", "refs/tags/v0.2.0"), head)
+        self.assertEqual(self.git(self.repo, "tag", "--list", "v0.2.0"), "")
+        with self.assertRaises(GitError):
+            run(gitops.push_tag(self.tree, self.tree, "v0.2.0", self.main))
         run(gitops.fetch_with_tags(self.repo))
         self.assertEqual(run(gitops.release_tags(self.repo, head)), ["v0.2.0"])
         self.assertEqual(run(gitops.show_file(self.repo, head, "uv.lock")), 'version = "0.2.0"')
@@ -858,7 +860,7 @@ class Releasing(unittest.TestCase):
                 run(gitops.push_branch(self.tree, self.tree, name))
         for tag in ("v1.2.3-rc.1", "1.2.3", "-d"):
             with self.subTest(tag=tag), self.assertRaises(GitError):
-                run(gitops.push_tag(self.tree, self.tree, tag))
+                run(gitops.push_tag(self.tree, self.tree, tag, self.main))
         with self.assertRaises(GitError):
             run(gitops.show_file(self.repo, self.main, "README.md"))
 
@@ -867,7 +869,7 @@ class Releasing(unittest.TestCase):
         with self.assertRaises(GitError):
             run(gitops.commit_files(self.repo, self.tree, "x"))
         with self.assertRaises(GitError):
-            run(gitops.tag_commit(self.repo, self.tree, "v0.2.0", self.main))
+            run(gitops.push_tag(self.repo, self.tree, "v0.2.0", self.main))
         with self.assertRaises(GitError):
             run(gitops.release_tree_remove(self.repo, self.repo, self.tree))
         # Detached at `main`, not on a release branch: no commit.

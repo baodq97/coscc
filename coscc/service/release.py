@@ -53,7 +53,7 @@ class ReleaseMixin:
         Reads only, against the `origin/main` and tags the last fetch brought. A block whose
         `state` is `unknown` or `nothing` carries only its reason."""
         if not (root / release.SCRIPT).is_file():
-            return _empty_block("unknown", f"this workspace has no {release.SCRIPT.as_posix()}")
+            return _empty_block("unknown", "this workspace has no cos.mjs, so it is not released from here")
         try:
             origin = await gitops.rev_parse(root, "refs/remotes/origin/main")
             tags = await gitops.release_tags(root, origin)
@@ -328,11 +328,12 @@ class ReleaseMixin:
             code, said = await release.cos(tree, "check-version")
             if code != 0 or (said.split() or [""])[0] != version:
                 raise release.ReleaseError(f"check-version at {sha[:7]} printed {said!r}, not {version}")
-            await gitops.tag_commit(tree, tree, tag, sha)
-            await gitops.push_tag(tree, tree, tag)
+            await gitops.push_tag(tree, tree, tag, sha)
             rec = write("tagged", **merged)
             try:
                 await self._release_tree_gone(root, tree)
+                # The tag was made on the remote only; the board reads local tags.
+                await gitops.fetch_with_tags(root)
             except GitError:
                 pass
             yield ("done", {"release": rec})

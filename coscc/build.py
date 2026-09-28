@@ -69,6 +69,7 @@ _SOURCES = (
     "coscc/state/backlog.py",
     "coscc/state/rerun.py",
     "coscc/state/ideas.py",
+    "coscc/state/release.py",
     "rxconfig.py",
 )
 
