@@ -220,6 +220,21 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual(steps_seen, [])
         self.assert_failed("moved on after the update paused it")
 
+    def test_a_unit_already_held_writes_a_failed_resume_row(self):
+        # Review round 1, F4: the `resume` row says what happened, not what was about to.
+        steps_seen = self.taken()
+        self.paused()
+        self.service._take(self.key, self.unit, "integrate")
+        [said] = self.up()
+        self.assertEqual(steps_seen, [])
+        self.assertEqual(said["result"], "failed")
+        [row] = self.journal.records(self.key, kind="resume")
+        self.assertEqual(row["result"], "failed")
+        self.assertEqual(row["detail"], said["detail"])
+        self.assertTrue(row["detail"])
+        [end] = self.ends()
+        self.assertEqual(end["outcome"], "failed")
+
     def test_a_row_failing_in_the_same_pass_is_not_the_unit_moving_on(self):
         steps_seen = self.taken()
         got: list[dict] = []

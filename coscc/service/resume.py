@@ -144,6 +144,15 @@ class ResumeMixin:
             if not problem and kind not in KINDS:
                 problem = f"no owner takes up a session of kind {kind!r}"
             problem = problem or gone[id(row)]
+            if not problem and kind in STEP_KINDS + ("integrate",):
+                # Review round 1, F4: what the claim would refuse, asked before the `resume` row
+                # so that row says what happened. Nothing awaits from here to the claim.
+                key, unit = str(owner.get("workspace") or ""), str(owner.get("unit") or "")
+                held = self.steps.get(key, unit)
+                problem = self._busy(key, unit) or (
+                    steps_mod.describe(unit, steps_mod.Mark("step", held.stage, "running", held.started_at))
+                    if held is not None else ""
+                )
             try:
                 journal.resumed(
                     str(row.get("workspace") or ""), str(row.get("unit") or ""), str(row.get("stage") or ""),
