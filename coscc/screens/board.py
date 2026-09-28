@@ -1,5 +1,5 @@
 """The Board screen: its lanes and cards, starting a unit, what is running, the update panel
-and the autopilot strip.
+and the guide panel.
 Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
 """
 
@@ -9,7 +9,7 @@ import reflex as rx
 
 from coscc.web import studio as s
 from coscc.service import CONSEQUENCE
-from coscc.state import AutopilotStop, Card
+from coscc.state import Card, GuideItem
 from coscc.screens.common import P, _MONO, _RUNIC, _details
 from coscc.screens.overview import _empty_board
 
@@ -383,18 +383,37 @@ _RECONNECT_JS = """
 """
 
 
-def _autopilot_stop_row(stop: rx.Var[AutopilotStop]) -> rx.Component:
-    return rx.flex(
-        s.badge(stop.unit, "iris"),
-        s.badge(stop.kind, "amber"),
-        s.text(stop.reason, size="1", min_width="0", overflow_wrap="anywhere"),
-        gap="8px", align="center", wrap="wrap", width="100%", data_testid="autopilot-stop",
+def _guide_row(item: rx.Var[GuideItem], testid: str) -> rx.Component:
+    """One line of a guide list: the unit, what it is, and the line below it."""
+    return rx.el.li(
+        rx.flex(
+            rx.cond(item.unit != "", s.badge(item.unit, "iris")),
+            rx.cond(item.href != "",
+                    rx.link(item.what, href=item.href, size="2", overflow_wrap="anywhere"),
+                    s.text(item.what, size="2", overflow_wrap="anywhere")),
+            gap="8px", align="center", wrap="wrap", width="100%",
+        ),
+        rx.cond(item.detail != "", s.text(item.detail, size="1", min_width="0", overflow_wrap="anywhere")),
+        data_testid=testid, style={"listStyle": "none", "padding": "4px 0"},
     )
 
 
-def _autopilot_strip() -> rx.Component:
-    """`0043` R9. Shown while the autopilot is on: the cap line, and one row per stop behind
-    their count."""
+def _guide_list(title: str, items, empty: str, testid: str) -> rx.Component:
+    return rx.vstack(
+        s.eyebrow(title),
+        rx.cond(
+            items.length() > 0,
+            rx.el.ul(rx.foreach(items, lambda i: _guide_row(i, testid)),
+                     style={"margin": "0", "padding": "0", "width": "100%"}),
+            s.text(empty, size="1"),
+        ),
+        spacing="1", width="100%", align="start",
+    )
+
+
+def _guide_panel() -> rx.Component:
+    """`0101` R10, in place of `0043`'s strip: what runs, what needs you and what Jera decided,
+    under the day's cap line. Off, one sentence and the way to Settings."""
     return rx.cond(
         P.autopilot_on,
         rx.vstack(
@@ -406,19 +425,29 @@ def _autopilot_strip() -> rx.Component:
                 width="100%", align="center", wrap="wrap",
             ),
             rx.cond(P.autopilot_refused != "", s.text(P.autopilot_refused, size="1")),
-            # `0133` R11: the stops in a closed part, so the strip does not push the lanes down.
-            rx.cond(
-                P.autopilot_stops.length() > 0,
-                rx.el.details(
-                    rx.el.summary(s.text(P.autopilot_stops.length().to_string() + " stops",
-                                         size="1", as_="span"), cursor="pointer"),
-                    rx.vstack(rx.foreach(P.autopilot_stops, _autopilot_stop_row),
-                              spacing="2", margin_top="8px", width="100%"),
-                    id="autopilot-stops", width="100%",
+            # `0133` R11: the lists in a closed part, so the panel does not push the lanes down.
+            rx.el.details(
+                rx.el.summary(s.text(
+                    P.guide_running.length().to_string() + " running · "
+                    + P.guide_needs_you.length().to_string()
+                    + rx.cond(P.guide_needs_you.length() == 1, " needs you · ", " need you · ")
+                    + P.guide_decided.length().to_string() + " decided for you",
+                    size="1", as_="span"), cursor="pointer"),
+                rx.grid(
+                    _guide_list("RUNNING", P.guide_running, "Nothing is running.", "guide-running"),
+                    _guide_list("NEEDS YOU", P.guide_needs_you, "Nothing waits for you.", "guide-needs-you"),
+                    _guide_list("DECIDED FOR YOU", P.guide_decided, "Jera decided nothing in the last seven days.", "guide-decided"),
+                    columns=rx.breakpoints(initial="1", md="3"), gap="16px", width="100%", margin_top="8px",
                 ),
+                id="guide-lists", width="100%",
             ),
             padding="12px 16px", background=rx.color("iris", 3), border_radius="10px",
-            spacing="2", width="100%", role="status", id="autopilot-strip",
+            spacing="3", width="100%", role="status", id="guide-panel",
+        ),
+        rx.flex(
+            s.text("The autopilot is off, so nothing starts on its own.", size="1"),
+            rx.link("Settings", href=P.settings_href, size="1"),
+            gap="8px", align="center", wrap="wrap", width="100%", id="guide-panel",
         ),
     )
 
@@ -501,7 +530,7 @@ def _focus(target: str):
 
 
 def _board() -> rx.Component:
-    """`0133` Design: the toolbar, the autopilot strip, the lanes, the folded groups, what is
+    """`0133` Design: the toolbar, the guide panel (`0101`), the lanes, the folded groups, what is
     running, the release panel (`0046`), and the two forms last, so nothing above the lanes
     pushes them down (R10)."""
     return rx.vstack(
@@ -542,7 +571,7 @@ def _board() -> rx.Component:
                 size="1", variant="ghost")),
             width="100%", align="center", gap="12px", wrap="wrap",
         ),
-        _autopilot_strip(),
+        rx.cond(P.has_workspace, _guide_panel(), rx.fragment()),
         rx.box(rx.cond(
             P.cards.length() == 0,
             _empty_board(),

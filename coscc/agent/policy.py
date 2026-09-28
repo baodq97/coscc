@@ -220,9 +220,11 @@ ESTIMATE_WARNING = (
 # `0044`. Said wherever *Ask Jera* is explained in full; the page keeps one sentence
 # (`service.CONSEQUENCE["precedent"]`).
 PRECEDENT_WARNING = (
-    "Asking Jera opens one paid session (1 turn, $1.00 ceiling) on the model of the Settings "
-    "row `precedent`. What it answers is an agent's inference from precedent, and every later "
-    "stage reads it as decided. Whoever holds the password or a live session can press it."
+    "Asking Jera opens one paid session (1 turn, a ceiling from $1.00 to $3.00, set by the "
+    "length of its prompt) on the model of the Settings row `precedent`. What it answers is an "
+    "agent's inference from precedent or from a best practice it names, and every later stage "
+    "reads it as decided. Whoever holds the password or a live session can press it, and the "
+    "autopilot opens it with nobody pressing anything."
 )
 
 # Only stages that appear here get anything. The rest — `idea`, `intent`, and any
@@ -376,10 +378,11 @@ GRANTS: dict[str, Grant] = {
         max_budget_usd=2.0,
         warning=ESTIMATE_WARNING,
     ),
-    # `0044`. Jera, not a stage either: *Ask Jera* on a unit's Questions tab, one session per
-    # press. No tools, no commands, one turn; the app reads the reply and writes what survives
-    # its filter (`coscc/agent/precedent.py`). $1.00 is chosen, not measured (`spec.md` C7): nobody
-    # has measured a prompt carrying every answer of a workspace.
+    # `0044`. Jera, not a stage either: *Ask Jera* on a unit's Questions tab, or the autopilot
+    # (`0101` R1), one session each. No tools, no commands, one turn; the app reads the reply
+    # and writes what survives its filter (`coscc/agent/precedent.py`). Since `0101` R5 the
+    # $1.00 here is only the floor: each session runs on `precedent.grant_for_prompt`, whose
+    # ceiling grows with the prompt up to `PRECEDENT_MAX_USD`.
     "precedent": Grant(
         max_turns=1,
         max_budget_usd=1.0,

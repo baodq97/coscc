@@ -35,7 +35,7 @@ NAMES = {
         "backlog_view", "cost_note", "events_mod", "rx",
     ),
     "screens": (
-        "_activity", "_autopilot_settings", "_autopilot_strip", "_backlog_screen", "_banners",
+        "_activity", "_autopilot_settings", "_backlog_screen", "_banners", "_guide_panel",
         "_board", "_detail_dialog", "_empty_board", "_integration_panel", "_outcome_panel",
         "_overview", "_questions_tab", "_sessions", "_settings", "_unit_card",
         "_workspaces_screen", "index",

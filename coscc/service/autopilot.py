@@ -11,7 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from coscc.units import autopilot, backlog
+from coscc.units import autopilot, backlog, guide
+from coscc.agent import precedent
 from coscc.git import fetches
 from coscc.github import integrate
 from coscc.git.gitops import GitError
@@ -177,7 +178,9 @@ class AutopilotMixin:
                 return
             data = await self.board(cwd)
             try:
-                records = journal.records(kinds=("start", "end", "integration", "shortlist", "answer", "screens"))
+                records = journal.records(
+                    kinds=("start", "end", "integration", "shortlist", "answer", "screens", "precedent"),
+                )
             except Busy as e:
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
                 return
@@ -300,6 +303,24 @@ class AutopilotMixin:
                         )
                     else:
                         stage, rerun = nxt["rerun"], True
+                # `0101` R1, R2, R5: open questions Jera was not asked are its to try first, at
+                # the ceiling of the prompt it will be given (C13). After the integrate branch,
+                # which never takes a stop `a`, and `0106`'s, which never makes one.
+                need = None
+                if stop is not None and stop["kind"] == "a":
+                    unasked = autopilot.unasked(u, records, key)
+                    if here.get(name) == autopilot.JERA:
+                        # Its `start` already counts the questions as asked; no stop yet.
+                        stop, stage = None, ""
+                    elif not unasked:
+                        stop = autopilot.waiting_for_you(autopilot.open_questions(u))
+                    else:
+                        _, _, prompt = self._precedent_prompt(data["units"], u, name, unasked)
+                        need = precedent.ceiling(len(prompt))
+                        if need > precedent.PRECEDENT_MAX_USD:
+                            stop = {"kind": "a", "reason": autopilot.STORE_PAST_CEILING}
+                        else:
+                            stop, stage = None, autopilot.JERA
                 if stop is not None and unfetched is not None and name in at_ship:
                     note = integrate.origin_note(str(info.get("origin_sha") or ""), unfetched)
                     stop = {**stop, "reason": f"{stop['reason']}; {note}"}
@@ -316,7 +337,8 @@ class AutopilotMixin:
                 # `integrate`, which skipped nothing.
                 skipped = stage == "ship" and autopilot.skips_exhausted(nxt, last.get(name), recorded)
                 candidates.append({
-                    "unit": name, "stage": stage, "files": files, "need": autopilot.reservation(stage), "rank": rank,
+                    "unit": name, "stage": stage, "files": files, "rank": rank,
+                    "need": need if stage == autopilot.JERA else autopilot.reservation(stage),
                     "rerun": rerun,
                     "past_exhausted": {"at": last[name].get("at")} if skipped else None,
                 })
@@ -375,19 +397,23 @@ class AutopilotMixin:
                 self._autopilot_runs.setdefault(key, {})[c["unit"]] = (c["stage"], task)
 
     async def _autopilot_launch(self, key: str, cwd: str, unit: str, stage: str) -> None:
-        """Start one step or integration and read it to its end, since no client will.
+        """Start one step, integration or Jera session (`0101` R1) and read it to its end,
+        since no client will.
 
         A refusal is a stop line with the gate's words (R6 f) — unless it is CI still
         running, or the unit taken by someone else in the meantime, which are not stops.
         """
-        stream = (
-            self.integrate(cwd, unit, started_by="autopilot") if stage == "integrate"
-            else self.run_step(cwd, unit, stage, started_by="autopilot")
-        )
         try:
             # R1: turned off between the pass and this task's first turn.
             if not self._autopilot_on(key):
                 return
+            if stage == autopilot.JERA:
+                await self.precedent(cwd, unit, started_by="autopilot")
+                return
+            stream = (
+                self.integrate(cwd, unit, started_by="autopilot") if stage == "integrate"
+                else self.run_step(cwd, unit, stage, started_by="autopilot")
+            )
             async for _ in stream:
                 pass
         except asyncio.CancelledError:
@@ -422,3 +448,20 @@ class AutopilotMixin:
             key=lambda s: (autopilot.unit_number(s["unit"]), s["unit"]),
         )
         return block
+
+    def _guide_block(self, key: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        """`0101` R10. The board's guide: `{on, running, needs_you, decided}`, or `{on: False}`
+        alone while the autopilot is off. `rows` are the run-log rows the board already read;
+        what runs is read from memory. Display only; decides nothing."""
+        if not self._autopilot_values(key)["autopilot"]:
+            return {"on": False}
+        stops = sorted(
+            (self._autopilot_stops.get(key) or {}).values(),
+            key=lambda s: (autopilot.unit_number(s["unit"]), s["unit"]),
+        )
+        return {
+            "on": True,
+            "running": guide.running(self._running_here(key, self._agent_overrides()[0])),
+            "needs_you": guide.needs_you(stops),
+            "decided": guide.decided(rows, datetime.now().astimezone()),
+        }

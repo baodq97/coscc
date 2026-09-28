@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from coscc.units import backlog
+from coscc.units import autopilot, backlog
 from coscc.units import board as board_reader
 from coscc.git import fetches, gitops
 from coscc.units import hold as hold_rules
@@ -252,19 +252,45 @@ class BacklogMixin:
             self._running.pop(rid, None)
             self.updater.job_ended()
 
-    async def precedent(self, cwd: str, unit: str) -> dict[str, Any]:
+    def _precedent_prompt(
+        self, data_units: list[dict[str, Any]], found: dict[str, Any], unit: str,
+        only: list[dict[str, Any]] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, str]], str]:
+        """`0101` R5, R8. `(questions, store, prompt)` for Jera on `found`, the one place its
+        prompt is built: `precedent` runs it, and the autopilot's pass prices it (C13).
+
+        `only`: the questions to ask, `[{artifact, n}]`; every one Jera may be given when
+        `None`. The rules are Settings' `decision_rules`, or `DEFAULT_RULES` while it is empty.
+        Pure but for reading the preferences.
+        """
+        questions = precedent_mod.asked(found)
+        if only is not None:
+            wanted = {(str(q["artifact"]), q["n"]) for q in only}
+            questions = [q for q in questions if (q["artifact"], q["n"]) in wanted]
+        prefs = self.preferences()
+        store = precedent_mod.entries(data_units, str(prefs.get("decision_preferences") or ""), {unit})
+        rules = str(prefs.get("decision_rules") or "").strip() or precedent_mod.DEFAULT_RULES
+        return questions, store, precedent_mod.build_prompt(questions, store, rules)
+
+    async def precedent(self, cwd: str, unit: str, started_by: str = "person") -> dict[str, Any]:
         """`0044`. Jera answers this unit's open questions from precedent: one paid session.
 
-        Started only by a person's press (`POST /api/units/precedent`, *Ask Jera*) — nothing
-        else in the app calls this (R1). Holds the unit like a step (`_take`), so Jera, a
-        step, an integration and a hold of one unit exclude each other in this process; a
-        session at a terminal is not excluded (`spec.md` C6).
+        Started by a person's press (`POST /api/units/precedent`, *Ask Jera*), which asks
+        every open question, or since `0101` R1 by the autopilot's pass (`started_by`
+        `autopilot`), which asks only those `autopilot.unasked` names (R2). Holds the unit like
+        a step (`_take`), so Jera, a step, an integration and a hold of one unit exclude each
+        other in this process; a session at a terminal is not excluded (`spec.md` C6).
 
-        Writes a `start` and an `end` (stage `precedent`, the unit's own), one `precedent`
-        row per question (R9, R12), and each `answer` that survives `precedent.verdicts`
-        through `_append_answers` as `Jera`, `Via: precedent`, `actor = agent:Jera` (R7). A
+        Its ceiling is its prompt's (`precedent.grant_for_prompt`, `0101` R5); past
+        `PRECEDENT_MAX_USD` it is refused before a `start` is written, so nothing opens.
+
+        Writes a `start` and an `end` (stage `precedent`, the unit's own), the `start` with
+        who started it, its ceiling and the questions it `asked`; one `precedent` row per
+        question (R9, R12), and each `answer` that survives `precedent.verdicts` through
+        `_append_answers` as `Jera`, `Via: precedent`, `actor = agent:Jera` (R7). A
         `needs-person` verdict writes no byte of any artifact. A reply that cannot be read
-        writes nothing either, and its tail is kept in the `end` row (R13).
+        writes nothing either, and its tail is kept in the `end` row (R13). When it is over,
+        the autopilot is woken (`0101` R4).
         """
         self._workspace_or_refuse(cwd)
         self._refuse_while_updating()
@@ -283,23 +309,34 @@ class BacklogMixin:
             found = next((u for u in data["units"] if u["name"] == unit), None)
             if found is None:
                 raise Invalid(f"no such work unit in this workspace: {unit}")
-            questions = precedent_mod.asked(found)
+            only = None
+            if started_by == "autopilot":
+                try:
+                    only = autopilot.unasked(found, journal.records(key, unit, kinds=("start", "end", "precedent")), key)
+                except Busy as e:
+                    raise Invalid(str(e)) from e
+            questions, store, prompt = self._precedent_prompt(data["units"], found, unit, only)
             if not questions:
-                raise Invalid(f"{unit} has no open question Jera may answer")
-            prefs = str(self.preferences().get("decision_preferences") or "")
-            store = precedent_mod.entries(data["units"], prefs, {unit})
-            prompt = precedent_mod.build_prompt(questions, store)
-            grant = grant_for("precedent")
+                raise Invalid(f"{unit} has no open question Jera may answer"
+                              + (" that it was not asked already" if only is not None else ""))
+            grant = precedent_mod.grant_for_prompt(grant_for("precedent"), prompt)
+            if grant.max_budget_usd > precedent_mod.PRECEDENT_MAX_USD:
+                raise Invalid(
+                    f"the precedent store is past a Jera session's ceiling: this prompt would need "
+                    f"{grant.max_budget_usd:.2f} USD, and one session may cost "
+                    f"{precedent_mod.PRECEDENT_MAX_USD:.2f}"
+                )
             defaults, _ = models.load_defaults()
             model, model_source, effort, effort_source = models.resolve(
                 models.PRECEDENT, None, self._model_overrides()[0], self._effort_overrides()[0], defaults,
                 self.config.model,
             )
             try:
-                journal.started(key, unit, "precedent", "manual", prompt_chars=len(prompt), granted=[],
-                                max_turns=grant.max_turns, model=model, model_source=model_source,
+                journal.started(key, unit, "precedent", "manual", started_by=started_by,
+                                prompt_chars=len(prompt), granted=[], max_turns=grant.max_turns,
+                                max_budget_usd=grant.max_budget_usd, model=model, model_source=model_source,
                                 effort=effort, effort_source=effort_source, questions=len(questions),
-                                entries=len(store))
+                                entries=len(store), asked=[[q["artifact"], q["n"]] for q in questions])
                 started = True
             except (BadRecord, Busy):
                 pass
@@ -360,6 +397,8 @@ class BacklogMixin:
             self._release(key, unit, mark)
             self._running.pop(rid, None)
             self.updater.job_ended()
+            # `0101` R4: what Jera wrote may let the unit move on; nothing happens while off.
+            self._autopilot_nudge(key)
 
     async def start_branch(self, cwd: str, unit: str) -> dict[str, Any]:
         """`0014` R4. Cut this unit's branch in the workspace and switch to it.

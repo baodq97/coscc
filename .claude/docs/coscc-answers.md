@@ -20,12 +20,14 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/
   when its block exists. A stranger's answer plus one agent's round is part of what opens
   a merge.
 - **`POST /api/units/precedent` puts an agent's words into a paid prompt as decided.** Since
-  `0044` it opens one paid session (Jera, grant `precedent`: no tools, one turn, $1.00
-  chosen, not measured) and appends each answer that survives `precedent.verdicts` through
-  `Service._append_answers`, the same path as a person's, headed `Answered by: Jera. …
-  Via: precedent.`. Whoever holds the password or a live session can press it, as often as
-  they like: `_take` stops only a second run on the same unit. What stands between Jera
-  and a later stage is the app's filter, and it cannot see everything:
+  `0044` it opens one paid session (Jera, grant `precedent`: no tools, one turn, a ceiling
+  from $1.00 to $3.00 set by the prompt's length since `0101`) and appends each answer that
+  survives `precedent.verdicts` through `Service._append_answers`, the same path as a
+  person's, headed `Answered by: Jera. … Via: precedent.`. Whoever holds the password or a
+  live session can press it, as often as they like: `_take` stops only a second run on the
+  same unit. Since `0101` the autopilot's pass opens it too, once per question
+  (`.claude/docs/not-built.md`). What stands between Jera and a later stage is the app's
+  filter, and it cannot see everything:
   - The category is Jera's word (0044 spec C2). A question about permissions
     that Jera files as `other` is answered and written.
   - The store is every answer in force in the workspace, Leif's included (C3), and the
@@ -38,16 +40,20 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/
     renumbers `## Open questions` while Jera runs leaves its `### Câu N` on the wrong
     question, and nothing says so (C6, the same window as below). `_take` keeps a step of
     the same unit out in this process only.
-  - The whole store goes into one prompt, never cut; a store past the $1.00 ceiling is a
-    failed `end` row with the money spent and nothing written (C7).
+  - The whole store goes into one prompt, never cut. A prompt whose ceiling would pass
+    $3.00 (`precedent.PRECEDENT_MAX_USD`) opens no session and is refused as `Invalid`; one
+    under it that still runs out is a failed `end` row with the money spent and nothing
+    written (`0101` C5).
+  - `practice`, cited on a question of category `other`, stands for a best practice Jera
+    names in the answer; nothing checks that it is one (`0101` C2).
   - With the workspace's autopilot on and the unit on its shortlist, a Jera answer that
-    clears the last open question lets the autopilot's next pass, at most
-    `autopilot.POLL_SECONDS` (300 s) later, start the next stage on it unpressed — or,
-    when the artifact is a `draft` of `intent`, `spec`, `spike` or `plan`, run that stage
-    again (`0106`).
-    `precedent` does not call `_autopilot_nudge`, which only delays that. The autopilot
+    clears the last open question lets the pass `precedent` wakes (`_autopilot_nudge`,
+    since `0101`) start the next stage on it unpressed — or, when the artifact is a `draft`
+    of `intent`, `spec`, `spike` or `plan`, run that stage again (`0106`). The autopilot
     reads past Jera's own `start`/`end` rows (`autopilot.is_step`), so a Jera run neither
     lifts nor sets the stop on a failed step.
+  - *Use this proposal* on the Questions tab (`0101` R9) only puts Jera's proposal in the
+    question's box; a person still presses *Send this answer*, and the block is `owner`'s.
 - **Re-running a prose stage keeps `## Answers` byte for byte; a reply's own attempt at
   one is dropped, silently.** Since `0025` the runner (`coscc/runner/prompt.py`: `answers_section`,
   `strip_answers`, `with_answers`) reads the section already on disk right before it

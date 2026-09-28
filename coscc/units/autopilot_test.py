@@ -512,6 +512,103 @@ class Measuring(unittest.TestCase):
         self.assertEqual(ap.measure(self.rows(), "w", "2000-01-01", "2000-01-02")["units"], [])
 
 
+class JeraOnTheAutopilot(unittest.TestCase):
+    """`0101` R2, R3, R11."""
+
+    def row(self):
+        return {
+            "name": "0010_a", "next": "write-plan",
+            "stages": [{"stage": "intent", "file": "intent.md"}, {"stage": "spec", "file": "spec.md"}],
+            "questions": [
+                {"artifact": "spec.md", "n": 1, "text": "a?", "answered": False, "counted": True},
+                {"artifact": "spec.md", "n": 2, "text": "b?", "answered": False, "counted": True},
+            ],
+        }
+
+    def r(self, kind, minutes, **kw):
+        return {"kind": kind, "workspace": "w", "unit": "0010_a", "at": at(timedelta(minutes=minutes)), **kw}
+
+    def test_a_question_with_a_precedent_row_after_its_stage_end_is_asked(self):
+        rows = [
+            self.r("end", 0, stage="spec", outcome="done"),
+            self.r("precedent", 1, artifact="spec.md", n=1, verdict="needs-person"),
+        ]
+        self.assertEqual(ap.unasked(self.row(), rows, "w"), [{"artifact": "spec.md", "n": 2}])
+        self.assertEqual(len(ap.unasked(self.row(), rows, "other")), 2, "another workspace's rows count for nothing")
+
+    def test_a_question_is_asked_again_only_after_its_stage_ran_again(self):
+        rows = [
+            self.r("precedent", 0, artifact="spec.md", n=1, verdict="needs-person"),
+            self.r("precedent", 0, artifact="spec.md", n=2, verdict="needs-person"),
+            self.r("end", 1, stage="intent", outcome="done"),
+            self.r("end", 2, stage="precedent", outcome="done"),
+        ]
+        self.assertEqual(ap.unasked(self.row(), rows, "w"), [], "another stage's end, and Jera's own, change nothing")
+        rows.append(self.r("end", 3, stage="spec", outcome="done"))
+        self.assertEqual(len(ap.unasked(self.row(), rows, "w")), 2)
+
+    def test_a_failed_jera_session_still_counts_its_questions_as_asked(self):
+        rows = [
+            self.r("end", 0, stage="spec", outcome="done"),
+            self.r("start", 1, stage="precedent", asked=[["spec.md", 1], ["spec.md", 2]]),
+            self.r("end", 2, stage="precedent", outcome="failed"),
+        ]
+        self.assertEqual(ap.unasked(self.row(), rows, "w"), [])
+
+    def test_review_questions_are_never_unasked(self):
+        row = self.row()
+        row["questions"] = [{"artifact": "review.md", "n": 1, "text": "?", "answered": False, "counted": True},
+                            {"artifact": "spec.md", "n": 3, "text": "?", "answered": True, "counted": True},
+                            {"artifact": "intent.md", "n": 1, "text": "?", "answered": False, "counted": False}]
+        self.assertEqual(ap.unasked(row, [], "w"), [])
+
+    def test_the_stop_names_how_many_wait(self):
+        said = ap.waiting_for_you([{"artifact": "spec.md", "n": 1}, {"artifact": "spec.md", "n": 2}])
+        self.assertEqual(said["kind"], "a")
+        self.assertIn("2 questions wait for you", said["reason"])
+        self.assertIn("spec.md question 2", said["reason"])
+
+    def test_jera_is_reserved_at_the_most_one_session_may_cost(self):
+        self.assertEqual(ap.reservation("precedent"), 3.0)
+        self.assertEqual(ap.estimate("precedent"), 3.0)
+
+    def test_an_open_jera_start_is_reserved_at_its_recorded_ceiling(self):
+        rows = [
+            {"kind": "start", "workspace": "w", "unit": "0010_a", "stage": "precedent", "at": at(), "max_budget_usd": 1.55},
+            {"kind": "start", "workspace": "w", "unit": "0011_b", "stage": "precedent", "at": at()},
+        ]
+        self.assertEqual(ap.reserved(rows, NOW), 1.55 + 3.0)
+
+    def test_measure_counts_questions_to_a_person_and_by_jera(self):
+        day = NOW.date().isoformat()
+        rows = [
+            self.r("start", 0, stage="precedent", started_by="autopilot"),
+            self.r("precedent", 1, artifact="spec.md", n=1, verdict="answer"),
+            self.r("precedent", 1, artifact="spec.md", n=2, verdict="needs-person"),
+            self.r("answer", 1, stage="spec", artifact="spec.md", question=1, via="precedent"),
+            self.r("end", 2, stage="precedent", outcome="done", cost_usd=1.2),
+            self.r("answer", 3, stage="spec", artifact="spec.md", question=2, via="product"),
+            self.r("precedent", 4, artifact="spec.md", n=1, verdict="needs-person"),
+            self.r("precedent", 5, artifact="spec.md", n=1, verdict="answer"),
+            self.r("end", 6, stage="precedent", outcome="failed"),
+        ]
+        [u] = ap.measure(rows, "w", day, day)["units"]
+        self.assertEqual((u["to_person"], u["by_jera"], u["jera_cost_usd"]), (2, 1, 1.2))
+        self.assertEqual((u["autopilot"], u["person"]), (0, 0), "Jera's starts are no step")
+
+    def test_measure_lists_a_jera_start_with_no_pick_before_it(self):
+        day = NOW.date().isoformat()
+        rows = [
+            self.r("autopilot-pick", 0, stage="precedent"),
+            self.r("start", 1, stage="precedent", started_by="autopilot"),
+            self.r("start", 2, stage="precedent"),
+            self.r("autopilot-pick", 3, stage="spec"),
+            self.r("start", 4, stage="precedent", started_by="autopilot"),
+        ]
+        [u] = ap.measure(rows, "w", day, day)["units"]
+        self.assertEqual([x["started_by"] for x in u["unpicked_precedent"]], ["person", "autopilot"])
+
+
 class MeasuredDays(unittest.TestCase):
     def test_each_clause_of_the_outcome_per_day(self):
         one, two = ap.today(NOW), ap.today(NOW + timedelta(days=1))

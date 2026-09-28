@@ -929,6 +929,18 @@ AUTOPILOT_STOP_LABEL = {
 }
 
 
+@dataclasses.dataclass
+class GuideItem:
+    """`0101` R10. One line of the board's guide, copied from `Service._guide_block`: a unit,
+    what it is (a stage and its agent, a thing to do, or a question Jera answered), a line
+    below it, and where the link goes (`""` for none)."""
+
+    unit: str = ""
+    what: str = ""
+    detail: str = ""
+    href: str = ""
+
+
 def _number(text: str, kind: type) -> object:
     """`text` as `kind`, or the text itself for the service to refuse with its reason."""
     try:

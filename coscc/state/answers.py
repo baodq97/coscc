@@ -33,6 +33,9 @@ class AnswersMixin(rx.State, mixin=True):
     asking_jera: bool = False
     # `0044` R8a. The Settings text Jera reads as precedent, as typed and as last saved.
     decision_preferences: str = ""
+    # `0101` R8. What Jera's prompt says about deciding, as typed and as last saved; empty is
+    # the default rules.
+    decision_rules: str = ""
     # `0047`. The outcome form. Nobody types who records it (`0082` R3); `outcome_measured_by`
     # starts as `agent`, the case with no script to run.
     # Both hold the English label the select shows (`0089` R1, R4); `record_outcome` sends
@@ -103,6 +106,12 @@ class AnswersMixin(rx.State, mixin=True):
             self._load_artifact()
         except Exception as e:  # noqa: BLE001 - R5: the answer is written; say so regardless
             self.notice += f" The board could not be read again: {type(e).__name__}: {e}"
+
+    @rx.event
+    def use_proposal(self, key: str, text: str):
+        """`0101` R9. Put Jera's proposal in that question's box. Nothing is sent: the person
+        still presses *Send this answer*, and the answer is theirs (S7)."""
+        self.answer_target, self.answer_text = key, text
 
     @rx.event
     async def ask_jera(self):

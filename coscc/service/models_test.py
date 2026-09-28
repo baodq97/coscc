@@ -203,6 +203,12 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         for stage in ("pr:novel", "review:novel", "ship:novel"):
             self.assertNotIn(stage, stages)
 
+    def test_settings_shows_jeras_ceiling_as_its_range(self):
+        """`0101` R5, review F1: the static $1.00 is only Jera's floor."""
+        rows = {r["stage"]: r for r in self.service.settings()["grants"]}
+        self.assertEqual(rows["precedent"]["budget"], "$1.00–$3.00")
+        self.assertEqual(rows["impl"]["budget"], "$8.00")
+
     def test_settings_are_the_same_with_the_trial_on(self):
         """`0123` spec C11: Settings never shows the trial, whatever arm anything is in."""
         on = Service(dataclasses.replace(self.service.config, effort_trial=True), self.probe)

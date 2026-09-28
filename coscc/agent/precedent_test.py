@@ -117,8 +117,9 @@ class TheFilter(unittest.TestCase):
         self.assertIn("9999_x", v[1]["reason"])
         self.assertEqual(v[1]["text"], "Có.", "the proposal is still the reply's words")
 
-    def test_the_five_categories_and_an_unknown_one_need_a_person(self):
-        for c in precedent.NEEDS_PERSON + ("whatever", ""):
+    def test_the_categories_that_need_a_person_and_an_unknown_one_need_a_person(self):
+        # `0101` R7: `business-tradeoff` is no category any more, so it is an unknown one.
+        for c in precedent.NEEDS_PERSON + ("whatever", "", "business-tradeoff"):
             v = self.verdict(_ok(1, category=c), _ok(2))
             self.assertEqual(v[0]["verdict"], "needs-person", c)
             self.assertEqual(v[1]["verdict"], "answer", c)
@@ -135,6 +136,81 @@ class TheFilter(unittest.TestCase):
     def test_a_needs_person_verdict_keeps_jeras_reason(self):
         v = self.verdict(_ok(1, verdict="needs-person", category="significant-spend", reason="tốn tiền"), _ok(2))
         self.assertEqual((v[0]["verdict"], v[0]["reason"], v[0]["category"]), ("needs-person", "tốn tiền", "significant-spend"))
+
+
+class TheCeiling(unittest.TestCase):
+    """`0101` R5."""
+
+    def test_ceiling_is_the_floor_for_the_spike_prompt(self):
+        self.assertEqual(precedent.ceiling(64220), 1.00)
+
+    def test_ceiling_for_the_full_store_is_1_55(self):
+        self.assertEqual(precedent.ceiling(178405), 1.55)
+
+    def test_ceiling_never_falls_as_the_prompt_grows(self):
+        last = 0.0
+        for chars in range(0, 500001, 997):
+            got = precedent.ceiling(chars)
+            self.assertGreaterEqual(got, last, chars)
+            self.assertEqual(round(got * 20, 6) % 1, 0, f"{chars}: not a step of 0.05")
+            last = got
+
+    def test_ceiling_passes_the_absolute_cap_past_about_362500_chars(self):
+        self.assertEqual(precedent.ceiling(362500), precedent.PRECEDENT_MAX_USD)
+        self.assertGreater(precedent.ceiling(362501), precedent.PRECEDENT_MAX_USD)
+
+    def test_the_grant_for_a_prompt_is_the_grant_with_its_ceiling(self):
+        base = grant_for("precedent")
+        got = precedent.grant_for_prompt(base, "x" * 178405)
+        self.assertEqual((got.max_budget_usd, got.max_turns, got.tools), (1.55, base.max_turns, base.tools))
+        self.assertEqual(base.max_budget_usd, 1.0, "the static grant is the floor, untouched")
+
+
+class TheCategories(unittest.TestCase):
+    """`0101` R6, R7."""
+
+    def verdict(self, *items) -> list[dict]:
+        return precedent.verdicts(_reply(*items), Q, IDS)["verdicts"]
+
+    def test_needs_person_has_exactly_the_four_categories(self):
+        self.assertEqual(precedent.NEEDS_PERSON, (
+            "product-direction", "security-or-permissions", "significant-spend", "external-action",
+        ))
+        self.assertEqual(precedent.CATEGORIES, precedent.NEEDS_PERSON + ("other",))
+
+    def test_an_answer_in_one_of_the_four_categories_needs_a_person(self):
+        for c in precedent.NEEDS_PERSON:
+            for cites in (["0001_a/spec.md#Câu 1"], [precedent.PRACTICE]):
+                v = self.verdict(_ok(1, category=c, cites=cites), _ok(2))
+                self.assertEqual((v[0]["verdict"], v[1]["verdict"]), ("needs-person", "answer"), (c, cites))
+
+    def test_practice_answers_a_question_of_category_other(self):
+        v = self.verdict(_ok(1, cites=["practice"], text="Theo thông lệ: dùng UTC."), _ok(2))
+        self.assertEqual((v[0]["verdict"], v[0]["cites"]), ("answer", ["practice"]))
+        self.assertTrue(precedent.block_text(v[0]).endswith("Tiền lệ: practice"))
+
+    def test_practice_on_any_other_category_needs_a_person(self):
+        for c in ("whatever", ""):
+            v = self.verdict(_ok(1, category=c, cites=["practice"]), _ok(2))
+            self.assertEqual(v[0]["verdict"], "needs-person", c)
+        v = self.verdict(_ok(1, category="significant-spend", cites=["practice"]), _ok(2))
+        self.assertIn("practice", v[0]["reason"])
+
+
+class TheRules(unittest.TestCase):
+    """`0101` R8."""
+
+    def test_prompt_carries_the_rules_it_is_given(self):
+        default = precedent.build_prompt(Q, [])
+        self.assertIn("## Rules\n\n" + precedent.DEFAULT_RULES, default)
+        mine = precedent.build_prompt(Q, [], rules="Always ask me first.")
+        self.assertIn("## Rules\n\nAlways ask me first.", mine)
+        self.assertNotIn(precedent.DEFAULT_RULES, mine)
+        self.assertIn("`practice`", mine, "how to cite a best practice is not the rules' to remove")
+
+    def test_the_default_rules_name_no_one(self):
+        for name in ("Leif", "CoS", "coscc", "github.com", "/home/"):
+            self.assertNotIn(name, precedent.DEFAULT_RULES)
 
 
 class TheBlock(unittest.TestCase):

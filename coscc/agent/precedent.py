@@ -1,10 +1,12 @@
-"""Jera: an agent that answers a unit's open questions from precedent, when a person asks.
+"""Jera: an agent that answers a unit's open questions from precedent.
 
 `0044_open-questions-wait-for-the-originator-even-when-precedent-answers-them`. Not a stage
-and unknown to `cos.mjs`: one tool-less session per press of *Ask Jera*, under the grant
-`precedent` (`coscc/agent/policy.py`). Everything it may read is in its prompt; everything it
-says is in one JSON block the app reads, filters and writes. `Service.precedent` is the
-one caller that writes; `scripts/verify_0044.py --measure` asks and writes nothing.
+and unknown to `cos.mjs`: one tool-less session per press of *Ask Jera*, or per pick of the
+autopilot (`0101` R1), under the grant `precedent` (`coscc/agent/policy.py`) with a ceiling
+set by the prompt's length (`grant_for_prompt`). Everything it may read is in its prompt;
+everything it says is in one JSON block the app reads, filters and writes.
+`Service.precedent` is the one caller that writes; `scripts/verify_0044.py --measure` asks
+and writes nothing.
 
 Every function here but `ask` is pure: no disk, no network, no clock.
 
@@ -13,14 +15,18 @@ What is decided here, and what is not:
   same workspace, less Jera's own and the asked unit's (`spec.md` R8). An answer a later
   block replaced is not precedent: it is a decision that was changed (`plan.md`, *Những gì
   cố ý không làm*).
-- A verdict `answer` survives only with every citation in that store and a category outside
-  the five that need a person (`verdicts`, R4-R6). Which category a question is in is still
-  Jera's word (`spec.md` C2); nothing here can check it.
+- A verdict `answer` survives only with every citation in that store, or `practice` on a
+  question of category `other` (`0101` R6), and a category outside the four that need a
+  person (`verdicts`, R4-R6; `0101` R7). Which category a question is in is still Jera's
+  word (`spec.md` C2), and so is which best practice `practice` stands for (`0101` C2);
+  nothing here can check either.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import math
 import re
 from typing import Any, Iterable
 
@@ -28,17 +34,41 @@ AGENT = "Jera"
 VIA = "precedent"
 ACTOR = f"agent:{AGENT}"
 
-# `spec.md` R6, `intent.md ## Answers, câu 3 and câu 5`. A question in one of these is a
-# person's, whatever precedent says.
+# `0101` R7, `intent.md ## Answers, câu 4`. A question in one of these is a person's, whatever
+# precedent says, and no text in Settings removes one (`0101` C1). `0044`'s
+# `business-tradeoff` is gone (`0101` C3): a reply still saying it is a category the app
+# does not know, and needs a person.
 NEEDS_PERSON = (
     "product-direction",
     "security-or-permissions",
     "significant-spend",
     "external-action",
-    "business-tradeoff",
 )
 CATEGORIES = NEEDS_PERSON + ("other",)
 ANSWER, PERSON = "answer", "needs-person"
+
+# `0101` R6. The one citation that is no entry of the store: a best practice Jera names in
+# `text`. It settles only a question of category `other`, and has no source anyone can check.
+PRACTICE = "practice"
+
+# `0101` R5. A session's ceiling grows with its prompt. The line runs through two sessions
+# measured with a cold cache: 64220 characters cost $0.486468 (`0101` spike.md ## U2, run 1),
+# 178405 cost $1.213064 (`0101` spec.md R5 point 2). The margin 1.25 and the cap $3.00 are
+# chosen, not measured.
+PRECEDENT_FLOOR_USD = 1.00
+PRECEDENT_MAX_USD = 3.00
+_USD_FIXED, _USD_PER_CHAR, _MARGIN = 0.08, 0.0000064, 1.25
+
+# `0101` R8. What the prompt says about deciding, unless Settings holds `decision_rules`.
+# Words to the model, so English; no person, company or repository is named (`intent.md
+# ## Answers`, câu 6).
+DEFAULT_RULES = (
+    "Decide a question yourself when precedent below settles it, or when it is of category "
+    "`other` and a widely accepted best practice settles it. Leave it to the person when it is "
+    "about product direction, security or permissions, significant spend, or an action outside "
+    "this repository, or when neither precedent nor a best practice settles it. Whatever the "
+    "verdict, give exactly one proposed answer in `text`, never a list of options."
+)
 
 # The last line of every block Jera writes; `cites_of` reads it back for the board.
 CITES = "Tiền lệ:"
@@ -97,9 +127,25 @@ def asked(unit: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def build_prompt(questions: list[dict[str, Any]], store: list[dict[str, str]]) -> str:
+def ceiling(chars: int) -> float:
+    """`0101` R5. The `max_budget_usd` of a Jera session whose prompt is `chars` long: the
+    measured line with its margin, up to the next $0.05, and never under $1.00. Past
+    `PRECEDENT_MAX_USD` no session opens; that is the caller's to refuse."""
+    raw = _MARGIN * (_USD_FIXED + _USD_PER_CHAR * max(0, int(chars)))
+    # Rounded before the ceiling, so a float's last bit does not add a step.
+    return max(PRECEDENT_FLOOR_USD, round(math.ceil(round(raw * 20, 9)) / 20, 2))
+
+
+def grant_for_prompt(grant: Any, prompt: str) -> Any:
+    """`0101` R5, Design 2. The grant `precedent` with the ceiling of this prompt; `Grant` is
+    frozen, so a copy."""
+    return dataclasses.replace(grant, max_budget_usd=ceiling(len(prompt)))
+
+
+def build_prompt(questions: list[dict[str, Any]], store: list[dict[str, str]], rules: str = DEFAULT_RULES) -> str:
     """`spec.md` Design 4. In English; the text Jera writes is Vietnamese because it goes into
-    `.cos/`. No path and no workspace name: only questions and the store, by id."""
+    `.cos/`. No path and no workspace name: only questions, the rules in force (`0101` R8)
+    and the store, by id."""
     lines = [
         f"You are {AGENT}. You answer the open questions of one unit of work from precedent: "
         "decisions already made in this project, listed under *Precedent* below. You have no "
@@ -116,9 +162,14 @@ def build_prompt(questions: list[dict[str, Any]], store: list[dict[str, str]]) -
         "that is about " + ", ".join(f"`{c}`" for c in NEEDS_PERSON) + " is `needs-person`, "
         "whatever precedent says; use `other` for everything else.",
         "",
-        "Best practice, common sense or what most teams do is not precedent. Only the entries "
-        "below are, including the `pref:` ones the person wrote. When nothing below settles a "
+        f"Best practice may settle a question of category `other` that no entry below settles: "
+        f"cite the id `{PRACTICE}`, and name that best practice in one sentence of `text`. "
+        f"`{PRACTICE}` settles no question of any other category. When neither settles a "
         "question, it is `needs-person`.",
+        "",
+        "## Rules",
+        "",
+        (rules or DEFAULT_RULES).strip(),
         "",
         "Write `text` and `reason` in Vietnamese: they are added to the unit's files. No line of "
         "`text` may start with `#`.",
@@ -221,7 +272,7 @@ def verdicts(reply: str, questions: list[dict[str, Any]], entry_ids: Iterable[st
         if not well_formed:
             v.update(verdict=PERSON, reason=NOT_ANSWERED)
         elif verdict == ANSWER:
-            unknown = [c for c in cites if c not in known]
+            unknown = [c for c in cites if c not in known and c != PRACTICE]
             why = ""
             if not text:
                 why = "The answer is empty."
@@ -229,6 +280,9 @@ def verdicts(reply: str, questions: list[dict[str, Any]], entry_ids: Iterable[st
                 why = "It cites no precedent."
             elif unknown:
                 why = f"It cites {', '.join(unknown)}, which is not in the precedent it was given."
+            elif PRACTICE in cites and category != "other":
+                # `0101` R6: a best practice stands in for precedent on `other` alone.
+                why = f"It cites {PRACTICE}, which settles only a question of category other."
             elif category in NEEDS_PERSON:
                 why = f"Its category, {category}, needs a person."
             elif category not in CATEGORIES:

@@ -285,6 +285,20 @@ def _settings() -> rx.Component:
                       id="save-decision-preferences"),
             id="preferences-panel",
         ),
+        # `0101` R8. What Jera's prompt says about deciding; empty is the app's default.
+        s.panel(
+            s.section_head("Decision rules", rx.icon("list-checks", size=18, color=s.MUTED)),
+            s.text("Questions of product direction, security, significant spend or outside "
+                   "actions always go to you, whatever these rules say.", size="1"),
+            rx.text_area(
+                value=P.decision_rules, on_change=P.edit_decision_rules,
+                placeholder="Leave empty to use the default rules.", aria_label="Decision rules",
+                rows="5", width="100%", margin_top="10px", id="decision-rules",
+            ),
+            rx.button("Save", on_click=P.save_decision_rules, size="1", margin_top="8px",
+                      id="save-decision-rules"),
+            id="decision-rules-panel",
+        ),
         s.panel(
             s.section_head("What a board step may do",
                            rx.icon("key-round", size=18, color=s.MUTED)),

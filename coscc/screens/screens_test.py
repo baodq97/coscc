@@ -107,17 +107,38 @@ class ThePage(unittest.TestCase):
         self.assertIn("update-panel", _render(screens._settings()))
         self.assertIn("backlog-panel", _render(screens._backlog_screen()))
 
-    def test_0043_the_autopilot_strip_and_its_settings(self):
-        """`0043` R2, R9: the board's strip lists each stop as a row; Settings holds the four
-        controls, and no variable name reaches either (S3)."""
-        board = _render(screens._board())
-        self.assertIn("autopilot-strip", board)
-        self.assertIn("autopilot-stop", board)
+    def test_0043_the_autopilot_panel_and_its_settings(self):
+        """`0043` R2, R9: Settings holds the four controls, and no variable name reaches the
+        board's panel or Settings (S3). Since `0101` the board's strip is the guide panel."""
         settings = _render(screens._settings())
         for control in ("autopilot-panel", "autopilot-on", "autopilot-ship", "autopilot-parallel", "autopilot-cap"):
             self.assertIn(control, settings)
         self.assertNotIn("COS_", _render(screens._autopilot_settings()))
-        self.assertNotIn("COS_", _render(screens._autopilot_strip()))
+        self.assertNotIn("COS_", _render(screens._guide_panel()))
+
+    def test_board_carries_the_guide_panel_in_place_of_the_strip(self):
+        """`0101` R10: three lists, the cap line kept, one sentence and Settings when off."""
+        board = _render(screens._board())
+        self.assertIn("guide-panel", board)
+        self.assertNotIn("autopilot-strip", board)
+        panel = _render(screens._guide_panel())
+        for said in ("RUNNING", "NEEDS YOU", "DECIDED FOR YOU", "guide-running", "guide-needs-you",
+                     "guide-decided", "autopilot_cap", "Autopilot is on", "settings_href",
+                     "The autopilot is off, so nothing starts on its own."):
+            self.assertIn(said, panel)
+        self.assertEqual(panel.count('"name": "\\"ul\\""'), 3, "each list is a list (S5)")
+        self.assertNotIn("Leif", panel)
+
+    def test_0101_the_proposal_button_and_the_rules_box(self):
+        """`0101` R8, R9: the button fills the box and sends nothing; the rules box says which
+        questions no rule removes (S1, S2)."""
+        tab = _render(screens._questions_tab())
+        self.assertIn("Use this proposal", tab)
+        self.assertIn("use-proposal-", tab)
+        settings = _render(screens._settings())
+        for said in ("decision-rules-panel", "Decision rules", "Leave empty to use the default rules.",
+                     "always go to you"):
+            self.assertIn(said, settings)
 
     def test_0133_the_dialog_overview_carries_every_field_the_card_let_go(self):
         """`0133` R7: every field a card showed before `0133` is read by the dialog's header or
@@ -169,7 +190,7 @@ class ThePage(unittest.TestCase):
     def test_0133_the_board_puts_the_lanes_before_the_forms(self):
         """`0133` R5, R10, Design *the order of `/board`*."""
         board = _render(screens._board())
-        order = ["autopilot-strip", "board-grid", "done-group", "running-steps", "new-unit-slug",
+        order = ["guide-panel", "board-grid", "done-group", "running-steps", "new-unit-slug",
                  "new-idea-slug"]
         # Where each is drawn, not where the toolbar's buttons name it.
         at = [board.replace('\\"', '"').find(f'id:"{name}"') for name in order]
@@ -181,12 +202,14 @@ class ThePage(unittest.TestCase):
         for gone in ("paused-group", '"Nothing here"'):
             self.assertNotIn(gone, board.replace('\\"', '"'))
 
-    def test_0133_the_autopilot_stops_sit_in_a_closed_part(self):
-        """`0133` R11: a `details` is closed until opened."""
-        strip = _render(screens._autopilot_strip())
-        for said in ("autopilot-stops", " stops", "details", "autopilot-stop"):
-            self.assertIn(said, strip)
-        self.assertNotIn("open:", strip.replace('\\"', '"'))
+    def test_0133_the_guide_lists_sit_in_a_closed_part(self):
+        """`0133` R11, on `0101`'s guide panel, which took the strip's place: a `details` is
+        closed until opened."""
+        panel = _render(screens._guide_panel())
+        # Review F2: one item is "1 needs you", not "1 need you".
+        for said in ("guide-lists", " need you ", " needs you ", "details", "guide-needs-you"):
+            self.assertIn(said, panel)
+        self.assertNotIn("open:", panel.replace('\\"', '"'))
 
     def test_0036_every_column_may_carry_its_agent_and_settings_lists_them(self):
         """`0036` R2, R5: the glyph is a button with its label for hover and screen readers,
