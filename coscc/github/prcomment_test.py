@@ -64,6 +64,23 @@ class TheBodySaysWhereItCameFromAndCarriesTheWholeRound(unittest.TestCase):
         self.assertIsNotNone(m, first)
         self.assertEqual(m.groups(), ("1", UNIT))
 
+    def test_the_first_line_names_the_review_agent_and_says_it_is_not_a_person(self):
+        # `0036` R6: the label is handed in; the marker does not change with it.
+        b = prcomment.body(UNIT, 2, "pass", ROUND, "Tiwaz (agent, review)")
+        self.assertEqual(
+            b.splitlines()[0],
+            f"**coscc review, round 2 of {UNIT}.** Written by Tiwaz (agent, review), an agent "
+            "session, not a person. This comment is not an approval.",
+        )
+        self.assertEqual(b.splitlines()[-1], prcomment.marker(UNIT, 2))
+        gh = FakeGh()
+        run(prcomment.post(UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh))
+        r = run(prcomment.post(UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh, author="Judge (agent, review)"))
+        self.assertEqual(r.state, "already")
+        gh = FakeGh()
+        run(prcomment.post(UNIT, 1, "pass", ROUND, URL, "/tmp", run=gh, author="Judge (agent, review)"))
+        self.assertIn("Written by Judge (agent, review), an agent session", gh.comments[0]["body"])
+
     def test_every_finding_is_in_the_body_verbatim(self):
         b = prcomment.body(UNIT, 1, "changes-requested", ROUND)
         self.assertEqual(len(FINDINGS), 3)

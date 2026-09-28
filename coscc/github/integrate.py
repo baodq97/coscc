@@ -29,6 +29,7 @@ import re
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+from coscc.agent import agents
 from coscc.agent.harness import child_env
 
 STATES = ("current", "behind", "conflicting", "red-after-integration", "unknown")
@@ -247,10 +248,12 @@ def refusal(
 
 
 def warnings(
-    rounds: list[dict], review_status: str, gebo: bool, grant_warning: str, fallback: bool = False
+    rounds: list[dict], review_status: str, gebo: bool, grant_warning: str, fallback: bool = False,
+    name: str = "",
 ) -> list[str]:
     """R13: what the page says before the button is pressed. `fallback`: the press goes the
-    mechanical road, and Gebo opens if GitHub refuses it (`0052`)."""
+    mechanical road, and Gebo opens if GitHub refuses it (`0052`). `name` is the `integrate`
+    agent's, from the agent table (`0036` R1)."""
     out: list[str] = []
     # `0061` R11.1: the app cannot tell "behind but mergeable" (spike U1, U2), so the page
     # says when integrating a passed unit is worth another round, and leaves it to a person.
@@ -275,8 +278,9 @@ def warnings(
             "green, and that round counts toward COS_REVIEW_ROUNDS."
         )
     if fallback:
+        session = f"{name}, a paid agent session," if name else "a paid agent session"
         out.append(
-            "If GitHub refuses the rebase, the app opens Gebo, a paid agent session, to rebase "
+            f"If GitHub refuses the rebase, the app opens {session} to rebase "
             "this branch itself — pressing Integrate agrees to that session."
         )
     if gebo and grant_warning:
@@ -383,8 +387,12 @@ def record(
     update_branch: dict | None = None,
     started_by: str = "person",
     completion: dict | None = None,
+    agent: str = "",
 ) -> dict[str, Any]:
     """R9: the one record every integration leaves, whatever happened.
+
+    `0036` R7: `agent` is the session's agent name, written only when one was opened — a
+    record of the mechanical road, a refusal, or one from before `0036` has none.
 
     `0052` R5: `fetch` is how the press got its `origin/main` and `merge_state` what GitHub
     said of the pull request then — observed, never decided on. `update_branch` is the exit
@@ -423,6 +431,7 @@ def record(
         ),
         "started_by": started_by,
         "completion": _completion_of(completion),
+        **({"agent": agent} if agent else {}),
     }
 
 
@@ -454,22 +463,27 @@ def outcome_of_session(head_before: str, head_now: str, reply: str) -> str:
     return "failed"
 
 
-def describe_for_review(rec: dict[str, Any]) -> str:
+def describe_for_review(rec: dict[str, Any], overrides: dict[str, dict[str, str]] | None = None) -> str:
     """R10: the section the next `review` prompt carries.
 
     `0114` R8: a completion says what it pushed — local commits nobody had pushed — and
-    that the app opened the session for it, not a person."""
+    that the app opened the session for it, not a person.
+
+    `0036` R7: the session is named from the record, or for one from before `0036` from
+    today's table, `overrides` included."""
     body = json.dumps(rec, ensure_ascii=False, indent=2)
+    name = agents.of_record(rec, overrides)
+    session = f"an agent session ({name})" if name else "an agent session"
     if str((rec.get("completion") or {}).get("relation") or "") in COMPLETION:
         return (
             "# An integration since the last round\n\n"
-            "The app opened an agent session (Gebo) to push local commits on this branch that "
+            f"The app opened {session} to push local commits on this branch that "
             "had never been pushed — not a person, and this is no one's approval. The head you "
             "review is the one it pushed. Read what those commits changed with the same care as "
             "any other change. Its record, verbatim:\n\n"
             f"```json\n{body}\n```\n"
         )
-    who = "the app, mechanically" if rec.get("mode") == "mechanical" else "an agent session (Gebo)"
+    who = "the app, mechanically" if rec.get("mode") == "mechanical" else session
     return (
         "# An integration since the last round\n\n"
         f"The branch was rebased onto `origin/main` by {who} — not by a person, and no "
@@ -495,8 +509,12 @@ def build_prompt(
     own_paths: dict[str, Path],
     refused_update: dict | None = None,
     completion: dict | None = None,
+    agent: dict[str, Any] | None = None,
 ) -> str:
     """Gebo's prompt: its rules, what is wrong, where to start, and whose intent to read.
+
+    `agent` (`0036` R3) is the `integrate` row of the agent table; its section opens the
+    prompt, before the rules. `None` adds not one byte.
 
     `own_paths`: the unit's own artifacts that exist, by name, each an absolute path.
 
@@ -509,7 +527,7 @@ def build_prompt(
     The app does not rebase to find the conflicting files first (`plan.md` step 7): that
     would write to the tree before the session began, and R12 wants it clean.
     """
-    parts = [skill.strip(), ""]
+    parts = ([agents.identity_section(agent), ""] if agent is not None else []) + [skill.strip(), ""]
     parts.append(f"# This integration\n\nUnit: `{unit}`. Branch: `{branch}`. Pull request: #{pr}.")
     parts.append(f"State: `{state}` — {reason}")
     parts.append(f"Head at start: `{head_before}`. `origin/main` at start: `{origin_sha}`.")
@@ -776,9 +794,13 @@ async def run_gebo(
     read_also: tuple[str, ...],
     lease: tuple[str, str],
     model: str | None,
+    settings: str | None = None,
 ) -> AsyncIterator[tuple[str, Any]]:
     """One Gebo session, streamed. Not `Runner.run`: that requires an artifact written, and
-    Gebo writes none. Yields `("chunk", text)` and finally `("end", {reply, cost, ...})`."""
+    Gebo writes none. Yields `("chunk", text)` and finally `("end", {reply, cost, ...})`.
+
+    `settings` (`0036` R8) is the agent's commit attribution, beside the preset every Gebo
+    session has; `None` passes nothing."""
     from coscc.runner import CLAUDE_CODE_PRESET, Denials, permission_gate
 
     denials = Denials()
@@ -789,6 +811,8 @@ async def run_gebo(
         kwargs["workspace"] = workspace
     if model is not None:
         kwargs["model"] = model
+    if settings is not None:
+        kwargs["settings"] = settings
     async for kind, payload in sessions.stream(
         tree,
         prompt,

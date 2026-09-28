@@ -630,6 +630,9 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 # `0093` R8. What state opened an `integrate` session. Any other stage, or an
                 # `integrate` started before `0093`, has none: None.
                 "integrate_state": item.get("integrate_state"),
+                # `0036` R7. The agent's name when the step began. A start written before
+                # `0036`, or of a session no agent row names, has none: None.
+                "agent": item.get("agent"),
             }
             rows.append(row)
             open_runs[stage] = row

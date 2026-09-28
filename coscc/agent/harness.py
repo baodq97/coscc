@@ -39,7 +39,7 @@ from pathlib import Path
 import coscc
 from coscc.web import frontend
 from coscc.units import states
-from coscc.agent import models
+from coscc.agent import agents, models
 
 # The package root, `coscc/`, not this module's own directory (`0129`): the wheel holds
 # `_harness/` there, and the checkout's `.claude/` sits beside it.
@@ -220,6 +220,10 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
     model_set = _posix(models.DEFAULT_PATH.relative_to(_HERE))
     if model_set not in names:
         out.append(f"no {model_set} — every stage would run on COS_MODEL, silently")
+    # `0036` R1, on the same reasoning: without it no session is told its name, and nothing fails.
+    agent_set = _posix(agents.DEFAULT_PATH.relative_to(_HERE))
+    if agent_set not in names:
+        out.append(f"no {agent_set} — no session would be told its agent's name, silently")
     # `0068` R1: without it the board shows `commit unknown` for a release it built itself.
     stamp = _posix(BUILD_STAMP)
     if stamp not in names:

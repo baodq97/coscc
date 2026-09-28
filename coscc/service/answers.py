@@ -17,7 +17,7 @@ from coscc.units import board as board_reader
 from coscc.git import gitops
 from coscc.units import hold as hold_rules
 from coscc.units import more_rounds as more_rounds_rules
-from coscc.agent import policy
+from coscc.agent import agents, policy
 from coscc.github import prcomment, prscope, prsync
 from coscc.agent import precedent as precedent_mod
 from coscc.units.board import Unavailable
@@ -96,9 +96,12 @@ class AnswersMixin:
         unit = found["name"]
         n = rnd.get("n")
         pr_url = (found.get("pr") or {}).get("url") or ""
+        # `0036` R6: the `review` agent as the table names it now, overrides included.
+        reviewer = self._agent("review")
         result = await prcomment.post(
             unit, n, rnd.get("verdict"), rnd.get("text") or "", pr_url,
             str(Path(cwd).expanduser().resolve()),
+            author=agents.label(reviewer) if reviewer is not None else "",
         )
         record: dict[str, Any] = {
             "kind": "pr-comment",

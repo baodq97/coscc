@@ -509,6 +509,7 @@ def _options(
     model: str | None = None,
     system_prompt: dict[str, str] | None = None,
     effort: str | None = None,
+    settings: str | None = None,
     *,
     data_dir: str,
 ) -> ClaudeAgentOptions:
@@ -544,6 +545,12 @@ def _options(
 
     `data_dir` is the session's own data root (`0076`); the database it protects is the
     one `config` names. Building a `Data` touches no disk.
+
+    `settings` (`0036` R8) is the agent's `{"attribution": …}` from
+    `agents.settings_json`, passed as `--settings`, and only beside a preset: attribution
+    replaces the preset's commit guidance, and a session with no preset keeps the argv it
+    had. `setting_sources=[]` is untouched, so no settings file is read beside it
+    (`0036 spike.md ## U4` measured the argv and the gate with it set).
     """
     # A board step brings its own list from `policy.Grant`; everything else gets the
     # app default, which is empty. `tools=[]` and `tools=None` mean different things to
@@ -600,6 +607,8 @@ def _options(
     project = instructions.read(cwd).text
     if system_prompt is not None:
         options.system_prompt = dict(system_prompt)
+        if settings is not None:
+            options.settings = settings
     if project:
         # Through a file, never as a value in argv (`0088` review round 1, F1): the SDK
         # passes a string or an `append` as one argument, and Linux refuses an `execve`
@@ -744,6 +753,7 @@ class Sessions:
         system_prompt: dict[str, str] | None = None,
         effort: str | None = None,
         step: StepHandle | None = None,
+        settings: str | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -765,7 +775,7 @@ class Sessions:
         """
         inner = self._stream(
             cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
-            workspace, model, system_prompt, effort, step,
+            workspace, model, system_prompt, effort, step, settings,
         )
         if step is None:
             turn = self._begin_turn(cwd, session_id)
@@ -798,9 +808,9 @@ class Sessions:
 
     async def _stream(
         self, cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
-        workspace, model, system_prompt, effort, step,
+        workspace, model, system_prompt, effort, step, settings=None,
     ):
-        member = workspace if workspace is not None else cwd
+        member =workspace if workspace is not None else cwd
         if not self.membership(member):
             raise Refused(f"not a configured workspace: {member}")
         if session_id is not None and not self.config.may_resume(self.created_here(session_id)):
@@ -835,6 +845,7 @@ class Sessions:
                             model=model,
                             system_prompt=system_prompt,
                             effort=effort,
+                            settings=settings,
                             data_dir=str(scratch),
                         )
                     )

@@ -52,9 +52,11 @@ class StandIn:
         self.act = act
         self.membership = None
         self.prompts: list[str] = []
+        self.kws: list[dict] = []
 
     async def stream(self, cwd, prompt, session_id, **kw):
         self.prompts.append(prompt)
+        self.kws.append(kw)
         reply = await self.act(Path(cwd), kw["can_use_tool"])
         yield ("chunk", reply)
         yield ("done", {"session_id": "stand-in", "cost": {"cost_usd": 0.25, "turns": 3}})
@@ -217,6 +219,24 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(starts[0]["pointed"], ["intent.md", "spec.md", "plan.md", "impl.md"])
         self.assertEqual((starts[0]["app_version"], starts[0]["app_commit"]), (build["version"], build["commit"]))
         self.assertIn(f"- {self.directory.resolve() / 'plan.md'}", self.service.sessions.prompts[0])
+
+    def test_gebos_start_and_integration_carry_its_name_and_its_session_the_settings(self):
+        """`0036` R3, R7, R8 on Gebo's road, with an override so the name is the table's."""
+
+        async def act(tree, gate):
+            return "[needs-person] f.txt: both"
+
+        self.service.set_agent("integrate", {"name": "Weaver"})
+        rec = self.integrate_with(act)
+        [start] = [r for r in self.records("start") if r.get("stage") == "integrate"]
+        self.assertEqual(start["agent"], "Weaver")
+        self.assertEqual(rec["agent"], "Weaver")
+        self.assertTrue(self.service.sessions.prompts[0].startswith("# Who you are\n"))
+        self.assertIn("`Weaver (agent, integrate)`", self.service.sessions.prompts[0])
+        [kw] = self.service.sessions.kws
+        self.assertEqual(json.loads(kw["settings"])["attribution"]["commit"],
+                         "Co-authored-by: Weaver (agent, integrate) <weaver@agents.coscc.invalid>")
+        self.assertEqual(kw["system_prompt"], {"type": "preset", "preset": "claude_code"})
 
     def test_a_rebase_left_stopped_is_aborted_by_the_app(self):
         async def act(tree, gate):

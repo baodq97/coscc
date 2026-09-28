@@ -286,6 +286,27 @@ class StageModelsOverHttp(unittest.IsolatedAsyncioTestCase):
         r = await self.client.post("/api/settings/models", content=b"not json")
         self.assertEqual(r.status_code, 400)
 
+    async def test_settings_agents_routes_answer_400_with_a_reason(self):
+        # `0036` R2.
+        r = await self.client.get("/api/settings/agents")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.json()["rows"]), 11)
+        r = await self.client.post("/api/settings/agents", json={"key": "review", "name": "Judge"})
+        self.assertEqual(r.status_code, 200)
+        row = next(x for x in r.json()["rows"] if x["key"] == "review")
+        self.assertEqual((row["name"], row["source"]["name"]), ("Judge", "override"))
+        for body in ({"key": "review", "name": "two words"}, {"key": "spec", "name": "judge"},
+                     {"key": "bogus", "name": "X"}, {"name": "X"}, {"key": "plan", "glyph": "abc"},
+                     [1, 2]):
+            r = await self.client.post("/api/settings/agents", json=body)
+            self.assertEqual(r.status_code, 400, body)
+            self.assertTrue(r.json()["error"], body)
+        r = await self.client.post("/api/settings/agents", content=b"not json")
+        self.assertEqual(r.status_code, 400)
+        r = await self.client.post("/api/settings/agents", json={"key": "review"})
+        row = next(x for x in r.json()["rows"] if x["key"] == "review")
+        self.assertEqual((row["name"], row["overridden"]), ("Tiwaz", False))
+
 
 class WithoutAWorkingFolder(unittest.IsolatedAsyncioTestCase):
     """Without a store: the write routes say why rather than crashing."""

@@ -178,6 +178,18 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
             self.assertEqual(recorded["integrate_state"], "conflicting")
             self.assertIsNone(older["integrate_state"])
 
+    def test_a_folded_start_keeps_its_agent(self):
+        # `0036` R7: top level, not nested, and None for a start written before it.
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0009_x", "plan", "manual")
+            j.finished("w", "0009_x", "plan", "done")
+            j.started("w", "0009_x", "impl", "manual", agent="Uruz")
+            older, named = j.timeline("w", "0009_x")
+            self.assertIsNone(older["agent"])
+            self.assertEqual(named["agent"], "Uruz")
+            self.assertEqual(j.open_starts("w")["0009_x"]["open"][0]["agent"], "Uruz")
+
 
 class OpenStartsAreTheRunsNobodyEnded(unittest.TestCase):
     """`0051` plan step 2."""

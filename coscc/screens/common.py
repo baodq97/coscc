@@ -19,6 +19,9 @@ def _details(key: str, label: str, *children, **props) -> rx.Component:
 
 
 _MONO = "ui-monospace, monospace"
+# `0036` R5. The system's own runic fonts, no webfont and no detection: where none is
+# installed the glyph is a box, and the stage's name beside it still says everything.
+_RUNIC = '"Segoe UI Historic", "Noto Sans Runic", "Apple Symbols", sans-serif'
 
 
 def _table(headers: list[str], rows, render, empty: str, **props) -> rx.Component:

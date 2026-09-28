@@ -12,6 +12,7 @@ and how a step ends is in `coscc/runner/ending_test.py` (`0095`).
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import tempfile
@@ -1388,6 +1389,78 @@ class ABoardStepWithToolsRunsOnClaudeCodesPrompt(unittest.TestCase):
             by_stage = {s["stage"]: s for s in starts}
             self.assertEqual(by_stage["impl"]["system_prompt"], "claude_code")
             self.assertEqual(by_stage["idea"]["system_prompt"], "")
+
+
+class TheStepKnowsWhichAgentItIs(unittest.TestCase):
+    """`0036` R3, R4, R7, R8 at the runner: the prompt, `start`, `end` and `settings`."""
+
+    class Probe(ABoardStepWithToolsRunsOnClaudeCodesPrompt.Probe):
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.text = text
+            self.kw = kw
+            stage, directory = self.stage, self.directory
+            body = f"# {stage.capitalize()}: x\nIntent: intent.md. Author: {self.author}. Status: accepted.\n"
+            if stage == "review":
+                body = f"# Review: x\nPR: pr.md. Author: {self.author}. Status: accepted.\n\n## Round 1\n"
+            if grant_for(stage).app_writes_artifact:
+                yield ("chunk", body)
+            else:
+                (directory / f"{stage}.md").write_text(body, encoding="utf-8")
+                yield ("chunk", "done")
+            yield ("done", {"session_id": f"s-{stage}", "cost": {}})
+
+    def run_stage(self, d, stage, journal, agent, author="Someone"):
+        probe = self.Probe()
+        directory = make_unit(Path(d), intent_md="Status: accepted.\nI")
+        probe.stage, probe.directory, probe.author = stage, directory, author
+        r = Runner(sessions=probe, journal=journal)
+
+        async def go():
+            return [ev async for ev in r.run(
+                workspace=d, directory=directory, journal_key=d,
+                unit=UNIT, stage=stage, artifact=f"{stage}.md", stages=STAGES,
+                mode="manual", agent=agent,
+            )]
+
+        asyncio.run(go())
+        return probe
+
+    def test_start_carries_the_agent_and_end_the_author(self):
+        from coscc.agent import agents
+
+        with tempfile.TemporaryDirectory() as d:
+            journal = Journal(d, d)
+            probe = self.run_stage(d, "impl", journal, agents.agent_for("impl"), author="Uruz (agent, impl)")
+            self.assertTrue(probe.text.startswith("# Who you are\n"))
+            [start] = journal.records(d, kind="start")
+            [end] = journal.records(d, kind="end")
+            self.assertEqual(start["agent"], "Uruz")
+            self.assertEqual((end["outcome"], end["author"]), ("done", "Uruz (agent, impl)"))
+            # R4: a name off the table is written as it is, and the step is not refused.
+            self.run_stage(d, "plan", journal, agents.agent_for("plan"), author="Someone Else")
+            end = journal.records(d, kind="end")[-1]
+            self.assertEqual((end["outcome"], end["author"]), ("done", "Someone Else"))
+            # With no row: no `agent`, and not one byte more in the prompt.
+            probe = self.run_stage(d, "spec", journal, None)
+            self.assertNotIn("agent", journal.records(d, kind="start")[-1])
+            self.assertTrue(probe.text.startswith("# The rules for this stage"))
+
+    def test_a_preset_step_gets_the_attribution_settings_and_a_toolless_one_does_not(self):
+        from coscc.agent import agents
+
+        with tempfile.TemporaryDirectory() as d:
+            probe = self.run_stage(d, "impl", None, agents.agent_for("impl"))
+            self.assertEqual(json.loads(probe.kw["settings"]), {"attribution": {
+                "commit": "Co-authored-by: Uruz (agent, impl) <uruz@agents.coscc.invalid>",
+                "pr": "Uruz (agent, impl)",
+            }})
+        with tempfile.TemporaryDirectory() as d:
+            probe = self.run_stage(d, "intent", None, agents.agent_for("intent"))
+            self.assertNotIn("settings", probe.kw)
+            self.assertNotIn("system_prompt", probe.kw)
+            self.assertTrue(probe.text.startswith("# Who you are\n"))
+        with tempfile.TemporaryDirectory() as d:
+            self.assertNotIn("settings", self.run_stage(d, "impl", None, None).kw)
 
 
 def _git_repo(root: Path) -> Path:

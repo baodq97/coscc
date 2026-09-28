@@ -1059,3 +1059,40 @@ class ThePlanMapAndTheCommands(unittest.TestCase):
             self.assertIn(f"{COMMANDS_HEADING}\n\n`git`, `npm`, `COMMAND-MARKER`\n\n{COMMANDS_ADVICE}", prompt)
             self.assertIn("plan-map", included)
             self.assertIn("commands", included)
+
+
+class TheSessionIsToldWhoItIs(unittest.TestCase):
+    """`0036` R3: the identity section opens the prompt, and only for a stage with a row."""
+
+    def _args(self, d: str, stage: str = "review"):
+        make_unit(Path(d), intent_md="Status: accepted.\nINTENT", spec_md="Status: accepted.\nSPEC",
+                  plan_md="Status: accepted.\nPLAN")
+        return (d, Path(d) / ".cos" / UNIT, UNIT, stage, STAGES, f"{stage}.md")
+
+    def test_the_identity_section_comes_before_the_rules(self):
+        from coscc.agent import agents
+
+        with tempfile.TemporaryDirectory() as d:
+            row = agents.agent_for("review")
+            prompt = compose_prompt(*self._args(d), agent=row)[0]
+            self.assertTrue(prompt.startswith(agents.identity_section(row) + "\n\n"))
+            self.assertLess(prompt.index("# Who you are"), prompt.index("# The rules for this stage"))
+            self.assertIn("You are ᛏ Tiwaz (Tyr: justice and judgement), the agent of the review stage.", prompt)
+            self.assertIn("write exactly `Tiwaz (agent, review)`", prompt)
+
+    def test_a_stage_with_no_row_gets_not_one_byte_more(self):
+        with tempfile.TemporaryDirectory() as d:
+            args = self._args(d)
+            self.assertEqual(compose_prompt(*args, agent=None), compose_prompt(*args))
+            self.assertTrue(compose_prompt(*args)[0].startswith("# The rules for this stage"))
+
+    def test_missing_rules_still_raises_first(self):
+        from coscc.agent import agents
+        from coscc.agent.harness import MissingRules
+        from coscc.runner.reply import RunError
+
+        with tempfile.TemporaryDirectory() as d:
+            args = self._args(d, "no-such-stage")
+            with self.assertRaises(RunError) as caught:
+                compose_prompt(*args, agent=agents.agent_for("review"))
+            self.assertIsInstance(caught.exception.__cause__, MissingRules)

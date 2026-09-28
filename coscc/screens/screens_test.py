@@ -188,6 +188,18 @@ class ThePage(unittest.TestCase):
             self.assertIn(said, strip)
         self.assertNotIn("open:", strip.replace('\\"', '"'))
 
+    def test_0036_every_column_may_carry_its_agent_and_settings_lists_them(self):
+        """`0036` R2, R5: the glyph is a button with its label for hover and screen readers,
+        drawn in the system's runic fonts; Settings has one form per agent, Reset hidden (S8)."""
+        board = _render(screens._board())
+        for said in ("stage-glyph", "stage_glyphs", "stage_labels", "stage_notes", "Noto Sans Runic"):
+            self.assertIn(said, board)
+        settings = _render(screens._settings())
+        for said in ("agents-panel", "agent-row", "A change applies to the next step that starts.",
+                     "agent_problems", "Reset"):
+            self.assertIn(said, settings)
+        self.assertNotIn("COS_", _render(screens.settings._agent_row(screens.P.agent_rows[0])))
+
     def test_f2_a_grants_tools_are_a_list_behind_details(self):
         settings = _render(screens._settings())
         self.assertNotIn("tools: ", settings)

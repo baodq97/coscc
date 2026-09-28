@@ -9,8 +9,8 @@ from reflex.style import set_color_mode
 
 from coscc.agent import models
 from coscc.web import studio as s
-from coscc.state import GrantRow, Knob, ModelRow
-from coscc.screens.common import P, _MONO, _details
+from coscc.state import AgentRow, GrantRow, Knob, ModelRow
+from coscc.screens.common import P, _MONO, _RUNIC, _details
 from coscc.screens.board import _update_panel
 
 
@@ -117,6 +117,52 @@ def _model_row(row: rx.Var[ModelRow]) -> rx.Component:
         ),
         padding="12px 0", border_bottom=f"1px solid {s.LINE}", width="100%",
         data_testid="model-row",
+    )
+
+
+def _agent_field(row: rx.Var[AgentRow], field: str, value, source, width: str) -> rx.Component:
+    """One field of an agent row: its box, and a badge saying where its value came from."""
+    return rx.vstack(
+        rx.hstack(
+            s.text(field.capitalize(), size="1", weight="medium"),
+            s.badge(source, rx.cond(source == "override", "amber", "gray")),
+            align="center", spacing="2",
+        ),
+        rx.input(name=field, default_value=value, aria_label=field.capitalize() + " of " + row.key,
+                 size="1", width="100%",
+                 font_family=_RUNIC if field == "glyph" else None),
+        spacing="1", width=width, min_width=width if width != "100%" else "0", flex_grow="1",
+    )
+
+
+def _agent_row(row: rx.Var[AgentRow]) -> rx.Component:
+    """`0036` R2. One agent: its four fields, each with its source, saved as one form.
+    The plain element, not `rx.form`, which would add a Radix package to the bundle."""
+    return rx.el.form(
+        rx.el.input(type="hidden", name="key", value=row.key),
+        rx.hstack(
+            rx.text(row.glyph, font_family=_RUNIC, size="4", aria_hidden="true"),
+            s.badge(row.key, "iris"),
+            rx.spacer(),
+            rx.button("Save", type="submit", size="1"),
+            # S8: hidden, not greyed, while the row has nothing to reset.
+            rx.cond(row.overridden,
+                    rx.button("Reset", type="button", on_click=P.reset_agent(row.key), size="1",
+                              variant="soft")),
+            width="100%", align="center",
+        ),
+        rx.flex(
+            _agent_field(row, "glyph", row.glyph, row.glyph_source, "90px"),
+            _agent_field(row, "name", row.name, row.name_source, "160px"),
+            _agent_field(row, "meaning", row.meaning, row.meaning_source, "220px"),
+            _agent_field(row, "role", row.role, row.role_source, "100%"),
+            gap="10px", wrap="wrap", width="100%", margin_top="8px",
+        ),
+        on_submit=P.save_agent, reset_on_submit=False,
+        # A new key after a save or a reset, so each box shows the value now in force.
+        key=row.key + row.glyph + row.name + row.meaning + row.role,
+        padding="12px 0", border_bottom=f"1px solid {s.LINE}", width="100%",
+        data_testid="agent-row",
     )
 
 
@@ -245,6 +291,16 @@ def _settings() -> rx.Component:
             s.text("A stage not listed gets no tools.", size="1"),
             rx.foreach(P.grants, _grant_row),
             id="grants-panel",
+        ),
+        # `0036` R2. Who each stage's session is told it is.
+        s.panel(
+            s.section_head("Agents", rx.icon("users", size=18, color=s.MUTED)),
+            s.text("A change applies to the next step that starts.", size="1"),
+            rx.foreach(P.agent_problems,
+                       lambda p: rx.callout(p, icon="circle_alert", color_scheme="red",
+                                            variant="surface", size="1", margin_top="8px")),
+            rx.foreach(P.agent_rows, _agent_row),
+            id="agents-panel",
         ),
         s.panel(
             s.section_head("Which model runs each stage",

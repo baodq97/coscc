@@ -225,6 +225,17 @@ class BoardMixin:
         # what it was.
         if peer_problems:
             data["peer_problems"] = peer_problems
+        # `0036` R5. Each stage column's agent, by the one lookup, for the page to show only.
+        # A stage the table has no row for is left out, and its column has no glyph.
+        overrides = self._agent_overrides()[0]
+        data["stage_agents"] = {}
+        for stage in data["stages"]:
+            row = agents.agent_for(stage, overrides)
+            if row is not None:
+                data["stage_agents"][stage] = {
+                    "glyph": row["glyph"], "label": agents.label({**row, "key": stage}),
+                    "meaning": row["meaning"], "role": row["role"],
+                }
         name = self._workspace_name(cwd)
         for unit in data["units"]:
             if unit.get("repo") and name and unit["repo"] != name:
@@ -375,12 +386,15 @@ class BoardMixin:
         """
         self._workspace_or_refuse(cwd)
         key = self._journal_key(cwd)
+        # `0036` R5: through the one lookup, so an override shows here too. Read once per call.
+        overrides = self._agent_overrides()[0]
         running: dict[str, list[dict[str, Any]]] = {}
         for entry in self._running.values():
             if entry["workspace"] != key:
                 continue
             kind = entry["kind"]
-            agent = None if kind == "rebase" else agents.agent_for(entry["stage"])
+            row = None if kind == "rebase" else agents.agent_for(entry["stage"], overrides)
+            agent = {"glyph": row["glyph"], "name": row["name"]} if row else None
             running.setdefault(entry["unit"], []).append({
                 "kind": kind, "stage": entry["stage"], "agent": agent,
                 "started": entry["started"], "turns": entry["turns"], "cost_usd": entry["cost_usd"],
@@ -401,7 +415,8 @@ class BoardMixin:
             if unit in running:
                 continue
             rows = [
-                {"stage": r["stage"], "started": r["started"]}
+                # `0036` R7: the name the `start` carries, or its stage's for an older one.
+                {"stage": r["stage"], "started": r["started"], "agent": agents.of_record(r, overrides)}
                 for r in found["open"]
                 if r.get("started") and r["started"] == found["last_start"]
                 and _younger_than(r["started"], oldest)

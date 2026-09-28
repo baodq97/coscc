@@ -45,22 +45,26 @@ def marker(unit: str, n: int) -> str:
     return f"<!-- coscc-review unit={unit} round={n} -->"
 
 
-def first_line(unit: str, n: int) -> str:
-    """Says where the comment came from, before anything else (`0021` spec R4)."""
+def first_line(unit: str, n: int, author: str = "") -> str:
+    """Says where the comment came from, before anything else (`0021` spec R4).
+
+    `author` is the `review` agent's label, `<Name> (agent, review)`, read from the agent
+    table as the round is posted (`0036` R6); `""` names no agent."""
+    who = f"{author}, an agent session" if author else "an agent session"
     return (
-        f"**coscc review, round {n} of {unit}.** Written by an agent session, not a person. "
+        f"**coscc review, round {n} of {unit}.** Written by {who}, not a person. "
         "This comment is not an approval."
     )
 
 
-def body(unit: str, n: int, verdict: str | None, text: str) -> str:
-    """The whole comment. Pure: the same round always gives the same body.
+def body(unit: str, n: int, verdict: str | None, text: str, author: str = "") -> str:
+    """The whole comment. Pure: the same round and author always give the same body.
 
     The round's text goes in verbatim -- no summary, no cut (`0021` spec R3). A round too
     long for GitHub fails to post and shows as not posted, rather than posting short.
     """
     return (
-        f"{first_line(unit, n)}\n\n"
+        f"{first_line(unit, n, author)}\n\n"
         f"Verdict: {verdict or 'unreadable'}\n\n"
         f"{(text or '').rstrip()}\n\n"
         f"{marker(unit, n)}\n"
@@ -131,10 +135,13 @@ async def post(
     pr_url: str | None,
     cwd: str,
     run: Run | None = None,
+    author: str = "",
 ) -> Result:
     """Post one round unless it is already there. Never raises.
 
     `run` defaults to `_gh`, looked up at call time so a test can replace the module's.
+    `author` goes into the first line (`0036` R6); the marker does not carry it, so a round
+    posted before a rename is still found as `already`.
     """
     run = run or _gh
     if not pr_url:
@@ -158,7 +165,7 @@ async def post(
             return Result("already", url=str(c.get("url") or ""))
 
     got = await _call(
-        run, ["pr", "comment", pr_url, "--body-file", "-"], cwd, body(unit, n, verdict, text)
+        run, ["pr", "comment", pr_url, "--body-file", "-"], cwd, body(unit, n, verdict, text, author)
     )
     if isinstance(got, str):
         return Result("failed", reason=got)

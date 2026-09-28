@@ -236,14 +236,16 @@ class AnswersMixin(rx.State, mixin=True):
         finally:
             self.integrating = False
         outcome = done.get("outcome", "")
-        who = "the app" if done.get("mode") == "mechanical" else "an agent (Gebo)"
+        # `0036` R7: the name the service wrote into the record, never one put together here.
+        name = str(done.get("agent") or "")
+        who = "the app" if done.get("mode") == "mechanical" else (f"an agent ({name})" if name else "an agent")
         if outcome == "pushed":
             self.notice = (
                 f"Integrated by {who}: the pull request is now at {str(done.get('head_after'))[:7]}. "
                 "The ship gate is closed until a new review round reviews that head."
             )
         elif outcome == "needs-person":
-            self.notice = "Gebo stopped: a person is needed. The contradictions are listed on the unit."
+            self.notice = f"{name or 'The agent'} stopped: a person is needed. The contradictions are listed on the unit."
         else:
             self.notice = f"Integration {outcome or 'ended'}: {done.get('detail') or 'see Activity'}"
         await self._load_board()
