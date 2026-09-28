@@ -46,3 +46,6 @@ paths:
     `.claude/settings*.json` of the project are not read.
   - The CLI's own built-in skills and slash commands are still in every init: no option
     measured removes them (0088 spike ## U8).
+  - A session with a preset — a step with tools, Gebo — also gets `--settings`, holding
+    only `attribution` (`agents.settings_json`, 0036 R8). Any other key put there reaches
+    the session past `setting_sources=[]`.
