@@ -1028,6 +1028,9 @@ class StepsMixin:
             link_kw: dict[str, Any] = {}
             # `0135` R8. The answers and holds the prompt renders, from the database.
             link_kw["meta"] = self._meta_of(cwd, unit)
+            state_file = self._write_step_state(cwd, unit)
+            if state_file:
+                link_kw["state_file"] = state_file
             if stage == "intent":
                 idea_note = self._idea_note(cwd, unit)
                 if idea_note:

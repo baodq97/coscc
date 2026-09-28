@@ -2103,6 +2103,24 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
     OLD = {"head": "a" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
     NEW = {"head": "b" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
 
+    def test_the_step_is_handed_a_snapshot_file_cos_mjs_decides_on(self):
+        """`0135`: a step that runs `cos.mjs gate` or `pr-text` itself needs `--state`."""
+        import json
+        import subprocess
+
+        from coscc.agent import harness
+
+        self.step({"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None)
+        path = Path(self.seen[0]["state_file"])
+        snap = json.loads(path.read_text(encoding="utf-8"))
+        self.assertIn(f"{snap['workspace']}/{self.unit}", snap["units"])
+        self.assertFalse(path.is_relative_to(self.dir.parent))
+        done = subprocess.run(
+            ["node", str(harness.script()), "--root", str(self.dir.parent.parent), "gate", self.unit, "spec",
+             "--state", str(path)], capture_output=True, text=True, env=harness.child_env(),
+        )
+        self.assertIn(done.returncode, (0, 1), done.stderr)
+
     def test_no_retake_records_nothing_and_the_step_runs(self):
         self.step({"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None)
         self.assertEqual(len(self.seen), 1)

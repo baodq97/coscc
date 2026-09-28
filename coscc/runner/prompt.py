@@ -332,14 +332,22 @@ SESSION_ENDS_ADVICE = (
 HARNESS_HEADING = "# The harness script"
 
 
-def harness_advice(directory: Path) -> str:
-    """Where `cos.mjs` is and which `--root` a unit in `directory` takes."""
-    return (
+def harness_advice(directory: Path, state_file: str | Path | None = None) -> str:
+    """Where `cos.mjs` is and which `--root` a unit in `directory` takes; since `0135`, the
+    snapshot file its deciding commands read, which `cos.mjs` refuses to decide without."""
+    said = (
         f"Where your rules say `node .claude/scripts/cos.mjs <command>`, run "
         f"`node {harness.script()} <command> --root {directory.parent.parent}`. That is this "
         "app's copy and this unit's store; no other copy is the one the app reads. Do not "
         "search the filesystem for it."
     )
+    if state_file:
+        said += (
+            f"\n\n`status`, `gate`, `next`, `rerun`, `unit-branch`, `pr-text` and `screens` also "
+            f"take `--state {state_file}`: the app's snapshot of this unit's metadata, written as "
+            "this step began. Without it they exit 2; no other command takes it."
+        )
+    return said
 
 
 def _jera_answers(directory: Path, names: list[str], meta: dict[str, Any] | None = None) -> str:
@@ -461,6 +469,7 @@ def compose_prompt(
     runs_commands: bool = False,
     agent: dict[str, Any] | None = None,
     unit_meta: dict[str, Any] | None = None,
+    state_file: str | Path | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole (`spec.md` R4), and
     the ones it names by path only (`0094` R16).
@@ -544,9 +553,15 @@ def compose_prompt(
     if drift_note:
         parts.append(f"# The files main changed since the plan\n\n{drift_note}")
 
-    intent = "" if pointing else _read(directory / "intent.md")
-    if intent and unit_meta is not None:
-        intent = with_rows((directory / "intent.md").read_bytes(), "intent.md", unit_meta)
+    def embedded(name: str) -> str:
+        """An artifact as a prompt embeds it: since `0135` with its answers from `cos.db`,
+        which the file no longer carries (`with_rows`); `unit_meta=None` is the file."""
+        text = _read(directory / name)
+        if text and unit_meta is not None:
+            text = with_rows((directory / name).read_bytes(), name, unit_meta)
+        return text
+
+    intent = "" if pointing else embedded("intent.md")
     if intent:
         included.append("intent.md")
         parts.append(f"# The intent this work is authorised by\n\n{intent}")
@@ -559,7 +574,7 @@ def compose_prompt(
         name = f"{earlier}.md"
         if pointing and name not in _EMBED[stage]:
             continue
-        text = _read(directory / name)
+        text = embedded(name)
         if text and name not in included:
             included.append(name)
             parts.append(f"# The {earlier} it follows\n\n{text}")
@@ -578,7 +593,7 @@ def compose_prompt(
     # that measurement. A `spike` re-run needs the one before it to set `Round:`.
     spike = _read(directory / "spike.md")
     if stage == "plan" and "spike.md" in included and "spec.md" not in included:
-        spec = _read(directory / "spec.md")
+        spec = embedded("spec.md")
         if spec:
             included.append("spec.md")
             parts.append(f"# The spec the spike measured\n\n{spec}")
@@ -641,7 +656,7 @@ def compose_prompt(
         parts.append(f"{COMMANDS_HEADING}\n\n{words}\n\n{COMMANDS_ADVICE}")
     if runs_commands:
         parts.append(f"{SESSION_ENDS_HEADING}\n\n{SESSION_ENDS_ADVICE}")
-        parts.append(f"{HARNESS_HEADING}\n\n{harness_advice(directory)}")
+        parts.append(f"{HARNESS_HEADING}\n\n{harness_advice(directory, state_file)}")
 
     # `0110` R6. The finding lines earlier reviews raised on the files this plan changes,
     # already chosen and capped (`priorfindings.select`); this only places it, before the

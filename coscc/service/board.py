@@ -5,6 +5,7 @@ Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a 
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 import uuid
@@ -21,7 +22,7 @@ from coscc.git import gitops
 from coscc.github import integrate
 from coscc.agent import precedent as precedent_mod
 from coscc.units.board import Unavailable
-from coscc.data import now as _now
+from coscc.data import Data, now as _now
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord, Busy, Journal, last_runs, timelines_of, totals_of
 from coscc.units.history import BadTransition
@@ -223,6 +224,20 @@ class BoardMixin:
         """`unit`'s entry in the snapshot, `{}` when the app has none."""
         snap = self._snapshot(cwd, [unit])
         return snap["units"].get(f"{snap['workspace']}/{unit}") or {}
+
+    def _write_step_state(self, cwd: str, unit: str) -> str:
+        """`0135`. The snapshot a step that runs `cos.mjs` itself hands `--state` — the `pr`
+        step's `pr-text`, the `ship` step's gate — which refuse to decide without one. Written
+        as the step begins, under the data root beside `spikes/`, never in a store, and
+        replaced by the next step of the unit. `""` when it could not be written: the step
+        still runs, and the command it runs says what is missing."""
+        path = Data(self.config.data_dir).root / "state" / units.slot(cwd) / f"{unit}.json"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self._snapshot(cwd, [unit]), ensure_ascii=False), encoding="utf-8")
+        except (OSError, Invalid):
+            return ""
+        return str(path)
 
     def _import(self, meta: UnitMeta, key: str) -> None:
         """R3, R4. One store into `cos.db`, once; what it could not read, if anything, goes to

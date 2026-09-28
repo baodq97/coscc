@@ -1130,6 +1130,24 @@ class AnswersComeFromTheDatabase(unittest.TestCase):
         self.assertEqual(text.count("### Rerun\nDecided by: owner."), 1)
         self.assertEqual(text.count("## Answers"), 1)
 
+    def test_the_artifact_a_stage_follows_carries_its_answers_from_their_rows(self):
+        """The `plan` step reads `spec.md` from the prompt; an answer to a spec question given
+        since `0135` is a row only, and would be lost if the file were embedded as it stands."""
+        from coscc.runner import prompt as runner_prompt
+
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_x"
+            unit.mkdir(parents=True)
+            (unit / "intent.md").write_text("# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
+            (unit / "spec.md").write_text(
+                "# Spec: x\nIntent: intent.md. Status: accepted.\n\n## Open questions\n\n1. Hai?\n", encoding="utf-8")
+            entry = {"answers": [{"artifact": "spec.md", "n": 1, "id": None, "by": "owner", "date": "2026-09-28",
+                                  "via": "product", "text": "Một."}], "holds": []}
+            with mock.patch.object(runner_prompt, "skill_for", lambda s: f"RULES-FOR-{s}"):
+                prompt, _, _ = compose_prompt(d, unit, "0001_x", "plan", STAGES, "plan.md", unit_meta=entry)
+        followed = prompt.split("# The spec it follows\n\n", 1)[1]
+        self.assertIn("## Answers\n\n### Câu 1\nAnswered by: owner. Date: 2026-09-28. Via: product.\n\nMột.", followed)
+
     def test_a_hold_renders_as_the_block_intent_md_carried(self):
         with tempfile.TemporaryDirectory() as d:
             text = self.prompt(d, "spec")

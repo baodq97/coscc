@@ -1973,6 +1973,16 @@ class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):
                 self.assertEqual(prompt.count(HARNESS_HEADING), 1)
                 self.assertIn(f"`node {harness.script()} <command> --root {root}`", prompt)
 
+    def test_the_snapshot_file_is_named_for_the_deciding_commands(self):
+        """`0135`: `gate`, `pr-text` and the rest exit 2 without `--state`; the step is told its file."""
+        prompt = compose_prompt(
+            "/w", Path("/store") / ".cos" / UNIT, UNIT, "ship", STAGES, "ship.md", runs_commands=True,
+            state_file="/data/state/w/x.json",
+        )[0]
+        self.assertIn("also take `--state /data/state/w/x.json`", prompt)
+        without = compose_prompt("/w", Path("/store") / ".cos" / UNIT, UNIT, "ship", STAGES, "ship.md", runs_commands=True)[0]
+        self.assertNotIn("--state", without)
+
     def test_a_prose_stage_is_not_told(self):
         from coscc.runner.prompt import HARNESS_HEADING
 

@@ -335,6 +335,7 @@ class Runner:
         read_also: tuple[str, ...] = (),
         agent: dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
+        state_file: str | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -474,6 +475,7 @@ class Runner:
             runs_commands="Bash" in grant.tools,
             agent=agent,
             unit_meta=meta,
+            state_file=state_file,
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
