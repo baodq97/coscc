@@ -220,7 +220,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 4. Gebo's `[needs-person]` lines decide the integration outcome. *`0136`: R7's order — the head moved, else `needs_person` of the object Gebo hands back through `submit`, else `failed`.*
 5. Jera's JSON becomes `### Câu N` answers later stages treat as decided. *`0136`: the object Jera hands back through `submit`, guard `run-submitted`; each answer row carries `authority: agent`.*
 6. Estimate JSON becomes backlog rows. *`0136`: the object handed back through `submit`, guard `run-submitted`; each row carries `authority: agent`.*
-7. The reviewed sha and the merge pin are copied by the model out of prompt prose.
+7. The reviewed sha and the merge pin are copied by the model out of prompt prose. *`0136`: `ship` is the PR machine's (`coscc/github/prmachine.py`); guard `ship-ready` reads the head the review run recorded and the head its own `gh pr view` found, and the merge is pinned to that read.*
 8. The autopilot matches English substrings of `cos.mjs`'s messages (`CI is red on #`, `needs a person`, `record it in ship.md; do not merge`) (`units/autopilot.py:51-86`). *`0136`: `next` and `gate --json` hand out `reasons` from `guards.REASONS`, and the autopilot branches on them.*
 
 **Defects found while mapping (verified in code):**
@@ -243,7 +243,9 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
   plan shares a file with another unit's open PR waits with `overlap-pr #n`.*
 - There is no poller for CI or merge state; freshness depends on board reads and the 300 s pass.
 - pr.md and ship.md are agent sessions for what is mechanical (title/body from metadata; merge
-  with a pinned head) — 5% of spend and 11 failures across 90 units.
+  with a pinned head) — 5% of spend and 11 failures across 90 units. *Fixed by `0136` R12, R13:
+  a board step runs neither as a session; the PR machine pushes, opens and merges, and writes
+  both files from its own rows.*
 
 ## 7. Target direction (agreed 2026-09-28, to be designed by the FSM/DB units)
 
