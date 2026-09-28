@@ -750,12 +750,17 @@ async def reset_branch_to(
 # The first functions here that commit, push and tag. They take a release branch that passed
 # `_RELEASE_BRANCH_RE`, a tag that passed `_RELEASE_TAG_RE`, a full SHA, or a file named in
 # `RELEASE_FILES`. The two expressions keep a string from being read as a flag; the grammar
-# is `cos.mjs check-branch` and `check-tag`, which the caller asks first. Every writing
-# function refuses a tree that is not the one `worktrees.release_path` names.
+# is `cos.mjs check-branch` and `check-tag`, which the caller asks first. Every function
+# that writes to a tree takes it twice: the tree it works in, and `expected`, the path
+# `worktrees.release_path` names, which the caller works out again from the workspace rather
+# than passing the same variable. Both must agree, and the tree must itself be a linked
+# worktree named `RELEASE_TREE`, so a wrong path in both is still refused.
 
 _RELEASE_BRANCH_RE = re.compile(r"^chore/release-\d+-\d+-\d+$")
 _RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 RELEASE_FILES = ("pyproject.toml", "package.json", "package-lock.json", "uv.lock")
+# The release tree's own name. Not a `NNNN_slug`, so no unit's tree carries it.
+RELEASE_TREE = "release"
 
 
 def _release_branch(name: str) -> str:
@@ -770,9 +775,16 @@ def _release_tag(tag: str) -> str:
     return tag
 
 
+def _is_release_path(path: Path, expected: Path) -> bool:
+    where = Path(path).resolve()
+    return where == Path(expected).resolve() and where.name == RELEASE_TREE
+
+
 def _release_tree(tree: Path, expected: Path) -> None:
+    """Refuses unless `tree` is `expected` and a linked worktree named `release`: a
+    workspace's own checkout holds a `.git` directory, a linked tree a `.git` file."""
     _require_repo(tree)
-    if Path(tree).resolve() != Path(expected).resolve():
+    if not _is_release_path(tree, expected) or not (Path(tree) / ".git").is_file():
         raise GitError(f"{tree} is not the release worktree, so nothing was written")
 
 
@@ -813,12 +825,13 @@ async def show_file(path: Path, sha: str, name: str, timeout: float = BRANCH_TIM
     return await _run(["git", "-C", str(path), "show", f"{sha}:{name}"], timeout, strip=False)
 
 
-async def diff_u0(path: Path, timeout: float = BRANCH_TIMEOUT) -> str:
+async def diff_u0(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOUT) -> str:
     """`git diff -U0 HEAD`: every change in the tree, staged or not, new files included
-    once `add -N` would show them — so R7 reads what a commit of the whole tree would hold."""
-    _require_repo(path)
-    await _run(["git", "-C", str(path), "add", "--intent-to-add", "--all"], timeout)
-    return await _run(["git", "-C", str(path), "diff", "-U0", "--no-color", "HEAD"], timeout, strip=False)
+    once `add -N` would show them — so R7 reads what a commit of the whole tree would hold.
+    `add -N` writes the index, so only in the release tree."""
+    _release_tree(tree, expected)
+    await _run(["git", "-C", str(tree), "add", "--intent-to-add", "--all"], timeout)
+    return await _run(["git", "-C", str(tree), "diff", "-U0", "--no-color", "HEAD"], timeout, strip=False)
 
 
 async def commit_files(tree: Path, expected: Path, message: str, timeout: float = BRANCH_TIMEOUT) -> str:
@@ -858,8 +871,9 @@ async def detach_here(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOU
 
 async def release_tree_remove(root: Path, path: Path, expected: Path, timeout: float = WORKTREE_TIMEOUT) -> str:
     """`worktree remove --force`, the one forced removal: only of the release tree, whose
-    changes are the app's own (R7 removes it with them)."""
+    changes are the app's own (R7 removes it with them). Not `.git`-checked like the others:
+    a tree whose directory is already gone is still listed, and still removed."""
     _require_repo(root)
-    if Path(path).resolve() != Path(expected).resolve():
+    if not _is_release_path(path, expected) or Path(path).resolve() == Path(root).resolve():
         raise GitError(f"{path} is not the release worktree, so it was not removed")
     return await _run(["git", "-C", str(root), "worktree", "remove", "--force", "--", str(path)], timeout)

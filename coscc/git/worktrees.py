@@ -70,7 +70,7 @@ def path(workspace: str | os.PathLike[str], unit: str, data_dir: str | os.PathLi
     return where
 
 
-RELEASE_TREE = "release"
+RELEASE_TREE = gitops.RELEASE_TREE
 
 
 def release_path(workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None) -> Path:

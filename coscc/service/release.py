@@ -150,22 +150,26 @@ class ReleaseMixin:
             raise Invalid("no working folder is set, so a release cannot be recorded — set COS_WORKING_DIR")
         return journal, self._journal_key(cwd), Path(cwd).expanduser().resolve()
 
-    async def _release_tree_fresh(self, cwd: str, root: Path, sha: str) -> Path:
-        """The release worktree, detached at `sha`; a tree left from before is removed first."""
+    def _release_tree_path(self, cwd: str) -> Path:
+        """`worktrees.release_path` for `cwd`, worked out again on every call: it is the
+        `expected` each writing `gitops` function checks the tree it was handed against."""
         try:
-            tree = worktrees.release_path(cwd, self.config.data_dir)
+            return worktrees.release_path(cwd, self.config.data_dir)
         except BadUnit as e:
             raise GitError(str(e)) from e
-        await self._release_tree_gone(root, tree)
+
+    async def _release_tree_fresh(self, cwd: str, root: Path, sha: str) -> Path:
+        """The release worktree, detached at `sha`; a tree left from before is removed first."""
+        tree = self._release_tree_path(cwd)
+        await self._release_tree_gone(cwd, root, tree)
         tree.parent.mkdir(parents=True, exist_ok=True)
         await gitops.worktree_add(root, tree, sha)
         return tree
 
-    @staticmethod
-    async def _release_tree_gone(root: Path, tree: Path) -> None:
+    async def _release_tree_gone(self, cwd: str, root: Path, tree: Path) -> None:
         listed = {str(Path(t["path"]).resolve()) for t in await gitops.worktree_list(root)}
         if str(tree.resolve()) in listed:
-            await gitops.release_tree_remove(root, tree, tree)
+            await gitops.release_tree_remove(root, tree, self._release_tree_path(cwd))
 
     async def _release_press(
         self, cwd: str, phase: str, version: str,
@@ -245,7 +249,7 @@ class ReleaseMixin:
             if reason:
                 if tree is not None:
                     try:
-                        await self._release_tree_gone(root, tree)
+                        await self._release_tree_gone(cwd, root, tree)
                     except GitError:
                         pass
                 write("refused", detail=reason)
@@ -269,7 +273,7 @@ class ReleaseMixin:
                 # R6.3: still before anything changed, so a 400 like every other refusal.
                 write("refused", detail=f"check-branch refused {branch}: {said}")
                 try:
-                    await self._release_tree_gone(root, tree)
+                    await self._release_tree_gone(cwd, root, tree)
                 except GitError:
                     pass
                 raise Invalid(f"check-branch refused {branch}: {said}")
@@ -279,21 +283,22 @@ class ReleaseMixin:
             code, said = await release.cos(tree, "check-version")
             if code != 0 or (said.split() or [""])[0] != version:
                 raise release.ReleaseError(f"check-version printed {said!r}, not {version}")
-            extra = release.extra_diff(await gitops.diff_u0(tree), facts["old"], version)
+            extra = release.extra_diff(
+                await gitops.diff_u0(tree, self._release_tree_path(cwd)), facts["old"], version)
             if extra:
                 raise release.ReleaseError("the change is more than the version lines: " + "; ".join(extra))
-            head = await gitops.commit_files(tree, tree, f"chore(release): {version}")
-            await gitops.push_branch(tree, tree, branch)
+            head = await gitops.commit_files(tree, self._release_tree_path(cwd), f"chore(release): {version}")
+            await gitops.push_branch(tree, self._release_tree_path(cwd), branch)
             number = await release.create_pr(
                 str(tree), branch, f"chore(release): {version}",
                 release.pr_body(version, facts["units"], facts["unmatched"]))
-            await gitops.detach_here(tree, tree)
+            await gitops.detach_here(tree, self._release_tree_path(cwd))
             rec = write("opened", pr=number, head=head)
             yield ("done", {"release": rec})
         except (GitError, release.ReleaseError) as e:
             rec = write("failed", detail=str(e))
             try:
-                await self._release_tree_gone(root, tree)
+                await self._release_tree_gone(cwd, root, tree)
                 if cut:
                     await gitops.delete_merged_branch(root, branch, facts["origin_sha"])
             except GitError:
@@ -328,10 +333,10 @@ class ReleaseMixin:
             code, said = await release.cos(tree, "check-version")
             if code != 0 or (said.split() or [""])[0] != version:
                 raise release.ReleaseError(f"check-version at {sha[:7]} printed {said!r}, not {version}")
-            await gitops.push_tag(tree, tree, tag, sha)
+            await gitops.push_tag(tree, self._release_tree_path(cwd), tag, sha)
             rec = write("tagged", **merged)
             try:
-                await self._release_tree_gone(root, tree)
+                await self._release_tree_gone(cwd, root, tree)
                 # The tag was made on the remote only; the board reads local tags.
                 await gitops.fetch_with_tags(root)
             except GitError:
@@ -340,7 +345,7 @@ class ReleaseMixin:
         except (GitError, release.ReleaseError, integrate.IntegrateError, IndexError, KeyError) as e:
             rec = write("merged" if merged else "failed", detail=str(e), **merged)
             try:
-                await self._release_tree_gone(root, tree)
+                await self._release_tree_gone(cwd, root, tree)
             except GitError:
                 pass
             yield ("done", {"release": rec})

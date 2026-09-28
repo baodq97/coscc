@@ -836,7 +836,7 @@ class Releasing(unittest.TestCase):
         run = asyncio.run
         run(gitops.create_branch(self.tree, "chore/release-0-2-0", self.main))
         (self.tree / "uv.lock").write_text('version = "0.2.0"\n', encoding="utf-8")
-        self.assertIn('+version = "0.2.0"', run(gitops.diff_u0(self.tree)))
+        self.assertIn('+version = "0.2.0"', run(gitops.diff_u0(self.tree, self.tree)))
         head = run(gitops.commit_files(self.tree, self.tree, "chore(release): 0.2.0"))
         run(gitops.push_branch(self.tree, self.tree, "chore/release-0-2-0"))
         self.assertEqual(self.git(self.remote, "rev-parse", "refs/heads/chore/release-0-2-0"), head)
@@ -878,3 +878,26 @@ class Releasing(unittest.TestCase):
         (self.tree / "uv.lock").write_text("changed\n", encoding="utf-8")
         run(gitops.release_tree_remove(self.repo, self.tree, self.tree))
         self.assertFalse(self.tree.exists())
+
+    def test_the_same_wrong_path_twice_is_still_refused(self):
+        # `0046` review F3: every caller used to pass one variable as both arguments.
+        run = asyncio.run
+        other = self.tree.parent / "0001_a-unit"
+        run(gitops.worktree_add(self.repo, other, self.main))
+        (self.repo / "uv.lock").write_text("person's change\n", encoding="utf-8")
+        (other / "uv.lock").write_text("unit's change\n", encoding="utf-8")
+        for where in (self.repo, other):
+            with self.subTest(tree=where.name):
+                for call in (gitops.diff_u0(where, where), gitops.commit_files(where, where, "x"),
+                             gitops.push_branch(where, where, "chore/release-0-2-0"),
+                             gitops.push_tag(where, where, "v0.2.0", self.main), gitops.detach_here(where, where),
+                             gitops.release_tree_remove(self.repo, where, where)):
+                    with self.assertRaises(GitError):
+                        run(call)
+        self.assertEqual(self.git(self.repo, "status", "--porcelain"), "M uv.lock")
+        self.assertEqual(self.git(other, "status", "--porcelain"), "M uv.lock")
+        # A directory named `release` that is a checkout of its own, not a linked tree.
+        clone = self.tree.parent.parent / "elsewhere" / "release"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(clone)], check=True, capture_output=True)
+        with self.assertRaises(GitError):
+            run(gitops.diff_u0(clone, clone))
