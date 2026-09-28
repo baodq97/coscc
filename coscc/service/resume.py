@@ -21,6 +21,7 @@ from coscc.data import Data
 from coscc.runlog import events
 from coscc.runlog.journal import BadRecord, Busy
 from coscc.service.common import Invalid
+from coscc.service.sessions import CHAT_TURNS
 
 # The kinds `Sessions.stream`'s `owner` names, and which of them hold a unit.
 STEP_KINDS = ("step", "opening", "closing")
@@ -153,6 +154,11 @@ class ResumeMixin:
                     steps_mod.describe(unit, steps_mod.Mark("step", held.stage, "running", held.started_at))
                     if held is not None else ""
                 )
+            if not problem and kind == "chat":
+                # Review round 1, F5: R10 for a chat turn, said here so its `resume` row does.
+                used_up = transcript.ceilings_left(CHAT_TURNS, None, row)[2]
+                if used_up:
+                    problem = f"its ceiling was used up before the update: {used_up}"
             try:
                 journal.resumed(
                     str(row.get("workspace") or ""), str(row.get("unit") or ""), str(row.get("stage") or ""),

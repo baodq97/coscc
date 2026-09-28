@@ -66,8 +66,12 @@ class _Base(unittest.TestCase):
         self.tree = self.root / "tree"
         self.tree.mkdir()
 
-    def paused(self, kind: str = "step", cwd: Path | None = None, write: bool = True, **extra) -> dict:
-        """One `suspend` row, as `suspend_sessions` writes it, and its transcript unless not."""
+    def paused(self, kind: str = "step", cwd: Path | None = None, write: bool = True, api_calls: int | None = None,
+               **extra) -> dict:
+        """One `suspend` row, as `suspend_sessions` writes it, and its transcript unless not. A
+        chat turn's has used none of its one turn unless the test says so."""
+        if api_calls is None:
+            api_calls = 0 if kind == "chat" else 2
         cwd = str(cwd or self.tree)
         if write:
             path = transcript.path_for(cwd, SID)
@@ -78,7 +82,7 @@ class _Base(unittest.TestCase):
                  "stage": self.STAGE[kind], "start_at": "t0", "artifact": "plan.md", "head": ""}
         return self.journal.suspended(
             self.key, unit, owner["stage"], by="an", owner=owner, cwd=cwd, session_id=SID, model="m",
-            start_at="t0", boundary=4, safe_uuid="u2", dropped=DROPPED, api_calls=2, spent_usd=0.3, **extra,
+            start_at="t0", boundary=4, safe_uuid="u2", dropped=DROPPED, api_calls=api_calls, spent_usd=0.3, **extra,
         )
 
     def up(self) -> list[dict]:
@@ -248,6 +252,46 @@ class TakingUpAfterAnUpdate(_Base):
             said = self.up()
         self.assertEqual([(s["kind"], s["result"]) for s in said], [("step", "failed"), ("integrate", "resumed")])
         self.assertEqual((steps_seen, len(got)), ([], 1))
+
+    def test_the_chat_ceiling_is_what_sessions_gives_a_turn_that_names_none(self):
+        import inspect
+
+        from coscc.service.sessions import CHAT_TURNS
+
+        self.assertEqual(CHAT_TURNS, inspect.signature(Sessions.stream).parameters["max_turns"].default)
+        self.assertIsNone(inspect.signature(Sessions.stream).parameters["max_budget_usd"].default)
+
+    def test_a_chat_turn_goes_on_with_what_is_left_of_its_ceiling(self):
+        # Review round 1, F5: R10 for chat too, never its whole ceiling again.
+        streamed: list[dict] = []
+
+        async def stream(cwd, text, session_id=None, **kw):
+            streamed.append({"session_id": session_id, **kw})
+            yield ("done", {"session_id": SID})
+
+        self.service.sessions.stream = stream  # type: ignore[method-assign]
+        self.paused("chat", api_calls=0)
+        [said] = self.up()
+        self.assertEqual(said["result"], "resumed")
+        [call] = streamed
+        self.assertEqual((call["session_id"], call["resume_at"], call["max_turns"]), (SID, "u2", 1))
+
+    def test_a_chat_turn_with_its_one_turn_used_is_not_taken_up(self):
+        streamed: list[dict] = []
+
+        async def stream(cwd, text, session_id=None, **kw):
+            streamed.append(kw)
+            yield ("done", {"session_id": SID})
+
+        self.service.sessions.stream = stream  # type: ignore[method-assign]
+        self.paused("chat", api_calls=1)
+        [said] = self.up()
+        self.assertEqual(streamed, [])
+        self.assertEqual(said["result"], "failed")
+        self.assertIn("error_max_turns", said["detail"])
+        [row] = self.journal.records(self.key, kind="resume")
+        self.assertEqual(row["result"], "failed")
+        self.assertEqual(self.ends(), [])
 
     def test_a_refused_resume_ends_failed_without_a_new_session(self):
         # R8: the CLI refusing the id, or `Sessions` finding another in `init`, is the end.
