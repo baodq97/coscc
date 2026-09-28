@@ -692,14 +692,18 @@ class TheStagesThatReadWholeInputsKeepTheirPrompt(unittest.TestCase):
     """`0094` plan step 4: `idea`, `intent`, `spec`, `spike` and `plan` are outside R14, so
     their prompt is the one `build_prompt` made before `0094`, byte for byte. The digests
     were taken from `_golden_prompt` on `fc409f3`, before `coscc/runner/__init__.py` changed. A later
-    unit that changes one of these prompts on purpose takes the new digest and says so."""
+    unit that changes one of these prompts on purpose takes the new digest and says so.
+
+    `0135` review F5 did: `_ANSWERS_ADVICE` no longer says the app writes the answers back
+    onto the artifact, since they are rows in `cos.db`. That sentence is the only change to
+    `idea`, `intent`, `spec` and `plan`; `spike` does not carry it."""
 
     BEFORE = {
-        "idea": "0c27fc9c6020fb374fe896790542fd129ae2ed134c74f7ab10a21174ac06b7c1",
-        "intent": "ac89642b9f7a4d14c366728124f9b3a08dc48707f512b00372ebac71d59e36c0",
-        "spec": "3846c352c9beee851d1b520f5124ba5f97e1ec34bf1d19b352da2afe710dce07",
+        "idea": "9267c865c80da178ba395a2cdd9f338275803bbc443a3cb9620e3f9f1470972e",
+        "intent": "b96ef1e1b1e7fbc220a1d174597c28695fba2ab6918b0b836408e6239c75297e",
+        "spec": "380ab76a53c79b7e78f263ab12e3ef960bcd3d3a3c416598589b92d330266d18",
         "spike": "e1fcb244a461bb7573eb184a80fc5cdf187add7432dbc3024bd38d578655b6fd",
-        "plan": "1ee0ad89c88554fab29f4e23c833b10b63e2a366a185f588b5f6eba71b3787ab",
+        "plan": "4359018c31dedd5772e11bd9fc902b845df6e1075de60af80271a9e97e389f93",
     }
 
     def test_byte_for_byte(self):

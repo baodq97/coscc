@@ -194,8 +194,8 @@ def _open_questions(text: str) -> str:
 _ANSWERS_ADVICE = (
     "This is a person's decision, already made. Cite it as `<artifact> ## Answers, câu N` "
     "rather than reporting it back as if you had found it yourself. Do not copy this "
-    "section into your reply — the app writes it back onto the artifact after your reply, "
-    "on its own. If you still mention a question already answered here, keep its number."
+    "section into your reply — the app keeps these answers itself and gives them to every "
+    "later step. If you still mention a question already answered here, keep its number."
 )
 
 
