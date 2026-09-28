@@ -3,7 +3,9 @@ string built from a row."""
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -157,6 +159,37 @@ class StringsBuiltFromARow(unittest.TestCase):
         self.assertEqual(read(answered), "Kenaz (agent, spec)")
         self.assertEqual(read("# Impl\nno header here\n"), "")
         self.assertEqual(read("Author: Uruz (agent, impl)"), "Uruz (agent, impl)")
+
+
+class NoNameIsWrittenAnywhereElse(unittest.TestCase):
+    """`0036` R1: the eight names and Gebo live in `agents.json` alone. Comments and docstrings
+    are not where the app writes a name, so only other string constants are read."""
+
+    NAMES = re.compile(r"\b(Ingwaz|Nauthiz|Kenaz|Raidho|Uruz|Ansuz|Tiwaz|Othala|Gebo)\b")
+
+    @staticmethod
+    def _docstrings(tree: ast.AST) -> set[int]:
+        out: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                body = node.body
+                if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                    out.add(id(body[0].value))
+        return out
+
+    def test_no_agent_name_is_written_outside_the_default_file(self):
+        root = Path(agents.__file__).resolve().parents[1]
+        found = []
+        for path in sorted(root.rglob("*.py")):
+            if path.name.endswith("_test.py") or "_harness" in path.parts or "_web" in path.parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            skip = self._docstrings(tree)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip:
+                    if self.NAMES.search(node.value):
+                        found.append(f"{path.relative_to(root.parent)}:{node.lineno}: {node.value[:60]!r}")
+        self.assertEqual(found, [])
 
 
 if __name__ == "__main__":

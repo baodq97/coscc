@@ -209,11 +209,14 @@ class Warnings(unittest.TestCase):
 
     def test_a_press_that_may_fall_to_gebo_says_so(self):
         """`0052`: a `behind` or `current` press may open Gebo; the page says so, with the grant."""
-        said = ig.warnings([], "", True, "W", fallback=True)
+        said = ig.warnings([], "", True, "W", fallback=True, name="Gebo")
         self.assertEqual(len(said), 2)
-        self.assertIn("If GitHub refuses the rebase, the app opens Gebo, a paid agent session", said[0])
+        self.assertIn("If GitHub refuses the rebase, the app opens Gebo, a paid agent session, to rebase", said[0])
         self.assertIn("pressing Integrate agrees to that session", said[0])
         self.assertEqual(said[1], "W")
+        # `0036` R1: the name is the table's, handed in; with none the sentence still reads.
+        self.assertIn("the app opens a paid agent session to rebase",
+                      ig.warnings([], "", True, "W", fallback=True)[0])
 
     def test_a_passed_unit_is_told_what_integrating_costs(self):
         # `0061` R11.1: the four things the warning must say.
@@ -369,6 +372,23 @@ class Record(unittest.TestCase):
         rec["completion"]["relation"] = "behind"
         self.assertIn("rebased onto", ig.describe_for_review(rec))
 
+    def test_describe_for_review_names_the_agent_from_the_record(self):
+        # `0036` R7: the record's own name first; one from before `0036` by its stage, from
+        # today's table with its overrides.
+        rec = ig.record(workspace="w", unit="u", pr=7, mode="agent", head_before=HEAD, head_after=NEW,
+                        origin_sha=MAIN, outcome="pushed", agent="Weaver")
+        self.assertEqual(rec["agent"], "Weaver")
+        self.assertIn("by an agent session (Weaver)", ig.describe_for_review(rec))
+        del rec["agent"]
+        self.assertIn("by an agent session (Gebo)", ig.describe_for_review(rec))
+        self.assertIn("by an agent session (Knot)",
+                      ig.describe_for_review(rec, {"integrate": {"name": "Knot"}}))
+        rec["completion"] = {"relation": "ahead", "local_head": NEW, "cut": None}
+        self.assertIn("opened an agent session (Gebo) to push", ig.describe_for_review(rec))
+        mechanical = ig.record(workspace="w", unit="u", pr=7, mode="mechanical", head_before=HEAD,
+                               head_after=NEW, origin_sha=MAIN, outcome="pushed")
+        self.assertNotIn("agent", mechanical)
+
 
 class ThePrompt(unittest.TestCase):
     def test_it_carries_the_lease_the_lists_and_the_artifacts(self):
@@ -382,6 +402,19 @@ class ThePrompt(unittest.TestCase):
                      "/u/0030_a/plan.md", "- /u/0035_x/intent.md"):
             self.assertIn(want, text)
         self.assertNotIn("The mechanical rebase was refused", text)
+        self.assertTrue(text.startswith("RULES"))
+
+    def test_gebos_prompt_opens_with_its_identity(self):
+        # `0036` R3: before the rules, from the `integrate` row, with its empty fields left out.
+        from coscc.agent import agents
+
+        row = agents.agent_for("integrate")
+        text = ig.build_prompt(skill="RULES", unit="0035_x", branch="feat/x", pr=7, state="conflicting",
+                               reason="r", head_before=HEAD, origin_sha=MAIN, rel={"merged": [], "open": []},
+                               units_root=Path("/u"), own_paths={}, agent=row)
+        self.assertTrue(text.startswith(agents.identity_section(row) + "\n\nRULES"))
+        self.assertIn("You are ᚷ Gebo, the agent of the integrate stage.", text)
+        self.assertIn("`Gebo (agent, integrate)`", text)
 
     def test_every_own_artifact_it_names_can_be_read(self):
         """`0094` R15: Gebo is handed its unit's artifacts by path, so its grant must read them."""

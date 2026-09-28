@@ -18,7 +18,7 @@ from coscc.knowledge import efforttrial
 from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc import knowledge
-from coscc.agent import harness
+from coscc.agent import agents, harness
 from coscc.github import integrate
 from coscc.units import planmap, priorfindings, retake
 from coscc.units.board import Unavailable
@@ -210,7 +210,7 @@ class StepsMixin:
             if (last_record or {}).get("outcome") == "needs-person" else [],
             "warnings": integrate.warnings(
                 u.get("rounds") or [], review_status, gebo or fallback, grant_for("integrate").warning,
-                fallback=fallback,
+                fallback=fallback, name=(self._agent("integrate") or {}).get("name", ""),
             ),
             "consequence": CONSEQUENCE["integrate"],
         }
@@ -502,21 +502,26 @@ class StepsMixin:
             skill = harness.read_skill("integrate")
         except harness.MissingRules as e:
             raise Invalid(f"the integrate skill could not be read: {e}") from e
+        # `0036` R3, R7, R8: the `integrate` row, read once for the prompt, the records and
+        # the session's commit attribution.
+        agent = self._agent("integrate")
         prompt = integrate.build_prompt(
             skill=skill, unit=unit, branch=branch, pr=pr, state=info["state"], reason=info.get("reason", ""),
             head_before=head_before, origin_sha=origin_sha, rel=rel, units_root=units_root, own_paths=own,
-            refused_update=refused_update, completion=completion,
+            refused_update=refused_update, completion=completion, agent=agent,
         )
         grant = grant_for("integrate")
         model, model_source = self._model_for("impl")
         app = self._app_identity()
+        name = agent["name"] if agent is not None else ""
         try:
             journal.started(key, unit, "integrate", "manual", started_by=seen["started_by"],
                             prompt_chars=len(prompt), granted=list(grant.tools),
                             max_turns=grant.max_turns, head=head_before, model=model, model_source=model_source,
                             pointed=list(own), app_version=app["version"], app_commit=app["commit"],
                             # `0093` R8: what opened this session, for *Integrate for a conflict*.
-                            integrate_state=info["state"])
+                            integrate_state=info["state"],
+                            **({"agent": name} if name else {}))
         except (BadRecord, Busy):
             pass
         end: dict[str, Any] = {}
@@ -525,6 +530,7 @@ class StepsMixin:
             async for kind, payload in integrate.run_gebo(
                 self.sessions, tree=str(tree), workspace=cwd, prompt=prompt, grant=grant,
                 read_also=integrate.read_paths(units_root, unit, rel), lease=(branch, head_before), model=model,
+                settings=agents.settings_json(agent) if agent is not None else None,
             ):
                 if kind == "chunk":
                     yield ("chunk", payload)
@@ -587,7 +593,7 @@ class StepsMixin:
             workspace=key, unit=unit, pr=pr, mode="agent", head_before=head_before, head_after=head_now,
             origin_sha=origin_sha, outcome=outcome, related_=rel, report=reply,
             needs_person=integrate.parse_needs_person(reply), detail="; ".join(details),
-            update_branch=refused_update, **seen,
+            update_branch=refused_update, agent=name, **seen,
         ))
         yield ("done", {"integration": rec})
 
@@ -939,7 +945,9 @@ class StepsMixin:
             integration_note = ""
             if stage == "review":
                 since = integration_since_review(journal, key, unit)
-                integration_note = integrate.describe_for_review(since) if since else ""
+                integration_note = (
+                    integrate.describe_for_review(since, self._agent_overrides()[0]) if since else ""
+                )
             # `0042`. Which files the plan names `main` changed since the plan ran, for `impl`
             # only. Unlike `failed_attempts` above, nothing here may refuse the step (R8): a
             # busy run log, an unreadable `plan.md` or a bug in `drift.py` is "could not check".
