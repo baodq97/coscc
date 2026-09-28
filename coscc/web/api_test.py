@@ -748,6 +748,8 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
             got = await self.post(question=1, answer="Có.")
         self.assertEqual(got.status_code, 400, got.text)
         self.assertIn("the answer was not recorded", got.text)
+        # What went wrong is the log's, not the dialog's (review F8, S3).
+        self.assertNotIn("disk I/O error", got.text)
         self.assertEqual((len(self.rows()), len(answers())), (1, 1))
 
     async def test_the_board_then_counts_one_fewer_open(self):

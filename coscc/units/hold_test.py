@@ -267,6 +267,8 @@ class HoldThroughTheService(Repo):
             with self.assertRaises(Invalid) as said:
                 self.move("active", reason="tiếp")
         self.assertIn("the hold was not recorded", str(said.exception))
+        # What went wrong is the log's, not the dialog's (review F8, S3).
+        self.assertNotIn("disk I/O error", str(said.exception))
         self.assertEqual((len(self.holds()), len(self.records())), (1, 1))
         self.assertEqual(self.board_unit()["hold"]["state"], "paused")
 

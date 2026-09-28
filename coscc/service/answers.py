@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sqlite3
+import sys
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -502,8 +503,10 @@ class AnswersMixin:
                 })
             journal.append_with(records, rows)
         except (BadRecord, Busy, sqlite3.Error, OSError) as e:
+            # The error goes to the log, not the dialog: `Busy` names the database's path (S3).
             said = ", ".join(f"{w['artifact']} {w['question']}" for w in written)
-            raise Invalid(f"the answer was not recorded ({said}): {e}") from e
+            print(f"coscc: the answer was not recorded ({said}): {e}", file=sys.stderr)
+            raise Invalid(f"the answer was not recorded ({said})") from e
 
     def _append_one(
         self, cwd: str, unit: str, found: dict[str, Any], artifact: str, question: Any, text: str,
@@ -985,7 +988,8 @@ class AnswersMixin:
                 )
             except (BadRecord, Busy, sqlite3.Error, OSError) as e:
                 done = "; ".join(f"{x['effect']}: {x['result']}" for x in effects)
-                raise Invalid(f"the hold was not recorded: {e}" + (f" ({done})" if done else "")) from e
+                print(f"coscc: the hold of {unit} was not recorded: {e}", file=sys.stderr)
+                raise Invalid("the hold was not recorded" + (f" ({done})" if done else "")) from e
         finally:
             if mark is not None:
                 self._release(key, unit, mark)
