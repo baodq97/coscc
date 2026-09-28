@@ -311,13 +311,17 @@ class UnitMeta:
         with self.data.connect() as conn:
             return [dict(r) for r in conn.execute(sql + " ORDER BY workspace, unit, artifact, field", args)]
 
-    def snapshot(self, own: str, names: Mapping[str, str]) -> dict[str, Any]:
+    def snapshot(self, own: str, names: Mapping[str, str], units_: Iterable[str] | None = None) -> dict[str, Any]:
         """Spec Design 3: what `cos.mjs --state` reads, for the store `own` and every
         workspace `names` maps a name to. One query per table, never one per unit.
 
         Units are keyed `<name>/<unit>`. `own`'s name is the one `names` gives it, or `""`
         for a workspace with none. `not started`, the fold's word for no transition, is no
         status at all here, as a missing file is to `cos.mjs`.
+
+        `units_` narrows it to those units of `own` and every unit their `Depends on:` may
+        name, which is all `gate`, `next` and `unit-branch` read: R10 measured a `next` given
+        every unit of this repository's store slower than one reading its files.
         """
         named = dict(names)
         own_name = next((n for n, k in named.items() if k == own), "")
@@ -325,13 +329,32 @@ class UnitMeta:
         name_of = {k: n for n, k in named.items()}
         keys = list(name_of)
         where = f"root = ? AND workspace IN ({', '.join('?' for _ in keys)})"
-        args = [self.root, *keys]
+        args: list[Any] = [self.root, *keys]
+        pairs: set[tuple[str, str]] | None = None
         units: dict[str, dict[str, Any]] = {}
         with self.data.connect() as conn:
+            if units_ is not None:
+                wanted = sorted(set(units_))
+                pairs = {(own, u) for u in wanted}
+                links = conn.execute(
+                    f"SELECT ref FROM unit_links WHERE root = ? AND workspace = ? AND kind = 'depends' "
+                    f"AND unit IN ({', '.join('?' for _ in wanted)})", (self.root, own, *wanted),
+                ).fetchall()
+                for (ref,) in links:
+                    ws, _, name = ref.rpartition("/")
+                    pairs.add((own, name))
+                    if ws in named:
+                        pairs.add((named[ws], name))
+                names_in = sorted({u for _, u in pairs})
+                where += f" AND unit IN ({', '.join('?' for _ in names_in)})"
+                args += names_in
+
             def rows(sql: str):
                 return conn.execute(sql.format(where=where), args).fetchall()
 
             for r in rows("SELECT workspace, unit, type, lane FROM unit_meta WHERE {where}"):
+                if pairs is not None and (r["workspace"], r["unit"]) not in pairs:
+                    continue
                 units[f"{name_of[r['workspace']]}/{r['unit']}"] = {
                     "artifacts": {}, "type": None if r["type"] == "unknown" else r["type"], "lane": r["lane"],
                     "links": {"idea": None, "repo": None, "dependsOn": None},
@@ -390,6 +413,9 @@ class UnitMeta:
                     e["holds"].append({"state": r["move"], "reason": r["reason"], "by": r["decided_by"],
                                        "date": r["date"], "via": r["via"]})
             ideas: dict[str, list[dict[str, Any]]] = {}
-            for r in rows("SELECT workspace, idea, read FROM idea_meta WHERE {where} ORDER BY idea"):
+            for r in conn.execute(
+                f"SELECT workspace, idea, read FROM idea_meta WHERE root = ? AND workspace IN "
+                f"({', '.join('?' for _ in keys)}) ORDER BY idea", (self.root, *keys),
+            ):
                 ideas.setdefault(name_of[r["workspace"]], []).append({"id": r["idea"], **json.loads(r["read"])})
         return {"workspace": own_name, "workspaces": sorted(n for n in named if n), "units": units, "ideas": ideas}

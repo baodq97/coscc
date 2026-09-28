@@ -121,6 +121,22 @@ class TheSnapshotDecides(Base):
         for old, new in zip(before["units"], after["units"]):
             self.assertEqual(r5(new), r5(old), old["name"])
 
+    def test_a_snapshot_for_one_unit_carries_it_and_what_it_depends_on(self):
+        self.meta.import_store(WS, self.store)
+        snap = self.meta.snapshot(WS, NAMES, ["0017_linked"])
+        self.assertEqual(sorted(snap["units"]), ["proj/0010_full-loop", "proj/0017_linked"])
+        self.assertEqual(snap["ideas"]["proj"][0]["id"], "0001_x")
+        done = subprocess.run(
+            ["node", str(harness.script()), "--root", str(self.store), "--state", "-", "next", "0017_linked"],
+            input=json.dumps(snap), capture_output=True, text=True, env=harness.child_env(), check=True,
+        )
+        full = subprocess.run(
+            ["node", str(harness.script()), "--root", str(self.store), "--state", "-", "next", "0017_linked"],
+            input=json.dumps(self.meta.snapshot(WS, NAMES)), capture_output=True, text=True,
+            env=harness.child_env(), check=True,
+        )
+        self.assertEqual(json.loads(done.stdout), json.loads(full.stdout))
+
     def test_changing_a_status_in_the_snapshot_changes_the_output(self):
         self.meta.import_store(WS, self.store)
         snap = self.meta.snapshot(WS, NAMES)

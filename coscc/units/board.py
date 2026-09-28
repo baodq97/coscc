@@ -69,7 +69,7 @@ def _stage_rows(stages: list[dict[str, Any]], artifacts: dict[str, Any]) -> list
     return rows
 
 
-async def _run(argv: list[str], timeout: float) -> tuple[int, str, str]:
+async def _run(argv: list[str], timeout: float, stdin: str | None = None) -> tuple[int, str, str]:
     """One `cos.mjs` invocation: its exit code and both streams, decoded.
 
     Extracted when `gate` arrived, because the two callers want opposite things from a
@@ -84,10 +84,12 @@ async def _run(argv: list[str], timeout: float) -> tuple[int, str, str]:
         env=_child_env(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        stdin=asyncio.subprocess.DEVNULL,
+        stdin=asyncio.subprocess.DEVNULL if stdin is None else asyncio.subprocess.PIPE,
     )
     try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        out, err = await asyncio.wait_for(
+            proc.communicate(None if stdin is None else stdin.encode()), timeout=timeout
+        )
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
@@ -106,6 +108,14 @@ def _peer_args(peers: Peers) -> list[str]:
     """`0040` R14. One `--peer <ws>=<store root>` per workspace, the stores a unit's `Idea:` and
     `Depends on:` may name. Which names are left out is `Service._peers`'s decision, not this."""
     return [a for ws, store in peers for a in ("--peer", f"{ws}={Path(store).expanduser().resolve()}")]
+
+
+def _source(peers: Peers, state: dict[str, Any] | None) -> tuple[list[str], str | None]:
+    """`0135`. Where `cos.mjs` takes a unit's metadata from: the app's snapshot, on stdin as
+    `--state -` (`coscc/units/meta.py`), or, with none, the markdown and `--peer`s."""
+    if state is not None:
+        return ["--state", "-"], json.dumps(state, ensure_ascii=False)
+    return _peer_args(peers), None
 
 
 def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
@@ -134,7 +144,9 @@ def _ideas_of(data: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-async def read(units_root: str | Path, timeout: float = TIMEOUT, peers: Peers = ()) -> dict[str, Any]:
+async def read(
+    units_root: str | Path, timeout: float = TIMEOUT, peers: Peers = (), state: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Every unit under `units_root`, each with its eight stages.
 
     **`units_root` is not the workspace.** Until `0014` it was, and this module worked the
@@ -151,9 +163,10 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT, peers: Peers = 
     if not script.exists():
         raise Unavailable(f"the harness script is missing: {script}")
 
+    source, stdin = _source(peers, state)
     try:
         code, out_text, err_text = await _run(
-            [str(script), "--root", str(path), *_peer_args(peers), "status", "--json"], timeout
+            [str(script), "--root", str(path), *source, "status", "--json"], timeout, stdin
         )
     except (OSError, ValueError) as e:
         # No node on PATH is the ordinary case here, and it must name itself -- *with the
@@ -309,6 +322,7 @@ async def gate(
     repo: str | Path | None = None,
     timeout: float = GATE_TIMEOUT,
     peers: Peers = (),
+    state: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Ask `cos.mjs gate` whether one stage of one unit may proceed.
 
@@ -341,10 +355,11 @@ async def gate(
         raise Unavailable(f"the harness script is missing: {script}")
 
     try:
-        argv = [str(script), "--root", str(path), *_peer_args(peers), "gate", unit, stage]
+        source, stdin = _source(peers, state)
+        argv = [str(script), "--root", str(path), *source, "gate", unit, stage]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
-        code, out_text, err_text = await _run(argv, timeout)
+        code, out_text, err_text = await _run(argv, timeout, stdin)
     except (OSError, ValueError) as e:
         raise Unavailable(
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"
@@ -362,6 +377,7 @@ async def next_step(
     repo: str | Path | None = None,
     timeout: float = GATE_TIMEOUT,
     peers: Peers = (),
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask `cos.mjs next` which one stage the run button may offer for `unit`.
 
@@ -381,10 +397,11 @@ async def next_step(
         raise Unavailable(f"the harness script is missing: {script}")
 
     try:
-        argv = [str(script), "--root", str(path), *_peer_args(peers), "next", unit]
+        source, stdin = _source(peers, state)
+        argv = [str(script), "--root", str(path), *source, "next", unit]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
-        code, out_text, err_text = await _run(argv, timeout)
+        code, out_text, err_text = await _run(argv, timeout, stdin)
     except (OSError, ValueError) as e:
         raise Unavailable(
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"
