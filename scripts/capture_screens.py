@@ -42,6 +42,10 @@ runs on `0004_finished` (`seed_runs`), so every anomaly `/cost` knows has a row,
 plan`, whose reply is markdown (`seed_conversation`). Beside each PNG it writes the page's
 visible text as `<address slug>-<W>x<H>.txt`.
 
+Since `0046` `proj` holds this checkout's `cos.mjs`, a `pyproject.toml` at `0.1.0` tagged
+`v0.1.0`, then a `feat` and a `build(deps)` commit of no unit (`seed_release`), so `/board`
+shows its *Release* panel ready with `0.2.0` proposed.
+
 Since `0104` the autopilot is on for `proj` and the run log holds no `shortlist`, so `/board`
 shows its strip with one *No shortlist* stop and it starts nothing. **Add a shortlist to the
 fixture and the app under the camera starts real steps**, sessions that spend quota.
@@ -186,6 +190,24 @@ CHAT = (
     ("user", "Can the backlog be a table?"),
     ("assistant", [{"type": "text", "text": "Yes. The **plan** is:\n\n- one row per unit\n- *Edit* opens in the row"}]),
 )
+
+
+def seed_release(proj: Path) -> None:
+    """`0046`: one release behind, so the board's *Release* panel is `ready`. Pushed, so
+    `origin/main` and the tag are what a board read counts from."""
+    from scripts.proof_harness import git
+
+    (proj / ".claude" / "scripts").mkdir(parents=True, exist_ok=True)
+    shutil.copy(REPO / ".claude" / "scripts" / "cos.mjs", proj / ".claude" / "scripts" / "cos.mjs")
+    (proj / "pyproject.toml").write_text('[project]\nname = "proj"\nversion = "0.1.0"\n', encoding="utf-8")
+    git(proj, "add", "-A")
+    git(proj, "commit", "-q", "-m", "chore: release 0.1.0")
+    git(proj, "tag", "v0.1.0")
+    for subject, name in (("feat: search the board (#21)", "search.txt"), ("build(deps): bump reflex (#22)", "deps.txt")):
+        (proj / name).write_text(subject + "\n", encoding="utf-8")
+        git(proj, "add", "-A")
+        git(proj, "commit", "-q", "-m", subject)
+    git(proj, "push", "-q", "origin", "main", "v0.1.0")
 
 
 def seed_conversation(workspace: Path) -> str:
@@ -459,6 +481,7 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
     started = time.monotonic()
     try:
         proj = make_repo(work, outside)
+        seed_release(proj)
         token = seed_session(data_dir)
         seed_conversation(proj)
         with RealApp(config, work, data_dir) as app:
