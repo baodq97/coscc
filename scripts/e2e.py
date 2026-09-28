@@ -39,16 +39,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import httpx  # noqa: E402
 
 from coscc.web import auth
-from coscc.units import hold
+from coscc.data import Data  # noqa: E402
 from coscc.runlog import notices  # noqa: E402
 from coscc.config import from_env  # noqa: E402
 from coscc.runlog.journal import Journal  # noqa: E402
+from coscc.units.meta import UnitMeta  # noqa: E402
 from scripts.proof_harness import (  # noqa: E402
     EXIT_BROKEN,
     EXIT_PASS,
     Cut,
     RealApp,
     free_port,
+    ingest_fixture,
     make_repo,
     require_browser,
     require_build,
@@ -97,10 +99,12 @@ class Scene:
 
     def __init__(self, api: httpx.Client, proj: Path, other: Path) -> None:
         self.api, self.paths = api, {}
+        self.cwd = {"proj": proj, "other": other}
         self.alpha = self.unit(proj, "alpha", intent("alpha"))
         self.beta = self.unit(other, "beta", intent("beta"))
-        self.gone = self.unit(proj, "gone", intent(
-            "gone", "\n## Answers\n" + hold.block("dropped", "e2e", "2026-09-26", "no longer needed")))
+        self.gone = self.unit(proj, "gone", intent("gone"))
+        # Dropped by `load_fixture`, as a row: since `0135` no file carries a hold.
+        self.holds = [(proj, self.gone, "dropped", "no longer needed", "2026-09-26")]
 
     def unit(self, cwd: Path, slug: str, text: str) -> str:
         made = self.api.post("/api/units", json={"cwd": str(cwd), "slug": slug, "brief": "e2e"})
@@ -128,7 +132,8 @@ def slug_for(ws: str, n: int, at: str) -> str:
 
 def unit_files(at: str, shape: str, title: str) -> dict[str, str]:
     """`shape`: `ready` (whatever the service makes of the stage), `needs-you`, `paused` or
-    `done`."""
+    `done`. A `paused` unit's files are a `ready` one's: its hold is a row `load_fixture`
+    writes."""
     head = "Author: e2e. Status: {}.\n"
     intent_md = (f"# Intent: {title}\nAuthor: e2e. Type: feat. Status: accepted.\n\n"
                  "## Problem\n\nMột unit của fixture board.\n")
@@ -156,8 +161,6 @@ def unit_files(at: str, shape: str, title: str) -> dict[str, str]:
                          "### What was not reviewed\n\nNothing.\n")):
         if stage in ladder:
             files[f"{stage}.md"] = text
-    if shape == "paused":
-        files["intent.md"] += "\n## Answers\n" + hold.block("paused", "e2e", "2026-09-28", "on hold")
     return files
 
 
@@ -195,6 +198,19 @@ class Wide:
                 (where / file).write_text(text, encoding="utf-8")
             units[name] = (at, shape)
         return units
+
+
+def load_fixture(root: Path, data_dir: Path, scene: Scene, wide: Wide) -> None:
+    """`0135`: the board reads a unit from `cos.db`, not its files. What the fixture wrote by
+    hand goes in as a finished step's do (`ingest_fixture`); each hold as the row
+    `/api/units/hold` writes, without the pull request and worktree a drop closes."""
+    ingest_fixture(root, data_dir, *scene.cwd.values(), *wide.cwd.values(), by="e2e")
+    holds = list(scene.holds) + [(wide.cwd[ws], name, "paused", "on hold", "2026-09-28")
+                                 for ws, made in wide.units.items()
+                                 for name, (_, shape) in made.items() if shape == "paused"]
+    meta = UnitMeta(root, Data(data_dir))
+    for cwd, unit, move, reason, day in holds:
+        meta.add_hold(str(cwd.resolve()), unit, move, reason, "e2e", day, "product")
 
 
 # --------------------------------------------------------------------------
@@ -315,26 +331,35 @@ def the_board_search_keeps_only_the_cards_it_matches(context, base, scene) -> bo
         page.close()
 
 
-def an_answer_sent_from_the_dialog_is_appended_and_shown(context, base, scene) -> bool:
-    """`0071` (a), `0016`: Send this answer appends one block and the dialog shows it."""
+def an_answer_sent_from_the_dialog_is_recorded_and_shown(context, base, scene, data_dir) -> bool:
+    """`0071` (a), `0016`: Send this answer records one answer and the dialog shows it.
+    Since `0135` R8 the answer is a row in `cos.db` and no byte of `intent.md`."""
     page = context.new_page()
     words = "Có, đã trả lời từ bộ e2e."
+    path = scene.paths[scene.alpha] / "intent.md"
+
+    def rows() -> list[tuple]:
+        with Data(data_dir).connect() as conn:
+            return [tuple(r) for r in conn.execute(
+                "SELECT artifact, ref, text FROM unit_answers WHERE unit = ?", (scene.alpha,))]
+
     try:
         place = ("unit", "proj", scene.alpha, "questions")
+        before = path.read_bytes()
         why = arrive(page, base, href(*place)) or settle(page, *place)
         if not why:
             page.fill('[aria-label="Answer to intent.md#1"]', words)
             page.click('[id="answer-intent.md#1"]')
-            text, deadline = "", time.monotonic() + PLACE_TIMEOUT_S
-            while time.monotonic() < deadline and words not in text:
+            got, deadline = [], time.monotonic() + PLACE_TIMEOUT_S
+            while time.monotonic() < deadline and not got:
                 page.wait_for_timeout(200)
-                text = (scene.paths[scene.alpha] / "intent.md").read_text(encoding="utf-8")
+                got = rows()
             said = "Answered question 1 of intent.md"
             dialog = page.locator("[role=dialog]", has_text=said)
             shown = dialog.count() or (dialog.wait_for(timeout=TIMEOUT_MS) or 1)
-            why = ("" if text.count("### Câu 1") == 1 and text.startswith(intent("alpha").rstrip("\n"))
-                   and shown else f"file ends {text[-200:]!r}")
-        return say(not why, "one ### Câu 1 is appended, nothing above it moves, and the dialog says so", why)
+            why = ("" if got == [("intent.md", "1", words)] and path.read_bytes() == before and shown
+                   else f"rows {got!r}, intent.md {'unchanged' if path.read_bytes() == before else 'changed'}")
+        return say(not why, "one answer row is written, intent.md keeps every byte, and the dialog says so", why)
     finally:
         page.close()
 
@@ -896,16 +921,18 @@ def main() -> int:
                 api.post("/api/workspaces", json={"name": name}).raise_for_status()
             scene = Scene(api, proj, other)
             wide = Wide(api, f1, f2)
+            load_fixture(root, data_dir, scene, wide)
             context = browser.new_context(viewport=SIZE)
             context.set_default_timeout(TIMEOUT_MS)
             context.add_cookies([{"name": auth.COOKIE, "value": token, "url": app.base}])
             try:
                 for case in (every_place_opens_at_its_address_and_stays_after_a_reload,
                              back_and_forward_return_to_the_screens_the_page_moved_between,
-                             the_board_search_keeps_only_the_cards_it_matches,
-                             an_answer_sent_from_the_dialog_is_appended_and_shown,
-                             a_dropped_unit_opens_with_nothing_that_writes):
+                             the_board_search_keeps_only_the_cards_it_matches):
                     results.append(run(case, context, app.base, scene))
+                results.append(run(an_answer_sent_from_the_dialog_is_recorded_and_shown,
+                                   context, app.base, scene, data_dir))
+                results.append(run(a_dropped_unit_opens_with_nothing_that_writes, context, app.base, scene))
                 for case in (the_board_shows_every_stage_and_every_unfinished_unit_without_scrolling,
                              the_board_does_not_scroll_sideways_on_a_phone,
                              the_done_count_opens_the_done_group,
