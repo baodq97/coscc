@@ -5,9 +5,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from coscc.config import Config
-from coscc.data import Data
+from coscc.data import Busy, Data
 from coscc.service import Service
 from coscc.service.common import Invalid
 from coscc.agent.sessions import Sessions
@@ -66,6 +67,27 @@ class AnOverrideIsCheckedSavedAndLogged(unittest.TestCase):
         # A row may keep its own name.
         self.service.set_agent("plan", {"name": "ROAD"})
         self.assertEqual(self.service._agent("plan")["name"], "ROAD")
+
+    def test_a_default_name_coming_back_is_checked_too(self):
+        self.service.set_agent("review", {"name": "Judge", "role": "Reads it all."})
+        self.service.set_agent("impl", {"name": "Tiwaz"})
+        # Reset, and clearing the name alone, would both bring `Tiwaz` back to `review`.
+        for fields in ({}, {"name": ""}):
+            with self.assertRaises(Invalid, msg=fields):
+                self.service.set_agent("review", fields)
+        self.assertEqual(self.service._agent("review")["name"], "Judge")
+        self.assertEqual(len(self._settings()), 2)
+        self.service.set_agent("impl")
+        self.service.set_agent("review")
+        self.assertEqual(self.service._agent("review")["name"], "Tiwaz")
+
+    def test_an_unreadable_store_writes_nothing(self):
+        self.service.set_agent("review", {"name": "Judge"})
+        with mock.patch.object(Data, "pref_rows", side_effect=Busy("locked")):
+            with self.assertRaises(Invalid):
+                self.service.set_agent("review", {"role": "Reads it all."})
+        self.assertEqual(self.data.pref_rows("agent:"), {"agent:review": '{"name": "Judge"}'})
+        self.assertEqual(len(self._settings()), 1)
 
     def test_the_key_alone_removes_the_rows_override(self):
         self.service.set_agent("impl", {"name": "Builder", "glyph": "ᛒ"})

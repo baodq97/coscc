@@ -63,22 +63,32 @@ class AgentsMixin:
             if reason:
                 raise Invalid(reason)
 
-        overrides, _ = self._agent_overrides()
+        # Read strictly, unlike `_agent_overrides`: a write built on overrides it could not
+        # read would drop the row's other fields, log `old` as none, and check the name
+        # against defaults alone.
+        data = Data(self.config.data_dir)
+        try:
+            overrides, _ = agents.overrides_from(data.pref_rows(agents.PREFIX))
+        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+            raise Invalid(f"the agent overrides could not be read, so nothing was saved: {e}") from e
         old = overrides.get(key)
         if fields:
             new = {**(old or {}), **fields}
             new = {f: v for f, v in new.items() if v != ""} or None
         else:
             new = None
-        if new and "name" in new:
-            taken = {
-                str(agents.resolve(k, defaults, overrides)["name"]).lower(): k
-                for k in defaults if k != key
-            }
-            if new["name"].lower() in taken:
-                raise Invalid(f"the name {new['name']} is already {taken[new['name'].lower()]}'s")
+        # The name the row has after the change, override or default, since removing an
+        # override brings the default back.
+        after = {k: v for k, v in overrides.items() if k != key}
+        if new is not None:
+            after[key] = new
+        name = str(agents.resolve(key, defaults, after)["name"])
+        taken = {
+            str(agents.resolve(k, defaults, after)["name"]).lower(): k for k in defaults if k != key
+        }
+        if name.lower() in taken:
+            raise Invalid(f"the name {name} is already {taken[name.lower()]}'s")
 
-        data = Data(self.config.data_dir)
         if new is None:
             data.delete_pref(agents.PREFIX + key)
         else:
