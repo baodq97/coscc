@@ -465,6 +465,34 @@ def _links() -> rx.Component:
     )
 
 
+def _unit_badges() -> rx.Component:
+    """`0133` R7. The badges the card let go, where the unit is opened. `problems` and
+    `waits_for` are not here: the overview tab already shows both (`_links`, its callout)."""
+    u = P.current_unit
+    return rx.fragment(
+        rx.flex(
+            # `0016` R8, `0082` R11: only while the service says the unit can still be answered.
+            rx.cond((u.open_questions > 0) & u.answerable,
+                    s.badge(u.open_questions.to_string() + " waiting on you", "amber")),
+            # `0035` R1, `0052`: `current` has a button too, and still reads gray.
+            rx.cond(u.integration_state != "",
+                    s.badge("main: " + u.integration_state,
+                            rx.cond(u.integrate_button & (u.integration_state != "current"),
+                                    "amber", "gray"))),
+            # `0047` R8. The label is the service's; the page only shows it.
+            rx.cond(u.outcome_text != "", s.badge("outcome: " + u.outcome_text, u.outcome_color)),
+            # `0074`. Its place in the shortlist.
+            rx.cond(u.shortlist_rank > 0, s.badge("#" + u.shortlist_rank.to_string(), "iris")),
+            rx.cond(u.mode == "autonomous", s.badge("Autonomous", "iris")),
+            s.badge(u.owner, "gray"),
+            wrap="wrap", gap="8px", margin_top="14px", id="unit-badges",
+        ),
+        # `0074` R9. Its relations.
+        rx.cond(u.relations_text != "",
+                s.text(u.relations_text, size="1", margin_top="8px", overflow_wrap="anywhere")),
+    )
+
+
 def _detail_dialog() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
@@ -494,6 +522,7 @@ def _detail_dialog() -> rx.Component:
                                 margin_top="24px", line_height="1.3"),
                 rx.dialog.description("Next: " + P.current_unit.summary, size="2",
                                       color=s.MUTED, margin_top="12px"),
+                _unit_badges(),
                 rx.flex(rx.foreach(P.current_unit.cells, _cell_chip),
                         gap="14px", wrap="wrap", margin_top="20px"),
                 rx.cond(

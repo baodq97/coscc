@@ -119,6 +119,17 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("COS_", _render(screens._autopilot_settings()))
         self.assertNotIn("COS_", _render(screens._autopilot_strip()))
 
+    def test_0133_the_dialog_overview_carries_every_field_the_card_let_go(self):
+        """`0133` R7: every field a card showed before `0133` is read by the dialog's header or
+        its overview tab, which is open without a further click."""
+        dialog = _render(screens._detail_dialog()).replace('\\"', '"')
+        for field in ("open_questions", "answerable", "integration_state", "outcome_text",
+                      "shortlist_rank", "owner", "relations_text", "mode", "problems",
+                      "waits_for", "summary", "title", "state_label", "id"):
+            self.assertRegex(dialog, r'current_unit\w*\?\.\["' + field + r'"\]', field)
+        self.assertIn("waiting on you", dialog)
+        self.assertIn("unit-badges", dialog)
+
     def test_f2_a_grants_tools_are_a_list_behind_details(self):
         settings = _render(screens._settings())
         self.assertNotIn("tools: ", settings)
