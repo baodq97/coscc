@@ -800,3 +800,104 @@ class TreeStateSeesAWriteAndACommit(unittest.TestCase):
     def test_not_a_repository_is_refused(self):
         with self.assertRaises(GitError):
             asyncio.run(gitops.tree_state(Path(self._tmp.name)))
+
+
+class Releasing(unittest.TestCase):
+    """`0046`: the release branch and tag, in the release tree only, against a bare remote."""
+
+    def git(self, where: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(where), "-c", "user.name=T", "-c", "user.email=t@example.invalid",
+             "-c", "commit.gpgsign=false", *args],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        base = Path(self._tmp.name)
+        self.remote = base / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
+        self.repo = base / "repo"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(self.repo)], check=True, capture_output=True)
+        self.git(self.repo, "config", "user.name", "T")
+        self.git(self.repo, "config", "user.email", "t@example.invalid")
+        for name in gitops.RELEASE_FILES:
+            (self.repo / name).write_text('version = "0.1.0"\n', encoding="utf-8")
+        self.git(self.repo, "add", "-A")
+        self.git(self.repo, "commit", "-q", "-m", "one")
+        self.git(self.repo, "push", "-q", "origin", "main")
+        self.main = self.git(self.repo, "rev-parse", "main")
+        self.tree = base / "data" / "release"
+        self.tree.parent.mkdir(parents=True)
+        asyncio.run(gitops.worktree_add(self.repo, self.tree, self.main))
+
+    def test_a_branch_commit_and_tag_reach_the_remote(self):
+        run = asyncio.run
+        run(gitops.create_branch(self.tree, "chore/release-0-2-0", self.main))
+        (self.tree / "uv.lock").write_text('version = "0.2.0"\n', encoding="utf-8")
+        self.assertIn('+version = "0.2.0"', run(gitops.diff_u0(self.tree, self.tree)))
+        head = run(gitops.commit_files(self.tree, self.tree, "chore(release): 0.2.0"))
+        run(gitops.push_branch(self.tree, self.tree, "chore/release-0-2-0"))
+        self.assertEqual(self.git(self.remote, "rev-parse", "refs/heads/chore/release-0-2-0"), head)
+        run(gitops.detach_here(self.tree, self.tree))
+        self.assertEqual(run(gitops.current_branch(self.tree)), "")
+        self.assertFalse(run(gitops.remote_has_tag(self.tree, "v0.2.0")))
+        run(gitops.push_tag(self.tree, self.tree, "v0.2.0", head))
+        self.assertTrue(run(gitops.remote_has_tag(self.tree, "v0.2.0")))
+        self.assertEqual(self.git(self.remote, "rev-parse", "refs/tags/v0.2.0"), head)
+        self.assertEqual(self.git(self.repo, "tag", "--list", "v0.2.0"), "")
+        with self.assertRaises(GitError):
+            run(gitops.push_tag(self.tree, self.tree, "v0.2.0", self.main))
+        run(gitops.fetch_with_tags(self.repo))
+        self.assertEqual(run(gitops.release_tags(self.repo, head)), ["v0.2.0"])
+        self.assertEqual(run(gitops.show_file(self.repo, head, "uv.lock")), 'version = "0.2.0"')
+
+    def test_names_that_are_not_a_release_are_refused(self):
+        run = asyncio.run
+        for name in ("main", "feat/x", "--force", "chore/release-0-2"):
+            with self.subTest(branch=name), self.assertRaises(GitError):
+                run(gitops.push_branch(self.tree, self.tree, name))
+        for tag in ("v1.2.3-rc.1", "1.2.3", "-d"):
+            with self.subTest(tag=tag), self.assertRaises(GitError):
+                run(gitops.push_tag(self.tree, self.tree, tag, self.main))
+        with self.assertRaises(GitError):
+            run(gitops.show_file(self.repo, self.main, "README.md"))
+
+    def test_only_the_release_tree_is_written_or_removed(self):
+        run = asyncio.run
+        with self.assertRaises(GitError):
+            run(gitops.commit_files(self.repo, self.tree, "x"))
+        with self.assertRaises(GitError):
+            run(gitops.push_tag(self.repo, self.tree, "v0.2.0", self.main))
+        with self.assertRaises(GitError):
+            run(gitops.release_tree_remove(self.repo, self.repo, self.tree))
+        # Detached at `main`, not on a release branch: no commit.
+        with self.assertRaises(GitError):
+            run(gitops.commit_files(self.tree, self.tree, "x"))
+        (self.tree / "uv.lock").write_text("changed\n", encoding="utf-8")
+        run(gitops.release_tree_remove(self.repo, self.tree, self.tree))
+        self.assertFalse(self.tree.exists())
+
+    def test_the_same_wrong_path_twice_is_still_refused(self):
+        # `0046` review F3: every caller used to pass one variable as both arguments.
+        run = asyncio.run
+        other = self.tree.parent / "0001_a-unit"
+        run(gitops.worktree_add(self.repo, other, self.main))
+        (self.repo / "uv.lock").write_text("person's change\n", encoding="utf-8")
+        (other / "uv.lock").write_text("unit's change\n", encoding="utf-8")
+        for where in (self.repo, other):
+            with self.subTest(tree=where.name):
+                for call in (gitops.diff_u0(where, where), gitops.commit_files(where, where, "x"),
+                             gitops.push_branch(where, where, "chore/release-0-2-0"),
+                             gitops.push_tag(where, where, "v0.2.0", self.main), gitops.detach_here(where, where),
+                             gitops.release_tree_remove(self.repo, where, where)):
+                    with self.assertRaises(GitError):
+                        run(call)
+        self.assertEqual(self.git(self.repo, "status", "--porcelain"), "M uv.lock")
+        self.assertEqual(self.git(other, "status", "--porcelain"), "M uv.lock")
+        # A directory named `release` that is a checkout of its own, not a linked tree.
+        clone = self.tree.parent.parent / "elsewhere" / "release"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(clone)], check=True, capture_output=True)
+        with self.assertRaises(GitError):
+            run(gitops.diff_u0(clone, clone))

@@ -25,7 +25,7 @@ paths:
     by hand; nothing remembers the refusal.
   - The app moves a still-detached tree's HEAD to `origin/main` as a fetch just brought it,
     before every step that runs there. Each such step costs one more fetch, up to
-    `FETCH_TIMEOUT` (`coscc/git/gitops.py:239`, chosen, not measured) when the remote does not
+    `FETCH_TIMEOUT` (`coscc/git/gitops.py:244`, chosen, not measured) when the remote does not
     answer — unless a fetch of the same clone is already running (the step waits for it) or
     one succeeded under `REUSE_SECONDS` (`coscc/git/fetches.py:36`) before (the step fetches
     nothing, and a commit pushed in that window is not in its base, cutting a branch

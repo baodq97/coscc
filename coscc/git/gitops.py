@@ -202,10 +202,15 @@ async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
 #   how far a branch is behind, neither writing anything.
 # - Since `0048`, `rev-parse --git-common-dir`, a read that writes nothing: it names the git
 #   dir a workspace and all its worktrees share, so fetches into it can be coordinated.
+# - Since `0046`, in the release worktree only (`worktrees.release_path`) and only through the
+#   functions under `# --- releasing (0046) ---`: fetch `main` with tags, commit the four
+#   version files on a `chore/release-X-Y-Z` branch, push that branch without force, create
+#   and push a `vX.Y.Z` tag, detach the tree, and remove it with `--force`.
 #
 # The app may **not**: push, merge, commit, move `main` to another commit, or delete any
-# branch but that one. Those are a step's business — the `pr` grant carries `git`
-# and `gh` and a warning that says what that reaches (`coscc/agent/policy.py:96-99`) — or nobody's.
+# branch but that one — except the release branch and tag above. Those are a step's
+# business — the `pr` grant carries `git` and `gh` and a warning that says what that
+# reaches (`coscc/agent/policy.py:96-99`) — or nobody's.
 #
 # `plan.md` Risk 1 names the weakness honestly: this is a hand-written list, not a
 # mechanism, in the same way `policy.check_command` is. What makes it narrow is that the
@@ -738,3 +743,137 @@ async def reset_branch_to(
     if not await has_commit(tree, new_sha, timeout):
         raise GitError(f"{new_sha[:7]} is not here even after fetching {branch}, so nothing was moved")
     return await _run(["git", "-C", str(tree), "reset", "--keep", new_sha], timeout)
+
+
+# --- releasing (0046) -----------------------------------------------------------
+#
+# The first functions here that commit, push and tag. They take a release branch that passed
+# `_RELEASE_BRANCH_RE`, a tag that passed `_RELEASE_TAG_RE`, a full SHA, or a file named in
+# `RELEASE_FILES`. The two expressions keep a string from being read as a flag; the grammar
+# is `cos.mjs check-branch` and `check-tag`, which the caller asks first. Every function
+# that writes to a tree takes it twice: the tree it works in, and `expected`, the path
+# `worktrees.release_path` names, which the caller works out again from the workspace rather
+# than passing the same variable. Both must agree, and the tree must itself be a linked
+# worktree named `RELEASE_TREE`, so a wrong path in both is still refused.
+
+_RELEASE_BRANCH_RE = re.compile(r"^chore/release-\d+-\d+-\d+$")
+_RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+RELEASE_FILES = ("pyproject.toml", "package.json", "package-lock.json", "uv.lock")
+# The release tree's own name. Not a `NNNN_slug`, so no unit's tree carries it.
+RELEASE_TREE = "release"
+
+
+def _release_branch(name: str) -> str:
+    if not _RELEASE_BRANCH_RE.fullmatch(name or ""):
+        raise GitError(f"not a release branch this app will write: {name!r}")
+    return name
+
+
+def _release_tag(tag: str) -> str:
+    if not _RELEASE_TAG_RE.fullmatch(tag or ""):
+        raise GitError(f"not a release tag this app will write: {tag!r}")
+    return tag
+
+
+def _is_release_path(path: Path, expected: Path) -> bool:
+    where = Path(path).resolve()
+    return where == Path(expected).resolve() and where.name == RELEASE_TREE
+
+
+def _release_tree(tree: Path, expected: Path) -> None:
+    """Refuses unless `tree` is `expected` and a linked worktree named `release`: a
+    workspace's own checkout holds a `.git` directory, a linked tree a `.git` file."""
+    _require_repo(tree)
+    if not _is_release_path(tree, expected) or not (Path(tree) / ".git").is_file():
+        raise GitError(f"{tree} is not the release worktree, so nothing was written")
+
+
+async def fetch_with_tags(path: Path, timeout: float = FETCH_TIMEOUT) -> str:
+    """`fetch --tags origin +refs/heads/main:refs/remotes/origin/main`. `fetch` above keeps
+    `--no-tags`; only a release press brings the tags (R6.1)."""
+    _require_repo(path)
+    return await _run(
+        ["git", "-C", str(path), "fetch", "--tags", "--", "origin",
+         f"+refs/heads/{TRUNK}:refs/remotes/origin/{TRUNK}"],
+        timeout,
+    )
+
+
+async def release_tags(path: Path, sha: str, timeout: float = BRANCH_TIMEOUT) -> list[str]:
+    """Every local tag `v*` that `sha` contains."""
+    _require_repo(path)
+    _require_shas(sha)
+    out = await _run(["git", "-C", str(path), "tag", "--list", "v*", "--merged", sha], timeout)
+    return [t for t in out.splitlines() if t.strip()]
+
+
+async def remote_has_tag(path: Path, tag: str, timeout: float = FETCH_TIMEOUT) -> bool:
+    """Whether `origin` holds `refs/tags/<tag>`, asked of the remote, not the local refs."""
+    _require_repo(path)
+    _release_tag(tag)
+    out = await _run(
+        ["git", "-C", str(path), "ls-remote", "--tags", "origin", f"refs/tags/{tag}"], timeout)
+    return bool(out.strip())
+
+
+async def show_file(path: Path, sha: str, name: str, timeout: float = BRANCH_TIMEOUT) -> str:
+    """`git show <sha>:<name>` for one of the four version files."""
+    _require_repo(path)
+    _require_shas(sha)
+    if name not in RELEASE_FILES:
+        raise GitError(f"not a version file: {name!r}")
+    return await _run(["git", "-C", str(path), "show", f"{sha}:{name}"], timeout, strip=False)
+
+
+async def diff_u0(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOUT) -> str:
+    """`git diff -U0 HEAD`: every change in the tree, staged or not, new files included
+    once `add -N` would show them — so R7 reads what a commit of the whole tree would hold.
+    `add -N` writes the index, so only in the release tree."""
+    _release_tree(tree, expected)
+    await _run(["git", "-C", str(tree), "add", "--intent-to-add", "--all"], timeout)
+    return await _run(["git", "-C", str(tree), "diff", "-U0", "--no-color", "HEAD"], timeout, strip=False)
+
+
+async def commit_files(tree: Path, expected: Path, message: str, timeout: float = BRANCH_TIMEOUT) -> str:
+    """Commit the four version files on the release branch the tree stands on; the new SHA."""
+    _release_tree(tree, expected)
+    _release_branch(await current_branch(tree, timeout))
+    await _run(["git", "-C", str(tree), "add", "--", *RELEASE_FILES], timeout)
+    await _run(["git", "-C", str(tree), "commit", "-q", "-m", message, "--", *RELEASE_FILES], timeout)
+    return await _run(["git", "-C", str(tree), "rev-parse", "HEAD"], timeout)
+
+
+async def push_branch(tree: Path, expected: Path, branch: str, timeout: float = FETCH_TIMEOUT) -> str:
+    """`push origin refs/heads/<b>:refs/heads/<b>`. No `--force`, no `-u`."""
+    _release_tree(tree, expected)
+    _release_branch(branch)
+    return await _run(
+        ["git", "-C", str(tree), "push", "--", "origin", f"refs/heads/{branch}:refs/heads/{branch}"], timeout)
+
+
+async def push_tag(tree: Path, expected: Path, tag: str, sha: str, timeout: float = FETCH_TIMEOUT) -> str:
+    """`push origin <sha>:refs/tags/<tag>`: a lightweight tag made on the remote, the push that
+    builds the release (R10.4, R10.5). No local tag first, so a refused push leaves none
+    behind to hide the release that still needs one; a fetch brings it back. No force, so a
+    tag already there is refused."""
+    _release_tree(tree, expected)
+    _release_tag(tag)
+    _require_shas(sha)
+    return await _run(["git", "-C", str(tree), "push", "--", "origin", f"{sha}:refs/tags/{tag}"], timeout)
+
+
+async def detach_here(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOUT) -> str:
+    """`switch --detach` where the tree stands, so `gh pr merge --delete-branch` never has to
+    delete a branch that is checked out (plan Risk 3)."""
+    _release_tree(tree, expected)
+    return await _run(["git", "-C", str(tree), "switch", "--detach"], timeout)
+
+
+async def release_tree_remove(root: Path, path: Path, expected: Path, timeout: float = WORKTREE_TIMEOUT) -> str:
+    """`worktree remove --force`, the one forced removal: only of the release tree, whose
+    changes are the app's own (R7 removes it with them). Not `.git`-checked like the others:
+    a tree whose directory is already gone is still listed, and still removed."""
+    _require_repo(root)
+    if not _is_release_path(path, expected) or Path(path).resolve() == Path(root).resolve():
+        raise GitError(f"{path} is not the release worktree, so it was not removed")
+    return await _run(["git", "-C", str(root), "worktree", "remove", "--force", "--", str(path)], timeout)

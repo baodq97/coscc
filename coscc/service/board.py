@@ -15,6 +15,7 @@ from coscc.units import backlog
 from coscc.agent import agents
 from coscc.units import board as board_reader
 from coscc.git import gitops
+from coscc.github import integrate
 from coscc.agent import precedent as precedent_mod
 from coscc.units.board import Unavailable
 from coscc.data import now as _now
@@ -298,7 +299,10 @@ class BoardMixin:
             unit["attention_reason"] = attention_reason(unit)
 
         await self._attach_worktrees(cwd, data["units"])
-        asks = await self._attach_integration(cwd, data["units"], journal, key)
+        # `0046`: one `gh pr list` for the whole read, asked only by whichever block needs it.
+        prs = self._prs_once(cwd)
+        asks = await self._attach_integration(cwd, data["units"], journal, key, prs)
+        data["release"] = await self._attach_release(cwd, data["units"], journal, key, prs)
         for unit in data["units"]:
             # `0100` R3. From the timelines read above: no second scan of the run log.
             ended = [r for r in timelines.get(unit["name"], []) if r.get("ended") is not None]
@@ -324,6 +328,22 @@ class BoardMixin:
         # `0100` R6. Started last and never awaited: their answers count from the next read.
         self._ask_ci(asks)
         return data
+
+    @staticmethod
+    def _prs_once(cwd: str):
+        """`integrate.open_prs` for `cwd`, asked at most once however often it is awaited;
+        `gh`'s error as a string."""
+        held: list[Any] = []
+
+        async def prs() -> list[dict[str, Any]] | str:
+            if not held:
+                try:
+                    held.append(await integrate.open_prs(str(Path(cwd).expanduser().resolve())))
+                except integrate.IntegrateError as e:
+                    held.append(str(e))
+            return held[0]
+
+        return prs
 
     def _mark_running(self, key: str, unit: str, stage: str, kind: str) -> str:
         """`0051` R1. Put one entry in `_running` and return its id, for the `finally` to pop.

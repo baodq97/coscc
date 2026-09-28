@@ -136,6 +136,12 @@ from coscc.state.rerun import (
 from coscc.state.ideas import (
     IdeasMixin,
 )
+from coscc.state.release import (
+    ReleaseMixin,
+    ReleaseUnit,
+    ReleaseCommit,
+    release_fields,
+)
 from coscc.state.views import IdeaRow, ChildRow, link_fields  # noqa: F401 — the page imports them from here
 
 API = build()
@@ -150,6 +156,7 @@ class StudioState(
     BacklogMixin,
     RerunMixin,
     IdeasMixin,
+    ReleaseMixin,
     rx.State,
 ):
     """The whole page. No business state lives here — it is all read back from `Service`."""
@@ -638,6 +645,8 @@ class StudioState(
         }
         self.recording = bool(data["recording"])
         self._show_autopilot_block(data.get("autopilot") or {})
+        # `0046`. Copied from the board; the panel decides nothing.
+        self._show_release(data.get("release"))
         read_only = READ_ONLY_NOTE if data.get("read_only_because") else ""
         self.board_note = read_only or data.get("empty_because") or ""
         empty = data.get("empty") or {}
@@ -834,11 +843,14 @@ class StudioState(
             "attempt": ("camera", "amber"),
             # `0045` R10. A person paused, dropped or resumed a unit.
             "hold": ("pause", "amber"),
+            # `0046` R15. A release press, refused ones included.
+            "release": ("tag", "iris"),
         }
         events: list[Event] = []
         for row in feed["events"]:
             icon, color = icons.get(row["kind"], ("dot", "gray"))
-            if row["kind"] == "end" and row["outcome"] != "done":
+            if (row["kind"] == "end" and row["outcome"] != "done") or (
+                    row["kind"] == "release" and row["outcome"] in ("refused", "failed")):
                 icon, color = "triangle-alert", "amber"
             title = {
                 "mode": f"{row['stage']} set to {row['mode']}",
@@ -846,10 +858,13 @@ class StudioState(
                 "end": f"{row['stage']} {row['outcome']}",
                 "attempt": f"{row['stage']} stopped — what it left was recorded",
                 "hold": f"{row.get('from', '')} → {row.get('to', '')}",
+                "release": f"release {row.get('version', '')} {row['outcome']}",
             }.get(row["kind"], row["kind"])
             detail = f"{row['unit']}"
             if row["kind"] == "hold":
                 detail += _hold_detail(row)
+            if row["kind"] == "release":
+                detail = str(row.get("detail") or "")
             if row["denials"]:
                 detail += f" / {row['denials']} tool call(s) refused"
             if row["artifact"]:

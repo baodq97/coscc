@@ -70,6 +70,19 @@ def path(workspace: str | os.PathLike[str], unit: str, data_dir: str | os.PathLi
     return where
 
 
+RELEASE_TREE = gitops.RELEASE_TREE
+
+
+def release_path(workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None) -> Path:
+    """`0046`. The workspace's one release worktree, beside its units' trees. `release` is
+    not a `NNNN_slug`, so no unit's tree can be named the same."""
+    where = (Data(data_dir).root / WORKTREES_DIR / units.slot(workspace) / RELEASE_TREE).resolve()
+    for forbidden in (Path(units.key(workspace)), _package_dir()):
+        if where == forbidden or forbidden in where.parents:
+            raise BadUnit(f"the release worktree would land inside {forbidden}: {where}")
+    return where
+
+
 def prepare_record(tree: Path) -> Path:
     return tree.parent / f"{tree.name}.prepare.json"
 

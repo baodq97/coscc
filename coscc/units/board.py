@@ -208,6 +208,9 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT, peers: Peers = 
             # whether `problems` is empty. An older `cos.mjs` sends nothing, which reads as
             # the empty string, and no lane treats that specially.
             "phase": u.get("phase") or "",
+            # `0046` R3. The intent's `Type:`, as `cos.mjs` read it; Python has no reader of
+            # its own. An older `cos.mjs`, or an intent with none, reads as "".
+            "type": str(u.get("type") or ""),
             # `0016`. Which items under `## Open questions` a person has answered, and how
             # many are still open in the counted artifact. Both decided by `cos.mjs` and
             # copied, never recounted here (`0016` spec R7). An older `cos.mjs` sends

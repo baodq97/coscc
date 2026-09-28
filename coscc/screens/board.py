@@ -412,6 +412,78 @@ def _autopilot_strip() -> rx.Component:
     )
 
 
+def _release_panel() -> rx.Component:
+    """`0046`. What `main` holds since the last release, and the one button its state has.
+    Every word and whether the button may be pressed come from the board's `release` block."""
+    row = dict(gap="8px", align="center", wrap="wrap", width="100%")
+    return rx.cond(
+        P.rel_state != "",
+        s.panel(
+            rx.hstack(
+                s.eyebrow("RELEASE"),
+                rx.cond(P.rel_last_tag != "", s.text("last " + P.rel_last_tag, size="1")),
+                rx.spacer(),
+                s.badge(P.rel_state, rx.cond(P.rel_button != "", "amber", "gray")),
+                width="100%", align="center",
+            ),
+            rx.cond(P.rel_reason != "", s.text(P.rel_reason, size="1", margin_top="6px", id="release-reason")),
+            rx.cond(
+                P.rel_units.length() > 0,
+                rx.vstack(
+                    s.text(P.rel_units.length().to_string() + " units since " + P.rel_last_tag, size="2"),
+                    rx.foreach(P.rel_units, lambda u: rx.flex(
+                        s.text(u.sha, size="1", font_family=_MONO), s.badge(u.type, "gray"),
+                        s.text(u.name, size="1"), s.text(u.pr, size="1"), **row,
+                    )),
+                    spacing="1", margin_top="8px", width="100%", id="release-units",
+                ),
+            ),
+            rx.cond(
+                P.rel_unmatched.length() > 0,
+                rx.vstack(
+                    s.text(P.rel_unmatched.length().to_string() + " commits with no unit", size="2"),
+                    rx.foreach(P.rel_unmatched, lambda c: rx.flex(
+                        s.text(c.sha, size="1", font_family=_MONO),
+                        s.text(c.subject, size="1", overflow_wrap="anywhere"), **row,
+                    )),
+                    spacing="1", margin_top="8px", width="100%", id="release-unmatched",
+                ),
+            ),
+            rx.cond(
+                P.rel_workflow != "",
+                rx.flex(
+                    s.text("Release workflow: " + P.rel_workflow, size="1"),
+                    rx.link("run", href=P.rel_workflow_url, is_external=True, size="1"),
+                    rx.cond(P.rel_release_url != "",
+                            rx.link("release", href=P.rel_release_url, is_external=True, size="1")),
+                    margin_top="8px", **row,
+                ),
+            ),
+            rx.cond(
+                P.rel_button != "",
+                rx.vstack(
+                    s.text(CONSEQUENCE["release"], size="1", id="release-consequence"),
+                    rx.flex(
+                        rx.input(value=P.rel_version, on_change=P.set_rel_version, aria_label="Version",
+                                 size="1", width="120px", id="release-version",
+                                 disabled=P.rel_phase == "publish"),
+                        rx.button(
+                            rx.icon("tag", size=14), P.rel_button,
+                            on_click=P.press_release, loading=P.releasing,
+                            disabled=P.releasing | ~P.rel_enabled, size="1", id="release-button",
+                        ),
+                        gap="8px", align="center",
+                    ),
+                    rx.cond(~P.rel_enabled & (P.rel_disabled_reason != ""),
+                            s.text(P.rel_disabled_reason, size="1", id="release-disabled")),
+                    spacing="2", margin_top="10px", align="start",
+                ),
+            ),
+            width="100%", id="release-panel",
+        ),
+    )
+
+
 def _board() -> rx.Component:
     return rx.vstack(
         s.heading("Work board", "From an idea to something real. One clear step at a time."),
@@ -419,6 +491,7 @@ def _board() -> rx.Component:
         rx.cond(P.has_workspace, _start_idea(), rx.fragment()),
         _autopilot_strip(),
         _running_steps(),
+        _release_panel(),
         rx.flex(
             rx.input(rx.input.slot(rx.icon("search", size=15)), id="work-search",
                      placeholder="Search work...", value=P.query, on_change=P.search_work,

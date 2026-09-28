@@ -796,6 +796,58 @@ def build(config: Config | None = None) -> FastAPI:
 
         return StreamingResponse(lines(), media_type="application/x-ndjson")
 
+    async def _release_route(request: Request, phase: str) -> Any:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        if not isinstance(body, dict):
+            return _bad("body must be a JSON object")
+        run = service.release_prepare if phase == "prepare" else service.release_publish
+        stream = run(str(body.get("cwd", "")), str(body.get("version", "")))
+        try:
+            first = await stream.__anext__()
+        except Updating as e:
+            return _bad(str(e), 503)
+        except Invalid as e:
+            return _bad(str(e))
+        except StopAsyncIteration:
+            return _bad("the release produced nothing")
+
+        async def lines() -> AsyncIterator[bytes]:
+            def out(obj: dict[str, Any]) -> bytes:
+                return json.dumps(obj).encode() + b"\n"
+
+            try:
+                for kind, payload in (first,):
+                    yield out({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
+                async for kind, payload in stream:
+                    yield out({"type": kind, **({"text": payload} if kind == "chunk" else payload)})
+            except Exception as e:
+                yield out({"type": "error", "error": f"{type(e).__name__}: {e}"})
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
+
+    @api.post("/api/release/prepare")
+    async def release_prepare(request: Request) -> Any:
+        """`0046` R6. `{cwd, version}`: a `chore/release-X-Y-Z` pull request, streamed like
+        `/api/units/integrate`.
+
+        Whoever holds the password or a live session can make this machine's `gh` login
+        commit, push a branch and open a pull request. A refusal (R13) is a 400 before
+        anything changes; every press leaves one `release` record."""
+        return await _release_route(request, "prepare")
+
+    @api.post("/api/release/publish")
+    async def release_publish(request: Request) -> Any:
+        """`0046` R10. `{cwd, version}`: merge the release pull request and push `vX.Y.Z`
+        onto its merge commit, which publishes the release.
+
+        Whoever holds the password or a live session can make this machine's `gh` login
+        merge into `main` and push a tag no ruleset protects. A refusal (R13) is a 400
+        before anything changes; every press leaves one `release` record."""
+        return await _release_route(request, "publish")
+
     @api.get("/api/timeline")
     async def get_timeline(request: Request) -> Any:
         """R15. What happened to one unit, oldest first."""
