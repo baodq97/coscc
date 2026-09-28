@@ -6,7 +6,8 @@ replaced by a stand-in and the gate by one that says open (the real `review` gat
 or FAIL:
 
 - R1: `review`'s grant is 40 turns and $4.0.
-- R8, R9 through `node cos.mjs --root <fixture>`: a `draft` whose last round is `incomplete`
+- R8, R9 through `node cos.mjs --root <fixture> --state <its snapshot>` (`0135`,
+  `proof_harness.fixture_state`): a `draft` whose last round is `incomplete`
   is not "finish and accept review.md" and its `ship` gate is closed; the same full rounds
   with or without an `incomplete` one between them use the same number of rounds, under
   `COS_REVIEW_ROUNDS` 3 and 2.
@@ -316,8 +317,15 @@ def loop(tmp: Path) -> bool:
         (d / "review.md").write_text(HEADER.format(status=status) + "\n".join(rounds), encoding="utf-8")
         return name
 
+    def state() -> str:
+        # `0135`: `next` and `gate` decide on the app's snapshot, so the store goes through it.
+        from scripts.proof_harness import fixture_state
+
+        return str(fixture_state(tmp, tmp.with_name(f"{tmp.name}-state")))
+
     def nxt(unit: str, limit: int = 3) -> str:
-        out = run("node", str(COS), "--root", str(tmp), "next", unit, env={"COS_REVIEW_ROUNDS": str(limit)})
+        out = run("node", str(COS), "--root", str(tmp), "--state", state(), "next", unit,
+                  env={"COS_REVIEW_ROUNDS": str(limit)})
         try:
             return str(json.loads(out.stdout).get("action"))
         except ValueError:
@@ -327,7 +335,7 @@ def loop(tmp: Path) -> bool:
     action = nxt(a)
     ok &= claim("finish and accept" not in action and "review round 2 is incomplete" in action and "--repo" in action,
                 "R8 (a): next names the incomplete round and asks for --repo, not 'finish and accept review.md'", action)
-    ship = run("node", str(COS), "--root", str(tmp), "gate", a, "ship")
+    ship = run("node", str(COS), "--root", str(tmp), "--state", state(), "gate", a, "ship")
     said = ship.stdout + ship.stderr
     ok &= claim(ship.returncode == 1 and 'review.md is "draft"' in said,
                 "R8 (a): its ship gate is closed", f"exit {ship.returncode}: {said.strip()}")

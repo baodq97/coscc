@@ -117,6 +117,7 @@ from scripts.proof_harness import (  # noqa: E402
     EXIT_ENV,
     EXIT_PASS,
     RealApp,
+    ingest_fixture,
     make_repo,
     port_free,
     require_browser,
@@ -317,25 +318,6 @@ def make_unread_fixture(api: httpx.Client, proj: Path) -> None:
         "spec.md": "# Spec: unread status\nIntent: intent.md. Author: capture_screens. Status: approved.\n",
     }.items():
         (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
-
-
-def ingest_fixture(work: Path, data_dir: Path, *workspaces: Path) -> None:
-    """`0135`: the fixture's files are written by hand, and since then the board reads a unit
-    from `cos.db`, not its files. So they go in as a finished step's do: the store's import,
-    if the app has not read it yet — which also reads `0002`'s answer — then an ingest of
-    every unit, which reads only what changed since."""
-    from coscc import units
-    from coscc.data import Data
-    from coscc.units.meta import UnitMeta
-
-    meta = UnitMeta(work, Data(data_dir))
-    for ws in workspaces:
-        key, store = str(ws.resolve()), units.root(ws, data_dir)
-        if not meta.imported(key):
-            meta.import_store(key, store)
-        for d in sorted((store / units.COS_DIR).iterdir()):
-            if d.is_dir() and d.name != "ideas":
-                meta.ingest(key, store, d.name, actor="capture_screens", session="capture", source="capture_screens")
 
 
 def seed_run(work: Path, data_dir: Path, proj: Path) -> None:

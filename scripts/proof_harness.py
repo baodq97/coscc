@@ -336,6 +336,44 @@ def make_repo(root: Path, outside: Path, name: str = "proj", remote: str = "remo
     return proj
 
 
+def ingest_fixture(work: Path, data_dir: Path, *workspaces: Path, by: str = "capture_screens") -> None:
+    """`0135`: a fixture's files are written by hand, and since then the board reads a unit
+    from `cos.db`, not its files. So they go in as a finished step's do: the store's import,
+    if the app has not read it yet — which also reads any answer a file carries — then an
+    ingest of every unit, which reads only what changed since."""
+    from coscc import units
+    from coscc.units.meta import UnitMeta
+
+    meta = UnitMeta(work, Data(data_dir))
+    for ws in workspaces:
+        key, store = str(ws.resolve()), units.root(ws, data_dir)
+        if not meta.imported(key):
+            meta.import_store(key, store)
+        for d in sorted((store / units.COS_DIR).iterdir()):
+            if d.is_dir() and d.name != "ideas":
+                meta.ingest(key, store, d.name, actor=by, session=by, source=by)
+
+
+def fixture_state(store: Path, where: Path) -> Path:
+    """`0135`: the snapshot `cos.mjs --state` decides on, for a store a proof wrote by hand and
+    reads with `node cos.mjs --root <store>`. Imported into a `cos.db` of its own under
+    `where`, as the app imports a store on its first read, and written to `where/state.json`
+    for `--state`. Made again from nothing on every call, so a unit written since is in it."""
+    import json
+    import shutil
+
+    from coscc.units.meta import UnitMeta
+
+    shutil.rmtree(where, ignore_errors=True)
+    where.mkdir(parents=True)
+    meta = UnitMeta(where, Data(where / "data"))
+    key = str(store.resolve())
+    meta.import_store(key, store)
+    path = where / "state.json"
+    path.write_text(json.dumps(meta.snapshot(key, {}), ensure_ascii=False), encoding="utf-8")
+    return path
+
+
 def seed_session(data_dir: Path) -> str:
     """`0070`: a password nobody types and one live session, so a page opens past the login
     without `/setup`. Returns the cookie's value."""
