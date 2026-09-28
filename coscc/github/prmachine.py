@@ -84,6 +84,8 @@ class Outcome:
     detail: str = ""
     guard: str = ""
     calls: list[list[str]] = field(default_factory=list)
+    # `0136` R23: the id of the transition it recorded, where it recorded one.
+    transition: int | None = None
 
     @property
     def ok(self) -> bool:
@@ -278,6 +280,12 @@ class Read:
     moved: list[tuple[str, str]] = field(default_factory=list)
     error: str = ""
     calls: int = 0
+    # `{unit, transition, id}` for each of `moved`, which the pass it schedules records.
+    causes: list[dict[str, Any]] = field(default_factory=list)
+
+    def move(self, unit: str, transition: str, row_id: int | None) -> None:
+        self.moved.append((unit, transition))
+        self.causes.append({"unit": unit, "transition": transition, "id": row_id})
 
 
 class Machine:
@@ -418,7 +426,8 @@ class Machine:
         (u.directory / SHIP_FILE).write_text(
             render_ship(u, status="accepted", round_n=round_n, number=number, head=head, merge_commit=commit),
             encoding="utf-8")
-        return Outcome(result, number, str(view.get("url") or ""), head, commit, guard=applied.guard)
+        return Outcome(result, number, str(view.get("url") or ""), head, commit, guard=applied.guard,
+                       transition=(applied.row or {}).get("id"))
 
     async def ship(self, u: Unit, authority: str = "person") -> Outcome:
         """R13. Reconcile first; a merge made anywhere else is only recorded. Otherwise guard
@@ -542,13 +551,13 @@ class Machine:
                         round_ = last_round(self.history, workspace, name)
                         done = await self._record_merged(u, number, view, round_["n"] if round_ else None, "recorded")
                         if done.ok:
-                            out.moved.append((name, "merged"))
+                            out.move(name, "merged", done.transition)
                     elif view.get("state") == "CLOSED":
                         # Closed without a merge: `pr` is to run again, and opens a new one.
                         applied = self._apply(u, "closed", PR_FILE, "draft",
                                               {"number": number, "state": "CLOSED"}, "code")
                         if applied.open:
-                            out.moved.append((name, "closed"))
+                            out.move(name, "closed", (applied.row or {}).get("id"))
                     continue
                 head = str(row.get("headRefOid") or "")
                 if head == now.get("head") and now.get("ci") in SETTLED_CI:
@@ -568,5 +577,5 @@ class Machine:
             applied = self._apply(u, "ci", PR_FILE, "accepted", inputs, "code",
                                   also=self._pull_request_row(u, number, head, files=files))
             if applied.open:
-                out.moved.append((name, "ci"))
+                out.move(name, "ci", (applied.row or {}).get("id"))
         return out

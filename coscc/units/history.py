@@ -202,7 +202,8 @@ class History:
             )
             if cursor.rowcount:
                 latest[key] = row["to_state"]
-                stored.append(dict(row))
+                # `0136` R23: the row's own id, so what it caused can name it.
+                stored.append({**row, "id": cursor.lastrowid})
         return stored
 
     def _validate(self, item: dict[str, Any]) -> dict[str, Any]:

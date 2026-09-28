@@ -149,7 +149,8 @@ Settings (PERSON, `setting` rows): `autopilot`, `autopilot_may_ship`, `max_paral
 step ends, an integration ends, or a person answers. Not after: Jera, hold, more-rounds,
 shortlist change. Since `0136` R23 also after the PR reader records a transition of the PR/CI
 machine (a CI answer, a new head, `merged`, `closed`): one pass per workspace per read, and a
-`merged` one for every other workspace whose autopilot is on.
+`merged` one for every other workspace whose autopilot is on. Such a pass's `autopilot-pick`
+rows carry `woken_by`: `{unit, transition, id}` of each transition that scheduled it.
 
 A pass, all CODE (`service/autopilot.py:159-375`):
 

@@ -1476,9 +1476,14 @@ class Scripted(_Base):
         await self.settled()
         self.assertEqual((self.asked, self.launched), (["0001_a"], []), "pending scheduled one pass")
         gh.buckets = ("pass",)
-        self.assertEqual((await self.service._pr_read(self.key)).moved, [("0001_a", "ci")])
+        green = await self.service._pr_read(self.key)
+        self.assertEqual(green.moved, [("0001_a", "ci")])
         await self.until(lambda: self.launched, "the pass the green read scheduled")
         self.assertEqual(self.launched, [("0001_a", "review", "autopilot")])
+        # Design: the pass's record names the transition that scheduled it, by its row.
+        [row] = [r for r in machine.history.transitions(self.key, "0001_a", "pr.md") if r["guard"] == "ci-at-head"][-1:]
+        [pick] = self.picks()
+        self.assertEqual(pick["woken_by"], [{"unit": "0001_a", "transition": "ci", "id": row["id"]}])
         # Green at the same head is settled: the next read asks only for the list.
         got = await self.service._pr_read(self.key)
         self.assertEqual((got.moved, got.calls), ([], 1))

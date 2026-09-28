@@ -71,12 +71,13 @@ class AutopilotMixin:
         task = self._autopilot_tasks.get(key)
         return task is not None and not task.done()
 
-    def _autopilot_nudge(self, key: str) -> None:
+    def _autopilot_nudge(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
         """R5 a, b: a step or an integration ended, or an answer was written. One pass is
-        scheduled and not waited for; nothing happens when the switch is off."""
+        scheduled and not waited for; nothing happens when the switch is off. `woken_by`: the
+        transitions of the PR machine that scheduled it (`0136` R23), which its picks record."""
         if not self._autopilot_on(key):
             return
-        task = asyncio.get_running_loop().create_task(self._autopilot_guarded(key))
+        task = asyncio.get_running_loop().create_task(self._autopilot_guarded(key, woken_by))
         self._autopilot_pending.add(task)
         task.add_done_callback(self._autopilot_pending.discard)
 
@@ -116,17 +117,18 @@ class AutopilotMixin:
         got = await self._pr_machine().read(str(root), key, directory_of)
         if not got.moved:
             return got
-        self._autopilot_nudge(key)
-        if any(t == "merged" for _, t in got.moved):
+        self._autopilot_nudge(key, got.causes)
+        merged = [c for c in got.causes if c["transition"] == "merged"]
+        if merged:
             for other in list(self._autopilot_tasks):
                 if other != key:
-                    self._autopilot_nudge(other)
+                    self._autopilot_nudge(other, merged)
         return got
 
-    async def _autopilot_guarded(self, key: str) -> None:
+    async def _autopilot_guarded(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
         """A pass that raises leaves a stop line saying so, not a dead loop."""
         try:
-            await self._autopilot_pass(key)
+            await (self._autopilot_pass(key, woken_by) if woken_by else self._autopilot_pass(key))
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — shown on the board, never swallowed
@@ -203,7 +205,7 @@ class AutopilotMixin:
             except (BadRecord, Busy):
                 pass
 
-    async def _autopilot_pass(self, key: str) -> None:
+    async def _autopilot_pass(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
         """One look at a workspace: follow its shortlist (`0104`), find each listed unit's stop
         or why it waits, then start what may start, highest first, each after its record."""
         cwd = self._autopilot_cwd.get(key)
@@ -438,6 +440,8 @@ class AutopilotMixin:
                         "kind": "autopilot-pick", "workspace": key, "unit": c["unit"], "stage": c["stage"],
                         "pass": run_id, "rank": c["rank"], "shortlist": shortlist, "passed": over,
                         **({"past_exhausted": c["past_exhausted"]} if c.get("past_exhausted") else {}),
+                        # `0136` R23: the transitions whose read scheduled this pass.
+                        **({"woken_by": woken_by} if woken_by else {}),
                     })
                 except (BadRecord, Busy) as e:
                     self._autopilot_set_stops(key, {**found, "": {
