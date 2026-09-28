@@ -101,30 +101,37 @@ class ReleaseMixin(rx.State, mixin=True):
     def set_rel_version(self, value: str):
         self.rel_version = value
 
-    @rx.event
+    @rx.event(background=True)
     async def press_release(self):
-        """Run the button the panel shows. The `yield` sends `releasing` to the browser."""
+        """Run the button the panel shows. In the background, holding the state only to
+        read and to write it: a press can take minutes (`uv lock`, a push, a merge and its
+        poll), and the rest of the page keeps answering meanwhile."""
         from coscc.state import SERVICE
-        if self.releasing or not self.rel_phase:
-            return
-        self.releasing = True
-        yield
-        run = SERVICE.release_prepare if self.rel_phase == "prepare" else SERVICE.release_publish
+        async with self:
+            if self.releasing or not self.rel_phase:
+                return
+            self.releasing = True
+            phase, cwd, version = self.rel_phase, self.cwd, self.rel_version
+        run = SERVICE.release_prepare if phase == "prepare" else SERVICE.release_publish
         done: dict = {}
+        notice = ""
         try:
-            async for kind, payload in run(self.cwd, self.rel_version):
+            async for kind, payload in run(cwd, version):
                 if kind == "done":
                     done = payload.get("release") or {}
         except Invalid as e:
-            self.notice = f"Not released: {e}"
-            return
-        finally:
-            self.releasing = False
-        outcome = str(done.get("outcome") or "")
-        if outcome == "opened":
-            self.notice = f"Opened release pull request #{done.get('pr')} for {done.get('version')}."
-        elif outcome == "tagged":
-            self.notice = f"Pushed v{done.get('version')}; the release workflow builds it on GitHub."
+            notice = f"Not released: {e}"
         else:
-            self.notice = f"Release {outcome or 'ended'}: {done.get('detail') or 'see Activity'}"
-        await self._load_board()
+            outcome = str(done.get("outcome") or "")
+            if outcome == "opened":
+                notice = f"Opened release pull request #{done.get('pr')} for {done.get('version')}."
+            elif outcome == "tagged":
+                notice = f"Pushed v{done.get('version')}; the release workflow builds it on GitHub."
+            else:
+                notice = f"Release {outcome or 'ended'}: {done.get('detail') or 'see Activity'}"
+        finally:
+            async with self:
+                self.releasing = False
+                if notice:
+                    self.notice = notice
+                await self._load_board()

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import ast
 import unittest
+from pathlib import Path
 
+from coscc.state import release as release_state
 from coscc.state.release import ReleaseCommit, ReleaseUnit, release_fields
 
 BLOCK = {
@@ -33,6 +36,16 @@ class TheReleasePanel(unittest.TestCase):
     def test_no_full_sha_reaches_the_page(self):
         got = release_fields(BLOCK)
         self.assertTrue(all(len(u.sha) == 7 for u in got["rel_units"] + got["rel_unmatched"]))
+
+
+class ThePress(unittest.TestCase):
+    def test_it_runs_in_the_background_and_holds_the_state_only_in_blocks(self):
+        # Review F5: a plain event held the state lock for the whole press.
+        tree = ast.parse(Path(release_state.__file__).read_text(encoding="utf-8"))
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "press_release")
+        self.assertIn("rx.event(background=True)", [ast.unparse(d) for d in fn.decorator_list])
+        loop = next(n for n in ast.walk(fn) if isinstance(n, ast.AsyncFor))
+        self.assertFalse([n for n in ast.walk(loop) if isinstance(n, ast.AsyncWith)])
 
 
 if __name__ == "__main__":
