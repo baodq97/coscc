@@ -1129,6 +1129,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         self.terminal = None
         self.asked: list[dict] = []
         self.action = "review: run a review round"
+        self.reasons: list[str] = []
         self.next_fails: Exception | None = None
         self.made_count = 0
 
@@ -1167,7 +1168,8 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
             self.asked.append({"unit": unit, "repo": repo})
             if self.next_fails is not None:
                 raise self.next_fails
-            return {"unit": unit, "stage": "impl", "action": self.action, "blocked": False, "waiting": []}
+            return {"unit": unit, "stage": "impl", "action": self.action, "blocked": False, "waiting": [],
+                    "reasons": self.reasons}
 
         async def go():
             return [i async for i in self.service.run_step(str(self.repo), self.made["unit"], stage)]
@@ -1284,6 +1286,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         self._unit(effort_trial=True)
         self._run()
         self.action = "CI is red on #7: tests — back to impl: fix on the branch and push"
+        self.reasons = ["ci-red"]
         self._run()
         self.assertEqual(self.asked, [{"unit": self.made["unit"], "repo": str(self.repo)}])
         self.assertIs(self._starts()[1]["ci_red"], True)
@@ -1316,6 +1319,7 @@ class AnImplStepUnderTheEffortTrial(unittest.TestCase):
         self._unit(effort_trial=False, knowledge=True)
         self._run()
         self.action = "CI is red on #7: tests — back to impl: fix on the branch and push"
+        self.reasons = ["ci-red"]
         self._run()
         first, second = self._starts()
         self.assertNotIn("ci_red", first)

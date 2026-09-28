@@ -52,6 +52,16 @@ class TheReasonTableIsClosed(unittest.TestCase):
         self.assertGreaterEqual(len(written), 15)
         self.assertEqual(written - set(guards.REASONS), set())
 
+    def test_every_code_cos_mjs_hands_out_is_in_the_table(self):
+        # R11: `gate --json` and `next` carry `reasons`, each written as `code('…')`.
+        text = COS.read_text(encoding="utf-8")
+        handed = set(re.findall(r"code\('([a-z-]+)'\)", text))
+        self.assertGreaterEqual(handed, {"ci-pending", "ci-red", "ci-unfixable", "needs-person",
+                                         "waiting-on", "recording-ship", "closed", "gate-closed"})
+        self.assertEqual(handed - set(guards.REASONS), set())
+        # No code is written any other way: the only `reasons` pushed are `code(…)` or a `why`.
+        self.assertNotRegex(text, r"codes\.push\('")
+
     def test_no_code_is_listed_twice(self):
         self.assertEqual(len(guards.REASONS), len(set(guards.REASONS)))
 

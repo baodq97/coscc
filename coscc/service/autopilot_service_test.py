@@ -20,6 +20,7 @@ from coscc.agent import precedent
 from coscc.config import Config
 from coscc.runlog.journal import Busy, Journal
 from coscc.service import Invalid, Service
+from coscc.service.common import Refused
 from coscc.agent.sessions import Sessions
 from coscc.agent.submit_test import submits as _submits
 
@@ -492,9 +493,10 @@ class Scripted(_Base):
         self.service._autopilot_cwd[self.key] = self.ws
         self.addCleanup(self.release.set)
 
-    def add(self, name, stage, action="", plan=None, **unit):
+    def add(self, name, stage, action="", plan=None, reasons=(), **unit):
         self.units[name] = {"name": name, "next": action or f"write-{stage}", "questions": [], **unit}
-        self.nexts[name] = {"stage": stage, "action": action or f"write-{stage}", "waiting": [], "hold": None}
+        self.nexts[name] = {"stage": stage, "action": action or f"write-{stage}", "waiting": [], "hold": None,
+                            "reasons": list(reasons)}
         if plan is not None:
             d = self.service._unit_dir(self.ws, name)
             d.mkdir(parents=True, exist_ok=True)
@@ -631,7 +633,7 @@ class Scripted(_Base):
         `ship` for a head behind `origin/main`, the ref the board reads `behind` from."""
         behind = ("#7 is 2 commit(s) behind origin/main — integrate, then review again; "
                   "a round that passes does not count toward the limit")
-        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again",
+        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", reasons=["ci-pending"],
                  integration={"state": "behind"}, rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
         self.add("0003_c", "", action=behind, integration={"state": "behind"}, rounds=[{"verdict": "pass"}],
                  between_pr_and_ship=True)
@@ -682,9 +684,10 @@ class Scripted(_Base):
         """`0124` R1, R3 a: was a stop `e` for `0001_a`, replaced by `intent.md ## Answers`,
         câu 1 and 3 — CI red on its own integration runs the `impl` `next` names, once. A
         person's integration is still integrated again."""
-        red = f"{autopilot.CI_RED}3: tests — back to impl: fix on the branch and push"
+        red = "CI is red on #3: tests — back to impl: fix on the branch and push"
         for unit, action, plan in (("0001_a", red, "- `a/x.py`"), ("0002_b", "", "- `b/y.py`")):
             self.add(unit, "impl", action=action, plan=plan, integration={"state": "red-after-integration"},
+                     reasons=["changes-requested", "ci-red"] if action else [],
                      rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
         log = Journal(self.config.working_dir, self.config.data_dir)
         for unit, by in (("0001_a", "autopilot"), ("0002_b", "person")):
@@ -702,11 +705,12 @@ class Scripted(_Base):
         `b` with `next`'s words, not `e`."""
         head = "feat/open-questions-wait-for-the-originator-even-when-precedent-answers-them"
         action = (
-            f"{autopilot.NEEDS_A_PERSON} — {autopilot.CI_RED}97: branch-name — branch-name checks the branch "
+            "needs a person — CI is red on #97: branch-name — branch-name checks the branch "
             f'name, and no rerun or impl can fix it: "{head}" is not a work branch: '
             "the slug is 71 characters, over the 60 allowed"
         )
         self.add("0001_a", "", action=action, plan="- `a/x.py`", integration={"state": "red-after-integration"},
+                 reasons=["changes-requested", "ci-unfixable", "needs-person"],
                  rounds=[{"verdict": "changes-requested"}], between_pr_and_ship=True)
         Journal(self.config.working_dir, self.config.data_dir).append({
             "kind": "integration", "workspace": self.key, "unit": "0001_a", "stage": "integrate",
@@ -722,8 +726,9 @@ class Scripted(_Base):
         it, and `next` naming `impl` with `cos.mjs`'s words. Returns once that `impl` ended
         `outcome`."""
         self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
-        red = f"{autopilot.CI_RED}120: tests — back to impl: fix on the branch and push"
+        red = "CI is red on #120: tests — back to impl: fix on the branch and push"
         self.add("0001_a", "impl", action=red, plan="- `a/x.py`", integration={"state": "red-after-integration"},
+                 reasons=["ci-red"],
                  rounds=[{"verdict": "pass"}], between_pr_and_ship=True)
         log = Journal(self.config.working_dir, self.config.data_dir)
         log.append({
@@ -819,7 +824,7 @@ class Scripted(_Base):
         self.service.integrate = slow
         need = autopilot.reservation("integrate")
         self.service.set_autopilot(self.ws, "daily_cap_usd", need + autopilot.reservation("spec") / 2)
-        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again",
+        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", reasons=["ci-pending"],
                  integration={"state": "behind"}, rounds=[], between_pr_and_ship=True)
         await self.pass_()
         self.assertNotIn((self.key, "0001_a"), self.service._active)
@@ -858,7 +863,8 @@ class Scripted(_Base):
         self.assertEqual((cap["estimated"], cap["estimated_count"]), (autopilot.estimate("spec"), 1))
 
     async def test_ci_pending_is_quiet(self):
-        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", between_pr_and_ship=True)
+        self.add("0001_a", "", action="CI has not finished on #3: t — wait, then ask again", reasons=["ci-pending"],
+                 between_pr_and_ship=True)
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {}))
 
@@ -872,6 +878,20 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"],
                          {"unit": "0001_a", "kind": "f", "reason": "blocked: plan.md is draft"})
+
+    async def test_0136_a_gate_refusal_on_ci_pending_is_quiet_by_its_code_not_its_words(self):
+        words = "blocked: review cannot proceed for 0001_a\n  - CI has not finished on #3: t — wait, then ask again"
+        for error, stops in ((Refused("blocked: the words changed", ("ci-pending",)), {}),
+                             (Invalid(words), {"0001_a": "f"})):
+            async def refused(cwd, unit, stage, started_by="person", error=error):
+                raise error
+                yield  # pragma: no cover
+
+            self.service.run_step = refused
+            self.service._autopilot_stops.pop(self.key, None)
+            self.add("0001_a", "review")
+            await self.pass_()
+            self.assertEqual(self.stops(), stops, error)
 
     async def test_off_loopback_nothing_runs_and_the_board_says_why(self):
         self.service.config = dataclasses.replace(self.config, host="0.0.0.0")
@@ -970,8 +990,9 @@ class Scripted(_Base):
 
     async def test_r5_every_pass_asks_every_shortlisted_unit(self):
         self.add("0001_a", "spec")
-        self.add("0002_b", "", action=autopilot.FINISHED)
-        self.add("0003_c", "", action="CI has not finished on #3: t — wait, then ask again", between_pr_and_ship=True)
+        self.add("0002_b", "", action="finished", reasons=["finished"])
+        self.add("0003_c", "", action="CI has not finished on #3: t — wait, then ask again", reasons=["ci-pending"],
+                 between_pr_and_ship=True)
         await self.pass_()
         self.assertEqual(self.asked, ["0001_a", "0002_b", "0003_c"])
         await self.pass_()
@@ -1293,7 +1314,7 @@ class Scripted(_Base):
     async def test_0126_r1_an_old_exhausted_ship_starts_a_recording_ship(self):
         self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
         self.shipped("0001_a")
-        self.add("0001_a", "ship", action=self.RECORDING)
+        self.add("0001_a", "ship", action=self.RECORDING, reasons=["recording-ship"])
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([("0001_a", "ship", "autopilot")], {}))
         [pick] = self.picks()
@@ -1311,7 +1332,7 @@ class Scripted(_Base):
     async def test_0126_r3_a_recording_ship_that_ran_out_is_not_run_again(self):
         self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
         self.shipped("0001_a", ship_mode="record")
-        self.add("0001_a", "ship", action=self.RECORDING)
+        self.add("0001_a", "ship", action=self.RECORDING, reasons=["recording-ship"])
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
 

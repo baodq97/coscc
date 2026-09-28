@@ -420,7 +420,8 @@ class AutopilotMixin:
             raise
         except Exception as e:  # noqa: BLE001 — the reason is shown, not swallowed
             said = str(e)
-            if not autopilot.is_ci_pending(said) and not self._busy(key, unit):
+            # `0136` R11: a gate's refusal carries its codes (`Refused`); anything else has none.
+            if not autopilot.is_ci_pending(e) and not self._busy(key, unit):
                 self._autopilot_set_stops(key, {unit: {"unit": unit, "kind": "f", "reason": said}}, {unit})
         finally:
             runs = self._autopilot_runs.get(key) or {}

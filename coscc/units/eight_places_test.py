@@ -20,7 +20,11 @@ from coscc.agent import harness
 from coscc.config import Config
 from coscc.service import Service
 from coscc.service.service_test import create_sync
+from coscc.units import autopilot as ap
 from coscc.units import board as board_reader
+from coscc.units import guards
+from coscc.units.board_test import _store
+from coscc.units.meta_test import snapshot_of
 
 
 class _Nobody:
@@ -267,6 +271,53 @@ class Place3(_Review):
         done = self._impl("- F9: nothing", ["F9"])
         self.assertEqual(done["outcome"], "failed")
         self.assertIn("no-submission", done["error"])
+
+
+class Place8(unittest.TestCase):
+    """§6, 8: "The autopilot matches English substrings of `cos.mjs`'s messages." Now `next`
+    and the gate hand out codes from `guards.REASONS` beside their words, and the autopilot
+    branches on the codes (R11). Here `cos.mjs` rewords a reason, and the autopilot still
+    reads the unit as it did."""
+
+    ROW = {"name": "0001_x", "questions": []}
+
+    def _next(self, files: dict[str, str], old: str, new: str) -> dict:
+        """`next` for one unit, asked of a copy of the harness script with `old` reworded."""
+        with tempfile.TemporaryDirectory() as d:
+            text = harness.script().read_text(encoding="utf-8")
+            self.assertIn(old, text)
+            script = Path(d) / "harness" / "cos.mjs"
+            script.parent.mkdir()
+            script.write_text(text.replace(old, new), encoding="utf-8")
+            store = Path(d) / "store"
+            _store(store, {"0001_x": files})
+            state = snapshot_of(store)
+            with mock.patch.object(harness, "script", lambda: script):
+                return asyncio.run(board_reader.next_step(store, "0001_x", state=state))
+
+    def _read_as(self, nxt: dict, reason: str) -> None:
+        self.assertEqual(set(nxt["reasons"]) - set(guards.REASONS), set())
+        self.assertIsNone(ap.stop_for(self.ROW, nxt, None, False))
+        self.assertEqual(ap.reason_for(nxt, "", None), (reason, nxt["action"]))
+        # The words alone, as the autopilot read them before, would now stop the unit.
+        self.assertEqual(ap.stop_for(self.ROW, {**nxt, "reasons": []}, None, False)["kind"], "f")
+
+    def test_a_closed_unit_is_passed_over_as_closed_whatever_the_words(self):
+        nxt = self._next(
+            {"intent.md": "# I\nType: feat. Status: accepted.\n", "spec.md": "# S\nStatus: rejected.\n"},
+            "`closed — ${s.name} rejected`", "`shut: ${s.name} was turned down`",
+        )
+        self.assertEqual((nxt["stage"], nxt["action"]), ("", "shut: spec was turned down"))
+        self.assertIn("closed", nxt["reasons"])
+        self._read_as(nxt, "closed")
+
+    def test_a_finished_unit_is_passed_over_as_finished_whatever_the_words(self):
+        nxt = self._next(
+            {"intent.md": "# I\nType: feat. Status: accepted.\n", "plan.md": "# P\nStatus: done.\n"},
+            "action: 'finished'", "action: 'all done'",
+        )
+        self.assertEqual((nxt["stage"], nxt["action"], nxt["reasons"]), ("", "all done", ["finished"]))
+        self._read_as(nxt, "finished")
 
 
 if __name__ == "__main__":

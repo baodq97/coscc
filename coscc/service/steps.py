@@ -38,6 +38,7 @@ from coscc.service.common import (
     CONSEQUENCE,
     Invalid,
     OWNER,
+    Refused,
     _younger_than,
     describe_base,
     step_cwd,
@@ -681,8 +682,8 @@ class StepsMixin:
         merged. Never raises, like `_cleanup`: a record that cannot be written changes
         nothing about the step.
 
-        R5 says `next`, but `next` hands out no `why` (`autopilot.py`, above `CI_PENDING`):
-        `why` is `decide`'s, read off the files by `cos.mjs status` as `board.read` copies it,
+        R5 says `next`; `why` is `decide`'s, read off the files by `cos.mjs status` as
+        `board.read` copies it, without asking `gh` as `next` would,
         so `ship-refused` can also be a merge whose branch deletion failed (plan Risk 4)."""
         try:
             journal = self._journal()
@@ -725,6 +726,7 @@ class StepsMixin:
             return {
                 "cwd": cwd, "unit": unit, **{k: held[k] for k in ("stage", "action", "blocked")},
                 "waiting": [], "dropped": [], "hold": held["hold"],
+                "reasons": list(held.get("reasons") or []),
             }
         # `0017`. The unit's worktree is the checkout its branch and pull request are read
         # from. None when there is none to open, and `cos.mjs` then keeps `review` and
@@ -751,6 +753,8 @@ class StepsMixin:
             # `0106`. The stage a fully answered draft would run again; only the autopilot
             # reads it.
             "rerun": str(found.get("rerun") or ""),
+            # `0136` R11. The codes the autopilot branches on, copied from `cos.mjs next`.
+            "reasons": list(found.get("reasons") or []),
         }
 
     async def rerun_offers(self, cwd: str, unit: str) -> dict[str, Any]:
@@ -915,13 +919,16 @@ class StepsMixin:
             try:
                 # `work` is the checkout the `review` and `ship` gates read git and the pull
                 # request from (`0015`). The store has no git to read.
-                allowed, said = await board_reader.gate(
+                answer = await board_reader.gate(
                     self._units_root(cwd), unit, stage, repo=work, state=self._snapshot(cwd, [unit])
                 )
             except Unavailable as e:
                 raise Invalid(str(e)) from e
+            allowed, said = answer
+            # `0136` R11: the codes go with the words, so no reader downstream parses these.
+            gate_reasons = tuple(getattr(answer, "reasons", ()))
             if not allowed:
-                raise Invalid(said)
+                raise Refused(said, gate_reasons)
 
             if stage == "impl" and tree is not None:
                 # R6. A tree that cannot run its tests turns every `impl` red from the start, so
@@ -1126,6 +1133,7 @@ class StepsMixin:
                     stages=list(data["stages"]),
                     mode=mode,
                     gate_said=said,
+                    gate_reasons=gate_reasons,
                     cwd=step_cwd(stage, work, directory, str(scratch) if scratch else None),
                     base=base,
                     base_note=describe_base(base),

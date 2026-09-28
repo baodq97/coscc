@@ -1120,10 +1120,14 @@ class PrHasItsOwnTask(unittest.TestCase):
         recording = (f"open: ship may proceed for {UNIT} — #95 was merged as abc1234 at "
                      "2026-09-20T00:00:00Z: record it in ship.md; do not merge")
         merging = f"open: ship may proceed for {UNIT} — merge with --match-head-commit abc1234"
-        for stage, said, mode in (("ship", recording, "record"), ("ship", merging, None), ("pr", recording, None)):
+        # `0136` R11: the code decides, so the recording words with no code are a merging ship.
+        record = ("recording-ship",)
+        for stage, said, codes, mode in (("ship", recording, record, "record"), ("ship", merging, (), None),
+                                         ("pr", recording, record, None), ("ship", recording, (), None),
+                                         ("ship", merging, record, "record")):
             with tempfile.TemporaryDirectory() as d:
                 journal = Journal(d, d)
-                self.run_stage(d, stage, journal, gate_said=said)
+                self.run_stage(d, stage, journal, gate_said=said, gate_reasons=codes)
                 start = journal.records(d, kind="start")[-1]
                 self.assertEqual(start.get("ship_mode"), mode, (stage, said))
                 self.assertEqual(mode is not None, "ship_mode" in start, (stage, said))

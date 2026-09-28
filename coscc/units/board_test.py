@@ -428,7 +428,7 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
 
         async def fake_run(argv, timeout, stdin=None):
             seen["argv"], seen["timeout"] = argv, timeout
-            return 0, "open", ""
+            return 0, '{"ok": true, "lines": ["open"], "reasons": []}', ""
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
             name = self._store_unit(tmp)
@@ -898,6 +898,8 @@ class TheSnapshotReachesTheScriptOnStdin(unittest.TestCase):
 
         async def fake_run(argv, timeout, stdin=None):
             seen.append((argv, stdin))
+            if "gate" in argv:
+                return 0, '{"ok": true, "lines": ["open"], "reasons": []}', ""
             return 0, '{"stages": [], "units": []}' if "status" in argv else '{"stage": ""}', ""
 
         snapshot = {"workspace": "proj", "workspaces": ["proj"], "units": {}, "ideas": {}}

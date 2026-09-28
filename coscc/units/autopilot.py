@@ -52,42 +52,51 @@ SCREENS_FAILED = "the screenshots could not be taken again before review"
 # `0104` R3. The workspace's stop line when there is no shortlist to follow.
 NO_SHORTLIST = "Nothing is on the shortlist, so the autopilot starts nothing."
 
-# `cos.mjs`'s own words, read here because `next` hands out no `why`. `autopilot_test.py`
-# reads each one back out of `.claude/scripts/cos.mjs`, so a change there turns it red.
-CI_PENDING = "CI has not finished on #"
-CI_RED = "CI is red on #"
-NEEDS_A_PERSON = "needs a person"
-FINISHED = "finished"
-CLOSED = "closed — "
-# `0040` R7: `impl` waits on another unit's merge, `cos.mjs` `WAITING_ON`.
-WAITING_ON = "waiting on "
-# `0126` R4: a `ship` that records a merge already made and merges nothing, `cos.mjs` `mergedLine`.
-RECORDING = "record it in ship.md; do not merge"
-
 _NUMBER = re.compile(r"^(\d+)")
 
 
-def is_waiting_on_dependency(said: str) -> bool:
+# `0136` R11: what `next` or the gate said is read by code, from `reasons` (`guards.REASONS`),
+# never from its words, which are a person's to read and `cos.mjs`'s to change.
+def said(answer: Any, reason: str) -> bool:
+    """Whether `reason` is among the codes of `answer`: `next`'s dict, or anything with
+    `reasons` — a `board.Gate`, or the exception a refused step raised with it."""
+    if isinstance(answer, dict):
+        codes = answer.get("reasons") or ()
+    else:
+        codes = getattr(answer, "reasons", None) or ()
+    return reason in codes
+
+
+def is_waiting_on_dependency(answer: Any) -> bool:
     """`0040` R7: `next` holds `impl` back until a dependency merges. Not a stop, like CI
     pending: nothing a person does here would move it, and the next pass asks again."""
-    return (said or "").startswith(WAITING_ON)
+    return said(answer, "waiting-on")
 
 
-def is_ci_pending(said: str) -> bool:
+def is_ci_pending(answer: Any) -> bool:
     """R6: the gate or `next` is waiting on CI. Not a stop; R5 d asks again."""
-    return CI_PENDING in (said or "")
+    return said(answer, "ci-pending")
 
 
-def is_ci_red(said: str) -> bool:
-    """`0124` R2: `next` sends the unit back to `impl` because CI is red. Read anywhere in
-    the words, since `onReview` and `rebased` put the gate's reason after their own."""
-    return CI_RED in (said or "")
+def is_ci_red(answer: Any) -> bool:
+    """`0124` R2: `next` sends the unit back to `impl` because CI is red."""
+    return said(answer, "ci-red")
 
 
-def is_recording_ship(said: str) -> bool:
-    """`0126` R4: `next`'s action or the gate's open line names a `ship` that only records a
-    merge already made. Both take the words from `mergedLine`, never beside a merge pin."""
-    return RECORDING in (said or "")
+def is_recording_ship(answer: Any) -> bool:
+    """`0126` R4: `next` or the gate names a `ship` that only records a merge already made."""
+    return said(answer, "recording-ship")
+
+
+def needs_a_person(answer: Any) -> bool:
+    """R6 b: `next` stops for a person — review used its rounds, a spike failed too often, a
+    red check no impl can fix, a pass left closed twice on one head."""
+    return said(answer, "needs-person") or said(answer, "awaits-person")
+
+
+def is_over(answer: Any) -> bool:
+    """`next` offers nothing because the unit is finished or closed."""
+    return said(answer, "finished") or said(answer, "closed")
 
 
 def is_step(record: dict[str, Any]) -> bool:
@@ -170,7 +179,7 @@ def skips_exhausted(nxt: dict[str, Any], last: dict[str, Any] | None, recorded: 
     last = last or {}
     return (
         last.get("kind") == "end" and last.get("stage") == "ship" and last.get("outcome") == "exhausted"
-        and nxt.get("stage") == "ship" and is_recording_ship(str(nxt.get("action") or ""))
+        and nxt.get("stage") == "ship" and is_recording_ship(nxt)
         and not recorded
     )
 
@@ -200,7 +209,7 @@ def stop_for(
     action = str(nxt.get("action") or "")
     if nxt.get("hold"):
         return None
-    if not stage and (action == FINISHED or action.startswith(CLOSED)):
+    if not stage and is_over(nxt):
         return None
 
     # a. Every unanswered question of the counted artifact (`cos.mjs` `unitQuestions`).
@@ -212,7 +221,7 @@ def stop_for(
     waiting = [str(x) for x in nxt.get("waiting") or []]
     if waiting:
         return _stop("b", f"{action} (awaiting a person on {', '.join(waiting)})")
-    if not stage and action.startswith(NEEDS_A_PERSON):
+    if not stage and needs_a_person(nxt):
         return _stop("b", action)
 
     kind = (last or {}).get("kind")
@@ -252,10 +261,10 @@ def stop_for(
     # stop. Whether it may be is the pass's to say (`reruns_of`, `answered_since_start`).
     if not stage and nxt.get("rerun"):
         return None
-    if not stage and is_waiting_on_dependency(action):
+    if not stage and is_waiting_on_dependency(nxt):
         return None
     # f. Nothing to run, and not because CI is still running.
-    if not stage and not is_ci_pending(action):
+    if not stage and not is_ci_pending(nxt):
         return _stop("f", action or "cos.mjs next named no stage")
     return None
 
@@ -308,7 +317,7 @@ def after_own_integration(
         return None
     red_state = (integration or {}).get("state") == "red-after-integration"
     fixing = nxt.get("stage") == "impl"
-    red_next = fixing and is_ci_red(str(nxt.get("action") or ""))
+    red_next = fixing and is_ci_red(nxt)
     again = _stop("e", "CI is still red after the autopilot's last integration")
     if after is None:
         return ("", again) if red_state else None
@@ -547,13 +556,13 @@ def reason_for(
         return ("stop", f"{stop['kind']}: {stop['reason']}")
     if nxt.get("hold"):
         return ("held", str((nxt["hold"] or {}).get("state") or "held"))
-    if action == FINISHED:
+    if said(nxt, "finished"):
         return ("finished", action)
-    if action.startswith(CLOSED):
+    if said(nxt, "closed"):
         return ("closed", action)
-    if is_ci_pending(action):
+    if is_ci_pending(nxt):
         return ("ci", action)
-    if is_waiting_on_dependency(action):
+    if is_waiting_on_dependency(nxt):
         return ("dependency", action)
     raise ValueError(f"no reason for a unit with no stage and no stop: {action or 'nothing said'}")
 

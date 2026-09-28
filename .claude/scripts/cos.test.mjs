@@ -15,7 +15,7 @@ import {
   aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip, normalizePatch, openLines,
   parseMoreRounds, reviewLimit, moreRounds, branchChecks, notAWorkBranch,
   parseIdea, parseLinks, parseIdeaRef, parseUnitRef, WAITING_ON, titleProblem,
-  unitMeta, readIdeas, NEEDS_STATE,
+  unitMeta, readIdeas, NEEDS_STATE, nextAnswer, gateAnswer,
 } from './cos.mjs'
 import { createHash } from 'node:crypto'
 
@@ -1167,7 +1167,7 @@ test('cos.mjs next prints one JSON line, and misuse is exit 2', () => {
   const { root } = questionTree({ 'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n' })
   const out = cli('--root', root, 'next', '0001_q')
   assert.equal(out.status, 0)
-  assert.deepEqual(JSON.parse(out.stdout), { unit: '0001_q', stage: 'spec', action: 'write-spec — it assesses whether to skip first', blocked: true })
+  assert.deepEqual(JSON.parse(out.stdout), { unit: '0001_q', stage: 'spec', action: 'write-spec — it assesses whether to skip first', blocked: true, reasons: ['missing'] })
   assert.equal(cli('--root', root, 'next').status, 2)
   assert.equal(cli('--root', root, 'next', '0009_nope').status, 2)
   assert.equal(cli('--root', root, 'next', '0001_q', '--repo', tmpdir()).status, 0)
@@ -2884,7 +2884,7 @@ function answeredTree(files) {
 
 test('0106 R1: a draft intent with every question answered is rerun: intent, and nothing else changes', () => {
   const { next } = answeredTree({ 'intent.md': DRAFT_INTENT + answerBlock(1, 'A', 'x') + answerBlock(2, 'A', 'y') })
-  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept intent.md', blocked: true, rerun: 'intent' })
+  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept intent.md', blocked: true, rerun: 'intent', reasons: ['draft'] })
 })
 
 test('0106 R1: one question left unanswered is no rerun', () => {
@@ -2943,7 +2943,7 @@ test('0115 R1: a draft impl with an open question is listed and counted', () => 
 
 test('0115 R3: a draft impl answered in full is rerun: impl', () => {
   const { next } = implTree(`${DRAFT_IMPL}\n## Answers\n${answerBlock(1, 'A', 'x')}`)
-  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept impl.md', blocked: true, rerun: 'impl' })
+  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept impl.md', blocked: true, rerun: 'impl', reasons: ['draft'] })
 })
 
 test('0115 R3: a draft impl with one question unanswered is no rerun', () => {
@@ -4111,6 +4111,54 @@ test('0103 R3: every branch of next that reads CI stops on the same line, and th
   assert.deepEqual(checkGate(branched(passed), 'ship', { probe: rebased() }), { ok: false, need: [STOP_97] })
 })
 
+// --- 0136 R11: codes beside the words ------------------------------------------------
+
+test('0136 R11: next and gate name CI, a person, a merge made and a closed unit by code', () => {
+  const has = (answer, ...codes) => codes.forEach((c) => assert.ok(answer.reasons.includes(c), `${c} in ${answer.reasons}`))
+  const pending = greenProbe([{ name: 'tests', bucket: 'pending' }])
+  has(nextAnswer(branched(CHAIN), { probe: pending }), 'ci-pending')
+  has(gateAnswer(branched(CHAIN), 'review', { probe: pending }), 'ci-pending')
+  const red = headProbe(greenProbe([{ name: 'tests', bucket: 'fail' }]), { head: 'feat/x' })
+  const back = nextAnswer(branched(CHAIN), { probe: red })
+  assert.equal(back.stage, 'impl')
+  has(back, 'ci-red')
+  assert.ok(!back.reasons.includes('ci-pending'))
+  has(nextAnswer(branched(CHAIN), { probe: headProbe(greenProbe(RED_97)) }), 'ci-unfixable', 'needs-person')
+  // `0116`: the gate opens to record a merge already made, and says so by code alone.
+  assert.deepEqual(gateAnswer(passedOnce(), 'ship', { probe: mergedProbe() }).reasons, ['recording-ship'])
+  has(nextAnswer(passedOnce(), { probe: mergedProbe() }), 'recording-ship')
+  assert.deepEqual(gateAnswer(passedOnce(), 'ship', { probe: greenProbe() }).reasons, [])
+  assert.deepEqual(nextAnswer(branched({ ...CHAIN, 'plan.md': art('done') })).reasons, ['finished'])
+  has(nextAnswer(branched({ ...CHAIN, 'spec.md': art('rejected') })), 'closed')
+  // The words stay where they were: `nextStep` and `checkGate` hand out no codes.
+  assert.equal('reasons' in nextStep(branched(CHAIN), { probe: pending }), false)
+  assert.equal('reasons' in checkGate(branched(CHAIN), 'review', { probe: pending }), false)
+})
+
+test('0136 R11: every closed gate names at least one code', () => {
+  const u = branched({ 'intent.md': art('accepted'), 'spec.md': art('draft') })
+  for (const stage of STAGE_NAMES) {
+    const g = gateAnswer(u, stage, { probe: greenProbe() })
+    if (!g.ok) assert.ok(g.reasons.length, stage)
+  }
+  assert.deepEqual(gateAnswer(u, 'plan').reasons, ['draft'])
+  assert.deepEqual(gateAnswer({ ...u, hold: { state: 'paused', reason: 'x', by: 'b', date: 'd' } }, 'plan').reasons, ['paused'])
+  assert.deepEqual(gateAnswer(u, 'nope').reasons, ['unreadable'])
+})
+
+test('0136 R11: gate --json prints the lines it prints without it, its codes, and the same exit', () => {
+  const { root } = questionTree({ 'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n' })
+  const words = cli('--root', root, 'gate', '0001_q', 'plan')
+  const json = cli('--root', root, 'gate', '0001_q', 'plan', '--json')
+  assert.equal(words.status, 1)
+  assert.equal(json.status, 1)
+  const said = JSON.parse(json.stdout)
+  assert.deepEqual(said.lines, words.stderr.trimEnd().split('\n'))
+  assert.deepEqual([said.ok, said.reasons], [false, ['missing']])
+  const open = JSON.parse(cli('--root', root, 'gate', '--json', '0001_q', 'spec').stdout)
+  assert.deepEqual(open, { ok: true, lines: [cli('--root', root, 'gate', '0001_q', 'spec').stdout.trim()], reasons: [] })
+})
+
 test('0103 R7: a red read asks gh once more for the head, a green read never does', () => {
   const read = ['gh pr checks 7 --required --json name,bucket']
   for (const [checks, more] of [
@@ -4327,7 +4375,7 @@ test('0040 R7: impl gate stays shut while the dependency\'s ship.md is not accep
 test('0040 R7: next says why dependency and names the ref', () => {
   const { a, b } = pair40()
   assert.deepEqual(json40(cli('--root', b, 'next', '0001_y', '--peer', `a=${a}`)),
-    { unit: '0001_y', stage: '', action: `${WAITING_ON}a/0001_x to merge`, blocked: true, why: 'dependency' })
+    { unit: '0001_y', stage: '', action: `${WAITING_ON}a/0001_x to merge`, blocked: true, why: 'dependency', reasons: ['dependency', 'waiting-on'] })
   const [u] = json40(cli('--root', b, 'status', '--json', '--peer', `a=${a}`)).units
   assert.equal(u.next.why, 'dependency')
   assert.equal(u.next.action, `${WAITING_ON}a/0001_x to merge`)

@@ -38,7 +38,6 @@ from coscc.agent.policy import Grant, beyond_reading, grant_for_step, is_prose_s
 from coscc.units import guards
 from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended
-from coscc.units.autopilot import is_recording_ship
 from coscc.knowledge import TRIAL_FIELD as KNOWLEDGE_TRIAL_FIELD
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
@@ -373,6 +372,7 @@ class Runner:
         stages: list[str],
         mode: str,
         gate_said: str = "",
+        gate_reasons: tuple[str, ...] = (),
         cwd: str | None = None,
         model: str | None = None,
         model_source: str = "",
@@ -584,8 +584,9 @@ class Runner:
         # the way `0037` picks by `system_prompt`. Only `pr` carries it.
         pr_extra = {"pr_before": pr_before or ""} if stage == "pr" else {}
         # `0126` R3: the autopilot tells a recording `ship` that ran out from a merging one by
-        # this field. Only a `ship` whose gate named the merge already made carries it.
-        ship_extra = {"ship_mode": "record"} if stage == "ship" and is_recording_ship(gate_said) else {}
+        # this field. Only a `ship` whose gate named the merge already made carries it, by the
+        # code `recording-ship` (`0136` R11), not by its words.
+        ship_extra = {"ship_mode": "record"} if stage == "ship" and "recording-ship" in gate_reasons else {}
 
         # `0037`: the same condition that decides whether a gate and a tool list are sent.
         preset = CLAUDE_CODE_PRESET if grant.opens_anything else None

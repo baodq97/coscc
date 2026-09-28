@@ -34,6 +34,7 @@ from typing import Any
 # which is how a single packaging omission arrived as two unrelated-looking symptoms.
 from coscc.agent import harness
 from coscc.agent.harness import child_env as _child_env
+from coscc.units import guards
 
 # Measured 2026-09-21 on this machine: five runs over the eight units in this repository
 # took 0.05s each, node v24.20.0. Ten seconds is therefore about two hundred times the
@@ -45,6 +46,28 @@ TIMEOUT = 10.0
 
 class Unavailable(Exception):
     """The board cannot be read, carrying a reason a caller can show verbatim."""
+
+
+class Gate(tuple):
+    """`gate`'s answer: `(open, what it said)`, unpacked as it always was, and `reasons`, the
+    codes beside the words (`0136` R11), which the app branches on instead of them."""
+
+    reasons: tuple[str, ...]
+
+    def __new__(cls, opened: bool, said: str, reasons: tuple[str, ...] = ()) -> "Gate":
+        answer = super().__new__(cls, (opened, said))
+        answer.reasons = tuple(reasons)
+        return answer
+
+
+def _codes(data: dict[str, Any]) -> tuple[str, ...]:
+    """`reasons` of a `gate --json` or `next` answer. A code outside `guards.REASONS` is this
+    app's bug, refused here so that it never reaches a caller that branches on it."""
+    codes = tuple(str(c) for c in data.get("reasons") or ())
+    unknown = [c for c in codes if c not in guards.REASONS]
+    if unknown:
+        raise Unavailable(f"the harness script handed out a reason code the app does not know: {', '.join(unknown)}")
+    return codes
 
 
 def _stage_rows(stages: list[dict[str, Any]], artifacts: dict[str, Any]) -> list[dict[str, Any]]:
@@ -322,8 +345,8 @@ async def gate(
     repo: str | Path | None = None,
     timeout: float = GATE_TIMEOUT,
     state: dict[str, Any] | None = None,
-) -> tuple[bool, str]:
-    """Ask `cos.mjs gate` whether one stage of one unit may proceed.
+) -> Gate:
+    """Ask `cos.mjs gate --json` whether one stage of one unit may proceed.
 
     `repo` is the workspace -- the git checkout the unit's code lives in -- and is passed as
     `--repo`. It is not `units_root`: since `0014` that is the product's store, which holds
@@ -331,9 +354,9 @@ async def gate(
     to read and no pull request to ask about. Without `repo` those two gates stay closed
     and say so; every other stage reads files only and does not care.
 
-    Returns `(open, what it said)`. Exit 0 is open; exit 1 is blocked and carries the
-    reasons; exit 2 is misuse, which is this app's bug and not the unit's, so it is
-    reported with what the script printed rather than translated.
+    Returns `(open, what it said)`, with the codes as `.reasons` (`Gate`). Exit 0 is open;
+    exit 1 is blocked and carries the reasons; exit 2 is misuse, which is this app's bug and
+    not the unit's, so it is reported with what the script printed rather than translated.
 
     **Nothing in this app asked this question until now.** `.claude/CLAUDE.md` invariant 2
     -- *"Ask `cos.mjs gate` before a stage and stop when it exits non-zero"* -- was written
@@ -355,7 +378,7 @@ async def gate(
 
     try:
         source, stdin = _source(state)
-        argv = [str(script), "--root", str(path), *source, "gate", unit, stage]
+        argv = [str(script), "--root", str(path), *source, "gate", unit, stage, "--json"]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
         code, out_text, err_text = await _ask(argv, timeout, stdin)
@@ -366,8 +389,16 @@ async def gate(
     except asyncio.TimeoutError:
         raise Unavailable(f"asking the gate timed out after {timeout:.0f}s") from None
 
+    if code in (0, 1):
+        try:
+            data = json.loads(out_text)
+            lines = [str(line) for line in data["lines"]]
+        except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
+            raise Unavailable(f"the harness script did not return JSON: {e}") from e
+        said = "\n".join(lines).strip()
+        return Gate(code == 0, said or f"the gate exited {code} and said nothing", _codes(data))
     said = (out_text + err_text).strip()
-    return code == 0, said or f"the gate exited {code} and said nothing"
+    return Gate(False, said or f"the gate exited {code} and said nothing")
 
 
 async def next_step(
@@ -430,6 +461,9 @@ async def next_step(
         "rerun": str(data.get("rerun") or ""),
         # `0040` R7. `dependency` only when `impl` waits on a unit not merged; else "".
         "why": str(data.get("why") or ""),
+        # `0136` R11. The codes of what settled the answer; the autopilot reads these, never
+        # `action`.
+        "reasons": list(_codes(data)),
     }
 
 

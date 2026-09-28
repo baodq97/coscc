@@ -20,17 +20,19 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-# R11. The closed table. The first group is the `why` column `cos.mjs next` already writes
-# (`guards_test.py` reads every one back out of it); the second is what R11 and R22 add;
-# the third is what the guards below refuse with.
+# R11. The closed table. The first group is the `why` column `cos.mjs next` already writes;
+# the second is what R11 and R22 add, which `cos.mjs` hands out as `reasons` beside its
+# words (`guards_test.py` reads every `why: '…'` and `code('…')` back out of it); the third
+# is what the guards below refuse with.
 REASONS = (
     # `cos.mjs next`'s `why`, and a hold's move.
     "dependency", "unreadable", "finished", "paused", "dropped", "needs-person",
     "spike-fails", "spike-missing", "missing", "rejected", "stale", "review-incomplete",
     "ship-refused", "draft", "awaits-person", "person-answered", "changes-requested",
-    # R11, R22.
+    # R11, R22. `gate-closed`: a gate closed for a reason with no code of its own (a title,
+    # a screenshot, a moved head); its words say which.
     "ci-pending", "ci-red", "ci-unfixable", "waiting-on", "recording-ship", "closed",
-    "overlap-pr", "needs-idea",
+    "overlap-pr", "needs-idea", "gate-closed",
     # The guards' own refusals.
     "wrong-run", "stale-revision", "no-head", "head-moved", "not-open-finding",
     "agent-cannot-skip", "no-submission", "bad-branch", "not-merged", "not-closed",
