@@ -86,7 +86,7 @@ class StepsMixin:
     # -- integration (`0035`) -------------------------------------------------
 
     async def _attach_integration(
-        self, cwd: str, units_: list[dict[str, Any]], journal: Journal | None, key: str
+        self, cwd: str, units_: list[dict[str, Any]], journal: Journal | None, key: str, prs_once=None,
     ) -> list[tuple[tuple[str, str], str, int, str]]:
         """R1/R2. Give every unit `integration: {...}` when it sits in the window, else None.
 
@@ -107,10 +107,8 @@ class StepsMixin:
             return []
         root = Path(cwd).expanduser().resolve()
         last = self._last_integrations(journal, key)
-        try:
-            prs: list[dict[str, Any]] | str = await integrate.open_prs(str(root))
-        except integrate.IntegrateError as e:
-            prs = str(e)
+        # `0046`: the board's one `gh pr list`, shared with the release block.
+        prs: list[dict[str, Any]] | str = await (prs_once or self._prs_once(cwd))()
         asks: list[tuple[tuple[str, str], str, int, str]] = []
         oldest = datetime.fromisoformat(_now()) - timedelta(seconds=CI_REFRESH)
         for u in window:

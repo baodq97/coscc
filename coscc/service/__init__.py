@@ -112,6 +112,9 @@ from coscc.service.notices import (
 from coscc.service.ideas import (
     IdeasMixin,
 )
+from coscc.service.release import (
+    ReleaseMixin,
+)
 
 
 @dataclass
@@ -129,6 +132,7 @@ class Service(
     ActivityMixin,
     NoticesMixin,
     IdeasMixin,
+    ReleaseMixin,
 ):
     config: Config
     sessions: Sessions
@@ -156,6 +160,9 @@ class Service(
     # its first `await` (`_take`). One process only, like `pull`.
     _active: dict[tuple[str, str], steps_mod.Mark] = field(default_factory=dict, init=False, repr=False)
     _integrate_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
+    # `0046` R13. The journal keys with a release press running now, checked and marked with
+    # no `await` between. One process only, like `pull`.
+    _releasing: set[str] = field(default_factory=set, init=False, repr=False)
     # `0051` R1. What is running now, for the board to show: one entry per step or
     # integration, keyed by an id that never leaves this process. Added and removed beside
     # `_active`, read only by `running`. Display only: `_active` still does the refusing.

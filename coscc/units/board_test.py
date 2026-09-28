@@ -43,6 +43,15 @@ class TheRepositoryReadsAsABoard(unittest.TestCase):
             got = [row["stage"] for row in unit["stages"]]
             self.assertEqual(got, STAGES, f"{unit['name']} is missing a stage")
 
+    def test_the_type_is_cos_mjs_s_verbatim(self):
+        # `0046` R3: copied from `status --json`, never read from `intent.md` here.
+        data = run(board.read(REPO))
+        out = subprocess.run(["node", str(harness.script()), "--root", str(REPO), "status", "--json"],
+                             capture_output=True, text=True, check=True, env=harness.child_env()).stdout
+        want = {u["name"]: str(u.get("type") or "") for u in json.loads(out)["units"]}
+        self.assertEqual({u["name"]: u["type"] for u in data["units"]}, want)
+        self.assertIn("feat", want.values())
+
     def test_a_stage_with_no_artifact_reads_as_not_started(self):
         data = run(board.read(REPO))
         # Chosen by shape rather than by number: any unit closed under the old three-stage

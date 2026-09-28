@@ -81,6 +81,22 @@ class WhereATreeLives(Repo):
             worktrees.path(self.repo, "0001_a", pkg / "d")
 
 
+class TheReleaseTree(Repo):
+    """`0046`: one release tree per workspace, beside its units' trees and never one of them."""
+
+    def test_it_sits_beside_the_units_trees(self):
+        where = worktrees.release_path(self.repo, self.data)
+        self.assertEqual(where.parent, worktrees.path(self.repo, "0001_a", self.data).parent)
+        self.assertEqual(where.name, "release")
+        self.assertIsNone(units.UNIT_RE.fullmatch(where.name))
+
+    def test_inside_the_workspace_or_the_package_is_refused(self):
+        with self.assertRaises(BadUnit):
+            worktrees.release_path(self.repo, self.repo / "data")
+        with self.assertRaises(BadUnit):
+            worktrees.release_path(self.repo, Path(coscc.__file__).resolve().parent / "d")
+
+
 class Ensuring(Repo):
     def test_a_new_unit_gets_a_detached_tree_at_main_and_the_root_does_not_move(self):
         made = asyncio.run(worktrees.ensure(self.repo, "0001_a", None, self.data))

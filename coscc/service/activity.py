@@ -62,6 +62,9 @@ class ActivityMixin:
                 "reason": r.get("reason") or "",
                 "by": r.get("by") or "",
                 "effects": [e for e in r.get("effects") or [] if isinstance(e, dict)],
+                # `0046` R15. A `release` row's version and what happened; empty on every other kind.
+                "version": str(r.get("version") or "") if r.get("kind") == "release" else "",
+                "detail": str(r.get("detail") or "") if r.get("kind") == "release" else "",
             }
             for r in rows
             # `0111` R6: a retake of the screenshots is recorded, and shown on no screen.

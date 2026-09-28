@@ -6,6 +6,8 @@ real session is `scripts/verify_0001.py`, which is run on purpose.
 """
 
 import json
+import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -1752,3 +1754,42 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
             (f"proj/{front.json()['unit']}", "proj", [back_ref]),
         ])
         self.assertEqual(page["brief"], "backend adds, frontend calls")
+
+
+@unittest.skipUnless(shutil.which("uv") and shutil.which("node"), "uv and node are needed")
+class ReleasingOverHttp(unittest.IsolatedAsyncioTestCase):
+    """`0046` R13 over HTTP: a refusal is a 400 before any line of output, with one record."""
+
+    async def asyncSetUp(self):
+        from coscc.git import fetches
+        from coscc.service.release_service_test import Fixture
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.fx = Fixture(Path(tmp.name))
+        for patch in (mock.patch.dict(os.environ, self.fx.env),
+                      mock.patch.object(fetches, "shared", fetches.Fetches())):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.app = build(Config(workspaces=(self.fx.cwd,), working_dir=str(Path(tmp.name) / "work"),
+                                data_dir=str(Path(tmp.name) / "data")))
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://t")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def test_a_refused_press_is_a_400_and_one_record(self):
+        for route in ("/api/release/prepare", "/api/release/publish"):
+            with self.subTest(route=route):
+                got = await self.client.post(route, json={"cwd": self.fx.cwd, "version": "0.2.0-rc.1"})
+                self.assertEqual(got.status_code, 400)
+                self.assertIn("prerelease", got.json()["error"])
+        service = self.app.state.service
+        rows = service._journal().records(service._journal_key(self.fx.cwd), kind="release")
+        self.assertEqual([(r["phase"], r["outcome"]) for r in rows], [("prepare", "refused"), ("publish", "refused")])
+
+    async def test_bad_bodies_are_400(self):
+        for body in ({"cwd": "/etc", "version": "0.2.0"}, [], {}):
+            with self.subTest(body=body):
+                got = await self.client.post("/api/release/prepare", json=body)
+                self.assertEqual(got.status_code, 400)

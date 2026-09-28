@@ -171,6 +171,8 @@ CONSEQUENCE = {
     "precedent": "Opens one paid session; its answers reach later stages as decided.",
     "drop": "Closes this unit's open pull request with this machine's gh login.",
     "apply-now": "Stops every running step and chat turn, then restarts the app.",
+    # `0046` R16. The whole warning is `release.WARNING`, in `/api/board` (S2).
+    "release": "Commits, pushes, merges and tags on main with this machine's gh login.",
 }
 
 
