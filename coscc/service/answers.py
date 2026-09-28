@@ -221,7 +221,16 @@ class AnswersMixin:
             )
             return {}
         except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
-            reason = str(e) or type(e).__name__
+            # One fixed sentence on the card and the step, the error in the log: `MetaError`
+            # carries `cos.mjs`'s stderr or its argv, `Busy` the database's path (review F10,
+            # S3). A `BadTransition` names a status and nothing else, as it is written to.
+            print(f"coscc: {unit} in {workspace} could not be read after its step: {e}", file=sys.stderr)
+            if isinstance(e, BadTransition):
+                reason = str(e) or "a status it read is not one the app records"
+            elif isinstance(e, (Busy, sqlite3.Error)):
+                reason = "the database could not be written"
+            else:
+                reason = "its files could not be read"
             try:
                 meta.ingest_failed(workspace, unit, reason)
             except (Busy, sqlite3.Error, OSError):

@@ -420,7 +420,10 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.assertEqual(found["settled_edits"], 1)
 
     def test_a_failed_ingest_is_on_the_step_and_in_the_database(self):
-        """`0135` R7, C3: the step still ends `done`, and the failure is kept, not dropped."""
+        """`0135` R7, C3: the step still ends `done`, and the failure is kept, not dropped.
+        Review F10, S3: what is kept is one fixed sentence; the error, which may carry a path,
+        goes to the log."""
+        import io
         from unittest import mock
 
         from coscc.units import meta
@@ -430,13 +433,32 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
         # The store is imported on its first read, before `meta` is broken: only the ingest fails.
         asyncio.run(self.service.board(str(self.repo)))
-        with mock.patch.object(meta, "read", side_effect=meta.MetaError("cos.mjs meta exited 2")):
+        error = meta.MetaError("cos.mjs meta did not run: /home/x/cos.mjs --root /home/x/units")
+        with mock.patch.object(meta, "read", side_effect=error), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as log:
             _, payload = asyncio.run(go())[-1]
         self.assertEqual(payload["outcome"], "done")
-        self.assertEqual(payload["ingest_error"], "cos.mjs meta exited 2")
+        self.assertEqual(payload["ingest_error"], "its files could not be read")
         with self.service._unit_meta().data.connect() as conn:
             [row] = conn.execute("SELECT unit, field, reason FROM unit_unknowns WHERE field = 'ingest'").fetchall()
-        self.assertEqual(tuple(row), (self.made["unit"], "ingest", "cos.mjs meta exited 2"))
+        self.assertEqual(tuple(row), (self.made["unit"], "ingest", "its files could not be read"))
+        self.assertIn("/home/x/units", log.getvalue())
+        self.assertIn(self.made["unit"], log.getvalue())
+
+    def test_a_failed_ingest_on_the_database_names_no_path(self):
+        # Review F10, S3: `Busy` carries the path of `cos.db`.
+        import io
+        from unittest import mock
+
+        from coscc.data import Busy
+
+        asyncio.run(self.service.board(str(self.repo)))
+        busy = Busy(self.service.config.data_dir + "/cos.db")
+        with mock.patch("coscc.units.meta.UnitMeta.ingest", side_effect=busy), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            said = asyncio.run(self.service._ingest(str(self.repo), self.made["unit"], {"outcome": "done", "stage": "spec"}))
+        self.assertEqual(said, {"ingest_error": "the database could not be written"})
+        self.assertIn("cos.db", log.getvalue())
 
     def test_a_failed_step_records_nothing(self):
         class Empty:
