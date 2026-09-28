@@ -3,7 +3,10 @@
 On copies, as `verify_0135.py` makes them (plan Risk 1), for the largest store: 20 rounds,
 each timing, by the wall clock and in alternating order, the four calls
 
-- `board.read` before: `cos.mjs` at `git merge-base HEAD origin/main`, with `--peer`s;
+- `board.read` before: `cos.mjs` at `git merge-base HEAD origin/main`, with the `--peer`s
+  `Service._peers` passed. `board._source`, the one place a call's `--state` is added, is
+  patched to hand those instead, so both sides run the same Python and differ only in the
+  script and what it reads;
 - `board.read` after: `UnitMeta.snapshot` built, then this checkout's `cos.mjs --state -`;
 - one `next` as the autopilot asks it (`board.next_step`, no `--repo`), before and after,
   for the store's last unit.
@@ -84,20 +87,23 @@ def main() -> int:
         meta = UnitMeta(root, data)
         for n, s in stores.items():
             meta.import_store(units.key(paths[n]), s)
-        peers = [(n, s) for n, s in stores.items()]
+        peer_args = [a for n, s in stores.items() for a in ("--peer", f"{n}={s}")]
         keys = {n: units.key(p) for n, p in paths.items()}
         unit = sorted(d.name for d in (store / ".cos").iterdir() if d.is_dir() and d.name != "ideas")[-1]
 
-        def before_read():
-            with mock.patch.object(harness, "script", return_value=old):
-                return board.read(store, peers=peers)
+        def as_before():
+            return mock.patch.multiple(board, _source=lambda state: (peer_args, None))
+
+        async def before_read():
+            with mock.patch.object(harness, "script", return_value=old), as_before():
+                return await board.read(store)
 
         def after_read():
             return board.read(store, state=meta.snapshot(keys[name], keys))
 
-        def before_next():
-            with mock.patch.object(harness, "script", return_value=old):
-                return board.next_step(store, unit, peers=peers)
+        async def before_next():
+            with mock.patch.object(harness, "script", return_value=old), as_before():
+                return await board.next_step(store, unit)
 
         def after_next():
             return board.next_step(store, unit, state=meta.snapshot(keys[name], keys, [unit]))
