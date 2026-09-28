@@ -6,8 +6,11 @@ Since `0095` a claim worth keeping is a test in `npm test` or a case in `npm run
 
 - **`npm run e2e` is `scripts/e2e.py`.** Since `0095`. Browser, no session, no quota, no
   network: it starts `coscc.run` on `COS_HOST`/`COS_PORT` with a temporary working folder
-  and data root, two workspaces cloned from bare-directory remotes, and a password and one
-  session written in before it starts, so every case runs past the `0070` login. It needs
+  and data root, four workspaces cloned from bare-directory remotes, and a password and one
+  session written in before it starts, so every case runs past the `0070` login. Two of the
+  workspaces, `f1` and `f2`, are `0133`'s F1 and F2, 117 units each written straight into
+  the store; its board case measures them at 1280, 1440 and 1690 by 800 in both densities
+  and at 390×844, and sets the density back to `comfortable` when it ends. It needs
   the port free and a bundle built for it (`COS_HOST=127.0.0.1 COS_PORT=<port> uv run
   coscc-build`). Each case is a function named for what it shows. It is not part of `npm
   test` and does not run in CI.

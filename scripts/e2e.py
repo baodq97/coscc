@@ -4,8 +4,10 @@
     COS_HOST=127.0.0.1 COS_PORT=<port> uv run coscc-build && npm run e2e
 
 It starts `coscc.run` on the address the bundle was built for (`COS_HOST`, `COS_PORT`), on a
-temporary working folder and data root with two workspaces, `proj` and `other`, each a clone
-of a bare-directory remote. A password nobody types and one session are written into that
+temporary working folder and data root with four workspaces, each a clone of a bare-directory
+remote: `proj` and `other`, and since `0133` `f1` and `f2`, 117 units each, where the board is
+measured at 1280, 1440 and 1690 by 800 in both densities and at 390×844. A password nobody
+types and one session are written into that
 data root before the app starts, so every case runs past the `0070` login without `/setup`.
 No session is opened, no quota is spent and nothing leaves the machine.
 
@@ -19,6 +21,7 @@ for this address, the port in use, or no chromium. It is not part of `npm test`.
 
 from __future__ import annotations
 
+import collections
 import json
 import os
 import shutil
@@ -105,6 +108,93 @@ class Scene:
         self.paths[made.json()["unit"]] = Path(made.json()["path"])
         (self.paths[made.json()["unit"]] / "intent.md").write_text(text, encoding="utf-8")
         return str(made.json()["unit"])
+
+
+# `0133` spec, F1 and F2: two workspaces the size of the board on 2026-09-28. Each unit's
+# files are the least that puts it at its stage (`scripts/capture_screens.py` `FIXTURE`).
+STAGE_LADDER = ("idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship")
+DONE = 90
+SLUG_WORDS = "the board keeps this unit waiting until someone opens it and reads it through".split()
+
+
+def slug_for(ws: str, n: int, at: str) -> str:
+    """Exactly 60 characters, `new-path`'s limit, so each title is 60 too."""
+    words = [ws, at, f"{n:03d}"]
+    while len("-".join(words)) < 60:
+        words += SLUG_WORDS
+    slug = "-".join(words)[:60]
+    return slug if not slug.endswith("-") else slug[:59] + "a"
+
+
+def unit_files(at: str, shape: str, title: str) -> dict[str, str]:
+    """`shape`: `ready` (whatever the service makes of the stage), `needs-you`, `paused` or
+    `done`."""
+    head = "Author: e2e. Status: {}.\n"
+    intent_md = (f"# Intent: {title}\nAuthor: e2e. Type: feat. Status: accepted.\n\n"
+                 "## Problem\n\nMột unit của fixture board.\n")
+    if shape == "done":
+        return {"intent.md": intent_md,
+                "spec.md": f"# Spec: {title}\nIntent: intent.md. " + head.format("accepted"),
+                "plan.md": f"# Plan: {title}\n" + head.format("done")}
+    if shape == "needs-you":
+        return {"intent.md": intent_md.replace("Status: accepted", "Status: draft")
+                + "\n## Open questions\n\n1. Ai quyết định việc này?\n"}
+    files = {"idea.md": f"# Idea: {title}\n" + head.format("draft" if at == "idea" else "accepted")
+             + "\nMột ý tưởng.\n"}
+    ladder = STAGE_LADDER[:STAGE_LADDER.index(at)]
+    if "intent" in ladder:
+        files["intent.md"] = intent_md
+    if "spec" in ladder:
+        files["spec.md"] = (f"# Spec: {title}\nIntent: intent.md. " + head.format("accepted")
+                            + "\n## Concerns\n\n"
+                            + ("- [unmeasured] U1 Chưa đo.\n" if at == "spike" else "- C1. Không có.\n"))
+    for stage, text in (("plan", f"# Plan: {title}\n" + head.format("accepted")),
+                        ("impl", f"# Impl: {title}\n" + head.format("accepted")),
+                        ("pr", f"# PR: {title}\nPR: https://github.com/o/r/pull/1. " + head.format("accepted")),
+                        ("review", f"# Review: {title}\n" + head.format("accepted")
+                         + "\n## Round 1\n\nReviewed: " + "a" * 40 + ". Verdict: pass.\n\n### Findings\n\n"
+                         "### What was not reviewed\n\nNothing.\n")):
+        if stage in ladder:
+            files[f"{stage}.md"] = text
+    if shape == "paused":
+        files["intent.md"] += "\n## Answers\n" + hold.block("paused", "e2e", "2026-09-28", "on hold")
+    return files
+
+
+# (stage, shape) per unit. A held unit's `at` is the stage before the one its files would
+# offer, so the four paused units sit at `spec`, `plan`, `impl` and `pr`.
+F1 = ([("intent", "ready")] * 20 + [("intent", "needs-you")] * 3
+      + [(at, "paused") for at in ("plan", "impl", "pr", "review")] + [("done", "done")] * DONE)
+F2 = [(at, "ready") for at in STAGE_LADDER for _ in range(3)] + [("done", "done")] * DONE
+
+
+class Wide:
+    """`0133` F1 and F2. One unit made through the route, to learn where the store is; the
+    rest written straight into it, numbered on from `0002`."""
+
+    def __init__(self, api: httpx.Client, f1: Path, f2: Path) -> None:
+        self.cwd = {"f1": f1, "f2": f2}
+        self.units = {"f1": self.fill(api, f1, "f1", F1), "f2": self.fill(api, f2, "f2", F2)}
+
+    @staticmethod
+    def fill(api: httpx.Client, cwd: Path, ws: str, plan: list[tuple[str, str]]) -> dict[str, tuple[str, str]]:
+        slugs = [slug_for(ws, n, at) for n, (at, _) in enumerate(plan, start=1)]
+        made = api.post("/api/units", json={"cwd": str(cwd), "slug": slugs[0], "brief": "e2e"})
+        made.raise_for_status()
+        first = Path(made.json()["path"])
+        store = first.parent
+        for f in first.iterdir():
+            f.unlink()
+        first.rmdir()
+        units = {}
+        for n, ((at, shape), slug) in enumerate(zip(plan, slugs), start=1):
+            name = f"{n:04d}_{slug}"
+            where = store / name
+            where.mkdir()
+            for file, text in unit_files(at, shape, slug.replace("-", " ")).items():
+                (where / file).write_text(text, encoding="utf-8")
+            units[name] = (at, shape)
+        return units
 
 
 # --------------------------------------------------------------------------
@@ -261,6 +351,219 @@ def a_dropped_unit_opens_with_nothing_that_writes(context, base, scene) -> bool:
             boxes = dialog.locator('[id^="answer-"]').count()
             why = "" if present and not boxes else f"#unit-dropped {present}, answer buttons {boxes}"
         return say(not why, "a dropped unit is marked dropped and offers no answer", why)
+    finally:
+        page.close()
+
+
+# --------------------------------------------------------------------------
+# `0133`: the whole board in one window
+# --------------------------------------------------------------------------
+
+BOARD_SIZES = ((1280, 800), (1440, 800), (1690, 800))
+PHONE = (390, 844)
+FOLDED = ("done", "dropped")
+# R3's "the start of its title": about ten characters at the card's size, chosen, not measured
+# against a reader.
+TITLE_MIN_PX = 80
+
+# R1: the document and every scroller in the shell no wider than it shows.
+SIDEWAYS_JS = """
+() => {
+  const doc = document.documentElement;
+  const wide = [];
+  if (doc.scrollWidth > doc.clientWidth) wide.push(`document ${doc.scrollWidth} > ${doc.clientWidth}`);
+  for (const el of document.querySelectorAll('#studio-shell, #studio-shell *')) {
+    const ox = getComputedStyle(el).overflowX;
+    if ((ox === 'auto' || ox === 'scroll') && el.scrollWidth > el.clientWidth + 1)
+      wide.push(`${el.tagName.toLowerCase()}#${el.id || ''}.${String(el.className).slice(0, 40)} ${el.scrollWidth} > ${el.clientWidth}`);
+  }
+  return wide;
+}
+"""
+
+# R2–R5 on the board as the page drew it, against `/api/board`'s units.
+BOARD_JS = """
+({stages, units, done, TITLE_MIN_PX}) => {
+  const W = innerWidth, H = innerHeight;
+  const inside = (r, b) => r.width > 0 && r.left >= b.left - 0.5 && r.top >= b.top - 0.5
+    && r.right <= b.right + 0.5 && r.bottom <= b.bottom + 0.5;
+  const view = {left: 0, top: 0, right: W, bottom: H};
+  const out = {labels: [], cards: [], states: [], done: ''};
+  for (const s of stages) {
+    const label = document.querySelector(`[data-testid="column-${s}"] [data-testid="lane-label"]`);
+    if (!label || !inside(label.getBoundingClientRect(), view)) out.labels.push(s);
+  }
+  for (const u of units) {
+    const found = document.querySelectorAll(`[id="unit-${u.id}"]`);
+    const card = found[0];
+    if (found.length !== 1) { out.cards.push(`${u.id}: ${found.length} cards`); continue; }
+    const r = card.getBoundingClientRect();
+    const lane = card.closest('[data-testid^="column-"]');
+    const text = card.innerText;
+    const why = [];
+    if (!inside(r, view)) why.push(`at ${Math.round(r.left)},${Math.round(r.top)}-${Math.round(r.right)},${Math.round(r.bottom)}`);
+    if (!lane || lane.dataset.testid !== `column-${u.at}`) why.push(`in ${lane ? lane.dataset.testid : 'no lane'}`);
+    else if (!inside(r, lane.getBoundingClientRect())) why.push('cut by its lane');
+    if (!text.includes(u.id.slice(0, 4)) || !text.includes(u.title.slice(0, 12))) why.push(`reads ${JSON.stringify(text)}`);
+    // `innerText` ignores the ellipsis: the title must also have room for its first words.
+    const title = [...card.querySelectorAll('*')].find(e => getComputedStyle(e).textOverflow === 'ellipsis');
+    if (!title || title.clientWidth < TITLE_MIN_PX) why.push(`title ${title ? title.clientWidth : 'not'} px wide`);
+    if (why.length) out.cards.push(`${u.id.slice(0, 4)}: ${why.join(', ')}`);
+    const word = {'needs-you': 'Needs you', 'paused': 'Paused'}[u.state];
+    if (card.dataset.state !== u.state || (word && !text.includes(word))
+        || (u.state === 'ready' && text.includes('Ready')))
+      out.states.push(`${u.id.slice(0, 4)}: data-state ${card.dataset.state}, ${u.state}, ${JSON.stringify(text)}`);
+  }
+  const count = document.querySelector('#done-count');
+  if (!count) out.done = 'no #done-count';
+  else if (!count.innerText.includes(`${done} done`)) out.done = `#done-count reads ${JSON.stringify(count.innerText)}`;
+  else if (!inside(count.getBoundingClientRect(), view)) out.done = '#done-count is out of view';
+  const drawn = [...document.querySelectorAll('#done-group [data-testid="work-card"]')]
+    // A closed `details` still lays its content out for `getBoundingClientRect`; it is
+    // `checkVisibility` that says it is not drawn.
+    .filter(c => { const r = c.getBoundingClientRect();
+                   return c.checkVisibility() && r.width > 0 && r.bottom > 0 && r.top < H; });
+  if (drawn.length) out.done += ` ${drawn.length} done cards drawn`;
+  return out;
+}
+"""
+
+ALL_DRAWN_JS = "ids => ids.every(id => document.querySelector(`[id=\"unit-${id}\"]`))"
+
+
+def board_read(api: httpx.Client, wide: Wide, ws: str) -> tuple[list[str], list[dict], str]:
+    """The stages, the units the lanes must draw, and how the read differs from the fixture,
+    `""` when it does not."""
+    from coscc.state.views import _title_of
+
+    body = api.get("/api/board", params={"cwd": str(wide.cwd[ws])}).json()
+    units = [{"id": u["name"], "at": u["at"], "state": u["state"]["state"], "title": _title_of(u["name"])}
+             for u in body["units"]]
+    got = collections.Counter((u["at"], u["state"]) for u in units if u["state"] not in FOLDED)
+    done = sum(1 for u in units if u["state"] == "done")
+    if ws == "f1":
+        paused = sorted(at for (at, state), n in got.items() for _ in range(n) if state == "paused")
+        want = got == collections.Counter({("intent", "ready"): 20, ("intent", "needs-you"): 3,
+                                            **{(at, "paused"): 1 for at in ("spec", "plan", "impl", "pr")}})
+        ok = want and len(set(paused)) == 4
+    else:
+        per_stage = collections.Counter(at for (at, _), n in got.items() for _ in range(n))
+        ok = per_stage == collections.Counter({s: 3 for s in body["stages"]})
+    ok = ok and done == DONE and len(body["stages"]) == len(STAGE_LADDER)
+    why = "" if ok else f"{ws}: {sorted(got.items())}, {done} done, stages {body['stages']}"
+    return body["stages"], [u for u in units if u["state"] not in FOLDED], why
+
+
+def set_density(page, base: str, density: str) -> None:
+    """Pressed on Settings, as a person would; the chosen button turns solid."""
+    why = arrive(page, base, href("settings", "f1")) or settle(page, "settings", "f1")
+    if why:
+        raise RuntimeError(f"Settings did not open: {why}")
+    page.click(f"#density-{density}")
+    page.wait_for_function(
+        f"() => document.querySelector('#density-{density}').className.includes('rt-variant-solid')",
+        timeout=TIMEOUT_MS)
+    page.wait_for_timeout(500)
+
+
+def open_board(page, base: str, ws: str, units: list[dict], size: tuple[int, int]) -> str:
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    why = arrive(page, base, href("board", ws)) or settle(page, "board", ws)
+    if not why:
+        page.wait_for_function(ALL_DRAWN_JS, arg=[u["id"] for u in units], timeout=TIMEOUT_MS)
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(300)
+    return why
+
+
+def the_board_shows_every_stage_and_every_unfinished_unit_without_scrolling(context, base, api, wide) -> bool:
+    """`0133` R1–R5: F1 and F2, each width at 800 high, both densities, at the top of the page."""
+    ok = True
+    reads = {ws: board_read(api, wide, ws) for ws in ("f1", "f2")}
+    for ws, (_, _, why) in reads.items():
+        ok &= say(not why, f"{ws}: the board read is the fixture", why)
+    if not ok:
+        return False
+    page = context.new_page()
+    try:
+        for density in ("comfortable", "compact"):
+            set_density(page, base, density)
+            for ws, (stages, units, _) in reads.items():
+                for size in BOARD_SIZES:
+                    where = f"{ws}, {size[0]}×{size[1]}, {density}"
+                    why = open_board(page, base, ws, units, size)
+                    if why:
+                        ok &= say(False, f"{where}: the board opens", why)
+                        continue
+                    wide_ = page.evaluate(SIDEWAYS_JS)
+                    ok &= say(not wide_, f"{where}: nothing scrolls sideways (R1)", "; ".join(wide_))
+                    got = page.evaluate(BOARD_JS, {"stages": stages, "units": units, "done": DONE,
+                                                   "TITLE_MIN_PX": TITLE_MIN_PX})
+                    ok &= say(not got["labels"], f"{where}: all {len(stages)} lane labels in view (R2)",
+                              f"out of view: {got['labels']}")
+                    ok &= say(not got["cards"], f"{where}: all {len(units)} unfinished cards in view, in their lane, "
+                              "with number and title (R3)", "; ".join(got["cards"][:12]))
+                    ok &= say(not got["states"], f"{where}: each card's state reads as the service's (R4)",
+                              "; ".join(got["states"][:6]))
+                    ok &= say(not got["done"], f"{where}: '{DONE} done' in view and no done card drawn (R5)",
+                              got["done"])
+    finally:
+        try:
+            set_density(page, base, "comfortable")
+        finally:
+            page.close()
+    return ok
+
+
+def the_board_does_not_scroll_sideways_on_a_phone(context, base, api, wide) -> bool:
+    """`0133` R6: R1 at 390×844."""
+    ok = True
+    page = context.new_page()
+    try:
+        for ws in ("f1", "f2"):
+            _, units, _ = board_read(api, wide, ws)
+            why = open_board(page, base, ws, units, PHONE)
+            wide_ = [] if why else page.evaluate(SIDEWAYS_JS)
+            ok &= say(not why and not wide_, f"{ws}, {PHONE[0]}×{PHONE[1]}: nothing scrolls sideways",
+                      why or "; ".join(wide_))
+        return ok
+    finally:
+        page.close()
+
+
+def the_done_count_opens_the_done_group(context, base, api, wide) -> bool:
+    """`0133` R5: the count is a link to the group, which it opens."""
+    page = context.new_page()
+    try:
+        _, units, _ = board_read(api, wide, "f1")
+        why = open_board(page, base, "f1", units, (1440, 800))
+        if not why:
+            page.click("#done-count")
+            page.wait_for_function("() => document.getElementById('done-group').open", timeout=TIMEOUT_MS)
+            page.wait_for_timeout(500)
+            top = page.evaluate("document.getElementById('done-group').getBoundingClientRect().top")
+            height = page.evaluate("innerHeight")
+            why = "" if 0 <= top < height else f"#done-group top at {top}, window {height} high"
+        return say(not why, "f1, 1440×800: '90 done' opens the done group and brings it into view", why)
+    finally:
+        page.close()
+
+
+def new_unit_and_new_idea_move_focus_to_their_forms(context, base, api, wide) -> bool:
+    """`0133` R10: the forms are below the board, and the toolbar's buttons reach them."""
+    page = context.new_page()
+    ok = True
+    try:
+        _, units, _ = board_read(api, wide, "f1")
+        why = open_board(page, base, "f1", units, (1440, 800))
+        for button, field in (("#board-new-unit", "new-unit-slug"), ("#board-new-idea", "new-idea-slug")):
+            if not why:
+                page.click(button)
+                page.wait_for_timeout(300)
+                focused = page.evaluate("document.activeElement && document.activeElement.id")
+                why = "" if focused == field else f"focus on {focused!r}"
+            ok &= say(not why, f"{button} moves focus to #{field}", why)
+        return ok
     finally:
         page.close()
 
@@ -584,13 +887,15 @@ def main() -> int:
     outside = Path(tempfile.mkdtemp(prefix="cos-e2e-remote-")).resolve()
     results: list[bool] = []
     try:
-        proj, other = (make_repo(root, outside, name, f"{name}.git", "e2e\n") for name in ("proj", "other"))
+        proj, other, f1, f2 = (make_repo(root, outside, name, f"{name}.git", "e2e\n")
+                               for name in ("proj", "other", "f1", "f2"))
         token = seed_session(data_dir)
         with RealApp(config, root, data_dir) as app, \
-                httpx.Client(base_url=app.base, timeout=30, cookies={auth.COOKIE: token}) as api:
-            for name in ("proj", "other"):
+                httpx.Client(base_url=app.base, timeout=60, cookies={auth.COOKIE: token}) as api:
+            for name in ("proj", "other", "f1", "f2"):
                 api.post("/api/workspaces", json={"name": name}).raise_for_status()
             scene = Scene(api, proj, other)
+            wide = Wide(api, f1, f2)
             context = browser.new_context(viewport=SIZE)
             context.set_default_timeout(TIMEOUT_MS)
             context.add_cookies([{"name": auth.COOKIE, "value": token, "url": app.base}])
@@ -601,6 +906,11 @@ def main() -> int:
                              an_answer_sent_from_the_dialog_is_appended_and_shown,
                              a_dropped_unit_opens_with_nothing_that_writes):
                     results.append(run(case, context, app.base, scene))
+                for case in (the_board_shows_every_stage_and_every_unfinished_unit_without_scrolling,
+                             the_board_does_not_scroll_sideways_on_a_phone,
+                             the_done_count_opens_the_done_group,
+                             new_unit_and_new_idea_move_focus_to_their_forms):
+                    results.append(run(case, context, app.base, api, wide))
                 results.append(run(a_page_without_a_session_is_sent_to_the_login, browser, app.base))
                 # Last: it ends the one session every other case runs on.
                 results.append(run(logging_out_ends_at_the_login_page, context, app.base, scene))
