@@ -221,6 +221,17 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.assertEqual([c["subject"] for c in got["unmatched"]], ["build(deps): bump (#13)"])
         self.assertEqual((got["button"], got["enabled"]), ("prepare", True))
 
+    def test_a_workspace_never_released_asks_gh_nothing(self):
+        # Review F4: `gh pr list` ran on every read of a workspace with `cos.mjs`, tag or none.
+        # A fixture of its own: the shared one's units sit between `pr` and `ship`, and the
+        # integration block asks `gh` for them.
+        fx = Fixture(Path(self._tmp.name) / "untagged")
+        git(fx.workspace, "tag", "-d", "v0.1.0")
+        with mock.patch.dict(os.environ, fx.env):
+            got = asyncio.run(fx.service().board(fx.cwd))["release"]
+        self.assertEqual(got["state"], "nothing")
+        self.assertEqual(fx.calls(), [])
+
     def test_refusals_leave_one_record_each_and_change_nothing(self):
         for version, said in (("0.2.0-rc.1", "prerelease"), ("0.1.0", "not greater")):
             with self.subTest(version=version), self.assertRaises(Invalid) as caught:

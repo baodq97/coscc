@@ -45,13 +45,13 @@ class ReleaseMixin:
             return []
 
     async def _release_facts(
-        self, root: Path, units_: list[dict[str, Any]], prs: list[dict[str, Any]] | str,
-        records: list[dict[str, Any]],
+        self, root: Path, units_: list[dict[str, Any]], prs: PrsOnce, records: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """What git and `gh` say now, and the state `release.classify` makes of it.
 
         Reads only, against the `origin/main` and tags the last fetch brought. A block whose
-        `state` is `unknown` or `nothing` carries only its reason."""
+        `state` is `unknown` or `nothing` carries only its reason. `prs` is awaited only once
+        a release tag is found, so a workspace never released asks `gh` nothing here."""
         if not (root / release.SCRIPT).is_file():
             return _empty_block("unknown", "this workspace has no cos.mjs, so it is not released from here")
         try:
@@ -67,9 +67,10 @@ class ReleaseMixin:
                 break
         if not last_tag:
             return _empty_block("nothing", "no release yet")
-        if isinstance(prs, str):
-            return {**_empty_block("unknown", prs), "last_tag": last_tag}
-        open_prs = release.release_prs(prs)
+        got = await prs()
+        if isinstance(got, str):
+            return {**_empty_block("unknown", got), "last_tag": last_tag}
+        open_prs = release.release_prs(got)
         try:
             tag_sha = await gitops.rev_parse(root, f"refs/tags/{last_tag}")
             commits = await gitops.commits_between(root, tag_sha, origin)
@@ -88,7 +89,7 @@ class ReleaseMixin:
             "last_tag": last_tag, "units": matched["units"], "unmatched": matched["unmatched"],
             "count": len(matched["units"]), "version": verdict["version"],
             "proposed": verdict["version"] if verdict["state"] == "ready" else "",
-            "main_version": main_version, "origin_sha": origin, "tags": tags,
+            "main_version": main_version, "origin_sha": origin, "tags": tags, "_prs": got,
         }
         return block
 
@@ -123,18 +124,15 @@ class ReleaseMixin:
     ) -> dict[str, Any] | None:
         """R1: the board's `release` block, or None for a workspace that is not a git checkout.
 
-        Costs, at most: `git` reads, one `node cos.mjs check-tag` per candidate tag, the
-        board's shared `gh pr list`, and `gh pr checks` on an open release pull request or
-        `gh release view` and `gh run list` after a tag this app pushed. No fetch."""
+        Costs, at most: `git` reads, one `node cos.mjs check-tag` per candidate tag, and
+        once a release tag is found the board's shared `gh pr list`, then `gh pr checks` on
+        an open release pull request or `gh release view` and `gh run list` after a tag this
+        app pushed. No fetch."""
         root = Path(cwd).expanduser().resolve()
         if not (root / ".git").exists():
             return None
         records = self._release_records(journal, key)
-        needs_gh = (root / release.SCRIPT).is_file()
-        got = await prs() if needs_gh else []
-        block = await self._release_facts(root, units_, got, records)
-        if isinstance(got, list):
-            block["_prs"] = got
+        block = await self._release_facts(root, units_, prs, records)
         await self._release_detail(root, block, records)
         for k in ("_prs", "tags", "origin_sha"):
             block.pop(k, None)
@@ -201,12 +199,12 @@ class ReleaseMixin:
             except (GitError, Unavailable) as e:
                 write("failed", detail=f"could not read the workspace: {e}")
                 raise Invalid(f"could not read the workspace: {e}") from e
-            try:
-                prs: list[dict[str, Any]] | str = await integrate.open_prs(str(root))
-            except integrate.IntegrateError as e:
-                prs = str(e)
+            # Asked before the facts, tag or no tag: an open release pull request is R13's
+            # second reason. `_release_facts` gets the same answer, not a second call.
+            prs_once = self._prs_once(str(root))
+            prs = await prs_once()
             records = self._release_records(journal, key)
-            facts = await self._release_facts(root, data["units"], prs, records)
+            facts = await self._release_facts(root, data["units"], prs_once, records)
             ctx.update(proposed=facts["proposed"], last_tag=facts["last_tag"],
                        units=facts["units"], commits=facts["unmatched"])
             open_rel = release.release_prs(prs) if isinstance(prs, list) else []
