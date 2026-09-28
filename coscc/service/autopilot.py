@@ -6,15 +6,17 @@ Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a 
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from coscc.units import autopilot, backlog, guide
+from coscc.units import autopilot, backlog, guide, states
 from coscc.agent import precedent
 from coscc.git import fetches
-from coscc.github import integrate
+from coscc.github import integrate, prmachine
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord, Busy
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid
@@ -39,6 +41,8 @@ class AutopilotMixin:
         if task is not None and not task.done():
             return
         self._autopilot_tasks[key] = asyncio.get_running_loop().create_task(self._autopilot_loop(key))
+        # `0136` R23: the reader of the workspace's pull requests lives and dies with it.
+        self._pr_readers[key] = asyncio.get_running_loop().create_task(self._pr_reader_loop(key))
 
     def autopilot_stop(self, key: str) -> None:
         """Turned off: no more passes and no more `gh` calls for it (R1). A step it already
@@ -46,6 +50,9 @@ class AutopilotMixin:
         task = self._autopilot_tasks.pop(key, None)
         if task is not None:
             task.cancel()
+        reader = self._pr_readers.pop(key, None)
+        if reader is not None:
+            reader.cancel()
         self._autopilot_stops.pop(key, None)
 
     def autopilot_resume(self) -> list[str]:
@@ -76,6 +83,44 @@ class AutopilotMixin:
         while True:
             await self._autopilot_guarded(key)
             await asyncio.sleep(autopilot.POLL_SECONDS)
+
+    async def _pr_reader_loop(self, key: str) -> None:
+        """`0136` R23: every `ci_poll_seconds` of the lane config, one read of the workspace's
+        pull requests. The 300-second pass goes on beside it as the net."""
+        poll = states.default_lanes().ci_poll_seconds
+        while True:
+            await asyncio.sleep(poll)
+            try:
+                await self._pr_read(key)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — the next read tries again; the pass is the net
+                print(f"coscc: the pull request reader of {key} failed: {e}", file=sys.stderr)
+
+    async def _pr_read(self, key: str) -> prmachine.Read:
+        """One read (spec Design "Người đọc PR"). Whatever it recorded schedules one pass for
+        this workspace, however many transitions that was; a merge also schedules one for every
+        other workspace the autopilot is on in, where a unit may depend on it."""
+        cwd = self._autopilot_cwd.get(key)
+        if cwd is None or not self._autopilot_on(key):
+            return prmachine.Read()
+        root = Path(cwd).expanduser().resolve()
+
+        def directory_of(unit: str) -> Path:
+            try:
+                return self._unit_dir(cwd, unit)
+            except Invalid:
+                return self._units_root(cwd) / unit
+
+        got = await self._pr_machine().read(str(root), key, directory_of)
+        if not got.moved:
+            return got
+        self._autopilot_nudge(key)
+        if any(t == "merged" for _, t in got.moved):
+            for other in list(self._autopilot_tasks):
+                if other != key:
+                    self._autopilot_nudge(other)
+        return got
 
     async def _autopilot_guarded(self, key: str) -> None:
         """A pass that raises leaves a stop line saying so, not a dead loop."""
@@ -352,7 +397,12 @@ class AutopilotMixin:
             elsewhere = sum(1 for (k, unit) in autopilot.open_starts(records, now) if k == key and unit not in here)
             cap = self._autopilot_cap(records, settings["daily_cap_usd"])
             room = cap["limit"] - cap["spent"] - cap["running"]
-            picked = autopilot.pick(candidates, running, settings["max_parallel"] - elsewhere, room)
+            # `0136` R22: the pull requests the PR machine holds open, with the files it read.
+            try:
+                prs = prmachine.open_prs(self._pr_machine().history, key)
+            except (sqlite3.Error, OSError, Busy):
+                prs = []
+            picked = autopilot.pick(candidates, running, settings["max_parallel"] - elsewhere, room, prs)
             reasons.update(picked["held"])
             est = f" ({cap['estimated']:.2f} estimated)" if cap["estimated_count"] else ""
             for c in picked["capped"]:

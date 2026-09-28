@@ -167,7 +167,8 @@ def ci_of(rows: list[dict]) -> str:
 
 
 def state(history: History, workspace: str, unit: str) -> dict[str, Any]:
-    """Where the unit's pull request stands: a fold over the rows the three guards wrote."""
+    """Where the unit's pull request stands: a fold over the rows the machine's guards wrote.
+    `ci` is the one the reader last recorded, at `head`; `None` until it has read one."""
     now: dict[str, Any] = {"state": "none"}
     for row in history.transitions(workspace, unit):
         g, artifact = row.get("guard"), row.get("artifact")
@@ -176,12 +177,65 @@ def state(history: History, workspace: str, unit: str) -> dict[str, Any]:
         except ValueError:
             inputs = {}
         if g == "branch-named" and artifact == PR_FILE:
-            now = {"state": "open", **{k: inputs.get(k) for k in ("number", "url", "head")}}
+            now = {"state": "open", "ci": None, **{k: inputs.get(k) for k in ("number", "url", "head")}}
+        elif g == "ci-at-head" and artifact == PR_FILE:
+            now = {**now, "head": inputs.get("head"), "ci": inputs.get("ci")}
         elif g == "ship-ready" and artifact == SHIP_FILE:
             now = {**now, "state": "merge-requested", "number": inputs.get("number"), "head": inputs.get("head")}
         elif g == "merge-read" and artifact == SHIP_FILE:
             now = {**now, "state": "merged", "merge_commit": inputs.get("merge_commit")}
+        elif g == "close-read" and artifact == PR_FILE:
+            now = {**now, "state": "closed"}
     return now
+
+
+# R23: the states whose pull request the reader watches.
+WATCHED = ("open", "merge-requested")
+# A `ci` the reader does not read again at the same head.
+SETTLED_CI = ("green", "red", "unfixable")
+
+
+def watched(history: History, workspace: str) -> list[tuple[str, dict[str, Any]]]:
+    """`(unit, state)` for each unit of `workspace` whose pull request is `open` or
+    `merge-requested`: what the reader reads, and what R22 holds an `impl` behind."""
+    with history.data.connect() as conn:
+        names = [r["unit"] for r in conn.execute(
+            "SELECT DISTINCT unit FROM transitions WHERE root = ? AND workspace = ? AND guard = 'branch-named'",
+            (str(history.working_dir), workspace),
+        ).fetchall()]
+    out = []
+    for name in sorted(names):
+        now = state(history, workspace, name)
+        if now["state"] in WATCHED and now.get("number"):
+            out.append((name, now))
+    return out
+
+
+def files_held(history: History, workspace: str, number: int, head: str) -> list[str] | None:
+    """R22: the files the reader recorded for this pull request at this head; `None` when it
+    has not read them, or could not."""
+    with history.data.connect() as conn:
+        row = conn.execute(
+            "SELECT files FROM pull_requests WHERE root = ? AND workspace = ? AND number = ? AND head = ?",
+            (str(history.working_dir), workspace, int(number), str(head or "")),
+        ).fetchone()
+    if row is None or row["files"] is None:
+        return None
+    try:
+        files = json.loads(row["files"])
+    except ValueError:
+        return None
+    return [str(f) for f in files] if isinstance(files, list) else None
+
+
+def open_prs(history: History, workspace: str) -> list[dict[str, Any]]:
+    """R22: `{unit, number, files}` for `autopilot.pick`, from the machine's own rows; `files`
+    a set, as `autopilot.files_of` gives a plan's."""
+    out = []
+    for name, now in watched(history, workspace):
+        files = files_held(history, workspace, now["number"], str(now.get("head") or ""))
+        out.append({"unit": name, "number": now["number"], "files": None if files is None else set(files)})
+    return out
 
 
 def last_round(history: History, workspace: str, unit: str) -> dict[str, Any] | None:
@@ -203,6 +257,29 @@ async def _push(tree: str, branch: str) -> Any:
     return await gitops.push_unit_branch(Path(tree), branch)
 
 
+async def _files(tree: str, head: str) -> list[str] | None:
+    """R22: the paths the diff names from the merge-base with `origin/main` to `head`, in the
+    local repository, with no fetch; `None` when that cannot be read (C12)."""
+    try:
+        base = await gitops.rev_parse(Path(tree), "refs/remotes/origin/main")
+        if not await gitops.has_commit(Path(tree), head):
+            return None
+        return await gitops.files_between(Path(tree), await gitops.merge_base_of(Path(tree), base, head), head)
+    except gitops.GitError:
+        return None
+
+
+@dataclass
+class Read:
+    """What one read of a workspace's pull requests did (R23). `moved` holds `(unit,
+    transition)` for each transition recorded; `error` is `gh`'s words when the list could
+    not be read, and nothing was recorded after it."""
+
+    moved: list[tuple[str, str]] = field(default_factory=list)
+    error: str = ""
+    calls: int = 0
+
+
 class Machine:
     """`pr`, `ship` and the reconcile after a restart, for one working folder.
 
@@ -213,12 +290,14 @@ class Machine:
         self, history: History, journal: Journal, *, gh: Gh | None = None,
         push: Push | None = None, head: Head | None = None,
         notify: Callable[[transitions.Applied], None] | None = None,
+        files: Callable[[str, str], Awaitable[list[str] | None]] | None = None,
     ):
         self.history = history
         self.journal = journal
         self._gh = gh
         self._push = push
         self._head_of = head
+        self._files = files
         self.notify = notify
 
     async def gh(self, argv: list[str], cwd: str) -> tuple[int, str, str]:
@@ -256,13 +335,18 @@ class Machine:
             notify=self.notify, also=also,
         )
 
-    def _pull_request_row(self, u: Unit, number: int, head: str, merge_commit: str = "") -> Callable[[Any], None]:
+    def _pull_request_row(self, u: Unit, number: int, head: str, merge_commit: str = "",
+                          files: list[str] | None = None) -> Callable[[Any], None]:
+        """A read of the files keeps the ones an earlier read at the same head found: they
+        are the same diff."""
         def write(conn: Any) -> None:
             conn.execute(
                 "INSERT INTO pull_requests (root, workspace, unit, number, head, files, merge_commit, at) "
-                "VALUES (?, ?, ?, ?, ?, NULL, ?, datetime('now')) "
-                "ON CONFLICT (root, workspace, number, head) DO UPDATE SET merge_commit = excluded.merge_commit",
-                (str(self.history.working_dir), u.workspace, u.name, int(number), head, merge_commit),
+                "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now')) "
+                "ON CONFLICT (root, workspace, number, head) DO UPDATE SET merge_commit = excluded.merge_commit, "
+                "files = COALESCE(excluded.files, pull_requests.files)",
+                (str(self.history.working_dir), u.workspace, u.name, int(number), head,
+                 None if files is None else json.dumps(files), merge_commit),
             )
         return write
 
@@ -419,3 +503,70 @@ class Machine:
                 round_ = last_round(self.history, u.workspace, u.name)
                 done.append(await self._record_merged(u, int(now["number"]), view, round_["n"] if round_ else None, "recorded"))
         return done
+
+    # -- the reader (R23) -------------------------------------------------------
+
+    async def read(self, root: str, workspace: str, directory_of: Callable[[str], Path]) -> Read:
+        """Spec Design "Người đọc PR": one read of `workspace`'s pull requests.
+
+        No call at all when no unit's pull request is `open` or `merge-requested`. Otherwise
+        one `gh pr list`; `gh pr checks --required` only for a pull request whose `ci` at the
+        head the list gave is not settled; `gh pr view` only for one gone from the list. Each
+        change is a transition -- `ci` (a new head or a new answer at the same head),
+        `merged`, `closed` -- and nothing is written when nothing changed. A call that fails is
+        not asked again before the next read (C11)."""
+        out = Read()
+        watching = watched(self.history, workspace)
+        if not watching:
+            return out
+        try:
+            out.calls += 1
+            rows = await self._json(
+                ["pr", "list", "--state", "open", "--json", "number,headRefOid", "--limit", "200"], root)
+        except PrError as e:
+            out.error = str(e)
+            return out
+        listed = {
+            r["number"]: r for r in (rows if isinstance(rows, list) else [])
+            if isinstance(r, dict) and isinstance(r.get("number"), int)
+        }
+        for name, now in watching:
+            u = Unit(workspace, name, directory_of(name), root, "", "", None)
+            number = int(now["number"])
+            try:
+                row = listed.get(number)
+                if row is None:
+                    out.calls += 1
+                    view = await self.view(root, number)
+                    if view.get("state") == "MERGED":
+                        round_ = last_round(self.history, workspace, name)
+                        done = await self._record_merged(u, number, view, round_["n"] if round_ else None, "recorded")
+                        if done.ok:
+                            out.moved.append((name, "merged"))
+                    elif view.get("state") == "CLOSED":
+                        # Closed without a merge: `pr` is to run again, and opens a new one.
+                        applied = self._apply(u, "closed", PR_FILE, "draft",
+                                              {"number": number, "state": "CLOSED"}, "code")
+                        if applied.open:
+                            out.moved.append((name, "closed"))
+                    continue
+                head = str(row.get("headRefOid") or "")
+                if head == now.get("head") and now.get("ci") in SETTLED_CI:
+                    continue
+                out.calls += 1
+                ci = ci_of(await self._checks(root, number))
+            except PrError as e:
+                out.error = out.error or str(e)
+                continue
+            if head == now.get("head") and ci == now.get("ci"):
+                continue
+            files = None
+            if head != now.get("head") or files_held(self.history, workspace, number, head) is None:
+                files = await (self._files or _files)(root, head)
+            inputs = {"number": number, "head": head, "read_head": head, "ci": ci,
+                      "was_head": now.get("head"), "was_ci": now.get("ci")}
+            applied = self._apply(u, "ci", PR_FILE, "accepted", inputs, "code",
+                                  also=self._pull_request_row(u, number, head, files=files))
+            if applied.open:
+                out.moved.append((name, "ci"))
+        return out

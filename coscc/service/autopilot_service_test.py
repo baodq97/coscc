@@ -17,6 +17,7 @@ from unittest import mock
 from coscc.units import autopilot
 from coscc.agent import precedent
 from coscc.config import Config
+from coscc.github import prmachine, prmachine_test
 from coscc.runlog.journal import Busy, Journal
 from coscc.service import Invalid, Service
 from coscc.service.common import Refused
@@ -212,10 +213,14 @@ class OnTheRealLoop(_Base):
         await self.unit("off-again")
         self.service.set_autopilot(self.ws, "autopilot", True)
         task = self.service._autopilot_tasks[self.key]
+        reader = self.service._pr_readers[self.key]
         self.service.set_autopilot(self.ws, "autopilot", False)
         await asyncio.sleep(0)
         self.assertTrue(task.cancelled() or task.done())
         self.assertNotIn(self.key, self.service._autopilot_tasks)
+        # `0136` R23: and its pull request reader, so no `gh` call is made for it.
+        self.assertTrue(reader.cancelled() or reader.done())
+        self.assertNotIn(self.key, self.service._pr_readers)
 
     async def test_start_up_resumes_a_workspace_left_on(self):
         self.service.set_autopilot(self.ws, "autopilot", True)
@@ -1421,6 +1426,105 @@ class Scripted(_Base):
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "a"}))
         self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STORE_PAST_CEILING)
         self.assertEqual(self.picks(), [])
+
+    # --- `0136` R22, R23: the pull request reader ----------------------------------
+    #
+    # The loop here is a future that never resolves, so no pass comes on its own: each read
+    # below stands for one tick of `ci_poll_seconds`, and a pass that follows it is one the
+    # read scheduled, well before `POLL_SECONDS`.
+
+    def a_machine(self, gh, files=("coscc/a.py",)):
+        """The service's PR machine over its own database, with `gh`, push and diff faked."""
+        async def push(tree, branch):
+            return None
+
+        async def head(tree):
+            return prmachine_test.HEAD
+
+        async def read_files(tree, head):
+            return list(files)
+
+        machine = prmachine.Machine(self.service._unit_meta().history, self.service._journal(),
+                                    gh=gh, push=push, head=head, files=read_files)
+        self.service._pr_machine = lambda: machine
+        return machine
+
+    async def an_open_pr(self, machine, name):
+        d = self.service._unit_dir(self.ws, name)
+        d.mkdir(parents=True, exist_ok=True)
+        out = await machine.open_pr(prmachine.Unit(self.key, name, d, self.ws, "fix/x", "fix/x", "fix"))
+        self.assertEqual(out.result, "opened")
+
+    def waiting(self, machine, until, reason):
+        """`next` as `cos.mjs` answers it: the scripted stage once `until()`, else nothing."""
+        async def next_step(cwd, unit):
+            self.asked.append(unit)
+            if until():
+                return self.nexts[unit]
+            return {"stage": "", "action": reason, "waiting": [], "hold": None, "reasons": [reason]}
+        self.service.next_step = next_step
+
+    async def test_green_ci_starts_a_pass_before_the_poll(self):
+        gh = prmachine_test.FakeGh(buckets=("pending",))
+        machine = self.a_machine(gh)
+        await self.an_open_pr(machine, "0001_a")
+        self.add("0001_a", "review")
+        self.waiting(machine, lambda: prmachine.state(machine.history, self.key, "0001_a")["ci"] == "green",
+                     "ci-pending")
+        self.listed()
+        self.assertEqual((await self.service._pr_read(self.key)).moved, [("0001_a", "ci")])
+        await self.settled()
+        self.assertEqual((self.asked, self.launched), (["0001_a"], []), "pending scheduled one pass")
+        gh.buckets = ("pass",)
+        self.assertEqual((await self.service._pr_read(self.key)).moved, [("0001_a", "ci")])
+        await self.until(lambda: self.launched, "the pass the green read scheduled")
+        self.assertEqual(self.launched, [("0001_a", "review", "autopilot")])
+        # Green at the same head is settled: the next read asks only for the list.
+        got = await self.service._pr_read(self.key)
+        self.assertEqual((got.moved, got.calls), ([], 1))
+
+    async def test_a_merge_frees_a_unit_waiting_on_it(self):
+        gh = prmachine_test.FakeGh(buckets=("pass",))
+        machine = self.a_machine(gh)
+        await self.an_open_pr(machine, "0001_a")
+        self.add("0002_b", "impl", plan="- `coscc/b.py`")
+        self.waiting(machine, lambda: prmachine.state(machine.history, self.key, "0001_a")["state"] == "merged",
+                     "waiting-on")
+        self.listed("0002_b")
+        await self.pass_()
+        self.assertEqual(self.launched, [])
+        gh.open_prs, gh.state = [], "MERGED"
+        self.assertEqual((await self.service._pr_read(self.key)).moved, [("0001_a", "merged")])
+        await self.until(lambda: self.launched, "the pass the merge scheduled")
+        self.assertEqual(self.launched, [("0002_b", "impl", "autopilot")])
+        self.assertEqual(gh.count("pr", "merge"), 0, "a merge made elsewhere is only recorded")
+
+    async def test_an_impl_waits_on_an_open_pull_request_the_machine_holds_until_it_merges(self):
+        """R22 over the machine's own rows: the files are the ones the reader read."""
+        gh = prmachine_test.FakeGh(buckets=("pass",))
+        machine = self.a_machine(gh)
+        await self.an_open_pr(machine, "0001_a")
+        await self.service._pr_read(self.key)
+        await self.settled()
+        self.add("0002_b", "impl", plan="- `coscc/a.py`")
+        self.add("0003_c", "impl", plan="- `coscc/c.py`")
+        await self.pass_()
+        self.assertEqual(self.launched, [("0003_c", "impl", "autopilot")])
+        [pick] = self.picks()
+        self.assertEqual(pick["passed"], [{"unit": "0002_b", "reason": "overlap-pr", "detail": "#7"}])
+        gh.open_prs, gh.state = [], "MERGED"
+        await self.service._pr_read(self.key)
+        await self.until(lambda: len(self.launched) == 2, "the pass the merge scheduled")
+        self.assertEqual(self.launched[1], ("0002_b", "impl", "autopilot"))
+
+    async def test_off_the_reader_calls_no_gh(self):
+        gh = prmachine_test.FakeGh()
+        machine = self.a_machine(gh)
+        await self.an_open_pr(machine, "0001_a")
+        calls = len(gh.calls)
+        self.service.autopilot_stop(self.key)
+        got = await self.service._pr_read(self.key)
+        self.assertEqual((got.calls, len(gh.calls)), (0, calls))
 
 
 class ResumedAtStartUp(unittest.TestCase):

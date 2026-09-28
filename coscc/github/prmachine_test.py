@@ -92,6 +92,11 @@ class Fixture(unittest.TestCase):
 
         return prmachine.Machine(self.history, self.journal, gh=gh, push=push, head=head)
 
+    def opened(self, gh):
+        m = self.machine(gh)
+        run(m.open_pr(self.unit()))
+        return m
+
     def a_round(self, verdict="pass", head=HEAD, n=1):
         with self.data.write() as conn:
             conn.execute(
@@ -151,11 +156,6 @@ class PrIsMechanical(Fixture):
 
 class ShipIsMechanical(Fixture):
     """R10, R13."""
-
-    def opened(self, gh):
-        m = self.machine(gh)
-        run(m.open_pr(self.unit()))
-        return m
 
     def test_a_pass_on_green_ci_merges_pinned_to_the_head_it_read(self):
         gh = FakeGh()
@@ -240,6 +240,101 @@ class ShipIsMechanical(Fixture):
         out = run(self.machine(gh).ship(self.unit()))
         self.assertEqual(out.number, 3)
         self.assertEqual(gh.count("pr", "merge"), 1)
+
+
+class TheReaderRecordsWhatChanged(Fixture):
+    """R23, spec Design "Người đọc PR": each change a read finds is a transition of the
+    machine, and a read that finds none writes nothing."""
+
+    def reader(self, gh, files=("a.py",)):
+        m = self.opened(gh)
+        self.file_reads: list[str] = []
+
+        async def read_files(tree, head):
+            self.file_reads.append(head)
+            return None if files is None else list(files)
+
+        m._files = read_files
+        return m
+
+    def read(self, m):
+        return run(m.read(str(self.directory), WS, lambda name: self.directory))
+
+    def test_no_pull_request_the_machine_watches_calls_nothing(self):
+        gh = FakeGh()
+        got = run(self.machine(gh).read(str(self.directory), WS, lambda name: self.directory))
+        self.assertEqual((got.moved, got.calls, gh.calls), ([], 0, []))
+
+    def test_pending_then_green_is_two_transitions_and_green_is_not_asked_again(self):
+        gh = FakeGh(buckets=("pending",))
+        m = self.reader(gh)
+        self.assertEqual(self.read(m).moved, [(NAME, "ci")])
+        self.assertEqual(prmachine.state(self.history, WS, NAME)["ci"], "pending")
+        # Still pending: asked again, nothing written.
+        self.assertEqual(self.read(m).moved, [])
+        gh.buckets = ("pass",)
+        self.assertEqual(self.read(m).moved, [(NAME, "ci")])
+        self.assertEqual(prmachine.state(self.history, WS, NAME)["ci"], "green")
+        checks = gh.count("pr", "checks")
+        got = self.read(m)
+        self.assertEqual((got.moved, got.calls, gh.count("pr", "checks")), ([], 1, checks),
+                         "green at the same head is settled: only the list is read")
+        rows = [r for r in self.rows("pr.md") if r["guard"] == "ci-at-head"]
+        self.assertEqual([(r["to_state"], r["authority"], json.loads(r["inputs"])["ci"]) for r in rows],
+                         [("accepted", "code", "pending"), ("accepted", "code", "green")])
+        self.assertEqual(self.file_reads, [HEAD], "the files are read once for a head")
+
+    def test_a_new_head_is_read_again_with_its_files(self):
+        gh = FakeGh(buckets=("pass",))
+        m = self.reader(gh)
+        self.read(m)
+        other = "b" * 40
+        gh.open_prs[0]["headRefOid"] = other
+        self.assertEqual(self.read(m).moved, [(NAME, "ci")])
+        now = prmachine.state(self.history, WS, NAME)
+        self.assertEqual((now["head"], now["ci"]), (other, "green"))
+        self.assertEqual(self.file_reads, [HEAD, other])
+        self.assertEqual(prmachine.open_prs(self.history, WS), [{"unit": NAME, "number": 7, "files": {"a.py"}}])
+
+    def test_files_that_cannot_be_read_are_none(self):
+        """C12: `pick` counts that as every file."""
+        m = self.reader(FakeGh(), files=None)
+        self.read(m)
+        self.assertEqual(prmachine.open_prs(self.history, WS), [{"unit": NAME, "number": 7, "files": None}])
+
+    def test_a_merge_made_outside_is_recorded_and_merges_nothing(self):
+        gh = FakeGh()
+        m = self.reader(gh)
+        gh.open_prs, gh.state = [], "MERGED"
+        self.assertEqual(self.read(m).moved, [(NAME, "merged")])
+        self.assertEqual(prmachine.state(self.history, WS, NAME)["state"], "merged")
+        self.assertEqual(gh.count("pr", "merge"), 0)
+        self.assertIn("Status: accepted", (self.directory / "ship.md").read_text(encoding="utf-8"))
+        self.assertEqual(prmachine.open_prs(self.history, WS), [])
+        calls = len(gh.calls)
+        self.assertEqual((self.read(m).moved, len(gh.calls)), ([], calls), "a merged one is not watched")
+
+    def test_a_closed_pull_request_sends_pr_back(self):
+        gh = FakeGh()
+        m = self.reader(gh)
+        gh.open_prs, gh.state = [], "CLOSED"
+        self.assertEqual(self.read(m).moved, [(NAME, "closed")])
+        self.assertEqual(prmachine.state(self.history, WS, NAME)["state"], "closed")
+        [row] = [r for r in self.rows("pr.md") if r["guard"] == "close-read"]
+        self.assertEqual(row["to_state"], "draft")
+
+    def test_a_list_that_cannot_be_read_records_nothing(self):
+        gh = FakeGh()
+        m = self.reader(gh)
+        before = len(self.history.transitions(WS, NAME))
+
+        async def broken(argv, cwd):
+            return 1, "", "HTTP 502"
+
+        m._gh = broken
+        got = self.read(m)
+        self.assertEqual((got.moved, got.error), ([], "HTTP 502"))
+        self.assertEqual(len(self.history.transitions(WS, NAME)), before)
 
 
 if __name__ == "__main__":

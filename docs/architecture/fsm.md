@@ -147,7 +147,9 @@ stateDiagram-v2
 Settings (PERSON, `setting` rows): `autopilot`, `autopilot_may_ship`, `max_parallel`,
 `daily_cap_usd` (one cap for the app). Loop: off ↔ on; a **pass** runs every 300 s and after a
 step ends, an integration ends, or a person answers. Not after: Jera, hold, more-rounds,
-shortlist change.
+shortlist change. Since `0136` R23 also after the PR reader records a transition of the PR/CI
+machine (a CI answer, a new head, `merged`, `closed`): one pass per workspace per read, and a
+`merged` one for every other workspace whose autopilot is on.
 
 A pass, all CODE (`service/autopilot.py:159-375`):
 
@@ -161,8 +163,8 @@ A pass, all CODE (`service/autopilot.py:159-375`):
    CI red after its own integration → impl once, then stop `e` (0124).
 4. Answered draft → rerun, at most 2 times (0106).
 5. `pick` (`units/autopilot.py:393-440`): holds back by `running`, `max_parallel`, `ship-busy`,
-   `overlap` (plan `## Files that change` vs running code stages — **running steps only, not
-   open PRs**), `cap` (spent + estimates for unknown costs + running reservations + this grant
+   `overlap` (plan `## Files that change` vs running code stages), `overlap-pr` (an `impl` vs
+   another unit's open PR, files as the PR reader read them; `0136` R22), `cap` (spent + estimates for unknown costs + running reservations + this grant
    must fit).
 6. Write `autopilot-pick` (rank, passed[] with reasons) → launch `run_step` / `integrate` with
    `started_by=autopilot`. A stop row is written only when a unit's stop kind changes; it
@@ -242,6 +244,9 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 - `overlap` sees only running steps, not open PRs. *Fixed by `0136` R22: an `impl` whose
   plan shares a file with another unit's open PR waits with `overlap-pr #n`.*
 - There is no poller for CI or merge state; freshness depends on board reads and the 300 s pass.
+  *Fixed by `0136` R23: while a workspace's autopilot is on, the PR machine reads its open pull
+  requests every `ci_poll_seconds` (60, `coscc/units/lanes.json`); a new CI answer, a new head,
+  a merge or a close is a transition, and schedules one pass.*
 - pr.md and ship.md are agent sessions for what is mechanical (title/body from metadata; merge
   with a pinned head) — 5% of spend and 11 failures across 90 units. *Fixed by `0136` R12, R13:
   a board step runs neither as a session; the PR machine pushes, opens and merges, and writes
