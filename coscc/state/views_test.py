@@ -223,14 +223,14 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
             " / không đáng / by Leif / close-pr: failed (closed #7; #9: HTTP 502: Bad Gateway)",
         )
 
-    def test_dropped_and_paused_units_leave_the_columns_for_their_groups(self):
-        """`0100` R8, Design 6. Until then a paused unit stayed in its lane (`0045`)."""
+    def test_a_paused_unit_stays_in_its_stage_lane_and_a_dropped_one_leaves_for_its_group(self):
+        """`0133` spec C2. `0100` R8 had folded a paused unit into a group too."""
         from types import SimpleNamespace
 
         from coscc.state import Card, StudioState
 
-        # `0053`: the columns draw the cards `board_ids` names; each collapsed group draws
-        # the cards of its state and counts them with `group_counts`.
+        # `0053`: the lanes draw the cards `board_ids` names; each folded group draws the
+        # cards of its state and counts them with `group_counts`.
         page = SimpleNamespace(
             cards=[Card(id="a", hold_state="dropped", state="dropped"),
                    Card(id="b", hold_state="paused", state="paused"), Card(id="c", state="ready")],
@@ -238,15 +238,15 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
         )
         cv = StudioState.computed_vars
         page.shown_ids = cv["shown_ids"].fget(page)
-        self.assertEqual(cv["board_ids"].fget(page), ["c"])
-        self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "paused": 1, "dropped": 1})
+        self.assertEqual(cv["board_ids"].fget(page), ["b", "c"])
+        self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "dropped": 1})
         # Review F2: a group holds only what the search and the filter leave.
         page.query = "b"
         page.shown_ids = cv["shown_ids"].fget(page)
-        self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "paused": 1, "dropped": 0})
+        self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "dropped": 0})
         page.query, page.focus = "", "Needs you"
         page.shown_ids = cv["shown_ids"].fget(page)
-        self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "paused": 0, "dropped": 0})
+        self.assertEqual(cv["group_counts"].fget(page), {"done": 0, "dropped": 0})
 
     def test_the_handler_calls_hold_and_no_step(self):
         tree = ast.parse(SOURCE.read_text(encoding="utf-8"), filename=str(SOURCE))

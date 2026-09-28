@@ -560,7 +560,7 @@ def _collapsed_groups() -> rx.Component:
     search and the filter leave in a group what they leave in the List (review F2)."""
     return rx.vstack(
         *(_collapsed_group(state, label) for state, label in
-          (("done", "Done"), ("paused", "Paused"), ("dropped", "Dropped"))),
+          (("done", "Done"), ("dropped", "Dropped"))),
         spacing="3", width="100%",
     )
 

@@ -1199,7 +1199,7 @@ class TheIdListsAnswerAsTheCardListsDid(unittest.TestCase):
         full, cards, _ = _sample_read("state-test-id-lists")
         units = list(full.values())
         stages = _Sample.BOARD["stages"]
-        grouped = ("done", "paused", "dropped")
+        grouped = ("done", "dropped")
 
         def visible(query, focus):
             q = query.strip().lower()

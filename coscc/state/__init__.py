@@ -29,7 +29,7 @@ from reflex_base.event.context import EventContext
 from coscc.runlog import events as events_mod
 from coscc.web import place, present
 from coscc.web.api import build
-from coscc.service import COLLAPSED_STATES, Invalid, describe_base
+from coscc.service import COLLAPSED_STATES, FOLDED_STATES, Invalid, describe_base
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
 # `coscc.state.<name>` still resolves; a patch reaches only the module that looks it up.
@@ -363,7 +363,7 @@ class StudioState(
 
     @rx.var
     def active_count(self) -> int:
-        """`0100` R10. Every unit outside the three collapsed groups."""
+        """`0100` R10. Every unit that is not done, paused or dropped."""
         return len([c for c in self.cards if c.state not in COLLAPSED_STATES])
 
     @rx.var
@@ -373,15 +373,15 @@ class StudioState(
 
     @rx.var
     def board_ids(self) -> list[str]:
-        """`0100` R8. The shown cards the stage columns draw: every one outside the three
-        collapsed groups."""
+        """`0100` R8. The shown cards the stage lanes draw: every one outside the done and
+        dropped groups (`0133` spec C2: a paused one stays in its lane)."""
         shown = set(self.shown_ids)
-        return [c.id for c in self.cards if c.id in shown and c.state not in COLLAPSED_STATES]
+        return [c.id for c in self.cards if c.id in shown and c.state not in FOLDED_STATES]
 
     @rx.var
     def stage_counts(self) -> dict[str, int]:
-        """`0100` R1. How many cards each stage's column holds, keyed by the stages the board
-        read returned, for its count and its *Nothing here*."""
+        """`0100` R1. How many cards each stage's lane holds, keyed by the stages the board
+        read returned, for its count."""
         counts = {name: 0 for name in self.stages}
         board = set(self.board_ids)
         for c in self.cards:
@@ -392,8 +392,8 @@ class StudioState(
     @rx.var
     def group_counts(self) -> dict[str, int]:
         """`0100` R8. How many shown cards each collapsed group holds: the search and the
-        filter narrow a group as they narrow a column (review F2)."""
-        counts = {name: 0 for name in COLLAPSED_STATES}
+        filter narrow a group as they narrow a lane (review F2)."""
+        counts = {name: 0 for name in FOLDED_STATES}
         shown = set(self.shown_ids)
         for c in self.cards:
             if c.id in shown and c.state in counts:
