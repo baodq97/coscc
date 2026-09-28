@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sqlite3
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -23,8 +24,8 @@ from coscc.agent import precedent as precedent_mod
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import UNKNOWN, BadTransition
+from coscc.units.meta import MetaError, UnitMeta
 from coscc.runlog.journal import BadRecord, Busy
-from coscc.runner import STATUS_RE
 from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
@@ -186,42 +187,47 @@ class AnswersMixin:
                 pass
         return record
 
-    def _record_transition(
-        self, cwd: str, unit: str, artifact: str, directory: Path, done: dict[str, Any]
-    ) -> None:
-        """`0014` R6. One transition per step that finished, written as it happens.
+    def _unit_meta(self) -> UnitMeta | None:
+        """`0135`. The unit metadata store, or `None` with no working folder, as `_history`."""
+        return (
+            UnitMeta(self.config.working_dir, self.config.data_dir)
+            if self.config.working_dir
+            else None
+        )
 
-        This is the first writer into `0013`'s log that is not the git import.
-        `.cos/0013_.../ship.md` said the loop would come back here: history imported from
-        git carries no actor and no session, because git knows neither, so the provenance
-        that unit built is only ever true of work done **after** it. This is that work.
+    async def _ingest(self, cwd: str, unit: str, done: dict[str, Any], wrote: str | None = None) -> dict[str, Any]:
+        """`0135` R7. The one read of a unit's files after a step that finished, of every
+        stage, prose or not: what changed goes into `cos.db` through `cos.mjs meta`.
 
-        Never raises into the run. A step that did its job and then failed to be recorded
-        has still done its job, and turning a bookkeeping failure into a failed step would
-        cost real money for nothing. The failure is dropped rather than shown, and that is
-        a cost `0014` `impl.md` states rather than hides.
+        Replaces `0014`'s `_record_transition`, which read `Status:` with a regex that
+        stopped at a hyphen and dropped every failure. The step still ends as it ended, but
+        a failure is no longer dropped (spec C3): the `done` item carries `ingest_error`,
+        and a row in `unit_unknowns` says so to the snapshot. The transition carries the
+        stage, session and source `0014` R6 gave it.
         """
         if done.get("outcome") != "done":
-            return
-        history = self._history()
-        if history is None:
-            return
+            return {}
+        meta = self._unit_meta()
+        if meta is None:
+            return {}
+        workspace = self._journal_key(cwd)
+        stage = str(done.get("stage") or "")
         try:
-            text = (directory / artifact).read_text(encoding="utf-8", errors="replace")
-            found = STATUS_RE.search(text)
-            if not found:
-                return
-            history.record(
-                self._journal_key(cwd),
-                unit,
-                artifact,
-                found.group(1).lower(),
-                actor=f"stage:{done.get('stage') or ''}",
+            await asyncio.to_thread(
+                meta.ingest, workspace, self._units_root(cwd), unit,
+                actor=f"stage:{stage}",
                 session=str(done.get("session_id") or "") or UNKNOWN,
-                source=f"run:{done.get('stage') or ''}",
+                source=f"run:{stage}",
+                wrote=wrote,
             )
-        except (OSError, BadTransition, Busy):
-            return
+            return {}
+        except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
+            reason = str(e) or type(e).__name__
+            try:
+                meta.ingest_failed(workspace, unit, reason)
+            except (Busy, sqlite3.Error, OSError):
+                pass
+            return {"ingest_error": reason}
 
     def _create_lock(self, cwd: str) -> asyncio.Lock:
         """`0017` R8. One lock per workspace, held across numbering and making the tree."""

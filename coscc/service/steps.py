@@ -1237,7 +1237,7 @@ class StepsMixin:
                 if item[0] == "done":
                     item = ("done", {**item[1], "base": base})
                     if item[1].get("outcome") != "stopped":
-                        self._record_transition(cwd, unit, artifact, directory, item[1])
+                        item = ("done", {**item[1], **await self._ingest(cwd, unit, item[1], artifact)})
                     if stage == "ship" and tree is not None and item[1].get("outcome") == "done":
                         # R10. Only if `cos.mjs` now says `finished` and GitHub says merged;
                         # otherwise nothing is touched and the board tries again later.

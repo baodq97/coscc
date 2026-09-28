@@ -124,14 +124,17 @@ class UnitMeta:
         actor: str,
         session: str,
         source: str,
+        wrote: str | None = None,
     ) -> list[dict[str, Any]]:
         """R7: read one unit's files through `cos.mjs meta`, and write what changed.
 
         Only an artifact whose text differs from the last one read (`unit_seen`) is written:
         a transition when the fold differs from its status, its questions, and from
-        `intent.md` its `Type:` and links. Answers and holds are not read: since `0135` the
-        app writes them here and nowhere else. Raises `MetaError` or `sqlite3.Error`; the
-        caller records the failure rather than dropping it (spec C3).
+        `intent.md` its `Type:` and links. `wrote`, the artifact the step itself writes, is
+        the exception: it always gets its transition, as it had one per step since `0014`
+        R6, because rewriting a settled artifact is the event `0013` counts. Answers and
+        holds are not read: since `0135` the app writes them here and nowhere else. Raises
+        `MetaError` or `sqlite3.Error`; the caller records the failure (spec C3).
         """
         found = read(store, unit)
         meta = (found.get("units") or {}).get(unit) or {}
@@ -139,7 +142,7 @@ class UnitMeta:
             conn.execute(f"DELETE FROM unit_unknowns WHERE {_ONE} AND field = 'ingest'", (self.root, workspace, unit))
             return self._apply(
                 conn, workspace, unit, meta, imported=False,
-                provenance={"actor": actor, "session": session, "source": source},
+                provenance={"actor": actor, "session": session, "source": source}, wrote=wrote,
             )
 
     def ingest_failed(self, workspace: str, unit: str, reason: str) -> None:
@@ -166,6 +169,7 @@ class UnitMeta:
         *,
         imported: bool,
         provenance: Mapping[str, str] | None = None,
+        wrote: str | None = None,
     ) -> list[dict[str, Any]]:
         """Write one unit's `meta` output. Returns the fields it could not read."""
         scope = (self.root, workspace, unit)
@@ -185,13 +189,13 @@ class UnitMeta:
         items: list[dict[str, Any]] = []
         changed = [
             (artifact, a) for artifact, a in (meta.get("artifacts") or {}).items()
-            if seen.get(artifact) != a.get("sha256")
+            if seen.get(artifact) != a.get("sha256") or artifact == wrote
         ]
         for artifact, a in changed:
             conn.execute(f"DELETE FROM unit_unknowns WHERE {_ONE} AND artifact = ?", (*scope, artifact))
             status, raw = a.get("status"), a.get("raw")
             if status is not None and self.machine.refuse(artifact, status) is None:
-                if latest.get((workspace, unit, artifact), self.machine.absent) != status:
+                if artifact == wrote or latest.get((workspace, unit, artifact), self.machine.absent) != status:
                     item = {"workspace": workspace, "unit": unit, "artifact": artifact, "to_state": status}
                     if imported:
                         item.update(actor=SOURCE, session=SOURCE, source=SOURCE,

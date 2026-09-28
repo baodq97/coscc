@@ -419,6 +419,23 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(found["settled_edits"], 1)
 
+    def test_a_failed_ingest_is_on_the_step_and_in_the_database(self):
+        """`0135` R7, C3: the step still ends `done`, and the failure is kept, not dropped."""
+        from unittest import mock
+
+        from coscc.units import meta
+
+        async def go():
+            return [item async for item in self.service.run_step(str(self.repo), self.made["unit"], "spec")]
+
+        with mock.patch.object(meta, "read", side_effect=meta.MetaError("cos.mjs meta exited 2")):
+            _, payload = asyncio.run(go())[-1]
+        self.assertEqual(payload["outcome"], "done")
+        self.assertEqual(payload["ingest_error"], "cos.mjs meta exited 2")
+        with self.service._unit_meta().data.connect() as conn:
+            [row] = conn.execute("SELECT unit, field, reason FROM unit_unknowns WHERE field = 'ingest'").fetchall()
+        self.assertEqual(tuple(row), (self.made["unit"], "ingest", "cos.mjs meta exited 2"))
+
     def test_a_failed_step_records_nothing(self):
         class Empty:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
