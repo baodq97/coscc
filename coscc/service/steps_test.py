@@ -193,7 +193,7 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         ahead = self._advance_remote()
         self._run_step(unit)
         tree = self._tree(unit)
-        branch = units.branch_name(str(self.repo), unit, str(self.root / "data"))
+        branch = units.branch_name(str(self.repo), unit, str(self.root / "data"), self.service._snapshot(str(self.repo), [unit]))
         subprocess.run(
             ["git", "-C", str(tree), "switch", "--no-track", "-c", branch],
             check=True, capture_output=True,

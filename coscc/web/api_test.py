@@ -1064,6 +1064,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         import os
 
         from coscc.units import board, more_rounds
+        from coscc.units.meta_test import snapshot_of
 
         with mock.patch.dict(os.environ):
             os.environ.pop("COS_REVIEW_ROUNDS", None)
@@ -1079,11 +1080,11 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(after[len(before):].decode("utf-8"), "\n## Answers\n" + added)
             self.assertEqual(second.read_bytes(), other)
             # The real `cos.mjs`, no `--repo`: past the limit, the gate stops at the repository.
-            allowed, said = await board.gate(str(self.root), self.first.name, "review")
+            allowed, said = await board.gate(str(self.root), self.first.name, "review", state=snapshot_of(self.root))
             self.assertFalse(allowed)
             self.assertIn("no repository given", said)
             self.assertNotIn("needs a person", said)
-            allowed, said = await board.gate(str(self.root), self.second.name, "review")
+            allowed, said = await board.gate(str(self.root), self.second.name, "review", state=snapshot_of(self.root))
             self.assertFalse(allowed)
             self.assertIn("needs a person — review used 3 of 3", said)
             self.assertIsNone(os.environ.get("COS_REVIEW_ROUNDS"))

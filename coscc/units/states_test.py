@@ -51,7 +51,9 @@ class TheDefaultIsTheSetInUseToday(unittest.TestCase):
         # Run rather than parsed. `cos.mjs` is JavaScript and its table is a literal in
         # the source; asking the program is the only reading that cannot go stale.
         out = subprocess.run(
-            ["node", str(REPO / ".claude" / "scripts" / "cos.mjs"), "status", "--json"],
+            ["node", str(REPO / ".claude" / "scripts" / "cos.mjs"), "--state", "-", "status", "--json"],
+            # `0135`: the stage table needs no unit, so an empty snapshot.
+            input='{"workspace": "", "units": {}}',
             cwd=REPO,
             capture_output=True,
             text=True,

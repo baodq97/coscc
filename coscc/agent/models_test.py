@@ -191,7 +191,9 @@ class TheShippedDefaultsMatchTheScript(unittest.TestCase):
 
     def test_the_keys_are_exactly_the_stages_cos_mjs_names(self):
         out = subprocess.run(
-            ["node", str(REPO / ".claude" / "scripts" / "cos.mjs"), "status", "--json"],
+            ["node", str(REPO / ".claude" / "scripts" / "cos.mjs"), "--state", "-", "status", "--json"],
+            # `0135`: the stage table needs no unit, so an empty snapshot.
+            input='{"workspace": "", "units": {}}',
             cwd=REPO, capture_output=True, text=True, check=True,
         )
         names = [s["name"] for s in json.loads(out.stdout)["stages"]]

@@ -19,7 +19,7 @@ from pathlib import Path
 from coscc.agent import harness
 from coscc.data import Data
 from coscc.units.history import History
-from coscc.units.meta import SOURCE, UnitMeta
+from coscc.units.meta import SOURCE, MetaError, UnitMeta
 
 HERE = Path(__file__).resolve().parent
 FIXTURE = HERE / "testdata" / "meta_store"
@@ -66,6 +66,40 @@ def snapshot_of(root, peers=(), units_=None) -> dict:
             if (Path(key) / ".cos").is_dir():
                 meta.import_store(key, key)
         return meta.snapshot(own, names, units_)
+
+
+class WithSnapshot:
+    """Test glue (plan step 8): `coscc/units/board.py` as a test module sees it, each question
+    to `cos.mjs` handed `snapshot_of` its store when the test gave no `state` — what
+    `Service._snapshot` hands it in the app. Every other attribute, and every patch a test
+    sets on it, is the module's own."""
+
+    ASKS = ("read", "gate", "next_step", "pr_text", "rerun", "screens")
+
+    def __init__(self, module):
+        object.__setattr__(self, "_module", module)
+
+    def __getattr__(self, name):
+        found = getattr(self._module, name)
+        if name not in self.ASKS:
+            return found
+
+        def asked(units_root, *args, **kwargs):
+            if kwargs.get("state") is None:
+                try:
+                    kwargs["state"] = snapshot_of(units_root)
+                except MetaError:
+                    # No script to read with: the question fails as it would in the app.
+                    kwargs["state"] = self._module.EMPTY_STATE
+            return found(units_root, *args, **kwargs)
+
+        return asked
+
+    def __setattr__(self, name, value):
+        setattr(self._module, name, value)
+
+    def __delattr__(self, name):
+        delattr(self._module, name)
 
 
 class Base(unittest.TestCase):
