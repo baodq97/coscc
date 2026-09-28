@@ -15,6 +15,12 @@ a `review` gate that never opens.
 `uv run coscc state <workspace>` prints from `cos.db`; without it they exit 2. An artifact
 written at a terminal reaches that database only when a step of the app next ends on its unit.
 
+**`pr` and `ship` are the app's (`0136`).** From the board neither runs a session: the app's
+PR machine (`coscc/github/prmachine.py`) pushes the branch, opens the pull request, reads its
+CI while the autopilot is on, and merges pinned to the head its own guard read. A repository
+used only at a terminal has none of that: a person runs `gh pr create` and `gh pr merge`, as
+steps 6 and 8 of `.claude/CLAUDE.md` say, and nothing reads CI between two asks of `next`.
+
 Copy `.claude/`. That is the whole harness, and nothing lands in the host repository's own
 tree. Claude Code loads `.claude/CLAUDE.md` as project instructions, so no import, symlink
 or root file is needed. Then put that repository's real build and test commands under

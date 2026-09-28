@@ -84,14 +84,16 @@ The order per unit, and the reason it cannot be reordered:
 4. `git switch -c <that name>` — cut from `main`, before the first commit. `main` is closed;
    a commit made on it is a commit that has to be moved.
 5. Work the stages. Each artifact is its own commit.
-6. `pr`: `gh pr create`, then wait for the required checks. Red sends the work back to
-   `impl` on the same branch; the `review` gate stays closed until every check is green.
+6. `pr`: `gh pr create` (from the board the app does it, no session), then wait for the
+   required checks. Red sends the work back to `impl` on the same branch; the `review` gate
+   stays closed until every check is green.
 7. `review`: a separate agent session appends a round to `review.md`. Open findings mean
    `changes-requested`, a fix, green CI and another round, until `COS_REVIEW_ROUNDS` sends
    it to a person. An `[open]` `low` does not block; a finding naming a rule of the UI
    standard (`S<n>`) does. The detail is in `.claude/docs/branches.md`.
 8. `ship`: only once `cos.mjs gate <unit> ship` exits 0, `gh pr merge --squash --delete-branch`
-   with `--match-head-commit` set to the head the gate names.
+   with `--match-head-commit` set to the head the gate names. From the board the app merges,
+   pinned to the head its own guard read.
 
 Rebase, never merge `main` in; do it before a review round, not after a pass
 (`.claude/docs/branches.md` says why).
@@ -123,8 +125,8 @@ or a grant, read `.claude/docs/not-built.md`.
   not reason your way past it. A stage started from the coscc board has had this asked for
   it already — the app refuses to start a step the gate closes, and puts the gate's answer
   in the prompt. That is for the five prose stages, which run no command — `idea` and
-  `intent` hold no tools at all, `spec`, `plan` and `review` may only read — and so could
-  never obey this line themselves; at a terminal it still means you.
+  `intent` hold only `submit`, `spec`, `plan` and `review` may only read and submit — and so
+  could never obey this line themselves; at a terminal it still means you.
 - No code while `plan.md` is `draft`. Accept the plan in its own commit, so the
   authorization is separable from the thing it authorizes.
 - Take unit paths from `cos.mjs new-path`. Never guess a number.
