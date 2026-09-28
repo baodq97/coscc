@@ -474,5 +474,50 @@ class APausedOwnerEndsNothing(_Base):
                 self.assertEqual(self.service._active, {})
 
 
+class JeraTakenUpAgain(_Base):
+    """Review round 3, F8. Jera the autopilot started asks only what it was not asked, and
+    its own `start` names every question it was given: taken up again, it goes on with those."""
+
+    def test_jera_the_autopilot_started_goes_on_with_the_questions_it_was_given(self):
+        unit_dir = self.service._unit_dir(self.cwd, self.unit)
+        (unit_dir / "intent.md").write_text(
+            "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n", encoding="utf-8")
+        (unit_dir / "spec.md").write_text(APausedOwnerEndsNothing.ASKED, encoding="utf-8")
+        calls: list[dict] = []
+
+        async def stream(cwd, text, session_id=None, **kw):
+            calls.append({"cwd": cwd, "text": text, "session_id": session_id, **kw})
+            if len(calls) == 1:
+                raise Suspended("paused for an update")
+            yield ("done", {"session_id": SID, "cost": {"cost_usd": 0.1}, "terminal_reason": "success"})
+
+        self.service.sessions.stream = stream  # type: ignore[method-assign]
+        with self.assertRaises(Suspended):
+            asyncio.run(self.service.precedent(self.cwd, self.unit, "autopilot"))
+        owner = calls[0]["owner"]
+        self.assertEqual((owner["started_by"], owner["asked"]), ("autopilot", [["spec.md", 1]]))
+        path = transcript.path_for(calls[0]["cwd"], SID)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_transcript(), encoding="utf-8")
+        self.journal.suspended(
+            self.key, self.unit, "precedent", by="an", owner=owner, cwd=calls[0]["cwd"], session_id=SID,
+            model="m", start_at=owner["start_at"], boundary=4, safe_uuid="u2", dropped=[], api_calls=0,
+            spent_usd=0.1,
+        )
+
+        async def go():
+            said = await self.service.resume_after_update()
+            done = await asyncio.gather(*list(resume_mod._TASKS), return_exceptions=True)
+            return said, done
+
+        said, done = asyncio.run(go())
+        self.assertEqual([(s["kind"], s["result"]) for s in said], [("precedent", "resumed")])
+        [result] = done
+        self.assertNotIsInstance(result, Exception)
+        self.assertEqual((calls[1]["session_id"], calls[1]["resume_at"]), (SID, "u2"))
+        [end] = [e for e in self.ends() if e.get("stage") == "precedent"]
+        self.assertNotIn("not asked already", str(end.get("detail") or ""))
+
+
 if __name__ == "__main__":
     unittest.main()

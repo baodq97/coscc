@@ -326,7 +326,9 @@ class BacklogMixin:
         key = self._journal_key(cwd)
         mark = self._take(key, unit, "precedent", "precedent")
         rid = self._mark_running(key, unit, "precedent", "precedent")
-        started = ended = False
+        # `0138` review round 3, F8: taken up again, the `start` is already written, so whatever
+        # refuses it from here ends it.
+        started, ended = resume is not None, False
         try:
             try:
                 data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
@@ -336,7 +338,12 @@ class BacklogMixin:
             if found is None:
                 raise Invalid(f"no such work unit in this workspace: {unit}")
             only = None
-            if started_by == "autopilot":
+            asked_before = ((resume or {}).get("owner") or {}).get("asked")
+            if asked_before is not None:
+                # F8: the questions the paused session was given, which its own `start` names,
+                # so `autopilot.unasked` would count every one of them asked already.
+                only = [{"artifact": a, "n": n} for a, n in asked_before]
+            elif started_by == "autopilot":
                 try:
                     only = autopilot.unasked(found, journal.records(key, unit, kinds=("start", "end", "precedent")), key)
                 except Busy as e:
@@ -372,14 +379,12 @@ class BacklogMixin:
                     started = True
                 except (BadRecord, Busy):
                     pass
-            else:
-                # `0138`: the `start` was written before the update; this ends it.
-                started = True
             try:
                 reply, end, failure = await precedent_mod.ask(
                     self.sessions, cwd, prompt, grant, model, effort,
                     owner={"kind": "precedent", "workspace": key, "workspace_dir": cwd, "unit": unit,
-                           "stage": "precedent", "start_at": start_at, "started_by": started_by},
+                           "stage": "precedent", "start_at": start_at, "started_by": started_by,
+                           "asked": [[q["artifact"], q["n"]] for q in questions]},
                     resume=resume,
                 )
             except Suspended:
