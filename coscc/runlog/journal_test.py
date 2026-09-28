@@ -680,5 +680,34 @@ async def _arm(bell):
     return bell.arm()
 
 
+class ASuspendedSessionIsTakenUpOnce(unittest.TestCase):
+    """`0138` step 3."""
+
+    def test_a_suspend_row_without_a_resume_row_is_unresumed(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            a = j.suspended("w1", "0001_a", "impl", session_id="s1")
+            j.suspended("w2", "", "estimate", session_id="s2")
+            self.assertEqual([r["session_id"] for r in j.unresumed()], ["s1", "s2"])
+            self.assertEqual(len(a["suspend_id"]), 32)
+
+    def test_a_resume_row_closes_its_suspend_row_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            a = j.suspended("w", "0001_a", "impl")
+            b = j.suspended("w", "0002_b", "impl")
+            j.resumed("w", "0001_a", "impl", a["suspend_id"], by="app", result="resumed")
+            self.assertEqual([r["suspend_id"] for r in j.unresumed()], [b["suspend_id"]])
+
+    def test_suspend_and_resume_rows_do_not_close_a_start_row(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            j.started("w", "0001_a", "impl", "manual")
+            s = j.suspended("w", "0001_a", "impl")
+            j.resumed("w", "0001_a", "impl", s["suspend_id"])
+            self.assertIn("0001_a", j.open_starts("w"))
+            self.assertIsNone(j.timeline("w", "0001_a")[0]["ended"])
+
+
 if __name__ == "__main__":
     unittest.main()

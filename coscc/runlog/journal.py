@@ -38,6 +38,7 @@ import asyncio
 import json
 import os
 import threading
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -322,6 +323,28 @@ class Journal:
         return self.append(
             {"kind": "attempt", "workspace": workspace, "unit": unit, "stage": stage, **extra}
         )
+
+    def suspended(self, workspace: str, unit: str, stage: str, **fields: Any) -> dict[str, Any]:
+        """`0138` R6. One session an update paused, with a `suspend_id` of its own. Written
+        between a step's `start` and its `end`, and closing neither (R15)."""
+        return self.append({
+            "kind": "suspend", "workspace": workspace, "unit": unit, "stage": stage,
+            "suspend_id": uuid.uuid4().hex, **fields,
+        })
+
+    def resumed(self, workspace: str, unit: str, stage: str, suspend_id: str, **fields: Any) -> dict[str, Any]:
+        """`0138` R7. The next start took `suspend_id` up; written before it runs anything,
+        so a start after this one never takes it up again."""
+        return self.append({
+            "kind": "resume", "workspace": workspace, "unit": unit, "stage": stage,
+            "suspend_id": suspend_id, **fields,
+        })
+
+    def unresumed(self, timeout: float | None = None) -> list[dict[str, Any]]:
+        """`0138` R7. Every `suspend` row, in every workspace, with no `resume` naming it."""
+        rows = self.records(timeout=timeout, kinds=("suspend", "resume"))
+        taken = {r.get("suspend_id") for r in rows if r.get("kind") == "resume"}
+        return [r for r in rows if r.get("kind") == "suspend" and r.get("suspend_id") not in taken]
 
     # -- reading ------------------------------------------------------------
 
