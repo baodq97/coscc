@@ -103,6 +103,17 @@ class WhoCounts(Fixture):
         # Before the flag: in no arm, and not listed.
         self.assertNotIn("0003_before", json.dumps(got))
 
+    def test_a_unit_jera_answered_and_gebo_integrated_counts_with_their_turns(self):
+        # Review F1: `precedent` and `integrate` write their own `start`, outside `Runner.run`,
+        # and carry the arm as every stage does (R18); their `end`s are the unit's cost (R21).
+        self.a_unit("0001_asked", 1, turns=10, cost=1.0)
+        for stage, hour in (("precedent", 22), ("integrate", 23)):
+            self.add("start", day(1, hour), None, "0001_asked", stage, **{knowledge.TRIAL_FIELD: {"arm": knowledge.ON}})
+            self.add("end", day(1, hour), None, "0001_asked", stage, outcome="done", turns=1, cost_usd=0.25)
+        got = self.result()
+        self.assertEqual((got["on"]["units"], got["excluded"]), (["0001_asked"], []))
+        self.assertEqual((got["on"]["median"]["turns"], got["on"]["median"]["usd"]), (52, 5.5))
+
     def test_a_unit_shipped_after_the_deadline_is_excluded_with_its_condition(self):
         self.a_unit("0001_in_time", 1, ship=45)  # 2026-10-16
         self.a_unit("0002_late", 1, ship=46)  # 2026-10-17

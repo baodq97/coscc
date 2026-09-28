@@ -192,6 +192,20 @@ class GeboThroughTheService(unittest.TestCase):
         self.assertEqual(self.service.usage(self.cwd)["per_unit"][self.unit]["cost_usd"], 0.25)
         self.service.unit_history(self.cwd, self.unit)
         self.service.activity(self.cwd)
+        self.assertNotIn("knowledge_trial", starts[0])
+
+    def test_the_start_says_the_units_knowledge_arm_with_the_flag_on(self):
+        """`0131` R18, review F1: a `start` without it drops the unit from `measure`."""
+        from coscc import knowledge
+
+        self.service.config = dataclasses.replace(self.service.config, knowledge=True)
+        self.integrate_with(lambda tree, gate: self._needs_person())
+        [start] = [r for r in self.records("start") if r.get("stage") == "integrate"]
+        self.assertEqual(start[knowledge.TRIAL_FIELD], {"arm": knowledge.arm(self.unit)})
+
+    @staticmethod
+    async def _needs_person() -> str:
+        return "[needs-person] f.txt: one side wants `main`, the other `branch`"
 
     def test_the_integrate_end_row_counts_background_refusals(self):
         """`0130` R3: Gebo's `end` row carries `background`, as a board step's does."""

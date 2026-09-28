@@ -521,7 +521,9 @@ class StepsMixin:
                             pointed=list(own), app_version=app["version"], app_commit=app["commit"],
                             # `0093` R8: what opened this session, for *Integrate for a conflict*.
                             integrate_state=info["state"],
-                            **({"agent": name} if name else {}))
+                            **({"agent": name} if name else {}),
+                            # `0131` R18: every `start` of the unit says its arm, or `measure` drops it.
+                            **({knowledge.TRIAL_FIELD: {"arm": knowledge.arm(unit)}} if self.config.knowledge else {}))
         except (BadRecord, Busy):
             pass
         end: dict[str, Any] = {}
