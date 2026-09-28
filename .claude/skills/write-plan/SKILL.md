@@ -71,11 +71,12 @@ Intent: intent.md. Spec: spec.md | skipped (<reason>). Author: <name>. Status: a
 9. Accept it and commit it. `accepted` means you judged it finished, and nothing checks that
    judgement — so `## Proof` is the only thing that can contradict you. Set `done` only when
    the work has shipped and that command has passed.
-10. A question in `spec.md` with a block under its `## Answers` has been decided. Plan to
-    that answer rather than to a default, and do not ask it again. Cite it as
-    `spec.md ## Answers, câu N`. The words of an answer are a person's, not yours: quote
-    them, and do not restate them as your own finding. The app only ever appends that
-    section; never write into it yourself. A block headed `Answered by: Jera. … Via:
+10. A question in `spec.md` with a block under its `## Answers`, as your prompt shows it,
+    has been decided. Plan to that answer rather than to a default, and do not ask it again.
+    Cite it as `spec.md ## Answers, câu N`. The words of an answer are a person's, not
+    yours: quote them, and do not restate them as your own finding. Since `0135` the app
+    keeps answers in its database and puts them in the prompt; the file on disk may not
+    carry them. Never write into that section yourself. A block headed `Answered by: Jera. … Via:
     precedent.` is the exception: an agent inferred it from precedent, so cite it as Jera's
     inference and never present it as the originator's decision.
 11. `Impl:` is `novel` when the work is new logic rather than an existing pattern followed,

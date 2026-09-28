@@ -34,6 +34,7 @@ symptoms (`coscc/agent/harness.py:47-50`).
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -135,7 +136,7 @@ def unit_dir(
     return cos_dir(workspace, data_dir) / unit
 
 
-def _cos(root_path: Path, *args: str) -> str:
+def _cos(root_path: Path, *args: str, stdin: str | None = None) -> str:
     """Run `cos.mjs` against a root and return its stdout, or raise `CannotCreate`.
 
     The script that runs is **this app's copy**, never one found inside a workspace —
@@ -154,6 +155,7 @@ def _cos(root_path: Path, *args: str) -> str:
             capture_output=True,
             text=True,
             timeout=TIMEOUT,
+            input=stdin,
         )
     except FileNotFoundError as e:
         raise CannotCreate(
@@ -173,11 +175,13 @@ def branch_name(
     workspace: str | os.PathLike[str],
     unit: str,
     data_dir: str | os.PathLike[str] | None = None,
+    state: dict[str, Any] | None = None,
 ) -> str:
     """The branch this unit's `Type:` implies, from `cos.mjs unit-branch`.
 
-    It reads `intent.md` from disk, so it cannot answer before the intent stage has run —
-    and the refusal it raises says that, rather than this module guessing a name.
+    `state` is the app's snapshot, where the `Type:` is (`0135`); `intent.md` must still be
+    on disk, so it cannot answer before the intent stage has run — and the refusal it raises
+    says that, rather than this module guessing a name.
     """
     directory = unit_dir(workspace, unit, data_dir)  # validates before it reaches a command
     if not directory.is_dir():
@@ -191,7 +195,9 @@ def branch_name(
             f"{unit} has no intent.md yet, and the branch name comes from the Type: "
             "declared in it — run the intent stage first"
         )
-    return _cos(root(workspace, data_dir), "unit-branch", unit)
+    if state is None:
+        return _cos(root(workspace, data_dir), "unit-branch", unit)
+    return _cos(root(workspace, data_dir), "--state", "-", "unit-branch", unit, stdin=json.dumps(state, ensure_ascii=False))
 
 
 def create(

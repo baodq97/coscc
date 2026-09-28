@@ -5,8 +5,12 @@ Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a 
 
 from __future__ import annotations
 
+import json
+import sqlite3
+import sys
 import uuid
 from collections import Counter
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -18,9 +22,11 @@ from coscc.git import gitops
 from coscc.github import integrate
 from coscc.agent import precedent as precedent_mod
 from coscc.units.board import Unavailable
-from coscc.data import now as _now
+from coscc.data import Data, now as _now
 from coscc.git.gitops import GitError
-from coscc.runlog.journal import Busy, Journal, last_runs, timelines_of, totals_of
+from coscc.runlog.journal import BadRecord, Busy, Journal, last_runs, timelines_of, totals_of
+from coscc.units.history import BadTransition
+from coscc.units.meta import MetaError, UnitMeta
 from coscc.agent.policy import grant_for
 from coscc.agent import steps as steps_mod
 from coscc import units
@@ -171,16 +177,16 @@ class BoardMixin:
         """
         return units.root(cwd, self.config.data_dir)
 
-    def _peer_table(self) -> tuple[list[tuple[str, Path]], list[str]]:
-        """`0040` R14. Every workspace as `(name, store root)`, and what was left out and why.
+    def _peer_table(self) -> tuple[list[tuple[str, str]], list[str]]:
+        """`0040` R14. Every workspace as `(name, path)`, and what was left out and why.
 
-        A name two workspaces share is passed for neither: a reference to it could mean
-        either store, and `cos.mjs` refuses a name given twice. A name `valid_name` refuses
-        (an env workspace's basename can be one) could not be a reference at all.
+        A name two workspaces share is given for neither: a reference to it could mean
+        either store. A name `valid_name` refuses (an env workspace's basename can be one)
+        could not be a reference at all.
         """
         rows = self.workspaces()["workspaces"]
         count = Counter(str(r["name"]) for r in rows)
-        peers: list[tuple[str, Path]] = []
+        peers: list[tuple[str, str]] = []
         problems: list[str] = []
         for name, n in count.items():
             if n > 1:
@@ -188,11 +194,88 @@ class BoardMixin:
         for r in rows:
             name = str(r["name"])
             if count[name] == 1 and valid_name(name):
-                peers.append((name, self._units_root(r["path"])))
+                peers.append((name, str(r["path"])))
         return peers, problems
 
     def _peers(self) -> list[tuple[str, Path]]:
-        return self._peer_table()[0]
+        """Every named workspace as `(name, store root)`, the stores an `Idea:` may name."""
+        return [(name, self._units_root(path)) for name, path in self._peer_table()[0]]
+
+    def _snapshot(
+        self, cwd: str, units_: Iterable[str] | None = None, peers: list[tuple[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        """`0135` spec Design 3. What `cos.mjs --state` decides on: `cwd`'s units and those of
+        every workspace a link may name, from `cos.db`; `units_` narrows it as
+        `UnitMeta.snapshot` says. A store not imported yet is imported first (R3).
+
+        Raises `Invalid` when an import cannot run: a board read on metadata nobody could
+        read would show every unit as not started. So also when `cos.db` cannot be read, in one
+        sentence that names the workspace; the error, which may name the database's path, goes
+        to the log (review F11, S3). `peers` is `_peer_table`'s, when the caller read it already.
+        """
+        meta = self._unit_meta()
+        own = self._journal_key(cwd)
+        names = {name: self._journal_key(path) for name, path in (self._peer_table()[0] if peers is None else peers)}
+        try:
+            for key in {own, *names.values()} - self._imported:
+                # A workspace with no units yet has nothing to import: one `stat`, not a query.
+                if not (units.root(key, self.config.data_dir) / units.COS_DIR).is_dir():
+                    continue
+                if meta.imported(key):
+                    self._imported.add(key)
+                else:
+                    self._import(meta, key)
+            return meta.snapshot(own, names, units_)
+        except (Busy, sqlite3.Error, OSError) as e:
+            print(f"coscc: the units of {own} could not be read: {e}", file=sys.stderr)
+            raise Invalid(f"the units of {self._workspace_name(own) or 'a workspace'} could not be read") from e
+
+    def _meta_of(self, cwd: str, unit: str) -> dict[str, Any]:
+        """`unit`'s entry in the snapshot, `{}` when the app has none."""
+        snap = self._snapshot(cwd, [unit])
+        return snap["units"].get(f"{snap['workspace']}/{unit}") or {}
+
+    def _write_step_state(self, cwd: str, unit: str) -> str:
+        """`0135`. The snapshot a step that runs `cos.mjs` itself hands `--state` — the `pr`
+        step's `pr-text`, the `ship` step's gate — which refuse to decide without one. Written
+        as the step begins, under the data root beside `spikes/`, never in a store, and
+        replaced by the next step of the unit. `""` when it could not be written: the step
+        still runs, and the command it runs says what is missing."""
+        path = Data(self.config.data_dir).root / "state" / units.slot(cwd) / f"{unit}.json"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self._snapshot(cwd, [unit]), ensure_ascii=False), encoding="utf-8")
+        except (OSError, Invalid):
+            return ""
+        return str(path)
+
+    def _import(self, meta: UnitMeta, key: str) -> None:
+        """R3, R4. One store into `cos.db`, once; what it could not read, if anything, goes to
+        the log and to one `import` row of the run log. A store with no `.cos/` yet is left
+        for later."""
+        store = units.root(key, self.config.data_dir)
+        if not (store / units.COS_DIR).is_dir():
+            return
+        try:
+            unknowns = meta.import_store(key, store)
+        except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
+            # The workspace by name and the error in the log: `key` is a path, and `Busy` and
+            # `MetaError` carry the database's path or `cos.mjs`'s stderr (S3).
+            print(f"coscc: the units of {key} could not be imported: {e}", file=sys.stderr)
+            name = self._workspace_name(key) or "a workspace"
+            raise Invalid(f"the units of {name} could not be imported") from e
+        # Only when there is something to report, so a store read cleanly adds no row: a
+        # board read writes nothing to the run log (`0047` R9).
+        if not unknowns:
+            return
+        for u in unknowns:
+            print(f"coscc: import {key}: {u['unit']} {u['artifact']} {u['field']}: {u['reason']}", file=sys.stderr)
+        journal = self._journal()
+        if journal is not None:
+            try:
+                journal.append({"kind": "import", "workspace": key, "unknowns": unknowns})
+            except (BadRecord, Busy):
+                pass
 
     def _workspace_name(self, cwd: str) -> str:
         """The name the app shows for `cwd`, or "" when it is not one of the workspaces."""
@@ -218,7 +301,7 @@ class BoardMixin:
         self._workspace_or_refuse(cwd)
         peers, peer_problems = self._peer_table()
         try:
-            data = await board_reader.read(self._units_root(cwd), peers=peers)
+            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd, peers=peers))
         except Unavailable as e:
             raise Invalid(str(e)) from e
         # `0040` R14, R15. Only when there is something to say, so every other payload is

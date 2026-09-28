@@ -692,14 +692,18 @@ class TheStagesThatReadWholeInputsKeepTheirPrompt(unittest.TestCase):
     """`0094` plan step 4: `idea`, `intent`, `spec`, `spike` and `plan` are outside R14, so
     their prompt is the one `build_prompt` made before `0094`, byte for byte. The digests
     were taken from `_golden_prompt` on `fc409f3`, before `coscc/runner/__init__.py` changed. A later
-    unit that changes one of these prompts on purpose takes the new digest and says so."""
+    unit that changes one of these prompts on purpose takes the new digest and says so.
+
+    `0135` review F5 did: `_ANSWERS_ADVICE` no longer says the app writes the answers back
+    onto the artifact, since they are rows in `cos.db`. That sentence is the only change to
+    `idea`, `intent`, `spec` and `plan`; `spike` does not carry it."""
 
     BEFORE = {
-        "idea": "0c27fc9c6020fb374fe896790542fd129ae2ed134c74f7ab10a21174ac06b7c1",
-        "intent": "ac89642b9f7a4d14c366728124f9b3a08dc48707f512b00372ebac71d59e36c0",
-        "spec": "3846c352c9beee851d1b520f5124ba5f97e1ec34bf1d19b352da2afe710dce07",
+        "idea": "9267c865c80da178ba395a2cdd9f338275803bbc443a3cb9620e3f9f1470972e",
+        "intent": "b96ef1e1b1e7fbc220a1d174597c28695fba2ab6918b0b836408e6239c75297e",
+        "spec": "380ab76a53c79b7e78f263ab12e3ef960bcd3d3a3c416598589b92d330266d18",
         "spike": "e1fcb244a461bb7573eb184a80fc5cdf187add7432dbc3024bd38d578655b6fd",
-        "plan": "1ee0ad89c88554fab29f4e23c833b10b63e2a366a185f588b5f6eba71b3787ab",
+        "plan": "4359018c31dedd5772e11bd9fc902b845df6e1075de60af80271a9e97e389f93",
     }
 
     def test_byte_for_byte(self):
@@ -1096,3 +1100,70 @@ class TheSessionIsToldWhoItIs(unittest.TestCase):
             with self.assertRaises(RunError) as caught:
                 compose_prompt(*args, agent=agents.agent_for("review"))
             self.assertIsInstance(caught.exception.__cause__, MissingRules)
+
+
+class AnswersComeFromTheDatabase(unittest.TestCase):
+    """`0135` R8. A stage's prompt renders a unit's answers and holds from its rows in `cos.db`
+    where the file's `## Answers` blocks were; a block the database does not carry
+    (`### Rerun`, `### More rounds`, `### Outcome`) is kept from the file."""
+
+    INTENT = (
+        "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Open questions\n\n1. Một?\n\n"
+        "## Answers\n\n### Câu 1\nAnswered by: Leif. Date: 2026-09-01. Via: product.\n\nCó.\n\n"
+        "### Paused\nDecided by: Leif. Date: 2026-09-02. Via: product.\n\nchờ 0034\n\n"
+        "### Rerun\nDecided by: owner. Date: 2026-09-03. Via: product.\nStage: spec\n"
+    )
+
+    def prompt(self, d: str, stage: str) -> str:
+        from coscc.runner import prompt as runner_prompt
+        from coscc.units.meta_test import snapshot_of
+
+        unit = Path(d) / ".cos" / "0001_x"
+        unit.mkdir(parents=True)
+        (unit / "intent.md").write_text(self.INTENT, encoding="utf-8")
+        snap = snapshot_of(d)
+        entry = snap["units"][f"{snap['workspace']}/0001_x"]
+        with mock.patch.object(runner_prompt, "skill_for", lambda s: f"RULES-FOR-{s}"):
+            prompt, _, _ = compose_prompt(d, unit, "0001_x", stage, STAGES, f"{stage}.md", unit_meta=entry)
+        return prompt
+
+    def test_the_prompt_of_an_imported_unit_carries_each_answer_once(self):
+        with tempfile.TemporaryDirectory() as d:
+            text = self.prompt(d, "spec")
+        self.assertEqual(text.count("### Câu 1\nAnswered by: Leif. Date: 2026-09-01. Via: product.\n\nCó."), 1)
+        self.assertEqual(text.count("### Rerun\nDecided by: owner."), 1)
+        self.assertEqual(text.count("## Answers"), 1)
+
+    def test_the_artifact_a_stage_follows_carries_its_answers_from_their_rows(self):
+        """The `plan` step reads `spec.md` from the prompt; an answer to a spec question given
+        since `0135` is a row only, and would be lost if the file were embedded as it stands."""
+        from coscc.runner import prompt as runner_prompt
+
+        with tempfile.TemporaryDirectory() as d:
+            unit = Path(d) / ".cos" / "0001_x"
+            unit.mkdir(parents=True)
+            (unit / "intent.md").write_text("# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
+            (unit / "spec.md").write_text(
+                "# Spec: x\nIntent: intent.md. Status: accepted.\n\n## Open questions\n\n1. Hai?\n", encoding="utf-8")
+            entry = {"answers": [{"artifact": "spec.md", "n": 1, "id": None, "by": "owner", "date": "2026-09-28",
+                                  "via": "product", "text": "Một."}], "holds": []}
+            with mock.patch.object(runner_prompt, "skill_for", lambda s: f"RULES-FOR-{s}"):
+                prompt, _, _ = compose_prompt(d, unit, "0001_x", "plan", STAGES, "plan.md", unit_meta=entry)
+        followed = prompt.split("# The spec it follows\n\n", 1)[1]
+        self.assertIn("## Answers\n\n### Câu 1\nAnswered by: owner. Date: 2026-09-28. Via: product.\n\nMột.", followed)
+
+    def test_a_hold_renders_as_the_block_intent_md_carried(self):
+        with tempfile.TemporaryDirectory() as d:
+            text = self.prompt(d, "spec")
+        self.assertEqual(text.count("### Paused\nDecided by: Leif. Date: 2026-09-02. Via: product.\n\nchờ 0034"), 1)
+
+    def test_an_answer_the_file_does_not_carry_is_rendered_from_its_row(self):
+        from coscc.runner.prompt import answers_for
+
+        entry = {"answers": [{"artifact": "spec.md", "n": 2, "id": None, "by": "owner", "date": "2026-09-28",
+                              "via": "product", "text": "Hai."}], "holds": []}
+        self.assertEqual(
+            answers_for(b"# Spec\nStatus: draft.\n", "spec.md", entry),
+            "## Answers\n\n### Câu 2\nAnswered by: owner. Date: 2026-09-28. Via: product.\n\nHai.",
+        )
+        self.assertIsNone(answers_for(b"# Spec\nStatus: draft.\n", "spec.md", {"answers": [], "holds": []}))

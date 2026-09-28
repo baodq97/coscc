@@ -6,7 +6,7 @@ paths:
 # Reading the board: the gates and the run button
 
 - **The `review` and `ship` gates call `gh` and `git` in the workspace.** `board.gate`
-  passes `--repo` and waits `GATE_TIMEOUT` (`coscc/units/board.py:302`, chosen). `child_env`
+  passes `--repo` and waits `GATE_TIMEOUT` (`coscc/units/board.py:315`, chosen). `child_env`
   carries `PATH`, `HOME` and `COS_REVIEW_ROUNDS` only, so a machine logged in through
   `GH_TOKEN` alone sees the `review` gate closed with gh's own error. Offline, `review`
   cannot start.
@@ -17,7 +17,8 @@ paths:
   - Re-running `impl` overwrites `impl.md`. `review.md`'s rounds are guarded on top of that:
     the reply carries only its new round, the runner writes the earlier ones back from the
     file, and it refuses a reply that rewrites one. Every prose stage's `## Answers` section
-    is guarded the same way, `review.md` included (`.claude/docs/coscc-answers.md`).
+    is guarded the same way, `review.md` included; since `0135` answers and holds are rows,
+    not blocks in it (`.claude/docs/coscc-answers.md`).
   - Opening a unit, finishing a step and pressing *Ask again* each ask `gh` in the
     workspace under this machine's login (how long, unmeasured); nothing re-asks
     on a timer, so a pending CI shows no button until someone asks.

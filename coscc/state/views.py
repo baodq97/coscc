@@ -1052,6 +1052,17 @@ class NameRow:
 
 
 @dataclasses.dataclass
+class ImportRow:
+    """`0135` R4. One field an import could not read, as `Service.settings` returned it."""
+
+    workspace: str = ""
+    unit: str = ""
+    artifact: str = ""
+    field: str = ""
+    reason: str = ""
+
+
+@dataclasses.dataclass
 class GrantRow:
     stage: str = ""
     tools: str = ""

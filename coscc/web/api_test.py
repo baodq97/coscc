@@ -716,19 +716,62 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
     async def post(self, **over):
         return await self.client.post("/api/units/answer", json=self.body(**over))
 
-    async def test_a_valid_answer_is_appended_and_nothing_above_it_moves(self):
+    def rows(self, table: str = "unit_answers", columns: str = "artifact, ref, answered_by, via, text") -> list[tuple]:
+        """`0135` R8: what the database holds for this unit, where the file's block once was."""
+        from coscc.data import Data
+
+        with Data(self.data_dir).connect() as conn:
+            return [tuple(r) for r in conn.execute(
+                f"SELECT {columns} FROM {table} WHERE unit = ? AND once_key = '' ORDER BY id", (self.unit,))]
+
+    async def test_answering_through_the_api_changes_no_byte_of_the_artifact(self):
         before = self.intent.read_bytes()
         got = await self.post()
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(got.json()["question"], 2)
-        after = self.intent.read_bytes()
-        self.assertTrue(after.startswith(before))
-        tail = after[len(before):].decode("utf-8")
-        self.assertIn("## Answers", tail)
-        self.assertIn("### Câu 2", tail)
-        self.assertIn("Answered by: Phong. Date: ", tail)
-        self.assertIn("Via: product.", tail)
-        self.assertIn("Tách ra. MARK-0016", tail)
+        self.assertEqual(self.intent.read_bytes(), before)
+        self.assertEqual(self.rows(), [("intent.md", "2", "Phong", "product", "Tách ra. MARK-0016")])
+
+    async def test_an_answer_writes_its_journal_row_in_the_same_transaction(self):
+        import sqlite3
+
+        from coscc.runlog.journal import Journal
+
+        def answers() -> list:
+            return Journal(str(Path(self.cwd).parent), self.data_dir).records(kind="answer")
+
+        got = await self.post()
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual((len(self.rows()), len(answers())), (1, 1))
+        # The run-log row fails after the answer's row was written: neither is kept (C8).
+        with mock.patch.object(Journal, "_insert", side_effect=sqlite3.OperationalError("disk I/O error")):
+            got = await self.post(question=1, answer="Có.")
+        self.assertEqual(got.status_code, 400, got.text)
+        self.assertIn("the answer was not recorded", got.text)
+        # What went wrong is the log's, not the dialog's (review F8, S3).
+        self.assertNotIn("disk I/O error", got.text)
+        self.assertEqual((len(self.rows()), len(answers())), (1, 1))
+
+    async def test_a_locked_database_before_the_answer_is_one_sentence_without_its_path(self):
+        """Review F11 (S3): the snapshot the answer is checked against reads `cos.db`, and
+        `Busy` names the database's path. The dialog gets one sentence; the log gets the path."""
+        import contextlib
+        import io
+
+        from coscc.data import Busy
+        from coscc.units.meta import UnitMeta
+
+        held = "another process is holding /tmp/somewhere/cos.db"
+        before = self.intent.read_bytes()
+        err = io.StringIO()
+        with mock.patch.object(UnitMeta, "snapshot", side_effect=Busy(held)), \
+                contextlib.redirect_stderr(err):
+            got = await self.post()
+        self.assertEqual(got.status_code, 400, got.text)
+        self.assertIn("could not be read", got.text)
+        self.assertNotIn("/tmp/somewhere", got.text)
+        self.assertIn(held, err.getvalue())
+        self.assertEqual((self.rows(), self.intent.read_bytes()), ([], before))
 
     async def test_the_board_then_counts_one_fewer_open(self):
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
@@ -737,12 +780,12 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
         self.assertEqual(board["units"][0]["open"], 2)
 
-    async def test_a_second_answer_appends_under_the_same_heading(self):
+    async def test_a_second_answer_is_a_second_row(self):
+        before = self.intent.read_bytes()
         await self.post()
         await self.post(question=1, answer="Có.")
-        text = self.intent.read_text(encoding="utf-8")
-        self.assertEqual(text.count("## Answers"), 1)
-        self.assertIn("### Câu 1", text)
+        self.assertEqual(self.intent.read_bytes(), before)
+        self.assertEqual([r[1] for r in self.rows()], ["2", "1"])
 
     async def test_the_answer_is_recorded_as_a_person_in_the_history(self):
         from coscc.units.history import History
@@ -795,9 +838,12 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.refused(answer="ok\n## Status: rejected")
         await self.refused(answer="### Câu 3\nhijack")
 
-    async def test_a_file_with_a_section_after_its_answers_is_refused(self):  # (g)
+    async def test_a_file_with_a_section_after_its_answers_is_answered_all_the_same(self):  # (g)
+        # Refused until `0135`: a block appended there would not have been read. It is a row now.
         self.intent.write_text(QUESTIONS + "\n## Answers\n\n## Later\n", encoding="utf-8")
-        self.assertIn("after its ## Answers", await self.refused())
+        before = self.intent.read_bytes()
+        self.assertEqual((await self.post()).status_code, 200)
+        self.assertEqual(self.intent.read_bytes(), before)
 
     async def test_something_that_is_not_json_writes_nothing(self):
         before = self.intent.read_bytes()
@@ -830,13 +876,16 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         return f"D{n}"
 
     async def test_a_delegated_answer_ends_with_its_delegation_line(self):
+        # A row since `0135`: its text ends with the line, and the file keeps every byte.
         before = self.intent.read_bytes()
         d = self.decide()
         got = await self.post(answered_by="Leif (CoS)", delegation=d)
         self.assertEqual(got.status_code, 200, got.text)
-        tail = self.intent.read_bytes()[len(before):].decode("utf-8")
-        self.assertIn("Answered by: Leif (CoS). Date: ", tail)
-        self.assertTrue(tail.endswith(f"Via: product.\n\nTách ra. MARK-0016\n\nTheo ủy quyền: {d}\n"), tail)
+        self.assertEqual(self.intent.read_bytes(), before)
+        self.assertEqual(
+            self.rows(),
+            [("intent.md", "2", "Leif (CoS)", "product", f"Tách ra. MARK-0016\n\nTheo ủy quyền: {d}")],
+        )
 
     async def test_a_delegation_that_is_missing_expired_withdrawn_wrong_kind_wrong_agent_or_wrong_workspace_is_refused_and_writes_nothing(self):
         from datetime import date
@@ -857,6 +906,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(got.status_code, 400, (said, got.text))
             self.assertIn(said, got.json()["error"])
             self.assertEqual(hashlib.sha256(self.intent.read_bytes()).hexdigest(), before, said)
+            self.assertEqual(self.rows(), [], said)
 
     async def test_an_answer_without_delegation_is_written_as_before(self):
         from datetime import date
@@ -864,10 +914,10 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         before = self.intent.read_bytes()
         got = await self.post()
         self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(self.intent.read_bytes(), before)
         self.assertEqual(
-            self.intent.read_bytes()[len(before):].decode("utf-8"),
-            f"\n## Answers\n\n### Câu 2\nAnswered by: Phong. Date: {date.today().isoformat()}. Via: product.\n\n"
-            "Tách ra. MARK-0016\n",
+            self.rows(columns="artifact, ref, answered_by, date, via, text"),
+            [("intent.md", "2", "Phong", date.today().isoformat(), "product", "Tách ra. MARK-0016")],
         )
 
 
@@ -991,13 +1041,15 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         body = {"cwd": self.cwd, "unit": self.unit, "to": "paused", "reason": "chờ 0034", "by": "Leif", **over}
         return await self.client.post("/api/units/hold", json=body)
 
-    async def test_a_pause_is_appended_and_read_back(self):
+    rows = AnsweringAQuestionOverHttp.rows
+
+    async def test_a_pause_is_a_row_and_read_back(self):
         before = self.intent.read_bytes()
         got = await self.hold()
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual((got.json()["from"], got.json()["to"], got.json()["effects"]), ("active", "paused", []))
-        self.assertTrue(self.intent.read_bytes().startswith(before))
-        self.assertIn("### Paused\nDecided by: Leif. Date: ", self.intent.read_text(encoding="utf-8"))
+        self.assertEqual(self.intent.read_bytes(), before)
+        self.assertEqual(self.rows("unit_holds", "move, decided_by, reason"), [("paused", "Leif", "chờ 0034")])
         nxt = (await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": self.unit})).json()
         self.assertEqual(nxt["stage"], "")
 
@@ -1014,7 +1066,7 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         """`0082` R3: what `{"by": ""}` was refused for until then."""
         got = await self.hold(by="")
         self.assertEqual(got.status_code, 200, got.text)
-        self.assertIn("owner", self.intent.read_text(encoding="utf-8").split("## Answers", 1)[1])
+        self.assertEqual(self.rows("unit_holds", "decided_by"), [("owner",)])
 
 
 _ROUND_0028 = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
@@ -1057,6 +1109,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         import os
 
         from coscc.units import board, more_rounds
+        from coscc.units.meta_test import snapshot_of
 
         with mock.patch.dict(os.environ):
             os.environ.pop("COS_REVIEW_ROUNDS", None)
@@ -1072,11 +1125,11 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(after[len(before):].decode("utf-8"), "\n## Answers\n" + added)
             self.assertEqual(second.read_bytes(), other)
             # The real `cos.mjs`, no `--repo`: past the limit, the gate stops at the repository.
-            allowed, said = await board.gate(str(self.root), self.first.name, "review")
+            allowed, said = await board.gate(str(self.root), self.first.name, "review", state=snapshot_of(self.root))
             self.assertFalse(allowed)
             self.assertIn("no repository given", said)
             self.assertNotIn("needs a person", said)
-            allowed, said = await board.gate(str(self.root), self.second.name, "review")
+            allowed, said = await board.gate(str(self.root), self.second.name, "review", state=snapshot_of(self.root))
             self.assertFalse(allowed)
             self.assertIn("needs a person — review used 3 of 3", said)
             self.assertIsNone(os.environ.get("COS_REVIEW_ROUNDS"))
@@ -1144,17 +1197,13 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
     async def finding(self, **over):
         return await self.post(**{"artifact": "review.md", "question": "F2", **over})
 
-    async def test_a_finding_is_appended_as_its_own_block_and_nothing_above_moves(self):
+    async def test_a_finding_is_a_row_and_review_md_is_not_touched(self):
         before = self.review.read_bytes()
         got = await self.finding()
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(got.json()["question"], "F2")
-        after = self.review.read_bytes()
-        self.assertTrue(after.startswith(before))
-        tail = after[len(before):].decode("utf-8").splitlines()
-        at = tail.index("### F2")
-        self.assertRegex(tail[at + 1], r"^Answered by: Phong\. Date: \S+\. Via: product\.$")
-        self.assertIn("## Answers", tail)
+        self.assertEqual(self.review.read_bytes(), before)
+        self.assertEqual(self.rows(), [("review.md", "F2", "Phong", "product", "Tách ra. MARK-0016")])
 
     async def test_the_board_then_waits_on_the_other_one_only(self):
         await self.finding()

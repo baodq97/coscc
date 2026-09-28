@@ -102,6 +102,7 @@ from coscc.state.views import (
     AgentRow,
     DecisionRow,  # noqa: F401 — the page imports it from here
     NameRow,  # noqa: F401 — the page imports it from here
+    ImportRow,
     GrantRow,
     _run_target,
     _run_waiting,
@@ -288,6 +289,9 @@ class StudioState(
     unit_anomalies: list[AnomalyRow] = []
     knobs: list[Knob] = []
     grants: list[GrantRow] = []
+    # `0135` R4: the fields an import could not read, and why the report itself could not be.
+    import_rows: list[ImportRow] = []
+    import_problem: str = ""
     data_dir: str = ""
     host_port: str = ""
     # Whether the bound address reaches this machine only. Since `0011` the default
@@ -537,6 +541,13 @@ class StudioState(
             )
             for g in data.get("grants") or []
         ]
+        report = data.get("import_report") or {}
+        self.import_rows = [
+            ImportRow(workspace=str(r["workspace"]), unit=str(r["unit"]), artifact=str(r["artifact"]),
+                      field=str(r["field"]), reason=str(r["reason"]))
+            for r in report.get("rows") or []
+        ]
+        self.import_problem = str(report.get("problem") or "")
 
     def _show_models(self, data: dict) -> None:
         self.model_rows = [

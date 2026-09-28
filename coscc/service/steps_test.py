@@ -193,7 +193,7 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         ahead = self._advance_remote()
         self._run_step(unit)
         tree = self._tree(unit)
-        branch = units.branch_name(str(self.repo), unit, str(self.root / "data"))
+        branch = units.branch_name(str(self.repo), unit, str(self.root / "data"), self.service._snapshot(str(self.repo), [unit]))
         subprocess.run(
             ["git", "-C", str(tree), "switch", "--no-track", "-c", branch],
             check=True, capture_output=True,
@@ -419,6 +419,47 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(found["settled_edits"], 1)
 
+    def test_a_failed_ingest_is_on_the_step_and_in_the_database(self):
+        """`0135` R7, C3: the step still ends `done`, and the failure is kept, not dropped.
+        Review F10, S3: what is kept is one fixed sentence; the error, which may carry a path,
+        goes to the log."""
+        import io
+        from unittest import mock
+
+        from coscc.units import meta
+
+        async def go():
+            return [item async for item in self.service.run_step(str(self.repo), self.made["unit"], "spec")]
+
+        # The store is imported on its first read, before `meta` is broken: only the ingest fails.
+        asyncio.run(self.service.board(str(self.repo)))
+        error = meta.MetaError("cos.mjs meta did not run: /home/x/cos.mjs --root /home/x/units")
+        with mock.patch.object(meta, "read", side_effect=error), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            _, payload = asyncio.run(go())[-1]
+        self.assertEqual(payload["outcome"], "done")
+        self.assertEqual(payload["ingest_error"], "its files could not be read")
+        with self.service._unit_meta().data.connect() as conn:
+            [row] = conn.execute("SELECT unit, field, reason FROM unit_unknowns WHERE field = 'ingest'").fetchall()
+        self.assertEqual(tuple(row), (self.made["unit"], "ingest", "its files could not be read"))
+        self.assertIn("/home/x/units", log.getvalue())
+        self.assertIn(self.made["unit"], log.getvalue())
+
+    def test_a_failed_ingest_on_the_database_names_no_path(self):
+        # Review F10, S3: `Busy` carries the path of `cos.db`.
+        import io
+        from unittest import mock
+
+        from coscc.data import Busy
+
+        asyncio.run(self.service.board(str(self.repo)))
+        busy = Busy(self.service.config.data_dir + "/cos.db")
+        with mock.patch("coscc.units.meta.UnitMeta.ingest", side_effect=busy), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            said = asyncio.run(self.service._ingest(str(self.repo), self.made["unit"], {"outcome": "done", "stage": "spec"}))
+        self.assertEqual(said, {"ingest_error": "the database could not be written"})
+        self.assertIn("cos.db", log.getvalue())
+
     def test_a_failed_step_records_nothing(self):
         class Empty:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
@@ -513,7 +554,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
     def _after_end_with(self, why: str, stage: str = "ship") -> list[dict]:
         from coscc.units import board as board_reader
 
-        async def read(root, timeout=None, peers=()):
+        async def read(root, timeout=None, state=None):
             return {"units": [{"name": self.unit, "why": why, "questions": []}]}
 
         with mock.patch.object(board_reader, "read", read):
@@ -537,11 +578,11 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
 
         real = board_reader.read
 
-        async def broken(root, timeout=board_reader.TIMEOUT, peers=()):
+        async def broken(root, timeout=board_reader.TIMEOUT, state=None):
             # Only once the step's `end` is written: the gate before it reads the board too.
             if "end" in [r["kind"] for r in self.records()]:
                 raise board_reader.Unavailable("node is missing")
-            return await real(root, timeout, peers)
+            return await real(root, timeout, state)
 
         with mock.patch.object(board_reader, "read", broken):
             _, payload = self._run()[-1]
@@ -2083,6 +2124,24 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
 
     OLD = {"head": "a" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
     NEW = {"head": "b" * 40, "dirty": False, "addresses": ["/board"], "hits": []}
+
+    def test_the_step_is_handed_a_snapshot_file_cos_mjs_decides_on(self):
+        """`0135`: a step that runs `cos.mjs gate` or `pr-text` itself needs `--state`."""
+        import json
+        import subprocess
+
+        from coscc.agent import harness
+
+        self.step({"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None)
+        path = Path(self.seen[0]["state_file"])
+        snap = json.loads(path.read_text(encoding="utf-8"))
+        self.assertIn(f"{snap['workspace']}/{self.unit}", snap["units"])
+        self.assertFalse(path.is_relative_to(self.dir.parent))
+        done = subprocess.run(
+            ["node", str(harness.script()), "--root", str(self.dir.parent.parent), "gate", self.unit, "spec",
+             "--state", str(path)], capture_output=True, text=True, env=harness.child_env(),
+        )
+        self.assertIn(done.returncode, (0, 1), done.stderr)
 
     def test_no_retake_records_nothing_and_the_step_runs(self):
         self.step({"retake": False, "why": "the manifest's head is still an ancestor of HEAD"}, None)

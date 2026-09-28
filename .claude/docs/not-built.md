@@ -43,8 +43,9 @@ Read this before adding a route, a button or a grant, and before copying this ha
   under this machine's `gh` login. The run log's `started_by` says which starts were its.
 - **A person's answer is not an approval.** Since `0016` the
   app has one place where a person answers an item under `## Open questions`: the
-  *Questions* tab, or `POST /api/units/answer`. It appends a block under `## Answers` and
-  a row to the run log, and no gate reads it; the next stage finds it in its prompt. With
+  *Questions* tab, or `POST /api/units/answer`. Since `0135` it is a row in `cos.db`, not a
+  block under `## Answers`, plus a row in the run log, and no gate reads it; the next stage
+  finds it in its prompt, rendered as the block it once was. With
   the workspace's autopilot off, that stage runs when somebody presses the button; with it
   on (`0043`), an answer that clears the last open question can start it with nobody
   pressing anything. Since `0082` the
@@ -54,10 +55,10 @@ Read this before adding a route, a button or a grant, and before copying this ha
   a script can write any name. Since `0070` there is one master password and it names
   nobody, and the next stage will read the answer as a person's decision.
   One kind of answer is read by more than a prompt. Since `0028` a finding the last review
-  round marked `[needs-person]` is answered as `F<n>` into `review.md`, as a `### F<n>`
-  block: `cos.mjs next` reads it to offer `review` again once every such finding has one,
+  round marked `[needs-person]` is answered as `F<n>` for `review.md` (a `### F<n>` block
+  until `0135`, a row since, handed to `cos.mjs` in its `--state` snapshot): `cos.mjs next` reads it to offer `review` again once every such finding has one,
   and the `ship` gate counts a finding that review then marks `[answered]` as closed only
-  when that block exists. So a block anyone holding the password or a session can write,
+  when that answer exists. So an answer anyone holding the password or a session can write,
   followed by one agent's round, is part of what opens `ship`.
   A third kind is no answer at all. Since `0047` a finished unit's outcome is recorded as a
   `### Outcome` block under `intent.md ## Answers` (`POST /api/units/outcome`, or the
@@ -102,8 +103,8 @@ Read this before adding a route, a button or a grant, and before copying this ha
 - **A hold is not an approval, and it starts nothing.** Since `0045` the board can pause,
   drop or resume a unit (`POST /api/units/hold`), with one line of reason; the block's name
   is `owner` since `0082` (`stopped_by` above says what that word is and is not).
-  It appends a block under `intent.md ## Answers` and a `hold` row to the run log; `cos.mjs`
-  then offers the unit no stage and closes every gate on it. Resuming runs nothing either.
+  Since `0135` it is a `unit_holds` row in `cos.db`, written in one transaction with its
+  `hold` row in the run log, and no byte of `intent.md`; `cos.mjs` reads it from `--state`, then offers the unit no stage and closes every gate on it. Resuming runs nothing either.
   Dropping also closes the unit's open pull request **with this machine's `gh` login** and
   removes its worktree; the remote and local branches stay. Whoever holds the password or
   a live session can pause every unit, or drop one and close its pull request. A move is

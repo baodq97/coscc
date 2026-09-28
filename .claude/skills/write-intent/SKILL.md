@@ -83,10 +83,12 @@ Author: <name>. Type: <type>. Status: accepted.
 9. Interrogation comes first. You accept your own file, and no other step checks for a thin
    intent: the questions in invariant 2 are the only check there is — ask them before
    writing, not after.
-10. A question with a block under `## Answers` in the artifact that holds it has been
-    decided. Do not ask it again. Cite it as `<artifact> ## Answers, câu N`. The words of
-    an answer are a person's, not yours: quote them, and do not restate them as your own
-    finding. The app only ever appends that section; never write into it yourself.
+10. A question with a block under `## Answers` in the artifact that holds it, as your
+    prompt shows it, has been decided. Do not ask it again. Cite it as
+    `<artifact> ## Answers, câu N`. The words of an answer are a person's, not yours: quote
+    them, and do not restate them as your own finding. Since `0135` the app keeps answers
+    in its database and puts them in the prompt; the file on disk may not carry them. Never
+    write into that section yourself.
 11. Under `## Open questions`, each question is an item `N. ` at column 0 whose first
     paragraph holds a `?`. `cos.mjs` counts nothing else: a bullet, or a numbered line with
     no `?`, is read as a note and never stops the autopilot. So a real question always

@@ -195,7 +195,7 @@ class ReleaseMixin:
         try:
             try:
                 await gitops.fetch_with_tags(root)
-                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
             except (GitError, Unavailable) as e:
                 write("failed", detail=f"could not read the workspace: {e}")
                 raise Invalid(f"could not read the workspace: {e}") from e

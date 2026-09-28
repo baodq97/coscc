@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -19,6 +20,8 @@ from coscc.agent import steps
 from coscc.github import prcomment
 from coscc.git import worktrees
 from coscc.config import Config
+from coscc.data import Data
+from coscc.runlog.journal import Journal
 from coscc.service import Invalid, Service
 
 SLUG = "proof-of-hold"
@@ -94,14 +97,8 @@ class TheRefusals(unittest.TestCase):
 
 
 class TheShapes(unittest.TestCase):
-    def test_the_block_is_the_one_cos_mjs_reads(self):
-        self.assertEqual(
-            hold.block("paused", "Leif", "2026-09-24", "chờ 0034"),
-            "\n### Paused\nDecided by: Leif. Date: 2026-09-24. Via: product.\n\nchờ 0034\n",
-        )
-        self.assertTrue(hold.block("active", "a", "d", "r").startswith("\n### Resumed\n"))
-        self.assertTrue(hold.block("dropped", "a", "d", "r").startswith("\n### Dropped\n"))
-
+    # `block` went with `0135`: a hold is a row, and its block is rendered in the prompt
+    # (`coscc/runner/prompt_test.py`, `test_a_hold_renders_as_the_block_intent_md_carried`).
     def test_the_record(self):
         rec = hold.record(workspace="w", unit="u", from_="active", to="paused", reason="r", by="b", effects=[])
         self.assertEqual(rec, {"kind": "hold", "workspace": "w", "unit": "u", "stage": "", "from": "active",
@@ -211,6 +208,10 @@ class Repo(unittest.TestCase):
     def records(self) -> list[dict]:
         return self.service._journal().records(self.key, kind="hold")
 
+    def holds(self) -> list[dict]:
+        with Data(self.config.data_dir).connect() as conn:
+            return [dict(r) for r in conn.execute("SELECT move, reason FROM unit_holds WHERE unit = ? ORDER BY id", (self.unit,))]
+
 
 class NoSession:
     """`Sessions` for a service that must never open one (R16)."""
@@ -243,20 +244,33 @@ class RemovingTheWorktree(Repo):
 
 
 class HoldThroughTheService(Repo):
-    def test_the_five_moves_append_and_the_board_reads_them(self):
+    def test_the_five_moves_are_rows_and_the_board_reads_them(self):
+        # `0135` R8: a hold is a row in `unit_holds`; `intent.md` is not touched.
         path = [("paused", "active"), ("dropped", "paused"), ("paused", "dropped"), ("active", "paused"), ("dropped", "active")]
+        before = self.intent()
         for to, from_ in path:
-            before = self.intent()
             got = self.move(to, reason=f"vì {to}")
             self.assertEqual((got["from"], got["to"], got["reason"], got["by"]), (from_, to, f"vì {to}", "Leif"))
-            self.assertTrue(self.intent().startswith(before), to)
+            self.assertEqual(self.intent(), before, to)
             u = self.board_unit()
             self.assertEqual((u.get("hold") or {}).get("state"), None if to == "active" else to)
         self.assertEqual([(r["from"], r["to"]) for r in self.records()], [(f, t) for t, f in path])
-        text = self.intent().decode()
-        self.assertIn("\n## Answers\n", text)
-        for head in ("### Paused", "### Dropped", "### Resumed"):
-            self.assertIn(head, text)
+        self.assertEqual([r["move"] for r in self.holds()], [t for t, _ in path])
+
+    def test_a_hold_changes_no_byte_of_intent_md_and_writes_its_journal_row_in_the_same_transaction(self):
+        before = self.intent()
+        self.move("paused", reason="chờ")
+        self.assertEqual(self.intent(), before)
+        self.assertEqual((len(self.holds()), len(self.records())), (1, 1))
+        # The run-log row fails after the hold's row was written: neither is kept (C8).
+        with mock.patch.object(Journal, "_insert", side_effect=sqlite3.OperationalError("disk I/O error")):
+            with self.assertRaises(Invalid) as said:
+                self.move("active", reason="tiếp")
+        self.assertIn("the hold was not recorded", str(said.exception))
+        # What went wrong is the log's, not the dialog's (review F8, S3).
+        self.assertNotIn("disk I/O error", str(said.exception))
+        self.assertEqual((len(self.holds()), len(self.records())), (1, 1))
+        self.assertEqual(self.board_unit()["hold"]["state"], "paused")
 
     def test_pause_touches_nothing_and_starts_nothing(self):
         got = self.move("paused")
@@ -296,13 +310,15 @@ class HoldThroughTheService(Repo):
         self.move("paused")
         self.assertEqual(self.service._active, {})
 
-    def test_a_section_after_answers_is_refused(self):
+    def test_a_section_after_answers_no_longer_refuses_a_hold(self):
+        # Until `0135` a block appended after a later section would not have been read, so
+        # the hold was refused. It is a row now, and the file is not read for it.
         with (self.directory / "intent.md").open("a", encoding="utf-8") as f:
             f.write("\n## Answers\n\n## Later\n")
         before = self.intent()
-        with self.assertRaises(Invalid):
-            self.move("paused")
+        self.move("paused")
         self.assertEqual(self.intent(), before)
+        self.assertEqual(self.board_unit()["hold"]["state"], "paused")
 
     def test_drop_closes_the_pull_request_and_removes_the_tree(self):
         got = self.move("dropped", reason="không chứng minh được giá trị")
@@ -339,7 +355,7 @@ class HoldThroughTheService(Repo):
         (self.tree / "f.txt").write_text("changed\n", encoding="utf-8")
         got = self.move("dropped")
         self.assertEqual([e["result"] for e in got["effects"]], ["failed", "failed"])
-        self.assertIn("### Dropped", self.intent().decode())
+        self.assertEqual([r["move"] for r in self.holds()], ["dropped"])
         self.assertEqual(self.records()[-1]["effects"], got["effects"])
         self.assertEqual(self.board_unit()["hold"]["state"], "dropped")
 

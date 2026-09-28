@@ -8,10 +8,13 @@ makes the same argument for the same script.
 
 from __future__ import annotations
 
+import json
+
 import tempfile
 import unittest
 from pathlib import Path
 
+from coscc.units.meta_test import snapshot_of
 from coscc import units
 from coscc.units import BadUnit, CannotCreate
 
@@ -185,7 +188,8 @@ class TheBriefBecomesTheIdea(Fixture):
         # The only check that matters: `cos.mjs` has to agree it is a readable artifact,
         # because a file it calls broken blocks the unit rather than helping it.
         made = units.create(WS, "a-problem", "some words", self.data)
-        printed = units._cos(units.root(WS, self.data), "status")
+        store = units.root(WS, self.data)
+        printed = units._cos(store, "--state", "-", "status", stdin=json.dumps(snapshot_of(store)))
         self.assertIn(made["unit"], printed)
         row = next(line for line in printed.splitlines() if made["unit"] in line)
         self.assertEqual(row.split("|")[2].strip(), "A", row)
@@ -202,7 +206,7 @@ class TheBranchNameComesFromTheIntent(Fixture):
         # it reads and false of the unit. Measured 2026-09-22.
         made = units.create(WS, "a-problem", "", self.data)
         with self.assertRaises(CannotCreate) as caught:
-            units.branch_name(WS, made["unit"], self.data)
+            units.branch_name(WS, made["unit"], self.data, snapshot_of(units.root(WS, self.data)))
         message = str(caught.exception)
         self.assertIn("intent.md", message)
         self.assertNotIn("No such work unit", message)
@@ -212,11 +216,11 @@ class TheBranchNameComesFromTheIntent(Fixture):
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
-        self.assertEqual(units.branch_name(WS, made["unit"], self.data), "fix/a-problem")
+        self.assertEqual(units.branch_name(WS, made["unit"], self.data, snapshot_of(units.root(WS, self.data))), "fix/a-problem")
 
     def test_a_unit_that_is_not_there_is_refused_before_any_command_runs(self):
         with self.assertRaises(CannotCreate) as caught:
-            units.branch_name(WS, "0099_nothing", self.data)
+            units.branch_name(WS, "0099_nothing", self.data, snapshot_of(units.root(WS, self.data)))
         self.assertIn("0099_nothing", str(caught.exception))
 
 

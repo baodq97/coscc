@@ -9,7 +9,7 @@ from reflex.style import set_color_mode
 
 from coscc.agent import models
 from coscc.web import studio as s
-from coscc.state import AgentRow, DecisionRow, GrantRow, Knob, ModelRow, NameRow
+from coscc.state import AgentRow, DecisionRow, GrantRow, ImportRow, Knob, ModelRow, NameRow
 from coscc.screens.common import P, _MONO, _RUNIC, _details, _table
 from coscc.screens.board import _update_panel
 
@@ -302,6 +302,31 @@ def _names_panel() -> rx.Component:
     )
 
 
+def _import_row(row: rx.Var[ImportRow]) -> rx.Component:
+    return rx.table.row(
+        rx.table.cell(rx.text(row.workspace, size="1", white_space="nowrap")),
+        rx.table.cell(rx.text(row.unit, size="1", white_space="nowrap")),
+        rx.table.cell(rx.text(row.artifact, size="1", white_space="nowrap")),
+        rx.table.cell(rx.text(row.field, size="1")),
+        rx.table.cell(rx.text(row.reason, size="1", min_width="200px")),
+        data_testid="import-row",
+    )
+
+
+def _import_panel() -> rx.Component:
+    """`0135` R4. The fields the import could not read, which the board treats as unknown."""
+    return s.panel(
+        s.section_head("Import report", rx.icon("file_question", size=18, color=s.MUTED)),
+        s.text("The board treats each field listed here as unknown.", size="1"),
+        rx.cond(P.import_problem != "",
+                rx.callout(P.import_problem, icon="circle_alert", color_scheme="red",
+                           variant="surface", size="1", margin_top="8px")),
+        _table(["Workspace", "Unit", "Artifact", "Field", "Why"], P.import_rows, _import_row,
+               "Every field of every unit was read.", margin_top="10px"),
+        id="import-panel",
+    )
+
+
 def _settings() -> rx.Component:
     return rx.vstack(
         s.heading("Make it feel like yours.",
@@ -398,6 +423,7 @@ def _settings() -> rx.Component:
         ),
         _decisions_panel(),
         _names_panel(),
+        _import_panel(),
         s.panel(
             s.section_head("What a board step may do",
                            rx.icon("key-round", size=18, color=s.MUTED)),

@@ -12,7 +12,8 @@ Met when (b), (c) and (d) are all 0.
 
 No session, no quota, no network, and nothing written. It opens `<COS_DATA_DIR>/cos.db`
 (default `~/.cos`) with `mode=ro`, never through `Data`, which would raise the schema on a
-database an older build still reads. The workspaces are the app's: `COS_WORKSPACES`, and the
+database an older build still reads. Since `0135` a board is read on the app's snapshot, so
+the database is copied into a temporary directory first and every store is imported there. The workspaces are the app's: `COS_WORKSPACES`, and the
 `workspaces` rows under `COS_WORKING_DIR`. Each board is read by `cos.mjs`, so `node` is
 needed; the codes are `coscc.agent.precedent.decided_by`'s. Run it at a terminal on the
 machine the app runs on — inside a step `COS_DATA_DIR` is that step's scratch root (`0076`).
@@ -30,6 +31,7 @@ import json
 import shutil
 import sqlite3
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 
@@ -38,8 +40,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from coscc import units  # noqa: E402
 from coscc.agent import agents, precedent  # noqa: E402
 from coscc.config import from_env  # noqa: E402
+from coscc.data import Data, Incompatible  # noqa: E402
 from coscc.units import board as board_reader  # noqa: E402
 from coscc.units.board import Unavailable  # noqa: E402
+from coscc.units.meta import MetaError, UnitMeta  # noqa: E402
+from coscc.units.history import BadTransition  # noqa: E402
 
 FROM = ("intent.md", "spec.md")
 MINE = "answer_names_mine"
@@ -91,25 +96,52 @@ def _mine(prefs: dict[str, str]) -> list[str]:
     return [str(n) for n in value] if isinstance(value, list) else []
 
 
+def _copy(db: Path, into: Path, working_dir: str) -> UnitMeta:
+    """`0135`: a board is read on the app's snapshot, and a store the app has not imported yet
+    has its answers only in its files. So `cos.db` is copied with SQLite's backup API, from a
+    read-only connection, and every import runs on the copy: the real one keeps every byte."""
+    src = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    dst = sqlite3.connect(into / "cos.db")
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    return UnitMeta(working_dir or str(db.parent), Data(into))
+
+
+async def _board(meta: UnitMeta, data_dir: Path, path: str, names: dict[str, str]) -> dict:
+    """`path`'s board, read on the copy's snapshot, each store it may name imported first."""
+    for key in {units.key(path), *names.values()}:
+        store = units.root(key, str(data_dir))
+        if (store / units.COS_DIR).is_dir():
+            meta.import_store(key, store)
+    return await board_reader.read(units.root(path, str(data_dir)), state=meta.snapshot(units.key(path), names))
+
+
 async def measure(data_dir: Path, config) -> tuple[dict, list[str]]:
     db = _read(data_dir / "cos.db", config.working_dir or "")
     agent_names, mine = _agent_names(db["prefs"]), _mine(db["prefs"])
     paths = [str(p) for p in config.workspaces]
+    names: dict[str, str] = {}
     if config.working_dir:
         paths += [str(Path(config.working_dir) / n) for n in db["names"]]
+        names = {n: units.key(str(Path(config.working_dir) / n)) for n in db["names"]}
     codes: Counter = Counter()
     missing = agent_originator = 0
     lines: list[str] = []
-    for path in dict.fromkeys(paths):
-        root = data_dir / units.UNITS_DIR / units.slot(path)
-        if not (root / units.COS_DIR).is_dir():
-            lines.append(f"{Path(path).name}: no units")
-            continue
-        try:
-            data = await board_reader.read(root)
-        except Unavailable as e:
-            lines.append(f"{Path(path).name}: could not be read: {e}")
-            continue
+    with tempfile.TemporaryDirectory() as tmp:
+        meta = _copy(data_dir / "cos.db", Path(tmp), config.working_dir or "")
+        boards = {}
+        for path in dict.fromkeys(paths):
+            if not (units.root(path, str(data_dir)) / units.COS_DIR).is_dir():
+                lines.append(f"{Path(path).name}: no units")
+                continue
+            try:
+                boards[path] = await _board(meta, data_dir, path, names)
+            except (Unavailable, MetaError, BadTransition, Incompatible, sqlite3.Error) as e:
+                lines.append(f"{Path(path).name}: could not be read: {e}")
+    for path, data in boards.items():
         for u in data["units"]:
             for a in u.get("answers") or []:
                 if a.get("artifact") not in FROM:

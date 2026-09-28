@@ -251,7 +251,7 @@ class StepsMixin:
             raise Invalid("name a work unit")
         directory = self._unit_dir(cwd, unit)
         try:
-            data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
         except Unavailable as e:
             raise Invalid(str(e)) from e
         found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -283,7 +283,7 @@ class StepsMixin:
         pr_head = (info or {}).get("pr_head", "")
         origin_sha = (info or {}).get("origin_sha", "")
         try:
-            branch = units.branch_name(cwd, unit, self.config.data_dir)
+            branch = units.branch_name(cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
         except (CannotCreate, BadUnit):
             branch = ""
         tree_found = None
@@ -634,7 +634,7 @@ class StepsMixin:
     async def _cleanup(self, cwd: str, unit: str) -> dict[str, Any]:
         """R10 after a `ship` step. Never raises; says what it did or why not."""
         try:
-            data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
         except Unavailable as e:
             return {"removed": False, "reason": str(e)}
         found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -655,7 +655,7 @@ class StepsMixin:
             journal = self._journal()
             if journal is None:
                 return
-            data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
             found = next((u for u in data["units"] if u["name"] == unit), None)
             if found is None:
                 return
@@ -685,7 +685,7 @@ class StepsMixin:
         # `0045` R15. Asked first with no `--repo`, which reads files only: a held unit is
         # answered here, before `_worktree` could reopen the tree a drop just removed.
         try:
-            held = await board_reader.next_step(self._units_root(cwd), unit, repo=None, peers=self._peers())
+            held = await board_reader.next_step(self._units_root(cwd), unit, repo=None, state=self._snapshot(cwd, [unit]))
         except Unavailable as e:
             raise Invalid(str(e)) from e
         if held.get("hold"):
@@ -704,7 +704,7 @@ class StepsMixin:
         else:
             repo = cwd
         try:
-            found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo, peers=self._peers())
+            found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo, state=self._snapshot(cwd, [unit]))
         except Unavailable as e:
             raise Invalid(str(e)) from e
         return {
@@ -730,7 +730,7 @@ class StepsMixin:
             raise Invalid("name a work unit")
         self._unit_dir(cwd, unit)
         try:
-            found = await board_reader.rerun(self._units_root(cwd), unit)
+            found = await board_reader.rerun(self._units_root(cwd), unit, state=self._snapshot(cwd, [unit]))
         except Unavailable as e:
             raise Invalid(str(e)) from e
         if "error" in found:
@@ -747,7 +747,7 @@ class StepsMixin:
             )
 
         try:
-            data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
         except Unavailable as e:
             raise Invalid(str(e)) from e
 
@@ -807,7 +807,7 @@ class StepsMixin:
         rid: str | None = None
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
 
@@ -833,7 +833,7 @@ class StepsMixin:
                 if len(note) > RERUN_NOTE_MAX:
                     raise Invalid(f"the note is {len(note)} characters, over the {RERUN_NOTE_MAX} a rerun takes")
                 try:
-                    asked = await board_reader.rerun(self._units_root(cwd), unit, stage)
+                    asked = await board_reader.rerun(self._units_root(cwd), unit, stage, state=self._snapshot(cwd, [unit]))
                 except Unavailable as e:
                     raise Invalid(str(e)) from e
                 if "error" in asked:
@@ -883,7 +883,7 @@ class StepsMixin:
                 # `work` is the checkout the `review` and `ship` gates read git and the pull
                 # request from (`0015`). The store has no git to read.
                 allowed, said = await board_reader.gate(
-                    self._units_root(cwd), unit, stage, repo=work, peers=self._peers()
+                    self._units_root(cwd), unit, stage, repo=work, state=self._snapshot(cwd, [unit])
                 )
             except Unavailable as e:
                 raise Invalid(str(e)) from e
@@ -1026,6 +1026,11 @@ class StepsMixin:
             # `0040` R12, R13. Only for a unit an idea lists, and only for `intent` and `impl`;
             # every other step is handed no key, so its prompt and its gate are what they were.
             link_kw: dict[str, Any] = {}
+            # `0135` R8. The answers and holds the prompt renders, from the database.
+            link_kw["meta"] = self._meta_of(cwd, unit)
+            state_file = self._write_step_state(cwd, unit)
+            if state_file:
+                link_kw["state_file"] = state_file
             if stage == "intent":
                 idea_note = self._idea_note(cwd, unit)
                 if idea_note:
@@ -1141,7 +1146,7 @@ class StepsMixin:
         `Invalid` with `RETAKE_REFUSED`; what went wrong is only in its record (R5). No tracked
         file is put back; `.screens/` is, by `retake.take` (review round 1, F1)."""
         try:
-            asked = await board_reader.screens(self._units_root(cwd), unit, work)
+            asked = await board_reader.screens(self._units_root(cwd), unit, work, state=self._snapshot(cwd, [unit]))
         except Unavailable as e:
             raise Invalid(str(e)) from e
         if not asked.get("retake"):
@@ -1237,7 +1242,7 @@ class StepsMixin:
                 if item[0] == "done":
                     item = ("done", {**item[1], "base": base})
                     if item[1].get("outcome") != "stopped":
-                        self._record_transition(cwd, unit, artifact, directory, item[1])
+                        item = ("done", {**item[1], **await self._ingest(cwd, unit, item[1], artifact)})
                     if stage == "ship" and tree is not None and item[1].get("outcome") == "done":
                         # R10. Only if `cos.mjs` now says `finished` and GitHub says merged;
                         # otherwise nothing is touched and the board tries again later.

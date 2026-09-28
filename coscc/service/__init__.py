@@ -165,6 +165,9 @@ class Service(
     # its first `await` (`_take`). One process only, like `pull`.
     _active: dict[tuple[str, str], steps_mod.Mark] = field(default_factory=dict, init=False, repr=False)
     _integrate_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
+    # `0135`. The journal keys whose store `cos.db` says was imported: an import is never
+    # undone, so `_snapshot` stops asking once it is (review F2, R10). One process only.
+    _imported: set[str] = field(default_factory=set, init=False, repr=False)
     # `0046` R13. The journal keys with a release press running now, checked and marked with
     # no `await` between. One process only, like `pull`.
     _releasing: set[str] = field(default_factory=set, init=False, repr=False)

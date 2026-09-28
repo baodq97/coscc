@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import json
+
 import ast
 import unittest
 from pathlib import Path
 
+from coscc.units.meta_test import snapshot_of
 from coscc.state.state_test import SOURCE, _self_names, _source_text, _state_class
 
 
@@ -81,7 +84,10 @@ class AFreshUnitIsPlannedNotNeedsReview(unittest.TestCase):
         import asyncio
         import tempfile
 
-        from coscc.units import board
+        from coscc.units import board as _board
+        from coscc.units.meta_test import WithSnapshot
+
+        board = WithSnapshot(_board)
         from coscc.service import unit_state
 
         with tempfile.TemporaryDirectory() as d:
@@ -146,7 +152,10 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
         import subprocess
         import tempfile
 
-        from coscc.units import board
+        from coscc.units import board as _board
+        from coscc.units.meta_test import WithSnapshot
+
+        board = WithSnapshot(_board)
         from coscc.agent import harness
 
         with tempfile.TemporaryDirectory() as d:
@@ -154,7 +163,7 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
             unit.mkdir(parents=True)
             (unit / "intent.md").write_text(self.TEXT, encoding="utf-8")
             raw = subprocess.run(
-                ["node", str(harness.script()), "--root", d, "status", "--json"],
+                ["node", str(harness.script()), "--root", d, "--state", "-", "status", "--json"], input=json.dumps(snapshot_of(d)),
                 capture_output=True, text=True, check=True,
             ).stdout
             [from_script] = json.loads(raw)["units"]
@@ -196,7 +205,10 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
         import asyncio
         import tempfile
 
-        from coscc.units import board
+        from coscc.units import board as _board
+        from coscc.units.meta_test import WithSnapshot
+
+        board = WithSnapshot(_board)
         from coscc.state import _hold_fields
 
         with tempfile.TemporaryDirectory() as d:
@@ -295,7 +307,10 @@ class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
         import tempfile
         from unittest import mock
 
-        from coscc.units import board
+        from coscc.units import board as _board
+        from coscc.units.meta_test import WithSnapshot
+
+        board = WithSnapshot(_board)
 
         [kw] = [
             k for node in ast.walk(ast.parse(SOURCE.read_text(encoding="utf-8")))

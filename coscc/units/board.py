@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -69,7 +68,7 @@ def _stage_rows(stages: list[dict[str, Any]], artifacts: dict[str, Any]) -> list
     return rows
 
 
-async def _run(argv: list[str], timeout: float) -> tuple[int, str, str]:
+async def _run(argv: list[str], timeout: float, stdin: str | None = None) -> tuple[int, str, str]:
     """One `cos.mjs` invocation: its exit code and both streams, decoded.
 
     Extracted when `gate` arrived, because the two callers want opposite things from a
@@ -84,10 +83,12 @@ async def _run(argv: list[str], timeout: float) -> tuple[int, str, str]:
         env=_child_env(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        stdin=asyncio.subprocess.DEVNULL,
+        stdin=asyncio.subprocess.DEVNULL if stdin is None else asyncio.subprocess.PIPE,
     )
     try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        out, err = await asyncio.wait_for(
+            proc.communicate(None if stdin is None else stdin.encode()), timeout=timeout
+        )
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
@@ -99,13 +100,22 @@ async def _run(argv: list[str], timeout: float) -> tuple[int, str, str]:
     )
 
 
-Peers = Sequence[tuple[str, "str | Path"]]
+# `0135`. The snapshot of a store with no units, for a question that needs none: `stages`.
+EMPTY_STATE: dict[str, Any] = {"workspace": "", "workspaces": [], "units": {}, "ideas": {}}
 
 
-def _peer_args(peers: Peers) -> list[str]:
-    """`0040` R14. One `--peer <ws>=<store root>` per workspace, the stores a unit's `Idea:` and
-    `Depends on:` may name. Which names are left out is `Service._peers`'s decision, not this."""
-    return [a for ws, store in peers for a in ("--peer", f"{ws}={Path(store).expanduser().resolve()}")]
+def _source(state: dict[str, Any] | None) -> tuple[list[str], str | None]:
+    """`0135`. A unit's metadata is the app's snapshot (`coscc/units/meta.py`), handed to
+    `cos.mjs` on stdin as `--state -`. Without one, the deciding commands refuse with exit 2,
+    which each caller reports as it reports any other refusal."""
+    if state is None:
+        return [], None
+    return ["--state", "-"], json.dumps(state, ensure_ascii=False)
+
+
+async def _ask(argv: list[str], timeout: float, stdin: str | None) -> tuple[int, str, str]:
+    """`_run`, handed stdin only when there is a snapshot to hand it."""
+    return await (_run(argv, timeout) if stdin is None else _run(argv, timeout, stdin))
 
 
 def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
@@ -134,7 +144,9 @@ def _ideas_of(data: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-async def read(units_root: str | Path, timeout: float = TIMEOUT, peers: Peers = ()) -> dict[str, Any]:
+async def read(
+    units_root: str | Path, timeout: float = TIMEOUT, state: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Every unit under `units_root`, each with its eight stages.
 
     **`units_root` is not the workspace.** Until `0014` it was, and this module worked the
@@ -151,9 +163,10 @@ async def read(units_root: str | Path, timeout: float = TIMEOUT, peers: Peers = 
     if not script.exists():
         raise Unavailable(f"the harness script is missing: {script}")
 
+    source, stdin = _source(state)
     try:
-        code, out_text, err_text = await _run(
-            [str(script), "--root", str(path), *_peer_args(peers), "status", "--json"], timeout
+        code, out_text, err_text = await _ask(
+            [str(script), "--root", str(path), *source, "status", "--json"], timeout, stdin
         )
     except (OSError, ValueError) as e:
         # No node on PATH is the ordinary case here, and it must name itself -- *with the
@@ -293,7 +306,7 @@ async def stages(timeout: float = TIMEOUT) -> list[str]:
     import tempfile
 
     with tempfile.TemporaryDirectory(prefix="coscc-stages-") as empty:
-        data = await read(empty, timeout)
+        data = await read(empty, timeout, state=EMPTY_STATE)
     return list(data["stages"])
 
 
@@ -308,7 +321,7 @@ async def gate(
     stage: str,
     repo: str | Path | None = None,
     timeout: float = GATE_TIMEOUT,
-    peers: Peers = (),
+    state: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """Ask `cos.mjs gate` whether one stage of one unit may proceed.
 
@@ -341,10 +354,11 @@ async def gate(
         raise Unavailable(f"the harness script is missing: {script}")
 
     try:
-        argv = [str(script), "--root", str(path), *_peer_args(peers), "gate", unit, stage]
+        source, stdin = _source(state)
+        argv = [str(script), "--root", str(path), *source, "gate", unit, stage]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
-        code, out_text, err_text = await _run(argv, timeout)
+        code, out_text, err_text = await _ask(argv, timeout, stdin)
     except (OSError, ValueError) as e:
         raise Unavailable(
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"
@@ -361,7 +375,7 @@ async def next_step(
     unit: str,
     repo: str | Path | None = None,
     timeout: float = GATE_TIMEOUT,
-    peers: Peers = (),
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask `cos.mjs next` which one stage the run button may offer for `unit`.
 
@@ -381,10 +395,11 @@ async def next_step(
         raise Unavailable(f"the harness script is missing: {script}")
 
     try:
-        argv = [str(script), "--root", str(path), *_peer_args(peers), "next", unit]
+        source, stdin = _source(state)
+        argv = [str(script), "--root", str(path), *source, "next", unit]
         if repo is not None:
             argv += ["--repo", str(Path(repo).expanduser().resolve())]
-        code, out_text, err_text = await _run(argv, timeout)
+        code, out_text, err_text = await _ask(argv, timeout, stdin)
     except (OSError, ValueError) as e:
         raise Unavailable(
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"
@@ -419,7 +434,8 @@ async def next_step(
 
 
 async def screens(
-    units_root: str | Path, unit: str, repo: str | Path, timeout: float = GATE_TIMEOUT
+    units_root: str | Path, unit: str, repo: str | Path, timeout: float = GATE_TIMEOUT,
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask `cos.mjs screens` whether `unit`'s screenshots in `repo` must be taken again.
 
@@ -435,9 +451,10 @@ async def screens(
         raise Unavailable(f"the harness script is missing: {script}")
 
     try:
-        argv = [str(script), "--root", str(path), "screens", unit,
+        source, stdin = _source(state)
+        argv = [str(script), "--root", str(path), *source, "screens", unit,
                 "--repo", str(Path(repo).expanduser().resolve())]
-        code, out_text, err_text = await _run(argv, timeout)
+        code, out_text, err_text = await _ask(argv, timeout, stdin)
     except (OSError, ValueError) as e:
         raise Unavailable(
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"
@@ -453,7 +470,9 @@ async def screens(
         raise Unavailable(f"the harness script did not return JSON: {e}") from e
 
 
-async def pr_text(units_root: str | Path, unit: str, timeout: float = TIMEOUT) -> dict[str, Any]:
+async def pr_text(
+    units_root: str | Path, unit: str, timeout: float = TIMEOUT, state: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Ask `cos.mjs pr-text` for the title and body `unit`'s `pr.md` puts on its pull request.
 
     `0055`. The rule that cuts `pr.md` into a title and a body is `cos.mjs` `prText`, the
@@ -468,7 +487,8 @@ async def pr_text(units_root: str | Path, unit: str, timeout: float = TIMEOUT) -
         raise Unavailable(f"the harness script is missing: {script}")
 
     try:
-        code, out_text, err_text = await _run([str(script), "--root", str(path), "pr-text", unit], timeout)
+        source, stdin = _source(state)
+        code, out_text, err_text = await _ask([str(script), "--root", str(path), *source, "pr-text", unit], timeout, stdin)
     except (OSError, ValueError) as e:
         raise Unavailable(
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"
@@ -485,7 +505,8 @@ async def pr_text(units_root: str | Path, unit: str, timeout: float = TIMEOUT) -
 
 
 async def rerun(
-    units_root: str | Path, unit: str, stage: str | None = None, timeout: float = TIMEOUT
+    units_root: str | Path, unit: str, stage: str | None = None, timeout: float = TIMEOUT,
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask `cos.mjs rerun` which accepted stages of `unit` may run again, or -- with `stage`
     -- for the `### Rerun` block to append before running it.
@@ -502,8 +523,9 @@ async def rerun(
         raise Unavailable(f"the harness script is missing: {script}")
 
     try:
-        argv = [str(script), "--root", str(path), "rerun", unit] + ([stage] if stage else [])
-        code, out_text, err_text = await _run(argv, timeout)
+        source, stdin = _source(state)
+        argv = [str(script), "--root", str(path), *source, "rerun", unit] + ([stage] if stage else [])
+        code, out_text, err_text = await _ask(argv, timeout, stdin)
     except (OSError, ValueError) as e:
         raise Unavailable(
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"

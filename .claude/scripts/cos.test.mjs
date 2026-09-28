@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import {
-  parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit, STAGE_NAMES,
+  parseStatus, parseSkipReason, checkGate, nextAction, nextNumber, readUnit as readUnitWith, STAGE_NAMES,
   BRANCH_TYPES, branchProblem, tagProblem, isPrerelease, tagVersion, versionProblem, parseType,
   unitBranch, VERSION_SOURCE, parseQuestions, parseAnswers, parsePr, parseReview, REVIEW_ROUNDS,
   reviewRounds, nextStep, parseNeedsPerson, betweenPrAndShip, parseDeadline, parseOutcome, unitOutcome,
@@ -15,8 +15,50 @@ import {
   aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip, normalizePatch, openLines,
   parseMoreRounds, reviewLimit, moreRounds, branchChecks, notAWorkBranch,
   parseIdea, parseLinks, parseIdeaRef, parseUnitRef, WAITING_ON, titleProblem,
+  unitMeta, readIdeas, NEEDS_STATE,
 } from './cos.mjs'
 import { createHash } from 'node:crypto'
+
+// --- 0135: test glue, never in `cos.mjs` (plan step 8) --------------------------------
+// Since `0135` every deciding command, and `readUnit`, decides on the app's snapshot alone.
+// The tests below were written against files, so this builds the snapshot the app would
+// build from them: `meta`'s own readers (`unitMeta`, `readIdeas`), one entry per directory,
+// as `coscc/units/meta.py` imports a store. `stores` maps a workspace name to its `.cos/`;
+// `own` is the name of the store the command reads, `''` when it has none.
+const entryFrom = (m) => ({
+  artifacts: Object.fromEntries(Object.entries(m.artifacts).map(([f, a]) => [f, { status: a.status, raw: a.raw, questions: a.questions }])),
+  type: m.type ?? null,
+  links: m.links ?? { idea: null, repo: null, dependsOn: null },
+  holds: (m.holds ?? []).filter((h) => h.by !== null),
+  answers: m.answers,
+  unknowns: [],
+})
+function stateFor(stores, own = '') {
+  const units = {}
+  const ideas = {}
+  for (const [ws, cos] of stores) {
+    if (!existsSync(cos)) continue
+    for (const e of readdirSync(cos, { withFileTypes: true })) {
+      if (e.isDirectory() && e.name !== 'ideas') units[`${ws}/${e.name}`] = entryFrom(unitMeta(join(cos, e.name)))
+    }
+    ideas[ws] = existsSync(join(cos, 'ideas')) ? readIdeas(cos) : []
+  }
+  return { workspace: own, workspaces: [...stores.keys()].filter(Boolean), units, ideas }
+}
+// A store root (the directory `--root` takes) and `[name, root]` pairs, as `--peer` named them.
+function stateOfRoots(root, peers = []) {
+  const at = resolve(root)
+  const own = peers.find(([, d]) => resolve(d) === at)?.[0] ?? ''
+  return stateFor(new Map([[own, join(at, '.cos')], ...peers.filter(([n]) => n !== own).map(([n, d]) => [n, join(resolve(d), '.cos')])]), own)
+}
+// The unit read is entered under the name it is read by, whatever its directory is called.
+function readUnit(dir, name, { state, peers, cosDir } = {}) {
+  if (!state) {
+    state = stateOfRoots(dirname(cosDir ?? dirname(dir)), [...(peers ?? [])])
+    state.units[`${state.workspace}/${name}`] = entryFrom(unitMeta(dir))
+  }
+  return readUnitWith(dir, name, { state })
+}
 
 // `type` is what `readUnit` reads off `Type: feat`; since `0049` the `review` and `ship` gates
 // hold `pr.md`'s title to it.
@@ -443,8 +485,30 @@ test('a slug over the limit is cut at its last hyphen, and one within it is left
 // is not the same claim as "the flag was refused". The risk register of
 // `.cos/0009_branch-and-release-conventions/plan.md` says a guard with no test is a
 // sentence in a document, and this is the guard.
-const cli = (...args) =>
-  spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args], { encoding: 'utf8' })
+const SCRIPT = fileURLToPath(new URL('./cos.mjs', import.meta.url))
+const DECIDING = new Set(['status', 'gate', 'next', 'rerun', 'unit-branch', 'pr-text', 'screens'])
+const VALUED = new Set(['--root', '--repo', '--reserve-from', '--state', '--peer'])
+// `0135` glue: a deciding command given no `--state` is handed the snapshot of its files, and
+// `--peer <ws>=<dir>` becomes that workspace in it. Anything else is spawned as it is.
+const cosRun = (args, options = {}) => {
+  const cmd = args.find((a, i) => !a.startsWith('--') && !VALUED.has(args[i - 1]))
+  if (args.includes('--state') || !DECIDING.has(cmd)) return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', ...options })
+  const kept = []
+  const peers = []
+  let root = fileURLToPath(new URL('../..', import.meta.url))
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--peer' && args[i + 1]?.includes('=')) {
+      const at = args[++i].indexOf('=')
+      peers.push([args[i].slice(0, at), args[i].slice(at + 1)])
+      continue
+    }
+    if (args[i] === '--root' && args[i + 1]) root = args[i + 1]
+    kept.push(args[i])
+  }
+  const input = JSON.stringify(stateOfRoots(root, peers))
+  return spawnSync(process.execPath, [SCRIPT, ...kept, '--state', '-'], { encoding: 'utf8', input, ...options })
+}
+const cli = (...args) => cosRun(args)
 
 for (const args of [['check-branch', 'feat/x'], ['check-tag', 'v0.1.0'], ['check-version']]) {
   test(`--root is refused by ${args[0]}`, () => {
@@ -719,7 +783,8 @@ test('status --json over 64 KiB reaches a pipe whole', async () => {
   const long = `${QUESTIONS}4. ${'x'.repeat(200 * 1024)}?\n`
   const { root } = questionTree({ 'intent.md': long })
   const script = fileURLToPath(new URL('./cos.mjs', import.meta.url))
-  const child = spawn(process.execPath, [script, '--root', root, 'status', '--json'])
+  const child = spawn(process.execPath, [script, '--root', root, '--state', '-', 'status', '--json'])
+  child.stdin.end(JSON.stringify(stateOfRoots(root)))
   let text = ''
   child.stdout.setEncoding('utf8')
   for await (const chunk of child.stdout) {
@@ -961,7 +1026,7 @@ test('--repo belongs to gate and nothing else', () => {
 })
 
 test('a bad COS_REVIEW_ROUNDS is misuse, and names the variable', () => {
-  const out = spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), 'status'], {
+  const out = cosRun(['status'], {
     encoding: 'utf8', env: { ...process.env, COS_REVIEW_ROUNDS: 'three' },
   })
   assert.equal(out.status, 2)
@@ -1335,7 +1400,7 @@ test('0035: status --json carries betweenPrAndShip for every unit; gate and next
   put('0001_open', 'pr.md', '# PR\nPR: https://github.com/o/r/pull/7. Status: accepted.\n')
   put('0002_early', 'intent.md', '# X\nType: fix. Status: draft.\n')
   const cli = (...args) =>
-    spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', root], { encoding: 'utf8' })
+    cosRun([...args, '--root', root], { encoding: 'utf8' })
   const before = { gate: cli('gate', '0001_open', 'impl'), next: cli('next', '0001_open') }
   const status = JSON.parse(cli('status', '--json').stdout)
   assert.deepEqual(status.units.map((u) => [u.name, u.betweenPrAndShip]), [['0001_open', true], ['0002_early', false]])
@@ -1355,7 +1420,7 @@ test('0033 R11: the plan\'s Impl: label opens and closes no gate, and moves no n
     writeFileSync(join(dir, 'spec.md'), '# X\nStatus: accepted.\n')
     writeFileSync(join(dir, 'plan.md'), `# X\nStatus: accepted.${label === null ? '' : ` Impl: ${label}.`}\n`)
     const cli = (...args) =>
-      spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', root], { encoding: 'utf8' })
+      cosRun([...args, '--root', root], { encoding: 'utf8' })
     const gate = cli('gate', '0001_same', 'implement')
     const next = cli('next', '0001_same')
     return { code: gate.status, gate: gate.stdout, next: JSON.parse(next.stdout) }
@@ -1637,7 +1702,7 @@ function heldTree(intentTail, extra = {}) {
   writeFileSync(join(dir, 'intent.md'), HELD_INTENT + intentTail)
   for (const [f, text] of Object.entries(extra)) writeFileSync(join(dir, f), text)
   const cli = (...args) =>
-    spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', root], { encoding: 'utf8' })
+    cosRun([...args, '--root', root], { encoding: 'utf8' })
   return { root, dir, u: readUnit(dir, '0001_held'), cli }
 }
 
@@ -2395,7 +2460,7 @@ test('0027 R2: an incomplete round 1 then an unfinished round 2 uses no round', 
 const tree0027 = (text) => {
   const t = rerunTree({ ...RERUN_FILES, 'review.md': text }, '0017_units-share-one-working-tree')
   const run = (limit, ...args) =>
-    spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', t.root], {
+    cosRun([...args, '--root', t.root], {
       encoding: 'utf8', env: { ...process.env, COS_REVIEW_ROUNDS: String(limit) },
     })
   const used = (limit) => {
@@ -2520,7 +2585,7 @@ test('0100: status --json carries at and next.why for every unit', () => {
   put('0003_done', 'intent.md', '# X\nType: fix. Status: accepted.\n')
   put('0003_done', 'plan.md', '# X\nStatus: done.\n')
   const cli = (...args) =>
-    spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', root], { encoding: 'utf8' })
+    cosRun([...args, '--root', root], { encoding: 'utf8' })
   const status = JSON.parse(cli('status', '--json').stdout)
   assert.deepEqual(
     status.units.map((u) => [u.name, u.at, u.next.why]),
@@ -2535,7 +2600,7 @@ test('0100: the line cos.mjs next prints carries no why', () => {
   const dir = join(root, '.cos', '0001_open')
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, 'intent.md'), '# X\nType: feat. Status: accepted.\n')
-  const run = spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), 'next', '0001_open', '--root', root], { encoding: 'utf8' })
+  const run = cosRun(['next', '0001_open', '--root', root], { encoding: 'utf8' })
   const line = JSON.parse(run.stdout)
   assert.equal(line.stage, 'spec')
   assert.ok(!('why' in line), 'next carries no why')
@@ -2560,7 +2625,7 @@ function rerunTree(files = RERUN_FILES, name = '0003_awaiting-ship') {
   mkdirSync(dir, { recursive: true })
   for (const [f, text] of Object.entries(files)) writeFileSync(join(dir, f), text)
   const cli = (...args) =>
-    spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), ...args, '--root', root], { encoding: 'utf8' })
+    cosRun([...args, '--root', root], { encoding: 'utf8' })
   const read = () => readUnit(dir, name)
   // What the app does with the block: append it under `intent.md ## Answers`.
   const append = (file, tail) => {
@@ -4177,26 +4242,22 @@ test('0040 R6: a missing peer, a missing idea file and an unlisted unit each lan
   }, { '0001_f.md': IDEA40('- b/0005_s.') })
   const units = json40(cli('--root', b, 'status', '--json')).units
   const said = (name) => units.find((u) => u.name === name).problems.join('\n')
-  assert.match(said('0002_p'), /Depends on: c\/0001_z — no --peer c/)
-  assert.match(said('0003_q'), /Idea: ideas\/0009_none\.md — .*0009_none\.md does not exist/)
+  // `0135`: the snapshot names the workspaces, where `--peer` once named stores.
+  assert.match(said('0002_p'), /Depends on: c\/0001_z — the app has no workspace named c/)
+  assert.match(said('0003_q'), /Idea: ideas\/0009_none\.md — the app knows no \/ideas\/0009_none\.md/)
   assert.match(said('0004_r'), /does not list b\/0004_r under ## Units/)
   assert.match(said('0005_s'), /declares no Repo:/)
 })
 
-test('0040 R5: --peer with a bad or repeated name exits 2', () => {
+// `0135`: `--peer` is gone. Every use of it, well formed or not, on any command, is misuse.
+test('0040 R5, since 0135: --peer exits 2 wherever it is given', () => {
   const root = store40({})
-  for (const args of [['--peer', 'a/b=/x'], ['--peer', 'a'], ['--peer', 'a='], ['--peer'], ['--peer', 'a=/x', '--peer', 'a=/y'], ['--peer', '..=/x']]) {
-    const out = cli('--root', root, 'status', ...args)
+  for (const args of [['status', '--peer', 'a=/x'], ['status', '--peer', 'a/b=/x'], ['status', '--peer'], ['new-path', 'x', '--peer', 'a=/x']]) {
+    const out = spawnSync(process.execPath, [SCRIPT, '--root', root, ...args, '--state', '-'], { encoding: 'utf8', input: JSON.stringify(stateOfRoots(root)) })
     assert.equal(out.status, 2, args.join(' '))
+    assert.match(out.stderr, /--peer is gone since 0135/)
+    assert.equal(out.stdout, '')
   }
-  assert.equal(cli('--root', root, 'status', '--peer', 'a=/x', '--peer', 'b.c_d-1=/y').status, 0)
-})
-
-test('0040 R5: --peer is refused on new-path', () => {
-  const out = cli('--root', store40({}), 'new-path', 'x', '--peer', 'a=/x')
-  assert.equal(out.status, 2)
-  assert.match(out.stderr, /--peer applies only to/)
-  assert.equal(out.stdout, '')
 })
 
 test('0040 R7: impl gate stays shut while the dependency\'s ship.md is not accepted', () => {
@@ -4228,11 +4289,11 @@ test('0040 R8: impl gate opens once the dependency\'s ship.md is accepted', () =
   assert.ok(!('why' in next), 'why is carried only by a wait')
 })
 
-test('0040 R7: without --peer the impl gate names --peer', () => {
+test('0040 R7: a workspace the snapshot does not name shuts impl and says so', () => {
   const { b } = pair40({ ship: 'accepted' })
   const out = cli('--root', b, 'gate', '0001_y', 'impl')
   assert.equal(out.status, 1)
-  assert.match(out.stderr, /waits on a\/0001_x: no --peer a: pass --peer a=<dir>/)
+  assert.match(out.stderr, /waits on a\/0001_x: the app has no workspace named a/)
 })
 
 test('0040 R9: a Depends on that differs from the idea\'s line shuts impl', () => {
@@ -4270,7 +4331,7 @@ test('0040 R9: an unreadable Idea: shuts impl but no other gate', () => {
   for (const stage of ['spec', 'plan']) assert.equal(cli('--root', b, 'gate', '0001_y', stage, '--peer', `b=${b}`).status, 0, stage)
   const out = cli('--root', b, 'gate', '0001_y', 'impl', '--peer', `b=${b}`)
   assert.equal(out.status, 1)
-  assert.match(out.stderr, /Idea: b\/ideas\/0001_gone\.md cannot be read: .*does not exist/)
+  assert.match(out.stderr, /Idea: b\/ideas\/0001_gone\.md cannot be read: the app knows no b\/ideas\/0001_gone\.md/)
   const next = json40(cli('--root', b, 'next', '0001_y', '--peer', `b=${b}`))
   assert.equal(next.stage, '')
   assert.match(next.action, /^fix the idea link — /)
@@ -4450,4 +4511,129 @@ test('0049 R1: no skill opens a pull request with --fill, and write-pr names the
   assert.match(pr, /<type>\(<NNNN>\): <text>/)
   assert.match(pr, /gh pr create --title/)
   assert.match(pr, /cos\.mjs pr-text <NNNN_slug>/)
+})
+
+// --- 0135: metadata read once, by `meta` ----------------------------------------
+
+const META_STORE = fileURLToPath(new URL('../../coscc/units/testdata/meta_store', import.meta.url))
+const META_BEFORE = fileURLToPath(new URL('../../coscc/units/testdata/meta_store_before.json', import.meta.url))
+const metaOf = (...args) => {
+  const out = cli('--root', META_STORE, 'meta', ...args)
+  assert.equal(out.status, 0, out.stderr)
+  return JSON.parse(out.stdout)
+}
+
+test('meta prints every field status reads, from the same parsers', () => {
+  const { units, ideas } = metaOf()
+  // Every directory, the one misnamed among them; never `ideas/`.
+  assert.deepEqual(Object.keys(units).sort(), readdirSync(join(META_STORE, '.cos')).filter((d) => d !== 'ideas').sort())
+  assert.equal(units['0016_bad-status'].artifacts['spec.md'].status, null)
+  assert.equal(units['0016_bad-status'].artifacts['spec.md'].raw, 'approved')
+  assert.equal(units['0015_no-status'].artifacts['intent.md'].raw, null)
+  assert.equal(units['0010_full-loop'].artifacts['plan.md'].status, 'done')
+  assert.equal(units['0014_changes-requested'].artifacts['review.md'].status, 'changes-requested')
+  const spec = readFileSync(join(META_STORE, '.cos', '0013_open-question', 'spec.md'), 'utf8')
+  assert.deepEqual(units['0013_open-question'].artifacts['spec.md'].questions, parseQuestions(spec))
+  assert.deepEqual(units['0013_open-question'].answers, parseAnswers(spec).map((a) => ({ artifact: 'spec.md', ...a })))
+  assert.equal(units['0013_open-question'].artifacts['spec.md'].sha256, createHash('sha256').update(spec).digest('hex'))
+  assert.deepEqual(units['0014_changes-requested'].answers.map((a) => a.id), ['F1'])
+  const intent = readFileSync(join(META_STORE, '.cos', '0011_paused-then-resumed', 'intent.md'), 'utf8')
+  assert.deepEqual(units['0011_paused-then-resumed'].holds.map((h) => h.state), ['paused', 'active'])
+  assert.deepEqual(parseHold(intent), { hold: null, problems: [] })
+  assert.equal(units['0003_old-unit'].type, null)
+  assert.equal(units['0017_linked'].type, 'feat')
+  assert.deepEqual(units['0017_linked'].links, { idea: 'ideas/0001_x.md', repo: 'proj', dependsOn: ['0010_full-loop'] })
+  assert.deepEqual(ideas.map((i) => i.units), [[{ ref: 'proj/0017_linked', dependsOn: ['proj/0010_full-loop'] }]])
+})
+
+test('meta of one unit reads only the artifacts named, and intent.md brings its header', () => {
+  const only = metaOf('0013_open-question', 'spec.md').units['0013_open-question']
+  assert.deepEqual(Object.keys(only.artifacts), ['spec.md'])
+  assert.equal(only.type, undefined)
+  assert.equal(metaOf('0013_open-question', 'intent.md').units['0013_open-question'].type, 'feat')
+  assert.equal(cli('--root', META_STORE, 'meta', '0013_open-question', 'notes.md').status, 2)
+  assert.equal(cli('--root', META_STORE, 'meta', '../x').status, 2)
+})
+
+// Test glue, never in `cos.mjs` (plan step 8): the snapshot the app would build from `meta`,
+// for a store whose one workspace is `proj`.
+const snapshotOf = ({ units, ideas }) => ({
+  workspace: 'proj',
+  workspaces: ['proj'],
+  units: Object.fromEntries(Object.entries(units).map(([name, m]) => [`proj/${name}`, {
+    artifacts: Object.fromEntries(Object.entries(m.artifacts).map(([f, a]) => [f, { status: a.status, raw: a.raw, questions: a.questions }])),
+    type: m.type ?? null,
+    links: m.links ?? { idea: null, repo: null, dependsOn: null },
+    holds: (m.holds ?? []).filter((h) => h.by !== null),
+    answers: m.answers,
+    unknowns: [],
+  }])),
+  ideas: { proj: ideas ?? [] },
+})
+
+const strip = (text) => {
+  const lines = text.split('\n')
+  const cut = lines.findIndex((l) => l === '## Open questions' || l === '## Answers')
+  return (cut === -1 ? lines : lines.slice(0, cut)).join('\n')
+    .replace(/\b(Status|Type|Idea|Repo|Depends on):\s*[^\s]+(?:,\s*[^\s]+)*\.?/g, '')
+}
+
+test('0135 R6: stripping Status, Type, Idea, Depends on, Open questions and Answers lines leaves status, next and gate unchanged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cos-0135-'))
+  cpSync(META_STORE, dir, { recursive: true })
+  const state = JSON.stringify(snapshotOf(metaOf()))
+  const ask = (...args) => {
+    const out = cosRun(['--root', dir, '--state', '-', ...args], { encoding: 'utf8', input: state })
+    return { status: out.status, stdout: out.stdout.replace(dir, '<root>'), stderr: out.stderr }
+  }
+  const questions = [['status', '--json'], ['next', '0013_open-question'], ['next', '0017_linked'], ['next', '0011_paused-then-resumed'],
+    ['gate', '0013_open-question', 'plan'], ['gate', '0012_dropped', 'spec'], ['gate', '0017_linked', 'spec']]
+  const before = questions.map((q) => ask(...q))
+  // Real answers, not seven refusals: status reads, the draft spec shuts `plan`, the drop shuts `spec`.
+  assert.deepEqual(before.map((b) => b.status), [0, 0, 0, 0, 1, 1, 0])
+  const files = () => cli('--root', dir, 'status', '--json').stdout.replace(dir, '<root>')
+  const unstripped = files()
+  const cos = join(dir, '.cos')
+  for (const unit of readdirSync(cos)) {
+    for (const f of readdirSync(join(cos, unit))) {
+      const path = join(cos, unit, f)
+      writeFileSync(path, strip(readFileSync(path, 'utf8')))
+    }
+  }
+  assert.equal(readFileSync(join(cos, '0013_open-question', 'spec.md'), 'utf8').includes('Status:'), false)
+  const after = questions.map((q) => ask(...q))
+  assert.deepEqual(after, before)
+  // Without `--state` the same files now say something else, so what was stripped was read.
+  assert.notEqual(files(), unstripped)
+})
+
+test('0135 R6: a deciding command without --state exits 2 and says it needs the app', () => {
+  for (const args of [['status'], ['status', '--json'], ['gate', '0010_full-loop', 'spec'], ['next', '0010_full-loop'],
+    ['rerun', '0010_full-loop'], ['unit-branch', '0010_full-loop'], ['pr-text', '0010_full-loop']]) {
+    const out = spawnSync(process.execPath, [SCRIPT, '--root', META_STORE, ...args], { encoding: 'utf8' })
+    assert.equal(out.status, 2, args.join(' '))
+    assert.match(out.stderr, new RegExp(NEEDS_STATE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    assert.equal(out.stdout, '')
+  }
+  // `meta`, `new-path` and the `check-*` commands read no metadata, and need none.
+  assert.equal(cli('--root', META_STORE, 'meta').status, 0)
+})
+
+test('0135 R6: changing a status in the snapshot changes the output', () => {
+  const state = snapshotOf(metaOf())
+  const ask = (s) => spawnSync(process.execPath, [SCRIPT, '--root', META_STORE, '--state', '-', 'next', '0013_open-question'], { encoding: 'utf8', input: JSON.stringify(s) })
+  const before = JSON.parse(ask(state).stdout)
+  state.units['proj/0013_open-question'].artifacts['spec.md'].status = 'accepted'
+  state.units['proj/0013_open-question'].artifacts['spec.md'].questions = null
+  const after = JSON.parse(ask(state).stdout)
+  assert.notDeepEqual(after, before)
+  assert.equal(after.stage, 'plan')
+})
+
+test('status --json of the fixture store is what it was before meta existed', () => {
+  const out = cli('--root', META_STORE, 'status', '--json')
+  assert.equal(out.status, 0, out.stderr)
+  const now = JSON.parse(out.stdout)
+  const before = JSON.parse(readFileSync(META_BEFORE, 'utf8'))
+  assert.deepEqual({ ...now, root: before.root }, before)
 })

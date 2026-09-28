@@ -132,7 +132,10 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
             asyncio.run(self.service.set_stage_model("spec", "x"))
             self._run("spec")
         self.assertEqual(len(seen), 2)
-        self.assertEqual(seen[0], seen[1])
+        # `0135`: the snapshot is the unit as it stands, and the first step wrote `spec.md`
+        # between the two asks; the question is the rest.
+        without_state = [(a, {k: v for k, v in kw.items() if k != "state"}) for a, kw in seen]
+        self.assertEqual(without_state[0], without_state[1])
 
     def test_a_spec_step_has_no_label_and_the_default_effort(self):
         # `0033` R10: a stage before `plan` has no label; effort comes from R8's table.

@@ -174,13 +174,50 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 conn.execute("DROP TABLE decisions")
                 conn.execute("PRAGMA user_version=4")
 
-            self.assertEqual(data.version(), 5)
+            self.assertEqual(data.version(), SCHEMA_VERSION)
             self.assertEqual(data.decisions(), [])
             self.assertEqual(data.pref("density"), "compact")
             self.assertEqual(data.auth_password_hash(), "h")
 
-    def test_a_version_6_database_is_still_refused(self):
-        """Was `version_5` until `0137` made 5 this build's own number."""
+    def test_a_v5_database_rises_to_6_keeping_every_runs_and_transitions_row(self):
+        """`0135` R1: 6 adds the `unit_*` tables and `idea_meta`; the rows a v5 database
+        already had in `runs` and `transitions` are all still there after. The plan says 5:
+        `0137` took 5 on `main` first."""
+        self.assertEqual(SCHEMA_VERSION, 6)
+        new = {
+            "unit_meta", "unit_links", "idea_meta", "unit_questions", "unit_answers",
+            "unit_holds", "unit_unknowns", "unit_seen",
+        }
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.connect() as conn:
+                conn.execute(
+                    "INSERT INTO runs (at, root, kind, record) VALUES ('t', '/w', 'start', '{}')"
+                )
+                conn.execute(
+                    "INSERT INTO transitions (at, root, workspace, unit, artifact, stage, "
+                    "from_state, to_state, actor, session, source, machine) VALUES "
+                    "('t', '/w', 'p', '0001_x', 'intent.md', 'intent', 'not started', 'draft', "
+                    "'a', 's', 'src', 'coscc-default')"
+                )
+                for table in new:
+                    conn.execute(f"DROP TABLE {table}")
+                conn.execute("PRAGMA user_version=5")
+
+            self.assertEqual(data.version(), 6)
+            with data.connect() as conn:
+                tables = {
+                    row["name"]
+                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+                runs = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+                transitions = conn.execute("SELECT COUNT(*) FROM transitions").fetchone()[0]
+            self.assertEqual(new - tables, set())
+            self.assertEqual((runs, transitions), (1, 1))
+
+    def test_a_newer_database_is_still_refused(self):
+        """Was `version_5` until `0137` made 5 this build's own number, then `version_6`
+        until `0135` made 6 its own."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.version()

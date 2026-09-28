@@ -11,7 +11,8 @@ gives its prompt (`precedent.grant_for_prompt`, $1.00 to $3.00 by its length sin
 R5; none past $3.00). For each of the eight units `spec.md` R16 names
 it takes the questions that already have an answer, hides the answers, builds the store of
 precedent without any block of those eight units, and asks Jera. It writes into no artifact
-and no run log: only `<COS_DATA_DIR>/measurements/0044-<YYYY-MM-DD>.json` and a `.md` beside
+and no run log — since `0135` it imports the store into `cos.db` if the app never read it —
+and otherwise only `<COS_DATA_DIR>/measurements/0044-<YYYY-MM-DD>.json` and a `.md` beside
 it, one row per question with the old answer, Jera's verdict and its category, for Leif to
 grade against `spec.md` R6 and for the originator to sample ten (`intent.md ## Answers,
 câu 3`). It prints `answer: <k>/<n> = <p>%` and `>= 60%: yes|no` (`intent.md ## Answers,
@@ -220,10 +221,20 @@ async def proof(tmp: Path) -> bool:
         except Exception as e:  # noqa: BLE001
             ok &= claim(False, "R5", f"{type(e).__name__}: {e}")
 
-        # R7: a valid verdict appends exactly one block and nothing above it moves; a question a
-        # person answers while the session runs is skipped, with the reason logged.
+        def answer_rows(via: str) -> list[tuple]:
+            from coscc.data import Data
+
+            with Data(tmp / "data").connect() as conn:
+                return [tuple(r) for r in conn.execute(
+                    "SELECT artifact, ref, answered_by, text FROM unit_answers WHERE unit = ? AND via = ? "
+                    "ORDER BY id", (asked, via))]
+
+        # R7: a valid verdict records exactly one answer; a question a person answers while the
+        # session runs is skipped, with the reason logged. Since `0135` R8 an answer is a row
+        # in `cos.db` and no byte of the file, so the file must not move at all.
         try:
             before = spec_path.read_bytes()
+            jera_before = len(answer_rows("precedent"))
             sessions.text = reply(
                 {"artifact": "spec.md", "n": 1, "verdict": "answer", "category": "other",
                  "text": "Lấy từ Type của intent, như unit trước.", "cites": [cite]},
@@ -243,13 +254,13 @@ async def proof(tmp: Path) -> bool:
             r = await running
             sessions.gate = None
             after = spec_path.read_bytes()
-            added = after[len(after_person):].decode("utf-8")
-            header = f"Answered by: Jera. Date: {date.today().isoformat()}. Via: precedent."
+            added = answer_rows("precedent")[jera_before:]
+            person_rows = [a for a in answer_rows("product") if a[:2] == ("spec.md", "2")]
             skipped = [x for x in journal.records(key, asked, kind="precedent")
                        if x.get("n") == 2 and x.get("verdict") == "skipped"]
-            ok &= claim(person.status_code == 200 and r.status_code == 200 and after.startswith(before)
-                        and after.startswith(after_person) and added.count("### Câu") == 1
-                        and "### Câu 1" in added and header in added and f"Tiền lệ: {cite}" in added
+            ok &= claim(person.status_code == 200 and r.status_code == 200 and after == before
+                        and after_person == before and len(added) == 1 and added[0][:3] == ("spec.md", "1", "Jera")
+                        and f"Tiền lệ: {cite}" in added[0][3] and len(person_rows) == 1
                         and bool(skipped) and bool(skipped[-1].get("reason")),
                         "R7", f"{person.status_code} {r.status_code} added={added!r} skipped={skipped}")
         except Exception as e:  # noqa: BLE001
@@ -287,10 +298,16 @@ async def measure(cwd: str) -> int:
     from coscc.data import Data
     from coscc.agent.policy import grant_for
     from coscc.agent.sessions import Sessions
+    from coscc.units.meta import UnitMeta
 
     config = from_env()
     root = units.root(cwd, config.data_dir)
-    data = await board_reader.read(root)
+    # `0135`: the board decides on the app's snapshot. A store the app never read is
+    # imported first, as the app's first read would; that writes only `cos.db`'s unit tables.
+    meta, key = UnitMeta(config.working_dir, Data(config.data_dir)), units.key(cwd)
+    if not meta.imported(key):
+        meta.import_store(key, root)
+    data = await board_reader.read(root, state=meta.snapshot(key, {}))
     wanted = [u for u in data["units"] if str(u.get("name") or "")[:4] in MEASURED]
     if not wanted:
         say(f"none of {', '.join(MEASURED)} is in {root}")

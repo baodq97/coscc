@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sqlite3
+import sys
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -23,8 +25,9 @@ from coscc.agent import precedent as precedent_mod
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import UNKNOWN, BadTransition
+from coscc.data import Data
+from coscc.units.meta import MetaError, UnitMeta
 from coscc.runlog.journal import BadRecord, Busy
-from coscc.runner import STATUS_RE
 from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
@@ -52,7 +55,7 @@ class AnswersMixin:
         round that did not make it as *not on the PR* with the reason.
         """
         try:
-            data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
         except Unavailable as e:
             return [{"round": None, "state": "failed", "url": "", "reason": str(e)}]
         found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -80,7 +83,7 @@ class AnswersMixin:
             raise Invalid(f"a round is named by its number, got {round_n!r}") from None
         async with self._comment_lock:
             try:
-                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -152,7 +155,7 @@ class AnswersMixin:
         url, outcome, detail = "", "failed", ""
         scope: dict[str, Any] | None = None
         try:
-            text = await board_reader.pr_text(self._units_root(cwd), unit)
+            text = await board_reader.pr_text(self._units_root(cwd), unit, state=self._snapshot(cwd, [unit]))
             url = str(text.get("url") or "")
             if "error" in text:
                 outcome, detail = "skipped", str(text["error"])
@@ -186,42 +189,61 @@ class AnswersMixin:
                 pass
         return record
 
-    def _record_transition(
-        self, cwd: str, unit: str, artifact: str, directory: Path, done: dict[str, Any]
-    ) -> None:
-        """`0014` R6. One transition per step that finished, written as it happens.
+    def _unit_meta(self) -> UnitMeta:
+        """`0135`. The unit metadata store. Unlike `_history` there is one with no working
+        folder too, its rows keyed by the data directory, the one root there is then: every
+        board read needs a snapshot, and a read-only board is still read."""
+        data = Data(self.config.data_dir)
+        return UnitMeta(self.config.working_dir or data.root, data)
 
-        This is the first writer into `0013`'s log that is not the git import.
-        `.cos/0013_.../ship.md` said the loop would come back here: history imported from
-        git carries no actor and no session, because git knows neither, so the provenance
-        that unit built is only ever true of work done **after** it. This is that work.
+    async def _ingest(self, cwd: str, unit: str, done: dict[str, Any], wrote: str | None = None) -> dict[str, Any]:
+        """`0135` R7. The one read of a unit's files after a step that finished, of every
+        stage, prose or not: what changed goes into `cos.db` through `cos.mjs meta`.
 
-        Never raises into the run. A step that did its job and then failed to be recorded
-        has still done its job, and turning a bookkeeping failure into a failed step would
-        cost real money for nothing. The failure is dropped rather than shown, and that is
-        a cost `0014` `impl.md` states rather than hides.
+        Replaces `0014`'s `_record_transition`, which read `Status:` with a regex that
+        stopped at a hyphen and dropped every failure. The step still ends as it ended, but
+        a failure is no longer dropped (spec C3): the `done` item carries `ingest_error`,
+        and a row in `unit_unknowns` says so to the snapshot. The transition carries the
+        stage, session and source `0014` R6 gave it.
         """
         if done.get("outcome") != "done":
-            return
-        history = self._history()
-        if history is None:
-            return
+            return {}
+        meta = self._unit_meta()
+        workspace = self._journal_key(cwd)
+        stage = str(done.get("stage") or "")
         try:
-            text = (directory / artifact).read_text(encoding="utf-8", errors="replace")
-            found = STATUS_RE.search(text)
-            if not found:
-                return
-            history.record(
-                self._journal_key(cwd),
-                unit,
-                artifact,
-                found.group(1).lower(),
-                actor=f"stage:{done.get('stage') or ''}",
+            await asyncio.to_thread(
+                meta.ingest, workspace, self._units_root(cwd), unit,
+                actor=f"stage:{stage}",
                 session=str(done.get("session_id") or "") or UNKNOWN,
-                source=f"run:{done.get('stage') or ''}",
+                source=f"run:{stage}",
+                wrote=wrote,
             )
-        except (OSError, BadTransition, Busy):
-            return
+            return {}
+        except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
+            # One fixed sentence on the card and the step, the error in the log: `MetaError`
+            # carries `cos.mjs`'s stderr or its argv, `Busy` the database's path (review F10,
+            # S3). A `BadTransition` names a status and nothing else, as it is written to.
+            print(f"coscc: {unit} in {workspace} could not be read after its step: {e}", file=sys.stderr)
+            if isinstance(e, BadTransition):
+                reason = str(e) or "a status it read is not one the app records"
+            elif isinstance(e, (Busy, sqlite3.Error)):
+                reason = "the database could not be written"
+            else:
+                reason = "its files could not be read"
+            try:
+                meta.ingest_failed(workspace, unit, reason)
+            except (Busy, sqlite3.Error, OSError):
+                pass
+            return {"ingest_error": reason}
+
+    def _refresh_ideas(self, cwd: str) -> None:
+        """`0135`. `cwd`'s ideas into `cos.db` again, after the app wrote one. A failure is
+        left to the board: `cos.mjs` then reports the idea link it cannot find."""
+        try:
+            self._unit_meta().refresh_ideas(self._journal_key(cwd), self._units_root(cwd))
+        except (MetaError, Busy, sqlite3.Error, OSError):
+            pass
 
     def _create_lock(self, cwd: str) -> asyncio.Lock:
         """`0017` R8. One lock per workspace, held across numbering and making the tree."""
@@ -276,6 +298,9 @@ class AnswersMixin:
                 except OSError as e:
                     raise Invalid(f"{made['unit']} was made, but {idea} could not list it: {e}") from e
                 made["idea"] = idea
+                self._refresh_ideas(linked["home"])
+            # `0135` Design, the flow of writes: the new unit's row, and its `idea.md`'s status.
+            made.update(await self._ingest(cwd, made["unit"], {"outcome": "done", "stage": "create"}))
             try:
                 made["worktree"] = await worktrees.ensure(
                     cwd, made["unit"], None, self.config.data_dir
@@ -296,7 +321,7 @@ class AnswersMixin:
             if found is not None and found["branch"]:
                 return {"path": found["path"], "branch": found["branch"]}
             try:
-                branch = units.branch_name(cwd, unit, self.config.data_dir)
+                branch = units.branch_name(cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
                 await gitops.rev_parse(Path(cwd).expanduser().resolve(), f"refs/heads/{branch}")
             except (CannotCreate, BadUnit, GitError):
                 branch = None
@@ -322,11 +347,11 @@ class AnswersMixin:
     ) -> dict[str, Any]:
         """`0016` R2–R4. A person answers one item under an artifact's `## Open questions`.
 
-        The only route in this app that writes into an artifact a stage wrote, and it only
-        ever **appends**: the file is opened `"a"`, never `"w"`, so every byte above the
-        `## Answers` block is the byte the stage left there (R4). What counts as a question
-        and whether it is answered is `cos.mjs`'s decision, read through one board read;
-        nothing here parses `## Open questions` a second time (R7).
+        Since `0135` R8 the answer is a row in `cos.db` and the artifact is not touched: the
+        snapshot hands it to `cos.mjs`, and the next step's prompt renders it as the
+        `### Câu N` block the file once carried. What counts as a question and whether it is
+        answered is `cos.mjs`'s decision, read through one board read; nothing here parses
+        `## Open questions` a second time (R7).
 
         Not an approval, and it starts nothing itself; with the autopilot on, the pass it
         nudges may start the next stage (`0043`), or run again a draft this answer finished
@@ -334,11 +359,11 @@ class AnswersMixin:
         typed: no route in this app has a login, so it is a claim, not an identity.
 
         `0028`: `question` may be `"F<n>"`, a finding `cos.mjs` lists in the unit's
-        `personFindings`; then `artifact` must be `review.md` and the block is `### F<n>`.
-        Unlike a numbered answer, that block is read by `cos.mjs next` and the `ship` gate.
+        `personFindings`; then `artifact` must be `review.md` and the row's `ref` is `F<n>`.
+        Unlike a numbered answer, that row is read by `cos.mjs next` and the `ship` gate.
 
         `0137` R10: with `delegation` `D<n>`, the answer is an agent's under a delegation the
-        person entered on Settings; `_append_one` checks it and ends the block with
+        person entered on Settings; `_append_one` checks it and ends the row's text with
         `Theo ủy quyền: D<n>`, which is what reads it back as `delegated`.
         """
         self._workspace_or_refuse(cwd)
@@ -373,7 +398,7 @@ class AnswersMixin:
         source: str,
         delegation: str = "",
     ) -> dict[str, Any]:
-        """The one place that appends a block under `## Answers` (`0044` Design 3): a person's
+        """The one place that records an answer (`0044` Design 3; a row since `0135`): a person's
         through `answer`, Jera's through `precedent`. `items` is `[(artifact, question, text)]`,
         all checked and written under one hold of `_answer_lock` and one board read.
 
@@ -391,16 +416,17 @@ class AnswersMixin:
         skipped: list[dict[str, Any]] = []
         async with self._answer_lock:
             try:
-                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
 
             found = next((u for u in data["units"] if u["name"] == unit), None)
             if found is None:
                 raise Invalid(f"no such work unit in this workspace: {unit}")
+            texts: list[str] = []
             for artifact, question, answer in items:
                 try:
-                    number, finding = self._append_one(
+                    number, finding, text = self._append_one(
                         cwd, unit, found, artifact, question, str(answer or "").strip("\n"), name, via,
                         today, jera, delegation,
                     )
@@ -410,10 +436,18 @@ class AnswersMixin:
                     skipped.append({"artifact": artifact, "question": question, "reason": str(e)})
                     continue
                 written.append({"artifact": artifact, "question": finding or number})
+                texts.append(text)
+            try:
+                self._record_answers(cwd, unit, found, written, texts, name, today, via)
+            except Invalid as e:
+                if not jera:
+                    raise
+                skipped += [{**w, "reason": str(e)} for w in written]
+                written = []
 
         # `0016` plan, in place of spec R9: the store is not a git repository, so there is
         # no commit to make. The provenance this app already keeps is a row in `outputs`.
-        # Never raises: the answer is on disk, and failing the request now would tell the
+        # Never raises: the answer is recorded, and failing the request now would tell the
         # person it was not.
         history = self._history()
         if history is not None:
@@ -431,32 +465,44 @@ class AnswersMixin:
                 except (OSError, BadTransition, Busy):
                     pass
 
-        self._journal_answers(cwd, unit, found, written, via)
         return {"written": written, "skipped": skipped, "date": today}
 
-    def _journal_answers(
-        self, cwd: str, unit: str, found: dict[str, Any], written: list[dict[str, Any]], via: str,
+    def _record_answers(
+        self, cwd: str, unit: str, found: dict[str, Any], written: list[dict[str, Any]], texts: list[str],
+        name: str, today: str, via: str,
     ) -> None:
-        """`0106` R4. One `answer` record per block written, so the run log can tell which
-        answer finished a draft's questions (`completes`) and what the autopilot then did.
-        It starts nothing. Never raises, like the `outputs` row above it."""
-        journal = self._journal()
-        if journal is None or not written:
+        """`0135` R8, C8. Each answer's row in `unit_answers` and its `answer` record in the run
+        log in one transaction: all are written or none is. Raises `Invalid` when none was.
+
+        `0106` R4: one `answer` record per answer, so the run log can tell which answer
+        finished a draft's questions (`completes`) and what the autopilot then did. It
+        starts nothing. With no run log (`_journal`) there is only the row to write.
+        """
+        if not written:
             return
         key = self._journal_key(cwd)
+        meta = self._unit_meta()
+
+        def rows(conn) -> None:
+            for w, text in zip(written, texts):
+                meta.add_answer(key, unit, w["artifact"], w["question"], text, name, today, via, conn=conn)
+
+        journal = self._journal()
         try:
+            if journal is None:
+                with meta.data.write() as conn:
+                    rows(conn)
+                return
             listed, _ = backlog.shortlist_of(journal.records(workspace=key, kind="shortlist"))
             on = bool(self._autopilot_values(key)["autopilot"])
-        except (Busy, OSError):
-            return
-        stages = {s["file"]: s for s in found.get("stages") or []}
-        given: dict[str, set[Any]] = {}
-        for w in written:
-            artifact = w["artifact"]
-            given.setdefault(artifact, set()).add(w["question"])
-            row = stages.get(artifact) or {}
-            try:
-                journal.append({
+            stages = {s["file"]: s for s in found.get("stages") or []}
+            given: dict[str, set[Any]] = {}
+            records = []
+            for w in written:
+                artifact = w["artifact"]
+                given.setdefault(artifact, set()).add(w["question"])
+                row = stages.get(artifact) or {}
+                records.append({
                     "kind": "answer", "workspace": key, "unit": unit, "stage": row.get("stage", ""),
                     "artifact": artifact, "question": w["question"], "via": via,
                     "status": row.get("status", ""),
@@ -464,15 +510,19 @@ class AnswersMixin:
                     "autopilot": on, "shortlisted": unit in ((listed or {}).get("units") or []),
                     "held": bool(found.get("hold")),
                 })
-            except (BadRecord, Busy):
-                pass
+            journal.append_with(records, rows)
+        except (BadRecord, Busy, sqlite3.Error, OSError) as e:
+            # The error goes to the log, not the dialog: `Busy` names the database's path (S3).
+            said = ", ".join(f"{w['artifact']} {w['question']}" for w in written)
+            print(f"coscc: the answer was not recorded ({said}): {e}", file=sys.stderr)
+            raise Invalid(f"the answer was not recorded ({said})") from e
 
     def _append_one(
         self, cwd: str, unit: str, found: dict[str, Any], artifact: str, question: Any, text: str,
         name: str, via: str, today: str, jera: bool, delegation: str = "",
-    ) -> tuple[int | str, str]:
-        """Check one answer against the board read `found` and append its block. Raises
-        `Invalid` before a byte is written; returns `(number, finding)`."""
+    ) -> tuple[int | str, str, str]:
+        """Check one answer against the board read `found`. Raises `Invalid`; returns
+        `(number, finding, text)`, the text as its row keeps it. `_record_answers` writes it."""
         if jera:
             # `0044` R3. Decided by the name of the file and the shape of the heading, never
             # by what the session said.
@@ -517,14 +567,14 @@ class AnswersMixin:
         nxt = str(found.get("next") or "")
         if nxt == "finished" or nxt.startswith("closed"):
             raise Invalid(f"{unit} is {nxt}; its questions can no longer be answered")
-        # A line that reads as a heading would end this block early or open another,
-        # and `cos.mjs` would then read the answer wrongly. Refusing is cheaper and more
-        # honest than escaping somebody's words.
+        # A line that reads as a heading would end this block early or open another in the
+        # prompt that renders it (`0135`), and the stage would read the answer wrongly.
+        # Refusing is cheaper and more honest than escaping somebody's words.
         if any(line.lstrip().startswith("#") for line in text.splitlines()):
             raise Invalid("no line of an answer may start with #")
         # `0115` review F2. A stage outside the five prose ones writes its artifact with its
-        # own tools, whenever it likes, so a block appended while it runs can be written over
-        # with nothing left to say so. Checked with no `await` before the write, like `_take`.
+        # own tools, whenever it likes, so the questions an answer is numbered against may be
+        # renumbered under it while it runs. Checked with no `await` before the write, like `_take`.
         mark = self._active.get((self._journal_key(cwd), unit))
         if mark is not None and mark.kind == "step" and not policy.is_prose_stage(mark.stage):
             row = next((r for r in found.get("stages") or [] if r.get("stage") == mark.stage), None)
@@ -534,38 +584,11 @@ class AnswersMixin:
                     "is running; answer it once the step ends"
                 )
         if delegation:
-            # `0137` R10. Last of the refusals, and still before the file is opened.
+            # `0137` R10. Last of the refusals, and still before the row is written.
             text = f"{text}\n\n{precedent_mod.DELEGATION} {self._delegation_or_refuse(cwd, name, delegation, today)}"
-
-        path = self._unit_dir(cwd, unit) / artifact
-        try:
-            existing = path.read_text(encoding="utf-8")
-        except OSError as e:
-            raise Invalid(f"could not read {artifact}: {e}") from e
-        lines = existing.splitlines()
-        heading = next((i for i, l in enumerate(lines) if l.rstrip() == "## Answers"), None)
-        if heading is not None and any(l.startswith("## ") for l in lines[heading + 1:]):
-            raise Invalid(
-                f"{artifact} has a section after its ## Answers, so a block appended at "
-                "the end would not be read as an answer"
-            )
-
-        block = ""
-        if existing and not existing.endswith("\n"):
-            block += "\n"
-        if heading is None:
-            block += "\n## Answers\n"
-        block += f"\n### {finding}\n" if finding else f"\n### Câu {number}\n"
-        block += (
-            f"Answered by: {name}. Date: {today}. Via: {via}.\n\n"
-            f"{text}\n"
-        )
-        try:
-            with path.open("a", encoding="utf-8") as f:
-                f.write(block)
-        except OSError as e:
-            raise Invalid(f"could not write {artifact}: {e}") from e
-        return number, finding
+        # `0135` R8. A row in `cos.db`, and no byte of the artifact: the snapshot hands it to
+        # `cos.mjs`, and a stage's prompt renders it as the block it once was.
+        return number, finding, text.strip()
 
     def _delegation_or_refuse(self, cwd: str, name: str, delegation: str, today: str) -> str:
         """`0137` R10. The `D<n>` an answer under `name` may cite today in `cwd`, or `Invalid`
@@ -709,12 +732,15 @@ class AnswersMixin:
         mine = self._names_mine(Data(self.config.data_dir))
         found: dict[str, dict[str, Any]] = {}
         problems: list[str] = []
+        peers = self._peer_table()[0]
         for w in self.workspaces()["workspaces"]:
             if w.get("missing"):
                 continue
             try:
-                data = await board_reader.read(self._units_root(w["path"]), peers=self._peers())
-            except Unavailable as e:
+                data = await board_reader.read(
+                    self._units_root(w["path"]), state=self._snapshot(w["path"], peers=peers)
+                )
+            except (Unavailable, Invalid) as e:
                 problems.append(f"{w['name']} could not be read: {e}")
                 continue
             for u in data["units"]:
@@ -783,7 +809,7 @@ class AnswersMixin:
         text = str(note or "").strip("\n")
         async with self._answer_lock:
             try:
-                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
 
@@ -910,10 +936,9 @@ class AnswersMixin:
     async def hold(self, cwd: str, unit: str, to: str, reason: str, by: str) -> dict[str, Any]:
         """`0045`. A person pauses, drops or resumes a unit (`to`: paused, dropped, active).
 
-        Appends one `### Paused|Dropped|Resumed` block under `intent.md ## Answers` — the
-        way `answer` appends, never rewriting a byte above it (R8) — and one `hold` row to
-        the run log (R10). Which moves exist is `cos.mjs`'s `holdMoves`, read off the board;
-        nothing here decides it (R6). Dropping also closes the unit's open pull request with
+        Records one row in `unit_holds` and one `hold` record in the run log (R10), in one
+        transaction (`0135` C8); `intent.md` is not touched. Which moves exist is `cos.mjs`'s
+        `holdMoves`, read off the board; nothing here decides it (R6). Dropping also closes the unit's open pull request with
         this machine's `gh` login and removes its worktree (R12); a failure there is
         reported, never raised, and undoes nothing.
 
@@ -931,7 +956,7 @@ class AnswersMixin:
         to = str(to or "").strip()
         reason = str(reason or "").strip()
         by = str(by or "").strip() or OWNER
-        directory = self._unit_dir(cwd, unit)
+        self._unit_dir(cwd, unit)
         key = self._journal_key(cwd)
         # No `await` between the check and the take: the same mark `run_step` and
         # `integrate` take, so neither starts while this writes. When the unit is already
@@ -940,7 +965,7 @@ class AnswersMixin:
         mark = self._take(key, unit, "hold") if held is None else None
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)
@@ -950,27 +975,30 @@ class AnswersMixin:
             assert found is not None
             from_ = (found.get("hold") or {}).get("state") or "active"
             today = date.today().isoformat()
-            await self._append_to_answers(
-                directory / "intent.md", hold_rules.block(to, by, today, reason), "a hold"
-            )
 
             effects: list[dict[str, str]] = []
             if to == "dropped":
                 try:
-                    branch = units.branch_name(cwd, unit, self.config.data_dir)
+                    branch = units.branch_name(cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
                 except (CannotCreate, BadUnit):
                     branch = ""
                 root = str(Path(cwd).expanduser().resolve())
                 effects.append(await hold_rules.close_pr(root, branch))
                 effects.append(await hold_rules.remove_tree(cwd, unit, self.config.data_dir))
+            # `0135` R8, C8. The hold's row and its run-log record in one transaction, after
+            # the effects the record names: both are written or neither is.
+            meta = self._unit_meta()
             try:
-                journal.append(hold_rules.record(
-                    workspace=key, unit=unit, from_=from_, to=to, reason=reason, by=by, effects=effects,
-                ))
-            except (BadRecord, Busy):
-                # The block is on disk and `cos.mjs` reads it; failing now would tell the
-                # person their decision was not recorded when it was.
-                pass
+                journal.append_with(
+                    [hold_rules.record(
+                        workspace=key, unit=unit, from_=from_, to=to, reason=reason, by=by, effects=effects,
+                    )],
+                    lambda conn: meta.add_hold(key, unit, to, reason, by, today, "product", conn=conn),
+                )
+            except (BadRecord, Busy, sqlite3.Error, OSError) as e:
+                done = "; ".join(f"{x['effect']}: {x['result']}" for x in effects)
+                print(f"coscc: the hold of {unit} was not recorded: {e}", file=sys.stderr)
+                raise Invalid("the hold was not recorded" + (f" ({done})" if done else "")) from e
         finally:
             if mark is not None:
                 self._release(key, unit, mark)
@@ -998,7 +1026,7 @@ class AnswersMixin:
         mark = self._take(key, unit, "more-rounds") if held is None else None
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
             except Unavailable as e:
                 raise Invalid(str(e)) from e
             found = next((u for u in data["units"] if u["name"] == unit), None)

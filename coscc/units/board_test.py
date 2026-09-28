@@ -17,7 +17,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.units import board
+from coscc.units.meta_test import WithSnapshot, snapshot_of
+from coscc.units import board as _board
+
+board = WithSnapshot(_board)
 from coscc.agent import harness
 from coscc.units.board import Unavailable
 
@@ -46,7 +49,8 @@ class TheRepositoryReadsAsABoard(unittest.TestCase):
     def test_the_type_is_cos_mjs_s_verbatim(self):
         # `0046` R3: copied from `status --json`, never read from `intent.md` here.
         data = run(board.read(REPO))
-        out = subprocess.run(["node", str(harness.script()), "--root", str(REPO), "status", "--json"],
+        out = subprocess.run(["node", str(harness.script()), "--root", str(REPO), "--state", "-", "status", "--json"],
+                             input=json.dumps(snapshot_of(REPO)),
                              capture_output=True, text=True, check=True, env=harness.child_env()).stdout
         want = {u["name"]: str(u.get("type") or "") for u in json.loads(out)["units"]}
         self.assertEqual({u["name"]: u["type"] for u in data["units"]}, want)
@@ -154,7 +158,7 @@ class QuestionsAreCarriedFromTheScript(unittest.TestCase):
             }])
 
     def test_an_older_script_sends_no_answers_and_no_names(self):
-        async def fake_run(argv, timeout):
+        async def fake_run(argv, timeout, stdin=None):
             return 0, ('{"stages": [], "units": [{"name": "0001_q", "questions": '
                        '[{"artifact": "spec.md", "n": 1, "text": "x", "answered": true}]}]}'), ""
 
@@ -234,7 +238,7 @@ class PullRequestAndRoundsAreCarriedFromTheScript(unittest.TestCase):
                              [([], False), ([], False)])
 
     def test_an_older_script_that_sends_neither_reads_as_none(self):
-        async def fake_run(argv, timeout):
+        async def fake_run(argv, timeout, stdin=None):
             return 0, '{"stages": [], "units": [{"name": "0001_q", "artifacts": {}}]}', ""
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
@@ -258,8 +262,8 @@ class TheStageAtAndWhyAreCarriedFromTheScript(unittest.TestCase):
                     (unit / f).write_text(text, encoding="utf-8")
             script = REPO / ".claude" / "scripts" / "cos.mjs"
             said = json.loads(subprocess.run(
-                ["node", str(script), "--root", d, "status", "--json"],
-                capture_output=True, text=True, check=True,
+                ["node", str(script), "--root", d, "--state", "-", "status", "--json"],
+                input=json.dumps(snapshot_of(d)), capture_output=True, text=True, check=True,
             ).stdout)
             got = run(board.read(d))["units"]
         self.assertEqual(
@@ -269,7 +273,7 @@ class TheStageAtAndWhyAreCarriedFromTheScript(unittest.TestCase):
         self.assertEqual([(u["at"], u["why"]) for u in got], [("spec", "missing"), ("spec", "draft")])
 
     def test_an_older_script_that_sends_neither_reads_as_empty(self):
-        async def fake_run(argv, timeout):
+        async def fake_run(argv, timeout, stdin=None):
             return 0, '{"stages": [], "units": [{"name": "0001_q", "next": {"stage": ""}}]}', ""
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
@@ -422,7 +426,7 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
         """`0015`: the workspace is where `review` asks gh about the pull request."""
         seen = {}
 
-        async def fake_run(argv, timeout):
+        async def fake_run(argv, timeout, stdin=None):
             seen["argv"], seen["timeout"] = argv, timeout
             return 0, "open", ""
 
@@ -465,8 +469,8 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
         import subprocess
 
         out = subprocess.run(
-            ["node", str(harness.script()), "--root", tmp, "next", name, *extra],
-            capture_output=True, text=True, check=True,
+            ["node", str(harness.script()), "--root", tmp, "--state", "-", "next", name, *extra],
+            input=json.dumps(snapshot_of(tmp)), capture_output=True, text=True, check=True,
         ).stdout
         return json.loads(out)
 
@@ -501,7 +505,7 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
     def test_the_repo_reaches_next_as_repo_with_the_gate_timeout(self):
         seen = {}
 
-        async def fake_run(argv, timeout):
+        async def fake_run(argv, timeout, stdin=None):
             seen["argv"], seen["timeout"] = argv, timeout
             return 0, '{"unit": "u", "stage": "impl", "action": "a", "blocked": true}', ""
 
@@ -517,14 +521,14 @@ class TheNextStageIsAskedNotWorkedOut(unittest.TestCase):
         calls = []
         original = board._run
 
-        async def spy(argv, timeout):
+        async def spy(argv, timeout, stdin=None):
             calls.append(argv)
-            return await original(argv, timeout)
+            return await original(argv, timeout, stdin)
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", spy):
             self._unit(tmp, {"intent.md": "# I\nAuthor: t. Type: fix. Status: accepted.\n"})
             run(board.read(tmp))
-        self.assertEqual([a[a.index("--root") + 2:] for a in calls], [["status", "--json"]])
+        self.assertEqual([a[a.index("--root") + 2:] for a in calls], [["--state", "-", "status", "--json"]])
 
     def test_a_unit_that_is_not_there_is_unavailable(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -562,7 +566,7 @@ class WaitingForAPersonIsCarriedFromTheScript(unittest.TestCase):
         self.assertEqual(got["stage"], "")
 
     def test_no_waiting_in_the_script_reads_as_none(self):
-        async def fake_run(argv, timeout):
+        async def fake_run(argv, timeout, stdin=None):
             return 0, '{"unit": "u", "stage": "impl", "action": "a", "blocked": true}', ""
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
@@ -652,7 +656,7 @@ class TheOutcomeIsCopiedFromTheScript(unittest.TestCase):
         self.assertIsNone(self._read({"idea.md": "# Idea\nStatus: accepted.\n"})["outcome"])
 
     def test_an_older_script_that_sends_no_outcome_reads_as_none(self):
-        async def fake_run(argv, timeout):
+        async def fake_run(argv, timeout, stdin=None):
             return 0, '{"stages": [], "units": [{"name": "0001_q", "artifacts": {}}]}', ""
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
@@ -686,7 +690,7 @@ class TheHoldIsCarriedFromTheScript(unittest.TestCase):
         self.assertEqual((got["stage"], got["hold"]["state"]), ("", "paused"))
 
     def test_an_older_script_reads_as_unheld(self):
-        async def fake_run(argv, timeout):
+        async def fake_run(argv, timeout, stdin=None):
             return 0, '{"root": "r", "stages": [], "units": [{"name": "0001_x"}]}', ""
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
@@ -723,7 +727,7 @@ class MoreRoundsAreCarriedFromTheScript(unittest.TestCase):
         self.assertEqual((got["0002_stuck"]["more_rounds"], got["0002_stuck"]["rounds_granted"]), (True, 0))
 
     def test_an_older_script_reads_as_false_and_zero(self):
-        async def fake_run(argv, timeout):
+        async def fake_run(argv, timeout, stdin=None):
             return 0, '{"root": "r", "stages": [], "units": [{"name": "0001_x"}]}', ""
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
@@ -742,7 +746,7 @@ class TheStagesAnAnsweredDraftRunsAgainAreCarriedFromTheScript(unittest.TestCase
             self.assertEqual(u["after_answers"], data["after_answers"], u["name"])
 
     def test_an_older_script_sends_none_and_reads_as_none(self):
-        async def fake_run(argv, timeout):
+        async def fake_run(argv, timeout, stdin=None):
             return 0, '{"root": "r", "stages": [], "units": [{"name": "0001_x"}]}', ""
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", fake_run):
@@ -781,7 +785,7 @@ class ThePrTextIsCopiedFromTheScript(unittest.TestCase):
         self.assertIn("has no pr.md", got["error"])
 
     def test_no_node_is_unavailable(self):
-        async def no_node(argv, timeout):
+        async def no_node(argv, timeout, stdin=None):
             raise FileNotFoundError("node")
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", no_node):
@@ -847,7 +851,7 @@ class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
     def test_the_repo_is_passed_as_repo_with_the_gate_timeout(self):
         seen = {}
 
-        async def fake_run(argv, timeout):
+        async def fake_run(argv, timeout, stdin=None):
             seen["argv"], seen["timeout"] = argv, timeout
             return 0, '{"retake": false}', ""
 
@@ -863,7 +867,7 @@ class TheScreensAnswerIsCopiedFromTheScript(unittest.TestCase):
             with self.assertRaises(Unavailable):
                 run(board.screens(tmp, "0009_not-here", tmp))
 
-        async def no_node(argv, timeout):
+        async def no_node(argv, timeout, stdin=None):
             raise FileNotFoundError("node")
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(board, "_run", no_node):
@@ -886,28 +890,33 @@ def _store(d: Path, units: dict[str, dict[str, str]], ideas: dict[str, str] | No
 _TO_IMPL = {"spec.md": "# S\nStatus: skipped.\n", "plan.md": "# P\nStatus: accepted.\n"}
 
 
-class PeersReachTheScript(unittest.TestCase):
-    """`0040` R14. Each workspace is one `--peer`, before the command, beside `--root`."""
+class TheSnapshotReachesTheScriptOnStdin(unittest.TestCase):
+    """`0135`. Given a snapshot, `--state -` right after `--root`, and the JSON on stdin."""
 
-    def test_argv_carries_one_peer_per_workspace(self):
-        seen: list[list[str]] = []
+    def test_read_next_and_gate_hand_the_snapshot_on_stdin(self):
+        seen: list[tuple[list[str], str]] = []
 
-        async def fake_run(argv, timeout):
-            seen.append(argv)
+        async def fake_run(argv, timeout, stdin=None):
+            seen.append((argv, stdin))
             return 0, '{"stages": [], "units": []}' if "status" in argv else '{"stage": ""}', ""
 
+        snapshot = {"workspace": "proj", "workspaces": ["proj"], "units": {}, "ideas": {}}
         with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
-            peers = [("api", Path(d) / "a"), ("proj", Path(d) / "p")]
-            run(board.read(d, peers=peers))
-            run(board.next_step(d, "0001_x", peers=peers))
-            run(board.gate(d, "0001_x", "impl", peers=peers))
-        self.assertEqual(len(seen), 3)
-        for argv in seen:
-            at = argv.index("--root")
-            self.assertEqual(
-                argv[at + 2 : at + 6],
-                ["--peer", f"api={(Path(d) / 'a').resolve()}", "--peer", f"proj={(Path(d) / 'p').resolve()}"],
-            )
+            run(board.read(d, state=snapshot))
+            run(board.next_step(d, "0001_x", state=snapshot))
+            run(board.gate(d, "0001_x", "impl", state=snapshot))
+            run(board.rerun(d, "0001_x", state=snapshot))
+            run(board.pr_text(d, "0001_x", state=snapshot))
+        self.assertEqual(len(seen), 5)
+        for argv, stdin in seen:
+            self.assertEqual(argv[argv.index("--root") + 2 : argv.index("--root") + 4], ["--state", "-"])
+            self.assertNotIn("--peer", argv)
+            self.assertEqual(json.loads(stdin), snapshot)
+
+
+class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
+    """`0040` R14, since `0135`: another workspace's units reach `cos.mjs` in the snapshot,
+    under their workspace's name, where `--peer` once named their store."""
 
     def test_a_dependency_is_read_across_workspaces_and_copied(self):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
@@ -917,9 +926,9 @@ class PeersReachTheScript(unittest.TestCase):
                 {"0001_y": {"intent.md": "# I\nType: feat. Status: accepted.\nIdea: ideas/0001_f.md. Repo: b. Depends on: a/0001_x.\n", **_TO_IMPL}},
                 {"0001_f.md": "# Idea: f\nStatus: accepted.\n\n## Units\n\n- a/0001_x.\n- b/0001_y. Depends on: a/0001_x.\n"},
             )
-            peers = [("a", a), ("b", b)]
-            data = run(board.read(b, peers=peers))
-            nxt = run(board.next_step(b, "0001_y", peers=peers))
+            state = snapshot_of(b, [("a", a), ("b", b)])
+            data = run(board.read(b, state=state))
+            nxt = run(board.next_step(b, "0001_y", state=state))
         [u] = data["units"]
         self.assertEqual((u["idea"], u["repo"], u["why"]), ("ideas/0001_f.md", "b", "dependency"))
         self.assertEqual(u["depends_on"], [{"ref": "a/0001_x", "merged": False, "why": "not merged: its ship.md is not accepted"}])

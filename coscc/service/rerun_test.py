@@ -14,7 +14,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from coscc.units import board as board_reader
+from coscc.units import board as _board
+from coscc.units.meta_test import WithSnapshot
+
+board_reader = WithSnapshot(_board)
 from coscc.github import integrate
 from coscc.git import worktrees
 from coscc import service as service_mod

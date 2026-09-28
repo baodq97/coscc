@@ -43,15 +43,14 @@ attaches `idea`, `repo` and `dependsOn` to a unit only when its header carries t
 - a unit: `<ws>/NNNN_<slug>`, or `NNNN_<slug>` in the same store.
 - an idea: `<ws>/ideas/NNNN_<slug>.md`, or `ideas/NNNN_<slug>.md` in the same store.
 
-`<ws>` resolves through `--peer <ws>=<dir>` on `status`, `next` and `gate`, `<dir>` being the
-kind of directory `--root` takes. A peer's store is read only to resolve a reference that
-names it; its units are never listed, and a peer unit's own links are not followed. With no
-`--peer` for it, the unit's own `Repo:` is its own store. The app passes one `--peer` per
-workspace, leaving out a name two workspaces share.
+`<ws>` resolves through the snapshot `--state` carries (`0135`): the app names every
+workspace in it, leaving out a name two workspaces share. Another workspace's units are read
+only to resolve a reference that names them; they are never listed, and their own links are
+not followed. With no workspace of that name, the unit's own `Repo:` is its own store.
 
 ## What the gate does
 
-A broken link — no idea file, no `--peer`, a unit the idea does not list — is a problem in
+A broken link — no idea file, no such workspace, a unit the idea does not list — is a problem in
 `status` and closes nothing but `impl`.
 
 `impl` stays shut while any `Depends on:` unit is not merged, and `next` answers

@@ -11,7 +11,10 @@ from pathlib import Path
 from coscc.config import Config
 from coscc.service import Service
 from coscc.service.common import Invalid
-from coscc.units import board as board_reader
+from coscc.units import board as _board
+from coscc.units.meta_test import WithSnapshot
+
+board_reader = WithSnapshot(_board)
 
 
 def _repo(path: Path) -> str:

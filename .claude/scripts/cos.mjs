@@ -199,14 +199,14 @@ const HOLD_TO = { Paused: 'paused', Dropped: 'dropped', Resumed: 'active' }
 // route and page read `holdMoves` off a unit rather than keep a copy of this.
 export const HOLD_MOVES = { active: ['paused', 'dropped'], paused: ['dropped', 'active'], dropped: ['paused'] }
 
-// The hold in force: walk the blocks in file order from `active`; the last valid one
-// decides. A block with no well-formed `Decided by:` line is not counted, because nothing
-// says who decided. A block describing a move `HOLD_MOVES` lacks is not counted either,
-// and is reported. `hold` is `null` when the unit ends `active`.
-export function parseHold(text) {
+const HOLD_HEAD_OF = Object.fromEntries(Object.entries(HOLD_TO).map(([head, to]) => [to, head]))
+
+// `0135`. The hold blocks in file order, read and not judged: one row per block, `by` `null`
+// when its `Decided by:` line is missing or malformed. `foldHolds` decides; the app keeps
+// the well-formed rows in its database and hands them back in the same shape.
+export function holdBlocks(text) {
   const lines = section(text ?? '', 'Answers')
-  const problems = []
-  if (lines === null) return { hold: null, problems }
+  if (lines === null) return []
   const blocks = []
   for (const line of lines) {
     const m = line.match(HOLD_HEAD)
@@ -214,25 +214,35 @@ export function parseHold(text) {
     else if (/^###\s/.test(line)) blocks.push({ head: null, lines: [] })
     else if (blocks.length) blocks[blocks.length - 1].lines.push(line)
   }
-  let state = 'active'
-  let hold = null
-  let n = 0
-  for (const b of blocks) {
-    if (!b.head) continue
-    n += 1
+  return blocks.filter((b) => b.head).map((b) => {
     const at = b.lines.findIndex((l) => l.trim() !== '')
     const meta = at === -1 ? null : b.lines[at].match(HOLD_META)
-    if (!meta) continue
-    const to = HOLD_TO[b.head]
-    if (!HOLD_MOVES[state].includes(to)) {
-      problems.push(`hold block ${n} (### ${b.head}) is not a valid move from ${state} — it is ignored`)
-      continue
+    if (!meta) return { state: HOLD_TO[b.head], reason: null, by: null, date: null, via: null }
+    return { state: HOLD_TO[b.head], reason: b.lines.slice(at + 1).join('\n').trim(), by: meta[1].trim(), date: meta[2], via: meta[3] }
+  })
+}
+
+// The hold in force: walk the rows in order from `active`; the last valid one decides. A row
+// with no `by` is not counted, because nothing says who decided. A row describing a move
+// `HOLD_MOVES` lacks is not counted either, and is reported. `hold` is `null` when the unit
+// ends `active`.
+export function foldHolds(rows) {
+  const problems = []
+  let state = 'active'
+  let hold = null
+  rows.forEach((r, i) => {
+    if (r.by == null) return
+    if (!HOLD_MOVES[state].includes(r.state)) {
+      problems.push(`hold block ${i + 1} (### ${HOLD_HEAD_OF[r.state]}) is not a valid move from ${state} — it is ignored`)
+      return
     }
-    state = to
-    hold = to === 'active' ? null : { state: to, reason: b.lines.slice(at + 1).join('\n').trim(), by: meta[1].trim(), date: meta[2] }
-  }
+    state = r.state
+    hold = r.state === 'active' ? null : { state: r.state, reason: r.reason, by: r.by, date: r.date }
+  })
   return { hold, problems }
 }
+
+export const parseHold = (text) => foldHolds(holdBlocks(text))
 
 // --- a person's decision to allow more review rounds ----------------------------
 
@@ -345,11 +355,13 @@ export function parseReruns(text) {
 }
 
 // Each question joined to the answer in force for it, if any.
-export function answeredQuestions(text) {
-  const questions = parseQuestions(text)
+export const answeredQuestions = (text) => joinAnswers(parseQuestions(text), parseAnswers(text))
+
+// `0135`. The joining alone, so questions and answers the app hands back are joined the same way.
+export function joinAnswers(questions, answers) {
   if (questions === null) return null
   const latest = new Map()
-  for (const a of parseAnswers(text)) if (a.n !== null) latest.set(a.n, a)
+  for (const a of answers) if (a.n !== null) latest.set(a.n, a)
   return questions.map((q) => {
     const a = latest.get(q.n) ?? null
     return { n: q.n, text: q.text, answered: a !== null, answer: a }
@@ -790,11 +802,17 @@ export function reviewRounds(env = process.env) {
   return Number(raw)
 }
 
-// `ctx` is where `0040`'s references resolve: `cosDir`, the store `ideas/…` and `NNNN_…`
-// name, and `peers`, the stores `<ws>/…` names. `links: false` reads a unit another one
-// depends on, whose own links are not followed — so no chain of them can loop.
-export function readUnit(dir, name, { peers = new Map(), cosDir = dirname(dir), links = true } = {}) {
+// `state` is the app's snapshot (`--state`), where `0040`'s references resolve too: the
+// workspace `<ws>/…` names, or the unit's own for none.
+//
+// `0135`. A unit's metadata — each artifact's status, `Type:`, links, questions, answers and
+// holds — is the app's entry for it, never its files: they are read only for what the app
+// does not keep (spec C2) and for whether each one exists. Without a snapshot there is
+// nothing to decide on, so it throws.
+export function readUnit(dir, name, { state } = {}) {
+  if (!state) throw new Error(NEEDS_STATE)
   const unit = { name, artifacts: {}, problems: [] }
+  const known = entryOf(state, state.workspace, name) ?? NO_ENTRY
   let intentText = null
   // `0054`. Each artifact's text, kept for the stale check below and never attached.
   const texts = {}
@@ -812,7 +830,7 @@ export function readUnit(dir, name, { peers = new Map(), cosDir = dirname(dir), 
     const text = readFileSync(path, 'utf8')
     texts[file] = text
     if (file === 'intent.md') intentText = text
-    const status = parseStatus(text)
+    const status = statusIn(known, file)
     if (status === null) {
       unit.problems.push(`${file} carries no Status line`)
     } else if (!VALID[file].includes(status)) {
@@ -832,7 +850,8 @@ export function readUnit(dir, name, { peers = new Map(), cosDir = dirname(dir), 
     if (file === 'review.md') {
       unit.artifacts[file].review = parseReview(text)
       // `0028`: the findings a person answered, by id, from `review.md ## Answers`.
-      unit.artifacts[file].personAnswers = [...new Set(parseAnswers(text).filter((a) => a.id !== null).map((a) => a.id))]
+      const answers = answersIn(known, file)
+      unit.artifacts[file].personAnswers = [...new Set(answers.filter((a) => a.id !== null).map((a) => a.id))]
       // `0081` R2/R4: attached only when a round was granted, as `unmeasured` below, so
       // `status --json` of every unit without a `### More rounds` block stays what it was.
       const more = parseMoreRounds(text)
@@ -859,9 +878,13 @@ export function readUnit(dir, name, { peers = new Map(), cosDir = dirname(dir), 
     // Read after `spec.md` and `spike.md`, which `STAGES` puts before it. Only when `spike`
     // is required: a plan may mention `spike.md` without needing one — this unit's does.
     if (file === 'plan.md' && required(unit, SPIKE)) unit.artifacts[file].citesSpike = text.includes('spike.md')
-    const questions = answeredQuestions(text)
+    const questions = joinAnswers(known.artifacts?.[file]?.questions ?? null, answersIn(known, file))
     if (questions !== null) unit.artifacts[file].questions = questions
   }
+  for (const [file, a] of Object.entries(known.artifacts ?? {})) {
+    if (a?.status && !(file in unit.artifacts)) unit.problems.push(`the app records ${file} as ${a.status}, but the file does not exist`)
+  }
+  for (const u of known.unknowns ?? []) if (u.field === 'ingest') unit.problems.push(`the app could not read this unit after its last step: ${u.reason}`)
 
   Object.assign(unit, unitQuestions(unit))
   // The one list the board's Questions tab shows a finding from (`0028`); empty unless the
@@ -891,26 +914,24 @@ export function readUnit(dir, name, { peers = new Map(), cosDir = dirname(dir), 
     // Same distinction `missing()` draws below: a header with no `Type:` is a different
     // repair from a header that declares one nothing accepts. Both are reported and
     // neither is blocked — `checkGate` does not read this.
-    const type = parseType(intentText)
+    const type = known.type ?? null
     if (type === null) unit.problems.push(`intent.md declares no Type — add "Type: <${BRANCH_TYPES[0]}|…>" to its header`)
     else if (!BRANCH_TYPES.includes(type)) unit.problems.push(`intent.md has type "${type}", not one of ${BRANCH_TYPES.join(', ')}`)
     else unit.type = type
     // Derived, never typed — the `ship` gate reads the branch the review was of.
-    unit.branch = unitBranch(name, intentText).branch ?? null
+    unit.branch = branchFor(name, type).branch ?? null
   }
   // `0047`: read from the text already in hand, never another file. `nextAction` and
   // `checkGate` do not read it — a finished unit stays finished whatever it says.
   unit.outcome = intentText === null ? null : unitOutcome(intentText)
 
-  // `0045`. Read off `intent.md ## Answers`, every unit that has one. `plan.md: done` and a
+  // `0045`. The app's hold rows, every unit with an intent (`0135`). `plan.md: done` and a
   // rejected artifact win over a hold (spec R5): the unit stays finished or closed, and the
-  // block is reported rather than obeyed.
-  const held = parseHold(intentText)
+  // hold is reported rather than obeyed.
+  const held = intentText !== null ? foldHolds(known.holds ?? []) : { hold: null, problems: [] }
   unit.problems.push(...held.problems.map((p) => `intent.md: ${p}`))
   unit.hold = held.hold
-  const ended = statusOf(unit, 'plan.md') === 'done'
-    ? 'finished'
-    : STAGES.some((s) => statusOf(unit, s.file) === 'rejected') ? 'closed' : null
+  const ended = endedOf(unit)
   if (ended && unit.hold) {
     unit.problems.push(`intent.md carries a hold block, but the unit is ${ended} — it is ignored`)
     unit.hold = null
@@ -932,7 +953,33 @@ export function readUnit(dir, name, { peers = new Map(), cosDir = dirname(dir), 
     if (by) unit.artifacts[file].stale = { stage: by.stage, date: by.date }
   }
 
-  if (links && intentText !== null) resolveLinks(unit, intentText, { peers, cosDir })
+  if (intentText !== null) resolveLinks(unit, known.links ?? NO_ENTRY.links, { state })
+  return unit
+}
+
+// What a deciding command says when it is not given the app's snapshot (spec R6).
+export const NEEDS_STATE = 'needs the coscc app: pass --state <file|-> (uv run coscc state <workspace>)'
+
+// `0135`. The snapshot `--state` carries, as the app builds it (`coscc/units/meta.py`):
+// `{workspace, workspaces, units: {<ws>/<unit>: entry}, ideas: {<ws>: [idea]}}`, an entry
+// `{artifacts: {<file>: {status, raw, questions}}, type, links, holds, answers, unknowns}`.
+// `raw` is a status word outside the artifact's set, kept so it is reported as it was.
+const NO_ENTRY = { artifacts: {}, type: null, links: { idea: null, repo: null, dependsOn: null }, holds: [], answers: [], unknowns: [] }
+const entryOf = (state, ws, name) => state.units?.[`${ws}/${name}`] ?? null
+const statusIn = (e, file) => e.artifacts?.[file]?.status ?? e.artifacts?.[file]?.raw ?? null
+const answersIn = (e, file) => (e.answers ?? []).filter((a) => a.artifact === file).map(({ artifact, ...a }) => a)
+
+// A unit `plan.md: done` finished, or one a rejected artifact closed; a hold does not move either.
+const endedOf = (unit) => (statusOf(unit, 'plan.md') === 'done'
+  ? 'finished'
+  : STAGES.some((s) => statusOf(unit, s.file) === 'rejected') ? 'closed' : null)
+
+// `0135`. What a dependency is judged on (`dependency`), from the app's entry alone: a unit
+// in another workspace has no directory here to read.
+function entryUnit(e) {
+  const unit = { artifacts: {} }
+  for (const file of ARTIFACTS) if (e.artifacts?.[file]) unit.artifacts[file] = { status: statusIn(e, file) }
+  unit.hold = endedOf(unit) || !unit.artifacts['intent.md'] ? null : foldHolds(e.holds ?? []).hold
   return unit
 }
 
@@ -944,12 +991,40 @@ export function readUnit(dir, name, { peers = new Map(), cosDir = dirname(dir), 
 //
 // `ideas/` is not a unit (`0040` R2): it holds the ideas several units share, and `readIdeas`
 // reads it.
-export function readAll(cosDir = COS, { peers = new Map() } = {}) {
+export function readAll(cosDir = COS, { state } = {}) {
   if (!existsSync(cosDir)) return []
   return readdirSync(cosDir, { withFileTypes: true })
     .filter((e) => e.isDirectory() && e.name !== IDEAS)
-    .map((e) => readUnit(join(cosDir, e.name), e.name, { peers, cosDir }))
+    .map((e) => readUnit(join(cosDir, e.name), e.name, { state }))
     .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+// `0135`. A unit's metadata as its files carry it, read by the parsers above and decided on
+// nowhere: `meta` prints it, and the app's import and ingest are its only readers. `status`
+// is `null` unless `raw`, the word read, is one the artifact may carry. `only` narrows it to
+// the artifacts an ingest saw change; `type`, `links` and `holds` come with `intent.md`.
+export function unitMeta(dir, only = null) {
+  const artifacts = {}
+  const answers = []
+  let intentText = null
+  for (const file of ARTIFACTS) {
+    if (only && !only.includes(file)) continue
+    const path = join(dir, file)
+    if (!existsSync(path)) continue
+    const text = readFileSync(path, 'utf8')
+    const raw = parseStatus(text)
+    artifacts[file] = {
+      status: raw !== null && VALID[file].includes(raw) ? raw : null,
+      raw,
+      sha256: createHash('sha256').update(text).digest('hex'),
+      questions: parseQuestions(text),
+    }
+    answers.push(...parseAnswers(text).map((a) => ({ artifact: file, ...a })))
+    if (file === 'intent.md') intentText = text
+  }
+  const meta = { artifacts, answers }
+  if (intentText !== null) Object.assign(meta, { type: parseType(intentText), links: parseLinks(intentText), holds: holdBlocks(intentText) })
+  return meta
 }
 
 // --- one idea, several units, several repositories (`0040`) -------------------
@@ -1033,12 +1108,13 @@ export function readIdeas(cosDir) {
     })
 }
 
-// R5: the store a reference names. The unit's own for no `<ws>`, and for its own `Repo:`
-// when no `--peer` says otherwise; a peer's only when `--peer` names it.
-function storeOf(ws, repo, { peers, cosDir }) {
-  if (ws !== null && peers.has(ws)) return { dir: join(peers.get(ws), '.cos') }
-  if (ws === null || ws === repo) return { dir: cosDir }
-  return { why: `no --peer ${ws}: pass --peer ${ws}=<dir>` }
+// R5: the workspace a reference names, as the snapshot keys it (`0135`, where `--peer` once
+// named a store). The unit's own for no `<ws>`, and for its own `Repo:` when the snapshot
+// names no workspace so.
+function storeOf(ws, repo, { state }) {
+  if (ws !== null && (state.workspaces ?? []).includes(ws)) return { ws }
+  if (ws === null || ws === repo) return { ws: state.workspace }
+  return { why: `the app has no workspace named ${ws}` }
 }
 
 // `readUnit` keeps what it learned about a unit's links here rather than on the unit, so
@@ -1055,9 +1131,9 @@ function dependency(raw, unit, repo, ctx) {
   if (ref.name === unit.name && (ref.ws === null || ref.ws === repo)) return { ref: raw, merged: null, why: 'a unit cannot depend on itself' }
   const store = storeOf(ref.ws, repo, ctx)
   if (store.why) return { ref: raw, merged: null, why: store.why }
-  const dir = join(store.dir, ref.name)
-  if (!existsSync(dir)) return { ref: raw, merged: null, why: `unreadable: ${dir} does not exist` }
-  const other = readUnit(dir, ref.name, { links: false })
+  const e = entryOf(ctx.state, store.ws, ref.name)
+  if (!e) return { ref: raw, merged: null, why: `unreadable: the app knows no unit ${store.ws}/${ref.name}` }
+  const other = entryUnit(e)
   if (other.hold?.state === 'dropped') return { ref: raw, merged: false, why: 'dropped' }
   const rejected = STAGES.find((s) => statusOf(other, s.file) === 'rejected')
   if (rejected) return { ref: raw, merged: false, why: `rejected: its ${rejected.file} is rejected` }
@@ -1072,17 +1148,17 @@ function ideaLine(idea, unit, repo, ctx) {
   if (repo === null) return { why: 'intent.md declares no Repo:, so its line under ## Units cannot be found' }
   const store = storeOf(ref.ws, repo, ctx)
   if (store.why) return { why: store.why }
-  const path = join(store.dir, IDEAS, ref.file)
-  if (!existsSync(path)) return { why: `${path} does not exist` }
-  const line = parseIdea(readFileSync(path, 'utf8')).units.find((u) => u.ref === `${repo}/${unit.name}`)
+  const read = (ctx.state.ideas?.[store.ws] ?? []).find((i) => `${i.id}.md` === ref.file)
+  if (!read) return { why: `the app knows no ${store.ws}/${IDEAS}/${ref.file}` }
+  const line = read.units.find((u) => u.ref === `${repo}/${unit.name}`)
   return line ? { line } : { why: `it does not list ${repo}/${unit.name} under ## Units` }
 }
 
 // R4–R9. Each field is attached only when the header carries it, so every unit that has
 // none reads as it did, byte for byte. A broken link is a problem and closes nothing but
 // `impl` (R6, R9).
-function resolveLinks(unit, intentText, ctx) {
-  const { idea, repo, dependsOn } = parseLinks(intentText)
+function resolveLinks(unit, links, ctx) {
+  const { idea, repo, dependsOn } = links
   if (idea === null && repo === null && dependsOn === null) return
   const needs = []
   if (idea !== null) unit.idea = idea
@@ -2542,10 +2618,12 @@ export function parseType(text) {
 // the unit name cannot drift apart. The one exception is an old unit whose slug is over
 // `SLUG_MAX`: its branch carries the slug cut by `branchSlug`, still derived, so that
 // `check-branch` accepts every name this prints.
-export function unitBranch(unitName, intentText) {
+export const unitBranch = (unitName, intentText) => branchFor(unitName, parseType(intentText ?? ''))
+
+// `0135`: the same, from a `Type:` already read — the app's, given `--state`.
+export function branchFor(unitName, type) {
   const match = String(unitName ?? '').match(UNIT_RE)
   if (!match) return { error: `"${unitName}" does not match NNNN_<slug>` }
-  const type = parseType(intentText ?? '')
   if (!type) return { error: `${unitName}/intent.md declares no Type: — one of ${TYPE_LIST()}` }
   if (!BRANCH_TYPES.includes(type)) return { error: `"${type}" is not one of ${TYPE_LIST()}` }
   return { branch: `${type}/${branchSlug(match[2])}` }
@@ -2595,11 +2673,11 @@ export function stageAt(unit, next) {
   return (last ?? STAGES.find((s) => !s.optional && !s.when)).name
 }
 
-function cmdStatus(json, cosDir, limit, peers = new Map()) {
-  const units = readAll(cosDir, { peers })
+function cmdStatus(json, cosDir, limit, state) {
+  const units = readAll(cosDir, { state })
   // `0040` R3: only a store that holds `ideas/` carries the key, so every other one's output
   // is what it was, byte for byte.
-  const ideas = existsSync(join(cosDir, IDEAS)) ? readIdeas(cosDir) : null
+  const ideas = !existsSync(join(cosDir, IDEAS)) ? null : state.ideas?.[state.workspace] ?? []
   // `0100` R4: `status` carries `why` as well, so the board reads which rule answered
   // rather than the English of `action`. `next` still prints `nextAction`, without it.
   // `rerun` (`0106`) is for `next` and the autopilot only, so `status` drops it.
@@ -2645,9 +2723,9 @@ function cmdStatus(json, cosDir, limit, peers = new Map()) {
 // The stage a run button may offer, as one line of JSON: `{unit, stage, action, blocked}`.
 // Exit 0 whatever the stage is — "nothing to run" is an answer, not a failure. Exit 2 is
 // misuse: no unit named, or no such unit.
-function cmdNext(unitName, cosDir, repoDir, limit, peers = new Map()) {
+function cmdNext(unitName, cosDir, repoDir, limit, state) {
   if (!unitName) {
-    console.error('usage: cos.mjs next <NNNN_slug> [--repo <dir>] [--peer <ws>=<dir>]...')
+    console.error('usage: cos.mjs next <NNNN_slug> [--repo <dir>] --state <file|->')
     return 2
   }
   const dir = join(cosDir, unitName)
@@ -2656,7 +2734,7 @@ function cmdNext(unitName, cosDir, repoDir, limit, peers = new Map()) {
     return 2
   }
   const probe = repoDir ? makeProbe(repoDir) : null
-  const unit = readUnit(dir, unitName, { peers, cosDir })
+  const unit = readUnit(dir, unitName, { state })
   const { stage, action, blocked, waiting, dropped, rerun, why } = nextStep(unit, { probe, limit })
   // `waiting` only when a person is awaited (`0028`), `dropped` only when the last round left
   // out an earlier finding (`0027`), `hold` only when the unit is held (`0045`), `rerun` only
@@ -2684,9 +2762,9 @@ export function openLines(stage, unitName, { head = null, rebased = null, retry 
   return lines
 }
 
-function cmdGate(unitName, stage, cosDir, repoDir, limit, peers = new Map()) {
+function cmdGate(unitName, stage, cosDir, repoDir, limit, state) {
   if (!unitName || !stage) {
-    console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}> [--repo <dir>] [--peer <ws>=<dir>]...`)
+    console.error(`usage: cos.mjs gate <NNNN_slug> <${STAGE_NAMES.join('|')}> [--repo <dir>] --state <file|->`)
     return 2
   }
   const dir = join(cosDir, unitName)
@@ -2695,7 +2773,7 @@ function cmdGate(unitName, stage, cosDir, repoDir, limit, peers = new Map()) {
     return 2
   }
   const probe = repoDir ? makeProbe(repoDir) : null
-  const { ok, need, head, rebased, retry, merged } = checkGate(readUnit(dir, unitName, { peers, cosDir }), stage, { probe, limit })
+  const { ok, need, head, rebased, retry, merged } = checkGate(readUnit(dir, unitName, { state }), stage, { probe, limit })
   if (ok) {
     for (const line of openLines(stage, unitName, { head, rebased, retry, merged })) console.log(line)
     return 0
@@ -2818,7 +2896,7 @@ function cmdCheckVersion() {
   return 0
 }
 
-function cmdUnitBranch(unitName, cosDir) {
+function cmdUnitBranch(unitName, cosDir, state) {
   if (!unitName) {
     console.error('usage: cos.mjs unit-branch <NNNN_slug>')
     return 2
@@ -2828,7 +2906,7 @@ function cmdUnitBranch(unitName, cosDir) {
     console.error(`No such work unit: ${unitName}`)
     return 2
   }
-  const { branch, error } = unitBranch(unitName, readFileSync(intent, 'utf8'))
+  const { branch, error } = branchFor(unitName, entryOf(state, state.workspace, unitName)?.type ?? null)
   if (error) {
     console.error(error)
     return 1
@@ -2841,7 +2919,7 @@ function cmdUnitBranch(unitName, cosDir) {
 // against (`0049` R4), and prints; no git, no gh, no write. `titleProblem` does not change
 // the exit code. The name is checked before it is joined, so `../` cannot walk out of the
 // `.cos/` it was given.
-function cmdPrText(unitName, cosDir) {
+function cmdPrText(unitName, cosDir, state) {
   if (!unitName) {
     console.error('usage: cos.mjs pr-text <NNNN_slug>')
     return 2
@@ -2862,10 +2940,12 @@ function cmdPrText(unitName, cosDir) {
   }
   const text = readFileSync(file, 'utf8')
   const intent = join(dir, 'intent.md')
-  const type = existsSync(intent) ? parseType(readFileSync(intent, 'utf8')) : null
+  const known = entryOf(state, state.workspace, unitName) ?? NO_ENTRY
+  const type = !existsSync(intent) ? null : known.type ?? null
   const read = prText(text)
   const problem = titleProblem(read.title, BRANCH_TYPES.includes(type) ? type : null, unitName.slice(0, 4))
-  console.log(JSON.stringify({ unit: unitName, ...read, status: parseStatus(text), titleProblem: problem }))
+  const status = statusIn(known, 'pr.md')
+  console.log(JSON.stringify({ unit: unitName, ...read, status, titleProblem: problem }))
   return 0
 }
 
@@ -2874,7 +2954,7 @@ function cmdPrText(unitName, cosDir) {
 // the app appends the block. No `<stage>`: `{unit, offers: [{stage, later}], why}`, exit 0,
 // `why` saying why when `offers` is empty. With one: `{unit, stage, later, block}` and exit
 // 0, or the reason and exit 1. Exit 2 is misuse, as `gate`'s.
-function cmdRerun(unitName, stage, cosDir, limit, today = localDate()) {
+function cmdRerun(unitName, stage, cosDir, limit, today = localDate(), state) {
   if (!unitName) {
     console.error(`usage: cos.mjs rerun <NNNN_slug> [${RERUNNABLE.join('|')}]`)
     return 2
@@ -2888,7 +2968,7 @@ function cmdRerun(unitName, stage, cosDir, limit, today = localDate()) {
     console.error(`No such work unit: ${unitName}`)
     return 2
   }
-  const unit = readUnit(dir, unitName)
+  const unit = readUnit(dir, unitName, { state })
   if (stage === undefined) {
     const offers = rerunOffers(unit, limit)
     const why = offers.length ? '' : rerunClosed(unit) ?? 'no accepted stage can be run again now'
@@ -2913,7 +2993,7 @@ function cmdRerun(unitName, stage, cosDir, limit, today = localDate()) {
 // line of JSON: `screensAnswer`'s. Exit 0 whatever it says; exit 2 is misuse — no unit named,
 // no such unit, or `--root` with no `--repo`, since the store has no `.screens/` and no git.
 // Reads git and one file; writes nothing, and opens or closes no gate.
-function cmdScreens(unitName, cosDir, repoDir) {
+function cmdScreens(unitName, cosDir, repoDir, state) {
   if (!unitName) {
     console.error('usage: cos.mjs screens <NNNN_slug> [--repo <dir>]')
     return 2
@@ -2931,7 +3011,36 @@ function cmdScreens(unitName, cosDir, repoDir) {
     console.error('screens needs the checkout its screenshots are in — pass --repo <dir>')
     return 2
   }
-  console.log(JSON.stringify(screensAnswer(readUnit(dir, unitName), makeProbe(repoDir))))
+  console.log(JSON.stringify(screensAnswer(readUnit(dir, unitName, { state }), makeProbe(repoDir))))
+  return 0
+}
+
+// `0135`. `unitMeta` as JSON: every directory under `.cos/` but `ideas/`, whatever its name,
+// and the ideas; or one unit, and only the artifacts named. Writes nothing and decides
+// nothing. Exit 2 is misuse: a unit that is not a directory there, or a file no stage writes.
+function cmdMeta(unitName, files, cosDir) {
+  if (unitName === undefined) {
+    const units = {}
+    if (existsSync(cosDir)) {
+      for (const e of readdirSync(cosDir, { withFileTypes: true })) {
+        if (e.isDirectory() && e.name !== IDEAS) units[e.name] = unitMeta(join(cosDir, e.name))
+      }
+    }
+    const ideas = existsSync(join(cosDir, IDEAS)) ? readIdeas(cosDir) : null
+    console.log(JSON.stringify({ units, ideas }))
+    return 0
+  }
+  const dir = join(cosDir, unitName)
+  if (/[\\/]/.test(unitName) || unitName === '.' || unitName === '..' || unitName === IDEAS || !existsSync(dir)) {
+    console.error(`No such work unit: ${unitName}`)
+    return 2
+  }
+  const stray = files.filter((f) => !ARTIFACTS.includes(f))
+  if (stray.length) {
+    console.error(`not an artifact: ${stray.join(', ')} — use ${ARTIFACTS.join(', ')}`)
+    return 2
+  }
+  console.log(JSON.stringify({ units: { [unitName]: unitMeta(dir, files.length ? files : null) } }))
   return 0
 }
 
@@ -2952,7 +3061,11 @@ const LOCAL_ONLY = new Set(['check-branch', 'check-tag', 'check-version'])
 // the root, because the root is the only place anything is created.
 function cmdNewPath(slug, cosDir, reserveFrom = []) {
   if (refuseSlug(slug, 'new-path')) return 2
-  const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))].flatMap((d) => readAll(d))
+  // Names only (`0135`): a number is taken by a directory, whatever its files say.
+  const taken = [cosDir, ...reserveFrom.map((d) => join(resolve(d), '.cos'))]
+    .flatMap((d) => (existsSync(d) ? readdirSync(d, { withFileTypes: true }) : []))
+    .filter((e) => e.isDirectory() && e.name !== IDEAS)
+    .map((e) => ({ number: Number(e.name.match(UNIT_RE)?.[1] ?? 0) }))
   console.log(`.cos/${nextNumber(taken)}_${slug}`)
   return 0
 }
@@ -3004,38 +3117,30 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // `--reserve-from <dir>`, repeatable, stripped the same way and from any position.
   // `--repo <dir>`, once, the same way: the repository whose git and pull request the
   // `review` and `ship` gates read.
-  // `--peer <ws>=<dir>` (`0040` R5), repeatable, the same way: another store, the kind of
-  // directory `--root` takes, read only to resolve a reference that names `<ws>`.
+  // `--state <file|->` (`0135`), once, the same way: the app's snapshot of every unit's
+  // metadata, JSON from a file or from stdin. It carries every workspace a link may name,
+  // which is why `--peer` (`0040` R5) is gone.
   const reserveFrom = []
   let repoArg = null
-  const peers = new Map()
+  let stateArg = null
   const words = []
   for (let i = 0; i < afterRoot.length; i++) {
     const flag = afterRoot[i]
-    if (flag !== '--reserve-from' && flag !== '--repo' && flag !== '--peer') {
+    if (flag === '--peer') {
+      console.error('--peer is gone since 0135: --state carries every workspace a link may name')
+      process.exit(2)
+    }
+    if (flag !== '--reserve-from' && flag !== '--repo' && flag !== '--state') {
       words.push(flag)
       continue
     }
     if (!afterRoot[i + 1]) {
-      console.error(flag === '--peer' ? '--peer needs <ws>=<dir>' : `${flag} needs a directory`)
+      console.error(flag === '--state' ? '--state needs a file, or - for stdin' : `${flag} needs a directory`)
       process.exit(2)
     }
     if (flag === '--repo') repoArg = afterRoot[++i]
-    else if (flag === '--reserve-from') reserveFrom.push(afterRoot[++i])
-    else {
-      const given = afterRoot[++i]
-      const eq = given.indexOf('=')
-      const [name, dir] = eq === -1 ? [given, ''] : [given.slice(0, eq), given.slice(eq + 1)]
-      if (!validWs(name) || !dir) {
-        console.error(`--peer "${given}" is not <ws>=<dir>, <ws> 1-64 letters, digits, dot, dash or underscore`)
-        process.exit(2)
-      }
-      if (peers.has(name)) {
-        console.error(`--peer names "${name}" twice`)
-        process.exit(2)
-      }
-      peers.set(name, resolve(dir))
-    }
+    else if (flag === '--state') stateArg = afterRoot[++i]
+    else reserveFrom.push(afterRoot[++i])
   }
   const [cmd, ...rest] = words
 
@@ -3051,16 +3156,31 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(2)
   }
 
+  let state = null
+  if (stateArg !== null) {
+    try {
+      state = JSON.parse(readFileSync(stateArg === '-' ? 0 : stateArg, 'utf8'))
+    } catch (e) {
+      console.error(`--state ${stateArg} is not readable JSON: ${e.message}`)
+      process.exit(2)
+    }
+    if (typeof state?.workspace !== 'string' || typeof state.units !== 'object' || state.units === null) {
+      console.error(`--state ${stateArg} is not a snapshot: it needs "workspace" and "units"`)
+      process.exit(2)
+    }
+  }
+
   const run = {
-    status: () => cmdStatus(rest.includes('--json'), cosDir, limit, peers),
-    gate: () => cmdGate(rest[0], rest[1], cosDir, repoDir, limit, peers),
-    next: () => cmdNext(rest[0], cosDir, repoDir, limit, peers),
+    status: () => cmdStatus(rest.includes('--json'), cosDir, limit, state),
+    gate: () => cmdGate(rest[0], rest[1], cosDir, repoDir, limit, state),
+    next: () => cmdNext(rest[0], cosDir, repoDir, limit, state),
     'new-path': () => cmdNewPath(rest[0], cosDir, reserveFrom),
     'new-idea': () => cmdNewIdea(rest[0], cosDir),
-    'unit-branch': () => cmdUnitBranch(rest[0], cosDir),
-    'pr-text': () => cmdPrText(rest[0], cosDir),
-    rerun: () => cmdRerun(rest[0], rest[1], cosDir, limit),
-    screens: () => cmdScreens(rest[0], cosDir, repoDir),
+    'unit-branch': () => cmdUnitBranch(rest[0], cosDir, state),
+    'pr-text': () => cmdPrText(rest[0], cosDir, state),
+    rerun: () => cmdRerun(rest[0], rest[1], cosDir, limit, undefined, state),
+    screens: () => cmdScreens(rest[0], cosDir, repoDir, state),
+    meta: () => cmdMeta(rest[0], rest.slice(1), cosDir),
     'check-branch': () => cmdCheckBranch(rest[0]),
     'check-tag': () => cmdCheckTag(rest[0]),
     'check-version': () => cmdCheckVersion(),
@@ -3069,8 +3189,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!run) {
     console.error('usage: cos.mjs [--root <dir>] <command>')
     console.error('  reading a .cos/ (these take --root):')
-    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>]')
-    console.error('    status, gate and next also take --peer <ws>=<dir>, once per workspace')
+    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>] | meta [<unit> [<artifact>]...]')
+    console.error('    status, gate, next, rerun, unit-branch, pr-text and screens need --state <file|->, the app\'s snapshot')
     console.error('  describing this checkout (these do not):')
     console.error('    check-branch [name] | check-tag <tag> | check-version')
     process.exit(2)
@@ -3103,9 +3223,15 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(2)
   }
 
-  // `--peer` resolves a unit's links, which only these three read.
-  if (peers.size && cmd !== 'status' && cmd !== 'gate' && cmd !== 'next') {
-    console.error(`--peer applies only to \`status\`, \`gate\` and \`next\`, not to \`${cmd}\`.`)
+  // `--state` is the metadata these commands decide on, and they decide on nothing else
+  // (`0135` R6); `meta` is what the app builds it from.
+  const STATE_READERS = ['status', 'gate', 'next', 'rerun', 'unit-branch', 'pr-text', 'screens']
+  if (state && !STATE_READERS.includes(cmd)) {
+    console.error(`--state applies only to ${STATE_READERS.map((c) => `\`${c}\``).join(', ')}, not to \`${cmd}\`.`)
+    process.exit(2)
+  }
+  if (!state && STATE_READERS.includes(cmd)) {
+    console.error(`${cmd} ${NEEDS_STATE}`)
     process.exit(2)
   }
 

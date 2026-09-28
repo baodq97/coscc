@@ -169,11 +169,12 @@ class AnswersMixin(rx.State, mixin=True):
             self._fail(e)
             return
         except Exception as e:  # noqa: BLE001 - R5: an unexpected failure is shown, not lost
-            # Not "nothing was written": `Service.answer` writes the block before it touches
-            # the history, so a failure after that leaves it on disk (`spec.md` R5).
+            # Not "nothing was written": a failure may come after the answer's row (`spec.md`
+            # R5). Since `0135` R8 the answer is a row, never a byte of the artifact, so the file
+            # cannot tell; the Questions tab, read again, can (review F12).
             self.error = (
-                f"{type(e).__name__}: {e}. It is not known whether the answer was written; "
-                f"open {artifact} to check."
+                f"{type(e).__name__}: {e}. It is not known whether the answer was recorded; "
+                "reload the page, and the Questions tab shows it if it was."
             )
             return
         finally:
