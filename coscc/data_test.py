@@ -144,7 +144,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
     def test_a_version_3_database_gains_the_event_tables_and_keeps_its_rows(self):
         """`0073` step 2: 4 adds `step_runs` and `step_events`, and the number had to move --
         at 3 `_prepare` would never run `_SCHEMA` on a database already at 3."""
-        self.assertEqual(SCHEMA_VERSION, 4)
+        self.assertGreaterEqual(SCHEMA_VERSION, 4)
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.set_pref("density", "compact")
@@ -154,7 +154,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                 conn.execute("DROP TABLE step_runs")
                 conn.execute("PRAGMA user_version=3")
 
-            self.assertEqual(data.version(), 4)
+            self.assertEqual(data.version(), SCHEMA_VERSION)
             with data.connect() as conn:
                 tables = {
                     row["name"]
@@ -164,14 +164,55 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual(data.pref("density"), "compact")
             self.assertEqual(data.auth_password_hash(), "h")
 
-    def test_a_version_5_database_is_still_refused(self):
+    def test_a_version_4_database_gains_the_decisions_table_and_keeps_its_rows(self):
+        """`0137` step 1: 5 adds `decisions` the way 4 added its two."""
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            data.set_pref("density", "compact")
+            data.auth_set_password("h", 1)
+            with data.connect() as conn:
+                conn.execute("DROP TABLE decisions")
+                conn.execute("PRAGMA user_version=4")
+
+            self.assertEqual(data.version(), 5)
+            self.assertEqual(data.decisions(), [])
+            self.assertEqual(data.pref("density"), "compact")
+            self.assertEqual(data.auth_password_hash(), "h")
+
+    def test_a_version_6_database_is_still_refused(self):
+        """Was `version_5` until `0137` made 5 this build's own number."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.version()
             with sqlite3.connect(data.db_path) as conn:
-                conn.execute("PRAGMA user_version=5")
+                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION + 1}")
             with self.assertRaises(Incompatible):
                 data.version()
+
+
+class ThePersonsDecisions(unittest.TestCase):
+    """`0137` R4: `D<n>` is never reused, and nothing is deleted."""
+
+    def _add(self, data: Data, text: str = "t") -> int:
+        return data.decision_add(kind="decision", text=text, source="s", from_day="2026-09-28")
+
+    def test_a_decision_id_is_never_reused_after_the_last_row_goes(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            first = self._add(data)
+            with data.connect() as conn:
+                conn.execute("DELETE FROM decisions")
+            self.assertGreater(self._add(data), first)
+
+    def test_withdrawing_a_decision_keeps_its_row_and_writes_its_day_once(self):
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            n = self._add(data)
+            self.assertTrue(data.decision_withdraw(n, "2026-10-01"))
+            self.assertFalse(data.decision_withdraw(n, "2026-10-05"))
+            self.assertFalse(data.decision_withdraw(n + 99, "2026-10-05"))
+            [row] = data.decisions()
+            self.assertEqual((row["id"], row["withdrawn"], row["text"]), (n, "2026-10-01", "t"))
 
 
 class AStepsEvents(unittest.TestCase):

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from coscc.agent import agents
+from coscc.agent import agents, precedent
 from coscc.data import Data
 from coscc.service.common import Invalid
 
@@ -29,6 +29,14 @@ class AgentsMixin:
         """The resolved row for `key`, overrides included, or `None`. Every place in the
         service that shows or writes an agent's name asks this. Never raises on bad data."""
         return agents.agent_for(key, self._agent_overrides()[0])
+
+    def agent_names(self) -> list[str]:
+        """`0137` R2. Every name an agent answers under: each row's default and override, since
+        an older block carries the name its agent had then, and `Jera` and `Leif`. Never raises."""
+        defaults, _ = agents.load_defaults()
+        overrides, _ = self._agent_overrides()
+        names = [str(r.get("name") or "") for r in (*defaults.values(), *overrides.values())]
+        return [n for n in dict.fromkeys([*names, *precedent.AGENTS_ALWAYS]) if n]
 
     def agent_table(self) -> dict[str, Any]:
         """Every row Settings shows, each with `overridden`, and what was wrong."""

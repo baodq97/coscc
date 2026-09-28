@@ -817,6 +817,48 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
         self.ask()
         self.assertIn("## Rules\n\n" + precedent_mod.DEFAULT_RULES, self.sessions.prompt)
 
+    # -- `0137` -------------------------------------------------------------------
+
+    def _leifs(self) -> str:
+        """A unit whose one answer is Leif's, standing in for the originator."""
+        leif = self.EARLIER.replace("Answered by: owner.", "Answered by: Leif (CoS), thay người khởi xướng.")
+        made = self._make("leifs", intent="# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n",
+                          spec=leif)
+        return f"{made}/spec.md#Câu 1"
+
+    def test_precedent_rows_record_cite_who_at_the_time_jera_ran(self):
+        """R9."""
+        leif = self._leifs()
+        self.reply(self.item(1, cites=[self.cite, "practice"]),
+                   self.item(2, cites=[leif, "9999_x/spec.md#Câu 1"]))
+        self.ask()
+        rows = {r["n"]: r for r in self.rows("precedent")}
+        self.assertEqual(rows[1]["cite_who"], {self.cite: "originator", "practice": "practice"})
+        self.assertEqual(rows[2]["cite_who"], {leif: "inferred", "9999_x/spec.md#Câu 1": "unknown"})
+        self.assertIn("### Agents' inferences", self.sessions.prompt)
+
+    def test_an_answer_resting_on_leifs_blocks_alone_is_not_written(self):
+        """R8, through `Service.precedent` to `_append_answers`."""
+        leif = self._leifs()
+        before = self.spec.read_bytes()
+        self.reply(self.item(1, cites=[leif]), self.item(2, cites=[leif]))
+        done = self.ask()
+        self.assertEqual((self.spec.read_bytes(), done["written"]), (before, []))
+        rows = self.rows("precedent")
+        self.assertEqual([(r["verdict"], r["reason"], r["written"]) for r in rows],
+                         [("needs-person", precedent_mod.ONLY_INFERRED, False)] * 2)
+
+    def test_a_decision_from_settings_lets_jera_answer(self):
+        """R4, R8: the same Leif citation, with one of the person's decisions beside it."""
+        leif = self._leifs()
+        added = self.service.add_decision({"kind": "decision", "text": "Tách nhánh theo Type.",
+                                           "source": "chat 2026-09-28", "workspace": "proj"})["added"]
+        self.reply(self.item(1, cites=[leif, added]), self.item(2, cites=[leif]))
+        done = self.ask()
+        self.assertEqual(done["written"], [{"artifact": "spec.md", "n": 1}])
+        self.assertIn(f"#### {added}\nSource: chat 2026-09-28\nScope: this workspace", self.sessions.prompt)
+        self.assertIn(f"Tiền lệ: {leif}; {added}", self.spec.read_text(encoding="utf-8"))
+
     def test_jera_ending_wakes_the_autopilot(self):
         """`0101` R4, a refusal after the mark included."""
         woken: list[str] = []

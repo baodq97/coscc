@@ -20,6 +20,11 @@ What is decided here, and what is not:
   person (`verdicts`, R4-R6; `0101` R7). Which category a question is in is still Jera's
   word (`spec.md` C2), and so is which best practice `practice` stands for (`0101` C2);
   nothing here can check either.
+- Since `0137` every entry says who decided it (`decided_by`: `originator`, `delegated` or
+  `inferred`), and a verdict `answer` that cites no `originator` or `delegated` entry and
+  no `practice` needs a person (`verdicts`, R8): an agent's inference never settles a
+  question by itself. The label is only as true as the name in `Answered by:` (`0137`
+  spec ## Concerns).
 """
 
 from __future__ import annotations
@@ -28,7 +33,7 @@ import dataclasses
 import json
 import math
 import re
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 AGENT = "Jera"
 VIA = "precedent"
@@ -76,27 +81,127 @@ CITES = "Tiền lệ:"
 # `spec.md` R4. Said for a question the reply left out or said nothing usable about.
 NOT_ANSWERED = "Jera did not answer this question."
 
+# `0137` R1. Who decided an entry, computed on every read and never typed by anyone.
+ORIGINATOR, DELEGATED, INFERRED = "originator", "delegated", "inferred"
+WHO = (ORIGINATOR, DELEGATED, INFERRED)
+
+# `0137` R2. Names that are an agent's whatever the agent table says: Jera, and Leif, who
+# answers in the originator's place from outside the app.
+AGENTS_ALWAYS = ("Jera", "Leif")
+
+# `0137` R10. The last line of a block written under a delegation, `Theo ủy quyền: D<n>`.
+DELEGATION = "Theo ủy quyền:"
+_DELEGATION_LINE = re.compile(r"^Theo ủy quyền: (D\d+)$")
+
+# The fixed word `Answered by:` carries when a request names nobody (`service.common.OWNER`).
+OWNER = "owner"
+
+# `0137` R8. The reason a verdict citing only inferences needs a person.
+ONLY_INFERRED = "It rests only on agents' inferences."
+
+# `0137` R3. What each kind of entry says of itself.
+PREFS_SOURCE = "Settings: Decision preferences"
+EVERY_WORKSPACE, THIS_WORKSPACE, NO_END = "every workspace", "this workspace", "no end date"
+ANSWER_SCOPE, ANSWER_TERM = "that question of that unit", "until a later block replaces it"
+
 
 def is_jera(name: Any) -> bool:
     """`spec.md` R11: the one name a person may not answer under."""
     return str(name or "").strip().lower() == AGENT.lower()
 
 
+def opens_with(by: Any, names: Iterable[Any]) -> bool:
+    """`0137` R1: `by` opens with one of `names`, case aside, and the name ends there or at a
+    character that is not a letter — `Leif (CoS)` does, `Leifson` does not."""
+    b = str(by or "").strip().casefold()
+    for n in names:
+        n = str(n or "").strip().casefold()
+        if n and b.startswith(n) and (len(b) == len(n) or not b[len(n)].isalpha()):
+            return True
+    return False
+
+
+def is_agent_name(by: Any, names: Iterable[Any]) -> bool:
+    """`0137` R2. `by` is an agent's: it opens with a name in `names` or `AGENTS_ALWAYS`."""
+    return opens_with(by, [*names, *AGENTS_ALWAYS])
+
+
+def decision_id(d: Mapping[str, Any]) -> str:
+    return f"D{d.get('id')}"
+
+
+def in_force(d: Mapping[str, Any], day: str, workspace: str) -> bool:
+    """`0137` R4. Decision `d` holds on `day` (ISO) in `workspace` (a slot): from its first day,
+    to its last if it has one, before the day it was withdrawn, and in its workspace or all."""
+    day = str(day or "")
+    start, until = str(d.get("from_day") or ""), str(d.get("until_day") or "")
+    gone, where = str(d.get("withdrawn") or ""), str(d.get("workspace") or "")
+    return (bool(day) and bool(start) and start <= day and (not until or day <= until)
+            and (not gone or day < gone) and (not where or where == workspace))
+
+
+def delegation_of(text: Any) -> str:
+    """`0137` R10. The `D<n>` of a block's last non-empty line `Theo ủy quyền: D<n>`, else `""`."""
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    found = _DELEGATION_LINE.match(lines[-1]) if lines else None
+    return found.group(1) if found else ""
+
+
+def decided_by(answer: Mapping[str, Any], workspace: str, decisions: Iterable[Mapping[str, Any]],
+               mine: Iterable[str], agents: Iterable[str]) -> str:
+    """`0137` R1. Who decided one answer in force, in this order:
+
+    1. `delegated`: its last line cites a `delegation` in force on its `Date:` in this
+       workspace, and `by` opens with the name of the agent that delegation names;
+    2. `originator`: `by` is `owner` or a name marked "This was me", and no agent's;
+    3. `inferred`: everything else, every block of Leif's among it."""
+    by = str(answer.get("by") or "").strip()
+    cited = delegation_of(answer.get("text"))
+    if cited:
+        d = next((d for d in decisions if decision_id(d) == cited), None)
+        if (d is not None and d.get("kind") == "delegation"
+                and in_force(d, str(answer.get("date") or ""), workspace)
+                and opens_with(by, [d.get("agent")])):
+            return DELEGATED
+    key = by.casefold()
+    if (key == OWNER or key in {str(m).strip().casefold() for m in mine}) and not is_agent_name(by, agents):
+        return ORIGINATOR
+    return INFERRED
+
+
 def entry_id(unit: str, artifact: str, n: Any) -> str:
     return f"{unit}/{artifact}#Câu {n}"
 
 
-def entries(units: Iterable[dict[str, Any]], prefs_text: str, exclude_units: Iterable[str]) -> list[dict[str, str]]:
-    """`spec.md` R8. `[{id, text}]`: each paragraph of the Settings text as `pref:<k>`, then
-    each answer in force the board read carries (`answers`, `coscc/units/board.py`).
+def entries(units: Iterable[dict[str, Any]], prefs_text: str, exclude_units: Iterable[str], *,
+            workspace: str = "", decisions: Iterable[Mapping[str, Any]] = (), mine: Iterable[str] = (),
+            agents: Iterable[str] = (), today: str = "") -> list[dict[str, str]]:
+    """`spec.md` R8, `0137` R3. `[{id, text, who, source, scope, term}]`: each paragraph of the
+    Settings text as `pref:<k>`, each of the person's `decisions` in force `today` in
+    `workspace` as `D<n>`, then each answer in force the board read carries (`answers`,
+    `coscc/units/board.py`), which also has its `date`.
 
     Left out: an answer Jera gave (by its name or by `Via: precedent`), and every answer of a
     unit in `exclude_units` — the asked unit itself, so a question never cites its own
-    answer. Leif's answers stay in (`spec.md` C3)."""
+    answer. Leif's answers stay in (`spec.md` C3), labelled `inferred` (`0137` R1)."""
     out: list[dict[str, str]] = []
     paragraphs = [p.strip() for p in re.split(r"\n[ \t]*\n", prefs_text or "") if p.strip()]
     for k, p in enumerate(paragraphs, 1):
-        out.append({"id": f"pref:{k}", "text": p})
+        out.append({"id": f"pref:{k}", "text": p, "who": ORIGINATOR, "source": PREFS_SOURCE,
+                    "scope": EVERY_WORKSPACE, "term": NO_END})
+    decisions = list(decisions)
+    mine, agents = list(mine), list(agents)
+    for d in decisions:
+        if not in_force(d, today, workspace):
+            continue
+        text = str(d.get("text") or "").strip()
+        if d.get("kind") == "delegation":
+            text = f"Delegation to {d.get('agent')} for: {d.get('covers')}.\n{text}"
+        until = str(d.get("until_day") or "")
+        # The workspace by what it is to the asked unit, not by name: the prompt names none.
+        out.append({"id": decision_id(d), "text": text, "who": ORIGINATOR, "source": str(d.get("source") or ""),
+                    "scope": THIS_WORKSPACE if d.get("workspace") else EVERY_WORKSPACE,
+                    "term": f"until {until}" if until else "until withdrawn"})
     excluded = set(exclude_units)
     for u in units:
         name = str(u.get("name") or "")
@@ -105,10 +210,14 @@ def entries(units: Iterable[dict[str, Any]], prefs_text: str, exclude_units: Ite
         for a in u.get("answers") or []:
             if is_jera(a.get("by")) or str(a.get("via") or "") == VIA:
                 continue
+            artifact, day = str(a.get("artifact") or ""), str(a.get("date") or "")
             out.append({
-                "id": entry_id(name, str(a.get("artifact") or ""), a.get("n")),
+                "id": entry_id(name, artifact, a.get("n")),
                 "text": f"Question: {str(a.get('question') or '').strip()}\n"
                         f"Answer ({str(a.get('by') or '').strip()}): {str(a.get('text') or '').strip()}",
+                "who": decided_by(a, workspace, decisions, mine, agents),
+                "source": f"{name}/{artifact} ## Answers, câu {a.get('n')}" + (f", {day}" if day else ""),
+                "scope": ANSWER_SCOPE, "term": ANSWER_TERM, "date": day,
             })
     return out
 
@@ -184,12 +293,51 @@ def build_prompt(questions: list[dict[str, Any]], store: list[dict[str, str]], r
     ]
     for q in questions:
         lines += ["", f"### {q['artifact']}, question {q['n']}", str(q.get("text") or "").strip()]
-    lines += ["", "## Precedent"]
-    if not store:
-        lines += ["", "(none)"]
-    for e in store:
-        lines += ["", f"### {e['id']}", e["text"]]
+    # `0137` R7. Outside `## Rules`, so `decision_rules` cannot take it out.
+    lines += ["", "## Precedent", "", WEIGHING]
+    for who, title, said, same in _PARTS:
+        part = [e for e in store if e.get("who", INFERRED) == who]
+        lines += ["", f"### {title}", said]
+        if not part:
+            lines += ["", "(none)"]
+        for e in part:
+            lines += ["", f"#### {e['id']}"]
+            if e.get("date") is not None:
+                # An answer: its scope and term are always those of an answer.
+                lines.append(f"Date: {e['date']}")
+            else:
+                if e.get("source"):
+                    lines.append(f"Source: {e['source']}")
+                for field in ("scope", "term"):
+                    if e.get(field) and e[field] != same[field]:
+                        lines.append(f"{field.capitalize()}: {e[field]}")
+            lines.append(e["text"])
     return "\n".join(lines) + "\n"
+
+
+# `0137` R7. The three things the prompt always says about weighing precedent.
+WEIGHING = (
+    "An entry under *Agents' inferences* never settles a question by itself: an `answer` must "
+    "also cite an entry of one of the other two parts, or `practice`. When an inference "
+    "contradicts an entry of the person's, the person's entry wins. A delegation lets only the "
+    "agent it names decide, and only the kind of question it says it covers."
+)
+
+# `0137` R7. The three parts of `## Precedent`, in order: who, heading, the sentence saying
+# what every entry in it holds for, and that scope and term, which an entry repeats only when
+# its own differ.
+_PARTS = (
+    (ORIGINATOR, "The person's decisions",
+     "A preference or decision holds in every workspace with no end date unless it says otherwise; "
+     "a dated answer answers that question of that unit until a later block replaces it.",
+     {"scope": EVERY_WORKSPACE, "term": NO_END}),
+    (DELEGATED, "Answers the person delegated",
+     "Each answers that question of that unit, until a later block replaces it.",
+     {"scope": ANSWER_SCOPE, "term": ANSWER_TERM}),
+    (INFERRED, "Agents' inferences",
+     "Each answers that question of that unit, until a later block replaces it.",
+     {"scope": ANSWER_SCOPE, "term": ANSWER_TERM}),
+)
 
 
 _JSON_BLOCK = re.compile(r"```(?:json)?\s*\n(.*?)```", re.DOTALL)
@@ -218,8 +366,10 @@ def _number(value: Any) -> int | None:
         return None
 
 
-def verdicts(reply: str, questions: list[dict[str, Any]], entry_ids: Iterable[str]) -> dict[str, Any]:
+def verdicts(reply: str, questions: list[dict[str, Any]], who: Mapping[str, str]) -> dict[str, Any]:
     """`spec.md` R4, R5, R6. `{failed, verdicts, ignored}`.
+
+    `who` maps every id of the store Jera was given to who decided that entry (`0137` R1).
 
     `failed` is a reason when the reply holds no JSON list, and then nothing else is read.
     Otherwise `verdicts` has one element per question in `questions`, in their order, each
@@ -230,7 +380,7 @@ def verdicts(reply: str, questions: list[dict[str, Any]], entry_ids: Iterable[st
     data = _first_list(reply)
     if data is None:
         return {"failed": "the reply holds no JSON list", "verdicts": [], "ignored": []}
-    known = set(entry_ids)
+    known = set(who)
     wanted = {(q["artifact"], int(q["n"])): q for q in questions}
     said: dict[tuple[str, int], dict[str, Any]] = {}
     ignored: list[dict[str, Any]] = []
@@ -289,6 +439,9 @@ def verdicts(reply: str, questions: list[dict[str, Any]], entry_ids: Iterable[st
                 why = f"Its category, {category or '(none)'}, is not one the app knows."
             elif any(line.lstrip().startswith("#") for line in text.splitlines()):
                 why = "A line of it starts with #, which an answer may not."
+            elif not any(c == PRACTICE or who.get(c) in (ORIGINATOR, DELEGATED) for c in cites):
+                # `0137` R8, last so it counts only what no older reason already took.
+                why = ONLY_INFERRED
             if why:
                 v.update(verdict=PERSON, reason=why)
         if v["verdict"] == PERSON and not v["reason"]:

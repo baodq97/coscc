@@ -254,7 +254,7 @@ class BacklogMixin:
 
     def _precedent_prompt(
         self, data_units: list[dict[str, Any]], found: dict[str, Any], unit: str,
-        only: list[dict[str, Any]] | None = None,
+        only: list[dict[str, Any]] | None = None, *, cwd: str = "",
     ) -> tuple[list[dict[str, Any]], list[dict[str, str]], str]:
         """`0101` R5, R8. `(questions, store, prompt)` for Jera on `found`, the one place its
         prompt is built: `precedent` runs it, and the autopilot's pass prices it (C13).
@@ -262,13 +262,19 @@ class BacklogMixin:
         `only`: the questions to ask, `[{artifact, n}]`; every one Jera may be given when
         `None`. The rules are Settings' `decision_rules`, or `DEFAULT_RULES` while it is empty.
         Pure but for reading the preferences.
+
+        `0137` R7: each entry says who decided it, from the person's decisions and the names
+        marked "This was me" on Settings, both read here, and the agents' names. `cwd` is the
+        workspace `data_units` were read from; a decision scoped to another is not in force.
         """
         questions = precedent_mod.asked(found)
         if only is not None:
             wanted = {(str(q["artifact"]), q["n"]) for q in only}
             questions = [q for q in questions if (q["artifact"], q["n"]) in wanted]
         prefs = self.preferences()
-        store = precedent_mod.entries(data_units, str(prefs.get("decision_preferences") or ""), {unit})
+        store = precedent_mod.entries(
+            data_units, str(prefs.get("decision_preferences") or ""), {unit}, **self._who_context(cwd),
+        )
         rules = str(prefs.get("decision_rules") or "").strip() or precedent_mod.DEFAULT_RULES
         return questions, store, precedent_mod.build_prompt(questions, store, rules)
 
@@ -315,7 +321,7 @@ class BacklogMixin:
                     only = autopilot.unasked(found, journal.records(key, unit, kinds=("start", "end", "precedent")), key)
                 except Busy as e:
                     raise Invalid(str(e)) from e
-            questions, store, prompt = self._precedent_prompt(data["units"], found, unit, only)
+            questions, store, prompt = self._precedent_prompt(data["units"], found, unit, only, cwd=cwd)
             if not questions:
                 raise Invalid(f"{unit} has no open question Jera may answer"
                               + (" that it was not asked already" if only is not None else ""))
@@ -344,8 +350,9 @@ class BacklogMixin:
             cost = end.get("cost") or {}
             session = end.get("session_id", "")
             found_v = {"failed": failure or None, "verdicts": [], "ignored": []}
+            who = {e["id"]: e["who"] for e in store}
             if not failure:
-                found_v = precedent_mod.verdicts(reply, questions, {e["id"] for e in store})
+                found_v = precedent_mod.verdicts(reply, questions, who)
             if found_v["failed"]:
                 try:
                     # R13. The tail is chosen at 2000 characters, not measured.
@@ -368,7 +375,10 @@ class BacklogMixin:
                 row = {"kind": "precedent", "workspace": key, "unit": unit, "artifact": v["artifact"],
                        "n": v["n"], "verdict": v["verdict"], "category": v["category"], "text": v["text"],
                        "reason": v["reason"], "cites": v["cites"], "session_id": session,
-                       "written": v["verdict"] == precedent_mod.ANSWER and at not in skipped}
+                       "written": v["verdict"] == precedent_mod.ANSWER and at not in skipped,
+                       # `0137` R9: who decided each cite as Jera was given it, not as it reads later.
+                       "cite_who": {c: precedent_mod.PRACTICE if c == precedent_mod.PRACTICE
+                                    else who.get(c, "unknown") for c in v["cites"]}}
                 if at in skipped:
                     row.update(verdict="skipped", reason=skipped[at])
                 try:

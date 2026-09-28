@@ -607,6 +607,10 @@ class _Page:
             "cost": counted("cost", {"recording": False}),
             "unit_cost": counted("unit_cost", {"by_stage": [], "anomalies": [], "recording": True}),
             "artifact": counted("artifact", {"file": "impl.md", "exists": False, "text": ""}),
+            # `0137`: read only on arriving at Settings.
+            "decisions_table": counted("decisions_table", {"rows": [], "workspaces": ["a", "b"]}),
+            "answer_names": acounted("answer_names", {"rows": [{"name": "Phong", "count": 2, "mine": False}],
+                                                      "problems": []}),
             "next_step": mock.AsyncMock(side_effect=page.Invalid("not asked in this test")),
         }.items():
             stack.enter_context(mock.patch.object(page.SERVICE, name, value))
@@ -637,6 +641,9 @@ class AnArrivalReadsOnce(unittest.TestCase):
                     seen.append({
                         "board": fake.calls["board"] - before.get("board", 0),
                         "timeline": fake.calls["timeline"] - before.get("timeline", 0),
+                        "decisions": fake.calls["decisions_table"] - before.get("decisions_table", 0),
+                        "names": fake.calls["answer_names"] - before.get("answer_names", 0),
+                        "name_rows": [r.name for r in studio.name_rows],
                         "screen": studio.screen, "cwd": studio.cwd, "unit": studio.unit_id,
                         "tab": studio.detail_tab, "notice": studio.notice,
                         "redirects": list(fake.redirects),
@@ -670,6 +677,21 @@ class AnArrivalReadsOnce(unittest.TestCase):
         self.assertEqual((seen[3]["unit"], seen[4]["screen"]), ("", "sessions"))
         self.assertEqual((seen[5]["cwd"], seen[6]["cwd"]), ("/b", "/b"))
         self.assertEqual([s["redirects"] for s in seen], [[]] * 7)
+        # `0137`: none of these arrivals is at Settings, so neither panel is read.
+        self.assertEqual([(s["decisions"], s["names"]) for s in seen], [(0, 0)] * 7)
+
+    def test_arriving_at_settings_reads_decisions_and_names_once(self):
+        """`0137` R5, R6: each arrival at Settings reads both panels once; no other screen does."""
+        seen = self._walk([
+            ("/board?ws=a", "s1"),
+            ("/settings?ws=a", "s1"),
+            ("/board?ws=a", "s1"),
+            ("/settings?ws=a", "s1"),
+            ("/settings/?ws=a", "s2"),  # reload
+        ])
+        self.assertEqual([s["screen"] for s in seen], ["board", "settings", "board", "settings", "settings"])
+        self.assertEqual([(s["decisions"], s["names"]) for s in seen], [(0, 0), (1, 1), (0, 0), (1, 1), (1, 1)])
+        self.assertEqual(seen[1]["name_rows"], ["Phong"])
 
     def test_an_address_without_ws_is_replaced_by_one_with_it(self):
         seen = self._walk([("/board", "s1"), ("/board?ws=a", "s1")])

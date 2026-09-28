@@ -29,7 +29,16 @@ from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
+from coscc.data import Data
 from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
+
+# `0137` R4, R6. The kinds of a decision, the longest text one may carry (chosen, not
+# measured), the preference holding the names marked "This was me", and the artifacts whose
+# answers those names are gathered from.
+DECISION_KINDS = ("decision", "delegation")
+DECISION_TEXT_MAX = 2000
+NAMES_MINE = "answer_names_mine"
+NAMES_FROM = ("intent.md", "spec.md")
 
 
 class AnswersMixin:
@@ -309,6 +318,7 @@ class AnswersMixin:
         question: Any,
         answer: str,
         answered_by: str,
+        delegation: str = "",
     ) -> dict[str, Any]:
         """`0016` R2–R4. A person answers one item under an artifact's `## Open questions`.
 
@@ -326,6 +336,10 @@ class AnswersMixin:
         `0028`: `question` may be `"F<n>"`, a finding `cos.mjs` lists in the unit's
         `personFindings`; then `artifact` must be `review.md` and the block is `### F<n>`.
         Unlike a numbered answer, that block is read by `cos.mjs next` and the `ship` gate.
+
+        `0137` R10: with `delegation` `D<n>`, the answer is an agent's under a delegation the
+        person entered on Settings; `_append_one` checks it and ends the block with
+        `Theo ủy quyền: D<n>`, which is what reads it back as `delegated`.
         """
         self._workspace_or_refuse(cwd)
         name = str(answered_by or "").strip() or OWNER
@@ -335,6 +349,7 @@ class AnswersMixin:
             raise Invalid(f"{precedent_mod.AGENT} is the agent that answers from precedent; answer under another name")
         done = await self._append_answers(
             cwd, unit, [(artifact, question, answer)], name, "product", f"human:{name}", "answer",
+            delegation=str(delegation or "").strip(),
         )
         written = done["written"][0]
         # `0043` R5 b. The answer itself still starts nothing; a pass may, if the switch is on.
@@ -356,6 +371,7 @@ class AnswersMixin:
         via: str,
         actor: str,
         source: str,
+        delegation: str = "",
     ) -> dict[str, Any]:
         """The one place that appends a block under `## Answers` (`0044` Design 3): a person's
         through `answer`, Jera's through `precedent`. `items` is `[(artifact, question, text)]`,
@@ -386,7 +402,7 @@ class AnswersMixin:
                 try:
                     number, finding = self._append_one(
                         cwd, unit, found, artifact, question, str(answer or "").strip("\n"), name, via,
-                        today, jera,
+                        today, jera, delegation,
                     )
                 except Invalid as e:
                     if not jera:
@@ -453,7 +469,7 @@ class AnswersMixin:
 
     def _append_one(
         self, cwd: str, unit: str, found: dict[str, Any], artifact: str, question: Any, text: str,
-        name: str, via: str, today: str, jera: bool,
+        name: str, via: str, today: str, jera: bool, delegation: str = "",
     ) -> tuple[int | str, str]:
         """Check one answer against the board read `found` and append its block. Raises
         `Invalid` before a byte is written; returns `(number, finding)`."""
@@ -517,6 +533,9 @@ class AnswersMixin:
                     f"{artifact} cannot be answered while the {mark.stage} step that writes it "
                     "is running; answer it once the step ends"
                 )
+        if delegation:
+            # `0137` R10. Last of the refusals, and still before the file is opened.
+            text = f"{text}\n\n{precedent_mod.DELEGATION} {self._delegation_or_refuse(cwd, name, delegation, today)}"
 
         path = self._unit_dir(cwd, unit) / artifact
         try:
@@ -547,6 +566,191 @@ class AnswersMixin:
         except OSError as e:
             raise Invalid(f"could not write {artifact}: {e}") from e
         return number, finding
+
+    def _delegation_or_refuse(self, cwd: str, name: str, delegation: str, today: str) -> str:
+        """`0137` R10. The `D<n>` an answer under `name` may cite today in `cwd`, or `Invalid`
+        naming why not. What the delegation `covers` is not checked (spec ## Out of scope)."""
+        cited = str(delegation or "").strip()
+        if not re.fullmatch(r"D\d+", cited):
+            raise Invalid(f"a delegation is named D<n>, got {delegation!r}")
+        try:
+            rows = Data(self.config.data_dir).decisions()
+        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+            raise Invalid(f"the decisions could not be read, so nothing was written: {e}") from e
+        d = next((d for d in rows if precedent_mod.decision_id(d) == cited), None)
+        if d is None:
+            raise Invalid(f"there is no decision {cited}")
+        if d["kind"] != "delegation":
+            raise Invalid(f"{cited} is a decision, not a delegation")
+        if d["workspace"] and d["workspace"] != units.slot(cwd):
+            raise Invalid(f"{cited} does not cover this workspace")
+        if not precedent_mod.in_force(d, today, units.slot(cwd)):
+            raise Invalid(f"{cited} is not in force today")
+        if not precedent_mod.opens_with(name, [d["agent"]]):
+            raise Invalid(f"{cited} delegates to {d['agent']}, and this answer is under {name}")
+        return cited
+
+    # -- the person's decisions and names (`0137` R4-R6) ------------------------
+    #
+    # Called only by the Settings screen's handlers (`coscc/state/answers.py`). No route
+    # reaches these: a write over HTTP would let an agent make "the person's decision" itself
+    # (spec ## Concerns). The page does not tell a person from an agent with a browser.
+
+    def _who_context(self, cwd: str) -> dict[str, Any]:
+        """What `precedent.entries` needs to say who decided each entry (`0137` R1)."""
+        data = Data(self.config.data_dir)
+        return {"workspace": units.slot(cwd) if cwd else "", "decisions": data.decisions(),
+                "mine": sorted(self._names_mine(data)), "agents": self.agent_names(),
+                "today": date.today().isoformat()}
+
+    @staticmethod
+    def _names_mine(data: Data) -> set[str]:
+        """The names marked "This was me", casefolded; a hand-broken value is none."""
+        stored = data.pref(NAMES_MINE, [])
+        return {str(n).casefold() for n in stored} if isinstance(stored, list) else set()
+
+    def decisions_table(self) -> dict[str, Any]:
+        """`0137` R5. Every decision, withdrawn and expired included, each with its `state` and
+        its workspace by name (S3), and the workspace names the form offers."""
+        today = date.today().isoformat()
+        rows = self.workspaces()["workspaces"]
+        names = {units.slot(r["path"]): str(r["name"]) for r in rows}
+        try:
+            found = Data(self.config.data_dir).decisions()
+        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+            raise Invalid(f"The decisions could not be read: {e}") from e
+        out = []
+        for d in found:
+            if d["withdrawn"]:
+                state = "withdrawn"
+            elif d["until_day"] and d["until_day"] < today:
+                state = "expired"
+            elif d["from_day"] > today:
+                state = "not yet"
+            else:
+                state = "in force"
+            out.append({**d, "id": precedent_mod.decision_id(d), "state": state,
+                        "workspace_name": names.get(d["workspace"], "a removed workspace")
+                        if d["workspace"] else "All workspaces"})
+        return {"rows": out, "workspaces": sorted(dict.fromkeys(names.values()))}
+
+    def add_decision(self, fields: dict[str, Any]) -> dict[str, Any]:
+        """`0137` R4, R5. One new decision from the Settings form, or `Invalid` with one sentence.
+        `from` is today, set here: a form that took it could date a decision before the
+        blocks it would then relabel."""
+        get = lambda k: str(fields.get(k) or "").strip()  # noqa: E731
+        kind, text, source, until, where = get("kind"), get("text"), get("source"), get("until"), get("workspace")
+        agent, covers = get("agent"), get("covers")
+        today = date.today().isoformat()
+        if kind not in DECISION_KINDS:
+            raise Invalid("Choose decision or delegation.")
+        if not text:
+            raise Invalid("Write what was decided.")
+        if len(text) > DECISION_TEXT_MAX:
+            raise Invalid(f"The text is longer than {DECISION_TEXT_MAX} characters.")
+        if not source:
+            raise Invalid("Say where it was decided.")
+        if "\n" in source or "\r" in source:
+            raise Invalid("The source must fit on one line.")
+        if until:
+            try:
+                valid = len(until) == 10 and date.fromisoformat(until).isoformat() == until
+            except ValueError:
+                valid = False
+            if not valid:
+                raise Invalid("The end date must be a date such as 2026-12-31.")
+            if until < today:
+                raise Invalid("The end date is before today.")
+        slot = ""
+        if where and where.casefold() not in ("all", "all workspaces"):
+            slot = next((units.slot(r["path"]) for r in self.workspaces()["workspaces"] if r["name"] == where), "")
+            if not slot:
+                raise Invalid("Choose all workspaces or one of the app's workspaces.")
+        if kind == "delegation":
+            if agent not in precedent_mod.AGENTS_ALWAYS:
+                raise Invalid(f"Choose {' or '.join(precedent_mod.AGENTS_ALWAYS)} for a delegation.")
+            if not covers:
+                raise Invalid("Say which questions the delegation covers.")
+            if "\n" in covers or "\r" in covers:
+                raise Invalid("What it covers must fit on one line.")
+        else:
+            agent = covers = ""
+        try:
+            n = Data(self.config.data_dir).decision_add(
+                kind=kind, text=text, source=source, workspace=slot, agent=agent, covers=covers,
+                from_day=today, until_day=until,
+            )
+        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+            raise Invalid(f"The decision could not be saved: {e}") from e
+        return {"added": f"D{n}", **self.decisions_table()}
+
+    def withdraw_decision(self, decision_id: Any) -> dict[str, Any]:
+        """`0137` R4, R5. Withdraw one decision in force: its row stays, with today's date."""
+        cited = str(decision_id or "").strip()
+        today = date.today().isoformat()
+        table = self.decisions_table()
+        row = next((r for r in table["rows"] if r["id"] == cited), None)
+        if row is None:
+            raise Invalid(f"There is no decision {cited or '(none)'}.")
+        if row["state"] in ("withdrawn", "expired"):
+            raise Invalid(f"{cited} is {row['state']} already.")
+        try:
+            Data(self.config.data_dir).decision_withdraw(int(cited[1:]), today)
+        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+            raise Invalid(f"{cited} could not be withdrawn: {e}") from e
+        return {"withdrawn": cited, **self.decisions_table()}
+
+    async def answer_names(self) -> dict[str, Any]:
+        """`0137` R6. Every name in `Answered by:` of an answer in force in `intent.md` or
+        `spec.md`, in every workspace the app has, less `owner` and every agent's name; each
+        with how many answers carry it and whether it is marked "This was me". A workspace
+        that cannot be read is a `problems` line. Reads files and writes nothing (R11)."""
+        agent_names = self.agent_names()
+        mine = self._names_mine(Data(self.config.data_dir))
+        found: dict[str, dict[str, Any]] = {}
+        problems: list[str] = []
+        for w in self.workspaces()["workspaces"]:
+            if w.get("missing"):
+                continue
+            try:
+                data = await board_reader.read(self._units_root(w["path"]), peers=self._peers())
+            except Unavailable as e:
+                problems.append(f"{w['name']} could not be read: {e}")
+                continue
+            for u in data["units"]:
+                for a in u.get("answers") or []:
+                    by = str(a.get("by") or "").strip()
+                    if a.get("artifact") not in NAMES_FROM or not by:
+                        continue
+                    key = by.casefold()
+                    if key == OWNER or precedent_mod.is_agent_name(by, agent_names):
+                        continue
+                    row = found.setdefault(key, {"name": by, "count": 0, "mine": key in mine})
+                    row["count"] += 1
+        rows = sorted(found.values(), key=lambda r: (-r["count"], r["name"].casefold()))
+        return {"rows": rows, "problems": problems}
+
+    def set_name_mine(self, name: Any, on: bool) -> dict[str, Any]:
+        """`0137` R6. Mark one name as the person's, or unmark it. Stored casefolded under
+        `NAMES_MINE`, which `PREFERENCES` does not list, so `set_preference` cannot write it."""
+        shown = str(name or "").strip()
+        if not shown or "\n" in shown or "\r" in shown:
+            raise Invalid("Name one name, on one line.")
+        if shown.casefold() == OWNER:
+            raise Invalid("owner already counts as you.")
+        if precedent_mod.is_agent_name(shown, self.agent_names()):
+            raise Invalid(f"{shown} is an agent's name, so it cannot be yours.")
+        key = shown.casefold()
+
+        def change(current: Any) -> list[str]:
+            have = {str(n) for n in current} if isinstance(current, list) else set()
+            return sorted(have | {key}) if on else sorted(have - {key})
+
+        try:
+            Data(self.config.data_dir).update_pref(NAMES_MINE, change, [])
+        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+            raise Invalid(f"The name could not be saved: {e}") from e
+        return {"name": shown, "mine": bool(on)}
 
     async def record_outcome(
         self,

@@ -315,7 +315,7 @@ class AutopilotMixin:
                     elif not unasked:
                         stop = autopilot.waiting_for_you(autopilot.open_questions(u))
                     else:
-                        _, _, prompt = self._precedent_prompt(data["units"], u, name, unasked)
+                        _, _, prompt = self._precedent_prompt(data["units"], u, name, unasked, cwd=cwd)
                         need = precedent.ceiling(len(prompt))
                         if need > precedent.PRECEDENT_MAX_USD:
                             stop = {"kind": "a", "reason": autopilot.STORE_PAST_CEILING}

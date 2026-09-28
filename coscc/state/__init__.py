@@ -100,6 +100,8 @@ from coscc.state.views import (
     Knob,
     ModelRow,
     AgentRow,
+    DecisionRow,  # noqa: F401 — the page imports it from here
+    NameRow,  # noqa: F401 — the page imports it from here
     GrantRow,
     _run_target,
     _run_waiting,
@@ -1185,6 +1187,10 @@ class StudioState(
         if self.screen == "cost":
             # `0093` R12: every arrival here reads the run log once; no other screen does.
             self._load_cost()
+        if self.screen == "settings":
+            # `0137` R5, R6: the names panel reads every workspace's board, so only an
+            # arrival at Settings pays for it.
+            await self._load_decisions()
         self._read_cwd = cwd
         self.unit_id, self.detail_tab = unit, tab
         self._set_current()

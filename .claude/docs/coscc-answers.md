@@ -19,6 +19,14 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/
   and the `ship` gate counts a finding the review then marks `[answered]` as closed only
   when its block exists. A stranger's answer plus one agent's round is part of what opens
   a merge.
+  Since `0137` it also takes `delegation: "D<n>"`: while a `delegation` entered on Settings
+  is in force in the workspace, whoever holds the password or a live session can write an
+  answer under the name of the agent it names, ending `Theo ủy quyền: D<n>`, and Jera then
+  reads it as the person's (`delegated`), as good as their own answer. Whether the question
+  is one the delegation `covers` is not checked (that unit's spec ## Out of scope). The
+  decisions and the names marked "This was me" are written only from the Settings screen,
+  never over HTTP, but the screen cannot tell a person from an agent with a browser; the
+  only trace is the `decisions` row and the `answer_names_mine` preference.
 - **`POST /api/units/precedent` puts an agent's words into a paid prompt as decided.** Since
   `0044` it opens one paid session (Jera, grant `precedent`: no tools, one turn, a ceiling
   from $1.00 to $3.00 set by the prompt's length since `0101`) and appends each answer that
@@ -30,9 +38,13 @@ Read this before changing `POST /api/units/answer`, `/precedent`, `/outcome`, `/
   filter, and it cannot see everything:
   - The category is Jera's word (0044 spec C2). A question about permissions
     that Jera files as `other` is answered and written.
-  - The store is every answer in force in the workspace, Leif's included (C3), and the
-    *Decision preferences* text, all sent word for word; nothing checks either for a
-    company name (C4).
+  - The store is every answer in force in the workspace, Leif's included (C3), the
+    *Decision preferences* text and, since `0137`, the person's decisions in force, all sent
+    word for word; nothing checks any of them for a company name (C4). Since `0137` each
+    entry is labelled `originator`, `delegated` or `inferred` from its `Answered by:` name
+    alone (`precedent.decided_by`), and an `answer` citing only `inferred` entries is taken
+    to `needs-person` (R8). A name is a claim: an agent that answers over the route with no
+    name is written `owner`, and reads as the person's.
   - The later stage is told which blocks are Jera's (`runner._jera_answers`, R15), and the
     skills say to cite them as an inference; nothing checks that it does.
   - The board read and the write share `_answer_lock`, and a question a person answered

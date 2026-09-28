@@ -280,6 +280,11 @@ def build(config: Config | None = None) -> FastAPI:
         the last review round confirmed needs a person. That appends `### F<n>`, and it does
         more than a numbered answer does — `cos.mjs next` reads it to offer `review` again,
         and the `ship` gate reads it to count an `[answered]` finding as closed.
+
+        Since `0137` an optional `delegation: "D<n>"` writes the answer as one an agent gave
+        under a delegation entered on Settings, and Jera then reads it as the person's
+        (`delegated`). Whoever holds the password or a live session can write one under the
+        agent's name while the delegation is in force; what it `covers` is not checked.
         """
         try:
             body = await request.json()
@@ -295,6 +300,7 @@ def build(config: Config | None = None) -> FastAPI:
                 body.get("question"),
                 str(body.get("answer") or ""),
                 str(body.get("answered_by") or ""),
+                str(body.get("delegation") or ""),
             )
         except Invalid as e:
             return _bad(str(e))
