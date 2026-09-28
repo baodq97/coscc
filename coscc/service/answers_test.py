@@ -265,6 +265,35 @@ OUTCOME_INTENT = (
 )
 
 
+class ADelegatedAnswer(unittest.TestCase):
+    """`0137` R1, R10: what the route writes, the board reads back and `decided_by` labels."""
+
+    def test_a_block_written_with_delegation_reads_back_as_delegated(self):
+        from coscc import units
+        from coscc.agent import precedent
+        from coscc.data import Data
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            cwd = str(root / "work" / "proj")
+            Path(cwd).mkdir(parents=True)
+            config = Config(workspaces=(cwd,), working_dir=str(root / "work"), data_dir=str(root / "data"))
+            service = Service(config, Sessions(config))
+            made = create_sync(service, cwd, "a-problem", "x")
+            (Path(made["path"]) / "intent.md").write_text(
+                "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n## Open questions\n\n1. One?\n2. Two?\n",
+                encoding="utf-8")
+            added = service.add_decision({"kind": "delegation", "text": "Leif đặt tên.", "source": "chat",
+                                          "agent": "Leif", "covers": "naming"})["added"]
+            asyncio.run(service.answer(cwd, made["unit"], "intent.md", 1, "Có.", "Leif (CoS)", added))
+            asyncio.run(service.answer(cwd, made["unit"], "intent.md", 2, "Không.", "Leif (CoS)"))
+            [u] = asyncio.run(service.board(cwd))["units"]
+            decisions = Data(config.data_dir).decisions()
+            got = {a["n"]: precedent.decided_by(a, units.slot(cwd), decisions, [], service.agent_names())
+                   for a in u["answers"]}
+            self.assertEqual(got, {1: "delegated", 2: "inferred"})
+
+
 class RecordingAnOutcome(unittest.TestCase):
     """`0047` R1–R4, R7, R9 through the one place logic lives."""
 
