@@ -46,7 +46,7 @@ JERA = "precedent"
 STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap", "shortlist", "reruns", "full")
 
 # `0104` R6. Why a unit ranked higher on the shortlist was passed over, and nothing else.
-REASONS = ("held", "finished", "closed", "stop", "ci", "running", "overlap", "ship-busy", "missing", "dependency")
+REASONS = ("held", "finished", "closed", "stop", "ci", "running", "overlap", "ship-busy", "missing", "dependency", "overlap-pr")
 # `0111`. The stop `e` of a unit whose screenshots could not be taken again before `review`.
 SCREENS_FAILED = "the screenshots could not be taken again before review"
 # `0104` R3. The workspace's stop line when there is no shortlist to follow.
@@ -469,6 +469,7 @@ def pick(
     running: Iterable[dict[str, Any]],
     max_parallel: int,
     room: float,
+    open_prs: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     """R8 a–f and R7 over the steps that could start, highest on the shortlist first
     (`0104` R4).
@@ -479,8 +480,15 @@ def pick(
     what to start, what the cap alone held back, and `(reason, detail)` for each candidate
     another rule held back (`0104` R6). What `max_parallel` held back is in none of them:
     nothing after it is chosen, so nothing passes over it.
+
+    `open_prs` is `0136` R22: `{unit, number, files}` for each pull request of the workspace
+    that is open and not merged, `files` `None` when its diff could not be read. An `impl` of
+    a unit with no pull request of its own waits while one of another unit's touches a file
+    its plan names, so two open pull requests on one file never wait on each other.
     """
     running = list(running)
+    open_prs = list(open_prs)
+    with_pr = {p["unit"] for p in open_prs}
     busy = {r["unit"] for r in running}
     taken = list(running)
     chosen: list[dict[str, Any]] = []
@@ -503,6 +511,13 @@ def pick(
         if crossing is not None:
             held[c["unit"]] = ("overlap", crossing["unit"])
             continue
+        if c["stage"] in ("impl", "implement") and c["unit"] not in with_pr:
+            blocking = next((
+                p for p in open_prs if p["unit"] != c["unit"] and overlaps(c.get("files"), p.get("files"))
+            ), None)
+            if blocking is not None:
+                held[c["unit"]] = ("overlap-pr", f"#{blocking['number']}")
+                continue
         need = float(c.get("need") or 0.0)
         if need > room:
             capped.append(c)

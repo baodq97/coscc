@@ -439,6 +439,41 @@ class Scheduling(unittest.TestCase):
         got = ap.pick([self.c("0011_b", "ship")], [{"unit": "0010_a", "stage": "ship", "files": None}], 4, 100.0)
         self.assertEqual((got["chosen"], got["held"]), ([], {"0011_b": ("ship-busy", "0010_a")}))
 
+    def test_an_open_pr_on_the_same_file_holds_impl_until_it_merges(self):
+        # `0136` R22. While 0010_a's pull request is open, 0011_b's impl waits; once the
+        # PR/CI machine reads it merged, it is no longer in `open_prs` and the next pass picks it.
+        b = self.c("0011_b", "impl", {"a.py"})
+        pr = {"unit": "0010_a", "number": 7, "files": {"a.py", "c.py"}}
+        got = ap.pick([b], [], 4, 100.0, open_prs=[pr])
+        self.assertEqual((got["chosen"], got["held"]), ([], {"0011_b": ("overlap-pr", "#7")}))
+        got = ap.pick([b], [], 4, 100.0, open_prs=[])
+        self.assertEqual([x["unit"] for x in got["chosen"]], ["0011_b"])
+
+    def test_a_unit_with_its_own_open_pr_is_not_held_by_another(self):
+        # Back at impl after `changes-requested`: two open pull requests on one file must not
+        # wait on each other for ever.
+        b = self.c("0011_b", "impl", {"a.py"})
+        prs = [{"unit": "0010_a", "number": 7, "files": {"a.py"}},
+               {"unit": "0011_b", "number": 8, "files": {"a.py"}}]
+        got = ap.pick([b], [], 4, 100.0, open_prs=prs)
+        self.assertEqual([x["unit"] for x in got["chosen"]], ["0011_b"])
+
+    def test_a_pr_whose_files_could_not_be_read_overlaps_every_file(self):
+        got = ap.pick([self.c("0011_b", "impl", {"a.py"})], [], 4, 100.0,
+                      open_prs=[{"unit": "0010_a", "number": 7, "files": None}])
+        self.assertEqual(got["held"], {"0011_b": ("overlap-pr", "#7")})
+
+    def test_an_open_pr_holds_only_impl(self):
+        got = ap.pick([self.c("0011_b", "review", {"a.py"})], [], 4, 100.0,
+                      open_prs=[{"unit": "0010_a", "number": 7, "files": {"a.py"}}])
+        self.assertEqual([x["unit"] for x in got["chosen"]], ["0011_b"])
+
+    def test_overlap_pr_is_a_code_of_the_one_reason_table(self):
+        from coscc.units import guards
+
+        self.assertIn("overlap-pr", ap.REASONS)
+        self.assertIn("overlap-pr", guards.REASONS)
+
     def test_the_cap_holds_back_what_does_not_fit(self):
         got = ap.pick([self.c("0010_a", "impl", {"a"}, 16.0), self.c("0011_b", "review", None, 2.0)], [], 4, 3.0)
         self.assertEqual([x["unit"] for x in got["chosen"]], ["0011_b"])
