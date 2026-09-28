@@ -162,18 +162,6 @@ class Question:
 
 
 @dataclasses.dataclass
-class GuideItem:
-    """`0101` R10. One line of the board's guide, copied from `Service._guide_block`: a unit,
-    what it is (a stage and its agent, a thing to do, or a question Jera answered), a line
-    below it, and where the link goes (`""` for none)."""
-
-    unit: str = ""
-    what: str = ""
-    detail: str = ""
-    href: str = ""
-
-
-@dataclasses.dataclass
 class Round:
     """`0021`. One round of `review.md` and whether it is on the pull request as a comment.
     The round is `cos.mjs`'s; whether it is posted is `Service.board`'s reading of the run
@@ -939,6 +927,18 @@ AUTOPILOT_STOP_LABEL = {
     "a": "Open question", "b": "Needs a person", "c": "Ship waits", "d": "Integration needs a person",
     "e": "Last step did not finish", "f": "Blocked", "cap": "Daily cap", "shortlist": "No shortlist",
 }
+
+
+@dataclasses.dataclass
+class GuideItem:
+    """`0101` R10. One line of the board's guide, copied from `Service._guide_block`: a unit,
+    what it is (a stage and its agent, a thing to do, or a question Jera answered), a line
+    below it, and where the link goes (`""` for none)."""
+
+    unit: str = ""
+    what: str = ""
+    detail: str = ""
+    href: str = ""
 
 
 def _number(text: str, kind: type) -> object:
