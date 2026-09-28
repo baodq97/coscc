@@ -251,6 +251,12 @@ def label_of(source: str) -> str:
     return m.group("label") if m else ""
 
 
+def parts_of(source: str) -> dict[str, str] | None:
+    """`{slot, unit, file, anchor}` of a `Source:` value, `None` when it has not that shape."""
+    m = _SOURCE.match(source.strip())
+    return {k: m.group(k) for k in ("slot", "unit", "file", "anchor")} if m else None
+
+
 def _source_problem(source: str) -> str:
     m = _SOURCE.match(source.strip())
     if not m:

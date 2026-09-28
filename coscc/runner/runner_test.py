@@ -1762,6 +1762,22 @@ class AStepRecordsTheKnowledgeItCarried(AStepRecordsTheBaseItRanOn):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self._start_record(d, knowledge_record=record)["knowledge"], record)
 
+    def test_start_carries_knowledge_trial_and_the_extended_knowledge_record(self):
+        # `0131` R10, R18: both land as given, side by side; none handed in is no field.
+        from coscc import knowledge
+
+        record = {"version": "abc", "entries": 1, "bytes": 9, "ids": ["K1"],
+                  "withheld": [{"id": "K2", "reason": "coscc/screens.py is not on HEAD"}], "head": "f" * 40}
+        with tempfile.TemporaryDirectory() as d:
+            start = self._start_record(d, knowledge_record=record, knowledge_trial={"arm": knowledge.ON})
+        self.assertEqual((start["knowledge"], start[knowledge.TRIAL_FIELD]), (record, {"arm": knowledge.ON}))
+        with tempfile.TemporaryDirectory() as d:
+            off = self._start_record(d, knowledge_trial={"arm": knowledge.OFF})
+        self.assertEqual(off[knowledge.TRIAL_FIELD], {"arm": knowledge.OFF})
+        self.assertNotIn("knowledge", off)
+        with tempfile.TemporaryDirectory() as d:
+            self.assertNotIn(knowledge.TRIAL_FIELD, self._start_record(d))
+
 
 class AStepRecordsTheEffortTrial(AStepRecordsTheBaseItRanOn):
     """`0123` R6, R7: the record handed in lands in `start` as given, and none is no field."""

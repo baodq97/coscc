@@ -934,9 +934,10 @@ class StepsMixin:
             except Busy as e:
                 raise Invalid(str(e)) from e
             # `0123` R7. A return to `impl` with the trial on asks `next` once whether CI sent it
-            # back; `_ci_red` never raises, so nothing here refuses the step.
-            if "trial_record" in config and (config.get("impl_run") or 0) > 1:
-                config["trial_record"][efforttrial.CI_RED] = await self._ci_red(cwd, unit, work)
+            # back; `_ci_red` never raises, so nothing here refuses the step. `0131` R19: with
+            # `COS_KNOWLEDGE` on too, into the same field.
+            if (self.config.effort_trial or self.config.knowledge) and (config.get("impl_run") or 0) > 1:
+                config.setdefault("trial_record", {})[efforttrial.CI_RED] = await self._ci_red(cwd, unit, work)
             end_fields = None
             if rounds_before is not None:
                 async def end_fields() -> dict[str, Any]:
@@ -1003,9 +1004,16 @@ class StepsMixin:
             # that receive it; off, nothing is read and `Runner.run` is handed no key at all, so
             # its prompt and its `start` record are what they were (R2). A store that cannot be
             # read never refuses the step (`knowledge.for_step`).
+            # `0131` R16-R18: with the flag on every stage says the unit's arm, and only the `on`
+            # arm reads the store, checked on the step's `HEAD` (R9) off the event loop, since
+            # each git read may take `admit.TIMEOUT`.
             knowledge_kw: dict[str, Any] = {}
-            if self.config.knowledge and stage in knowledge.STAGES:
-                knowledge_kw = knowledge.for_step(self.config.data_dir, units.slot(cwd))
+            if self.config.knowledge:
+                arm = knowledge.arm(unit)
+                knowledge_kw["knowledge_trial"] = {"arm": arm}
+                if arm == knowledge.ON and stage in knowledge.STAGES:
+                    knowledge_kw.update(await asyncio.to_thread(
+                        knowledge.for_step, self.config.data_dir, units.slot(cwd), work))
             # `0054` R3, R8. After the last refusal that reads nothing more, before any money
             # is spent. `pr.md`'s `## Answers` is read first: the `pr` session writes that file
             # itself, so only a comparison afterwards can tell whether the section survived.
@@ -1310,6 +1318,9 @@ class StepsMixin:
                 # `done`, and after the mark is given back: the board read it costs holds
                 # neither the reader's `done` nor the unit.
                 await self._after_end(cwd, unit, stage, running.workspace)
+            if ended_done and not going_down and stage == "ship" and self.config.knowledge:
+                # `0131` R1. Once, in the background: nothing here waits for it.
+                self._gather_soon(cwd, unit, running.workspace)
 
     async def stop_step(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
         """Stop one running board step (`0034` R2, R5, R6). The route and the page's

@@ -260,21 +260,33 @@ def imported(path: Path) -> set[str]:
 
 
 class OnlyATerminalReachesIt(unittest.TestCase):
-    """R9: no route, no autopilot pass and no service call imports what gathers or measures.
-    Read from the source, because a route added later is exactly what this is for."""
+    """R9: no route and no autopilot pass imports what gathers or measures, and of the service
+    only `coscc/service/knowledge.py` does, since `0131` R1 made a gather follow a ship. Read
+    from the source, because a route added later is exactly what this is for."""
 
     FORBIDDEN = {"coscc.knowledge.gather", "coscc.knowledge.cli", "coscc.knowledge.measure", "coscc.knowledge.admit"}
+    ALLOWED = "coscc/service/knowledge.py"
 
     def forbidden(self, path: Path) -> set[str]:
         return {f for f in self.FORBIDDEN for n in imported(path) if n == f or n.startswith(f + ".")}
 
-    def test_api_autopilot_and_service_import_none_of_it(self):
+    def test_only_the_knowledge_service_imports_what_gathers(self):
         # `0095`: `Service` is spread over `service.py` and the `service_*.py` it was split into.
-        split = [f"coscc/service/{p.name}" for p in sorted((REPO / "coscc" / "service").glob("*.py")) if not p.name.endswith("_test.py")]
-        self.assertTrue(split)
+        split = [f"coscc/service/{p.name}" for p in sorted((REPO / "coscc" / "service").glob("*.py"))
+                 if not p.name.endswith("_test.py")]
+        self.assertIn(self.ALLOWED, split)
         for name in ("coscc/web/api.py", "coscc/units/autopilot.py", *split):
             with self.subTest(module=name):
-                self.assertFalse(self.forbidden(REPO / name))
+                if name == self.ALLOWED:
+                    self.assertTrue(self.forbidden(REPO / name))
+                    self.assertNotIn("coscc.knowledge.cli", self.forbidden(REPO / name))
+                else:
+                    self.assertFalse(self.forbidden(REPO / name))
+        # And one caller of it: the end of a board step, nowhere else.
+        callers = [str(p.relative_to(REPO)) for p in sorted((REPO / "coscc").rglob("*.py"))
+                   if not p.name.endswith("_test.py") and "self._gather_soon(" in p.read_text(encoding="utf-8")]
+        self.assertEqual(callers, ["coscc/service/steps.py"])
+        self.assertEqual((REPO / "coscc/service/steps.py").read_text(encoding="utf-8").count("self._gather_soon("), 1)
 
     def test_the_check_would_see_one(self):
         with tempfile.TemporaryDirectory() as d:

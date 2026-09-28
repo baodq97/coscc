@@ -950,10 +950,27 @@ class WhatEarlierUnitsMeasured(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
             directory = self.unit(d)
-            for stage in ("idea", "intent", "impl", "implement", "pr", "review", "ship"):
+            for stage in ("idea", "intent", "pr", "review", "ship"):
                 with self.subTest(stage=stage):
                     args = (d, directory, UNIT, stage, STAGES, f"{stage}.md")
                     self.assertEqual(compose_prompt(*args, knowledge=self.SECTION), compose_prompt(*args))
+
+    def test_impl_is_told_to_name_a_contradicting_entry_in_its_reply(self):
+        # `0131` R14, R15.
+        from coscc.runner import prompt as runner_prompt
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(runner_prompt, "skill_for", self.rules):
+            directory = self.unit(d)
+            for stage in ("impl", "implement"):
+                with self.subTest(stage=stage):
+                    prompt, included, _ = compose_prompt(
+                        d, directory, UNIT, stage, STAGES, "impl.md", knowledge=self.SECTION)
+                    self.assertIn(f"# What earlier units measured\n\n{self.SECTION}\n\n"
+                                  f"{runner_prompt.KNOWLEDGE_ADVICE_IMPL}", prompt)
+                    self.assertNotIn(runner_prompt.KNOWLEDGE_ADVICE, prompt)
+                    self.assertIn("say so in your final reply", runner_prompt.KNOWLEDGE_ADVICE_IMPL)
+                    self.assertIn("do not write a `## Concerns` section", runner_prompt.KNOWLEDGE_ADVICE_IMPL)
+                    self.assertIn("knowledge", included)
 
 
 class WhatEarlierReviewsSaid(unittest.TestCase):

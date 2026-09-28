@@ -280,6 +280,15 @@ KNOWLEDGE_ADVICE = (
     "contradicts an entry, say so under `## Concerns`, or in the spike's verdict, rather "
     "than quietly picking one side."
 )
+# `0131` R15. The same for `impl`, which writes no `## Concerns`: a contradiction goes into
+# its final reply.
+KNOWLEDGE_ADVICE_IMPL = (
+    "Each entry above is what an earlier unit measured, with its source and the date it was "
+    "measured: a measurement, not a guarantee. When you rely on one, cite it as "
+    "`knowledge K<n>` instead of measuring it again. When the code in front of you "
+    "contradicts an entry, say so in your final reply rather than quietly picking one side; "
+    "do not write a `## Concerns` section."
+)
 
 # `0110` R6. The heading and the same words after every section `priorfindings` built, for
 # `impl` only; `write-impl` carries the same advice (R8).
@@ -638,11 +647,13 @@ def compose_prompt(
         )
 
     # `0090` R3. The slice of the store `service.run_step` read for this workspace, already
-    # capped (`knowledge.slice_for`); this only places it. `""` -- the flag off, or nothing
-    # applies -- adds not one byte (R2).
-    if knowledge and stage in KNOWLEDGE_STAGES:
+    # capped (`knowledge.slice_for`); this only places it. `""` -- the flag off, the `off`
+    # arm, or nothing applies -- adds not one byte (R2). `0131` R15: `impl` is told otherwise.
+    impl = stage in ("impl", "implement")
+    if knowledge and (stage in KNOWLEDGE_STAGES or impl):
         included.append("knowledge")
-        parts.append(f"# What earlier units measured\n\n{knowledge}\n\n{KNOWLEDGE_ADVICE}")
+        advice = KNOWLEDGE_ADVICE_IMPL if impl else KNOWLEDGE_ADVICE
+        parts.append(f"# What earlier units measured\n\n{knowledge}\n\n{advice}")
 
     # `0096` R9, R10. The files the plan changes as they stand, already capped
     # (`planmap.select`), and the first words the grant allows, taken from it rather than

@@ -34,6 +34,7 @@ from coscc.runlog.journal import Journal
 from coscc.agent.policy import beyond_reading, grant_for_step, is_prose_stage
 from coscc.agent.sessions import Refused, Sessions
 from coscc.units.autopilot import is_recording_ship
+from coscc.knowledge import TRIAL_FIELD as KNOWLEDGE_TRIAL_FIELD
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
 # `coscc.runner.<name>` still resolves; a patch reaches only the module that looks it up.
@@ -323,6 +324,7 @@ class Runner:
         knowledge: str = "",
         knowledge_record: dict[str, Any] | None = None,
         trial_record: dict[str, Any] | None = None,
+        knowledge_trial: dict[str, Any] | None = None,
         rerun: bool = False,
         rerun_note: str = "",
         prior_findings: str = "",
@@ -396,7 +398,11 @@ class Runner:
 
         `trial_record` is `0123` R6/R7's: `{effort_trial, ci_red}` as `service.run_step` worked
         them out for an `impl` step, for `start` and nowhere else. `None` leaves the record
-        without either field, which is what the flag off is.
+        without either field, which is what the flag off is. Since `0131` R19 `ci_red` may come
+        alone, with `COS_KNOWLEDGE` on and the effort trial off.
+
+        `knowledge_trial` is `0131` R18's `{arm}`, for `start` under `knowledge.TRIAL_FIELD`
+        beside `knowledge`, and nowhere else. `None`, the flag off, leaves the record without it.
 
         `rerun` and `rerun_note` are `0054` R7's: a stage a person ran again from the board,
         and their note, into the prompt and into `start`. False leaves both as they were.
@@ -534,6 +540,8 @@ class Runner:
                 **({"shortlist": shortlist} if shortlist is not None else {}),
                 # `0090` R4. Beside `model`, and only when the flag was on for this stage.
                 **({"knowledge": knowledge_record} if knowledge_record is not None else {}),
+                # `0131` R18. Every stage, only with `COS_KNOWLEDGE` on.
+                **({KNOWLEDGE_TRIAL_FIELD: knowledge_trial} if knowledge_trial is not None else {}),
                 # `0123` R6/R7. The same: only an `impl` step with the flag on.
                 **(trial_record or {}),
                 # `0110` R7. Every `impl` start from this build, `bytes: 0` when nothing
