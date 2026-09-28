@@ -1108,7 +1108,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                             "cost": {"turns": 1, "cost_usd": self.closing_cost}}
                    if self.closing_terminal else {"session_id": "s1", "cost": {}})
 
-    def run_review(self, sessions, stage="review", git=True, act=None, stop=False):
+    def run_review(self, sessions, stage="review", git=True, act=None, stop=False, resume=None):
         from coscc.agent import steps
 
         with tempfile.TemporaryDirectory() as ws:
@@ -1134,6 +1134,7 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
                         workspace=ws, directory=directory, journal_key=ws, unit=UNIT,
                         stage=stage, artifact=artifact, stages=STAGES, mode="manual",
                         cwd=str(tree), running=running,
+                        **({"resume": resume(head)} if resume is not None else {}),
                     ):
                         out.append(item)
 
@@ -1175,6 +1176,27 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         self.assertEqual(end["cost_usd"], 1.4)
         self.assertEqual(end["closing"], {"terminal": "completed", "turns": 1, "cost_usd": 0.4})
         self.assertIn("review.md: Round 2 incomplete, written by the closing turn", end["detail"])
+
+    def test_a_resumed_closing_turn_resumes_that_turn_not_the_step(self):
+        # `0138`: an update paused the closing turn. The main reply is not asked again; the
+        # turn goes on from its safe point with the message, and the step ends once.
+        sessions = self.Closes()
+        sessions.calls.append({"text": "the main reply, before the update"})
+
+        def resume(head):
+            return {"suspend_id": "c1", "session_id": "s1", "safe_uuid": "u7",
+                    "message": f"MSG Reviewed: {head}. Verdict: incomplete", "pieces": ["Tôi hết lượt."],
+                    "api_calls": 0, "spent_usd": 1.0,
+                    "owner": {"kind": "closing", "start_at": "t0", "head": head, "main_terminal": "max_turns",
+                              "main_cost": {"turns": 41, "cost_usd": 1.0}}}
+
+        out, [end], review, head, _ = self.run_review(sessions, resume=resume)
+        [closing] = sessions.calls[1:]
+        self.assertEqual((closing["session_id"], closing["resume_at"]), ("s1", "u7"))
+        self.assertTrue(closing["text"].startswith("MSG "))
+        self.assertIn(f"## Round 2\n\nReviewed: {head}. Verdict: incomplete.", review)
+        self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "incomplete"))
+        self.assertNotIn("was not reached again", end["detail"])
 
     def test_the_closing_turn_denies_every_tool_and_counts_it(self):
         sessions = self.Closes()

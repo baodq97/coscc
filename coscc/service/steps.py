@@ -1283,6 +1283,8 @@ class StepsMixin:
         recorder = running.handle.recorder
         # `0073`. A cancel with no Stop behind it is the app going down (spec C9).
         going_down = False
+        # `0138`. Paused by an update: the next start takes the step up in the directory it had.
+        suspended = False
         try:
             if recorder is not None:
                 recorder.start()
@@ -1328,7 +1330,7 @@ class StepsMixin:
         except Suspended:
             # `0138`. An update paused the step and wrote its `suspend` row; like the app
             # going down, nothing is ended, nudged or recorded as a transition here.
-            going_down = True
+            going_down = suspended = True
         except asyncio.CancelledError:
             if not running.stop_requested:
                 going_down = True
@@ -1345,7 +1347,7 @@ class StepsMixin:
                 tell(("raise", Invalid(f"{unit}'s {stage} step ended without an outcome; the app may be shutting down")))
             self._release(running.workspace, running.unit, mark)
             self._running.pop(rid, None)
-            if scratch is not None:
+            if scratch is not None and not suspended:
                 shutil.rmtree(scratch, ignore_errors=True)
             self.steps.release(running)
             self.updater.job_ended()

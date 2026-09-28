@@ -1999,6 +1999,85 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
         self.assertIn("FileNotFoundError", kw["knowledge_record"]["error"])
 
 
+class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
+    """`0138` plan step 6: `_drive` takes `Suspended` as the app going down. No session
+    opens: the runner is a stand-in that raises it."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        (self.repo / ".git").mkdir(parents=True)
+        config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
+                        data_dir=str(self.root / "data"))
+        self.service = Service(config, Sessions(config))
+        self.unit = create_sync(self.service, str(self.repo), "a-problem", "words")["unit"]
+
+    def test_a_suspended_drive_abandons_its_recorder_and_nudges_nothing(self):
+        from coscc.agent.sessions import Suspended
+        from coscc.github import integrate
+        from coscc.runlog import events
+        from coscc.units import board as board_reader
+
+        service = self.service
+
+        class StandIn:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def run(self, **kw):
+                yield ("chunk", "measuring")
+                raise Suspended("paused for an update")
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, f"open: {stage} may proceed"
+
+        async def tree(*a, **kw):
+            return {"path": str(self.repo), "branch": "feat/a-problem", "base": None}
+
+        async def nothing(*a, **kw):
+            return {}
+
+        async def no_pr(*a, **kw):
+            return {"state": "none", "url": ""}
+
+        abandoned: list[str] = []
+        real_abandon = events.Recorder.abandon
+
+        async def abandon(recorder):
+            abandoned.append(recorder.run)
+            await real_abandon(recorder)
+
+        nudged: list[str] = []
+        after: list[tuple] = []
+
+        async def after_end(*a):
+            after.append(a)
+
+        async def go():
+            with self.assertRaises(Invalid):
+                async for _ in service.run_step(str(self.repo), self.unit, "spike"):
+                    pass
+            others = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            await asyncio.gather(*others, return_exceptions=True)
+
+        with mock.patch.object(board_reader, "gate", open_gate), \
+                mock.patch("coscc.service.steps.Runner", StandIn), \
+                mock.patch.object(service, "_worktree", tree), \
+                mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \
+                mock.patch.object(integrate, "pr_for_branch", no_pr), \
+                mock.patch.object(service, "_after_end", after_end), \
+                mock.patch.object(service, "_autopilot_nudge", nudged.append), \
+                mock.patch.object(events.Recorder, "abandon", abandon):
+            asyncio.run(go())
+        self.assertEqual(len(abandoned), 1)
+        self.assertEqual((nudged, after), ([], []))
+        self.assertEqual(service.steps.all(), [])
+        # The spike's directory stays for the step taken up again.
+        self.assertTrue(units.spike_dir(str(self.repo), self.unit, service.config.data_dir).is_dir())
+
+
 class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
     """`0131` plan step 7, R1. `_drive` schedules one gather of the unit when a `ship` ends
     `done` with the flag on, and none otherwise; the gather runs on its own `Sessions` and is

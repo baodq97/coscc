@@ -116,6 +116,13 @@ class ThePage(unittest.TestCase):
         self.assertIn("update-panel", _render(screens._settings()))
         self.assertIn("backlog-panel", _render(screens._backlog_screen()))
 
+    def test_no_apply_now_button_is_drawn(self):
+        # `0138` R1, R12: one Apply per channel, and no list of work it would cut.
+        settings = _render(screens._settings())
+        self.assertIn("update-apply-release", settings)
+        for gone in ("update-now-", "Apply now", "update-cut-list", "update-confirm-now"):
+            self.assertNotIn(gone, settings)
+
     def test_0043_the_autopilot_panel_and_its_settings(self):
         """`0043` R2, R9: Settings holds the four controls, and no variable name reaches the
         board's panel or Settings (S3). Since `0101` the board's strip is the guide panel."""

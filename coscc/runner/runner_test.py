@@ -2017,3 +2017,146 @@ class AStepRecordsThePlanMapItCarried(AStepRecordsTheBaseItRanOn):
         record = {"bytes": 0, "files": 0, "full": 0, "short": 0, "new": 0, "outside": 0}
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self._start_record(d, plan_map_record=record)["plan_map"], record)
+
+
+class AStepAnUpdatePaused(unittest.TestCase):
+    """`0138` R4, R7, R10, R11, R15 at `Runner.run`: a step `suspend_all` paused writes no
+    `end`, and one taken up again goes on in its own session and ends once."""
+
+    PLAN = "# Plan: a problem\nIntent: intent.md. Status: accepted.\n\n## Files that change\n\n- a.py\n"
+
+    class Paused:
+        """A session that says something and is then paused by an update."""
+
+        def __init__(self):
+            self.calls = []
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            from coscc.agent.sessions import Suspended
+
+            self.calls.append({"text": text, "session_id": session_id, "max_turns": max_turns, **kw})
+            yield ("chunk", "Reading the plan.")
+            raise Suspended("session s-1 was paused for an update")
+
+    class GoesOn:
+        """The same session taken up again: it says the rest and ends."""
+
+        def __init__(self, rest="## Order of work\n\n1. a\n", cost=1.2):
+            self.calls, self.rest, self.cost = [], rest, cost
+
+        async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+            self.calls.append({"text": text, "session_id": session_id, "max_turns": max_turns, **kw})
+            yield ("chunk", self.rest)
+            yield ("done", {"session_id": session_id, "terminal_reason": "completed",
+                            "cost": {"turns": 4, "cost_usd": self.cost},
+                            "first_call": {"input_tokens": 3, "cache_creation_tokens": 900, "cache_read_tokens": 0}})
+
+    def run_plan(self, d, sessions, resume=None):
+        from coscc.agent import steps
+
+        directory = make_unit(Path(d), intent_md="Status: accepted.\nI", spec_md="Status: accepted.\nS")
+        journal = Journal(d, d)
+        running = steps.Registry().claim(d, UNIT, "plan")
+
+        async def go():
+            out = []
+            async for item in Runner(sessions, journal).run(
+                workspace=d, directory=directory, journal_key=d, unit=UNIT, stage="plan",
+                artifact="plan.md", stages=STAGES, mode="manual", running=running,
+                **({"resume": resume} if resume is not None else {}),
+            ):
+                out.append(item)
+            return out
+
+        return asyncio.run(go()), journal, directory
+
+    def resume(self, **extra):
+        return {"suspend_id": "p1", "session_id": "s-1", "safe_uuid": "u9", "message": "MSG",
+                "pieces": [], "api_calls": 3, "spent_usd": 0.5,
+                "owner": {"kind": "step", "start_at": "t0", "head": ""}, **extra}
+
+    def kinds(self, journal):
+        return [r["kind"] for r in journal.records() if r["kind"] in ("start", "attempt", "end")]
+
+    def test_a_suspended_step_writes_no_end_and_no_attempt(self):
+        from coscc.agent.sessions import Suspended
+
+        with tempfile.TemporaryDirectory() as d:
+            sessions = self.Paused()
+            with self.assertRaises(Suspended):
+                self.run_plan(d, sessions)
+            journal = Journal(d, d)
+            self.assertEqual(self.kinds(journal), ["start"])
+            self.assertFalse((Path(d) / ".cos" / UNIT / "plan.md").exists())
+            # R6: what `suspend_all` needs to write the row, handed to the session.
+            owner = sessions.calls[0]["owner"]
+            self.assertEqual((owner["kind"], owner["unit"], owner["stage"]), ("step", UNIT, "plan"))
+            self.assertEqual(owner["start_at"], journal.records(kind="start")[0]["at"])
+
+    def test_a_step_resumes_without_a_second_start_row_and_ends_once(self):
+        with tempfile.TemporaryDirectory() as d:
+            sessions = self.GoesOn(rest=self.PLAN)
+            out, journal, _ = self.run_plan(d, sessions, self.resume())
+            self.assertEqual(self.kinds(journal), ["end"])
+            self.assertEqual(out[-1][1]["outcome"], "done")
+            [call] = sessions.calls
+            self.assertEqual((call["text"], call["session_id"], call["resume_at"]), ("MSG", "s-1", "u9"))
+
+    def test_remaining_ceilings_are_the_grant_less_what_was_used(self):
+        # R10: the CLI counts both from zero in its new process (`spike.md ## U4`).
+        grant = grant_for("plan")
+        with tempfile.TemporaryDirectory() as d:
+            sessions = self.GoesOn(rest=self.PLAN)
+            self.run_plan(d, sessions, self.resume())
+            [call] = sessions.calls
+            self.assertEqual(call["max_turns"], grant.max_turns - 3)
+            self.assertAlmostEqual(call["max_budget_usd"], grant.max_budget_usd - 0.5)
+        with tempfile.TemporaryDirectory() as d:
+            sessions = self.GoesOn(rest=self.PLAN)
+            self.run_plan(d, sessions, self.resume(cost_unknown=True, spent_usd=None))
+            # C9: with the cost unknown, the whole budget.
+            self.assertEqual(sessions.calls[0]["max_budget_usd"], grant.max_budget_usd)
+
+    def test_a_used_up_ceiling_ends_the_step_exhausted_without_a_session(self):
+        grant = grant_for("plan")
+        for used, terminal in (({"api_calls": grant.max_turns}, "error_max_turns"),
+                               ({"spent_usd": grant.max_budget_usd}, "error_max_budget_usd")):
+            with self.subTest(terminal=terminal), tempfile.TemporaryDirectory() as d:
+                sessions = self.GoesOn()
+                _, journal, _ = self.run_plan(d, sessions, self.resume(**used))
+                self.assertEqual(sessions.calls, [])
+                [end] = journal.records(kind="end")
+                self.assertEqual(end["outcome"], "exhausted")
+                self.assertIn(terminal, end["detail"])
+
+    def test_a_resumed_prose_step_writes_its_artifact_from_the_pieces_before_and_after(self):
+        with tempfile.TemporaryDirectory() as d:
+            sessions = self.GoesOn()
+            _, journal, directory = self.run_plan(d, sessions, self.resume(pieces=["Reading.", self.PLAN]))
+            written = (directory / "plan.md").read_text(encoding="utf-8")
+            self.assertTrue(written.startswith("# Plan: a problem\n"), written)
+            self.assertIn("- a.py", written)
+            self.assertIn("## Order of work\n\n1. a", written)
+            self.assertNotIn("Reading.", written)
+
+    def test_the_end_row_carries_the_whole_session_cost_and_each_segment(self):
+        # R11, R14: the CLI's total carries over a resume, so `cost_usd` is the session's.
+        with tempfile.TemporaryDirectory() as d:
+            _, journal, _ = self.run_plan(d, self.GoesOn(rest=self.PLAN), self.resume())
+            [end] = journal.records(kind="end")
+            self.assertEqual(end["cost_usd"], 1.2)
+            self.assertEqual(end["segments"], [{
+                "suspend_id": "p1", "cost_usd": 0.7,
+                "first_call": {"input_tokens": 3, "cache_creation_tokens": 900, "cache_read_tokens": 0},
+            }])
+            self.assertNotIn("cost_partial", end)
+
+    def test_a_segment_without_cost_state_marks_the_end_cost_partial(self):
+        with tempfile.TemporaryDirectory() as d:
+            _, journal, _ = self.run_plan(d, self.GoesOn(rest=self.PLAN),
+                                          self.resume(spent_usd=None, cost_unknown=True))
+            [end] = journal.records(kind="end")
+            self.assertTrue(end["cost_partial"])
+            # A CLI killed before its `cost-state` leaves the next counting from zero.
+            self.assertEqual(end["segments"][0]["cost_usd"], 1.2)
+            self.assertTrue(end["segments"][0]["cost_unknown"])
