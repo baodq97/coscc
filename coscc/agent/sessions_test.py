@@ -1471,3 +1471,169 @@ class OnlyAScratchDirectoryIsEverRemoved(unittest.TestCase):
             with self.assertRaises(Refused):
                 sessions.scratch_dir(app)
         self.assertEqual(list(inside.iterdir()), [])
+
+
+# -- `0138`: knowing what runs, and pausing it --------------------------------------------
+
+
+def _init(session_id):
+    return sdk.SystemMessage(subtype="init", data={"session_id": session_id})
+
+
+class ASessionIsKnownWhileItRuns(unittest.IsolatedAsyncioTestCase):
+    """`0138` step 4."""
+
+    def test_the_sdk_options_take_resume_session_at(self):
+        import dataclasses
+        self.assertIn("resume_session_at", {f.name for f in dataclasses.fields(sdk.ClaudeAgentOptions)})
+
+    def test_resume_passes_resume_session_at_and_never_resume_drops_turn(self):
+        options = _options(Config(), "/tmp", "sid-r", resume_at="u-safe")
+        self.assertEqual((options.resume, options.resume_session_at), ("sid-r", "u-safe"))
+        self.assertIsNone(options.resume_drops_turn)
+        self.assertIsNone(_options(Config(), "/tmp", None).resume_session_at)
+
+    async def test_a_stream_learns_its_session_id_from_init(self):
+        s = Sessions(Config(workspaces=("/tmp",)))
+        _FakeClient.messages = [_init("sid-i"), _result("sid-i")]
+        handle = sessions.StepHandle()
+        with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _FakeClient):
+            items = [i async for i in s.stream("/tmp", "hi", step=handle, owner={"kind": "step"})]
+        self.assertEqual(items[0], ("session", "sid-i"))
+        self.assertEqual((handle.session_id, handle.owner), ("sid-i", {"kind": "step"}))
+
+    async def test_a_different_session_id_in_init_is_refused(self):
+        s = Sessions(Config(workspaces=("/tmp",)))
+        s.adopt("sid-a")
+        _FakeClient.messages = [_init("sid-b"), _result("sid-b")]
+        with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _FakeClient):
+            with self.assertRaises(Refused):
+                async for _ in s.stream("/tmp", "hi", "sid-a", step=sessions.StepHandle()):
+                    pass
+
+    async def test_a_suspended_stream_raises_suspended_and_yields_no_done(self):
+        s = Sessions(Config(workspaces=("/tmp",)))
+        _CountingClient.made, _CountingClient.fail = [], False
+        _CountingClient.hold = asyncio.Event()
+        _CountingClient.messages = [_init("sid-p"), _result("sid-p")]
+        handle = sessions.StepHandle()
+        items = []
+
+        async def read():
+            async for item in s.stream("/tmp", "hi", step=handle):
+                items.append(item)
+
+        with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _CountingClient):
+            task = asyncio.create_task(read())
+            for _ in range(100):
+                if handle.session_id:
+                    break
+                await asyncio.sleep(0.01)
+            handle.suspended = True
+            _CountingClient.hold.set()
+            with self.assertRaises(sessions.Suspended):
+                await task
+        self.assertNotIn("done", [k for k, _ in items])
+
+
+class _PausingClient:
+    """A live client for `suspend_all`: records the order of `interrupt` and `disconnect`,
+    and writes the lines the CLI writes on an interrupt into its transcript."""
+
+    def __init__(self, path, order, hang=0.0, process=None):
+        self.path, self.order, self.hang = path, order, hang
+        self._transport = mock.Mock(_process=process) if process is not None else None
+        self._query = object()
+
+    async def interrupt(self):
+        self.order.append(("interrupt", sessions.transcript.boundary(self.path)))
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write('{"type": "user", "uuid": "fake"}\n{"type": "cost-state", "totalCostUSD": 0.25}\n')
+
+    async def disconnect(self):
+        self.order.append("disconnect")
+        if self.hang:
+            await asyncio.sleep(self.hang)
+
+
+class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
+    """`0138` step 5."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        patcher = mock.patch.object(sessions.transcript, "projects_root", lambda: self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.s = Sessions(Config(workspaces=("/tmp",)))
+        self.order = []
+
+    def _flow(self, sid, **kw):
+        path = sessions.transcript.path_for("/tmp/w_1", sid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '{"type": "user", "uuid": "p", "message": {"content": "go"}}\n'
+            '{"type": "assistant", "uuid": "a", "message": {"id": "m1", "content": '
+            '[{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "npm test"}}]}}\n',
+            encoding="utf-8",
+        )
+        client = _PausingClient(path, self.order, **kw)
+        handle = sessions.StepHandle(cwd="/tmp/w_1", client=client, session_id=sid,
+                                     owner={"kind": "step", "unit": "0001_a", "start_at": "t0"})
+        self.s._steps.add(handle)
+        return handle
+
+    async def test_suspend_reads_the_boundary_before_it_interrupts(self):
+        self._flow("sid-1")
+        [record] = await self.s.suspend_all()
+        self.assertEqual(self.order[0], ("interrupt", 2))
+        self.assertEqual(record["boundary"], 2)
+        self.assertEqual((record["safe_uuid"], record["api_calls"], record["spent_usd"]), ("p", 1, 0.25))
+        self.assertEqual(record["dropped"], [{"name": "Bash", "input": "npm test"}])
+        self.assertEqual((record["owner"]["unit"], record["start_at"]), ("0001_a", "t0"))
+        self.assertEqual(self.s._steps, set())
+
+    async def test_suspend_interrupts_before_it_shuts(self):
+        handle = self._flow("sid-2")
+        await self.s.suspend_all()
+        self.assertEqual([o if isinstance(o, str) else o[0] for o in self.order], ["interrupt", "disconnect"])
+        self.assertTrue(handle.suspended and handle.closed)
+
+    async def test_suspend_closes_every_session_in_parallel(self):
+        with mock.patch.object(sessions, "DISCONNECT_TIMEOUT", 0.3), mock.patch.object(sessions, "KILL_AFTER", 0.2):
+            for sid in ("sid-3", "sid-4"):
+                self._flow(sid, hang=10, process=_Process(obeys=False))
+            began = asyncio.get_running_loop().time()
+            records = await self.s.suspend_all()
+            took = asyncio.get_running_loop().time() - began
+        self.assertEqual(len(records), 2)
+        # Each hangs the whole `DISCONNECT_TIMEOUT + KILL_AFTER`; one after the other would be twice that.
+        self.assertLess(took, 1.5 * (0.3 + 0.2))
+
+    @unittest.skipUnless(Path("/proc/self/stat").exists(), "no /proc")
+    async def test_suspend_kills_descendants_left_alive_after_a_sigkill(self):
+        cli = await asyncio.create_subprocess_exec("sh", "-c", "trap '' TERM; sleep 60 & wait")
+        self.addCleanup(lambda: cli.returncode is None and cli.kill())
+        for _ in range(100):
+            left = sessions._descendants(cli.pid)
+            if left:
+                break
+            await asyncio.sleep(0.02)
+        self.assertTrue(left)
+        with mock.patch.object(sessions, "DISCONNECT_TIMEOUT", 0.1), mock.patch.object(sessions, "KILL_AFTER", 0.1):
+            self._flow("sid-5", process=cli)
+            await self.s.suspend_all()
+        self.assertEqual(cli.returncode, -9)  # `_shut`'s SIGKILL: the tree under it is orphaned
+        for _ in range(100):
+            alive = [p for p, _ in left if Path(f"/proc/{p}").exists()
+                     and Path(f"/proc/{p}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"]
+            if not alive:
+                break
+            await asyncio.sleep(0.02)
+        self.assertEqual(alive, [])
+
+    async def test_a_stream_with_no_session_id_is_closed_and_marked_unresumable(self):
+        handle = sessions.StepHandle(cwd="/tmp", owner={"kind": "step"})
+        self.s._steps.add(handle)
+        [record] = await self.s.suspend_all()
+        self.assertEqual(record["unresumable"], "no session id yet")
+        self.assertTrue(handle.closed and handle.suspended)
