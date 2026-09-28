@@ -257,8 +257,9 @@ class ActivityMixin:
     # request is a place to put anything; this is the list of things the Settings screen
     # actually remembers, and nothing else is writable.
     # `0044` R8a: `decision_preferences`, the text Jera reads as precedent, word for word.
+    # `0101` R8: `decision_rules`, what Jera's prompt says about deciding; empty is the default.
     PREFERENCES = {"density": "comfortable", "screen": "overview", "board_view": "Board",
-                   "decision_preferences": ""}
+                   "decision_preferences": "", "decision_rules": ""}
 
     def preferences(self) -> dict[str, Any]:
         data = Data(self.config.data_dir)

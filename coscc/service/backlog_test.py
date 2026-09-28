@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc import units
+from coscc.agent import precedent as precedent_mod
 from coscc.git import gitops, worktrees
 from coscc.config import Config
 from coscc.service.common import Invalid
@@ -596,7 +597,7 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.calls += 1
-            self.kw = kw
+            self.kw, self.prompt = kw, text
             if self.gate is not None:
                 await self.gate.wait()
             yield ("chunk", self.text)
@@ -644,8 +645,9 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
         board = asyncio.run(self.service.board(self.cwd))
         return next(u for u in board["units"] if u["name"] == self.asked)["questions"]
 
-    def test_r1_nothing_but_the_route_and_the_page_calls_it(self):
-        """R1. Structural: no read, no timer, no step and no answer starts Jera."""
+    def test_r1_nothing_but_the_route_the_page_and_the_autopilot_calls_it(self):
+        """R1. Structural: no read, no timer, no step and no answer starts Jera. Since `0101`
+        R1 the autopilot's launch does, after its pick."""
         callers = []
         # The whole package, since `0129` put its modules in subpackages.
         for path in sorted(Path(REPO, "coscc").rglob("*.py")):
@@ -655,7 +657,7 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
             if ".precedent(" in path.read_text(encoding="utf-8"):
                 callers.append(relative)
         # `0095`: the page's handler that asks Jera moved with `AnswersMixin`.
-        self.assertEqual(callers, ["coscc/state/answers.py", "coscc/web/api.py"])
+        self.assertEqual(callers, ["coscc/service/autopilot.py", "coscc/state/answers.py", "coscc/web/api.py"])
 
     def test_r2_a_unit_with_no_open_question_is_refused_before_a_session(self):
         self.reply(self.item(1), self.item(2))
@@ -688,7 +690,7 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
         self.assertEqual(self.sessions.kw["tools"], [])
 
     def test_r10_the_board_says_which_answer_is_jeras_and_which_needs_a_person(self):
-        self.reply(self.item(1), self.item(2, verdict="needs-person", category="business-tradeoff",
+        self.reply(self.item(1), self.item(2, verdict="needs-person", category="product-direction",
                                            reason="đánh đổi", text="Đề xuất: không."))
         self.ask()
         q1, q2 = self.board_questions()
@@ -770,3 +772,58 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
         self.assertEqual([(j["stage"], j["unit"]) for j in jobs], [("precedent", self.asked)])
         self.assertEqual(running[self.asked][0]["agent"]["name"], "Jera")
         self.assertEqual((self.sessions.calls, self.service._active), (1, {}))
+
+    # -- `0101` -------------------------------------------------------------------
+
+    def test_jera_start_records_who_started_it_and_its_ceiling(self):
+        """`0101` R1, R5 point 4, R2 (b)."""
+        self.reply(self.item(1), self.item(2))
+        self.ask()
+        [start] = self.rows("start")
+        self.assertEqual((start["started_by"], start["mode"]), ("person", "manual"))
+        self.assertEqual(start["asked"], [["spec.md", 1], ["spec.md", 2]])
+        self.assertEqual(start["max_budget_usd"], precedent_mod.ceiling(start["prompt_chars"]))
+        self.assertEqual(self.sessions.kw["max_budget_usd"], start["max_budget_usd"])
+
+    def test_the_autopilot_asks_only_what_was_not_asked(self):
+        """`0101` R2: a person's press asks every question; the autopilot's, only the unasked."""
+        self.reply(self.item(1, verdict="needs-person", category="product-direction"),
+                   self.item(2, verdict="needs-person", category="product-direction"))
+        self.ask()
+        with self.assertRaises(Invalid) as refused:
+            asyncio.run(self.service.precedent(self.cwd, self.asked, started_by="autopilot"))
+        self.assertIn("not asked already", str(refused.exception))
+        self.assertEqual(self.sessions.calls, 1)
+        self.ask()
+        self.assertEqual(self.sessions.calls, 2, "a person may ask again")
+
+    def test_a_prompt_past_three_dollars_opens_no_session_and_is_invalid(self):
+        """`0101` R5 point 3: refused before a `start`, so nothing opens and nothing is held."""
+        self.service.set_preference("decision_preferences", "x" * 400000)
+        with self.assertRaises(Invalid) as refused:
+            self.ask()
+        self.assertIn("past a Jera session's ceiling", str(refused.exception))
+        self.assertEqual((self.sessions.calls, self.rows("start"), self.service._active), (0, [], {}))
+
+    def test_a_saved_rules_override_reaches_the_prompt_and_clearing_it_restores_the_default(self):
+        """`0101` R8."""
+        self.reply(self.item(1, verdict="needs-person", category="product-direction"),
+                   self.item(2, verdict="needs-person", category="product-direction"))
+        self.service.set_preference("decision_rules", "Ask me about everything.\n")
+        self.ask()
+        self.assertIn("## Rules\n\nAsk me about everything.\n", self.sessions.prompt)
+        self.assertNotIn(precedent_mod.DEFAULT_RULES, self.sessions.prompt)
+        self.service.set_preference("decision_rules", "   ")
+        self.ask()
+        self.assertIn("## Rules\n\n" + precedent_mod.DEFAULT_RULES, self.sessions.prompt)
+
+    def test_jera_ending_wakes_the_autopilot(self):
+        """`0101` R4, a refusal after the mark included."""
+        woken: list[str] = []
+        self.service._autopilot_nudge = woken.append
+        self.reply(self.item(1), self.item(2))
+        self.ask()
+        self.assertEqual(woken, [self.key])
+        with self.assertRaises(Invalid):
+            self.ask()
+        self.assertEqual(woken, [self.key, self.key])

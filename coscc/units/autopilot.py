@@ -154,9 +154,10 @@ def _listed(questions: Iterable[dict[str, Any]]) -> str:
 
 
 def waiting_for_you(open_: list[dict[str, Any]]) -> dict[str, str]:
-    """`0101` R2: the stop `a` once Jera has been asked every open question it may be."""
+    """`0101` R2: the stop `a` once Jera has been asked every open question it may be. `open_`
+    is every open question, `review.md`'s included, which Jera is never asked."""
     count = "1 question waits" if len(open_) == 1 else f"{len(open_)} questions wait"
-    return _stop("a", f"{count} for you after Jera: {_listed(open_)}")
+    return _stop("a", f"{count} for you: {_listed(open_)}")
 
 
 # `0101` R5 point 3. The stop `a` when the prompt would cost more than one session may.
