@@ -12,6 +12,16 @@ from coscc.units import backlog
 NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)
 
 
+class Day(unittest.TestCase):
+    """`0137`, S4."""
+
+    def test_day_is_a_short_date_without_a_time(self):
+        self.assertEqual(present.day("2026-10-19"), "Oct 19, 2026")
+        self.assertEqual(present.day("2026-10-01T23:00:00+00:00"), "Oct 1, 2026")
+        self.assertEqual((present.day(""), present.day(None)), ("", ""))
+        self.assertEqual(present.day("soon"), "soon")
+
+
 class When(unittest.TestCase):
     def test_an_iso_time_minutes_ago_reads_relative(self):
         self.assertEqual(present.when("2026-09-25T11:55:00+00:00", NOW), "5 min ago")

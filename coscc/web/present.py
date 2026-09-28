@@ -8,7 +8,7 @@ page draws, so the page shows a reader's words while everything else keeps the o
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 # `0082` R7. Under this many seconds a time reads as "3 min ago"; past it, as a date.
 RELATIVE_FOR = 24 * 3600
@@ -89,6 +89,20 @@ def when(value, now: datetime | None = None) -> str:
         return f"{int(seconds // 3600)} h ago"
     local = moment.astimezone()
     return f"{local.strftime('%b')} {local.day}, {local.strftime('%H:%M')}"
+
+
+def day(value) -> str:
+    """A calendar day for a reader, "Oct 19, 2026", with no time (`0137`, S4).
+
+    Takes an ISO date or the start of an ISO time; nothing reads as `""`, and a string that
+    is not a date is returned as it is, never guessed at."""
+    if value in (None, ""):
+        return ""
+    try:
+        parsed = date.fromisoformat(str(value).strip()[:10])
+    except ValueError:
+        return str(value)
+    return f"{parsed.strftime('%b')} {parsed.day}, {parsed.year}"
 
 
 def short_sha(sha) -> str:

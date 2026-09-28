@@ -9,8 +9,8 @@ from reflex.style import set_color_mode
 
 from coscc.agent import models
 from coscc.web import studio as s
-from coscc.state import AgentRow, GrantRow, Knob, ModelRow
-from coscc.screens.common import P, _MONO, _RUNIC, _details
+from coscc.state import AgentRow, DecisionRow, GrantRow, Knob, ModelRow, NameRow
+from coscc.screens.common import P, _MONO, _RUNIC, _details, _table
 from coscc.screens.board import _update_panel
 
 
@@ -205,6 +205,103 @@ def _autopilot_settings() -> rx.Component:
     )
 
 
+def _decision_row(row: rx.Var[DecisionRow]) -> rx.Component:
+    """`0137` R5. One decision, its days for a reader (S4), its workspace by name (S3)."""
+    return rx.table.row(
+        rx.table.cell(s.badge(row.id, "iris")),
+        rx.table.cell(rx.text(row.kind, size="1")),
+        rx.table.cell(
+            rx.cond(row.kind == "delegation",
+                    s.text(row.agent + " decides: " + row.covers, size="1", weight="medium")),
+            rx.text(row.text, size="1", white_space="pre-wrap"),
+            min_width="220px",
+        ),
+        rx.table.cell(rx.text(row.source, size="1")),
+        rx.table.cell(rx.text(row.workspace, size="1", white_space="nowrap")),
+        rx.table.cell(rx.text(row.from_day, size="1", white_space="nowrap")),
+        rx.table.cell(rx.text(row.until, size="1", white_space="nowrap")),
+        rx.table.cell(s.badge(row.state, rx.cond(row.in_force, "grass", "gray"))),
+        # S8: only a decision in force can be withdrawn; the others show no button.
+        rx.table.cell(rx.cond(row.in_force,
+                              rx.button("Withdraw", on_click=P.withdraw_decision(row.id), size="1",
+                                        variant="soft"))),
+        data_testid="decision-row",
+    )
+
+
+def _decision_field(label: str, control: rx.Component) -> rx.Component:
+    return rx.vstack(s.text(label, size="1", weight="medium"), control, spacing="1", min_width="140px",
+                     flex_grow="1")
+
+
+def _decisions_panel() -> rx.Component:
+    """`0137` R4, R5. The person's decisions and delegations, which Jera reads as theirs. No
+    name is asked (S7): what is typed here is recorded as the person's."""
+    form = P.decision_form
+    return s.panel(
+        s.section_head("Decisions", rx.icon("stamp", size=18, color=s.MUTED)),
+        s.text("Jera reads each decision in force as yours.", size="1"),
+        _table(["Id", "Kind", "Text", "Source", "Workspace", "From", "Until", "State", ""],
+               P.decision_rows, _decision_row, "No decision has been added yet.", margin_top="10px"),
+        rx.flex(
+            _decision_field("Kind", rx.select(["decision", "delegation"], value=form["kind"],
+                                              on_change=lambda v: P.edit_decision("kind", v), size="1",
+                                              aria_label="Kind", id="decision-kind")),
+            _decision_field("Workspace", rx.select(P.decision_workspaces, value=form["workspace"],
+                                                   on_change=lambda v: P.edit_decision("workspace", v),
+                                                   size="1", aria_label="Workspace", id="decision-workspace")),
+            _decision_field("Until", rx.input(value=form["until"], on_change=lambda v: P.edit_decision("until", v),
+                                              placeholder="YYYY-MM-DD, empty until withdrawn", size="1",
+                                              aria_label="Until", id="decision-until")),
+            rx.cond(
+                form["kind"] == "delegation",
+                rx.fragment(
+                    _decision_field("Agent", rx.select(["Leif", "Jera"], value=form["agent"],
+                                                       on_change=lambda v: P.edit_decision("agent", v), size="1",
+                                                       aria_label="Agent", id="decision-agent")),
+                    _decision_field("Covers", rx.input(value=form["covers"],
+                                                       on_change=lambda v: P.edit_decision("covers", v),
+                                                       placeholder="The kind of question it may decide", size="1",
+                                                       aria_label="Covers", id="decision-covers")),
+                ),
+            ),
+            gap="10px", wrap="wrap", width="100%", margin_top="14px",
+        ),
+        rx.text_area(value=form["text"], on_change=lambda v: P.edit_decision("text", v),
+                     placeholder="What was decided.", aria_label="Decision text", rows="3", width="100%",
+                     margin_top="10px", id="decision-text"),
+        rx.input(value=form["source"], on_change=lambda v: P.edit_decision("source", v),
+                 placeholder="Where it was decided, on one line", aria_label="Source", size="1", width="100%",
+                 margin_top="8px", id="decision-source"),
+        rx.button("Add", on_click=P.add_decision, size="1", margin_top="8px", id="add-decision"),
+        id="decisions-panel",
+    )
+
+
+def _name_row(row: rx.Var[NameRow]) -> rx.Component:
+    return rx.table.row(
+        rx.table.cell(rx.text(row.name, size="1")),
+        rx.table.cell(rx.text(row.count.to_string(), size="1")),
+        rx.table.cell(rx.switch(checked=row.mine, on_change=lambda v: P.set_name_mine(row.name, v),
+                                aria_label="This was me: " + row.name, size="1")),
+        data_testid="name-row",
+    )
+
+
+def _names_panel() -> rx.Component:
+    """`0137` R6. Who answered as the person before the app stopped asking; off by default."""
+    return s.panel(
+        s.section_head("Names in answers", rx.icon("user-check", size=18, color=s.MUTED)),
+        s.text("Turn on the names that were you, and Jera reads their answers as yours.", size="1"),
+        rx.foreach(P.name_problems,
+                   lambda p: rx.callout(p, icon="circle_alert", color_scheme="red",
+                                        variant="surface", size="1", margin_top="8px")),
+        _table(["Answered by", "Answers", "This was me"], P.name_rows, _name_row,
+               "No answer carries a name other than owner or an agent's.", margin_top="10px"),
+        id="names-panel",
+    )
+
+
 def _settings() -> rx.Component:
     return rx.vstack(
         s.heading("Make it feel like yours.",
@@ -299,6 +396,8 @@ def _settings() -> rx.Component:
                       id="save-decision-rules"),
             id="decision-rules-panel",
         ),
+        _decisions_panel(),
+        _names_panel(),
         s.panel(
             s.section_head("What a board step may do",
                            rx.icon("key-round", size=18, color=s.MUTED)),

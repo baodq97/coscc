@@ -1024,6 +1024,34 @@ class AgentRow:
 
 
 @dataclasses.dataclass
+class DecisionRow:
+    """`0137` R5. One of the person's decisions as Settings shows it. Copied from
+    `Service.decisions_table`, the days through `present.day`; nothing is decided here."""
+
+    id: str = ""
+    kind: str = ""
+    text: str = ""
+    source: str = ""
+    workspace: str = ""
+    agent: str = ""
+    covers: str = ""
+    from_day: str = ""
+    until: str = ""
+    withdrawn: str = ""
+    state: str = ""
+    in_force: bool = False
+
+
+@dataclasses.dataclass
+class NameRow:
+    """`0137` R6. One name found in `Answered by:`, as `Service.answer_names` returned it."""
+
+    name: str = ""
+    count: int = 0
+    mine: bool = False
+
+
+@dataclasses.dataclass
 class GrantRow:
     stage: str = ""
     tools: str = ""

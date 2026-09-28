@@ -223,6 +223,21 @@ class ThePage(unittest.TestCase):
             self.assertIn(said, settings)
         self.assertNotIn("COS_", _render(screens.settings._agent_row(screens.P.agent_rows[0])))
 
+    def test_settings_has_the_decisions_and_names_panels(self):
+        """`0137` R5, R6; S7: the form asks no name; S8: *Withdraw* only on a decision in force."""
+        from coscc.screens import settings as page
+
+        settings = _render(screens._settings())
+        for said in ("decisions-panel", "names-panel", "add-decision", "decision-text", "decision-source",
+                     "decision-until", "decision-workspace", "This was me", "Withdraw",
+                     "No decision has been added yet."):
+            self.assertIn(said, settings)
+        form = _render(page._decisions_panel())
+        self.assertNotRegex(form, r"(?i)your name|answered.by|decided.by")
+        row = _render(page._decision_row(screens.P.decision_rows[0]))
+        self.assertIn("in_force", row.split("Withdraw")[0])
+        self.assertNotIn("COS_", _render(page._names_panel()) + form)
+
     def test_f2_a_grants_tools_are_a_list_behind_details(self):
         settings = _render(screens._settings())
         self.assertNotIn("tools: ", settings)

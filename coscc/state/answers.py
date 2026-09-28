@@ -12,7 +12,11 @@ import reflex as rx
 
 from coscc.web import present
 from coscc.service import Invalid
-from coscc.state.views import _key_label
+from coscc.state.views import DecisionRow, NameRow, _key_label
+
+# `0137` R5. The fields of the decision form, and what each starts as. No name is asked (S7).
+DECISION_FORM = {"kind": "decision", "text": "", "source": "", "workspace": "All workspaces", "until": "",
+                 "agent": "Leif", "covers": ""}
 
 
 class AnswersMixin(rx.State, mixin=True):
@@ -51,6 +55,85 @@ class AnswersMixin(rx.State, mixin=True):
     holding: bool = False
     # `0081`. True while one more review round is being allowed; locks its button.
     granting_round: bool = False
+    # `0137` R5, R6. The two Settings panels, read on arriving at Settings, and the form as
+    # typed; `decision_workspaces` is what the form's workspace select offers.
+    decision_rows: list[DecisionRow] = []
+    decision_workspaces: list[str] = ["All workspaces"]
+    decision_form: dict[str, str] = dict(DECISION_FORM)
+    name_rows: list[NameRow] = []
+    name_problems: list[str] = []
+
+    def _show_decisions(self, data: dict) -> None:
+        self.decision_rows = [
+            DecisionRow(
+                id=str(r["id"]), kind=str(r["kind"]), text=str(r["text"]), source=str(r["source"]),
+                workspace=str(r["workspace_name"]), agent=str(r.get("agent") or ""),
+                covers=str(r.get("covers") or ""), from_day=present.day(r.get("from_day")),
+                until=present.day(r.get("until_day")) or "until withdrawn",
+                withdrawn=present.day(r.get("withdrawn")), state=str(r["state"]),
+                in_force=r["state"] == "in force",
+            )
+            for r in data.get("rows") or []
+        ]
+        self.decision_workspaces = ["All workspaces", *[str(n) for n in data.get("workspaces") or []]]
+
+    async def _load_decisions(self) -> None:
+        """`0137`. Both panels: one read of `cos.db` and one board read per workspace."""
+        from coscc.state import SERVICE
+        try:
+            self._show_decisions(SERVICE.decisions_table())
+            names = await SERVICE.answer_names()
+        except Invalid as e:
+            self._fail(e)
+            return
+        self.name_rows = [NameRow(name=str(r["name"]), count=int(r["count"]), mine=bool(r["mine"]))
+                          for r in names.get("rows") or []]
+        self.name_problems = [str(p) for p in names.get("problems") or []]
+
+    @rx.event
+    def edit_decision(self, field: str, value: str):
+        if field in DECISION_FORM:
+            self.decision_form = {**self.decision_form, field: str(value)}
+
+    @rx.event
+    def add_decision(self):
+        """`0137` R5. Whether the form may be saved is `Service.add_decision`'s call; a refusal
+        is its one sentence, shown as it is."""
+        from coscc.state import SERVICE
+        form = dict(self.decision_form)
+        if form.get("workspace") == DECISION_FORM["workspace"]:
+            form["workspace"] = ""
+        try:
+            done = SERVICE.add_decision(form)
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        self._show_decisions(done)
+        self.decision_form = {**DECISION_FORM, "kind": self.decision_form.get("kind", "decision")}
+        self.notice = f"Added {done['added']}."
+
+    @rx.event
+    def withdraw_decision(self, decision_id: str):
+        from coscc.state import SERVICE
+        try:
+            self._show_decisions(SERVICE.withdraw_decision(decision_id))
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        self.notice = f"Withdrew {decision_id}."
+
+    @rx.event
+    def set_name_mine(self, name: str, on: bool):
+        """`0137` R6. Whether the name may be marked is `Service.set_name_mine`'s call."""
+        from coscc.state import SERVICE
+        try:
+            done = SERVICE.set_name_mine(name, bool(on))
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        self.name_rows = [NameRow(name=r.name, count=r.count, mine=done["mine"] if r.name == name else r.mine)
+                          for r in self.name_rows]
+        self.notice = f"{name} {'counts' if done['mine'] else 'no longer counts'} as you."
 
     @rx.event
     async def answer_question(self, key: str):
