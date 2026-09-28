@@ -206,7 +206,8 @@ class ThePage(unittest.TestCase):
         """`0133` R11, on `0101`'s guide panel, which took the strip's place: a `details` is
         closed until opened."""
         panel = _render(screens._guide_panel())
-        for said in ("guide-lists", " need you ", "details", "guide-needs-you"):
+        # Review F2: one item is "1 needs you", not "1 need you".
+        for said in ("guide-lists", " need you ", " needs you ", "details", "guide-needs-you"):
             self.assertIn(said, panel)
         self.assertNotIn("open:", panel.replace('\\"', '"'))
 

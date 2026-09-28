@@ -429,7 +429,8 @@ def _guide_panel() -> rx.Component:
             rx.el.details(
                 rx.el.summary(s.text(
                     P.guide_running.length().to_string() + " running · "
-                    + P.guide_needs_you.length().to_string() + " need you · "
+                    + P.guide_needs_you.length().to_string()
+                    + rx.cond(P.guide_needs_you.length() == 1, " needs you · ", " need you · ")
                     + P.guide_decided.length().to_string() + " decided for you",
                     size="1", as_="span"), cursor="pointer"),
                 rx.grid(
