@@ -440,12 +440,16 @@ class UnitMeta:
                 return None if e is None else e["artifacts"].setdefault(r["artifact"], {"status": None, "raw": None, "questions": None})
 
             for r in rows(
-                "SELECT workspace, unit, artifact, to_state FROM transitions WHERE id IN "
+                "SELECT workspace, unit, artifact, to_state, authority FROM transitions WHERE id IN "
                 "(SELECT MAX(id) FROM transitions WHERE {where} GROUP BY workspace, unit, artifact)"
             ):
                 a = artifact(r)
                 if a is not None and r["to_state"] != self.machine.absent:
                     a["status"] = r["to_state"]
+                    # `0136` R14: whose skip it was, which `cos.mjs` stops the unit on unless it
+                    # was a person's or their delegate's. Only on a skip, which is all it reads.
+                    if r["to_state"] == "skipped":
+                        a["authority"] = r["authority"]
             # `0136` R4: the last stage result of each stage, which `cos.mjs` reads a spec's
             # `U<n>` and a spike's verdicts from rather than from the file.
             for r in rows(

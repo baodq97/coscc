@@ -59,6 +59,9 @@ copy of it.
 `[unmeasured] U<n>` puts it between `spec` and `plan`, and `plan` does not open until every
 `U<n>` has `Verdict: holds`.
 
+**A skip is a person's.** `spec.md: skipped` counts only once a person runs `uv run coscc
+skip <workspace> <unit> spec [--delegated] <reason>`; any other skip stops the unit.
+
 **`plan.md: done` is terminal.** Once the app has read it, `cos.mjs` reports a unit finished
 without reading a single later artifact. Set it only after the proof command has passed, and never to close a unit
 that still has stages left.

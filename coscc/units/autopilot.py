@@ -90,8 +90,9 @@ def is_recording_ship(answer: Any) -> bool:
 
 def needs_a_person(answer: Any) -> bool:
     """R6 b: `next` stops for a person — review used its rounds, a spike failed too often, a
-    red check no impl can fix, a pass left closed twice on one head."""
-    return said(answer, "needs-person") or said(answer, "awaits-person")
+    red check no impl can fix, a pass left closed twice on one head, and (`0136` R14) a spec
+    or plan skipped by no person or delegate of theirs."""
+    return said(answer, "needs-person") or said(answer, "awaits-person") or said(answer, "agent-cannot-skip")
 
 
 def is_over(answer: Any) -> bool:

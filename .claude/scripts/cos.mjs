@@ -874,6 +874,11 @@ export function readUnit(dir, name, { state } = {}) {
       unit.problems.push(`${file} has status "${status}", not one of ${VALID[file].join(', ')}`)
     }
     unit.artifacts[file] = { status, skipReason: file === 'plan.md' ? parseSkipReason(text) : null }
+    // `0136` R14: whose skip it was is the transition the app recorded, never the file.
+    // Attached only to a skip no person decided, as `stale` below, so `status --json` of a
+    // unit a person skipped is what it was.
+    const by = known.artifacts?.[file]?.authority ?? null
+    if (status === 'skipped' && !DECIDERS.includes(by)) unit.artifacts[file].agentSkip = { by }
     // Attached, never reported as a problem: `review.md` files written before rounds
     // existed have none, and the closed units' output must not change (`0015` spec, R7).
     if (file === 'pr.md') {
@@ -939,7 +944,10 @@ export function readUnit(dir, name, { state } = {}) {
     if (questions !== null) unit.artifacts[file].questions = questions
   }
   for (const [file, a] of Object.entries(known.artifacts ?? {})) {
-    if (a?.status && !(file in unit.artifacts)) unit.problems.push(`the app records ${file} as ${a.status}, but the file does not exist`)
+    if (!a?.status || file in unit.artifacts) continue
+    // `0136` R14: a skip a person recorded (`coscc skip`) wrote no file, and needs none.
+    if (a.status === 'skipped' && DECIDERS.includes(a.authority)) unit.artifacts[file] = { status: a.status, skipReason: null }
+    else unit.problems.push(`the app records ${file} as ${a.status}, but the file does not exist`)
   }
   for (const u of known.unknowns ?? []) if (u.field === 'ingest') unit.problems.push(`the app could not read this unit after its last step: ${u.reason}`)
 
@@ -1281,6 +1289,13 @@ const present = (u, f) => f in u.artifacts
 // later stage must not be blocked by it.
 const settled = (s) => s === 'accepted' || s === 'skipped' || s === 'done'
 
+// `0136` R14: spec and plan may be skipped only on the decision of a person or their
+// delegate (`coscc/units/guards.py`, `DECIDERS`). A `skipped` status an agent wrote, or one
+// the app took from a file without knowing whose it was, is no skip: the unit stops on it.
+const DECIDERS = ['person', 'delegated']
+const agentSkip = (u, f) => statusOf(u, f) === 'skipped' && Boolean(u.artifacts[f]?.agentSkip)
+const skippedBy = (u, f) => `${f} is skipped by ${u.artifacts[f]?.agentSkip?.by ?? 'no one the app knows'}, not by a person or their delegate`
+
 // A file that exists but carries no readable status is not the same as a missing file, and
 // saying so is the difference between "write it" and "fix the one line at the top of it".
 const missing = (u, f) => (present(u, f) ? `${f} exists but carries no Status line` : `${f} does not exist`)
@@ -1289,13 +1304,13 @@ const SPIKE = STAGES.find((s) => s.when === 'unmeasured')
 const unmeasuredOf = (u) => u.artifacts['spec.md']?.unmeasured ?? { ids: [], problems: [] }
 
 // Whether stage `s` has to be behind a unit before what follows it (`0039` R4, R5). Every
-// stage but `idea` always does. `spike` does when `spec.md` names a `U<n>`, or `spike.md`
-// already exists — a spec rewritten without its questions still leaves the measurement it
-// was rewritten on — and never when the spec was skipped.
+// stage but `idea` always does. `spike` does when, and only when, `spec.md` names a `U<n>`
+// (`0136` R14): a `spike.md` a spec rewritten without its questions left behind no longer
+// makes it. Never when the spec was skipped.
 export function required(unit, s) {
   if (!s.when) return !s.optional
   if (statusOf(unit, 'spec.md') === 'skipped') return false
-  return unmeasuredOf(unit).ids.length > 0 || present(unit, s.file)
+  return unmeasuredOf(unit).ids.length > 0
 }
 
 // `0039` R7: for every `U<n>` the spec names now, what `spike.md` does not yet show. An id
@@ -1410,6 +1425,11 @@ function decideFiles(unit, limit) {
       return { blocked: true, action: s.hint, stage: s.name, why: 'missing' }
     }
     if (status === 'rejected') return { blocked: false, action: `closed — ${s.name} rejected`, stage: '', why: 'rejected' }
+    // `0136` R14: an agent's skip stops the unit for a person, who records the skip or has
+    // the stage run. `stage` stays `''`: running it again would only skip again.
+    if (agentSkip(unit, s.file)) {
+      return { blocked: true, action: `${skippedBy(unit, s.file)} — a person records the skip (coscc skip), or runs ${s.hint.split(' ')[0]}`, stage: '', why: 'agent-cannot-skip' }
+    }
     // `0054` R5: a stage run again from the board left this artifact stale; its stage runs
     // before anything after it. `nextStep` takes a stale `review` or `ship` down the road
     // a missing one takes.
@@ -2247,6 +2267,7 @@ function gateReasons(unit, stage, need, said) {
     const status = statusOf(unit, s.file)
     if (status === null) codes.push(code('missing'))
     else if (status === 'rejected') codes.push(code('rejected'), code('closed'))
+    else if (agentSkip(unit, s.file)) codes.push(code('agent-cannot-skip'))
     else if (!settled(status)) codes.push(code('draft'))
     else if (unit.artifacts[s.file].stale) codes.push(code('stale'))
   }
@@ -2291,7 +2312,9 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     // Only a file that may legitimately be skipped gets told it has that option.
     const canSkip = s.statuses.includes('skipped')
     if (status === null) {
-      need.push(canSkip ? `${missing(unit, s.file)} — write it, or record the skip in it` : missing(unit, s.file))
+      need.push(canSkip ? `${missing(unit, s.file)} — write it, or a person records the skip (coscc skip)` : missing(unit, s.file))
+    } else if (agentSkip(unit, s.file)) {
+      need.push(skippedBy(unit, s.file))
     } else if (!settled(status)) {
       need.push(`${s.file} is "${status}", not accepted${canSkip ? ' or skipped' : ''}`)
     } else if (unit.artifacts[s.file].stale) {

@@ -887,7 +887,7 @@ def _store(d: Path, units: dict[str, dict[str, str]], ideas: dict[str, str] | No
     return d
 
 
-_TO_IMPL = {"spec.md": "# S\nStatus: skipped.\n", "plan.md": "# P\nStatus: accepted.\n"}
+_TO_IMPL = {"spec.md": "# S\nStatus: accepted.\n", "plan.md": "# P\nStatus: accepted.\n"}
 
 
 class TheSnapshotReachesTheScriptOnStdin(unittest.TestCase):

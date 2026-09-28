@@ -26,7 +26,11 @@ import { createHash } from 'node:crypto'
 // as `coscc/units/meta.py` imports a store. `stores` maps a workspace name to its `.cos/`;
 // `own` is the name of the store the command reads, `''` when it has none.
 const entryFrom = (m) => ({
-  artifacts: Object.fromEntries(Object.entries(m.artifacts).map(([f, a]) => [f, { status: a.status, raw: a.raw, questions: a.questions }])),
+  // `0136` R14: a skip in these files stands for one a person recorded; a test of an agent's
+  // skip says so in the entry it builds.
+  artifacts: Object.fromEntries(Object.entries(m.artifacts).map(([f, a]) => [f, {
+    status: a.status, raw: a.raw, questions: a.questions, ...(a.status === 'skipped' ? { authority: 'person' } : {}),
+  }])),
   type: m.type ?? null,
   links: m.links ?? { idea: null, repo: null, dependsOn: null },
   holds: (m.holds ?? []).filter((h) => h.by !== null),
@@ -1724,11 +1728,61 @@ test(`a question still failing at round ${SPIKE_ROUNDS} needs a person`, () => {
   assert.equal(next.action, `needs a person — spike round ${SPIKE_ROUNDS} of ${SPIKE_ROUNDS} found U3 does not hold`)
 })
 
-test('a spec rewritten without its questions still reads the spike beside it', () => {
+test('a spec rewritten without its questions no longer needs the spike beside it (0136 R14)', () => {
   const u = spikeUnit({ 'spec.md': specText('- none left'), 'spike.md': spikeText(1, [['U1', 'fails']]) })
-  // the old measurement is required to be accepted, but an id the spec dropped is not judged
+  // an id the spec dropped is not judged
   assert.equal(nextAction(u).stage, 'plan')
   assert.equal(checkGate(u, 'plan').ok, true)
+  // Spike is required when, and only when, the spec names a `U<n>`: a draft one left behind
+  // does not hold `plan` either, as it did while a present `spike.md` made it required.
+  const draft = spikeUnit({ 'spec.md': specText('- none left'), 'spike.md': '# Spike\nStatus: draft.\n' })
+  assert.equal(nextAction(draft).stage, 'plan')
+  assert.equal(checkGate(draft, 'plan').ok, true)
+  assert.equal(checkGate(draft, 'spike').ok, false)
+})
+
+// `0136` R14: `spec.md` skipped, and the snapshot saying whose decision the skip was.
+const skipTree = (authority, files = { 'spec.md': '# Spec\nStatus: skipped.\n' }) => {
+  const dir = unitDir({ 'intent.md': INTENT_0039, ...files })
+  const state = stateOfRoots(dirname(dirname(dir)))
+  const e = entryFrom(unitMeta(dir))
+  e.artifacts['spec.md'] = { raw: null, questions: null, ...e.artifacts['spec.md'], status: 'skipped', authority }
+  state.units[`${state.workspace}/0039_x`] = e
+  return readUnitWith(dir, '0039_x', { state })
+}
+
+test('0136 R14: a skip an agent wrote, or one whose author the app does not know, stops the unit for a person', () => {
+  for (const authority of ['agent', 'code', 'unknown', undefined]) {
+    const u = skipTree(authority)
+    assert.deepEqual(u.artifacts['spec.md'].agentSkip, { by: authority ?? null })
+    const next = nextAnswer(u)
+    assert.equal(next.stage, '', authority)
+    assert.equal(next.blocked, true)
+    assert.deepEqual(next.reasons, ['agent-cannot-skip'])
+    assert.match(next.action, /spec\.md is skipped by .*, not by a person or their delegate — a person records the skip \(coscc skip\), or runs write-spec/)
+    const gate = gateAnswer(u, 'plan')
+    assert.equal(gate.ok, false)
+    assert.deepEqual(gate.reasons, ['agent-cannot-skip'])
+    assert.match(gate.need.join('\n'), /spec\.md is skipped by/)
+  }
+})
+
+test('0136 R14: a skip a person or their delegate decided opens plan, with or without a spec.md', () => {
+  for (const authority of ['person', 'delegated']) {
+    const written = skipTree(authority)
+    assert.equal(written.artifacts['spec.md'].agentSkip, undefined)
+    assert.equal(nextAction(written).stage, 'plan')
+    assert.equal(checkGate(written, 'plan').ok, true)
+    // `coscc skip` records the decision and writes no file.
+    const recorded = skipTree(authority, {})
+    assert.deepEqual(recorded.artifacts['spec.md'], { status: 'skipped', skipReason: null })
+    assert.deepEqual(recorded.problems.filter((p) => /spec\.md/.test(p)), [])
+    assert.equal(checkGate(recorded, 'plan').ok, true)
+  }
+  // An agent's skip with no file is a status the file does not back, as before.
+  const bare = skipTree('agent', {})
+  assert.equal(bare.artifacts['spec.md'], undefined)
+  assert.match(bare.problems.join('\n'), /the app records spec\.md as skipped, but the file does not exist/)
 })
 
 test('with a spike required, impl opens only on a plan that cites spike.md (R9)', () => {

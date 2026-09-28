@@ -300,7 +300,7 @@ def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
         raise RuntimeError(f"could not open the frontend unit: {front.text}")
     for file, text in {
         "intent.md": f"# Intent: frontend calls api\nAuthor: the originator. Type: feat. Status: accepted.\nIdea: {ref}. Repo: proj. Depends on: {back_ref}.\n",
-        "spec.md": "# Spec: frontend calls api\nIntent: intent.md. Author: t. Status: skipped.\n",
+        "spec.md": "# Spec: frontend calls api\nIntent: intent.md. Author: t. Status: accepted.\n",
         "plan.md": "# Plan: frontend calls api\nIntent: intent.md. Author: t. Status: accepted.\n",
     }.items():
         Path(front.json()["path"], file).write_text(text, encoding="utf-8")

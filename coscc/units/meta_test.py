@@ -176,8 +176,11 @@ class TheSnapshotDecides(Base):
         after = status(self.store, self.meta.snapshot(WS, NAMES))
         before = json.loads(BEFORE.read_text(encoding="utf-8"))
         self.assertEqual([u["name"] for u in after["units"]], [u["name"] for u in before["units"]])
+        # `0136` R14, the one field that moved: a skip read from a file is a skip no person is
+        # known to have decided, and the unit stops on it for one.
+        moved = {"0003_old-unit": {"next": ("", "agent-cannot-skip")}}
         for old, new in zip(before["units"], after["units"]):
-            self.assertEqual(r5(new), r5(old), old["name"])
+            self.assertEqual(r5(new), {**r5(old), **moved.get(old["name"], {})}, old["name"])
 
     def test_a_snapshot_for_one_unit_carries_it_and_what_it_depends_on(self):
         self.meta.import_store(WS, self.store)

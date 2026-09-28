@@ -54,6 +54,13 @@ class TheCodesAreRead(unittest.TestCase):
         self.assertTrue(ap.is_ci_pending(Refused("anything at all")))
         self.assertFalse(ap.is_ci_pending(Exception("CI has not finished on #7: t — wait, then ask again")))
 
+    def test_a_skip_no_person_decided_stops_for_a_person(self):
+        # `0136` R14: `cos.mjs` names no stage for it, since running the spec again would only
+        # skip again; the stop is `b`, a person's, never `f`'s "no stage it can name".
+        said = nxt("", "spec.md is skipped by agent, not by a person or their delegate — …", reasons=["agent-cannot-skip"])
+        self.assertTrue(ap.needs_a_person(said))
+        self.assertEqual(ap.stop_for(unit(), said, None, False)["kind"], "b")
+
     def test_the_autopilot_holds_none_of_cos_mjs_words(self):
         for name in ("CI_PENDING", "CI_RED", "NEEDS_A_PERSON", "FINISHED", "CLOSED", "WAITING_ON", "RECORDING"):
             self.assertFalse(hasattr(ap, name), name)

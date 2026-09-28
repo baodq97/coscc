@@ -42,8 +42,10 @@ Intent: intent.md. Author: <name>. Status: skipped.
 <the criteria, and who decided>
 ````
 
-A skip that leaves no file is indistinguishable later from a spec nobody got round to
-writing, and the gate ahead cannot tell those apart either.
+Writing that file skips nothing (`0136` R14). The unit stops on it until a person records
+the skip as theirs, from a shell: `coscc skip <workspace> <unit> spec [--delegated] <reason>`.
+Only that command makes it a person's, and no session can run it. Hand back `judgement:
+not-ready`, and say in your reply that the skip is theirs to record.
 
 ## Screens
 

@@ -1856,7 +1856,7 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
             f"# Intent: f\nAuthor: t. Type: feat. Status: accepted.\nIdea: {idea['ref']}. Repo: proj. Depends on: {back_ref}.\n",
             encoding="utf-8",
         )
-        (front_dir / "spec.md").write_text("# S\nStatus: skipped.\n", encoding="utf-8")
+        (front_dir / "spec.md").write_text("# S\nStatus: accepted.\n", encoding="utf-8")
         (front_dir / "plan.md").write_text("# P\nStatus: accepted.\n", encoding="utf-8")
         (units.unit_dir(self.cwd["api"], back.json()["unit"], data) / "intent.md").write_text(
             f"# Intent: b\nAuthor: t. Type: feat. Status: accepted.\nIdea: {idea['ref']}. Repo: api.\n", encoding="utf-8",
