@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -223,3 +224,63 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
         config = Config(workspaces=(self.cwd,))
         service = Service(config, Sessions(config))
         self.assertEqual(service.running(self.cwd), {"running": {}, "unknown_end": {}})
+
+
+class TheGuide(unittest.TestCase):
+    """`0101` R10. `_guide_block` on memory and the run-log rows the board read."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        (root / "work" / "proj").mkdir(parents=True)
+        config = Config(workspaces=(str(root / "work" / "proj"),), working_dir=str(root / "work"),
+                        data_dir=str(root / "data"))
+        self.service = Service(config, Sessions(config))
+        self.cwd = str(root / "work" / "proj")
+        self.key = self.service._journal_key(self.cwd)
+        self.journal = self.service._journal()
+
+    def block(self) -> dict:
+        with mock.patch.object(self.service, "_autopilot_values", return_value={"autopilot": True}):
+            return self.service._guide_block(self.key, self.journal.records(self.key))
+
+    def test_guide_lists_running_steps_and_jera_sessions(self):
+        self.service._mark_running(self.key, "0009_x", "impl", "step")
+        self.service._mark_running(self.key, "0010_y", "precedent", "precedent")
+        self.service._mark_running("/elsewhere", "0011_z", "spec", "step")
+        got = self.block()["running"]
+        self.assertEqual([(r["unit"], r["stage"], r["agent"]) for r in got],
+                         [("0009_x", "impl", "Uruz"), ("0010_y", "precedent", "Jera")])
+        self.assertTrue(all(r["started"] for r in got))
+
+    def test_guide_turns_every_stop_but_full_into_one_thing_to_do(self):
+        kinds = ("a", "b", "c", "d", "e", "f", "cap", "reruns", "full")
+        self.service._autopilot_stops[self.key] = {
+            f"00{n:02d}_u": {"unit": f"00{n:02d}_u", "kind": k, "reason": f"why {k}"} for n, k in enumerate(kinds, 1)
+        }
+        self.service._autopilot_stops[self.key][""] = {"unit": "", "kind": "shortlist", "reason": "none"}
+        got = self.block()["needs_you"]
+        self.assertEqual([r["kind"] for r in got], [*kinds[:-1], "shortlist"])
+        by = {r["kind"]: r for r in got}
+        self.assertEqual((by["a"]["unit"], by["a"]["screen"], by["a"]["tab"], by["a"]["reason"]),
+                         ("0001_u", "unit", "questions", "why a"))
+        self.assertEqual((by["cap"]["screen"], by["shortlist"]["screen"]), ("settings", "backlog"))
+
+    def test_guide_shows_at_most_ten_jera_answers_from_the_last_seven_days(self):
+        now = datetime.now(timezone.utc)
+        for n in range(12):
+            self.journal.append({"kind": "precedent", "workspace": self.key, "unit": "0009_x", "artifact": "spec.md",
+                                 "n": n + 1, "verdict": "answer", "written": True,
+                                 "at": (now - timedelta(hours=n)).isoformat()})
+        for over in ({"at": (now - timedelta(days=8)).isoformat()}, {"verdict": "needs-person", "written": False}):
+            self.journal.append({"kind": "precedent", "workspace": self.key, "unit": "0010_y", "artifact": "spec.md",
+                                 "n": 1, "verdict": "answer", "written": True, "at": now.isoformat(), **over})
+        got = self.block()["decided"]
+        self.assertEqual([(r["unit"], r["n"]) for r in got], [("0009_x", n) for n in range(1, 11)])
+        self.assertEqual({r["tab"] for r in got}, {"questions"})
+
+    def test_guide_says_only_that_the_autopilot_is_off_when_it_is(self):
+        self.service._mark_running(self.key, "0009_x", "impl", "step")
+        self.assertEqual(self.service._guide_block(self.key, []), {"on": False})
+        self.assertEqual(asyncio.run(self.service.board(self.cwd))["guide"], {"on": False})

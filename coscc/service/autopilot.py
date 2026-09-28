@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from coscc.units import autopilot, backlog
+from coscc.units import autopilot, backlog, guide
 from coscc.agent import precedent
 from coscc.git import fetches
 from coscc.github import integrate
@@ -448,3 +448,20 @@ class AutopilotMixin:
             key=lambda s: (autopilot.unit_number(s["unit"]), s["unit"]),
         )
         return block
+
+    def _guide_block(self, key: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        """`0101` R10. The board's guide: `{on, running, needs_you, decided}`, or `{on: False}`
+        alone while the autopilot is off. `rows` are the run-log rows the board already read;
+        what runs is read from memory. Display only; decides nothing."""
+        if not self._autopilot_values(key)["autopilot"]:
+            return {"on": False}
+        stops = sorted(
+            (self._autopilot_stops.get(key) or {}).values(),
+            key=lambda s: (autopilot.unit_number(s["unit"]), s["unit"]),
+        )
+        return {
+            "on": True,
+            "running": guide.running(self._running_here(key, self._agent_overrides()[0])),
+            "needs_you": guide.needs_you(stops),
+            "decided": guide.decided(rows, datetime.now().astimezone()),
+        }

@@ -322,6 +322,8 @@ class BoardMixin:
         data["recording"] = journal is not None
         # `0043` R9. Display only: the page shows it and decides nothing from it.
         data["autopilot"] = self._autopilot_block(key)
+        # `0101` R10. Display only, from the rows read above: no second read of the run log.
+        data["guide"] = self._guide_block(key, verdicts)
         data["read_only_because"] = (
             None if journal is not None
             else "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR"
@@ -369,6 +371,23 @@ class BoardMixin:
         }
         return rid
 
+    def _running_here(self, key: str, overrides: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        """`running`'s `running`, from memory alone: what `_guide_block` reads too (`0101`)."""
+        running: dict[str, list[dict[str, Any]]] = {}
+        for entry in self._running.values():
+            if entry["workspace"] != key:
+                continue
+            kind = entry["kind"]
+            row = None if kind == "rebase" else agents.agent_for(entry["stage"], overrides)
+            agent = {"glyph": row["glyph"], "name": row["name"]} if row else None
+            running.setdefault(entry["unit"], []).append({
+                "kind": kind, "stage": entry["stage"], "agent": agent,
+                "started": entry["started"], "turns": entry["turns"], "cost_usd": entry["cost_usd"],
+                # `0073` R1. A board step's events; `""` for an integration or an estimate.
+                "run": entry.get("run", ""),
+            })
+        return running
+
     def running(self, cwd: str) -> dict[str, Any]:
         """`0051` R2. What has an agent working in this workspace now, and what ended unseen.
 
@@ -388,19 +407,7 @@ class BoardMixin:
         key = self._journal_key(cwd)
         # `0036` R5: through the one lookup, so an override shows here too. Read once per call.
         overrides = self._agent_overrides()[0]
-        running: dict[str, list[dict[str, Any]]] = {}
-        for entry in self._running.values():
-            if entry["workspace"] != key:
-                continue
-            kind = entry["kind"]
-            row = None if kind == "rebase" else agents.agent_for(entry["stage"], overrides)
-            agent = {"glyph": row["glyph"], "name": row["name"]} if row else None
-            running.setdefault(entry["unit"], []).append({
-                "kind": kind, "stage": entry["stage"], "agent": agent,
-                "started": entry["started"], "turns": entry["turns"], "cost_usd": entry["cost_usd"],
-                # `0073` R1. A board step's events; `""` for an integration or an estimate.
-                "run": entry.get("run", ""),
-            })
+        running = self._running_here(key, overrides)
         out: dict[str, Any] = {"running": running, "unknown_end": {}}
         journal = self._journal()
         if journal is None:
