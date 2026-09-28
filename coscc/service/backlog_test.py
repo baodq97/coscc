@@ -674,12 +674,13 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
         self.reply(self.item(1), self.item(2, verdict="needs-person", category="significant-spend",
                                            reason="tốn tiền"))
         done = self.ask()
-        after = self.spec.read_bytes()
-        self.assertTrue(after.startswith(before))
-        tail = after[len(before):].decode("utf-8")
-        self.assertEqual(tail.count("### Câu"), 1)
-        self.assertIn(f"Answered by: Jera. Date: {date.today().isoformat()}. Via: precedent.", tail)
-        self.assertIn(f"Tiền lệ: {self.cite}", tail)
+        # `0135` R8: one row, and not one byte of `spec.md`.
+        self.assertEqual(self.spec.read_bytes(), before)
+        with self.service._unit_meta().data.connect() as conn:
+            [row] = conn.execute(
+                "SELECT artifact, ref, answered_by, date, via, text FROM unit_answers WHERE via = 'precedent'").fetchall()
+        self.assertEqual(tuple(row)[:5], ("spec.md", "1", "Jera", date.today().isoformat(), "precedent"))
+        self.assertIn(f"Tiền lệ: {self.cite}", row["text"])
         self.assertEqual((done["written"], done["needs_person"]),
                          ([{"artifact": "spec.md", "n": 1}], [{"artifact": "spec.md", "n": 2}]))
         verdicts = {r["n"]: r for r in self.rows("precedent")}

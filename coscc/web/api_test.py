@@ -716,19 +716,21 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
     async def post(self, **over):
         return await self.client.post("/api/units/answer", json=self.body(**over))
 
-    async def test_a_valid_answer_is_appended_and_nothing_above_it_moves(self):
+    def rows(self, table: str = "unit_answers", columns: str = "artifact, ref, answered_by, via, text") -> list[tuple]:
+        """`0135` R8: what the database holds for this unit, where the file's block once was."""
+        from coscc.data import Data
+
+        with Data(self.data_dir).connect() as conn:
+            return [tuple(r) for r in conn.execute(
+                f"SELECT {columns} FROM {table} WHERE unit = ? AND once_key = '' ORDER BY id", (self.unit,))]
+
+    async def test_answering_through_the_api_changes_no_byte_of_the_artifact(self):
         before = self.intent.read_bytes()
         got = await self.post()
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(got.json()["question"], 2)
-        after = self.intent.read_bytes()
-        self.assertTrue(after.startswith(before))
-        tail = after[len(before):].decode("utf-8")
-        self.assertIn("## Answers", tail)
-        self.assertIn("### Câu 2", tail)
-        self.assertIn("Answered by: Phong. Date: ", tail)
-        self.assertIn("Via: product.", tail)
-        self.assertIn("Tách ra. MARK-0016", tail)
+        self.assertEqual(self.intent.read_bytes(), before)
+        self.assertEqual(self.rows(), [("intent.md", "2", "Phong", "product", "Tách ra. MARK-0016")])
 
     async def test_the_board_then_counts_one_fewer_open(self):
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
@@ -737,12 +739,12 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
         self.assertEqual(board["units"][0]["open"], 2)
 
-    async def test_a_second_answer_appends_under_the_same_heading(self):
+    async def test_a_second_answer_is_a_second_row(self):
+        before = self.intent.read_bytes()
         await self.post()
         await self.post(question=1, answer="Có.")
-        text = self.intent.read_text(encoding="utf-8")
-        self.assertEqual(text.count("## Answers"), 1)
-        self.assertIn("### Câu 1", text)
+        self.assertEqual(self.intent.read_bytes(), before)
+        self.assertEqual([r[1] for r in self.rows()], ["2", "1"])
 
     async def test_the_answer_is_recorded_as_a_person_in_the_history(self):
         from coscc.units.history import History
@@ -795,9 +797,12 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         await self.refused(answer="ok\n## Status: rejected")
         await self.refused(answer="### Câu 3\nhijack")
 
-    async def test_a_file_with_a_section_after_its_answers_is_refused(self):  # (g)
+    async def test_a_file_with_a_section_after_its_answers_is_answered_all_the_same(self):  # (g)
+        # Refused until `0135`: a block appended there would not have been read. It is a row now.
         self.intent.write_text(QUESTIONS + "\n## Answers\n\n## Later\n", encoding="utf-8")
-        self.assertIn("after its ## Answers", await self.refused())
+        before = self.intent.read_bytes()
+        self.assertEqual((await self.post()).status_code, 200)
+        self.assertEqual(self.intent.read_bytes(), before)
 
     async def test_something_that_is_not_json_writes_nothing(self):
         before = self.intent.read_bytes()
@@ -991,13 +996,15 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         body = {"cwd": self.cwd, "unit": self.unit, "to": "paused", "reason": "chờ 0034", "by": "Leif", **over}
         return await self.client.post("/api/units/hold", json=body)
 
-    async def test_a_pause_is_appended_and_read_back(self):
+    rows = AnsweringAQuestionOverHttp.rows
+
+    async def test_a_pause_is_a_row_and_read_back(self):
         before = self.intent.read_bytes()
         got = await self.hold()
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual((got.json()["from"], got.json()["to"], got.json()["effects"]), ("active", "paused", []))
-        self.assertTrue(self.intent.read_bytes().startswith(before))
-        self.assertIn("### Paused\nDecided by: Leif. Date: ", self.intent.read_text(encoding="utf-8"))
+        self.assertEqual(self.intent.read_bytes(), before)
+        self.assertEqual(self.rows("unit_holds", "move, decided_by, reason"), [("paused", "Leif", "chờ 0034")])
         nxt = (await self.client.get("/api/units/next", params={"cwd": self.cwd, "unit": self.unit})).json()
         self.assertEqual(nxt["stage"], "")
 
@@ -1014,7 +1021,7 @@ class HoldingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         """`0082` R3: what `{"by": ""}` was refused for until then."""
         got = await self.hold(by="")
         self.assertEqual(got.status_code, 200, got.text)
-        self.assertIn("owner", self.intent.read_text(encoding="utf-8").split("## Answers", 1)[1])
+        self.assertEqual(self.rows("unit_holds", "decided_by"), [("owner",)])
 
 
 _ROUND_0028 = "\n## Round {n}\n\nReviewed: aaaaaaa. Verdict: {v}.\n\n### Findings\n\n{f}\n"
@@ -1144,17 +1151,13 @@ class AnsweringAFindingOverHttp(AnsweringAQuestionOverHttp):
     async def finding(self, **over):
         return await self.post(**{"artifact": "review.md", "question": "F2", **over})
 
-    async def test_a_finding_is_appended_as_its_own_block_and_nothing_above_moves(self):
+    async def test_a_finding_is_a_row_and_review_md_is_not_touched(self):
         before = self.review.read_bytes()
         got = await self.finding()
         self.assertEqual(got.status_code, 200, got.text)
         self.assertEqual(got.json()["question"], "F2")
-        after = self.review.read_bytes()
-        self.assertTrue(after.startswith(before))
-        tail = after[len(before):].decode("utf-8").splitlines()
-        at = tail.index("### F2")
-        self.assertRegex(tail[at + 1], r"^Answered by: Phong\. Date: \S+\. Via: product\.$")
-        self.assertIn("## Answers", tail)
+        self.assertEqual(self.review.read_bytes(), before)
+        self.assertEqual(self.rows(), [("review.md", "F2", "Phong", "product", "Tách ra. MARK-0016")])
 
     async def test_the_board_then_waits_on_the_other_one_only(self):
         await self.finding()

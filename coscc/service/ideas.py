@@ -36,6 +36,7 @@ class IdeasMixin:
             made = ideas.create_idea(cwd, slug, brief, self.config.data_dir)
         except CannotCreate as e:
             raise Invalid(str(e)) from e
+        self._refresh_ideas(cwd)
         return {"cwd": cwd, "id": made["id"], "ref": ideas.idea_ref(name, made["id"]) if name else ""}
 
     def _idea_link(self, cwd: str, idea: str, brief: str, depends_on: str) -> dict[str, Any]:
@@ -59,7 +60,7 @@ class IdeasMixin:
             raise Invalid("This workspace has no name of its own that another unit could refer to.")
         if depends_on and depends_on not in [u["ref"] for u in ideas.read_units(ideas.read_text(path))]:
             raise Invalid(f"{depends_on} is not listed under {idea}.")
-        return {"path": path, "ws": name}
+        return {"path": path, "ws": name, "home": home}
 
     def _ideas_everywhere(self) -> list[dict[str, Any]]:
         """Every idea file in every workspace's store, `{ws, id, path, text, units}`."""
@@ -164,7 +165,7 @@ class IdeasMixin:
             raise Invalid(f"No idea {idea_id} in this workspace.")
         text = ideas.read_text(path)
         listed = ideas.read_units(text)
-        peers = self._peers()
+        peers = self._peer_table()[0]
         boards: dict[str, dict[str, Any] | None] = {}
         rows: list[dict[str, Any]] = []
         for line in listed:
@@ -172,7 +173,7 @@ class IdeasMixin:
             if ws not in boards:
                 where = self._workspace_by_name(ws)
                 try:
-                    boards[ws] = None if where is None else await board_reader.read(self._units_root(where), peers=peers)
+                    boards[ws] = None if where is None else await board_reader.read(self._units_root(where), state=self._snapshot(where, peers=peers))
                 except Unavailable:
                     boards[ws] = None
             board = boards[ws]

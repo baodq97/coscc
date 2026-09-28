@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+from coscc.units.meta_test import ingest
 from coscc.github import integrate
 from coscc.git import fetches
 from coscc import service as service_mod
@@ -652,6 +653,7 @@ class AStaleOriginMain(unittest.TestCase):
         (self.service._unit_dir(self.cwd, self.unit) / "review.md").write_text(
             f"# Review: fixture\nAuthor: t. Status: accepted.\n\n## Round 1\n\nReviewed: {head}. Verdict: pass.\n\n"
             "### Findings\n\n### What was not reviewed\n\nnothing\n", encoding="utf-8")
+        ingest(self.service, self.cwd, self.unit)
         self.service.config = dataclasses.replace(self.service.config, host="127.0.0.1")
         calls: list[tuple[str, str]] = []
 

@@ -334,6 +334,7 @@ class Runner:
         siblings_note: str = "",
         read_also: tuple[str, ...] = (),
         agent: dict[str, Any] | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -420,6 +421,9 @@ class Runner:
         and a preset session gets its commit attribution as `settings` (R8). A `done` step's
         `end` carries the `Author:` its artifact wrote (R4), read and never checked. `None`
         leaves the prompt, the argv and both records as they were.
+
+        `meta` is `0135` R8's: the unit's entry in the snapshot, whose answers and holds the
+        prompt renders where the files' `## Answers` blocks were (`prompt.answers_for`).
         """
         check_started_by(started_by)
         grant = grant_for_step(stage, label)
@@ -469,6 +473,7 @@ class Runner:
             siblings_note=siblings_note,
             runs_commands="Bash" in grant.tools,
             agent=agent,
+            unit_meta=meta,
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,

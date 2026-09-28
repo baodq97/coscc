@@ -109,7 +109,7 @@ class ModelsMixin:
         with `autopilot.is_ci_red`; `None` when it could not be asked. Never raises: the answer
         is recorded and refuses nothing."""
         try:
-            found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo, peers=self._peers())
+            found = await board_reader.next_step(self._units_root(cwd), unit, repo=repo, state=self._snapshot(cwd, [unit]))
             return autopilot.is_ci_red(str(found.get("action") or ""))
         except Exception:  # noqa: BLE001 — R7, recorded as null
             return None
@@ -118,7 +118,7 @@ class ModelsMixin:
         """`0033` R10. The findings in the rounds a `review` step added, off the board —
         `parseReview`'s count, read the way `_post_new_rounds` reads it. `0093` R9: and
         those rounds' verdicts, each a string, for *Changes-requested rounds*."""
-        data = await board_reader.read(self._units_root(cwd), peers=self._peers())
+        data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
         found = next((u for u in data["units"] if u["name"] == unit), None) or {}
         added = [r for r in found.get("rounds") or [] if r.get("n") not in before]
         return {

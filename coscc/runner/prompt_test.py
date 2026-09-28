@@ -1096,3 +1096,52 @@ class TheSessionIsToldWhoItIs(unittest.TestCase):
             with self.assertRaises(RunError) as caught:
                 compose_prompt(*args, agent=agents.agent_for("review"))
             self.assertIsInstance(caught.exception.__cause__, MissingRules)
+
+
+class AnswersComeFromTheDatabase(unittest.TestCase):
+    """`0135` R8. A stage's prompt renders a unit's answers and holds from its rows in `cos.db`
+    where the file's `## Answers` blocks were; a block the database does not carry
+    (`### Rerun`, `### More rounds`, `### Outcome`) is kept from the file."""
+
+    INTENT = (
+        "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Open questions\n\n1. Một?\n\n"
+        "## Answers\n\n### Câu 1\nAnswered by: Leif. Date: 2026-09-01. Via: product.\n\nCó.\n\n"
+        "### Paused\nDecided by: Leif. Date: 2026-09-02. Via: product.\n\nchờ 0034\n\n"
+        "### Rerun\nDecided by: owner. Date: 2026-09-03. Via: product.\nStage: spec\n"
+    )
+
+    def prompt(self, d: str, stage: str) -> str:
+        from coscc.runner import prompt as runner_prompt
+        from coscc.units.meta_test import snapshot_of
+
+        unit = Path(d) / ".cos" / "0001_x"
+        unit.mkdir(parents=True)
+        (unit / "intent.md").write_text(self.INTENT, encoding="utf-8")
+        snap = snapshot_of(d)
+        entry = snap["units"][f"{snap['workspace']}/0001_x"]
+        with mock.patch.object(runner_prompt, "skill_for", lambda s: f"RULES-FOR-{s}"):
+            prompt, _, _ = compose_prompt(d, unit, "0001_x", stage, STAGES, f"{stage}.md", unit_meta=entry)
+        return prompt
+
+    def test_the_prompt_of_an_imported_unit_carries_each_answer_once(self):
+        with tempfile.TemporaryDirectory() as d:
+            text = self.prompt(d, "spec")
+        self.assertEqual(text.count("### Câu 1\nAnswered by: Leif. Date: 2026-09-01. Via: product.\n\nCó."), 1)
+        self.assertEqual(text.count("### Rerun\nDecided by: owner."), 1)
+        self.assertEqual(text.count("## Answers"), 1)
+
+    def test_a_hold_renders_as_the_block_intent_md_carried(self):
+        with tempfile.TemporaryDirectory() as d:
+            text = self.prompt(d, "spec")
+        self.assertEqual(text.count("### Paused\nDecided by: Leif. Date: 2026-09-02. Via: product.\n\nchờ 0034"), 1)
+
+    def test_an_answer_the_file_does_not_carry_is_rendered_from_its_row(self):
+        from coscc.runner.prompt import answers_for
+
+        entry = {"answers": [{"artifact": "spec.md", "n": 2, "id": None, "by": "owner", "date": "2026-09-28",
+                              "via": "product", "text": "Hai."}], "holds": []}
+        self.assertEqual(
+            answers_for(b"# Spec\nStatus: draft.\n", "spec.md", entry),
+            "## Answers\n\n### Câu 2\nAnswered by: owner. Date: 2026-09-28. Via: product.\n\nHai.",
+        )
+        self.assertIsNone(answers_for(b"# Spec\nStatus: draft.\n", "spec.md", {"answers": [], "holds": []}))

@@ -66,7 +66,18 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         (Path(made["path"]) / "intent.md").write_text(
             f"# Intent: x\nAuthor: proof. Type: fix. {intent}\n", encoding="utf-8"
         )
+        await self.ingest(made["unit"])
         return made["unit"]
+
+    async def ingest(self, unit: str) -> None:
+        """`0135` plan Risk 4: files written here by hand reach `cos.db` as a step's would."""
+        self.assertEqual(await self.service._ingest(self.ws, unit, {"outcome": "done", "stage": "test"}), {})
+
+    def rows(self, unit: str) -> list[tuple]:
+        """`0135` R8: the answers `cos.db` holds for `unit`, `(artifact, ref, answered_by, via, text)`."""
+        with self.service._unit_meta().data.connect() as conn:
+            return [tuple(r) for r in conn.execute(
+                "SELECT artifact, ref, answered_by, via, text FROM unit_answers WHERE unit = ? ORDER BY id", (unit,))]
 
     def starts(self) -> list[dict]:
         """The steps' `start`s. Since `0101` R1 the autopilot asks Jera before it stops on an
@@ -248,9 +259,10 @@ class OnTheRealLoop(_Base):
         self.assertEqual([(p["unit"], p["stage"]) for p in picks], [(unit, "precedent"), (unit, "intent")])
         [answer] = self.answers()
         self.assertEqual((answer["completes"], answer["autopilot"], answer["shortlisted"]), (True, True, True))
-        # The rerun kept the answer, and the draft it wrote asks nothing, so it is not run again.
-        text = (self.service._unit_dir(self.ws, unit) / "intent.md").read_text(encoding="utf-8")
-        self.assertIn("### Câu 1", text)
+        # The rerun kept the answer — a row since `0135` — and the draft it wrote asks nothing,
+        # so it is not run again.
+        self.assertEqual(self.rows(unit), [("intent.md", "1", "owner", "product", "một")])
+        self.assertNotIn("### Câu 1", (self.service._unit_dir(self.ws, unit) / "intent.md").read_text(encoding="utf-8"))
         found = autopilot.measure_reruns(
             Journal(self.config.working_dir, self.config.data_dir).records(), self.key, "2000-01-01", "2999-12-31",
         )
@@ -324,8 +336,8 @@ class OnTheRealLoop(_Base):
         self.assertEqual([(p["unit"], p["stage"]) for p in picks], [(unit, "precedent"), (unit, "intent")])
         [answer] = self.answers()
         self.assertEqual((answer["via"], answer["completes"]), ("precedent", True))
-        text = (self.service._unit_dir(self.ws, unit) / "intent.md").read_text(encoding="utf-8")
-        self.assertIn("Answered by: Jera.", text)
+        [(artifact, ref, by, via, text)] = self.rows(unit)
+        self.assertEqual((artifact, ref, by, via), ("intent.md", "1", "Jera", "precedent"))
         self.assertIn("Tiền lệ: practice", text)
 
     # --- `0115`, a draft impl asks a person ---------------------------------------
@@ -337,10 +349,11 @@ class OnTheRealLoop(_Base):
         (d / "plan.md").write_text("# Plan: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8")
         before = "# Impl: x\nAuthor: proof. Status: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
         (d / "impl.md").write_text(before, encoding="utf-8")
+        await self.ingest(unit)
         await self.service.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "Leif")
-        after = (d / "impl.md").read_text(encoding="utf-8")
-        self.assertTrue(after.startswith(before))
-        self.assertRegex(after[len(before):], r"\n## Answers\n\n### Câu 1\nAnswered by: Leif\. Date: [^\n]+\. Via: product\.\n\nĐã chạy, ra 0\.\n$")
+        # `0135` R8: a row, and not one byte of `impl.md`.
+        self.assertEqual((d / "impl.md").read_text(encoding="utf-8"), before)
+        self.assertEqual(self.rows(unit), [("impl.md", "1", "Leif", "product", "Đã chạy, ra 0.")])
         [u] = (await self.service.board(self.ws))["units"]
         self.assertEqual([(q["artifact"], q["n"], q["answered"]) for q in u["questions"]], [("impl.md", 1, True)])
         [record] = self.answers()
@@ -353,6 +366,7 @@ class OnTheRealLoop(_Base):
         (d / "plan.md").write_text("# Plan: x\nAuthor: proof. Status: accepted.\n", encoding="utf-8")
         before = "# Impl: x\nAuthor: proof. Status: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
         (d / "impl.md").write_text(before, encoding="utf-8")
+        await self.ingest(unit)
         return unit, d, before
 
     async def test_0115_f2_an_answer_to_impl_md_is_refused_while_an_impl_step_runs(self):

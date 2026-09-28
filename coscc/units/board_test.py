@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from coscc.units.meta_test import snapshot_of
 from coscc.units import board
 from coscc.agent import harness
 from coscc.units.board import Unavailable
@@ -887,7 +888,7 @@ _TO_IMPL = {"spec.md": "# S\nStatus: skipped.\n", "plan.md": "# P\nStatus: accep
 
 
 class TheSnapshotReachesTheScriptOnStdin(unittest.TestCase):
-    """`0135`. Given a snapshot, `--state -` and no `--peer`, and the JSON on stdin."""
+    """`0135`. Given a snapshot, `--state -` right after `--root`, and the JSON on stdin."""
 
     def test_read_next_and_gate_hand_the_snapshot_on_stdin(self):
         seen: list[tuple[list[str], str]] = []
@@ -898,39 +899,21 @@ class TheSnapshotReachesTheScriptOnStdin(unittest.TestCase):
 
         snapshot = {"workspace": "proj", "workspaces": ["proj"], "units": {}, "ideas": {}}
         with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
-            peers = [("proj", Path(d) / "p")]
-            run(board.read(d, peers=peers, state=snapshot))
-            run(board.next_step(d, "0001_x", peers=peers, state=snapshot))
-            run(board.gate(d, "0001_x", "impl", peers=peers, state=snapshot))
-        self.assertEqual(len(seen), 3)
+            run(board.read(d, state=snapshot))
+            run(board.next_step(d, "0001_x", state=snapshot))
+            run(board.gate(d, "0001_x", "impl", state=snapshot))
+            run(board.rerun(d, "0001_x", state=snapshot))
+            run(board.pr_text(d, "0001_x", state=snapshot))
+        self.assertEqual(len(seen), 5)
         for argv, stdin in seen:
             self.assertEqual(argv[argv.index("--root") + 2 : argv.index("--root") + 4], ["--state", "-"])
             self.assertNotIn("--peer", argv)
             self.assertEqual(json.loads(stdin), snapshot)
 
 
-class PeersReachTheScript(unittest.TestCase):
-    """`0040` R14. Each workspace is one `--peer`, before the command, beside `--root`."""
-
-    def test_argv_carries_one_peer_per_workspace(self):
-        seen: list[list[str]] = []
-
-        async def fake_run(argv, timeout):
-            seen.append(argv)
-            return 0, '{"stages": [], "units": []}' if "status" in argv else '{"stage": ""}', ""
-
-        with tempfile.TemporaryDirectory() as d, mock.patch.object(board, "_run", fake_run):
-            peers = [("api", Path(d) / "a"), ("proj", Path(d) / "p")]
-            run(board.read(d, peers=peers))
-            run(board.next_step(d, "0001_x", peers=peers))
-            run(board.gate(d, "0001_x", "impl", peers=peers))
-        self.assertEqual(len(seen), 3)
-        for argv in seen:
-            at = argv.index("--root")
-            self.assertEqual(
-                argv[at + 2 : at + 6],
-                ["--peer", f"api={(Path(d) / 'a').resolve()}", "--peer", f"proj={(Path(d) / 'p').resolve()}"],
-            )
+class LinksReachTheScriptInTheSnapshot(unittest.TestCase):
+    """`0040` R14, since `0135`: another workspace's units reach `cos.mjs` in the snapshot,
+    under their workspace's name, where `--peer` once named their store."""
 
     def test_a_dependency_is_read_across_workspaces_and_copied(self):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
@@ -940,9 +923,9 @@ class PeersReachTheScript(unittest.TestCase):
                 {"0001_y": {"intent.md": "# I\nType: feat. Status: accepted.\nIdea: ideas/0001_f.md. Repo: b. Depends on: a/0001_x.\n", **_TO_IMPL}},
                 {"0001_f.md": "# Idea: f\nStatus: accepted.\n\n## Units\n\n- a/0001_x.\n- b/0001_y. Depends on: a/0001_x.\n"},
             )
-            peers = [("a", a), ("b", b)]
-            data = run(board.read(b, peers=peers))
-            nxt = run(board.next_step(b, "0001_y", peers=peers))
+            state = snapshot_of(b, [("a", a), ("b", b)])
+            data = run(board.read(b, state=state))
+            nxt = run(board.next_step(b, "0001_y", state=state))
         [u] = data["units"]
         self.assertEqual((u["idea"], u["repo"], u["why"]), ("ideas/0001_f.md", "b", "dependency"))
         self.assertEqual(u["depends_on"], [{"ref": "a/0001_x", "merged": False, "why": "not merged: its ship.md is not accepted"}])

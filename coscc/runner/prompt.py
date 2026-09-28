@@ -107,6 +107,74 @@ def with_answers(body: str, section: bytes | None) -> bytes:
     return body.rstrip("\n").encode("utf-8") + b"\n\n" + section
 
 
+# `0135`. The heads of the blocks `cos.db` now carries — an answer, a finding's answer, a
+# hold. Every other block under `## Answers` (`### Rerun`, `### More rounds`, `### Outcome`)
+# is still the file's alone.
+_ROW_HEAD = re.compile(r"^###\s+(?:Câu\s+\d+|F\d+|Paused|Dropped|Resumed)\s*$")
+_HOLD_HEADS = {"paused": "Paused", "dropped": "Dropped", "active": "Resumed"}
+
+
+def _file_blocks(section: str) -> list[str]:
+    """The blocks of a file's `## Answers` that `cos.db` does not carry, verbatim and in
+    file order. An answer or hold block is cut: the file's copy was imported, and the row is
+    what is rendered in its place, so a prompt carries each answer once (spec R8)."""
+    blocks: list[list[str]] = []
+    keep = False
+    for line in section.splitlines()[1:]:
+        if line.startswith("###"):
+            keep = not _ROW_HEAD.match(line)
+            if keep:
+                blocks.append([])
+        if keep:
+            blocks[-1].append(line)
+    return ["\n".join(b).strip() for b in blocks]
+
+
+def _row_blocks(meta: dict[str, Any], artifact: str) -> list[str]:
+    """`artifact`'s answers from `cos.db`, and `intent.md`'s holds, each as the block the app
+    appended to the file before `0135`, so a stage reads them as it always has."""
+    def block(head: str, who: str, row: dict[str, Any], text: Any) -> str:
+        return (
+            f"### {head}\n{who}: {row.get('by')}. Date: {row.get('date')}. Via: {row.get('via')}.\n\n"
+            f"{text or ''}"
+        ).rstrip()
+
+    blocks = [
+        block(a.get("id") or f"Câu {a.get('n')}", "Answered by", a, a.get("text"))
+        for a in meta.get("answers") or []
+        if a.get("artifact") == artifact
+    ]
+    if artifact == "intent.md":
+        blocks += [
+            block(_HOLD_HEADS.get(str(h.get("state")), str(h.get("state"))), "Decided by", h, h.get("reason"))
+            for h in meta.get("holds") or []
+        ]
+    return blocks
+
+
+def answers_for(raw: bytes, artifact: str, meta: dict[str, Any] | None) -> str | None:
+    """`0135` R8. The `## Answers` a prompt shows for `artifact`, whose bytes are `raw`:
+    its rows from `cos.db` first, then the file's own blocks the database does not carry.
+    `None` when there is neither. `meta` is the unit's entry in the snapshot; `None`, a
+    caller that has none, is the file's section as it stands."""
+    section = answers_section(raw)
+    if meta is None:
+        return None if section is None else section.decode("utf-8", errors="replace")
+    blocks = _row_blocks(meta, artifact)
+    if section is not None:
+        blocks += _file_blocks(section.decode("utf-8", errors="replace"))
+    return "## Answers\n\n" + "\n\n".join(blocks) if blocks else None
+
+
+def with_rows(raw: bytes, artifact: str, meta: dict[str, Any] | None) -> str:
+    """An artifact as a prompt carries it whole: its text above `## Answers`, and
+    `answers_for` in place of the section the file holds."""
+    section = answers_section(raw)
+    above = (raw if section is None else raw[: len(raw) - len(section)]).decode("utf-8", errors="replace")
+    answers = answers_for(raw, artifact, meta)
+    return above if answers is None else f"{above.rstrip()}\n\n{answers}\n"
+
+
 def _open_questions(text: str) -> str:
     """The `## Open questions` section of an artifact, verbatim: from that heading to the
     next `## ` heading or the end of the file. Mirrors `.claude/scripts/cos.mjs`'s own
@@ -131,10 +199,11 @@ _ANSWERS_ADVICE = (
 )
 
 
-def _answers_block(directory: Path, artifact: str, repeat_content: bool) -> str | None:
+def _answers_block(directory: Path, artifact: str, repeat_content: bool, meta: dict[str, Any] | None = None) -> str | None:
     """`spec.md` R7: what a re-run is told about the answers its own artifact already
-    carries. `None` when the artifact has never been written, or was written with no
-    `## Answers` section -- a first run has nothing of a person's to protect.
+    carries. `None` when the artifact has never been written, or has no answer -- a first
+    run has nothing of a person's to protect. Since `0135` the answers are `meta`'s rows
+    (`answers_for`).
 
     `repeat_content` is false only for `intent`, whose file is already in the prompt in
     full (`build_prompt`, *The intent this work is authorised by*, just above): repeating
@@ -144,7 +213,7 @@ def _answers_block(directory: Path, artifact: str, repeat_content: bool) -> str 
         raw = (directory / artifact).read_bytes()
     except OSError:
         return None
-    section = answers_section(raw)
+    section = answers_for(raw, artifact, meta)
     if section is None:
         return None
     if not repeat_content:
@@ -153,7 +222,7 @@ def _answers_block(directory: Path, artifact: str, repeat_content: bool) -> str 
     return (
         "# The answers already given to this artifact\n\n"
         f"{_open_questions(text)}\n\n"
-        f"{section.decode('utf-8', errors='replace')}\n\n"
+        f"{section}\n\n"
         f"{_ANSWERS_ADVICE}"
     )
 
@@ -171,22 +240,22 @@ _IMPL_ANSWERS_ADVICE = (
 )
 
 
-def _impl_answers_block(directory: Path) -> str | None:
+def _impl_answers_block(directory: Path, meta: dict[str, Any] | None = None) -> str | None:
     """`0115` R6: an `impl` step is told what a person answered its own `impl.md`: its
-    `## Open questions` and `## Answers`, each verbatim, and `_IMPL_ANSWERS_ADVICE`. `None`
-    when `impl.md` cannot be read or has no `## Answers` section. The rest of `impl.md` stays
-    named by path only (spec Design 4)."""
+    `## Open questions` verbatim, the answers as `answers_for` renders them, and
+    `_IMPL_ANSWERS_ADVICE`. `None` when `impl.md` cannot be read or has no answer. The rest
+    of `impl.md` stays named by path only (spec Design 4)."""
     try:
         raw = (directory / "impl.md").read_bytes()
     except OSError:
         return None
-    section = answers_section(raw)
+    section = answers_for(raw, "impl.md", meta)
     if section is None:
         return None
     return (
         "# The answers already given to this artifact\n\n"
         f"{_open_questions(raw.decode('utf-8', errors='replace'))}\n\n"
-        f"{section.decode('utf-8', errors='replace')}\n\n"
+        f"{section}\n\n"
         f"{_IMPL_ANSWERS_ADVICE}"
     )
 
@@ -273,11 +342,18 @@ def harness_advice(directory: Path) -> str:
     )
 
 
-def _jera_answers(directory: Path, names: list[str]) -> str:
+def _jera_answers(directory: Path, names: list[str], meta: dict[str, Any] | None = None) -> str:
     """`# Answers an agent gave`, listing every `<artifact> ### Câu N` block Jera wrote in
-    `names`; `""` when there is none."""
+    `names`; `""` when there is none. Since `0135` read off `meta`'s rows, the file's
+    blocks when there is no `meta`."""
     found: list[str] = []
     for name in names:
+        if meta is not None:
+            found += [
+                f"- {name} ### Câu {a.get('n')}" for a in meta.get("answers") or []
+                if a.get("artifact") == name and _JERA_META.match(f"Answered by: {a.get('by')}.")
+            ]
+            continue
         try:
             section = answers_section((directory / name).read_bytes())
         except OSError:
@@ -384,6 +460,7 @@ def compose_prompt(
     siblings_note: str = "",
     runs_commands: bool = False,
     agent: dict[str, Any] | None = None,
+    unit_meta: dict[str, Any] | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole (`spec.md` R4), and
     the ones it names by path only (`0094` R16).
@@ -410,6 +487,9 @@ def compose_prompt(
 
     `runs_commands` (`0130` R4) is true when the step's grant holds `Bash`, for any stage;
     false adds not one byte.
+
+    `unit_meta` (`0135` R8) is the unit's entry in the snapshot: its answers and holds, which the
+    prompt renders where the file's `## Answers` blocks were (`answers_for`).
 
     The list is returned rather than inferred later because R4 is checked against it: if a
     step ran without the previous stage's artifact in the prompt, the record says so.
@@ -465,6 +545,8 @@ def compose_prompt(
         parts.append(f"# The files main changed since the plan\n\n{drift_note}")
 
     intent = "" if pointing else _read(directory / "intent.md")
+    if intent and unit_meta is not None:
+        intent = with_rows((directory / "intent.md").read_bytes(), "intent.md", unit_meta)
     if intent:
         included.append("intent.md")
         parts.append(f"# The intent this work is authorised by\n\n{intent}")
@@ -575,14 +657,14 @@ def compose_prompt(
     # `stage != "review"` here keeps it from also landing in this earlier position.
     own_answers = False
     if is_prose_stage(stage) and not writes_own and stage != "review":
-        block = _answers_block(directory, artifact, repeat_content=stage != "intent")
+        block = _answers_block(directory, artifact, repeat_content=stage != "intent", meta=unit_meta)
         if block:
             own_answers = True
             parts.append(block)
     # `0115` R6. A draft `impl.md` that asked a person carries the answers; the step that
     # runs next is told them, and that the section is not its to touch.
     if stage in ("impl", "implement"):
-        block = _impl_answers_block(directory)
+        block = _impl_answers_block(directory, unit_meta)
         if block:
             own_answers = True
             parts.append(block)
@@ -698,7 +780,7 @@ def compose_prompt(
     # under `## Answers` while a review is at `changes-requested`, and the next review
     # must not treat that decision as an unread finding.
     if stage == "review" and is_prose_stage(stage) and not writes_own:
-        block = _answers_block(directory, artifact, repeat_content=True)
+        block = _answers_block(directory, artifact, repeat_content=True, meta=unit_meta)
         if block:
             own_answers = True
             parts.append(block)
@@ -775,7 +857,7 @@ def compose_prompt(
     # wrote: otherwise not one byte is added, and a unit that never asked Jera gets the prompt
     # it got before.
     seen = [n for n in included if n.endswith(".md")] + pointed + ([artifact] if own_answers else [])
-    jera = _jera_answers(directory, list(dict.fromkeys(seen)))
+    jera = _jera_answers(directory, list(dict.fromkeys(seen)), unit_meta)
     if jera:
         parts.append(jera)
 

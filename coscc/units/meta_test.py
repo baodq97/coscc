@@ -8,6 +8,7 @@ for the same answer on every field R5 lists.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import subprocess
@@ -44,6 +45,27 @@ def r5(unit: dict) -> dict:
         "dependsOn": [(d["ref"], d["merged"]) for d in unit.get("dependsOn") or []],
         "next": (unit["next"]["stage"], unit["next"]["why"]),
     }
+
+
+def ingest(service, cwd: str, unit: str) -> None:
+    """Test glue (plan Risk 4): a file a test wrote by hand reaches `cos.db` the way a
+    finished step's does, through `Service._ingest`. Since `0135` nothing else reads it."""
+    done = asyncio.run(service._ingest(cwd, unit, {"outcome": "done", "stage": "test"}))
+    assert not done, done
+
+
+def snapshot_of(root, peers=(), units_=None) -> dict:
+    """Test glue (plan step 8): the snapshot the app would hand `cos.mjs` for the store
+    `root`, and for each `(name, store)` of `peers`, built by the app's own import into a
+    throwaway database. A store is keyed by its resolved path."""
+    with tempfile.TemporaryDirectory() as d:
+        meta = UnitMeta(Path(d) / "work", Data(Path(d) / "data"))
+        own = str(Path(root).resolve())
+        names = {name: str(Path(store).resolve()) for name, store in peers}
+        for key in {own, *names.values()}:
+            if (Path(key) / ".cos").is_dir():
+                meta.import_store(key, key)
+        return meta.snapshot(own, names, units_)
 
 
 class Base(unittest.TestCase):

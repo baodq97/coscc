@@ -5,10 +5,11 @@ What a hold is, and which moves are allowed from each, is `cos.mjs`'s decision
 reads them. Nothing here keeps a second copy of the table (`.claude/CLAUDE.md`: "nothing may
 hold a second copy of it").
 
-Two kinds of function live here. The pure ones — `refusal`, `block`, `record` — shape what
-`Service.hold` writes. The two side effects of a drop (spec R12) — `close_pr` and
-`remove_tree` — each return one `{effect, result, detail}` and never raise: a failure in one
-must not undo the block already written, nor stop the other.
+Two kinds of function live here. The pure ones — `refusal`, `record` — shape what
+`Service.hold` writes; since `0135` that is a row in `cos.db`, and `coscc/runner/prompt.py`
+renders it as the block `intent.md` once carried. The two side effects of a drop (spec R12)
+— `close_pr` and `remove_tree` — each return one `{effect, result, detail}` and never raise:
+a failure in one must not stop the other.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from coscc.git import gitops, worktrees
 from coscc.git.gitops import GitError
 from coscc.units import BadUnit
 
-# The value `to` takes for each block heading, the other way round from `cos.mjs` `HOLD_TO`.
+# The block heading for each value of `to`, the other way round from `cos.mjs` `HOLD_TO`.
 # A spelling, not a rule: which move is allowed is still read off `hold_moves`.
 HEADS = {"paused": "Paused", "dropped": "Dropped", "active": "Resumed"}
 
@@ -68,11 +69,6 @@ def refusal(found: dict[str, Any] | None, to: str, reason: str, by: str, busy: s
         # never stops either itself.
         return f"{busy}; a hold does not stop anything itself"
     return ""
-
-
-def block(to: str, by: str, today: str, reason: str) -> str:
-    """R8: the block appended under `## Answers`, blank line first."""
-    return f"\n### {HEADS[to]}\nDecided by: {by}. Date: {today}. Via: product.\n\n{reason}\n"
 
 
 def record(
