@@ -228,7 +228,8 @@ class AnswersMixin:
                 decided=(wrote,) if submitted else (),
             )
             if submitted:
-                await asyncio.to_thread(self._apply_result, meta, workspace, unit, stage, wrote, submitted, done)
+                apply = self._apply_round if stage == submit.ROUND else self._apply_result
+                await asyncio.to_thread(apply, meta, workspace, unit, stage, wrote, submitted, done)
             return {}
         except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
             # One fixed sentence on the card and the step, the error in the log: `MetaError`
@@ -266,6 +267,30 @@ class AnswersMixin:
             session=str(done.get("session_id") or "") or UNKNOWN,
             actor=f"stage:{stage}", source=f"run:{stage}",
             also=lambda conn: meta.record_result(conn, workspace, unit, stage, artifact, submitted),
+        )
+        if not applied.open:
+            raise BadTransition(f"guard {applied.guard} refused {artifact}: {', '.join(applied.reasons)}")
+
+    def _apply_round(
+        self, meta: UnitMeta, workspace: str, unit: str, stage: str, artifact: str,
+        submitted: dict[str, Any], done: dict[str, Any],
+    ) -> None:
+        """`0136` R5. The round a review run submitted, as the status of `review.md`: one
+        transition through guard `review-round`, reading the head the app recorded when the run
+        opened (R3 c), and the round's rows, in one transaction with its event (R16). The
+        verdict reaches the history whole, `changes-requested` and all (`0134`)."""
+        journal = self._journal() or Journal(meta.root, self.config.data_dir)
+        obj = dict(submitted.get("object") or {})
+        applied = transitions.apply(
+            meta.history, journal,
+            machine="unit", transition="round",
+            workspace=workspace, unit=unit, artifact=artifact,
+            to_state=submit.ROUND_STATES[str(obj.get("verdict"))],
+            inputs=submitted, authority="agent",
+            run=str(submitted.get("run") or UNKNOWN),
+            session=str(done.get("session_id") or "") or UNKNOWN,
+            actor=f"stage:{stage}", source=f"run:{stage}",
+            also=lambda conn: meta.record_round(conn, workspace, unit, submitted),
         )
         if not applied.open:
             raise BadTransition(f"guard {applied.guard} refused {artifact}: {', '.join(applied.reasons)}")

@@ -16,7 +16,7 @@ from coscc.service.common import STAGE_FILES, Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.service.service_test import create_sync
-from coscc.agent.submit_test import submits as _submits
+from coscc.agent.submit_test import a_head, finding, submits as _submits
 
 
 REVIEW_ONE = (
@@ -65,10 +65,15 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", REVIEW_ONE + ROUND_TWO)
-            await _submits(kw)
+            # `0136` R5: the round's object, which `review.md` is written from.
+            await _submits(kw, verdict="changes-requested", findings=[
+                finding("F1", "fixed", "high", fixed_in="abcdef2", path="", text="the first thing"),
+                finding("F2", "open", "low", path="", text="the second thing"),
+            ])
             yield ("done", {"session_id": "sess-r", "cost": {}})
 
     def setUp(self):
+        a_head(self, "abcdef2")
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
@@ -131,8 +136,19 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertEqual(len(gh.posts()), 1)
         body = gh.comments[0]["body"]
         self.assertIn("round 2 of", body.splitlines()[0])
-        self.assertIn("- F1 [fixed abcdef2] the first thing", body)
+        self.assertIn("- F1 [fixed abcdef2] (none) — high — the first thing", body)
         self.assertEqual([(c["round"], c["state"]) for c in done["comments"]], [(2, "posted")])
+
+    def test_changes_requested_reaches_the_history(self):
+        """`0136` R5, `0134`: the round's verdict reaches the history whole, through guard
+        `review-round`, and no failure is swallowed on the way."""
+        _, done = self._run_review(FakeGh())[-1]
+        self.assertNotIn("ingest_error", done)
+        rows = [r for r in self.service.unit_history(str(self.repo), self.unit)["transitions"] if r["artifact"] == "review.md"]
+        self.assertEqual(
+            (rows[-1]["to_state"], rows[-1]["guard"], rows[-1]["authority"]),
+            ("changes-requested", "review-round", "agent"),
+        )
 
     def test_the_end_record_counts_the_findings_of_the_added_round(self):
         # `0033` R10: round 2 has two findings, one of them still open.
@@ -158,7 +174,8 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         good = (self.dir / "review.md").read_bytes()
         (self.dir / "review.md").write_text(REVIEW_ONE, encoding="utf-8")
         _, done = self._run_review(FakeGh(fail=True))[-1]
-        self.assertEqual((self.dir / "review.md").read_bytes(), good)
+        # `0136` R5: the app has a row for round 2 now, so the round it writes is round 3.
+        self.assertEqual((self.dir / "review.md").read_bytes(), good.replace(b"## Round 2", b"## Round 3"))
         self.assertEqual(done["outcome"], "done")
         self.assertEqual(done["comments"][0]["state"], "failed")
         self.assertIn("Bad credentials", done["comments"][0]["reason"])

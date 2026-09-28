@@ -443,10 +443,11 @@ def beyond_reading(grant: Grant) -> tuple[str, ...]:
     return tuple(t for t in grant.tools if t not in READ_TOOLS) + tuple(grant.commands)
 
 
-# `0136` R2, R4. The stages whose run hands back a stage result through `submit`.
-# `coscc/agent/submit.py` holds the same tuple as `STAGE_RESULT`; `policy_test` pins the two.
+# `0136` R2, R4, R5. The stages whose run hands back an object through `submit`: a stage
+# result, or `review`'s round. `coscc/agent/submit.py` holds the same stages as
+# `STAGE_RESULT` and `ROUND`; `policy_test` pins the two.
 # A set, not the loop's order: that is `cos.mjs`'s alone (`autopilot_test`, `0115` R4).
-SUBMITTING = ("idea", "impl", "intent", "plan", "spec", "spike")
+SUBMITTING = ("idea", "impl", "intent", "plan", "review", "spec", "spike")
 # The fewest turns such a step gets: `idea` and `intent` had one, and a call to `submit` ends
 # a turn. Chosen, not measured, from `0136 spike.md ## U2`: a refused object was submitted
 # again after one more turn, so four holds a call, a refusal, a second call and the reply.

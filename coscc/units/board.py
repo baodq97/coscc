@@ -635,6 +635,8 @@ def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
             "n": r.get("n"), "verdict": r.get("verdict"), "text": r.get("text") or "",
             "findings": len(found),
             "findings_open": sum(1 for f in found if f.get("label") == "open"),
+            # `0136` R6: the ids an impl may claim only a person can close, off the same list.
+            "open_ids": [str(f.get("id")) for f in found if f.get("label") == "open"],
             "dropped": [str(x) for x in r.get("dropped") or []],
             "unfinished": bool(r.get("unfinished")),
         })

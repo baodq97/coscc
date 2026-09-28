@@ -39,11 +39,17 @@ AGAIN = "Correct the object and call submit again."
 # a later machine's, and no agent chooses them.
 JUDGEMENTS = {"ready": "accepted", "not-ready": "draft"}
 
-# The stages whose run hands back a stage result (R4). `review` hands back a round and the
-# integrate, precedent and estimate sessions their own objects; a stage not here opens no
-# channel and ends as it did before.
+# The stages whose run hands back a stage result (R4). `review` hands back a round (R5) and
+# the integrate, precedent and estimate sessions their own objects; a stage in neither opens
+# no channel and ends as it did before.
 # A set, not the loop's order, as `policy.SUBMITTING` is.
 STAGE_RESULT = ("idea", "impl", "intent", "plan", "spec", "spike")
+ROUND = "review"
+
+# R5. What a round's `verdict` puts on `review.md`. `needs-person` keeps it
+# `changes-requested`: the unit is not finished, and `cos.mjs` reads the round's verdict for
+# the wait (`0028`).
+ROUND_STATES = {"pass": "accepted", "changes-requested": "changes-requested", "needs-person": "changes-requested"}
 
 _U = {"type": "string", "pattern": "^U[0-9]+$"}
 _F = {"type": "string", "pattern": "^F[0-9]+$"}
@@ -66,6 +72,10 @@ def stage_result_schema(stage: str) -> dict[str, Any]:
         "questions": _QUESTIONS,
     }
     required = ["stage", "judgement", "questions"]
+    if stage == "impl":
+        # R6. The open findings of the last round impl says only a person can close.
+        properties["needs_person"] = {"type": "array", "items": _F}
+        required.append("needs_person")
     if stage == "spec":
         properties["unmeasured"] = {"type": "array", "items": _U}
         required.append("unmeasured")
@@ -83,6 +93,10 @@ def stage_result_schema(stage: str) -> dict[str, Any]:
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
+# The labels a finding may carry, `cos.mjs`'s own (`0028`): `open`, `fixed` in a commit, or
+# what the review made of impl's claim or of a person's answer.
+FINDING_STATES = ("open", "fixed", "needs-person", "claim-rejected", "answered")
+
 # Three more kinds of R2, whose fields the spec's Design names, each wired by the step of
 # `plan.md` that moves its place. Jera's and the estimate's come with theirs (step 12): their
 # fields are what `precedent.py` and `backlog.py` check today, and are copied from there then.
@@ -97,18 +111,35 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "object",
                     "properties": {
                         "id": _F,
-                        "state": {"type": "string", "enum": ["open", "fixed", "withdrawn"]},
+                        "state": {"type": "string", "enum": list(FINDING_STATES)},
+                        # The commit a `fixed` finding was fixed in; `""` for every other state.
+                        "fixed_in": {"type": "string", "pattern": "^([0-9a-f]{7,40})?$"},
                         "severity": {"type": "string", "enum": ["high", "medium", "low"]},
                         "rule": {"type": "string", "pattern": "^(S[0-9]+)?$"},
                         "path": {"type": "string"},
                         "lines": {"type": "string"},
                         "text": {"type": "string", "minLength": 1},
                     },
-                    "required": ["id", "state", "severity", "rule", "path", "lines", "text"],
+                    "required": ["id", "state", "fixed_in", "severity", "rule", "path", "lines", "text"],
                     "additionalProperties": False,
                 },
             },
-            "screens": {"type": "array", "items": {"type": "string"}},
+            # `0083`: one per screenshot opened. Where they were taken is the app's read of
+            # `.screens/manifest.json`, never the model's.
+            "screens": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "pattern": "\\.png$"},
+                        "size": {"type": "string", "pattern": "^[0-9]+x[0-9]+$"},
+                        "address": {"type": "string", "minLength": 1},
+                        "result": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["path", "size", "address", "result"],
+                    "additionalProperties": False,
+                },
+            },
         },
         "required": ["verdict", "findings", "screens"],
         "additionalProperties": False,
@@ -140,7 +171,22 @@ SCHEMAS: dict[str, dict[str, Any]] = {
 
 def schema_for(stage: str) -> dict[str, Any] | None:
     """The schema a run of `stage` submits against, or `None` for a stage with no channel yet."""
+    if stage == ROUND:
+        return SCHEMAS["review-round"]
     return stage_result_schema(stage) if stage in STAGE_RESULT else None
+
+
+def round_problem(obj: Mapping[str, Any]) -> str:
+    """What a review round says that its schema cannot rule out, `""` when nothing: an id
+    given twice, or a `fixed` with no commit, which `cos.mjs` would read as neither."""
+    ids = [f["id"] for f in obj.get("findings") or ()]
+    twice = sorted({i for i in ids if ids.count(i) > 1})
+    if twice:
+        return f"{', '.join(twice)} is listed more than once."
+    unfixed = [f["id"] for f in obj.get("findings") or () if (f["state"] == "fixed") != bool(f["fixed_in"])]
+    if unfixed:
+        return f"{', '.join(unfixed)}: `fixed_in` names the commit of a `fixed` finding, and is empty for any other state."
+    return ""
 
 
 def revision(directory: str | Path, artifact: str, *, own: bool) -> str:
@@ -188,6 +234,9 @@ class Channel:
         artifact: str,
         own: bool,
         open_run: Callable[[], str] | None = None,
+        head: str = "",
+        open_findings: tuple[str, ...] = (),
+        claims_round: int | None = None,
     ):
         self.run = run
         self.stage = stage
@@ -196,13 +245,26 @@ class Channel:
         self.own = own
         # Who the app has open for this unit and stage now. By default this very run.
         self._open_run = open_run or (lambda: run)
+        # R3 c: the head the app read when the run opened, the one a review round is of.
+        self.head = head
+        # R6: the `F<k>` the last round left `open`, as the board read them before the step,
+        # and that round's number: what an impl may claim only a person can close.
+        self.open_findings = tuple(open_findings)
+        self.claims_round = claims_round
+        # What the runner adds once the artifact is written, all of it the app's: a round's
+        # number and where its screenshots were taken.
+        self.extra: dict[str, Any] = {}
         self.schema = schema_for(stage) or {"type": "object"}
         self.received: dict[str, Any] | None = None
         self.refused = 0
 
+    @property
+    def guard_id(self) -> str:
+        return "review-round" if self.stage == ROUND else "stage-result"
+
     def inputs(self, obj: Mapping[str, Any], revision_then: str) -> dict[str, Any]:
-        """What guard `stage-result` reads, the app's own hash taken again now beside it."""
-        return {
+        """What this channel's guard reads, the app's own hash taken again now beside it."""
+        out: dict[str, Any] = {
             "run": self.run,
             "open_run": self._open_run(),
             "revision": revision_then,
@@ -210,32 +272,67 @@ class Channel:
             "stage": self.stage,
             "object": dict(obj),
         }
+        if self.stage == ROUND:
+            out["head"] = self.head
+        if self.stage == "impl":
+            out.update(
+                claims=list(obj.get("needs_person") or ()), open_findings=list(self.open_findings),
+                claims_round=self.claims_round,
+            )
+        return {**out, **self.extra}
+
+    def verdict(self, obj: Mapping[str, Any], revision_then: str) -> guards.Verdict:
+        """This channel's guard, and for impl guard `impl-claim` once it opens (R6)."""
+        inputs = self.inputs(obj, revision_then)
+        verdict = guards.guard(self.guard_id).check(inputs)
+        if verdict.open and self.stage == "impl":
+            return guards.guard("impl-claim").check(inputs)
+        return verdict
 
     async def handle(self, args: dict[str, Any]) -> dict[str, Any]:
         """The handler. The schema has passed by the time this runs (`spike.md ## U1`)."""
         obj = dict(args or {})
-        if obj.get("stage") != self.stage:
+        if self.stage == ROUND:
+            problem = round_problem(obj)
+            if problem:
+                self.refused += 1
+                return refusal(problem)
+        elif obj.get("stage") != self.stage:
             self.refused += 1
             return refusal(f"this run is {self.stage}; the object names {obj.get('stage')!r}.")
         taken = revision(self.directory, self.artifact, own=self.own)
         if self.own and not (self.directory / self.artifact).exists():
             self.refused += 1
             return refusal(f"{self.artifact} is not written yet; write it first, then submit what it says.")
-        verdict = guards.stage_result(self.inputs(obj, taken))
+        verdict = self.verdict(obj, taken)
         if not verdict.open:
             self.refused += 1
+            if "not-open-finding" in verdict.reasons:
+                return refusal(
+                    "guard impl-claim refused: `needs_person` may name only a finding the last review "
+                    f"round left open, and those are: {', '.join(self.open_findings) or 'none'}."
+                )
             return refusal(
-                f"guard stage-result refused: {', '.join(verdict.reasons)} "
+                f"guard {self.guard_id} refused: {', '.join(verdict.reasons)} "
                 "(this run is not the one open for the unit, or its artifacts changed while it ran)."
             )
         self.received = {"object": obj, "revision": taken}
-        return {"content": [{"type": "text", "text": f"received: {self.artifact} {obj['judgement']}"}]}
+        said = obj["verdict"] if self.stage == ROUND else obj["judgement"]
+        return {"content": [{"type": "text", "text": f"received: {self.artifact} {said}"}]}
 
     def description(self) -> str:
+        if self.stage == ROUND:
+            return (
+                "Hand the app your review round: its verdict, every finding with its state, and "
+                "every screenshot you opened. The app writes the round's verdict line, its "
+                "### Findings and its ### Screens in review.md from this object. If it returns "
+                f"an error, the app has checked your object against the unit: {AGAIN}"
+            )
         return (
             f"Hand the app your judgement of {self.artifact}: whether it is ready, its open "
             "questions" + (", the U<n> ids under ## Concerns" if self.stage == "spec" else "")
             + (", and a verdict per U<n>" if self.stage == "spike" else "")
+            + (", and the open findings only a person can close" if self.stage == "impl" else "")
             + ". Call it once the artifact is final. If it returns an error, the app has checked "
             f"your object against the unit: {AGAIN}"
         )

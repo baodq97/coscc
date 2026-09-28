@@ -290,6 +290,32 @@ class UnitMeta:
             "ON CONFLICT (root, workspace, unit, artifact) DO UPDATE SET questions = 1",
             (*scope, artifact),
         )
+        # R6: impl's claims, each against the round whose open findings guard `impl-claim` read.
+        conn.executemany(
+            "INSERT INTO impl_claims (at, root, workspace, unit, run, round, finding) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(now(), *scope, str(submitted.get("run") or ""), int(submitted.get("claims_round") or 0), str(f))
+             for f in obj.get("needs_person") or ()],
+        )
+
+    def record_round(self, conn: sqlite3.Connection, workspace: str, unit: str, submitted: Mapping[str, Any]) -> None:
+        """`0136` R5. A review round and its findings, in the caller's transaction. `n` and
+        `head` are the app's: the number the runner wrote the round under and the head it read
+        when the run opened (R3 c); `screens` is the object's list with where the app read
+        they were taken."""
+        obj = dict(submitted.get("object") or {})
+        screens = {**dict(submitted.get("screens") or {}), "shots": list(obj.get("screens") or ())}
+        cur = conn.execute(
+            "INSERT INTO review_rounds (at, root, workspace, unit, n, run, head, verdict, screens) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (now(), self.root, workspace, unit, int(submitted["n"]), str(submitted.get("run") or ""),
+             str(submitted.get("head") or ""), str(obj["verdict"]), json.dumps(screens, ensure_ascii=False)),
+        )
+        conn.executemany(
+            "INSERT INTO review_findings (round, finding, open, label, fixed_in, severity, rule, path, lines, text) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(cur.lastrowid, f["id"], 1 if f["state"] == "open" else 0, f["state"], f["fixed_in"],
+              f["severity"], f["rule"], f["path"], f["lines"], f["text"]) for f in obj.get("findings") or ()],
+        )
 
     def _write_ideas(self, conn: sqlite3.Connection, workspace: str, ideas: Iterable[Mapping[str, Any]] | None) -> None:
         conn.execute("DELETE FROM idea_meta WHERE root = ? AND workspace = ?", (self.root, workspace))
@@ -424,6 +450,25 @@ class UnitMeta:
                 a = artifact({"workspace": r["workspace"], "unit": r["unit"], "artifact": f"{r['stage']}.md"})
                 if a is not None:
                     a["result"] = json.loads(r["object"])
+            # `0136` R5: every round a review handed back, which `cos.mjs` reads in place of
+            # the round of the same number in `review.md`.
+            by_id: dict[int, dict[str, Any]] = {}
+            for r in rows("SELECT id, workspace, unit, n, head, verdict, screens FROM review_rounds WHERE {where} ORDER BY n"):
+                a = artifact({"workspace": r["workspace"], "unit": r["unit"], "artifact": "review.md"})
+                if a is not None:
+                    by_id[r["id"]] = {"n": r["n"], "reviewed": r["head"], "verdict": r["verdict"],
+                                      "screens": json.loads(r["screens"]), "findings": []}
+                    a.setdefault("rounds", []).append(by_id[r["id"]])
+            for r in rows(
+                "SELECT f.round, f.finding, f.label, f.fixed_in, f.severity, f.rule, f.path, f.lines, f.text "
+                "FROM review_findings f JOIN review_rounds ON f.round = review_rounds.id WHERE {where} ORDER BY f.rowid"
+            ):
+                if r["round"] in by_id:
+                    by_id[r["round"]]["findings"].append({
+                        "id": r["finding"], "label": r["label"], "fixedIn": r["fixed_in"] or None,
+                        "severity": r["severity"], "rule": r["rule"], "path": r["path"], "lines": r["lines"],
+                        "text": r["text"],
+                    })
             for r in rows("SELECT workspace, unit, artifact, questions FROM unit_seen WHERE {where}"):
                 a = artifact(r)
                 if a is not None and r["questions"]:

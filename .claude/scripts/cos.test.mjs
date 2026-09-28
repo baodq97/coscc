@@ -1604,6 +1604,34 @@ test('0136 R4: a stage result decides the spec\'s U<n> and the spike\'s verdicts
   assert.ok(!('unmeasured' in read({ unmeasured: [] }).artifacts['spec.md']))
 })
 
+test('0136 R5, R6: a round and the claims the app holds decide, not review.md and impl.md', () => {
+  const dir = unitDir({
+    'intent.md': INTENT_0039,
+    'review.md': '# Review: x\nStatus: changes-requested.\n\n## Round 1\n\nReviewed: abc1234. Verdict: changes-requested.\n\n' +
+      '### Findings\n\n- F1 [open] a.py:3 — high — old\n\n## Round 2\n\nReviewed: abc1234. Verdict: pass.\n\n### Findings\n\nNone.\n',
+    'impl.md': '# Impl: x\nStatus: accepted.\n\n## Needs a person\n\n- F2: a login\n',
+  })
+  const state = stateOfRoots(dirname(dirname(dir)))
+  const entry = (state.units[`${state.workspace}/0039_x`] = entryFrom(unitMeta(dir)))
+  const row = (label, severity = 'medium') => ({ id: 'F2', label, fixedIn: null, severity, rule: 'S3', path: 'b.py', lines: '9', text: 'new' })
+  entry.artifacts['review.md'].rounds = [{ n: 2, reviewed: 'f'.repeat(40), verdict: 'changes-requested', screens: {}, findings: [row('open')] }]
+  entry.artifacts['impl.md'].result = { stage: 'impl', judgement: 'ready', questions: [], needs_person: [] }
+  const u = readUnit(dir, '0039_x', { state })
+  const rounds = u.artifacts['review.md'].review.rounds
+  // Round 1 only the file holds; round 2 is the app's row, whatever the file says of it.
+  assert.deepEqual(rounds.map((r) => [r.n, r.reviewed, r.verdict]), [[1, 'abc1234', 'changes-requested'], [2, 'f'.repeat(40), 'changes-requested']])
+  assert.deepEqual(rounds[1].findings.map((f) => [f.id, f.label, f.severity]), [['F2', 'open', 'medium']])
+  assert.deepEqual(rounds[1].dropped, ['F1'])
+  assert.match(rounds[1].text, /Verdict: pass/)
+  // `## Needs a person` names F2; the object claims nothing, so nothing is claimed.
+  assert.deepEqual(u.artifacts['impl.md'].needsPerson, [])
+  entry.artifacts['impl.md'].result.needs_person = ['F2']
+  assert.deepEqual(readUnit(dir, '0039_x', { state }).artifacts['impl.md'].needsPerson, [{ id: 'F2', reason: 'a login' }])
+  // `S<n>` makes a low block, from the field as from the line.
+  entry.artifacts['review.md'].rounds[0].findings = [row('open', 'low')]
+  assert.deepEqual(nonBlocking(readUnit(dir, '0039_x', { state })), [])
+})
+
 test('parseSpike reads Round: from the header line only, never from a fenced block', () => {
   const text =
     '# Spike: x\nSpec: spec.md. Author: ᛈ Perthro. Status: accepted.\n\n' +

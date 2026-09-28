@@ -8,8 +8,46 @@ from __future__ import annotations
 
 import unittest
 
-from coscc.runner.review import merge_review
+from coscc.runner.review import merge_review, render_round, replace_new_rounds
 from coscc.runner.runner_test import REVIEW_R1, _REVIEW_TWO_ROUNDS, incomplete_reply
+
+
+class ARoundIsWrittenFromItsObject(unittest.TestCase):
+    """`0136` R5: the verdict line, `### Findings` and `### Screens` are the app's; the rest of
+    the round is the session's, in its places."""
+
+    SECTION = (
+        "## Round 7\n\nReviewed: 0000000. Verdict: pass.\n\n### What was checked\n\nall of it\n\n"
+        "### Findings\n\n- F1 [fixed 1234567] a.py:1 — low — gone\n\n### What was not reviewed\n\nnothing\n"
+    )
+    OBJ = {
+        "verdict": "changes-requested",
+        "findings": [
+            {"id": "F1", "state": "open", "fixed_in": "", "severity": "high", "rule": "S3", "path": "a.py",
+             "lines": "1-4", "text": "still broken\nsecond line"},
+        ],
+        "screens": [{"path": ".screens/b.png", "size": "390x844", "address": "/board", "result": "no violation"}],
+    }
+    SCREENS = {"taken": "e" * 40, "standard": ".claude/rules/ui-standard.md", "by": "Ansuz (agent, review)"}
+
+    def test_the_decisions_are_the_objects_and_the_prose_is_kept_in_place(self):
+        out = render_round(self.SECTION, 2, "f" * 40, self.OBJ, self.SCREENS)
+        self.assertTrue(out.startswith(f"## Round 2\n\nReviewed: {'f' * 40}. Verdict: changes-requested.\n\n### What was checked"))
+        self.assertIn("- F1 [open] a.py:1-4 — high — S3 still broken\n  second line", out)
+        self.assertNotIn("fixed 1234567", out)
+        self.assertNotIn("0000000", out)
+        self.assertLess(out.index("### Findings"), out.index("### What was not reviewed"))
+        self.assertIn(f"Taken at: {'e' * 40}. Standard: .claude/rules/ui-standard.md. Looked at by: Ansuz (agent, review), from screenshots.", out)
+        self.assertIn("- .screens/b.png — 390×844 — /board — no violation", out)
+
+    def test_a_round_that_lists_no_screenshot_writes_no_screens(self):
+        out = render_round(self.SECTION + "\n### Screens\n\nTaken at: x\n", 2, "f" * 40, {**self.OBJ, "screens": []}, self.SCREENS)
+        self.assertNotIn("### Screens", out)
+
+    def test_only_the_new_rounds_are_replaced(self):
+        text = "# Review: x\nStatus: draft.\n\n## Round 1\n\nold\n\n## Round 5\n\nnew\n\n## Answers\n\n### Câu 1\nkept\n"
+        out = replace_new_rounds(text, {1}, "## Round 2\n\nrendered")
+        self.assertEqual(out, "# Review: x\nStatus: draft.\n\n## Round 1\n\nold\n\n## Round 2\n\nrendered\n\n## Answers\n\n### Câu 1\nkept\n")
 
 
 class MergeReview(unittest.TestCase):

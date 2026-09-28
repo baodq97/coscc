@@ -15,7 +15,11 @@ from coscc.agent.submit import AGAIN, Channel
 
 
 def _filled(channel: Channel, fields: dict[str, Any]) -> dict[str, Any]:
+    if channel.stage == submit.ROUND:
+        return {"verdict": "pass", "findings": [], "screens": [], **fields}
     obj: dict[str, Any] = {"stage": channel.stage, "judgement": "ready", "questions": []}
+    if channel.stage == "impl":
+        obj["needs_person"] = []
     if channel.stage == "spec":
         obj["unmeasured"] = []
     if channel.stage == "spike":
@@ -58,8 +62,20 @@ class TheSchemaOfAStageResult(unittest.TestCase):
         jsonschema.validate({"stage": "intent", "judgement": "not-ready", "questions": [{"n": 1, "text": "?"}]}, schema)
 
     def test_a_stage_without_a_result_opens_no_channel(self):
-        for stage in ("review", "pr", "ship", "integrate"):
+        for stage in ("pr", "ship", "integrate"):
             self.assertIsNone(submit.schema_for(stage), stage)
+
+    def test_review_hands_back_a_round_and_impl_its_claims(self):
+        """R5, R6."""
+        self.assertIs(submit.schema_for("review"), submit.SCHEMAS["review-round"])
+        self.assertIn("needs_person", submit.stage_result_schema("impl")["required"])
+        self.assertNotIn("needs_person", submit.stage_result_schema("plan")["properties"])
+        finding = {"id": "F1", "state": "withdrawn", "fixed_in": "", "severity": "low", "rule": "",
+                   "path": "a.py", "lines": "3", "text": "t"}
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate({"verdict": "pass", "findings": [finding], "screens": []}, submit.schema_for("review"))
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate({"verdict": "incomplete", "findings": [], "screens": []}, submit.schema_for("review"))
 
     def test_every_kind_of_object_is_closed(self):
         for name, schema in {**submit.SCHEMAS, "stage": submit.stage_result_schema("spec")}.items():
@@ -134,6 +150,84 @@ class TheChannelChecksWhatTheSchemaCannot(unittest.TestCase):
         asyncio.run(channel.handle(_filled(channel, {"judgement": "ready"})))
         asyncio.run(channel.handle(_filled(channel, {"judgement": "not-ready"})))
         self.assertEqual(channel.received["object"]["judgement"], "not-ready")
+
+
+def a_head(test: unittest.TestCase, sha: str = "c" * 40) -> str:
+    """R3 c. A review run outside a git checkout reads no head, and guard `review-round` then
+    refuses its round; a test of a review that is not about git gives it one, for the test."""
+    from unittest import mock
+
+    patcher = mock.patch("coscc.runner._head_of", mock.AsyncMock(return_value=sha))
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    return sha
+
+
+def finding(fid: str, state: str = "open", severity: str = "medium", **kw: Any) -> dict[str, Any]:
+    """One finding of a review round's object, for a stand-in review to submit."""
+    return {"id": fid, "state": state, "fixed_in": kw.pop("fixed_in", "abc1234" if state == "fixed" else ""),
+            "severity": severity, "rule": kw.pop("rule", ""), "path": kw.pop("path", "coscc/x.py"),
+            "lines": kw.pop("lines", "1"), "text": kw.pop("text", f"what {fid} says"), **kw}
+
+
+class ARoundIsOfTheHeadTheAppRecorded(unittest.TestCase):
+    """R3 c, R5."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+
+    def _channel(self, head: str = "a" * 40) -> Channel:
+        return Channel(run="r", stage="review", directory=self.dir, artifact="review.md", own=False, head=head)
+
+    def test_a_round_is_kept_with_the_head_and_never_names_one(self):
+        channel = self._channel()
+        said = asyncio.run(channel.handle(_filled(channel, {"verdict": "changes-requested", "findings": [finding("F1")]})))
+        self.assertNotIn("is_error", said)
+        got = channel.inputs(channel.received["object"], channel.received["revision"])
+        self.assertEqual((got["head"], got["object"]["verdict"]), ("a" * 40, "changes-requested"))
+        self.assertNotIn("head", submit.SCHEMAS["review-round"]["properties"])
+
+    def test_a_run_that_read_no_head_cannot_hand_back_a_round(self):
+        channel = self._channel(head="")
+        said = asyncio.run(channel.handle(_filled(channel, {})))
+        self.assertTrue(said["content"][0]["text"].endswith(AGAIN))
+        self.assertIn("no-head", said["content"][0]["text"])
+
+    def test_an_id_twice_or_a_fix_with_no_commit_is_refused(self):
+        channel = self._channel()
+        for findings in ([finding("F1"), finding("F1")], [finding("F2", "fixed", fixed_in="")], [finding("F3", fixed_in="abc1234")]):
+            said = asyncio.run(channel.handle(_filled(channel, {"findings": findings})))
+            self.assertTrue(said.get("is_error"), findings)
+            self.assertTrue(said["content"][0]["text"].endswith(AGAIN))
+        self.assertIsNone(channel.received)
+
+
+class ImplClaimsOnlyAnOpenFinding(unittest.TestCase):
+    """R6: guard `impl-claim`, asked at `submit`."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        (self.dir / "impl.md").write_text("# Impl: x\n", encoding="utf-8")
+
+    def _channel(self) -> Channel:
+        return Channel(run="r", stage="impl", directory=self.dir, artifact="impl.md", own=True,
+                       open_findings=("F2",), claims_round=3)
+
+    def test_an_open_finding_of_the_last_round_may_be_claimed(self):
+        channel = self._channel()
+        said = asyncio.run(channel.handle(_filled(channel, {"needs_person": ["F2"]})))
+        self.assertNotIn("is_error", said)
+        got = channel.inputs(channel.received["object"], channel.received["revision"])
+        self.assertEqual((got["claims"], got["claims_round"]), (["F2"], 3))
+
+    def test_any_other_id_is_refused_naming_the_open_ones(self):
+        channel = self._channel()
+        said = asyncio.run(channel.handle(_filled(channel, {"needs_person": ["F1"]})))
+        self.assertTrue(said["is_error"])
+        self.assertIn("impl-claim", said["content"][0]["text"])
+        self.assertIn("F2", said["content"][0]["text"])
+        self.assertTrue(said["content"][0]["text"].endswith(AGAIN))
+        self.assertIsNone(channel.received)
 
 
 class AStandInReachesTheChannelThroughItsServer(unittest.TestCase):

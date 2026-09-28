@@ -32,7 +32,7 @@ from coscc.runner.runner_test import (
     incomplete_reply,
     make_unit,
 )
-from coscc.agent.submit_test import submits as _submits
+from coscc.agent.submit_test import a_head, submits as _submits
 
 
 class AFailedStepIsRecordedAsFailed(unittest.TestCase):
@@ -1334,7 +1334,7 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
             self.calls.append({"text": text, "session_id": session_id, "max_turns": max_turns, **kw})
             if len(self.calls) == 1:
                 yield ("chunk", self.first)
-                await _submits(kw)
+                await _submits(kw, **getattr(self, "obj", {}))
                 yield ("done", {"session_id": self.session, "terminal_reason": self.terminal,
                                 "cost": {"turns": 12, "cost_usd": 2.0}})
                 return
@@ -1563,9 +1563,11 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
         self.assertIsNone(written)
 
     def test_a_review_repair_turn_asks_for_the_new_round_only(self):
-        head = "b" * 40
+        head = a_head(self, "b" * 40)
         round2 = incomplete_reply(head, verdict="changes-requested", status="changes-requested")
         sessions = self.Repairs(first=round2.split("\n", 1)[1], repair=round2)
+        # `0136` R5: what the round says is its object; the prose above is rendered from it.
+        sessions.obj = {"verdict": "changes-requested"}
         _, [end], _, written, _ = self.go(sessions, stage="review")
         self.assertIn("new round only", sessions.calls[1]["text"])
         review = written.decode("utf-8")

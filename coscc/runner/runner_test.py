@@ -40,7 +40,7 @@ from coscc.runner import (
     strip_answers,
     with_answers,
 )
-from coscc.agent.submit_test import submits as _submits
+from coscc.agent.submit_test import a_head, submits as _submits
 
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
 UNIT = "0009_a-test-unit"
@@ -668,6 +668,9 @@ class ReviewRoundsAccumulate(unittest.TestCase):
             await _submits(kw)
             yield ("done", {"session_id": "s", "cost": {}})
 
+    def setUp(self):
+        a_head(self)
+
     def run_review(self, d, reply):
         unit = make_unit(
             Path(d),
@@ -910,6 +913,7 @@ class RerunningKeepsTheAnswers(unittest.TestCase):
             self.assertIn("MID-RUN-MARKER-0025", after)
 
     def test_g_review_with_answers_and_a_new_round_keeps_both(self):
+        a_head(self)
         with tempfile.TemporaryDirectory() as d:
             existing = (
                 "# Review: x\nPR: pr.md. Status: changes-requested.\n\n" + self.ROUND1 +

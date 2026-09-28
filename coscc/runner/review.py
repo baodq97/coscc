@@ -5,6 +5,7 @@ are open, and checking a closing round. Split from `coscc/runner/__init__.py` (`
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from coscc.runner.reply import HEADER_STATUS_RE, RunError, check_reply
 
@@ -56,6 +57,85 @@ def merge_review(existing: str, reply: str) -> str:
 def _rounds(text: str) -> list[str]:
     """Every round already recorded, each exactly as it stands in the file."""
     return [m.group(0).rstrip() for m in _ROUND_RE.finditer(text or "")]
+
+
+# `0136` R5. The standard a round's screenshots are judged against, as `cos.mjs` names it.
+UI_STANDARD = ".claude/rules/ui-standard.md"
+
+
+def finding_line(f: dict[str, Any]) -> str:
+    """One finding of a round's object as `write-review` has always written it, so a person
+    reads the file as before: `- F<k> [label] path:lines — severity — S<n> text`."""
+    label = f"fixed {f['fixed_in']}" if f["state"] == "fixed" else f["state"]
+    where = f"{f['path']}:{f['lines']}" if f["path"] and f["lines"] else (f["path"] or "(none)")
+    text_lines = ((f"{f['rule']} " if f["rule"] else "") + f["text"].strip()).splitlines() or [""]
+    out = [f"- {f['id']} [{label}] {where} — {f['severity']} — {text_lines[0]}"]
+    out += [f"  {line}" if line.strip() else "" for line in text_lines[1:]]
+    return "\n".join(out).rstrip()
+
+
+def render_round(section: str, n: int, head: str, obj: dict[str, Any], screens: dict[str, Any] | None) -> str:
+    """`0136` R5. A round of `review.md` from the object its run handed back.
+
+    What decides is the app's: the heading's number, the line naming the head the app read and
+    the verdict, `### Findings` and `### Screens`. The other `###` sections the session wrote
+    are kept as they are, in their places; whatever it wrote above its first `###` — its own
+    verdict line — is not. A `### Findings` or `### Screens` the session left out is added at
+    the end, and one it wrote while the object names no screenshot is dropped.
+    """
+    body = section.splitlines()[1:]
+    first = next((i for i, line in enumerate(body) if line.startswith("### ")), len(body))
+    sections: list[tuple[str, list[str]]] = []
+    for line in body[first:]:
+        if line.startswith("### "):
+            sections.append((line.rstrip(), []))
+        else:
+            sections[-1][1].append(line)
+    findings = "\n".join(finding_line(f) for f in obj.get("findings") or ()) or "None."
+    shots = list(obj.get("screens") or ())
+    rendered = {"### Findings": findings}
+    if shots and screens is not None:
+        rendered["### Screens"] = (
+            f"Taken at: {screens.get('taken') or '(no manifest)'}. Standard: {screens['standard']}. "
+            f"Looked at by: {screens['by']}, from screenshots.\n\n"
+            + "\n".join(
+                f"- {s['path']} — {s['size'].replace('x', '×')} — {s['address']} — {s['result']}" for s in shots
+            )
+        )
+    out = [f"## Round {n}", "", f"Reviewed: {head}. Verdict: {obj['verdict']}.", ""]
+    done: set[str] = set()
+    for heading, lines in sections:
+        if heading in ("### Findings", "### Screens"):
+            if heading in rendered and heading not in done:
+                out += [heading, "", rendered[heading], ""]
+                done.add(heading)
+            continue
+        out += [heading, *lines]
+    for heading, text in rendered.items():
+        if heading not in done:
+            out += [heading, "", text, ""]
+    return "\n".join(out).rstrip()
+
+
+def replace_new_rounds(text: str, before: set[int], rendered: str) -> str:
+    """`review.md` with every round not numbered in `before` taken out and `rendered` put
+    where the first of them stood; the header and every earlier round are left byte for byte."""
+    kept: list[str] = []
+    placed = False
+    last = 0
+    for m in _ROUND_RE.finditer(text):
+        kept.append(text[last:m.start()])
+        last = m.end()
+        if _round_number(m.group(0)) in before:
+            kept.append(m.group(0))
+        elif not placed:
+            kept.append(rendered + "\n\n")
+            placed = True
+    kept.append(text[last:])
+    out = "".join(kept)
+    if not placed:
+        out = out.rstrip() + "\n\n" + rendered + "\n"
+    return out.rstrip() + "\n"
 
 
 def _header_status(text: str) -> str | None:

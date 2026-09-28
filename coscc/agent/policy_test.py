@@ -52,7 +52,7 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
     def test_every_prose_stage_holding_a_result_gains_submit_and_nothing_else(self):
         from coscc.agent import submit
 
-        self.assertEqual(policy.SUBMITTING, submit.STAGE_RESULT)
+        self.assertEqual(set(policy.SUBMITTING), {*submit.STAGE_RESULT, submit.ROUND})
         self.assertEqual(policy.SUBMIT_TOOL, submit.NAME)
         for stage in policy.SUBMITTING:
             g = grant_for(stage)
@@ -66,7 +66,7 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
                 self.assertEqual(policy.beyond_reading(g), (), stage)
 
     def test_no_other_mcp_tool_and_no_other_stage_gets_through(self):
-        for stage in ("review", "pr", "ship", "integrate", "estimate", "precedent", "x"):
+        for stage in ("pr", "ship", "integrate", "estimate", "precedent", "x"):
             self.assertIn("not granted", decide(grant_for(stage), policy.SUBMIT_TOOL, {}, "/tmp/ws"), stage)
         for name in ("mcp__cos__other", "mcp__other__submit", "submit"):
             self.assertIn("not granted", decide(grant_for("spec"), name, {}, "/tmp/ws"), name)
@@ -131,7 +131,8 @@ class OneGrantPerStage(unittest.TestCase):
                         max_budget_usd=3.0, app_writes_artifact=False,
                         warning=policy.PR_WARNING, denied=policy.PR_DENIED,
                         push_no_force=True),  # `0041` R3; the ceilings are R6's, unchanged
-            "review": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0),  # `0085` R1
+            # `0085` R1; `0136` R5: the round comes back through `submit`.
+            "review": Grant(tools=READ_TOOLS, max_turns=40, max_budget_usd=4.0, submits=True),
             "ship": Grant(tools=rw, commands=policy.PR_COMMANDS, max_turns=30,
                           max_budget_usd=3.0, app_writes_artifact=False,
                           warning=policy.SHIP_WARNING),

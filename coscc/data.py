@@ -430,11 +430,14 @@ CREATE TABLE IF NOT EXISTS review_rounds (
 )""",
     """CREATE UNIQUE INDEX IF NOT EXISTS review_rounds_n ON review_rounds (root, workspace, unit, n)""",
     """-- `0136` R5: the findings of one round. `finding` is `F<k>`; `open` is 1 while the finding
--- is `[open]`, not a status column (`coscc/units/history_test.py`). `rule` is `S<n>` or ''.
+-- is `[open]`, and `label` the word the round gave it (`open`, `fixed`, `needs-person`,
+-- `claim-rejected`, `answered`), what a reader of that one round sees, not a status that
+-- moves (`coscc/units/history_test.py`). `rule` is `S<n>` or ''.
 CREATE TABLE IF NOT EXISTS review_findings (
     round    INTEGER NOT NULL,
     finding  TEXT NOT NULL,
     open     INTEGER NOT NULL,
+    label    TEXT NOT NULL,
     fixed_in TEXT NOT NULL DEFAULT '',
     severity TEXT NOT NULL,
     rule     TEXT NOT NULL DEFAULT '',

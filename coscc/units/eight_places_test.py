@@ -9,11 +9,14 @@ The file grows with `plan.md ## Order of work`: each step that moves a place add
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from coscc.agent.submit_test import submits
+from coscc.agent.submit_test import a_head, finding, submits
+from coscc.agent import harness
 from coscc.config import Config
 from coscc.service import Service
 from coscc.service.service_test import create_sync
@@ -130,6 +133,140 @@ class Place1(unittest.TestCase):
         rows = self.service.unit_history(str(self.repo), self.unit)["transitions"]
         self.assertEqual([r for r in rows if r["artifact"] == "spec.md"], [])
         self.assertFalse(self._plan_gate())
+
+
+class _Review(unittest.TestCase):
+    """A unit with everything up to `review` accepted, and a review or an impl run on it."""
+
+    def setUp(self):
+        self.head = a_head(self, "d" * 40)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.repo = root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.config = Config(
+            workspaces=(str(self.repo),), working_dir=str(root / "work"), data_dir=str(root / "data"),
+        )
+        self.service = Service(self.config, _Nobody())
+        made = create_sync(self.service, str(self.repo), "a-problem", "some words")
+        self.unit, self.dir = made["unit"], Path(made["path"])
+        for name, title in (("intent", "Intent"), ("spec", "Spec"), ("plan", "Plan"), ("impl", "Impl"), ("pr", "PR")):
+            extra = " Type: feat." if name == "intent" else ""
+            (self.dir / f"{name}.md").write_text(f"# {title}: a problem\nAuthor: t.{extra} Status: accepted.\n", encoding="utf-8")
+
+    def _run(self, stage: str, reply: str, **obj) -> dict:
+        directory = self.dir
+
+        class Replies:
+            async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
+                if stage == "impl":
+                    (directory / "impl.md").write_text(reply, encoding="utf-8")
+                else:
+                    yield ("chunk", reply)
+                await submits(kw, **obj)
+                yield ("done", {"session_id": "sess-1", "cost": {}})
+
+        self.service.sessions = Replies()
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, f"open: {stage} may proceed"
+
+        async def go():
+            return [item async for item in self.service.run_step(str(self.repo), self.unit, stage)]
+
+        with mock.patch.object(board_reader, "gate", open_gate):
+            return asyncio.run(go())[-1][1]
+
+    def _row(self, artifact: str) -> dict:
+        rows = self.service.unit_history(str(self.repo), self.unit)["transitions"]
+        row = dict([r for r in rows if r["artifact"] == artifact][-1])
+        return {**row, "inputs": json.loads(row["inputs"]) if isinstance(row.get("inputs"), str) else row.get("inputs")}
+
+    def _unit(self) -> dict:
+        [u] = asyncio.run(self.service.board(str(self.repo)))["units"]
+        return u
+
+    def _status(self) -> dict:
+        """The unit as `cos.mjs status --json` reads it from the app's snapshot."""
+        repo = str(self.repo)
+        source, stdin = board_reader._source(self.service._snapshot(repo, [self.unit]))
+        argv = [str(harness.script()), "--root", str(self.service._units_root(repo)), *source, "status", "--json"]
+        code, out, err = asyncio.run(board_reader._ask(argv, 30.0, stdin))
+        self.assertEqual(code, 0, err)
+        [u] = [u for u in json.loads(out)["units"] if u["name"] == self.unit]
+        return u
+
+
+# The review's prose: a header and a round saying the opposite of the object below it.
+PASSING_PROSE = (
+    "# Review: a problem\nPR: pr.md. Author: t. Status: accepted.\n\n## Round 1\n\n"
+    "Reviewed: 0000000. Verdict: pass.\n\n### What was checked\n\nEverything.\n\n### Findings\n\nNone.\n"
+)
+
+
+class Place2(_Review):
+    """§6, 2: "`Verdict`, a finding's label and its severity, as the review wrote them, decide
+    the `ship` gate." Now guard `review-round` records the round the run handed back, at the
+    head the app read when it opened (R3 c, R5)."""
+
+    def test_a_round_whose_prose_passes_asks_for_changes_when_its_object_does(self):
+        done = self._run("review", PASSING_PROSE, verdict="changes-requested",
+                         findings=[finding("F1", "open", "high", path="coscc/x.py", lines="3", text="broken")])
+        self.assertEqual(done["outcome"], "done", done["error"])
+        self.assertNotIn("ingest_error", done)
+        row = self._row("review.md")
+        self.assertEqual((row["to_state"], row["guard"], row["authority"]), ("changes-requested", "review-round", "agent"))
+        [r] = self._unit()["rounds"]
+        self.assertEqual((r["verdict"], r["findings_open"], r["open_ids"]), ("changes-requested", 1, ["F1"]))
+        # The file is the app's rendering of the object, the head its own read.
+        text = (self.dir / "review.md").read_text(encoding="utf-8")
+        self.assertIn(f"Reviewed: {self.head}. Verdict: changes-requested.", text)
+        self.assertIn("- F1 [open] coscc/x.py:3 — high — broken", text)
+        self.assertIn("### What was checked\n\nEverything.", text)
+        self.assertNotIn("0000000", text)
+
+    def test_the_head_a_round_is_of_is_the_apps_never_the_models(self):
+        self._run("review", PASSING_PROSE, verdict="pass")
+        self.assertEqual(self._row("review.md")["inputs"]["head"], self.head)
+        review = self._status()["artifacts"]["review.md"]["review"]
+        self.assertEqual([(r["n"], r["reviewed"], r["verdict"]) for r in review["rounds"]], [(1, self.head, "pass")])
+
+
+class Place3(_Review):
+    """§6, 3: "`impl.md ## Needs a person` sends the unit back to `review`." Now guard
+    `impl-claim` checks the ids an impl run hands back, and the section is prose (R6)."""
+
+    def setUp(self):
+        super().setUp()
+        done = self._run("review", PASSING_PROSE, verdict="changes-requested", findings=[
+            finding("F1", "open", "high"), finding("F2", "open", "medium"),
+        ])
+        self.assertEqual(done["outcome"], "done", done["error"])
+
+    def _impl(self, prose_claims: str, claims: list[str]) -> dict:
+        reply = (
+            "# Impl: a problem\nIntent: intent.md. Plan: plan.md. Author: t. Status: accepted.\n\n"
+            f"## What was built\n\nx\n\n## Needs a person\n\n{prose_claims}\n"
+        )
+        return self._run("impl", reply, needs_person=claims)
+
+    def test_a_claim_the_prose_does_not_make_still_counts(self):
+        done = self._impl("", ["F1", "F2"])
+        self.assertEqual(done["outcome"], "done", done["error"])
+        self.assertEqual(self._row("impl.md")["inputs"]["claims"], ["F1", "F2"])
+        claims = self._status()["artifacts"]["impl.md"]["needsPerson"]
+        self.assertEqual([c["id"] for c in claims], ["F1", "F2"])
+
+    def test_a_claim_only_the_prose_makes_counts_for_nothing(self):
+        done = self._impl("- F1: needs a login\n- F2: costs money", [])
+        self.assertEqual(done["outcome"], "done", done["error"])
+        self.assertEqual(self._status()["artifacts"]["impl.md"]["needsPerson"], [])
+
+    def test_a_finding_the_last_round_did_not_leave_open_is_refused_at_submit(self):
+        done = self._impl("- F9: nothing", ["F9"])
+        self.assertEqual(done["outcome"], "failed")
+        self.assertIn("no-submission", done["error"])
 
 
 if __name__ == "__main__":

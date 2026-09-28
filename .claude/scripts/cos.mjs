@@ -661,20 +661,57 @@ export function parseReview(text) {
       severity: text.match(SEVERITY)?.[1].toLowerCase() ?? null,
     })
   }
-  // `0027` R1: every id an earlier round raised, whatever that round's verdict, in the order
-  // first raised. The round is only read as unfinished, never marked so in the file (R4).
+  return withDropped(rounds.map(({ n, reviewed, verdict, findings, screens, lines }) => ({
+    n, reviewed, verdict, findings, screens, text: lines.join('\n').trimEnd(),
+  })))
+}
+
+// `0027` R1: every id an earlier round raised, whatever that round's verdict, in the order
+// first raised. The round is only read as unfinished, never marked so in the file (R4).
+function withDropped(rounds) {
   const seen = []
   return {
-    rounds: rounds.map(({ n, reviewed, verdict, findings, screens, lines }) => {
-      const listed = new Set(findings.map((f) => f.id))
+    rounds: rounds.map((r) => {
+      const listed = new Set(r.findings.map((f) => f.id))
       const dropped = seen.filter((id) => !listed.has(id))
       for (const id of listed) if (!seen.includes(id)) seen.push(id)
-      return {
-        n, reviewed, verdict, findings, screens, text: lines.join('\n').trimEnd(),
-        dropped, unfinished: verdict === 'changes-requested' && dropped.length > 0,
-      }
+      return { ...r, dropped, unfinished: r.verdict === 'changes-requested' && dropped.length > 0 }
     }),
   }
+}
+
+// `0136` R5. The rounds a review handed back to the app (`rows`, the snapshot's), each in the
+// place of the round of the same number in `parsed`, `parseReview`'s reading of the file. A
+// round only the file holds — one written before `0136`, or the `incomplete` round a closing
+// turn writes — is still read from it. A row's finding carries its severity and `S<n>` as
+// fields; its `text` is the line `write-review` writes, so every reader below sees one shape.
+// `text` of the round is the file's, for a person: what the app posts to the pull request.
+export function reviewFrom(rows, parsed) {
+  const byN = new Map(parsed.rounds.map((r) => [r.n, r]))
+  for (const row of rows) {
+    const shots = row.screens?.shots ?? []
+    byN.set(row.n, {
+      n: row.n,
+      reviewed: row.reviewed || null,
+      verdict: row.verdict,
+      findings: row.findings.map((f) => ({
+        id: f.id,
+        label: f.label,
+        fixedBy: f.label === 'fixed' ? f.fixedIn : null,
+        text: `${f.path ? (f.lines ? `${f.path}:${f.lines}` : f.path) : '(none)'} — ${f.severity} — ${f.rule ? `${f.rule} ` : ''}${f.text}`,
+        severity: f.severity,
+        rule: f.rule || null,
+      })),
+      screens: shots.length
+        ? {
+            taken: row.screens.taken ?? null, standard: row.screens.standard ?? null, by: row.screens.by ?? null,
+            header: null, shots: shots.map(({ path, size, address, result }) => ({ path, size, address, result })),
+          }
+        : null,
+      text: byN.get(row.n)?.text ?? '',
+    })
+  }
+  return withDropped([...byN.values()].sort((a, b) => a.n - b.n).map(({ dropped, unfinished, ...r }) => r))
 }
 
 // `impl.md ## Needs a person` (`0028`): the findings impl says its stage cannot close, one
@@ -848,7 +885,8 @@ export function readUnit(dir, name, { state } = {}) {
       if (title !== null) unit.artifacts[file].title = title
     }
     if (file === 'review.md') {
-      unit.artifacts[file].review = parseReview(text)
+      const rows = known.artifacts?.[file]?.rounds ?? []
+      unit.artifacts[file].review = rows.length ? reviewFrom(rows, parseReview(text)) : parseReview(text)
       // `0028`: the findings a person answered, by id, from `review.md ## Answers`.
       const answers = answersIn(known, file)
       unit.artifacts[file].personAnswers = [...new Set(answers.filter((a) => a.id !== null).map((a) => a.id))]
@@ -858,7 +896,15 @@ export function readUnit(dir, name, { state } = {}) {
       if (more.granted > 0) unit.artifacts[file].roundsGranted = more.granted
       unit.problems.push(...more.problems.map((p) => `review.md: ${p}`))
     }
-    if (file === 'impl.md') unit.artifacts[file].needsPerson = parseNeedsPerson(text)
+    // `0136` R6: the claims an impl run handed back decide; `## Needs a person` is prose, read
+    // only for the reason a person sees beside each id, and for a unit whose impl ran before.
+    if (file === 'impl.md') {
+      const said = parseNeedsPerson(text)
+      const claimed = known.artifacts?.[file]?.result?.needs_person
+      unit.artifacts[file].needsPerson = Array.isArray(claimed)
+        ? claimed.map((id) => ({ id, reason: said.find((c) => c.id === id)?.reason ?? null }))
+        : said
+    }
     // `0039`: attached only when there is something to attach, so that `status --json` of
     // every unit that never used `[unmeasured]` stays what it was, byte for byte (R4).
     // `0136` R4: a stage result the app received decides a spec's `U<n>` and a spike's

@@ -955,6 +955,13 @@ class StepsMixin:
                 {"unfinished_round": {"n": last_round["n"], "dropped": list(last_round["dropped"])}}
                 if last_round and last_round.get("unfinished") else {}
             )
+            # `0136` R6. The findings the last round left open, which an `impl` may claim only a
+            # person can close: guard `impl-claim` reads them when its object arrives.
+            if rounds_before:
+                unfinished_kw["rounds_known"] = tuple(sorted(n for n in rounds_before if isinstance(n, int)))
+            if stage in ("impl", "implement") and found.get("rounds"):
+                last = found["rounds"][-1]
+                unfinished_kw.update(open_findings=tuple(last.get("open_ids") or ()), claims_round=last.get("n"))
             # `0004_no-setting-says-which-model-runs-a-stage`. Resolved after the gate, so a
             # refused step reads nothing more. `stage` was checked against the board above.
             # `0033`: with the plan's label, the effort and, for `impl`, which run this is.

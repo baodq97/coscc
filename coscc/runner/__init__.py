@@ -21,6 +21,7 @@ that answers where those skills are, and a step whose rules it cannot find does 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from pathlib import Path
@@ -86,6 +87,9 @@ from coscc.runner.review import (
     _headings_in_order,
     closing_prompt,
     closing_round_problem,
+    render_round,
+    replace_new_rounds,
+    UI_STANDARD,
 )
 from coscc.runner.reply import (
     RunError,
@@ -236,22 +240,32 @@ async def _submit_turn(
 SUBMIT_TURNS = 4
 
 
+def _manifest_head(cwd: str) -> str | None:
+    """`0136` R5. The head `.screens/manifest.json` in the step's tree says its screenshots
+    were taken at: the app's read, so no model copies it. `None` when there is none."""
+    try:
+        head = json.loads((Path(cwd) / ".screens" / "manifest.json").read_text(encoding="utf-8")).get("head")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return str(head) if head else None
+
+
 def _titled(pieces: list[str], artifact: str) -> bool:
     title = _title(artifact)
     return any(line.startswith(title) for piece in pieces for line in piece.splitlines())
 
 
 def _unsubmitted(channel: submit_mod.Channel) -> str:
-    """`0136` R2, R3. `""` once the run holds an object guard `stage-result` still opens on,
+    """`0136` R2, R3. `""` once the run holds an object its channel's guard still opens on,
     with the app's hash taken now; else why not, the object dropped when it went stale. The
     run itself ends `done` only as the lane's `run-submitted` guard says (R1)."""
     got = channel.received
     if got is not None:
-        verdict = guards.stage_result(channel.inputs(got["object"], got["revision"]))
+        verdict = channel.verdict(got["object"], got["revision"])
         if not verdict.open:
             channel.received = None
             return (
-                f"guard stage-result refused the object it had accepted ({', '.join(verdict.reasons)}): "
+                f"guard {channel.guard_id} refused the object it had accepted ({', '.join(verdict.reasons)}): "
                 "the unit's files changed after it was submitted"
             )
     lane = unit_states.default_lanes().lane("full")
@@ -393,6 +407,9 @@ class Runner:
         plan_map: str = "",
         plan_map_record: dict[str, Any] | None = None,
         unfinished_round: dict[str, Any] | None = None,
+        open_findings: tuple[str, ...] = (),
+        claims_round: int | None = None,
+        rounds_known: tuple[int, ...] = (),
         idea_note: str = "",
         siblings_note: str = "",
         read_also: tuple[str, ...] = (),
@@ -586,6 +603,7 @@ class Runner:
                 run=str(recorder.run) if recorder is not None else uuid.uuid4().hex,
                 stage=stage, directory=directory, artifact=artifact,
                 own=not grant.app_writes_artifact,
+                head=head, open_findings=tuple(open_findings), claims_round=claims_round,
             )
             if grant.submits
             else None
@@ -595,6 +613,8 @@ class Runner:
         after_submit: int | None = None
         # What the repair turn of `0136` R2 cost, when it ran.
         submit_turn: dict[str, Any] | None = None
+        # `0136` R5. The rounds `review.md` held before this step's reply was written.
+        rounds_before: set[int] | None = None
 
         start_at = was.get("start_at")
         if self.journal is not None and resume is None:
@@ -865,6 +885,8 @@ class Runner:
                     # the session saying it called the tool: never part of the artifact.
                     taken = pieces[:after_submit]
                 taken = taken[-1:] if _hit_ceiling(terminal) else taken
+                if channel is not None and stage == submit_mod.ROUND:
+                    rounds_before = {_round_number(r) for r in _rounds(_read(directory / artifact))}
                 _write_artifact(directory, artifact, _joined(taken, artifact), blocks=blocks)
                 if watch:
                     # `0080` R4: the reply was written, so the progress file is never read.
@@ -1162,6 +1184,29 @@ class Runner:
                         outcome = "failed"
                         error = {"type": "NoSubmission", "message": why}
                         detail = f"no-submission: {why}" + (f" ({said})" if said else "")
+            # `0136` R5. The round the review handed back, written into `review.md` by the app:
+            # its number, the head the app read, the verdict, the findings and the screenshots.
+            if (
+                channel is not None and stage == submit_mod.ROUND and outcome == "done"
+                and channel.received is not None and not shutting_down
+            ):
+                try:
+                    # Past every round the file held and every one the app has a row for, so a
+                    # number is never given twice (`review_rounds_n`).
+                    number = max({*(rounds_before or ()), *rounds_known}, default=0) + 1
+                    screens = {
+                        "taken": _manifest_head(cwd), "standard": UI_STANDARD,
+                        "by": f"{(agent or {}).get('name') or 'the review session'} (agent, review)",
+                    }
+                    text = _read(directory / artifact)
+                    new = [r for r in _rounds(text) if _round_number(r) not in (rounds_before or set())]
+                    rendered = render_round(new[-1] if new else "## Round", number, head, channel.received["object"], screens)
+                    (directory / artifact).write_text(replace_new_rounds(text, rounds_before or set(), rendered), encoding="utf-8")
+                    channel.extra = {"n": number, "screens": screens}
+                except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
+                    outcome = "failed"
+                    error = {"type": type(e).__name__, "message": str(e)}
+                    detail = f"review.md: the round was not written from its object: {type(e).__name__}: {e}"
             # `0034` review round 1, F2. The outcome is decided here, so the door closes
             # here: a Stop that arrives while the attempt record is captured below is
             # refused (`Finishing`) rather than told "stopped" and logged as something
