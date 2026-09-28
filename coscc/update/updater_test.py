@@ -71,6 +71,10 @@ class StandIn:
         self.shut += 1
         self.order.append("shutdown")
 
+    async def resume_after_update(self):
+        self.order.append("take_up")
+        return []
+
     def events(self):
         return [r["event"] for r in self.rows]
 
@@ -430,6 +434,53 @@ class TheSequence(_Base):
             del update.SERVER.hand_off
         self.assertEqual(order, ["suspend", "shutdown", "close_all", "hand_off"])
         self.assertTrue(self.server.should_exit)
+
+    async def test_a_failed_hand_off_takes_every_paused_session_up_again_here(self):
+        # Review round 1, F3: this process goes on serving, so its `suspend` rows are taken up
+        # now, with the window closed -- not by whichever start comes next.
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+        seen: list[bool] = []
+        taken = self.service.resume_after_update
+
+        async def take_up():
+            seen.append(u.window)
+            return await taken()
+
+        self.service.resume_after_update = take_up  # type: ignore[method-assign]
+        update.SERVER.hand_off = lambda handoff: False  # type: ignore[method-assign]
+        try:
+            u = self.make_real()
+            await self.run_apply(u)
+        finally:
+            del update.SERVER.hand_off
+        self.assertEqual(self.service.order, ["suspend", "shutdown", "close_all", "take_up"])
+        self.assertEqual(seen, [False])
+        self.assertEqual(u.state, "idle")
+        self.assertIn("uvicorn.Server was gone", u.error["message"])
+        self.assertFalse(u._fetch_lock.locked())
+
+    async def test_a_step_after_the_pause_that_fails_takes_them_up_again_too(self):
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+
+        async def breaks():
+            self.service.order.append("shutdown")
+            raise RuntimeError("shutdown broke")
+
+        self.service.shutdown = breaks  # type: ignore[method-assign]
+        u = self.make_real()
+        await self.run_apply(u)
+        self.assertEqual(self.service.order, ["suspend", "shutdown", "take_up"])
+        self.assertIn("shutdown broke", u.error["message"])
+        self.assertFalse(self.server.should_exit)
+
+    async def test_nothing_is_taken_up_when_nothing_was_paused(self):
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+        u = self.make_real("the trial failed")
+        await self.run_apply(u)
+        self.assertNotIn("take_up", self.service.order)
 
     async def test_a_local_build_is_cancelled_and_not_resumed(self):
         # `0138` R3: a build is no session; it is cut, with its `cut` row, and nothing takes

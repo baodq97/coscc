@@ -210,6 +210,30 @@ class TakingUpAfterAnUpdate(_Base):
         self.assertEqual(steps_seen, [])
         self.assert_failed("no session id yet")
 
+    def test_a_unit_that_moved_on_after_the_pause_is_not_taken_up(self):
+        # Review round 1, F3: a rerun while the row waited for a start. Taking the old session
+        # up would write over newer work.
+        steps_seen = self.taken()
+        self.paused()
+        self.journal.append({"kind": "start", "workspace": self.key, "unit": self.unit, "stage": "plan"})
+        self.up()
+        self.assertEqual(steps_seen, [])
+        self.assert_failed("moved on after the update paused it")
+
+    def test_a_row_failing_in_the_same_pass_is_not_the_unit_moving_on(self):
+        steps_seen = self.taken()
+        got: list[dict] = []
+
+        async def integration(record):
+            got.append(record)
+
+        self.paused(cwd=self.root / "gone", write=False)
+        self.paused("integrate")
+        with mock.patch.object(self.service, "resume_integration", lambda r: integration(r)):
+            said = self.up()
+        self.assertEqual([(s["kind"], s["result"]) for s in said], [("step", "failed"), ("integrate", "resumed")])
+        self.assertEqual((steps_seen, len(got)), ([], 1))
+
     def test_a_refused_resume_ends_failed_without_a_new_session(self):
         # R8: the CLI refusing the id, or `Sessions` finding another in `init`, is the end.
         from coscc.runner import Runner

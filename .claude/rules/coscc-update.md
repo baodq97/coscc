@@ -19,7 +19,9 @@ paths:
   - The next start (`coscc/service/resume.py`) takes each row up once, before the autopilot,
     in the same session from the last point every tool call had its result, and runs no git
     on the worktree first. Its transcript must be under `~/.claude/projects/<cwd, every
-    non-alphanumeric character as ->/`: missing there, the step ends `failed` (C8).
+    non-alphanumeric character as ->/`: missing there, the step ends `failed` (C8). So does
+    a row whose unit has a later `start` or `end`. A hand-off failing after the pause takes
+    the rows up in the same process.
   - *Build from origin/main* runs `scripts/build_wheel.sh` of the configured workspace's
     upstream `main` under this user — `uv sync`, Reflex fetching Node/Bun, all of it.
   - The source of a release is a constant and a wheel is installed only after its sha256

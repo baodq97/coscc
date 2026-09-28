@@ -90,6 +90,26 @@ def check(row: dict[str, Any]) -> tuple[str, list[str]]:
     return "", list(found["pieces"])
 
 
+def moved_on(journal: Any, row: dict[str, Any]) -> str:
+    """Review round 1, F3. Why `row`'s unit went on without its session, or `""`: a `start` or
+    an `end` of that unit written after the `suspend` row, as a rerun while the row waited
+    for a start leaves. A session taken up then would write over newer work."""
+    unit = str(row.get("unit") or "")
+    if not unit:
+        return ""
+    try:
+        rows = journal.records(str(row.get("workspace") or ""), unit, kinds=("start", "end", "suspend"))
+    except Busy:
+        return "the run log was busy, so whether the unit moved on is unknown"
+    after = False
+    for r in rows:
+        if r.get("kind") == "suspend" and r.get("suspend_id") == row.get("suspend_id"):
+            after = True
+        elif after and r.get("kind") in ("start", "end"):
+            return f"{unit} moved on after the update paused it: its {r.get('stage')} has a later {r['kind']} row"
+    return ""
+
+
 def _spawn(coro: Any) -> asyncio.Task:
     task = asyncio.ensure_future(coro)
     _TASKS.add(task)
@@ -114,12 +134,16 @@ class ResumeMixin:
             rows = journal.unresumed() if journal is not None else []
         except Busy:
             rows = []
+        # Judged before any row is written, so the `end` of one that fails is not read as the
+        # unit of another moving on.
+        gone = {id(row): moved_on(journal, row) for row in rows}
         for row in rows:
             owner = row.get("owner") or {}
             kind = str(owner.get("kind") or "")
             problem, pieces = check(row)
             if not problem and kind not in KINDS:
                 problem = f"no owner takes up a session of kind {kind!r}"
+            problem = problem or gone[id(row)]
             try:
                 journal.resumed(
                     str(row.get("workspace") or ""), str(row.get("unit") or ""), str(row.get("stage") or ""),

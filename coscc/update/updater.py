@@ -502,7 +502,7 @@ class Updater:
         self.log = str(log)
         if not await asyncio.to_thread(self._fetch_lock.acquire, True, FETCH_LOCK_WAIT):
             return self._fail("another download is still under way; try again later")
-        handed = False
+        handed = paused = False
         try:
             # Step 1: from disk, right now, before anything changes.
             if update.SERVER.server is None:
@@ -538,6 +538,7 @@ class Updater:
                              stopped_by=by)
             # `0138` R4-R6: every session paused, each with its `suspend` row, before the
             # steps' tasks are cancelled below.
+            paused = True
             await self.service.suspend_sessions(by)
             # Step 4: the lifespan does not run on the real stack (`spike.md ## U5` part 2).
             await self.service.shutdown()
@@ -574,6 +575,18 @@ class Updater:
             # Handed off, the lock stays held: this process exits with the wheels as they were.
             if not handed:
                 self._fetch_lock.release()
+        if paused and not handed:
+            await self._take_up_again()
+
+    async def _take_up_again(self) -> None:
+        """`0138` review round 1, F3. Every session was paused and the hand-off then failed, so
+        this process goes on serving: it takes them up now, `_fail` having closed the window,
+        rather than leave their rows to whichever start comes next, over units that moved on."""
+        try:
+            await self.service.resume_after_update()
+        except Exception as e:  # noqa: BLE001 - the panel says what went wrong
+            said = f"the paused sessions were not taken up again: {type(e).__name__}: {e}"
+            self.error = {**(self.error or {}), "message": f"{(self.error or {}).get('message', '')}; {said}"}
 
     async def _trial(self, target: dict[str, Any], log: Path) -> str:
         """R12 step 2. `""` when the new version installed, answered and was stopped."""
