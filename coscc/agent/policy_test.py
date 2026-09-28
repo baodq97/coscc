@@ -699,7 +699,8 @@ class IntegrationIsNotPrs(unittest.TestCase):
 
     def test_opening_and_reading_the_pull_request_stay_open(self):
         for command in ("git push -u origin HEAD", "git push origin HEAD:fix/x",
-                        "gh pr create --fill-first --body-file pr.md", "gh pr view --json url",
+                        "gh pr create --title 'fix(0049): a pr title is taken from pr.md' --body-file pr.md",
+                        "gh pr view --json url",
                         "gh pr checks 7 --required", "git log --grep rebase",
                         "git commit -m merge", "git log --oneline main..HEAD"):
             with self.subTest(command=command):

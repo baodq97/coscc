@@ -489,6 +489,34 @@ export function prText(text) {
   return { title, body: kept.join('\n'), url: parsePr(text)?.url ?? null, scope: prScope(text) }
 }
 
+// `0049` R3. `null` when `title` is one a pull request may carry, else where it is wrong. The
+// grammar is `<type>(<NNNN>): <text>`: `type` the unit's `Type:` (`null` when its intent
+// declares none `BRANCH_TYPES` holds), `number` the four digits its name opens with, and
+// `<text>` English that does not open with the word `wip`. This is the one copy of the
+// grammar. NFC first, so a Vietnamese letter written as a base and a combining mark is
+// refused like the precomposed one.
+export function titleProblem(title, type, number) {
+  if (!title) return 'pr.md has no title: its # PR: line is missing or empty'
+  const m = title.match(/^([a-z]+)\((\d{4})\): (.+)$/)
+  if (!m) return `the title "${title}" is not <type>(<NNNN>): <text>`
+  if (!BRANCH_TYPES.includes(m[1])) return `the title's type "${m[1]}" is not one of ${TYPE_LIST()}`
+  if (!type) return `intent.md declares no Type, so the title's type "${m[1]}" cannot be checked against it`
+  if (m[1] !== type) return `the title's type is "${m[1]}", but intent.md declares Type: ${type}`
+  if (m[2] !== number) return `the title names unit ${m[2]}, not ${number}`
+  if (/^wip(?![a-z0-9])/i.test(m[3])) return `the title's text opens with "wip" — it names the change, not how far it got`
+  const marked = title.normalize('NFC').match(/[À-ɏḀ-ỿ]/)
+  if (marked) return `the title carries "${marked[0]}", a letter with a diacritic — the title is English`
+  return null
+}
+
+// `0049` R5, R6: the `review` and `ship` gates' reading of `titleProblem`, `[]` or one line.
+function titleNeeds(unit) {
+  const artifact = unit.artifacts['pr.md']
+  if (!artifact) return []
+  const wrong = titleProblem(artifact.title, unit.type ?? null, unit.name.slice(0, 4))
+  return wrong ? [`${wrong} — the pr stage writes the # PR: line of pr.md again`] : []
+}
+
 // `0122` R2, R3. What `pr.md ## Scope of the diff` states, in write-pr's grammar: the first
 // non-blank line `<N> files, +<A>/-<D>`, then one `` - `<path>` `` per file, then prose.
 // `null` with no such heading, a first line in any other form, or a path listed twice.
@@ -793,7 +821,14 @@ export function readUnit(dir, name, { peers = new Map(), cosDir = dirname(dir), 
     unit.artifacts[file] = { status, skipReason: file === 'plan.md' ? parseSkipReason(text) : null }
     // Attached, never reported as a problem: `review.md` files written before rounds
     // existed have none, and the closed units' output must not change (`0015` spec, R7).
-    if (file === 'pr.md') unit.artifacts[file].pr = parsePr(text)
+    if (file === 'pr.md') {
+      unit.artifacts[file].pr = parsePr(text)
+      // `0049`: what the `review` and `ship` gates hold the grammar to, and compare with GitHub.
+      // Attached only when there is one, so `status --json` of a `pr.md` with no `# PR:` line
+      // stays what it was; the gates read its absence as no title.
+      const { title } = prText(text)
+      if (title !== null) unit.artifacts[file].title = title
+    }
     if (file === 'review.md') {
       unit.artifacts[file].review = parseReview(text)
       // `0028`: the findings a person answered, by id, from `review.md ## Answers`.
@@ -1670,6 +1705,8 @@ function reviewNeeds(unit, probe, limit, said = {}) {
   const need = []
   const pr = unit.artifacts['pr.md']?.pr ?? null
   if (!pr) need.push('pr.md names no pull request — the pr stage opens one and writes PR: <url>')
+  // `0049` R5: before `probe`, so a title outside the grammar asks no `gh`.
+  need.push(...titleNeeds(unit))
   if (outOfRounds(unit, limit)) need.push(needsAPerson(roundsUsed(unit), reviewLimit(unit, limit)))
   if (need.length || !pr) return need
   if (!probe) return ['no repository given — pass --repo <dir>']
@@ -1745,12 +1782,12 @@ function redNeeds(probe, pr, red, said) {
   return [line]
 }
 
-// The pull request as GitHub reports it, from one `gh pr view`: `{ state, head, merged }`,
-// `merged` being `{ commit, at }` on a `MERGED` one and `null` otherwise, or `{ error }`.
-// `0116`: the `ship` gate reads the merge commit from the same answer as the state, so the
-// two cannot disagree.
+// The pull request as GitHub reports it, from one `gh pr view`: `{ state, head, merged, title }`,
+// `merged` being `{ commit, at }` on a `MERGED` one and `null` otherwise, `title` `null` when
+// gh gave none, or `{ error }`. `0116`: the `ship` gate reads the merge commit from the same
+// answer as the state, so the two cannot disagree; `0049` R6 reads the title from it too.
 function prView(probe, pr) {
-  const view = probe.gh('pr', 'view', String(pr.number), '--json', 'state,headRefOid,mergeCommit,mergedAt')
+  const view = probe.gh('pr', 'view', String(pr.number), '--json', 'state,headRefOid,mergeCommit,mergedAt,title')
   let info = null
   try {
     info = JSON.parse(view.out)
@@ -1762,7 +1799,7 @@ function prView(probe, pr) {
     return { error: `cannot read the head of #${pr.number}: ${said}` }
   }
   const merged = info.state === 'MERGED' ? { commit: info.mergeCommit?.oid ?? null, at: info.mergedAt ?? null } : null
-  return { state: info.state, head: info.headRefOid, merged }
+  return { state: info.state, head: info.headRefOid, merged, title: typeof info.title === 'string' ? info.title : null }
 }
 
 // The pull request's head on GitHub, as `{ head }`, or `{ error }` saying why not. Shared by
@@ -1820,6 +1857,8 @@ function shipNeeds(unit, probe, said = {}) {
     need.push(`review rounds are numbered ${numbers.join(', ')}, not 1 to ${rounds.length} — a round was removed or renumbered`)
   }
   if (!last.reviewed) need.push(`review round ${last.n} names no reviewed commit — Reviewed: <sha>`)
+  // `0049` R6: as `review`'s, before `probe` and any `gh`.
+  need.push(...titleNeeds(unit))
   if (need.length) return need
 
   if (!probe) return ['no repository given — pass --repo <dir>']
@@ -1902,7 +1941,15 @@ function shipNeeds(unit, probe, said = {}) {
     const by = k !== null ? `${k} commit(s)` : `an unknown number of commits (git said: ${(count.err || count.out).trim() || `exit ${count.code}`})`
     return [`#${pr.number} is ${by} behind origin/main — integrate, then review again only if the rebase changes the unit's patch: one that leaves it unchanged opens ship once CI is green; a round that passes does not count toward the limit`]
   }
-  return screensNeeds(unit, probe, last, said)
+  const screens = screensNeeds(unit, probe, last, said)
+  if (screens.length) return screens
+  // `0049` R6, last: when this closes the gate it is the only reason, so `nextStep` may offer
+  // `ship`, which the app starts by putting `pr.md` up (R7). `said.title` says so.
+  const mine = unit.artifacts['pr.md'].title.trim()
+  if (view.title?.trim() === mine) return []
+  said.title = 'differs'
+  const theirs = view.title === null ? 'no title gh could read' : `the title "${view.title}"`
+  return [`#${pr.number} carries ${theirs}, not pr.md's "${mine}" — put pr.md onto it (write-pr step 5), or start ship from the board, which does that first`]
 }
 
 // `0116`: a pull request already merged — by a `ship` whose `--delete-branch` then exited 1,
@@ -2197,6 +2244,9 @@ function stepOf(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     if (g.said.moved || g.said.screens) return again(g)
     // `0067` R5: a clean rebase CI failed on goes back to impl, never to another round.
     if (g.said.rebased && g.said.ci === 'red') return { blocked: true, action: g.need.join('; '), stage: 'impl' }
+    // `0049`: a title that differs is all that closes it, and a `ship` started on the board
+    // puts `pr.md` up before it asks the gate. Offering nothing would leave no one to start it.
+    if (g.said.title === 'differs') return { blocked: true, action: `${next.action} — ${g.need.join('; ')}`, stage: 'ship' }
     return none(g.need.join('; '))
   }
 
@@ -2217,6 +2267,7 @@ function stepOf(unit, { probe = null, limit = REVIEW_ROUNDS } = {}) {
     if (g.said.ci === 'unfixable') return none(g.need.join('; '))
     if (g.said.moved || g.said.screens) return again(g)
     if (g.said.rebased && g.said.ci === 'red') return { blocked: true, action: g.need.join('; '), stage: 'impl' }
+    if (g.said.title === 'differs') return { blocked: true, action: `write-ship — ${g.need.join('; ')}`, stage: 'ship' }
     if (!g.ok) return none(g.need.join('; '))
     // `0067` R5: a merge refused as not up to date, then rebased clean, adds no round to go
     // past it — the clean rebase is what cures that refusal. Any other refusal still stops.
@@ -2786,8 +2837,10 @@ function cmdUnitBranch(unitName, cosDir) {
   return 0
 }
 
-// Reads one file and prints; no git, no gh, no write. The name is checked before it is
-// joined, so `../` cannot walk out of the `.cos/` it was given.
+// Reads two files, `pr.md` and the `intent.md` whose `Type:` `titleProblem` checks the title
+// against (`0049` R4), and prints; no git, no gh, no write. `titleProblem` does not change
+// the exit code. The name is checked before it is joined, so `../` cannot walk out of the
+// `.cos/` it was given.
 function cmdPrText(unitName, cosDir) {
   if (!unitName) {
     console.error('usage: cos.mjs pr-text <NNNN_slug>')
@@ -2808,7 +2861,11 @@ function cmdPrText(unitName, cosDir) {
     return 1
   }
   const text = readFileSync(file, 'utf8')
-  console.log(JSON.stringify({ unit: unitName, ...prText(text), status: parseStatus(text) }))
+  const intent = join(dir, 'intent.md')
+  const type = existsSync(intent) ? parseType(readFileSync(intent, 'utf8')) : null
+  const read = prText(text)
+  const problem = titleProblem(read.title, BRANCH_TYPES.includes(type) ? type : null, unitName.slice(0, 4))
+  console.log(JSON.stringify({ unit: unitName, ...read, status: parseStatus(text), titleProblem: problem }))
   return 0
 }
 

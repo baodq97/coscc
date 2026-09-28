@@ -27,7 +27,10 @@ paths:
   - The trace is one `pr-sync` row in the run log per step, with `existed` (the lookup
     before the step saw the pull request; `null` when that lookup could not answer — count
     those apart, not as `false`), `outcome` `updated`, `already`, `failed` or `skipped`,
-    and, unless skipped, `scope`: GitHub's counts and `verdict` `match`, `mismatch` or
-    `unread` against `pr.md ## Scope of the diff`. No gate reads it and no screen shows
-    the row. A `pr` step at a terminal leaves none.
+    and, unless skipped or failed before the sync ran, `scope`: GitHub's counts and
+    `verdict` `match`, `mismatch` or `unread` against `pr.md ## Scope of the diff`. No gate
+    reads it and no screen shows the row. A `pr` step at a terminal leaves none.
+  - `_sync_pr` also runs before every `ship` step started from the app, before the gate is
+    asked (`0049` R7): at most two `gh` calls, no scope read, and a row with `stage` `ship`
+    and no `existed`. The `ship` gate closes on a title that differs from `pr.md`'s.
 - A review comment is not an approval, and no gate reads it (`.claude/docs/not-built.md`).

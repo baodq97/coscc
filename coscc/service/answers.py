@@ -121,17 +121,21 @@ class AnswersMixin:
                 pass
         return {"unit": unit, "round": n, "pr": pr_url, **result.as_dict()}
 
-    async def _sync_pr(self, cwd: str, unit: str, pr_before: str | None) -> dict[str, Any]:
+    async def _sync_pr(
+        self, cwd: str, unit: str, pr_before: str | None, stage: str = "pr"
+    ) -> dict[str, Any]:
         """`0055` R3, R5. Put `pr.md`'s title and body onto its pull request. Never raises.
 
-        Called from `_drive` after a `pr` step that was not stopped, and from nowhere else
-        (R4). The words are `cos.mjs pr-text`'s; `prsync` compares and writes. A `pr.md` that
+        Called from two places: `_drive` after a `pr` step that was not stopped (R4), and
+        `run_step` before it asks the gate of a `ship` step (`0049` R7), `stage` naming which.
+        The words are `cos.mjs pr-text`'s; `prsync` compares and writes. A `pr.md` that
         is not accepted or names no pull request is `skipped` with no `gh` call. One
-        `pr-sync` row says how it went, `existed` from the lookup before the step -- `None`
-        when that lookup could not answer, never a guess; a row
+        `pr-sync` row says how it went, `existed` from the lookup before a `pr` step -- `None`
+        when that lookup could not answer, never a guess; a `ship` row has none. A row
         that cannot be written is dropped, as `_post_round` drops one. `pr.md` is never
-        touched. `0122` R4: once `prsync` has run, whatever it said, `prscope` reads the pull
-        request's own counts and the row carries them as `scope`, with a verdict no gate reads.
+        touched. `0122` R4: after a `pr` step, once `prsync` has run, whatever it said,
+        `prscope` reads the pull request's own counts and the row carries them as `scope`,
+        with a verdict no gate reads. Before `ship` it is not read (`0049` spec C6).
         """
         url, outcome, detail = "", "failed", ""
         scope: dict[str, Any] | None = None
@@ -148,18 +152,16 @@ class AnswersMixin:
                 where = str(Path(cwd).expanduser().resolve())
                 result = await prsync.sync(url, text.get("title"), str(text.get("body") or ""), where)
                 outcome, detail = result.state, result.reason
-                scope = await prscope.read(url, text.get("scope"), where)
+                if stage == "pr":
+                    scope = await prscope.read(url, text.get("scope"), where)
         except Unavailable as e:
             detail = str(e)
         except Exception as e:  # noqa: BLE001 — R5: the step is done whatever this does
             detail = str(e) or type(e).__name__
-        record: dict[str, Any] = {
-            "unit": unit,
-            "stage": "pr",
-            "pr": url,
-            "existed": None if pr_before is None else bool(pr_before),
-            "outcome": outcome,
-        }
+        record: dict[str, Any] = {"unit": unit, "stage": stage, "pr": url}
+        if stage == "pr":
+            record["existed"] = None if pr_before is None else bool(pr_before)
+        record["outcome"] = outcome
         if outcome in ("failed", "skipped"):
             record["detail"] = detail
         if scope is not None:
