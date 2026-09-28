@@ -37,11 +37,14 @@ def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
         title=unit.id + " · " + unit.title, aria_label="Open " + unit.id + " " + unit.title,
         on_click=P.open_unit(unit.id),
         # `0133` Design: the density changes only the padding.
-        padding=rx.cond(P.density == "compact", "4px 8px", "7px 10px"),
+        padding=rx.cond(P.density == "compact", "3px 8px", "5px 10px"),
         background=s.CANVAS, border=f"1px solid {s.LINE}", border_radius="8px",
         border_left=rx.cond(unit.state == "needs-you", f"3px solid {rx.color('amber', 9)}",
                             f"1px solid {s.LINE}"),
         width="100%", min_width="0", cursor="pointer", text_align="left", font_family="inherit",
+        # In a lane, a card with a state word takes two places, so its title is still read.
+        **({} if grouped else {"grid_column": rx.breakpoints(
+            initial="auto", md=rx.cond(unit.state != "ready", "span 2", "auto"))}),
         transition="border-color 150ms ease",
         _hover={"border_color": rx.color("iris", 7)},
         _focus_visible={"outline": f"2px solid {s.ACCENT}", "outline_offset": "2px"},
@@ -65,11 +68,11 @@ def _lane(stage: rx.Var[str]) -> rx.Component:
             # (`spike.md ## U2`), so no card reaches the page twice.
             rx.foreach(P.cards, lambda c: rx.cond(
                 (c.at == stage) & P.board_ids.contains(c.id), _unit_card(c), rx.fragment())),
-            grid_template_columns=rx.breakpoints(initial="1fr", md="repeat(auto-fill, minmax(180px, 1fr))"),
+            grid_template_columns=rx.breakpoints(initial="1fr", md="repeat(auto-fill, minmax(160px, 1fr))"),
             gap="6px", flex="1", min_width="0", width="100%",
         ),
         direction=rx.breakpoints(initial="column", md="row"), gap="10px", width="100%",
-        min_width="0", padding="6px 0", border_bottom=f"1px solid {s.LINE}",
+        min_width="0", padding="3px 0", border_bottom=f"1px solid {s.LINE}",
         # So a proof can ask which lane a card is in (`0001_product-describes-a-state-it-
         # is-not-in` R4).
         data_testid="column-" + stage,
@@ -553,7 +556,7 @@ def _board() -> rx.Component:
         _release_panel(),
         rx.cond(P.has_workspace, _start_unit(), rx.fragment()),
         rx.cond(P.has_workspace, _start_idea(), rx.fragment()),
-        spacing="5", width="100%",
+        spacing="4", width="100%",
     )
 
 
