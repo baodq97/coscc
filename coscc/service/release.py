@@ -210,7 +210,8 @@ class ReleaseMixin:
             open_rel = release.release_prs(prs) if isinstance(prs, list) else []
             has_script = (root / release.SCRIPT).is_file()
             tree: Path | None = None
-            check_version = (1, facts["reason"] if facts["state"] == "unknown" else "")
+            # Asked in the tree below; `unreadable` refuses first when there is none.
+            check_version = (1, "")
             problem = ""
             if has_script and facts["state"] != "unknown":
                 try:
@@ -232,7 +233,7 @@ class ReleaseMixin:
             reason = release.refusal(
                 active=False, phase=phase, open_release_pr=open_rel[0] if open_rel else None,
                 has_script=has_script, check_version=check_version, version_problem_=problem,
-                state=facts["state"],
+                state=facts["state"], unreadable=facts["reason"] if facts["state"] == "unknown" else "",
             )
             checked: dict[str, Any] = {}
             if not reason and facts["state"] == "pr-open":

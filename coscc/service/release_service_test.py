@@ -50,6 +50,8 @@ def out(obj, code=0):
     print(json.dumps(obj)); sys.exit(code)
 prs = state.setdefault("prs", {})
 if args[:2] == ["pr", "list"]:
+    if state.get("offline"):
+        print("could not resolve api.github.com", file=sys.stderr); sys.exit(1)
     if opt("--state") == "merged":
         out([{"number": int(n), "mergeCommit": {"oid": p["merge"]}, "headRefOid": p["head"]}
              for n, p in prs.items() if p["state"] == "MERGED" and p["branch"] == opt("--head")])
@@ -240,6 +242,17 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.assertEqual([r["outcome"] for r in self.records()], ["refused", "refused"])
         self.assertEqual(self.fx.remote_ref("refs/heads/chore/release-0-1-0"), "")
         self.assertFalse(self.service._releasing)
+
+    def test_gh_offline_is_named_as_gh_not_as_check_version(self):
+        # Review F6.
+        self.fx.state.write_text(json.dumps({"offline": True}), encoding="utf-8")
+        with self.assertRaises(Invalid) as caught:
+            press(self.service, "prepare", self.fx.cwd, "0.2.0")
+        said = str(caught.exception)
+        self.assertTrue(said.startswith("the release could not be read: "), said)
+        self.assertIn("could not resolve api.github.com", said)
+        self.assertNotIn("check-version", said)
+        self.assertEqual([r["outcome"] for r in self.records()], ["refused"])
 
     def test_prepare_then_publish(self):
         rec = press(self.service, "prepare", self.fx.cwd, "0.2.0")

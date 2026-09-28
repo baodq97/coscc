@@ -71,16 +71,24 @@ class Refusing(unittest.TestCase):
 
     def test_refusals_in_r13_order(self):
         base = dict(active=True, phase="prepare", open_release_pr={"number": 5}, has_script=False,
-                    check_version=(1, "off"), version_problem_="too low", state="nothing")
+                    unreadable="gh: offline", check_version=(1, "off"), version_problem_="too low", state="nothing")
         expected = ["already running", "already open: #5", "no .claude/scripts/cos.mjs",
+                    "the release could not be read: gh: offline",
                     "check-version on origin/main failed: off", "too low", "has no Prepare button"]
-        for key, said in zip(("active", "open_release_pr", "has_script", "check_version", "version_problem_", "state"),
-                             expected):
+        keys = ("active", "open_release_pr", "has_script", "unreadable", "check_version", "version_problem_", "state")
+        for key, said in zip(keys, expected):
             with self.subTest(first=key):
                 self.assertIn(said, release.refusal(**base))
-            base[key] = {"active": False, "open_release_pr": None, "has_script": True,
+            base[key] = {"active": False, "open_release_pr": None, "has_script": True, "unreadable": "",
                          "check_version": (0, "0.1.0"), "version_problem_": "", "state": "ready"}[key]
         self.assertEqual(release.refusal(**base), "")
+
+    def test_an_unreadable_workspace_is_not_blamed_on_check_version(self):
+        # Review F6: `gh`'s words used to arrive as "check-version on origin/main failed: …".
+        said = release.refusal(active=False, phase="prepare", open_release_pr=None, has_script=True,
+                               check_version=(1, ""), version_problem_="", state="unknown",
+                               unreadable="gh: could not resolve api.github.com")
+        self.assertEqual(said, "the release could not be read: gh: could not resolve api.github.com")
 
     def test_an_open_release_pr_does_not_refuse_the_second_press(self):
         self.assertEqual(release.refusal(active=False, phase="publish", open_release_pr={"number": 5},

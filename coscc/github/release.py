@@ -159,14 +159,20 @@ def refusal(
     check_version: tuple[int, str],
     version_problem_: str,
     state: str,
+    unreadable: str = "",
 ) -> str:
-    """R13, in its order: the first condition that does not hold, or `""`."""
+    """R13, in its order: the first condition that does not hold, or `""`.
+
+    `unreadable` is why the facts R13 needs could not be read — `gh`, git or
+    `pyproject.toml`, the tool's own words — so check-version is never named for it."""
     if active:
         return "a release is already running for this workspace"
     if phase == "prepare" and open_release_pr is not None:
         return f"a release pull request is already open: #{open_release_pr.get('number')}"
     if not has_script:
         return f"this workspace has no {SCRIPT.as_posix()}"
+    if unreadable:
+        return f"the release could not be read: {unreadable}"
     code, said = check_version
     if code != 0:
         return f"check-version on origin/main failed: {said.strip() or f'exit {code}'}"
