@@ -147,7 +147,7 @@ def _questions_tab() -> rx.Component:
     D12); the page says one sentence, and asks no name (R3)."""
     return rx.vstack(
         s.text(rx.cond(P.current_unit.answerable,
-                       "Your answer is added under ## Answers; the next step reads it.",
+                       "The app keeps your answer, and the next step reads it.",
                        "This unit is finished; its questions are shown to read."),
                size="1"),
         # `0044`. Hidden, not greyed, when there is nothing Jera may answer (S8).
