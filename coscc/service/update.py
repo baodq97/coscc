@@ -129,6 +129,8 @@ class UpdateMixin:
             owner = record.get("owner") or {}
             if journal is None:
                 break
+            if not owner.get("kind"):
+                continue  # a caller that named no owner: nothing could take it up again
             try:
                 written.append(journal.suspended(
                     str(owner.get("workspace") or ""), str(owner.get("unit") or ""),

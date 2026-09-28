@@ -563,7 +563,7 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
                 await asyncio.sleep(0.01)
                 if self.sessions.calls:
                     break
-            jobs = self.service._update_jobs()
+            jobs = self.service._update_waited()
             with self.assertRaises(Invalid):
                 await self.service.propose_estimates(self.cwd).__anext__()
             gate.set()
@@ -574,7 +574,8 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
 
         jobs = asyncio.run(go())
         self.assertEqual(self.sessions.calls, 1)
-        self.assertEqual([(j["kind"], j["stage"]) for j in jobs], [("integration", "estimate")])
+        # `0138` C10: an update pauses a running estimate instead of waiting for it.
+        self.assertEqual(jobs, [])
         self.assertEqual(self.service._active, {})
 
 
@@ -657,8 +658,10 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
                 continue
             if ".precedent(" in path.read_text(encoding="utf-8"):
                 callers.append(relative)
-        # `0095`: the page's handler that asks Jera moved with `AnswersMixin`.
-        self.assertEqual(callers, ["coscc/service/autopilot.py", "coscc/state/answers.py", "coscc/web/api.py"])
+        # `0095`: the page's handler that asks Jera moved with `AnswersMixin`. `0138`: the
+        # resume runner takes up a Jera an update paused, which one of the others started.
+        self.assertEqual(callers, ["coscc/service/autopilot.py", "coscc/service/resume.py",
+                                   "coscc/state/answers.py", "coscc/web/api.py"])
 
     def test_r2_a_unit_with_no_open_question_is_refused_before_a_session(self):
         self.reply(self.item(1), self.item(2))
@@ -761,7 +764,7 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
                 await asyncio.sleep(0.01)
                 if self.sessions.calls:
                     break
-            jobs = self.service._update_jobs()
+            jobs = self.service._update_waited()
             running = self.service.running(self.cwd)["running"]
             with self.assertRaises(Invalid) as refused:
                 await self.service.precedent(self.cwd, self.asked)
@@ -771,7 +774,8 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
 
         jobs, running, said = asyncio.run(go())
         self.assertIn("Jera is answering its questions", said)
-        self.assertEqual([(j["stage"], j["unit"]) for j in jobs], [("precedent", self.asked)])
+        # `0138` C10: paused by an update, not waited for.
+        self.assertEqual(jobs, [])
         self.assertEqual(running[self.asked][0]["agent"]["name"], "Jera")
         self.assertEqual((self.sessions.calls, self.service._active), (1, {}))
 

@@ -1553,26 +1553,26 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
     async def test_every_post_is_409_where_updates_are_unavailable(self):
         for path in ("/api/update/apply", "/api/update/cancel", "/api/update/build-local"):
             with self.subTest(path=path):
-                r = await self.client.post(path, json={"channel": "release", "mode": "wait", "by": "an"})
+                r = await self.client.post(path, json={"channel": "release", "by": "an"})
                 self.assertEqual(r.status_code, 409)
-        self.assertEqual((await self.client.get("/api/update/cut-list")).status_code, 409)
 
     async def test_a_source_in_the_body_is_never_read(self):
         self.as_a_service()
         seen = []
 
-        async def apply(channel, mode, by, token=""):
-            seen.append((channel, mode, by, token))
+        async def apply(channel, by):
+            seen.append((channel, by))
             return {"state": "applying"}
 
         self.updater.apply = apply
-        plain = {"channel": "release", "mode": "wait", "by": "an", "token": ""}
+        plain = {"channel": "release", "by": "an"}
+        # `0138` R1: a `mode` or a `token` is one more field nobody reads.
         smuggled = {**plain, "url": "https://evil.example/x.whl", "path": "/tmp/x.whl",
-                    "version": "9.9.9", "ref": "evil", "wheel": "/tmp/x.whl"}
+                    "version": "9.9.9", "ref": "evil", "wheel": "/tmp/x.whl", "mode": "now", "token": "t"}
         a = await self.client.post("/api/update/apply", json=plain)
         b = await self.client.post("/api/update/apply", json=smuggled)
         self.assertEqual((a.status_code, a.json()), (b.status_code, b.json()))
-        self.assertEqual(seen, [("release", "wait", "an", "")] * 2)
+        self.assertEqual(seen, [("release", "an")] * 2)
 
     async def test_r11_is_503_on_run_integrate_send_and_build(self):
         self.as_a_service()
@@ -1589,17 +1589,14 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(r.status_code, 503, r.text)
                 self.assertIn("update is being applied", r.json()["error"])
 
-    async def test_a_stale_cut_list_is_refused_with_the_fresh_one(self):
+    async def test_the_cut_list_route_is_gone(self):
+        # `0138` R1: one Apply, so nothing lists what another way would cut.
         self.as_a_service()
-        self.service.steps.claim("/w", "0001_a", "impl")
-        r = await self.client.post("/api/update/apply", json={
-            "channel": "release", "mode": "now", "by": "an", "token": "old"})
-        self.assertEqual(r.status_code, 409)
-        self.assertEqual(len(r.json()["cut_list"]["items"]), 1)
+        self.assertEqual((await self.client.get("/api/update/cut-list")).status_code, 404)
 
     def test_no_update_route_uses_a_path_reflex_reserves(self):
         paths = [getattr(r, "path", "") for r in self.app.routes if "update" in getattr(r, "path", "")]
-        self.assertEqual(len(paths), 5)
+        self.assertEqual(len(paths), 4)
         for p in paths:
             self.assertFalse(p.startswith(("/ping/", "/_event", "/_upload")), p)
 

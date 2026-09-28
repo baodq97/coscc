@@ -2110,10 +2110,10 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
             with mock.patch.object(gather, "gather_unit", stand_in):
                 service._gather_soon(str(self.repo), self.unit, key)
                 await asyncio.sleep(0)
-                during = [j for j in service._update_jobs() if j["stage"] == "knowledge"]
+                during = [j for j in service._update_waited() if j["stage"] == "knowledge"]
                 release.set()
                 await asyncio.gather(*service._gathers)
-            after = [j for j in service._update_jobs() if j["stage"] == "knowledge"]
+            after = [j for j in service._update_waited() if j["stage"] == "knowledge"]
             return during, after
 
         during, after = asyncio.run(go())
@@ -2420,7 +2420,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
             return {"retake": True, "manifest": self.OLD}
 
         async def take(tree, addresses, **kw):
-            during.append(self.service._update_jobs())
+            during.append(self.service._update_waited())
             return {"code": 0, "seconds": 0.1, "tail": "", "head_before_run": "b" * 40,
                     "manifest_after": self.NEW, "status_before": "", "status_after": ""}
 
@@ -2430,7 +2430,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                 str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
         [[job]] = during
         self.assertEqual((job["kind"], job["unit"], job["stage"]), ("integration", self.unit, "screens"))
-        self.assertEqual(self.service._update_jobs(), [])
+        self.assertEqual(self.service._update_waited(), [])
         ended.assert_called_once()
 
     def test_no_retake_begins_while_an_update_is_applied(self):
@@ -2446,12 +2446,14 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
             taken.append(tree)
             return {}
 
-        self.service.updater.window = True
-        with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take):
-            with self.assertRaises(Invalid):
-                asyncio.run(self.service._retake_screens(
-                    str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
-        self.assertEqual((taken, self.service._update_jobs()), ([], []))
+        # `0138` R3: nor while one waits, so the wait cannot grow.
+        for window, state in ((True, "idle"), (False, "pending")):
+            self.service.updater.window, self.service.updater.state = window, state
+            with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take):
+                with self.assertRaises(Invalid):
+                    asyncio.run(self.service._retake_screens(
+                        str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
+        self.assertEqual((taken, self.service._update_waited()), ([], []))
 
     def test_two_retakes_never_run_at_once(self):
         from coscc.units import board as board_reader
