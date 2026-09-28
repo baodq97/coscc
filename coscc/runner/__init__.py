@@ -27,7 +27,7 @@ from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
-from coscc.agent import instructions, steps
+from coscc.agent import agents, instructions, steps
 from coscc.github.integrate import check_started_by
 from coscc.agent import sessions as sessions_mod
 from coscc.runlog.journal import Journal
@@ -333,6 +333,7 @@ class Runner:
         idea_note: str = "",
         siblings_note: str = "",
         read_also: tuple[str, ...] = (),
+        agent: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -413,6 +414,12 @@ class Runner:
         `idea_note`, `siblings_note` and `read_also` are `0040` R12/R13's: the shared idea an
         `intent` step's prompt carries, and the sibling checkouts an `impl` step may read, as a
         prompt block and as paths the read boundary lets through (never writes, never `git -C`).
+
+        `agent` is `0036`'s: the stage's resolved row of the agent table, from
+        `Service._agent`. Its section opens the prompt (R3), its name goes into `start` (R7),
+        and a preset session gets its commit attribution as `settings` (R8). A `done` step's
+        `end` carries the `Author:` its artifact wrote (R4), read and never checked. `None`
+        leaves the prompt, the argv and both records as they were.
         """
         check_started_by(started_by)
         grant = grant_for_step(stage, label)
@@ -461,6 +468,7 @@ class Runner:
             idea_note=idea_note,
             siblings_note=siblings_note,
             runs_commands="Bash" in grant.tools,
+            agent=agent,
         )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
@@ -472,6 +480,8 @@ class Runner:
 
         # `0037`: the same condition that decides whether a gate and a tool list are sent.
         preset = CLAUDE_CODE_PRESET if grant.opens_anything else None
+        # `0036` R8. Only beside a preset: a tool-less session's argv stays what it was.
+        settings = agents.settings_json(agent) if agent is not None and preset else None
 
         # `0073`. The step's recorder, when `Service.run_step` gave it one: its `run` goes into
         # `start` and `end`, and it is closed -- everything on disk -- before `end` is written.
@@ -534,6 +544,9 @@ class Runner:
                 **({"rerun": True, "rerun_note": rerun_note} if rerun else {}),
                 **pr_extra,
                 **ship_extra,
+                # `0036` R7. Top level, the name when the step began; none for a stage the
+                # agent table has no row for, and none on a start written before `0036`.
+                **({"agent": agent["name"]} if agent is not None else {}),
                 # `0092` R5: whose step this is, so the next start can tell one this process
                 # still runs from one the app went down under.
                 **({"run": recorder.run, "pid": os.getpid()} if recorder is not None else {}),
@@ -611,6 +624,8 @@ class Runner:
                 # And again: a tool-less step passes nothing, so it gets the session it
                 # always got, and a stand-in without the parameter keeps working for it.
                 **({"system_prompt": dict(preset)} if preset else {}),
+                # `0036` R8, the same: only a preset session with an agent row passes it.
+                **({"settings": settings} if settings is not None else {}),
                 # `0034`, the same reasoning once more: only a board step has a row.
                 **({"step": running.handle} if running is not None else {}),
             ):
@@ -779,6 +794,7 @@ class Runner:
                                 **({"model": model} if model is not None else {}),
                                 **({"effort": effort} if effort is not None else {}),
                                 **({"system_prompt": dict(preset)} if preset else {}),
+                                **({"settings": settings} if settings is not None else {}),
                             ),
                             CLOSING_TIMEOUT,
                         )
@@ -836,6 +852,7 @@ class Runner:
                                 **({"model": model} if model is not None else {}),
                                 **({"effort": effort} if effort is not None else {}),
                                 **({"system_prompt": dict(preset)} if preset else {}),
+                                **({"settings": settings} if settings is not None else {}),
                             ),
                             OPENING_TIMEOUT,
                         )
@@ -982,6 +999,9 @@ class Runner:
                         else {}
                     ),
                     **cost_fields,
+                    # `0036` R4. The `Author:` the artifact carries, as written: `""` for none,
+                    # never checked against the table and never a reason to refuse.
+                    **({"author": agents.author_of(_read(directory / artifact))} if outcome == "done" else {}),
                     **extra,
                     **run_fields,
                     # `0080` R6: only a spike's `end` carries it.

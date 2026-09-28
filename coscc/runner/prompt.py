@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import harness
+from coscc.agent import agents, harness
 from coscc.knowledge import STAGES as KNOWLEDGE_STAGES
 from coscc.agent.policy import is_prose_stage
 from coscc.runner.review import (
@@ -367,9 +367,13 @@ def compose_prompt(
     idea_note: str = "",
     siblings_note: str = "",
     runs_commands: bool = False,
+    agent: dict[str, Any] | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """The prompt for one step, the artifacts that went into it whole (`spec.md` R4), and
     the ones it names by path only (`0094` R16).
+
+    `agent` (`0036` R3) is the stage's resolved row of the agent table; its section opens
+    the prompt. `None` adds not one byte.
 
     `idea_note` (`0040` R12) is the shared idea a unit was opened from, placed for `intent`
     only, and `siblings_note` (R13) the sibling checkouts `impl` may read, placed for `impl`
@@ -407,6 +411,10 @@ def compose_prompt(
     # and before `Sessions.stream` exists as a coroutine, so a `MissingRules` raised here
     # is `spec.md` R4's "0 requests to the SDK" by structure rather than by promise.
     parts.append(f"# The rules for this stage\n\n{skill_for(stage)}")
+    # `0036` R3. Who the session is, before its rules: `skill_for` has still been asked
+    # first. `None`, a stage the agent table has no row for, adds not one byte.
+    if agent is not None:
+        parts.insert(0, agents.identity_section(agent))
 
     # The rules above open by telling this stage to run `cos.mjs gate` and stop if it
     # exits non-zero. Four of the six prose stages have no tools and never could, and on

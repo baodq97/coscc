@@ -1077,6 +1077,9 @@ class StepsMixin:
                     end_fields=end_fields,
                     pr_note=pr_note,
                     pr_before=pr_before,
+                    # `0036` R3, R7, R8. The stage's row with today's overrides, read once
+                    # as the step starts: a rename later reaches the next step, not this one.
+                    agent=self._agent(stage),
                     **knowledge_kw,
                     **prior_kw,
                     **plan_kw,

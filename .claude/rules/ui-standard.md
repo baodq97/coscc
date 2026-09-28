@@ -24,6 +24,7 @@ paths:
   - "coscc/screens/settings.py"
   - "coscc/screens/unit.py"
   - "coscc/service/activity.py"
+  - "coscc/service/agents.py"
   - "coscc/service/answers.py"
   - "coscc/service/autopilot.py"
   - "coscc/service/backlog.py"

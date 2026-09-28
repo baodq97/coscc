@@ -289,6 +289,28 @@ class OptionsCarryTheKnobs(unittest.TestCase):
             self.assertEqual(preset.permission_mode, bare.permission_mode)
             self.assertEqual(preset.max_turns, bare.max_turns)
 
+    def test_settings_are_set_only_beside_a_preset(self):
+        # `0036` R8, plan Risk 1: the attribution reaches a preset session, a session with no
+        # preset keeps what it had, and nothing else moves.
+        from coscc.agent import agents, policy
+        from coscc.runner import CLAUDE_CODE_PRESET
+
+        def gate(name, data, ctx):  # never called; compared by identity
+            raise AssertionError("not called")
+
+        given = agents.settings_json(agents.agent_for("impl"))
+        common = dict(max_turns=40, tools=list(policy.READ_TOOLS), can_use_tool=gate)
+        plain = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET, **common)
+        signed = _options(Config(), "/p", None, system_prompt=CLAUDE_CODE_PRESET, settings=given, **common)
+        self.assertEqual(signed.settings, given)
+        self.assertIsNone(plain.settings)
+        self.assertIsNone(_options(Config(), "/p", None, settings=given, **common).settings)
+        self.assertEqual(signed.setting_sources, [])
+        self.assertTrue(signed.strict_mcp_config)
+        self.assertIs(signed.can_use_tool, gate)
+        self.assertEqual((signed.tools, signed.permission_mode, signed.extra_args),
+                         (plain.tools, plain.permission_mode, plain.extra_args))
+
     # `0088`. No settings source, no MCP server, and the project's own instructions put
     # into the system prompt by the app, since the CLI no longer loads them.
 
