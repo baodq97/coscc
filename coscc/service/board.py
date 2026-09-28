@@ -215,8 +215,13 @@ class BoardMixin:
         meta = self._unit_meta()
         own = self._journal_key(cwd)
         names = {name: self._journal_key(path) for name, path in (self._peer_table()[0] if peers is None else peers)}
-        for key in {own, *names.values()}:
-            if not meta.imported(key):
+        for key in {own, *names.values()} - self._imported:
+            # A workspace with no units yet has nothing to import: one `stat`, not a query.
+            if not (units.root(key, self.config.data_dir) / units.COS_DIR).is_dir():
+                continue
+            if meta.imported(key):
+                self._imported.add(key)
+            else:
                 self._import(meta, key)
         return meta.snapshot(own, names, units_)
 
