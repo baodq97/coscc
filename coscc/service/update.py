@@ -153,15 +153,17 @@ class UpdateMixin:
         reading the PR's head after its session, had none. Each gets `within` seconds to
         finish -- no new session may open meanwhile (`Sessions.paused`) -- and what still runs
         then is returned, for the updater to name in a `cut` row before `shutdown` cancels it.
+
+        Round 3, F6: and a step past its `_running` entry, writing its `questions` or `ship`
+        record (`_after_end`), until its task ends (`_finishing`), as `after-end`.
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + within
-        while self._running and loop.time() < deadline:
+        while (self._running or self._finishing) and loop.time() < deadline:
             await asyncio.sleep(SETTLE_POLL)
-        return [
-            {k: entry.get(k) for k in ("kind", "workspace", "unit", "stage", "started")}
-            for entry in self._running.values()
-        ]
+        left = list(self._running.values())
+        left += [{**entry, "kind": "after-end"} for entry, _task in self._finishing.values()]
+        return [{k: entry.get(k) for k in ("kind", "workspace", "unit", "stage", "started")} for entry in left]
 
     def update_status(self) -> dict[str, Any]:
         """`Updater.status`, unchanged, with `0082` R9's `line`, `local_line` and `actions`."""
@@ -201,6 +203,8 @@ class UpdateMixin:
         for t in list(self._ci_asks.values()):
             t.cancel()
         tasks = [r.task for r in self.steps.all() if r.task is not None and not r.task.done()]
+        # `0138` review round 3, F6: a step's task past `steps.release`, still in its `_after_end`.
+        tasks += [t for _entry, t in self._finishing.values() if not t.done() and t not in tasks]
         for t in tasks:
             t.cancel()
         if tasks:

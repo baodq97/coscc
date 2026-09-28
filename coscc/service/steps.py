@@ -1346,32 +1346,40 @@ class StepsMixin:
             if not told_done:
                 tell(("raise", Invalid(f"{unit}'s {stage} step ended without an outcome; the app may be shutting down")))
             self._release(running.workspace, running.unit, mark)
-            self._running.pop(rid, None)
-            if scratch is not None and not suspended:
-                shutil.rmtree(scratch, ignore_errors=True)
-            self.steps.release(running)
-            self.updater.job_ended()
-            # `0043` R5 a: after the mark is gone, so the pass sees the unit free.
-            if not going_down:
-                self._autopilot_nudge(running.workspace)
-            if recorder is not None and not recorder.closed:
-                # The runner closes it on every road that writes an `end`. Left open means the
-                # app is going down -- what can be written is, with no `end` (C9) -- or the
-                # runner raised before its own `finally`, which is an ending like any other.
-                if going_down:
-                    await recorder.abandon()
-                else:
-                    await recorder.close("failed", "the step ended without an outcome")
-            if recorder is not None:
-                self._recorders.pop(recorder.run, None)
-            if ended_done and not going_down and stage not in autopilot.NOT_STEPS:
-                # `0113` R4, R5. After the runner's `end`, which it writes before it yields
-                # `done`, and after the mark is given back: the board read it costs holds
-                # neither the reader's `done` nor the unit.
-                await self._after_end(cwd, unit, stage, running.workspace)
-            if ended_done and not going_down and stage == "ship" and self.config.knowledge:
-                # `0131` R1. Once, in the background: nothing here waits for it.
-                self._gather_soon(cwd, unit, running.workspace)
+            entry = self._running.pop(rid, None)
+            task = asyncio.current_task()
+            if entry is not None and task is not None:
+                # `0138` review round 3, F6: off the board from here, and until this task
+                # ends -- its recorder, `_after_end` -- an Apply's settle still waits for it.
+                self._finishing[rid] = (entry, task)
+            try:
+                if scratch is not None and not suspended:
+                    shutil.rmtree(scratch, ignore_errors=True)
+                self.steps.release(running)
+                self.updater.job_ended()
+                # `0043` R5 a: after the mark is gone, so the pass sees the unit free.
+                if not going_down:
+                    self._autopilot_nudge(running.workspace)
+                if recorder is not None and not recorder.closed:
+                    # The runner closes it on every road that writes an `end`. Left open means the
+                    # app is going down -- what can be written is, with no `end` (C9) -- or the
+                    # runner raised before its own `finally`, which is an ending like any other.
+                    if going_down:
+                        await recorder.abandon()
+                    else:
+                        await recorder.close("failed", "the step ended without an outcome")
+                if recorder is not None:
+                    self._recorders.pop(recorder.run, None)
+                if ended_done and not going_down and stage not in autopilot.NOT_STEPS:
+                    # `0113` R4, R5. After the runner's `end`, which it writes before it yields
+                    # `done`, and after the mark is given back: the board read it costs holds
+                    # neither the reader's `done` nor the unit.
+                    await self._after_end(cwd, unit, stage, running.workspace)
+                if ended_done and not going_down and stage == "ship" and self.config.knowledge:
+                    # `0131` R1. Once, in the background: nothing here waits for it.
+                    self._gather_soon(cwd, unit, running.workspace)
+            finally:
+                self._finishing.pop(rid, None)
 
     async def stop_step(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
         """Stop one running board step (`0034` R2, R5, R6). The route and the page's

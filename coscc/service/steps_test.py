@@ -590,6 +590,61 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.assertEqual([r["kind"] for r in self.records()][-1], "end")
         self.assertEqual(self.service._active, {})
 
+    async def _ended(self, after_end) -> asyncio.Task:
+        """A step run to its `done` with `after_end` as its `_after_end`, returned once its
+        task is past `_running` and in `_finishing`."""
+        self.service._after_end = after_end
+        stream = self.service.run_step(str(self.repo), self.unit, "spec")
+        await stream.__anext__()
+        task = self.service.steps.get(self.key, self.unit).task
+        [_ async for _ in stream]
+        for _ in range(500):
+            if self.service._finishing:
+                break
+            await asyncio.sleep(0.01)
+        self.assertEqual(self.service._running, {})
+        return task
+
+    def test_an_apply_waits_for_the_after_end_of_a_step_that_just_ended(self):
+        # `0138` review round 3, F6. `_drive` gives back the unit and its `_running` entry
+        # before `_after_end`; the settle still waits, and the `questions` row is written.
+        real = self.service._after_end
+
+        async def go():
+            gate = asyncio.Event()
+
+            async def slow(*args):
+                await gate.wait()
+                await real(*args)
+
+            task = await self._ended(slow)
+            settle = asyncio.create_task(self.service.settle_after_suspend(5))
+            await asyncio.sleep(0.3)
+            self.assertFalse(settle.done())
+            gate.set()
+            left = await settle
+            await task
+            return left
+
+        self.assertEqual(asyncio.run(go()), [])
+        self.assertEqual([r["kind"] for r in self.records()][-2:], ["end", "questions"])
+        self.assertEqual(self.service._finishing, {})
+
+    def test_an_after_end_that_outlives_the_settle_is_named_and_cancelled(self):
+        async def go():
+            async def hangs(*args):
+                await asyncio.sleep(60)
+
+            task = await self._ended(hangs)
+            left = await self.service.settle_after_suspend(0.05)
+            await self.service.shutdown()
+            return left, task
+
+        left, task = asyncio.run(go())
+        self.assertEqual([(j["kind"], j["unit"], j["stage"]) for j in left], [("after-end", self.unit, "spec")])
+        self.assertTrue(task.cancelled())
+        self.assertEqual(self.service._finishing, {})
+
 
 class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
     """`0034`. A step is its own task: a reader leaving does not end it (R3), a second

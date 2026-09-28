@@ -81,6 +81,8 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
     async def test_a_step_with_no_session_open_finishes_before_the_settle_ends(self):
         # Review round 2, F6: a step between its `end` and its `finally` -- posting a round,
         # syncing `pr.md` -- had nothing to pause; the settle waits for its `_running` entry.
+        # Past that entry, in `_after_end`, is round 3's F6, driven through `_drive` in
+        # `steps_test.py`.
         rid = self.s._mark_running("/w", "0001_a", "review", "step")
 
         async def posts_its_round():

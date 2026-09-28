@@ -182,6 +182,10 @@ class Service(
     # integration, keyed by an id that never leaves this process. Added and removed beside
     # `_active`, read only by `running`. Display only: `_active` still does the refusing.
     _running: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
+    # `0138` review round 3, F6. A step's `_after_end`, run after its `_running` entry and its
+    # mark are gone: by the same id, its entry and the task running it. Not shown on the
+    # board; an Apply's settle waits for it and `shutdown` cancels it.
+    _finishing: dict[str, tuple[dict[str, Any], asyncio.Task]] = field(default_factory=dict, init=False, repr=False)
     # `0100` R6. By `(journal key, unit)`: the last answer of `integrate.required_checks`,
     # `{head, checks | error, at}`, and the one background ask running for it. Memory only,
     # gone on a restart, and never waited on by a board read. One process only, like `pull`.
