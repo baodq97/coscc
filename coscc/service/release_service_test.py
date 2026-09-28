@@ -21,6 +21,7 @@ from unittest import mock
 
 from coscc.config import Config
 from coscc.git import fetches
+from coscc.github import integrate
 from coscc.service import Invalid, Service
 
 REPO = Path(__file__).resolve().parents[2]
@@ -163,6 +164,16 @@ class Fixture:
         log = Path(str(self.state) + ".log")
         return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
+    def push_onto(self, branch: str) -> str:
+        """Somebody else's commit on `branch` of the remote; its SHA."""
+        git(self.seed, "fetch", "-q", "origin", branch)
+        git(self.seed, "switch", "-q", "--detach", "FETCH_HEAD")
+        (self.seed / "stranger.txt").write_text("not the app's\n", encoding="utf-8")
+        git(self.seed, "add", "-A")
+        git(self.seed, "commit", "-q", "-m", "stranger")
+        git(self.seed, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
+        return git(self.seed, "rev-parse", "HEAD")
+
     def remote_ref(self, ref: str) -> str:
         p = subprocess.run(["git", "--git-dir", str(self.remote), "rev-parse", "--verify", "-q", ref],
                            capture_output=True, text=True)
@@ -242,6 +253,26 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.assertEqual(self.fx.remote_ref("refs/heads/main"), rec["merge_sha"])
         self.assertEqual(self.block()["state"], "published")
         self.assertEqual([r["outcome"] for r in self.records()], ["opened", "refused", "refused", "tagged"])
+
+    def test_a_push_after_the_checks_passed_is_not_merged(self):
+        # Review F1: the merge used to read the pull request again and pin whatever head it found.
+        opened = press(self.service, "prepare", self.fx.cwd, "0.2.0")["head"]
+        main = self.fx.remote_ref("refs/heads/main")
+        real = integrate.required_checks
+
+        async def then_somebody_pushes(*args, **kwargs):
+            got = await real(*args, **kwargs)
+            self.fx.push_onto("chore/release-0-2-0")
+            return got
+
+        with mock.patch.object(integrate, "required_checks", then_somebody_pushes):
+            rec = press(self.service, "publish", self.fx.cwd, "0.2.0")
+        self.assertEqual(rec["outcome"], "failed", rec)
+        merges = [c for c in self.fx.calls() if c.startswith("pr merge")]
+        self.assertEqual(len(merges), 1)
+        self.assertIn(f"--match-head-commit {opened}", merges[0])
+        self.assertEqual(self.fx.remote_ref("refs/heads/main"), main)
+        self.assertEqual(self.fx.remote_ref("refs/tags/v0.2.0"), "")
 
 
 if __name__ == "__main__":

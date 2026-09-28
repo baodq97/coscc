@@ -236,6 +236,7 @@ class ReleaseMixin:
                 has_script=has_script, check_version=check_version, version_problem_=problem,
                 state=facts["state"],
             )
+            checked: dict[str, Any] = {}
             if not reason and facts["state"] == "pr-open":
                 row = open_rel[0]
                 try:
@@ -246,6 +247,9 @@ class ReleaseMixin:
                 reason = release.publish_problem(
                     checks, str(row.get("headRefOid") or ""), opened, f"v{version}" in facts.get("tags", []), version)
                 ctx.update(pr=row.get("number"), head=str(row.get("headRefOid") or ""))
+                # R10.1: the merge is pinned to the head R9 just passed, which is the one
+                # the app pushed; the pull request is not read a second time.
+                checked = {"checked_pr": int(row["number"]), "checked_head": opened}
             if reason:
                 if tree is not None:
                     try:
@@ -256,7 +260,7 @@ class ReleaseMixin:
                 raise Invalid(reason)
             assert tree is not None
             old = check_version[1].split()[0] if check_version[1].split() else ""
-            return journal, key, root, {**facts, "old": old}, tree, version, write
+            return journal, key, root, {**facts, **checked, "old": old}, tree, version, write
         except BaseException:
             self._releasing.discard(key)
             raise
@@ -316,9 +320,7 @@ class ReleaseMixin:
         merged: dict[str, Any] = {}
         try:
             if facts["state"] == "pr-open":
-                prs = await integrate.open_prs(str(root))
-                row = release.release_prs(prs)[0]
-                number, head = int(row["number"]), str(row.get("headRefOid") or "")
+                number, head = facts["checked_pr"], facts["checked_head"]
                 await release.merge_pr(str(tree), number, head)
                 merged = {"pr": number, "head": head, "merge_sha": await release.merge_commit(str(tree), number)}
             else:
