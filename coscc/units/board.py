@@ -595,8 +595,9 @@ def _questions_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """`[{artifact, n, question, by, date, via, text}]`, one per question with an answer in
-    force, in the order of `artifacts`."""
+    """`[{artifact, n, question, by, date, via, text, authority}]`, one per question with an
+    answer in force, in the order of `artifacts`. `authority` is the app's (`0136` R15), as
+    the snapshot handed it to `cos.mjs`; `""` where it gave none."""
     out = []
     for artifact, a in (unit.get("artifacts") or {}).items():
         for q in (a or {}).get("questions") or []:
@@ -607,6 +608,7 @@ def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
                 "artifact": str(artifact), "n": q.get("n"), "question": str(q.get("text") or ""),
                 "by": str(answer.get("by") or ""), "date": str(answer.get("date") or ""),
                 "via": str(answer.get("via") or ""), "text": str(answer.get("text") or ""),
+                "authority": str(answer.get("authority") or ""),
             })
     return out
 

@@ -154,7 +154,8 @@ class QuestionsAreCarriedFromTheScript(unittest.TestCase):
             self.assertEqual([q["by"] for q in u["questions"]], ["", "Jera", ""])
             self.assertEqual(u["answers"], [{
                 "artifact": "intent.md", "n": 2, "question": "Two?", "by": "Jera", "date": "2026-09-25",
-                "via": "precedent", "text": "Không.",
+                # `0136` R15: whose it is, as the app's import classified `Via: precedent.`
+                "via": "precedent", "text": "Không.", "authority": "agent",
             }])
 
     def test_an_older_script_sends_no_answers_and_no_names(self):

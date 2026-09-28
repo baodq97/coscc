@@ -338,6 +338,25 @@ def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     })
 
 
+def seed_transitions(work: Path, data_dir: Path, proj: Path) -> None:
+    """`0136` R20: rows a guard decided, so the Timeline tab shows guard labels and whose
+    decision each was. Each sets the state its artifact already holds, so no lane moves:
+    `0003_awaiting-ship`'s round and a CI read at its head, `0004_finished`'s plan result."""
+    from coscc.units.history import History
+
+    history, key = History(work, data_dir), str(proj.resolve())
+    head = "a" * 40
+    history.record(key, "0003_awaiting-ship", "pr.md", "accepted", guard="ci-at-head", authority="code",
+                   run="capture-pr-reader", inputs={"number": 1, "head": head, "read_head": head, "ci": "green"},
+                   actor="app", source="capture_screens")
+    history.record(key, "0003_awaiting-ship", "review.md", "accepted", guard="review-round", authority="agent",
+                   run="capture-review-1", inputs={"head": head, "verdict": "pass"},
+                   actor="capture_screens", source="capture_screens")
+    history.record(key, "0004_finished", "plan.md", "done", guard="stage-result", authority="agent",
+                   run="capture-plan-1", inputs={"judgement": "ready"},
+                   actor="capture_screens", source="capture_screens")
+
+
 def seed_knowledge(work: Path, data_dir: Path, proj: Path) -> None:
     """`0131` spec Design 7: a small store for `proj` — one `tool:` entry, two `workspace:`
     ones — a `health.json` that calls two of them broken, one gather after a ship that the fetch
@@ -558,6 +577,7 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                     make_unread_fixture(api, proj)
                     ingest_fixture(work, data_dir, proj, other)
                     seed_runs(work, data_dir, proj)
+                    seed_transitions(work, data_dir, proj)
                     seed_knowledge(work, data_dir, proj)
                 except RuntimeError as e:
                     print(str(e), file=sys.stderr)

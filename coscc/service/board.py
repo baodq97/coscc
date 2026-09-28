@@ -96,6 +96,8 @@ def _attach_precedent(units_: list[dict[str, Any]], rows: list[dict[str, Any]]) 
             row = last.get((unit["name"], str(q.get("artifact") or ""), q.get("n"))) or {}
             waiting = not q.get("answered") and row.get("verdict") == precedent_mod.PERSON
             q["by_jera"] = jera
+            # `0136` R15: whose the answer in force is, as the app recorded it.
+            q["authority"] = str(said.get("authority") or "") if q.get("answered") else ""
             q["cites"] = precedent_mod.cites_of(str(said.get("text") or "")) if jera else []
             q["said"] = precedent_mod.words_of(str(said.get("text") or "")) if jera else ""
             q["needs_person"] = waiting
@@ -415,6 +417,10 @@ class BoardMixin:
             # `0082` R11, R12. Decided here so the page only shows them.
             unit["answerable"] = answerable(unit)
             unit["attention_reason"] = attention_reason(unit)
+            # `0136` R22. The code the last autopilot pass held the unit back with, and its
+            # detail (`overlap-pr #7`); display only, and nothing while the autopilot is off.
+            held = (self._autopilot_held.get(key) or {}).get(unit["name"])
+            unit["held"] = " ".join(p for p in held if p) if held else ""
 
         await self._attach_worktrees(cwd, data["units"])
         # `0046`: one `gh pr list` for the whole read, asked only by whichever block needs it.

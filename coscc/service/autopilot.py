@@ -54,6 +54,7 @@ class AutopilotMixin:
         if reader is not None:
             reader.cancel()
         self._autopilot_stops.pop(key, None)
+        self._autopilot_held.pop(key, None)
 
     def autopilot_resume(self) -> list[str]:
         """R5 c: at start-up, every workspace whose switch is on starts again. Returns them."""
@@ -426,6 +427,7 @@ class AutopilotMixin:
             if not self._autopilot_on(key) or not self._autopilot_values(key)["autopilot"]:
                 return
             self._autopilot_set_stops(key, found)
+            self._autopilot_held[key] = dict(picked["held"])
             run_id = uuid.uuid4().hex
             shortlist = {"n": n, "at": listed.get("at"), "units": names}
             for c, over in zip(picked["chosen"], passed):

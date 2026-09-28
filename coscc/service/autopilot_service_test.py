@@ -1512,10 +1512,15 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0003_c", "impl", "autopilot")])
         [pick] = self.picks()
         self.assertEqual(pick["passed"], [{"unit": "0002_b", "reason": "overlap-pr", "detail": "#7"}])
+        # R22: what the board's card shows, kept from the same pass.
+        self.assertEqual(self.service._autopilot_held[self.key].get("0002_b"), ("overlap-pr", "#7"))
         gh.open_prs, gh.state = [], "MERGED"
         await self.service._pr_read(self.key)
         await self.until(lambda: len(self.launched) == 2, "the pass the merge scheduled")
         self.assertEqual(self.launched[1], ("0002_b", "impl", "autopilot"))
+        self.assertNotIn("0002_b", self.service._autopilot_held[self.key])
+        self.service.autopilot_stop(self.key)
+        self.assertNotIn(self.key, self.service._autopilot_held)
 
     async def test_off_the_reader_calls_no_gh(self):
         gh = prmachine_test.FakeGh()

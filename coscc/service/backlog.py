@@ -6,10 +6,11 @@ Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a 
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from coscc.units import autopilot, backlog
+from coscc.units import autopilot, backlog, guards
 from coscc.units import board as board_reader
 from coscc.git import fetches, gitops
 from coscc.units import hold as hold_rules
@@ -30,6 +31,22 @@ from coscc import knowledge, units
 from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, OWNER
+
+
+def _labelled(row: dict[str, Any]) -> dict[str, Any]:
+    """`0136` R20. One transition row for the timeline: its `inputs` as an object, the label of
+    its guard (`""` for a guard `guards` does not know, as on a row from before `0136`), and
+    `head`, the SHA its guard read, where it read one."""
+    try:
+        inputs = json.loads(row.get("inputs") or "{}")
+    except (TypeError, ValueError):
+        inputs = {}
+    inputs = inputs if isinstance(inputs, dict) else {}
+    known = guards.GUARDS.get(str(row.get("guard") or ""))
+    return {
+        **row, "inputs": inputs, "guard_label": known.label if known else "",
+        "head": str(inputs.get("merge_commit") or inputs.get("head") or ""),
+    }
 
 
 class BacklogMixin:
@@ -540,17 +557,24 @@ class BacklogMixin:
             raise Invalid(str(e)) from e
 
     def timeline(self, cwd: str, unit: str) -> dict[str, Any]:
-        """What has happened to one unit, oldest first (`spec.md` R15)."""
+        """What has happened to one unit, oldest first (`spec.md` R15).
+
+        `0136` R20: `transitions` beside `runs`, each row of the log with the one-sentence
+        label of the guard that decided it; `""` for a row from before `0136`, which names none.
+        """
         self._workspace_or_refuse(cwd)
         journal = self._journal()
-        if journal is None:
-            return {"cwd": cwd, "unit": unit, "runs": [], "cost": {}}
+        history = self._history()
+        if journal is None or history is None:
+            return {"cwd": cwd, "unit": unit, "runs": [], "cost": {}, "transitions": []}
         key = self._journal_key(cwd)
         try:
             runs = journal.timeline(key, unit)
+            rows = history.transitions(key, unit)
         except Busy as e:
             raise Invalid(str(e)) from e
-        return {"cwd": cwd, "unit": unit, "runs": runs, "cost": totals_of(runs)}
+        return {"cwd": cwd, "unit": unit, "runs": runs, "cost": totals_of(runs),
+                "transitions": [_labelled(r) for r in rows]}
 
     def _history(self) -> History | None:
         """The transition log, or `None` when there is no working folder to keep it in.

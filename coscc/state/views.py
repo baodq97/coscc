@@ -161,6 +161,8 @@ class Question:
     needs_person: bool = False
     proposal: str = ""
     reason: str = ""
+    # `0136` R15. Whose the answer in force is, in words (`AUTHORITY_LABEL`); `""` unanswered.
+    authority: str = ""
 
 
 @dataclasses.dataclass
@@ -263,6 +265,8 @@ class Unit:
     repo: str = ""
     waits_for: str = ""
     waits_for_href: str = ""
+    # `0136` R22. The code the last autopilot pass held the unit back with (`overlap-pr #7`).
+    held: str = ""
 
 
 @dataclasses.dataclass
@@ -379,6 +383,7 @@ class Card:
     state_color: str = "gray"
     # `0040` R15 (3). The unit `impl` waits on, when it waits.
     waits_for: str = ""
+    held: str = ""
 
 
 def _card(u: Unit) -> Card:
@@ -391,7 +396,7 @@ def _card(u: Unit) -> Card:
         shortlist_rank=u.shortlist_rank, relations_text=u.relations_text, live=list(u.live),
         answerable=u.answerable, attention_reason=u.attention_reason,
         at=u.at, state=u.state, state_label=u.state_label, state_color=u.state_color,
-        waits_for=u.waits_for,
+        waits_for=u.waits_for, held=u.held,
     )
 
 
@@ -891,6 +896,48 @@ class Run:
 
 
 @dataclasses.dataclass
+class Move:
+    """`0136` R20. One transition of a unit's timeline: what moved and when, the label of the
+    guard that decided it and whose decision it was. The guard's id, the full SHA it read
+    and the run's id are for *Details* alone."""
+
+    artifact: str = ""
+    change: str = ""
+    at: str = ""
+    guard_label: str = ""
+    authority: str = ""
+    guard: str = ""
+    head: str = ""
+    run: str = ""
+    key: str = ""
+
+
+# `0136` R15. Each authority in words, for a reader rather than a column name.
+AUTHORITY_LABEL = {
+    "person": "a person", "delegated": "their delegate", "agent": "an agent", "code": "the app",
+}
+
+
+def _moves(rows: list[dict]) -> list[Move]:
+    """`0136` R20. The timeline's transitions, as `Service.timeline` sent them. Copies."""
+    out = []
+    for i, r in enumerate(rows):
+        authority = str(r.get("authority") or "")
+        out.append(Move(
+            artifact=str(r.get("artifact") or ""),
+            change=f"{r.get('from_state') or '—'} → {r.get('to_state') or '—'}",
+            at=present.when(r.get("at")),
+            guard_label=str(r.get("guard_label") or "") or "No guard was recorded for this change.",
+            authority=AUTHORITY_LABEL.get(authority, "unknown"),
+            guard=str(r.get("guard") or ""),
+            head=str(r.get("head") or ""),
+            run=str(r.get("run") or ""),
+            key=f"move-{r.get('id', i)}",
+        ))
+    return out
+
+
+@dataclasses.dataclass
 class WatchEvent:
     """`0073` R10, R12. One event of the watch pane, as `events.collapse` shaped it. Never
     more than the collapsed body: the whole of one opened event is `watch_open_text`."""
@@ -1208,6 +1255,8 @@ def _questions(unit: dict) -> tuple[int, list[Question]]:
             needs_person=bool(q.get("needs_person")),
             proposal=str(q.get("proposal") or ""),
             reason=str(q.get("reason") or ""),
+            authority=(AUTHORITY_LABEL.get(str(q.get("authority") or ""), "unknown")
+                       if q.get("answered") else ""),
         )
         for q in unit.get("questions") or []
     ] + [

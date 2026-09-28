@@ -87,6 +87,8 @@ from coscc.state.views import (
     GuideItem,
     RunningStep,
     Run,
+    Move,
+    _moves,
     WatchEvent,
     WATCH_WINDOW,
     WATCH_GATHER,
@@ -227,6 +229,8 @@ class StudioState(
     artifact_file: str = ""
     artifact_missing: bool = False
     runs: list[Run] = []
+    # `0136` R20. The unit's transitions, beside its runs on the Timeline tab.
+    moves: list[Move] = []
     # `0034`. Every step running in this workspace, as the service lists it. One per unit
     # -- the service refuses a second -- and any number of units at once. This page holds
     # no running flag of its own; the list is re-read, never patched.
@@ -807,6 +811,7 @@ class StudioState(
                     decided_label=str(decided.get("label") or ""),
                     decided_color=str(decided.get("color") or "gray"),
                     **link_fields(u, self._name_of(self.cwd)),
+                    held=str(u.get("held") or ""),
                 )
             )
         units = [dataclasses.replace(u, **_shown(u, self._running_read)) for u in units]
@@ -1012,7 +1017,7 @@ class StudioState(
         self.unit_anomalies = _anomaly_rows(data["anomalies"])
 
     def _load_timeline(self) -> None:
-        self.runs = []
+        self.runs, self.moves = [], []
         if not (self.cwd and self.unit_id):
             return
         try:
@@ -1041,6 +1046,7 @@ class StudioState(
             )
             for i, r in enumerate(data["runs"])
         ]
+        self.moves = _moves(data.get("transitions") or [])
 
     def _load_artifact(self) -> None:
         self.artifact, self.artifact_file, self.artifact_missing = "", "", False

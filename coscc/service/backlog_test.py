@@ -61,6 +61,19 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         self.assertEqual(found["state"]["intent.md"], found["transitions"][-1]["to_state"])
         self.assertEqual(found["state"]["intent.md"], "accepted")
 
+    def test_0136_r20_the_timeline_carries_each_transition_with_its_guards_label(self):
+        log = self._log()
+        log.record(REPO, "0001_a-problem", "intent.md", "draft")
+        log.record(REPO, "0001_a-problem", "ship.md", "accepted", guard="merge-read", authority="code",
+                   run="r-1", inputs={"merge_commit": "f" * 40, "number": 7})
+        old, merged = self.service.timeline(REPO, "0001_a-problem")["transitions"]
+        # A row from before `0136` names no guard, and the page says so rather than guessing.
+        self.assertEqual((old["guard"], old["guard_label"], old["head"]), ("unknown", "", ""))
+        self.assertEqual(
+            (merged["guard_label"], merged["authority"], merged["run"], merged["head"], merged["inputs"]["number"]),
+            ("A merge is recorded only from a read that names its merge commit.", "code", "r-1", "f" * 40, 7),
+        )
+
     def test_it_counts_the_edits_after_settling_that_0013_exists_to_count(self):
         log = self._log()
         log.record(REPO, "0001_a-problem", "intent.md", "draft")
