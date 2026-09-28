@@ -1582,6 +1582,18 @@ class SuspendingEverySession(unittest.IsolatedAsyncioTestCase):
         self.s._steps.add(handle)
         return handle
 
+    async def test_no_stream_opens_once_every_session_is_paused(self):
+        # Review round 2, F6: a step between two sessions while the settle waits for it ends
+        # `Refused`, with no client made and nothing registered for the hand-off to cut.
+        await self.s.suspend_all()
+        _CountingClient.made, _CountingClient.fail = [], False
+        with mock.patch("coscc.agent.sessions.ClaudeSDKClient", _CountingClient):
+            for step in (sessions.StepHandle(), None):
+                with self.assertRaises(sessions.Refused) as caught:
+                    await self.s.stream("/tmp", "hi", step=step).__anext__()
+                self.assertEqual(str(caught.exception), sessions.PAUSED)
+        self.assertEqual((_CountingClient.made, self.s._steps, self.s._turns), ([], set(), {}))
+
     async def test_suspend_reads_the_boundary_before_it_interrupts(self):
         self._flow("sid-1")
         [record] = await self.s.suspend_all()

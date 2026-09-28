@@ -78,6 +78,24 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
                          [("0001_a", "impl", "an", "sid", "u1")])
         self.assertTrue(rows[0]["suspend_id"])
 
+    async def test_a_step_with_no_session_open_finishes_before_the_settle_ends(self):
+        # Review round 2, F6: a step between its `end` and its `finally` -- posting a round,
+        # syncing `pr.md` -- had nothing to pause; the settle waits for its `_running` entry.
+        rid = self.s._mark_running("/w", "0001_a", "review", "step")
+
+        async def posts_its_round():
+            await asyncio.sleep(0.05)
+            self.s._running.pop(rid, None)
+
+        task = asyncio.create_task(posts_its_round())
+        self.assertEqual(await self.s.settle_after_suspend(5), [])
+        self.assertTrue(task.done())
+
+    async def test_what_outlives_the_settle_is_returned_to_be_named(self):
+        self.s._mark_running("/w", "0002_b", "integrate", "gebo")
+        left = await self.s.settle_after_suspend(0.05)
+        self.assertEqual([(j["kind"], j["unit"], j["stage"]) for j in left], [("gebo", "0002_b", "integrate")])
+
     def test_the_routes_seam_refuses_where_updates_are_not_available(self):
         from coscc.service import NotUpdatable
 

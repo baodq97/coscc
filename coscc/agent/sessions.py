@@ -175,6 +175,10 @@ class Suspended(Exception):
     `interrupt()` is never handed on as a `done`."""
 
 
+# `0138` review round 2, F6: what a stream begun after `suspend_all` is refused with.
+PAUSED = "every session was paused for an update, so no new one may open"
+
+
 # ---------------------------------------------------------------------------
 # Read layer
 # ---------------------------------------------------------------------------
@@ -753,6 +757,10 @@ class Sessions:
         self._turns: dict[str, dict[str, Any]] = {}
         # Told when a turn ends, so the updater waiting on it need not guess by the clock.
         self.on_turn_end: Any = None
+        # `0138` review round 2, F6. Set by `suspend_all`: from then on no stream opens, so a
+        # step between two sessions while the update waits for it ends saying why, rather
+        # than open one the hand-off cuts with no `suspend` row. `resume_after_update` clears it.
+        self.paused = False
 
     def created_here(self, session_id: str) -> bool:
         return session_id in self._created_here
@@ -870,8 +878,11 @@ class Sessions:
         on from a safe point of `session_id` (`_options`). `spent_before` is what the
         session had cost before this client: `{}`, the default, makes `done.cost` the whole
         session's, since the CLI's own total carries over a resume (`spike.md ## U4`).
-        A stream `suspend_all` paused raises `Suspended` and yields no `done`.
+        A stream `suspend_all` paused raises `Suspended` and yields no `done`, and one begun
+        after it is `Refused`.
         """
+        if self.paused:
+            raise Refused(PAUSED)
         resolved_model = model if model is not None else self.config.model
         if step is None:
             flow: Any = self._begin_turn(cwd, session_id, owner, resolved_model)
@@ -1166,6 +1177,7 @@ class Sessions:
         stream with no session id or no client yet is closed all the same and marked
         `unresumable`. Nothing here writes to a transcript or runs git.
         """
+        self.paused = True
         flows: list[Any] = [*self._steps, *self._turns.values()]
         records = await asyncio.gather(*(self._suspend(f) for f in flows))
         for f in flows:

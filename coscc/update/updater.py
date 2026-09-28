@@ -58,6 +58,10 @@ BUILD_TIMEOUT = 15 * 60
 LOG_TAIL = 40
 HTTP_TIMEOUT = 30
 FETCH_LOCK_WAIT = 120  # chosen: how long an apply waits for a download already under way
+# `0138` review round 2, F6. Chosen: how long work with no session open is given to finish
+# after the pause. `spike.md ## U1` estimates 37 s from press to serving; 37 + 15 stays
+# under R2's 60 s.
+SETTLE_WITHIN = 15
 
 CHANNELS = ("release", "local")
 
@@ -540,6 +544,10 @@ class Updater:
             # steps' tasks are cancelled below.
             paused = True
             await self.service.suspend_sessions(by)
+            # Review round 2, F6: what had no session open to pause gets a bounded wait, and
+            # what outlives it is named before `shutdown` cancels it.
+            for job in await self.service.settle_after_suspend(SETTLE_WITHIN):
+                self._record("cut", by, cut=job, stopped_by=by)
             # Step 4: the lifespan does not run on the real stack (`spike.md ## U5` part 2).
             await self.service.shutdown()
             await self.service.sessions.close_all()

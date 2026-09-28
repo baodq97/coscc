@@ -15,7 +15,9 @@ paths:
     session of this process at once: its CLI's descendants listed, the transcript's line
     count read, `interrupt()`, the client closed, every listed descendant still alive
     SIGKILLed — one that left the tree by `setsid` first is not (0138 C3). Each is a
-    `suspend` row, and a local build is cut.
+    `suspend` row, and a local build is cut. Work with no session open then (a round posted
+    after its `end`) gets `SETTLE_WITHIN` s, no session may open, and what outlives it is a
+    `cut` row.
   - The next start (`coscc/service/resume.py`) takes each row up once, before the autopilot,
     in the same session from the last point every tool call had its result, and runs no git
     on the worktree first. Its transcript must be under `~/.claude/projects/<cwd, every

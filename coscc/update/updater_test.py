@@ -49,6 +49,8 @@ class StandIn:
     def __init__(self):
         self.jobs: list[dict] = []
         self.suspended: list[str] = []
+        # What `settle_after_suspend` says still runs once its wait is over.
+        self.unsettled: list[dict] = []
         self.rows: list[dict] = []
         self.store = None
         # What happened after the trial, in order: pausing, shutting down, closing.
@@ -66,6 +68,11 @@ class StandIn:
         self.suspended.append(by)
         self.order.append("suspend")
         return []
+
+    async def settle_after_suspend(self, within):
+        self.order.append("settle")
+        self.within = within
+        return list(self.unsettled)
 
     async def shutdown(self):
         self.shut += 1
@@ -413,7 +420,24 @@ class TheSequence(_Base):
         await self.run_apply(u)
         self.assertIsNone(u.error)
         self.assertEqual(self.service.suspended, ["an"])
-        self.assertEqual(self.service.order, ["suspend", "shutdown", "close_all"])
+        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "close_all"])
+
+    async def test_work_with_no_session_is_given_time_and_what_outlives_it_is_named(self):
+        # Review round 2, F6: a step posting its round after its `end` had no session to pause;
+        # it is waited for, bounded, and one still running then gets a `cut` row before
+        # `shutdown` cancels it.
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+        job = {"kind": "step", "workspace": "/w", "unit": "0001_a", "stage": "review", "started": "t"}
+        self.service.unsettled = [job]
+        u = self.make_real()
+        await self.run_apply(u)
+        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "close_all"])
+        self.assertEqual(self.service.within, updater.SETTLE_WITHIN)
+        cut = [r for r in self.service.rows if r["event"] == "cut"]
+        self.assertEqual([(c["cut"], c["stopped_by"]) for c in cut], [(job, "an")])
+        self.assertLess(self.service.rows.index(cut[0]),
+                        [r["event"] for r in self.service.rows].index("applying"))
 
     async def test_suspend_rows_are_written_before_hand_off(self):
         # `0138`: the rows are the next start's only way to the sessions, so they come first.
@@ -432,7 +456,7 @@ class TheSequence(_Base):
             await self.run_apply(u)
         finally:
             del update.SERVER.hand_off
-        self.assertEqual(order, ["suspend", "shutdown", "close_all", "hand_off"])
+        self.assertEqual(order, ["suspend", "settle", "shutdown", "close_all", "hand_off"])
         self.assertTrue(self.server.should_exit)
 
     async def test_a_failed_hand_off_takes_every_paused_session_up_again_here(self):
@@ -454,7 +478,7 @@ class TheSequence(_Base):
             await self.run_apply(u)
         finally:
             del update.SERVER.hand_off
-        self.assertEqual(self.service.order, ["suspend", "shutdown", "close_all", "take_up"])
+        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "close_all", "take_up"])
         self.assertEqual(seen, [False])
         self.assertEqual(u.state, "idle")
         self.assertIn("uvicorn.Server was gone", u.error["message"])
@@ -471,7 +495,7 @@ class TheSequence(_Base):
         self.service.shutdown = breaks  # type: ignore[method-assign]
         u = self.make_real()
         await self.run_apply(u)
-        self.assertEqual(self.service.order, ["suspend", "shutdown", "take_up"])
+        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "take_up"])
         self.assertIn("shutdown broke", u.error["message"])
         self.assertFalse(self.server.should_exit)
 

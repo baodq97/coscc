@@ -13,6 +13,10 @@ from coscc.runlog.journal import BadRecord, Busy
 from coscc.service.common import Invalid, NotUpdatable, OWNER, Updating
 
 
+# How often `settle_after_suspend` looks again; chosen, not measured.
+SETTLE_POLL = 0.1
+
+
 def _as_invalid(e: updater_mod.Refused) -> Invalid:
     if isinstance(e, updater_mod.Updating):
         return Updating(str(e))
@@ -92,7 +96,8 @@ class UpdateMixin:
         """`0138` R2, R3. What an Apply waits for: a mechanical integration and a screenshot
         retake (spec.md ## Answers, câu 1, Jera's inference), and since `0131` a knowledge
         gather, whose sessions are not the app's. A Gebo session, a step, an
-        estimate, Jera and chat are paused by `suspend_sessions` instead (C10)."""
+        estimate, Jera and chat are paused by `suspend_sessions` instead (C10), and what of
+        them had no session open is given `settle_after_suspend`'s bounded wait."""
         jobs: list[dict[str, Any]] = []
         for entry in self._running.values():
             if entry["stage"] == "integrate" and entry.get("kind") != "gebo":
@@ -141,6 +146,22 @@ class UpdateMixin:
             except (BadRecord, Busy):
                 continue
         return written
+
+    async def settle_after_suspend(self, within: float) -> list[dict[str, Any]]:
+        """`0138` review round 2, F6. `suspend_sessions` pauses only what had a session open:
+        a step writing its round to the PR or syncing `pr.md` after its `end`, or a Gebo
+        reading the PR's head after its session, had none. Each gets `within` seconds to
+        finish -- no new session may open meanwhile (`Sessions.paused`) -- and what still runs
+        then is returned, for the updater to name in a `cut` row before `shutdown` cancels it.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + within
+        while self._running and loop.time() < deadline:
+            await asyncio.sleep(SETTLE_POLL)
+        return [
+            {k: entry.get(k) for k in ("kind", "workspace", "unit", "stage", "started")}
+            for entry in self._running.values()
+        ]
 
     def update_status(self) -> dict[str, Any]:
         """`Updater.status`, unchanged, with `0082` R9's `line`, `local_line` and `actions`."""

@@ -239,6 +239,15 @@ class TakingUpAfterAnUpdate(_Base):
         [end] = self.ends()
         self.assertEqual(end["outcome"], "failed")
 
+    def test_taking_up_again_lets_sessions_open_once_more(self):
+        # Review round 2, F6: `suspend_all` closed `Sessions` to new streams; after a failed
+        # hand-off this same process takes its rows up, and must open them again.
+        self.taken()
+        self.service.sessions.paused = True
+        self.paused()
+        self.up()
+        self.assertFalse(self.service.sessions.paused)
+
     def test_a_row_failing_in_the_same_pass_is_not_the_unit_moving_on(self):
         steps_seen = self.taken()
         got: list[dict] = []

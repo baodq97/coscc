@@ -128,6 +128,9 @@ class ResumeMixin:
         a second time. Every unit a step or an integration held is claimed again, with no
         `await` in between, before the autopilot is asked, so it cannot start a step on one.
         """
+        # Review round 2, F6: the pause is over once its rows are taken up -- here after a
+        # failed hand-off; a new process never had it.
+        self.sessions.paused = False
         journal = self._journal()
         said: list[dict[str, Any]] = []
         starts: list[Any] = []
