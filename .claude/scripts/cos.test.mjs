@@ -4451,3 +4451,53 @@ test('0049 R1: no skill opens a pull request with --fill, and write-pr names the
   assert.match(pr, /gh pr create --title/)
   assert.match(pr, /cos\.mjs pr-text <NNNN_slug>/)
 })
+
+// --- 0135: metadata read once, by `meta` ----------------------------------------
+
+const META_STORE = fileURLToPath(new URL('../../coscc/units/testdata/meta_store', import.meta.url))
+const META_BEFORE = fileURLToPath(new URL('../../coscc/units/testdata/meta_store_before.json', import.meta.url))
+const metaOf = (...args) => {
+  const out = cli('--root', META_STORE, 'meta', ...args)
+  assert.equal(out.status, 0, out.stderr)
+  return JSON.parse(out.stdout)
+}
+
+test('meta prints every field status reads, from the same parsers', () => {
+  const { units, ideas } = metaOf()
+  // Every directory, the one misnamed among them; never `ideas/`.
+  assert.deepEqual(Object.keys(units).sort(), readdirSync(join(META_STORE, '.cos')).filter((d) => d !== 'ideas').sort())
+  assert.equal(units['0016_bad-status'].artifacts['spec.md'].status, null)
+  assert.equal(units['0016_bad-status'].artifacts['spec.md'].raw, 'approved')
+  assert.equal(units['0015_no-status'].artifacts['intent.md'].raw, null)
+  assert.equal(units['0010_full-loop'].artifacts['plan.md'].status, 'done')
+  assert.equal(units['0014_changes-requested'].artifacts['review.md'].status, 'changes-requested')
+  const spec = readFileSync(join(META_STORE, '.cos', '0013_open-question', 'spec.md'), 'utf8')
+  assert.deepEqual(units['0013_open-question'].artifacts['spec.md'].questions, parseQuestions(spec))
+  assert.deepEqual(units['0013_open-question'].answers, parseAnswers(spec).map((a) => ({ artifact: 'spec.md', ...a })))
+  assert.equal(units['0013_open-question'].artifacts['spec.md'].sha256, createHash('sha256').update(spec).digest('hex'))
+  assert.deepEqual(units['0014_changes-requested'].answers.map((a) => a.id), ['F1'])
+  const intent = readFileSync(join(META_STORE, '.cos', '0011_paused-then-resumed', 'intent.md'), 'utf8')
+  assert.deepEqual(units['0011_paused-then-resumed'].holds.map((h) => h.state), ['paused', 'active'])
+  assert.deepEqual(parseHold(intent), { hold: null, problems: [] })
+  assert.equal(units['0003_old-unit'].type, null)
+  assert.equal(units['0017_linked'].type, 'feat')
+  assert.deepEqual(units['0017_linked'].links, { idea: 'ideas/0001_x.md', repo: 'proj', dependsOn: ['0010_full-loop'] })
+  assert.deepEqual(ideas.map((i) => i.units), [[{ ref: 'proj/0017_linked', dependsOn: ['proj/0010_full-loop'] }]])
+})
+
+test('meta of one unit reads only the artifacts named, and intent.md brings its header', () => {
+  const only = metaOf('0013_open-question', 'spec.md').units['0013_open-question']
+  assert.deepEqual(Object.keys(only.artifacts), ['spec.md'])
+  assert.equal(only.type, undefined)
+  assert.equal(metaOf('0013_open-question', 'intent.md').units['0013_open-question'].type, 'feat')
+  assert.equal(cli('--root', META_STORE, 'meta', '0013_open-question', 'notes.md').status, 2)
+  assert.equal(cli('--root', META_STORE, 'meta', '../x').status, 2)
+})
+
+test('status --json of the fixture store is what it was before meta existed', () => {
+  const out = cli('--root', META_STORE, 'status', '--json')
+  assert.equal(out.status, 0, out.stderr)
+  const now = JSON.parse(out.stdout)
+  const before = JSON.parse(readFileSync(META_BEFORE, 'utf8'))
+  assert.deepEqual({ ...now, root: before.root }, before)
+})

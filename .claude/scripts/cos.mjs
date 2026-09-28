@@ -199,14 +199,14 @@ const HOLD_TO = { Paused: 'paused', Dropped: 'dropped', Resumed: 'active' }
 // route and page read `holdMoves` off a unit rather than keep a copy of this.
 export const HOLD_MOVES = { active: ['paused', 'dropped'], paused: ['dropped', 'active'], dropped: ['paused'] }
 
-// The hold in force: walk the blocks in file order from `active`; the last valid one
-// decides. A block with no well-formed `Decided by:` line is not counted, because nothing
-// says who decided. A block describing a move `HOLD_MOVES` lacks is not counted either,
-// and is reported. `hold` is `null` when the unit ends `active`.
-export function parseHold(text) {
+const HOLD_HEAD_OF = Object.fromEntries(Object.entries(HOLD_TO).map(([head, to]) => [to, head]))
+
+// `0135`. The hold blocks in file order, read and not judged: one row per block, `by` `null`
+// when its `Decided by:` line is missing or malformed. `foldHolds` decides; the app keeps
+// the well-formed rows in its database and hands them back in the same shape.
+export function holdBlocks(text) {
   const lines = section(text ?? '', 'Answers')
-  const problems = []
-  if (lines === null) return { hold: null, problems }
+  if (lines === null) return []
   const blocks = []
   for (const line of lines) {
     const m = line.match(HOLD_HEAD)
@@ -214,25 +214,35 @@ export function parseHold(text) {
     else if (/^###\s/.test(line)) blocks.push({ head: null, lines: [] })
     else if (blocks.length) blocks[blocks.length - 1].lines.push(line)
   }
-  let state = 'active'
-  let hold = null
-  let n = 0
-  for (const b of blocks) {
-    if (!b.head) continue
-    n += 1
+  return blocks.filter((b) => b.head).map((b) => {
     const at = b.lines.findIndex((l) => l.trim() !== '')
     const meta = at === -1 ? null : b.lines[at].match(HOLD_META)
-    if (!meta) continue
-    const to = HOLD_TO[b.head]
-    if (!HOLD_MOVES[state].includes(to)) {
-      problems.push(`hold block ${n} (### ${b.head}) is not a valid move from ${state} — it is ignored`)
-      continue
+    if (!meta) return { state: HOLD_TO[b.head], reason: null, by: null, date: null, via: null }
+    return { state: HOLD_TO[b.head], reason: b.lines.slice(at + 1).join('\n').trim(), by: meta[1].trim(), date: meta[2], via: meta[3] }
+  })
+}
+
+// The hold in force: walk the rows in order from `active`; the last valid one decides. A row
+// with no `by` is not counted, because nothing says who decided. A row describing a move
+// `HOLD_MOVES` lacks is not counted either, and is reported. `hold` is `null` when the unit
+// ends `active`.
+export function foldHolds(rows) {
+  const problems = []
+  let state = 'active'
+  let hold = null
+  rows.forEach((r, i) => {
+    if (r.by == null) return
+    if (!HOLD_MOVES[state].includes(r.state)) {
+      problems.push(`hold block ${i + 1} (### ${HOLD_HEAD_OF[r.state]}) is not a valid move from ${state} — it is ignored`)
+      return
     }
-    state = to
-    hold = to === 'active' ? null : { state: to, reason: b.lines.slice(at + 1).join('\n').trim(), by: meta[1].trim(), date: meta[2] }
-  }
+    state = r.state
+    hold = r.state === 'active' ? null : { state: r.state, reason: r.reason, by: r.by, date: r.date }
+  })
   return { hold, problems }
 }
+
+export const parseHold = (text) => foldHolds(holdBlocks(text))
 
 // --- a person's decision to allow more review rounds ----------------------------
 
@@ -345,11 +355,13 @@ export function parseReruns(text) {
 }
 
 // Each question joined to the answer in force for it, if any.
-export function answeredQuestions(text) {
-  const questions = parseQuestions(text)
+export const answeredQuestions = (text) => joinAnswers(parseQuestions(text), parseAnswers(text))
+
+// `0135`. The joining alone, so questions and answers the app hands back are joined the same way.
+export function joinAnswers(questions, answers) {
   if (questions === null) return null
   const latest = new Map()
-  for (const a of parseAnswers(text)) if (a.n !== null) latest.set(a.n, a)
+  for (const a of answers) if (a.n !== null) latest.set(a.n, a)
   return questions.map((q) => {
     const a = latest.get(q.n) ?? null
     return { n: q.n, text: q.text, answered: a !== null, answer: a }
@@ -950,6 +962,34 @@ export function readAll(cosDir = COS, { peers = new Map() } = {}) {
     .filter((e) => e.isDirectory() && e.name !== IDEAS)
     .map((e) => readUnit(join(cosDir, e.name), e.name, { peers, cosDir }))
     .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+// `0135`. A unit's metadata as its files carry it, read by the parsers above and decided on
+// nowhere: `meta` prints it, and the app's import and ingest are its only readers. `status`
+// is `null` unless `raw`, the word read, is one the artifact may carry. `only` narrows it to
+// the artifacts an ingest saw change; `type`, `links` and `holds` come with `intent.md`.
+export function unitMeta(dir, only = null) {
+  const artifacts = {}
+  const answers = []
+  let intentText = null
+  for (const file of ARTIFACTS) {
+    if (only && !only.includes(file)) continue
+    const path = join(dir, file)
+    if (!existsSync(path)) continue
+    const text = readFileSync(path, 'utf8')
+    const raw = parseStatus(text)
+    artifacts[file] = {
+      status: raw !== null && VALID[file].includes(raw) ? raw : null,
+      raw,
+      sha256: createHash('sha256').update(text).digest('hex'),
+      questions: parseQuestions(text),
+    }
+    answers.push(...parseAnswers(text).map((a) => ({ artifact: file, ...a })))
+    if (file === 'intent.md') intentText = text
+  }
+  const meta = { artifacts, answers }
+  if (intentText !== null) Object.assign(meta, { type: parseType(intentText), links: parseLinks(intentText), holds: holdBlocks(intentText) })
+  return meta
 }
 
 // --- one idea, several units, several repositories (`0040`) -------------------
@@ -2935,6 +2975,35 @@ function cmdScreens(unitName, cosDir, repoDir) {
   return 0
 }
 
+// `0135`. `unitMeta` as JSON: every directory under `.cos/` but `ideas/`, whatever its name,
+// and the ideas; or one unit, and only the artifacts named. Writes nothing and decides
+// nothing. Exit 2 is misuse: a unit that is not a directory there, or a file no stage writes.
+function cmdMeta(unitName, files, cosDir) {
+  if (unitName === undefined) {
+    const units = {}
+    if (existsSync(cosDir)) {
+      for (const e of readdirSync(cosDir, { withFileTypes: true })) {
+        if (e.isDirectory() && e.name !== IDEAS) units[e.name] = unitMeta(join(cosDir, e.name))
+      }
+    }
+    const ideas = existsSync(join(cosDir, IDEAS)) ? readIdeas(cosDir) : null
+    console.log(JSON.stringify({ units, ideas }))
+    return 0
+  }
+  const dir = join(cosDir, unitName)
+  if (/[\\/]/.test(unitName) || unitName === '.' || unitName === '..' || unitName === IDEAS || !existsSync(dir)) {
+    console.error(`No such work unit: ${unitName}`)
+    return 2
+  }
+  const stray = files.filter((f) => !ARTIFACTS.includes(f))
+  if (stray.length) {
+    console.error(`not an artifact: ${stray.join(', ')} — use ${ARTIFACTS.join(', ')}`)
+    return 2
+  }
+  console.log(JSON.stringify({ units: { [unitName]: unitMeta(dir, files.length ? files : null) } }))
+  return 0
+}
+
 // Today on this machine's calendar, `YYYY-MM-DD` — the date the app's own blocks carry.
 function localDate(d = new Date()) {
   const pad = (n) => String(n).padStart(2, '0')
@@ -3061,6 +3130,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     'pr-text': () => cmdPrText(rest[0], cosDir),
     rerun: () => cmdRerun(rest[0], rest[1], cosDir, limit),
     screens: () => cmdScreens(rest[0], cosDir, repoDir),
+    meta: () => cmdMeta(rest[0], rest.slice(1), cosDir),
     'check-branch': () => cmdCheckBranch(rest[0]),
     'check-tag': () => cmdCheckTag(rest[0]),
     'check-version': () => cmdCheckVersion(),
@@ -3069,7 +3139,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!run) {
     console.error('usage: cos.mjs [--root <dir>] <command>')
     console.error('  reading a .cos/ (these take --root):')
-    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>]')
+    console.error('    status [--json] | gate <unit> <stage> [--repo <dir>] | next <unit> [--repo <dir>] | new-path [--reserve-from <dir>]... <slug> | new-idea <slug> | unit-branch <unit> | pr-text <unit> | rerun <unit> [<stage>] | screens <unit> [--repo <dir>] | meta [<unit> [<artifact>]...]')
     console.error('    status, gate and next also take --peer <ws>=<dir>, once per workspace')
     console.error('  describing this checkout (these do not):')
     console.error('    check-branch [name] | check-tag <tag> | check-version')
