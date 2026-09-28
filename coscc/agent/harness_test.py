@@ -38,6 +38,7 @@ RUNNABLE = (
     # Committed rather than generated, unlike the four above, and checked anyway: an
     # installed copy cannot tell how a missing file came to be missing (`0013` step 8).
     "coscc/units/states.json",
+    "coscc/units/lanes.json",
     "coscc/agent/models.json",
     "coscc/agent/agents.json",
     # `0068` R1: the commit the board shows is read from here.

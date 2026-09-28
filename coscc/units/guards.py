@@ -1,0 +1,234 @@
+"""Every guard of the three machines `0136` puts in scope, as pure functions.
+
+`.cos/0136_transitions-are-decided-by-parsing-prose` R1: each transition of the unit, the run
+and the pull request is decided by exactly one guard, and each guard has an id fixed here and
+a one-sentence English label. The lane config (`coscc/units/lanes.json`, loaded by
+`coscc/units/states.py`) chooses a guard for each transition from `TRANSITIONS` below; it can
+choose, never switch one off.
+
+A guard reads structured input — rows of `cos.db`, a read of git or `gh` — and nothing else.
+It never opens a file an agent wrote: that is the whole point of the unit, and
+`coscc/units/no_prose_decides_test.py` is what keeps it so once the parsers are gone.
+
+`REASONS` is the one definition of the reason codes (R11). A guard that answers a code not in
+it is refused at the answer, not at the reader, so a typo cannot reach the autopilot.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Any
+
+# R11. The closed table. The first group is the `why` column `cos.mjs next` already writes
+# (`guards_test.py` reads every one back out of it); the second is what R11 and R22 add;
+# the third is what the guards below refuse with.
+REASONS = (
+    # `cos.mjs next`'s `why`, and a hold's move.
+    "dependency", "unreadable", "finished", "paused", "dropped", "needs-person",
+    "spike-fails", "spike-missing", "missing", "rejected", "stale", "review-incomplete",
+    "ship-refused", "draft", "awaits-person", "person-answered", "changes-requested",
+    # R11, R22.
+    "ci-pending", "ci-red", "ci-unfixable", "waiting-on", "recording-ship", "closed",
+    "overlap-pr", "needs-idea",
+    # The guards' own refusals.
+    "wrong-run", "stale-revision", "no-head", "head-moved", "not-open-finding",
+    "agent-cannot-skip", "no-submission", "bad-branch", "not-merged", "not-closed",
+)
+
+# R14's vocabulary for who may skip a stage. `agent` and `code` never may.
+DECIDERS = ("person", "delegated")
+
+
+class BadVerdict(ValueError):
+    """A guard answered a reason code `REASONS` does not hold."""
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """`open`, or closed with the codes that closed it. Never closed with none."""
+
+    open: bool
+    reasons: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        unknown = [r for r in self.reasons if r not in REASONS]
+        if unknown:
+            raise BadVerdict(f"not a reason code: {', '.join(unknown)}")
+        if not self.open and not self.reasons:
+            raise BadVerdict("a closed verdict names at least one reason")
+
+
+OPEN = Verdict(True)
+
+
+def _closed(*reasons: str) -> Verdict:
+    return Verdict(False, tuple(dict.fromkeys(reasons)))
+
+
+@dataclass(frozen=True)
+class Guard:
+    id: str
+    label: str
+    check: Callable[[Mapping[str, Any]], Verdict]
+
+
+def _same_run(inputs: Mapping[str, Any]) -> bool:
+    """R3 a: the object came from the run the app has open for this unit and stage."""
+    run = str(inputs.get("run") or "")
+    return bool(run) and run == str(inputs.get("open_run") or "")
+
+
+def stage_result(inputs: Mapping[str, Any]) -> Verdict:
+    """`run`, `open_run`; `revision` as submitted and `computed_revision` as the app took it."""
+    reasons = []
+    if not _same_run(inputs):
+        reasons.append("wrong-run")
+    revision = str(inputs.get("revision") or "")
+    if not revision or revision != str(inputs.get("computed_revision") or ""):
+        reasons.append("stale-revision")
+    return _closed(*reasons) if reasons else OPEN
+
+
+def review_round(inputs: Mapping[str, Any]) -> Verdict:
+    """`run`, `open_run`; `head`, the SHA the app recorded when the review run opened (R3 c)."""
+    reasons = []
+    if not _same_run(inputs):
+        reasons.append("wrong-run")
+    if not str(inputs.get("head") or ""):
+        reasons.append("no-head")
+    return _closed(*reasons) if reasons else OPEN
+
+
+def impl_claim(inputs: Mapping[str, Any]) -> Verdict:
+    """`claims`, the `F<k>` ids; `open_findings`, the open ids of the last round (R6)."""
+    open_ids = set(inputs.get("open_findings") or ())
+    if any(c not in open_ids for c in inputs.get("claims") or ()):
+        return _closed("not-open-finding")
+    return OPEN
+
+
+def skip_decision(inputs: Mapping[str, Any]) -> Verdict:
+    """`authority` of the decision to skip spec or plan (R14)."""
+    return OPEN if inputs.get("authority") in DECIDERS else _closed("agent-cannot-skip")
+
+
+def spike_holds(inputs: Mapping[str, Any]) -> Verdict:
+    """`unmeasured`, the spec's `U<n>`; `verdicts`, `{U<n>: "holds" | "fails"}` from the spike."""
+    verdicts = inputs.get("verdicts") or {}
+    reasons = []
+    for u in inputs.get("unmeasured") or ():
+        if u not in verdicts:
+            reasons.append("spike-missing")
+        elif verdicts[u] != "holds":
+            reasons.append("spike-fails")
+    return _closed(*reasons) if reasons else OPEN
+
+
+def dependency_merged(inputs: Mapping[str, Any]) -> Verdict:
+    """`depends`, `[{ref, merged}]` with `merged` read from the PR/CI machine (R10)."""
+    if any(not d.get("merged") for d in inputs.get("depends") or ()):
+        return _closed("waiting-on")
+    return OPEN
+
+
+def ship_ready(inputs: Mapping[str, Any]) -> Verdict:
+    """`ci` at `head`; `reviewed_head`, the head the last passing round recorded; `verdict` of
+    that round; `head`, the one this guard itself read, which the merge is pinned to (R10)."""
+    ci = inputs.get("ci")
+    reasons = []
+    if ci == "pending" or ci is None:
+        reasons.append("ci-pending")
+    elif ci == "red":
+        reasons.append("ci-red")
+    elif ci == "unfixable":
+        reasons.append("ci-unfixable")
+    verdict = inputs.get("verdict")
+    if verdict == "changes-requested":
+        reasons.append("changes-requested")
+    elif verdict == "needs-person":
+        reasons.append("needs-person")
+    elif verdict != "pass":
+        reasons.append("review-incomplete")
+    head = str(inputs.get("head") or "")
+    if not head:
+        reasons.append("no-head")
+    elif head != str(inputs.get("reviewed_head") or ""):
+        reasons.append("head-moved")
+    return _closed(*reasons) if reasons else OPEN
+
+
+def run_submitted(inputs: Mapping[str, Any]) -> Verdict:
+    """`submitted`: whether the `submit` handler accepted an object during the run (R2)."""
+    return OPEN if inputs.get("submitted") else _closed("no-submission")
+
+
+def branch_named(inputs: Mapping[str, Any]) -> Verdict:
+    """`branch_ok`: what `cos.mjs check-branch` said of the unit's branch (R12)."""
+    return OPEN if inputs.get("branch_ok") else _closed("bad-branch")
+
+
+def ci_at_head(inputs: Mapping[str, Any]) -> Verdict:
+    """`head` the machine holds; `read_head`, the head the checks were read at."""
+    head = str(inputs.get("head") or "")
+    return OPEN if head and head == str(inputs.get("read_head") or "") else _closed("head-moved")
+
+
+def merge_read(inputs: Mapping[str, Any]) -> Verdict:
+    """`merge_commit`, as `gh pr view --json state,mergeCommit` gave it (R13)."""
+    return OPEN if str(inputs.get("merge_commit") or "") else _closed("not-merged")
+
+
+def close_read(inputs: Mapping[str, Any]) -> Verdict:
+    """`state`, as `gh pr view` gave it."""
+    return OPEN if inputs.get("state") == "CLOSED" else _closed("not-closed")
+
+
+GUARDS: dict[str, Guard] = {
+    g.id: g
+    for g in (
+        Guard("stage-result", "A stage's artifact takes the judgement its own run submitted about the revision the app read.", stage_result),
+        Guard("review-round", "A review round counts only from the run that reviewed the head the app recorded.", review_round),
+        Guard("impl-claim", "Impl may claim a person is needed only for an open finding of the last round.", impl_claim),
+        Guard("skip-decision", "Spec or plan is skipped only on the decision of a person or their delegate.", skip_decision),
+        Guard("spike-holds", "Plan opens only once every unmeasured item of the spec has a spike verdict of holds.", spike_holds),
+        Guard("dependency-merged", "Impl opens only once every unit it depends on has merged.", dependency_merged),
+        Guard("ship-ready", "Ship opens only on green CI and a passing review of the very head being merged.", ship_ready),
+        Guard("run-submitted", "A run ends done only once the app has received its object.", run_submitted),
+        Guard("branch-named", "A pull request is opened only from a branch the harness's grammar accepts.", branch_named),
+        Guard("ci-at-head", "CI moves only on a read of the required checks at the head the machine holds.", ci_at_head),
+        Guard("merge-read", "A merge is recorded only from a read that names its merge commit.", merge_read),
+        Guard("close-read", "A pull request is closed only on a read that says it is closed.", close_read),
+    )
+}
+
+# R1. Each machine's transitions, and the guards the lane config may choose from for each.
+# A config must name one for every transition here; it cannot leave one out.
+TRANSITIONS: dict[str, dict[str, tuple[str, ...]]] = {
+    "unit": {
+        "result": ("stage-result",),
+        "round": ("review-round",),
+        "claim": ("impl-claim",),
+        "skip": ("skip-decision",),
+        "plan": ("spike-holds",),
+        "impl": ("dependency-merged",),
+        "ship": ("ship-ready",),
+    },
+    "run": {
+        "submitted": ("run-submitted",),
+    },
+    "pr": {
+        "open": ("branch-named",),
+        "ci": ("ci-at-head",),
+        "merge-requested": ("ship-ready",),
+        "merged": ("merge-read",),
+        "closed": ("close-read",),
+    },
+}
+
+
+def guard(guard_id: str) -> Guard:
+    try:
+        return GUARDS[guard_id]
+    except KeyError:
+        raise KeyError(f"no guard {guard_id!r}; there are {', '.join(GUARDS)}") from None
