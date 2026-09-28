@@ -1,30 +1,38 @@
-"""`coscc knowledge baseline` and `coscc knowledge measure`: did the store make planning cheaper?
+"""`coscc knowledge measure`: did the store make a unit take fewer turns?
 
-`0090_agents-relearn-what-earlier-units-already-knew` R15-R17, and `spec.md ## Answers`,
-câu 8, 9 and 10. Both read `cos.db` with `sqlite3` in `mode=ro`, as `scripts/verify_0093.py`
-does, and the store's own three files; they import nothing of the web app. Run them at a
-terminal: inside a step `cos.db` is a tripwire (`.claude/rules/coscc-sessions.md`).
+`0131_the-knowledge-store-goes-stale-after-one-gather` R20-R23, a holdout like `0123`'s: while
+`COS_KNOWLEDGE` is on every unit is in the `on` or the `off` arm (`knowledge.arm`), and every
+`start` it runs says which (`knowledge.TRIAL_FIELD`). `measure` compares the two arms over every
+stage, from the arm the records carry, never worked out again from a name. It replaces
+`0090`'s before-and-after against a baseline, which is gone with `baseline.json`.
+
+It reads `cos.db` with `sqlite3` in `mode=ro`, as `scripts/verify_0093.py` does, and imports
+nothing of the web app; the Knowledge page calls `measure` on the same rows, without the fetch
+`run_measure` makes first (R11). Run it at a terminal: inside a step `cos.db` is a tripwire
+(`.claude/rules/coscc-sessions.md`).
 
 The fields read here are the ones `coscc/runner/__init__.py` and `coscc/knowledge/gather.py` write, by the
-names in `coscc/knowledge/__init__.py` and `coscc/knowledge/gather.py`: rename one there and this reads
-nothing, silently (`.claude/rules/coscc-data.md`), which `coscc/knowledge/measure_test.py` guards by
-writing its fixture through the same names.
+names in `coscc/knowledge/__init__.py`, `coscc/knowledge/efforttrial.py` and `coscc/knowledge/gather.py`:
+rename one there and this reads nothing, silently (`.claude/rules/coscc-data.md`), which
+`coscc/knowledge/measure_test.py` guards by writing its fixture through the same names.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
+import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from coscc import knowledge, units
-from coscc.knowledge import gather
+from coscc.knowledge import efforttrial, gather
 
-# `intent.md`: 10 units a side, 20% cheaper by 2026-10-16. The day is read in UTC (plan
-# Risk 9), and `spec.md ## Answers, câu 10`: the date does not move by itself.
+# `intent.md ## Answers`, câu 5 and 6: 10 units a side, 20% fewer turns, by 2026-10-16 read
+# in UTC, and no more cost, changes-requested rounds or red-CI returns.
 GROUP = 10
 TARGET = 0.20
 DEADLINE = "2026-10-16"
@@ -34,6 +42,11 @@ DEFAULT_WORKSPACE = "coscc"
 PASS, FAIL, SHORT = "đạt", "không đạt", "chưa đủ mẫu"
 CHANGES_REQUESTED = "changes-requested"
 KINDS = ("start", "end", gather.KIND)
+ARMS = (knowledge.ON, knowledge.OFF)
+# R21: the first two compared by median, the last two by mean.
+METRICS = ("turns", "usd", "changes_requested", "ci_red")
+# R21, C4: the gathers whose cost is the `on` arm's.
+GATHER_MODES = ("unit", "new")
 
 
 class Refused(Exception):
@@ -118,155 +131,131 @@ def units_of(rows: list[dict[str, Any]], slot: str) -> dict[str, dict[str, Any]]
     return out
 
 
-def _entries(start: dict[str, Any]) -> int:
-    field = start.get("knowledge")
-    if not isinstance(field, dict):
-        return 0
+def _number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _utc_day(at: Any) -> str:
+    """The UTC day of an `at`, `""` when it does not read."""
     try:
-        return int(field.get("entries") or 0)
-    except (TypeError, ValueError):
-        return 0
+        dt = datetime.fromisoformat(str(at or "").replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).date().isoformat()
 
 
-def state(unit: dict[str, Any]) -> str:
-    """`off`: no `start` of `spec`, `spike` or `plan` carries `knowledge`. `on`: every one
-    carries it with `entries > 0`. `mixed`: anything else (R16)."""
-    starts = [r for r in unit["starts"] if r.get("stage") in knowledge.STAGES]
-    if not any("knowledge" in r for r in starts):
-        return "off"
-    if starts and all(_entries(r) > 0 for r in starts):
-        return "on"
-    return "mixed"
+def arm_of(start: dict[str, Any]) -> str | None:
+    field = start.get(knowledge.TRIAL_FIELD)
+    return field.get("arm") if isinstance(field, dict) else None
 
 
-def pick_baseline(rows: list[dict[str, Any]], slot: str) -> list[dict[str, str]]:
-    """R15. The last `GROUP` units, by when `plan` was done, that ran with the flag off."""
-    found = units_of(rows, slot)
-    done = sorted(
-        ((u["plan_done_at"], name) for name, u in found.items() if u["plan_done_at"] and state(u) == "off"),
-    )
-    return [{"unit": name, "plan_done_at": at} for at, name in done[-GROUP:]]
+def _shipped_at(unit: dict[str, Any]) -> str | None:
+    """The `at` of the last `end` of `ship` that is `done`."""
+    found = [str(e.get("at") or "") for e in unit["ends"] if e.get("stage") == "ship" and e.get("outcome") == "done"]
+    return max(found) if found else None
 
 
-def _money(value: float) -> float:
-    return round(value, 6)
+def failed(unit: dict[str, Any]) -> list[int]:
+    """Every one of R20's three conditions `unit` fails, by number."""
+    out = []
+    arms = {arm_of(s) for s in unit["starts"]}
+    if len(arms) != 1 or not arms <= set(ARMS):
+        out.append(1)
+    shipped = _shipped_at(unit)
+    if not shipped or not _utc_day(shipped) or _utc_day(shipped) > DEADLINE:
+        out.append(2)
+    if not unit["ends"] or not all(_number(e.get("turns")) and _number(e.get("cost_usd")) for e in unit["ends"]):
+        out.append(3)
+    return out
 
 
-def group(found: dict[str, dict[str, Any]], names: list[str]) -> dict[str, Any]:
-    """R16, R17 for one side."""
-    cost, unknown, spikes = 0.0, 0, 0
-    reviewed, requested = 0, 0
-    for name in names:
-        u = found.get(name) or {"starts": [], "ends": []}
-        for e in u["ends"]:
-            if e.get("stage") in knowledge.STAGES:
-                value = e.get("cost_usd")
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    cost += float(value)
-                else:
-                    unknown += 1
-        spikes += sum(1 for s in u["starts"] if s.get("stage") == "spike")
-        # `spec.md ## Answers, câu 8`: only units that have had at least one round count.
-        rounds = [v for e in u["ends"] if e.get("stage") == "review" and isinstance(e.get("verdicts"), list)
-                  for v in e["verdicts"]]
-        if any(e.get("stage") == "review" and isinstance(e.get("verdicts"), list) for e in u["ends"]):
-            reviewed += 1
-            requested += sum(1 for v in rounds if v == CHANGES_REQUESTED)
-    n = len(names)
+def metrics(unit: dict[str, Any]) -> dict[str, Any]:
+    """R21, over every stage."""
     return {
-        "units": list(names),
-        "n": n,
-        "cost_usd": _money(cost),
-        "cost_unknown": unknown,
-        "cost_per_unit": _money(cost / n) if n else None,
-        "spikes_per_unit": round(spikes / n, 4) if n else None,
-        "review": {"n": reviewed, "changes_requested_per_unit": round(requested / reviewed, 4) if reviewed else None},
+        "turns": sum(e["turns"] for e in unit["ends"]),
+        "usd": round(sum(float(e["cost_usd"]) for e in unit["ends"]), 6),
+        "changes_requested": sum(
+            1 for e in unit["ends"] if e.get("stage") == "review" and isinstance(e.get("verdicts"), list)
+            for v in e["verdicts"] if v == CHANGES_REQUESTED
+        ),
+        "ci_red": sum(1 for s in unit["starts"]
+                      if s.get("stage") == "impl" and s.get(efforttrial.CI_RED) is True),
     }
 
 
-def _reduction(off: float | None, on: float | None) -> float | None:
-    if off is None or on is None or off <= 0:
-        return None
-    return round(1 - on / off, 4)
+def _side(each: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    names = sorted(each)
+    return {
+        "n": len(names),
+        "units": names,
+        "median": {m: (statistics.median(v[m] for v in each.values()) if names else None) for m in METRICS},
+        "mean": {m: (round(statistics.mean(v[m] for v in each.values()), 4) if names else None) for m in METRICS},
+    }
 
 
-def measure(rows: list[dict[str, Any]], baseline: dict[str, Any], today: str | None = None) -> dict[str, Any]:
-    """R16, R17 and `## Answers` câu 8-10. Raises `Refused` when the baseline was written after
-    the first step that carried the store."""
-    slot = str(baseline.get("workspace") or "")
-    of = _slot_of()
-    flagged = [
-        str(r.get("at") or "") for r in rows
-        if r.get("kind") == "start" and of(str(r.get("workspace") or "")) == slot and _entries(r) > 0
-    ]
-    first_on = min(flagged) if flagged else None
-    written = str(baseline.get("written_at") or "")
-    if first_on is not None and written > first_on:
-        raise Refused(
-            f"the baseline was written at {written}, after the first step that carried the store "
-            f"({first_on}): it has to be chosen before the flag is turned on"
-        )
-
+def measure(rows: list[dict[str, Any]], slot: str, today: str | None = None) -> dict[str, Any]:
+    """R20-R22 over one workspace's records, pure: what `run_measure` prints and the Knowledge
+    page shows, but for `origin_main` and `health`, which only the command reads."""
     found = units_of(rows, slot)
-    off_names = [str(u.get("unit")) for u in baseline.get("units") or []]
-    on_all = sorted(
-        (u["plan_done_at"], name) for name, u in found.items()
-        if u["plan_done_at"] and state(u) == "on" and u["plan_done_at"][:10] <= DEADLINE
-    )
-    on_names = [name for _, name in on_all[:GROUP]]
-    mixed = sorted(name for name, u in found.items() if u["plan_done_at"] and state(u) == "mixed")
-    off, on = group(found, off_names), group(found, on_names)
+    each: dict[str, dict[str, dict[str, Any]]] = {arm: {} for arm in ARMS}
+    excluded = []
+    window: list[str] = []
+    for name in sorted(found):
+        unit = found[name]
+        # Before the flag: in no arm, and not listed either.
+        if not any(knowledge.TRIAL_FIELD in s for s in unit["starts"]):
+            continue
+        why = failed(unit)
+        if why:
+            excluded.append({"unit": name, "failed": why})
+            continue
+        each[arm_of(unit["starts"][0])][name] = metrics(unit)
+        window += [min(str(s.get("at") or "") for s in unit["starts"]), str(_shipped_at(unit))]
+    on, off = _side(each[knowledge.ON]), _side(each[knowledge.OFF])
 
-    # `## Answers, câu 9`: gathering in the window is the flag's cost; the backfill is not.
-    window = None
-    gathered = 0.0
-    if on_names:
-        begin = min(str(s.get("at") or "") for n in on_names for s in found[n]["starts"]
-                    if s.get("stage") in knowledge.STAGES)
-        end = max(found[n]["plan_done_at"] for n in on_names)
-        window = {"from": begin, "to": end}
-        gathered = sum(
-            float(r.get("cost_usd") or 0.0) for r in rows
-            if r.get("kind") == gather.KIND and r.get("mode") == "new" and begin <= str(r.get("at") or "") <= end
-        )
-    backfill = sum(float(r.get("cost_usd") or 0.0) for r in rows
-                   if r.get("kind") == gather.KIND and r.get("mode") == "all")
-    on_with = _money((on["cost_usd"] + gathered) / on["n"]) if on["n"] else None
-    reduction = _reduction(off["cost_per_unit"], on["cost_per_unit"])
-    reduction_with = _reduction(off["cost_per_unit"], on_with)
-    saving = (off["cost_per_unit"] - on_with) if off["cost_per_unit"] is not None and on_with is not None else None
-    if saving is None:
-        even, even_why = None, "a side has no unit"
-    elif saving <= 0:
-        even, even_why = None, f"the flag saves nothing per unit ({_money(saving)} USD)"
-    else:
-        even, even_why = round(backfill / saving, 2), ""
+    # C4: what gathering cost while the counted units ran is the `on` arm's, per `on` unit.
+    begin, end = (min(window), max(window)) if window else ("", "")
+    gathered = round(sum(
+        float(r["cost_usd"]) for r in rows
+        if r.get("kind") == gather.KIND and r.get("mode") in GATHER_MODES and _number(r.get("cost_usd"))
+        and window and begin <= str(r.get("at") or "") <= end
+    ), 6)
+    share = round(gathered / on["n"], 6) if on["n"] else None
+    usd_on = round(on["median"]["usd"] + share, 6) if on["n"] else None
 
-    if off["n"] < GROUP or on["n"] < GROUP or not off["review"]["n"] or not on["review"]["n"]:
+    reduction = None
+    if on["n"] and off["n"] and off["median"]["turns"] > 0:
+        reduction = round(1 - on["median"]["turns"] / off["median"]["turns"], 4)
+    if on["n"] < GROUP or off["n"] < GROUP:
         verdict = SHORT
-    elif (reduction_with is not None and reduction_with >= TARGET
-          and on["review"]["changes_requested_per_unit"] <= off["review"]["changes_requested_per_unit"]):
+    elif (reduction is not None and reduction >= TARGET and usd_on <= off["median"]["usd"]
+          and all(on["mean"][m] <= off["mean"][m] for m in ("changes_requested", "ci_red"))):
         verdict = PASS
     else:
         verdict = FAIL
+    # C1: how the effort trial's arms fall across these, worked out from the name, since that
+    # flag may be off and its field absent.
+    crosstab = {arm: {e: 0 for e in (efforttrial.TRIAL_ARM, efforttrial.CONTROL_ARM)} for arm in ARMS}
+    for arm in ARMS:
+        for name in each[arm]:
+            crosstab[arm][efforttrial.arm(name)] += 1
     today = today or _now()[:10]
     return {
         "workspace": slot,
-        "baseline_written_at": written,
         "deadline": DEADLINE,
         "timezone": TIMEZONE,
         "past_deadline": today > DEADLINE,
         "target": TARGET,
-        "off": off,
+        "group": GROUP,
         "on": on,
-        "mixed": mixed,
+        "off": off,
         "reduction": reduction,
-        "window": window,
-        "gather_cost_usd": _money(gathered),
-        "reduction_with_gather": reduction_with,
-        "backfill_cost_usd": _money(backfill),
-        "break_even_units": even,
-        **({"break_even_reason": even_why} if even_why else {}),
+        "window": {"from": begin, "to": end} if window else None,
+        "gather_cost_usd": gathered,
+        "gather_per_on_unit": share,
+        "usd_on_with_gather": usd_on,
+        "crosstab": crosstab,
+        "excluded": excluded,
         "verdict": verdict,
     }
 
@@ -277,53 +266,53 @@ def _db(data_dir: str | os.PathLike[str] | None) -> Path:
     return Data(data_dir).db_path
 
 
-def run_baseline(data_dir: str | os.PathLike[str] | None, wanted: str | None,
-                 say: Callable[[str], None] = print) -> int:
-    path = knowledge.path_of(data_dir) / knowledge.BASELINE
-    if path.exists():
-        say(f"coscc knowledge baseline: {path} already exists, and a baseline is never overwritten")
-        return 2
-    db = _db(data_dir)
-    if not db.is_file():
-        say(f"coscc knowledge baseline: no {db}")
-        return 1
-    rows = read_rows(db)
-    try:
-        slot = choose(rows, wanted)
-    except Refused as e:
-        say(f"coscc knowledge baseline: {e}")
-        return 2
-    picked = pick_baseline(rows, slot)
-    record = {"written_at": _now(), "workspace": slot, "n": len(picked), "units": picked}
-    knowledge.save(path, json.dumps(record, indent=2, ensure_ascii=False) + "\n")
-    say(f"coscc knowledge baseline: {len(picked)} unit(s) of {slot} written to {path}"
-        + ("" if len(picked) >= GROUP else f" — fewer than {GROUP}"))
-    return 0
-
-
 def run_measure(data_dir: str | os.PathLike[str] | None, wanted: str | None,
                 say: Callable[[str], None] = print) -> int:
-    path = knowledge.path_of(data_dir) / knowledge.BASELINE
-    try:
-        baseline = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        say(f"coscc knowledge measure: no baseline at {path} — run `coscc knowledge baseline` "
-            "before turning COS_KNOWLEDGE on")
-        return 2
-    except ValueError as e:
-        say(f"coscc knowledge measure: {path} is not JSON: {e}")
-        return 1
-    if wanted and wanted != baseline.get("workspace"):
-        say(f"coscc knowledge measure: the baseline is of {baseline.get('workspace')}, not {wanted}")
-        return 2
+    """R22. Fetches the workspace's `origin/main` first, checks the store on it and writes
+    `knowledge.HEALTH`, then prints the measure with both. A fetch that fails is `1`, and no
+    verdict is printed (R11)."""
+    from coscc.knowledge import admit
+
     db = _db(data_dir)
     if not db.is_file():
         say(f"coscc knowledge measure: no {db}")
         return 1
     try:
-        result = measure(read_rows(db), baseline)
+        rows = read_rows(db)
+    except sqlite3.Error as e:
+        say(f"coscc knowledge measure: the run log cannot be read: {e}")
+        return 2
+    try:
+        slot = choose(rows, wanted)
     except Refused as e:
         say(f"coscc knowledge measure: {e}")
         return 2
+    path = admit.workspaces([r for r in rows if r.get("kind") == "end"]).get(slot)
+    if not path:
+        say(f"coscc knowledge measure: no run of {slot} names a directory there now, so its origin/main "
+            "cannot be fetched; no verdict")
+        return 1
+    try:
+        sha = asyncio.run(admit.fresh_main(path))
+    except admit.GitError as e:
+        say(f"coscc knowledge measure: no verdict: {e}")
+        return 1
+    try:
+        text = knowledge.load(knowledge.path_of(data_dir) / knowledge.STORE)
+    except FileNotFoundError:
+        text = ""
+    except (OSError, UnicodeDecodeError) as e:
+        say(f"coscc knowledge measure: the store cannot be read: {type(e).__name__}: {e}")
+        return 2
+    entries = knowledge.for_workspace(knowledge.parse(text)["entries"], slot)
+    try:
+        found = admit.health(entries, {slot: path}, admit.Reader("origin/main"))
+    except admit.GitError as e:
+        say(f"coscc knowledge measure: {e}")
+        return 2
+    admit.save_health(data_dir, {slot: sha}, found)
+    result = measure(rows, slot)
+    result["origin_main"] = sha
+    result["health"] = {"entries": len(found), "broken": {k: v for k, v in sorted(found.items()) if v}}
     say(json.dumps(result, indent=2, ensure_ascii=False))
     return 0

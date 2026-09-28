@@ -3,6 +3,7 @@ repository built here with fixed dates. Nothing here opens a session."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import tempfile
@@ -11,6 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc import knowledge, units
+from coscc.git import fetches
 from coscc.knowledge import admit
 from coscc.runlog.journal import Journal
 
@@ -23,7 +25,8 @@ def lock(**versions: str) -> str:
 
 def make_repo(path: Path, *commits: tuple[str, dict[str, str]]) -> Path:
     """A repository at `path` whose `main` holds one commit per `(ISO date, {file: text})`,
-    committed at that date, each on top of the last."""
+    committed at that date, each on top of the last. `origin/main` is left where `main` is,
+    as a fetch that `no_fetch` stands in for would leave it (`0131` R11)."""
     path.mkdir(parents=True)
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(path), "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
@@ -40,7 +43,27 @@ def make_repo(path: Path, *commits: tuple[str, dict[str, str]]) -> Path:
         git("add", "-A")
         git("-c", "commit.gpgsign=false", "commit", "-q", "-m", when,
             GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+    if commits:
+        git("update-ref", "refs/remotes/origin/main", "main")
     return path
+
+
+async def _fetched(path, remote, branch) -> str:
+    return ""
+
+
+def no_fetch():
+    """A patch of `fetches.shared` under which every fetch succeeds and moves nothing."""
+    return mock.patch.object(fetches, "shared", fetches.Fetches(run=_fetched))
+
+
+async def _unreachable(path, remote, branch) -> str:
+    raise fetches.GitError("fatal: could not read from remote repository")
+
+
+def failing_fetch():
+    """A patch of `fetches.shared` under which every fetch fails."""
+    return mock.patch.object(fetches, "shared", fetches.Fetches(run=_unreachable))
 
 
 OLD = "2026-09-01T00:00:00+00:00"
@@ -119,6 +142,37 @@ class DatesAndPins(Fixture):
         self.assertFalse(git.ref_exists(str(self.repo), "coscc/knowledge/gather.py::batch")[0])
         self.assertFalse(git.ref_exists(str(self.repo), "coscc/knowledge/admit.py")[0])
 
+    def test_spec_and_plan_are_dated_by_their_stage(self):
+        # `0131` R3, Design 2.
+        spec, plan = self.source("0001_a", "spec.md"), self.source("0001_a", "plan.md")
+        self.journal.finished(str(self.repo), "0001_a", "spec", "done", at="2026-09-21T00:00:00+00:00")
+        self.journal.finished(str(self.repo), "0001_a", "plan", "done", at="2026-09-22T00:00:00+00:00")
+        self.journal.finished(str(self.repo), "0001_a", "spike", "done", at="2026-09-23T00:00:00+00:00")
+        dates = admit.date_sources(self.journal.records(kind="end"), [spec, plan])
+        self.assertEqual((dates[spec["label"]]["date"], dates[plan["label"]]["date"]), ("2026-09-21", "2026-09-22"))
+
+    def test_ref_exists_reads_the_ref_it_is_given(self):
+        # `0131` R11: `origin/main` is a ref of its own; `main` moving past it changes nothing.
+        subprocess.run(["git", "-C", str(self.repo), "rm", "-q", "coscc/knowledge/gather.py"], check=True,
+                       capture_output=True)
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@example.com",
+                        "-c", "commit.gpgsign=false", "commit", "-q", "-m", "gone"], check=True, capture_output=True)
+        on_main, on_origin = admit.Reader(), admit.Reader("origin/main")
+        self.assertEqual(on_main.ref_exists(str(self.repo), "coscc/knowledge/gather.py"),
+                         (False, "coscc/knowledge/gather.py is not on main"))
+        self.assertEqual(on_origin.ref_exists(str(self.repo), "coscc/knowledge/gather.py::batches"), (True, ""))
+        self.assertEqual(on_origin.ref_exists(str(self.repo), "coscc/knowledge/gather.py::gone"),
+                         (False, "gone is not in coscc/knowledge/gather.py on origin/main"))
+
+    def test_fresh_main_raises_when_the_fetch_fails(self):
+        with failing_fetch():
+            with self.assertRaises(admit.GitError) as failed:
+                asyncio.run(admit.fresh_main(str(self.repo)))
+        self.assertIn("could not read from remote repository", str(failed.exception))
+        with no_fetch():
+            sha = asyncio.run(admit.fresh_main(str(self.repo)))
+        self.assertEqual(sha, admit._git(str(self.repo), "rev-parse", "main").strip())
+
     def test_no_git_on_path_is_an_error_not_an_answer(self):
         with mock.patch.dict("os.environ", {"PATH": str(self.root)}):
             self.assertFalse(admit.git_runs())
@@ -196,9 +250,8 @@ class Admit(Fixture):
         good = entry(1, scope, self.label(s), refs=("coscc/knowledge/gather.py::batches",))
         bad = entry(2, scope, self.label(s), refs=("coscc/knowledge/gather.py", "coscc/gone.py"))
         bare = entry(3, scope, self.label(s))
-        tools = [entry(n, "tool:python", self.label(s)) for n in (4, 5, 6)]
-        kept, dropped = admit.admit([good, bad, bare, *tools], [], ctx)
-        self.assertEqual([e["id"] for e in kept], [1, 4, 5, 6])
+        kept, dropped = admit.admit([good, bad, bare], [], ctx)
+        self.assertEqual([e["id"] for e in kept], [1])
         self.assertEqual(dropped, [{"id": "K2", "reason": "ref-missing"}, {"id": "K3", "reason": "ref-missing"}])
         self.assertIn("Ref: coscc/knowledge/gather.py::batches", kept[0]["text"])
 
@@ -217,24 +270,33 @@ class Admit(Fixture):
         e = entry(1, "tool:python", self.label(s), statement="w" * (knowledge.ENTRY_BYTES - 80))
         self.assertEqual(admit.admit([e], [], self.dated(s))[1], [{"id": "K1", "reason": "too-big"}])
 
-    def test_the_share_of_tool_entries_drops_the_oldest_workspace_entries_first(self):
-        s = self.source("0001_a")
-        ctx = self.dated(s)
-        scope, ref = f"workspace:{self.slot}", ("coscc/knowledge/gather.py",)
-        old = knowledge.parse("\n\n".join(
-            f"## K{n}\nScope: {scope}\nSource: {self.label(s)}\nRef: coscc/knowledge/gather.py\nMeasured: {day}\nOld {n}."
-            for n, day in ((1, "2026-09-20"), (2, "2026-09-10"), (3, "2026-09-10"))))["entries"]
-        new = [entry(4, scope, self.label(s), refs=ref), entry(5, "tool:python", self.label(s)),
-               entry(6, "tool:reflex", self.label(s))]
-        kept, dropped = admit.admit(new, old, ctx)
-        # Four `workspace:` against two `tool:`: K2 and K3 (oldest, lower id first) go.
-        self.assertEqual([e["id"] for e in kept], [1, 4, 5, 6])
-        self.assertEqual(dropped, [{"id": "K2", "reason": "ratio"}, {"id": "K3", "reason": "ratio"}])
+    def test_no_workspace_entry_is_dropped_for_the_share_of_tool_entries(self):
+        # `0131` R6: four `workspace:` entries and no `tool:` one, each of its own unit.
+        found = [self.source(f"000{n}_u{n}") for n in range(1, 5)]
+        ctx = self.dated(*found)
+        new = [entry(n, f"workspace:{self.slot}", self.label(s), refs=("coscc/knowledge/gather.py",))
+               for n, s in enumerate(found, 1)]
+        kept, dropped = admit.admit(new, [], ctx)
+        self.assertEqual(([e["id"] for e in kept], dropped), ([1, 2, 3, 4], []))
 
-    def test_a_store_with_no_tool_entry_keeps_no_workspace_entry(self):
-        s = self.source("0001_a")
-        e = entry(1, f"workspace:{self.slot}", self.label(s), refs=("coscc/knowledge/gather.py",))
-        self.assertEqual(admit.admit([e], [], self.dated(s)), ([], [{"id": "K1", "reason": "ratio"}]))
+    def test_a_unit_that_is_the_only_source_of_three_entries_keeps_its_two_newest(self):
+        # `0131` R5, across the store: two old entries of 0001_a and one new one.
+        s, other = self.source("0001_a"), self.source("0002_b")
+        ctx = self.dated(s, other)
+        old = knowledge.parse("\n\n".join(
+            f"## K{n}\nScope: tool:python 3.14\nSource: {self.label(s)}\nMeasured: {day}\nOld {n}."
+            for n, day in ((1, "2026-09-25"), (2, "2026-09-10"))))["entries"]
+        new = [entry(3, "tool:python", self.label(s)), entry(4, "tool:reflex", self.label(s), self.label(other)),
+               entry(5, "tool:python", self.label(other))]
+        kept, dropped = admit.admit(new, old, ctx)
+        # K1 and K3 are both of 2026-09-25: the newest two, whatever their ids. K2 goes. K4 cites
+        # two units, so it is no one unit's.
+        self.assertEqual([e["id"] for e in kept], [1, 3, 4, 5])
+        self.assertEqual(dropped, [{"id": "K2", "reason": "one-unit"}])
+        # A tie on the date keeps the higher id.
+        three = [entry(n, "tool:python", self.label(s)) for n in (6, 7, 8)]
+        kept, dropped = admit.admit(three, [], ctx)
+        self.assertEqual(([e["id"] for e in kept], dropped), ([7, 8], [{"id": "K6", "reason": "one-unit"}]))
 
     def test_a_git_error_drops_the_entry_it_met_and_says_why(self):
         s = self.source("0001_a")
