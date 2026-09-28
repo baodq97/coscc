@@ -33,6 +33,11 @@ directory, and five units in it, always the same, so a spec can name its address
                            changes and left out F1 of round 1 (`0027`); pr.md names
                            github.com/o/r/pull/2
 
+After them `make_idea_fixture` makes `0006_frontend-calls-api` (`0040`), and since `0135`
+`0007_unread-status` has a spec whose status no stage writes, so `/settings` lists it in
+its import report. Every file is written by hand, then goes into `cos.db` through the
+import and an ingest (`ingest_fixture`), since the board reads a unit from there.
+
 The run log holds, since `0092`, a `spec` run that ended `done` for $0.52 and an `impl` run
 that ended `failed` after 109 turns with no known cost on `0002_open-question`, and an
 `impl` run on `0004_finished` that ended `failed` with neither; since `0093` also two
@@ -300,6 +305,39 @@ def make_idea_fixture(api: httpx.Client, proj: Path, other: Path) -> None:
         Path(front.json()["path"], file).write_text(text, encoding="utf-8")
 
 
+def make_unread_fixture(api: httpx.Client, proj: Path) -> None:
+    """`0135` R4. `proj/0007_unread-status`, whose `spec.md` carries a status no stage writes,
+    so the import report on `/settings` has a row. Made after `make_idea_fixture`, so the
+    numbers a spec names stay where they were."""
+    made = api.post("/api/units", json={"cwd": str(proj), "slug": "unread-status", "brief": "The unread status fixture."})
+    if made.status_code != 200:
+        raise RuntimeError(f"could not make the unit unread-status: {made.text}")
+    for file, text in {
+        "intent.md": INTENT.format(title="unread status", problem="Một spec mang status không stage nào viết."),
+        "spec.md": "# Spec: unread status\nIntent: intent.md. Author: capture_screens. Status: approved.\n",
+    }.items():
+        (Path(made.json()["path"]) / file).write_text(text, encoding="utf-8")
+
+
+def ingest_fixture(work: Path, data_dir: Path, *workspaces: Path) -> None:
+    """`0135`: the fixture's files are written by hand, and since then the board reads a unit
+    from `cos.db`, not its files. So they go in as a finished step's do: the store's import,
+    if the app has not read it yet — which also reads `0002`'s answer — then an ingest of
+    every unit, which reads only what changed since."""
+    from coscc import units
+    from coscc.data import Data
+    from coscc.units.meta import UnitMeta
+
+    meta = UnitMeta(work, Data(data_dir))
+    for ws in workspaces:
+        key, store = str(ws.resolve()), units.root(ws, data_dir)
+        if not meta.imported(key):
+            meta.import_store(key, store)
+        for d in sorted((store / units.COS_DIR).iterdir()):
+            if d.is_dir() and d.name != "ideas":
+                meta.ingest(key, store, d.name, actor="capture_screens", session="capture", source="capture_screens")
+
+
 def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
     """`0089` R16: one ended `plan` run of `0004_finished` in the running app's run log, keyed
     as `Service._journal_key` keys it. `at` is when it is written, so the page reads "just now"."""
@@ -498,6 +536,8 @@ def capture(args: argparse.Namespace, config, roots: list[Path]) -> int:
                 try:
                     make_fixture(api, proj)
                     make_idea_fixture(api, proj, other)
+                    make_unread_fixture(api, proj)
+                    ingest_fixture(work, data_dir, proj, other)
                     seed_runs(work, data_dir, proj)
                 except RuntimeError as e:
                     print(str(e), file=sys.stderr)
