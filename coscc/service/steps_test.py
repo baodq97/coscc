@@ -2200,6 +2200,33 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
         self.assertEqual(after, [])
         self.assertEqual(service._gathers, set())
 
+    def test_no_gather_begins_once_apply_is_pressed(self):
+        # `0138` review round 1, F2: an Apply waits for a gather, so none may begin after the
+        # press; its record says why, and nothing was spent.
+        from coscc.knowledge import gather
+
+        for state in ("pending", "applying"):
+            with self.subTest(state=state):
+                service = self.service(True)
+                service.updater.state = state
+                began = []
+
+                async def stand_in(*a, **kw):
+                    began.append(a)
+                    return {"outcome": "saved"}
+
+                async def go():
+                    with mock.patch.object(gather, "gather_unit", stand_in):
+                        service._gather_soon(str(self.repo), self.unit, service._journal_key(str(self.repo)))
+                        await asyncio.sleep(0)
+                        return [j for j in service._update_waited() if j["stage"] == "knowledge"]
+
+                self.assertEqual(asyncio.run(go()), [])
+                self.assertEqual((began, service._gathers), ([], set()))
+                [row] = [r for r in service._journal().records() if r.get("kind") == gather.KIND]
+                self.assertEqual((row["unit"], row["outcome"], row["cost_usd"]), (self.unit, "refused", 0.0))
+                self.assertIn("an update is waiting to be applied", row["reason"])
+
 
 class RunStepHandsOnWhatEarlierReviewsSaid(RunStepHandsOnTheKnowledgeStore):
     """`0110` plan step 4. `run_step` hands an `impl` step the finding lines of the units the

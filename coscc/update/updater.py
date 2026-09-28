@@ -67,10 +67,11 @@ _ORIGIN = re.compile(
 )
 
 UPDATING = "an update is being applied"
-# `0138` spec.md ## Answers, câu 1 (Jera's inference): once Apply is pressed, neither of the
-# two things an update still waits for may begin.
+# `0138` spec.md ## Answers, câu 1 (Jera's inference): once Apply is pressed, none of the
+# things an update still waits for may begin -- since `0131` a knowledge gather among them
+# (review round 1, F2).
 WAITING = "an update is waiting to be applied"
-WAITING_WARNING = "An update waits for an integration or a screenshot retake to finish."
+WAITING_WARNING = "An update waits for an integration, a screenshot retake or a knowledge gather to finish."
 
 
 class Refused(Exception):
@@ -434,8 +435,8 @@ class Updater:
             raise Updating(UPDATING)
 
     def refuse_mechanical_while_updating(self) -> None:
-        """`0138` R3. Called before a mechanical integration or a screenshot retake: from the
-        press of Apply on, neither begins, so the wait it began cannot grow."""
+        """`0138` R3. Called before a mechanical integration, a screenshot retake or a knowledge
+        gather: from the press of Apply on, none begins, so the wait it began cannot grow."""
         self.refuse_while_updating()
         if self.state in ("pending", "applying"):
             raise Updating(WAITING)
@@ -527,7 +528,7 @@ class Updater:
             if self.waited():
                 self.state, self.window = "pending", False
                 self.pending = {"channel": channel, "by": by, "since": update.now(),
-                                "reason": "an integration or a retake began during the trial"}
+                                "reason": "an integration, a retake or a knowledge gather began during the trial"}
                 self._record("pending", by, channel=channel, to=target["version"])
                 return
             # `0138` R3: a local build is not a session, and is not taken up again.

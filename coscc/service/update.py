@@ -55,7 +55,7 @@ def update_words(status: dict[str, Any]) -> dict[str, Any]:
     local_line = _LOCAL_LINE.get(ls, "").format(v=local.get("version") or "")
     actions: list[str] = []
     if state == "pending":
-        # `0138` R12: the only two things an update still waits for, in one sentence.
+        # `0138` R12: the only things an update still waits for, in one sentence.
         line = updater_mod.WAITING_WARNING
         actions.append("cancel")
     else:
@@ -81,7 +81,8 @@ class UpdateMixin:
             raise _as_invalid(e) from e
 
     def _refuse_mechanical_while_updating(self) -> None:
-        """`0138` R3: a mechanical integration or a retake, refused once Apply is pressed."""
+        """`0138` R3: a mechanical integration, a retake or a knowledge gather, refused once
+        Apply is pressed."""
         try:
             self.updater.refuse_mechanical_while_updating()
         except updater_mod.Refused as e:
@@ -102,7 +103,8 @@ class UpdateMixin:
                 })
             elif entry["stage"] == "knowledge":
                 # `0131` R1. A gather after a ship: waited for, never paused, because it runs on
-                # a `Sessions` of its own that `suspend_sessions` does not reach (`0138`).
+                # a `Sessions` of its own that `suspend_sessions` does not reach (`0138`); none
+                # begins once Apply is pressed (`_gather_soon`).
                 jobs.append({
                     "kind": "integration", "id": f"knowledge:{entry['workspace']}:{entry['unit']}",
                     "workspace": entry["workspace"], "unit": entry["unit"], "stage": "knowledge",
