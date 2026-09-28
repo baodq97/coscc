@@ -256,6 +256,22 @@ SESSION_ENDS_ADVICE = (
     "never end it saying you will wait for something or come back."
 )
 
+# A step whose grant holds `Bash` runs in the store or a worktree, and neither holds this
+# app's `cos.mjs` where the skills' `node .claude/scripts/cos.mjs` points. On 2026-09-28 the
+# `ship` steps of `0036` and `0137` went looking for it with `find /`, which on WSL walks
+# `/mnt/c` and held `0137`'s step for seven minutes. The app knows both paths; it says them.
+HARNESS_HEADING = "# The harness script"
+
+
+def harness_advice(directory: Path) -> str:
+    """Where `cos.mjs` is and which `--root` a unit in `directory` takes."""
+    return (
+        f"Where your rules say `node .claude/scripts/cos.mjs <command>`, run "
+        f"`node {harness.script()} <command> --root {directory.parent.parent}`. That is this "
+        "app's copy and this unit's store; no other copy is the one the app reads. Do not "
+        "search the filesystem for it."
+    )
+
 
 def _jera_answers(directory: Path, names: list[str]) -> str:
     """`# Answers an agent gave`, listing every `<artifact> ### Câu N` block Jera wrote in
@@ -543,6 +559,7 @@ def compose_prompt(
         parts.append(f"{COMMANDS_HEADING}\n\n{words}\n\n{COMMANDS_ADVICE}")
     if runs_commands:
         parts.append(f"{SESSION_ENDS_HEADING}\n\n{SESSION_ENDS_ADVICE}")
+        parts.append(f"{HARNESS_HEADING}\n\n{harness_advice(directory)}")
 
     # `0110` R6. The finding lines earlier reviews raised on the files this plan changes,
     # already chosen and capped (`priorfindings.select`); this only places it, before the
