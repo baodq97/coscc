@@ -101,11 +101,12 @@ Intent: intent.md. Author: <name>. Status: accepted.
    this repository, by path and line range.
 8. Accept it and commit it. `accepted` means you judged it finished — no one else will look,
    so the `## Concerns` section is where a doubt gets recorded instead of resolved by you.
-9. A question with a block under `## Answers` in the artifact that holds it has been
-   decided. Do not carry it forward as open and do not ask it again. Cite it as
-   `<artifact> ## Answers, câu N`. The words of an answer are a person's, not yours: quote
-   them, and do not restate them as your own finding. The app only ever appends that
-   section; never write into it yourself. A block headed `Answered by: Jera. … Via:
+9. A question with a block under `## Answers` in the artifact that holds it, as your
+   prompt shows it, has been decided. Do not carry it forward as open and do not ask it
+   again. Cite it as `<artifact> ## Answers, câu N`. The words of an answer are a person's,
+   not yours: quote them, and do not restate them as your own finding. Since `0135` the app
+   keeps answers in its database and puts them in the prompt; the file on disk may not
+   carry them. Never write into that section yourself. A block headed `Answered by: Jera. … Via:
    precedent.` is the exception: an agent inferred it from precedent, so cite it as Jera's
    inference and never present it as the originator's decision.
 10. A concern you could not measure from here — whether an SDK, a CLI or a process behaves

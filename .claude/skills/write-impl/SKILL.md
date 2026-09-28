@@ -124,7 +124,8 @@ Since `0115`, a draft `impl.md` can wait on a person and run again on the answer
 - `## Needs a person` keeps its meaning above: `- F<k>:` claims in a review round, answered
   in `review.md`.
 - Once `## Open questions` is written, keep the heading even when no question is left open.
-- The `## Answers` section at the end of the file is the app's. When the prompt carries
+- The `## Answers` section at the end of the file is the app's; since `0135` a new answer is
+  a row in the app's database and reaches you only in the prompt. When the prompt carries
   *The answers already given to this artifact*, cite each as `impl.md ## Answers, câu N`,
   write everything above that section, and never edit, move or add to it. An answered
   question keeps its number; a new one takes a number not yet used in the file.

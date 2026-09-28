@@ -86,7 +86,8 @@ decide, and label it:
   cannot be closed without it. The finding stays not closed.
 - `[claim-rejected]` — impl could have fixed it. Say why in the finding's line. The unit
   goes back to `impl`.
-- `[answered]` — a person answered it: `review.md ## Answers` holds a `### F<k>` block, and
+- `[answered]` — a person answered it: `review.md ## Answers` holds a `### F<k>` block (in
+  your prompt: since `0135` the app keeps the answer in its database, not the file), and
   what it says settles the finding. Only use this when that block exists; the `ship` gate
   refuses an `[answered]` with no block behind it. If the answer does not settle it, keep
   the finding `[open]` and say what is still missing: the unit goes back to `impl`, not to
@@ -105,8 +106,8 @@ while `impl.md` still claims it. Then:
    `Verdict: needs-person`, header `Status: changes-requested` — even with a `low` still
    `[open]` beside them. `cos.mjs next` then offers no stage and names the findings a
    person must answer; each is answered on the board's *Questions* tab (or
-   `POST /api/units/answer` with `question: "F<k>"`, `artifact: "review.md"`), which appends
-   `### F<k>` under `## Answers`. Once every one has an answer, this stage runs again and
+   `POST /api/units/answer` with `question: "F<k>"`, `artifact: "review.md"`), which records
+   it, and the next round's prompt shows it as `### F<k>` under `## Answers`. Once every one has an answer, this stage runs again and
    closes each as `[answered]` or keeps it open.
 7. A finding once `[answered]` never goes back to `[needs-person]`. If a person must be
    asked again, raise a new finding with a new id: the old `### F<k>` block carries no round
