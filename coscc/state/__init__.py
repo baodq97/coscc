@@ -527,7 +527,7 @@ class StudioState(
                 tools=g["tools"],
                 commands=g["commands"],
                 turns=str(g["max_turns"]),
-                budget=f"${g['max_budget_usd']:.2f}",
+                budget=str(g.get("budget") or f"${g['max_budget_usd']:.2f}"),
                 warning=g["warning"],
                 consequence=str(g.get("consequence") or ""),
                 tool_list=list(g.get("tool_list") or []),
