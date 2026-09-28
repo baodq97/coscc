@@ -590,6 +590,61 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.assertEqual([r["kind"] for r in self.records()][-1], "end")
         self.assertEqual(self.service._active, {})
 
+    async def _ended(self, after_end) -> asyncio.Task:
+        """A step run to its `done` with `after_end` as its `_after_end`, returned once its
+        task is past `_running` and in `_finishing`."""
+        self.service._after_end = after_end
+        stream = self.service.run_step(str(self.repo), self.unit, "spec")
+        await stream.__anext__()
+        task = self.service.steps.get(self.key, self.unit).task
+        [_ async for _ in stream]
+        for _ in range(500):
+            if self.service._finishing:
+                break
+            await asyncio.sleep(0.01)
+        self.assertEqual(self.service._running, {})
+        return task
+
+    def test_an_apply_waits_for_the_after_end_of_a_step_that_just_ended(self):
+        # `0138` review round 3, F6. `_drive` gives back the unit and its `_running` entry
+        # before `_after_end`; the settle still waits, and the `questions` row is written.
+        real = self.service._after_end
+
+        async def go():
+            gate = asyncio.Event()
+
+            async def slow(*args):
+                await gate.wait()
+                await real(*args)
+
+            task = await self._ended(slow)
+            settle = asyncio.create_task(self.service.settle_after_suspend(5))
+            await asyncio.sleep(0.3)
+            self.assertFalse(settle.done())
+            gate.set()
+            left = await settle
+            await task
+            return left
+
+        self.assertEqual(asyncio.run(go()), [])
+        self.assertEqual([r["kind"] for r in self.records()][-2:], ["end", "questions"])
+        self.assertEqual(self.service._finishing, {})
+
+    def test_an_after_end_that_outlives_the_settle_is_named_and_cancelled(self):
+        async def go():
+            async def hangs(*args):
+                await asyncio.sleep(60)
+
+            task = await self._ended(hangs)
+            left = await self.service.settle_after_suspend(0.05)
+            await self.service.shutdown()
+            return left, task
+
+        left, task = asyncio.run(go())
+        self.assertEqual([(j["kind"], j["unit"], j["stage"]) for j in left], [("after-end", self.unit, "spec")])
+        self.assertTrue(task.cancelled())
+        self.assertEqual(self.service._finishing, {})
+
 
 class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
     """`0034`. A step is its own task: a reader leaving does not end it (R3), a second
@@ -1999,6 +2054,85 @@ class RunStepHandsOnTheKnowledgeStore(unittest.TestCase):
         self.assertIn("FileNotFoundError", kw["knowledge_record"]["error"])
 
 
+class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
+    """`0138` plan step 6: `_drive` takes `Suspended` as the app going down. No session
+    opens: the runner is a stand-in that raises it."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "work" / "proj"
+        (self.repo / ".git").mkdir(parents=True)
+        config = Config(workspaces=(str(self.repo),), working_dir=str(self.root / "work"),
+                        data_dir=str(self.root / "data"))
+        self.service = Service(config, Sessions(config))
+        self.unit = create_sync(self.service, str(self.repo), "a-problem", "words")["unit"]
+
+    def test_a_suspended_drive_abandons_its_recorder_and_nudges_nothing(self):
+        from coscc.agent.sessions import Suspended
+        from coscc.github import integrate
+        from coscc.runlog import events
+        from coscc.units import board as board_reader
+
+        service = self.service
+
+        class StandIn:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def run(self, **kw):
+                yield ("chunk", "measuring")
+                raise Suspended("paused for an update")
+
+        async def open_gate(units_root, unit, stage, repo=None, **kw):
+            return True, f"open: {stage} may proceed"
+
+        async def tree(*a, **kw):
+            return {"path": str(self.repo), "branch": "feat/a-problem", "base": None}
+
+        async def nothing(*a, **kw):
+            return {}
+
+        async def no_pr(*a, **kw):
+            return {"state": "none", "url": ""}
+
+        abandoned: list[str] = []
+        real_abandon = events.Recorder.abandon
+
+        async def abandon(recorder):
+            abandoned.append(recorder.run)
+            await real_abandon(recorder)
+
+        nudged: list[str] = []
+        after: list[tuple] = []
+
+        async def after_end(*a):
+            after.append(a)
+
+        async def go():
+            with self.assertRaises(Invalid):
+                async for _ in service.run_step(str(self.repo), self.unit, "spike"):
+                    pass
+            others = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            await asyncio.gather(*others, return_exceptions=True)
+
+        with mock.patch.object(board_reader, "gate", open_gate), \
+                mock.patch("coscc.service.steps.Runner", StandIn), \
+                mock.patch.object(service, "_worktree", tree), \
+                mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}), \
+                mock.patch.object(integrate, "pr_for_branch", no_pr), \
+                mock.patch.object(service, "_after_end", after_end), \
+                mock.patch.object(service, "_autopilot_nudge", nudged.append), \
+                mock.patch.object(events.Recorder, "abandon", abandon):
+            asyncio.run(go())
+        self.assertEqual(len(abandoned), 1)
+        self.assertEqual((nudged, after), ([], []))
+        self.assertEqual(service.steps.all(), [])
+        # The spike's directory stays for the step taken up again.
+        self.assertTrue(units.spike_dir(str(self.repo), self.unit, service.config.data_dir).is_dir())
+
+
 class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
     """`0131` plan step 7, R1. `_drive` schedules one gather of the unit when a `ship` ends
     `done` with the flag on, and none otherwise; the gather runs on its own `Sessions` and is
@@ -2110,16 +2244,43 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
             with mock.patch.object(gather, "gather_unit", stand_in):
                 service._gather_soon(str(self.repo), self.unit, key)
                 await asyncio.sleep(0)
-                during = [j for j in service._update_jobs() if j["stage"] == "knowledge"]
+                during = [j for j in service._update_waited() if j["stage"] == "knowledge"]
                 release.set()
                 await asyncio.gather(*service._gathers)
-            after = [j for j in service._update_jobs() if j["stage"] == "knowledge"]
+            after = [j for j in service._update_waited() if j["stage"] == "knowledge"]
             return during, after
 
         during, after = asyncio.run(go())
         self.assertEqual([(j["kind"], j["unit"], j["workspace"]) for j in during], [("integration", self.unit, key)])
         self.assertEqual(after, [])
         self.assertEqual(service._gathers, set())
+
+    def test_no_gather_begins_once_apply_is_pressed(self):
+        # `0138` review round 1, F2: an Apply waits for a gather, so none may begin after the
+        # press; its record says why, and nothing was spent.
+        from coscc.knowledge import gather
+
+        for state in ("pending", "applying"):
+            with self.subTest(state=state):
+                service = self.service(True)
+                service.updater.state = state
+                began = []
+
+                async def stand_in(*a, **kw):
+                    began.append(a)
+                    return {"outcome": "saved"}
+
+                async def go():
+                    with mock.patch.object(gather, "gather_unit", stand_in):
+                        service._gather_soon(str(self.repo), self.unit, service._journal_key(str(self.repo)))
+                        await asyncio.sleep(0)
+                        return [j for j in service._update_waited() if j["stage"] == "knowledge"]
+
+                self.assertEqual(asyncio.run(go()), [])
+                self.assertEqual((began, service._gathers), ([], set()))
+                [row] = service._journal().records(unit=self.unit, kind=gather.KIND)
+                self.assertEqual((row["unit"], row["outcome"], row["cost_usd"]), (self.unit, "refused", 0.0))
+                self.assertIn("an update is waiting to be applied", row["reason"])
 
 
 class RunStepHandsOnWhatEarlierReviewsSaid(RunStepHandsOnTheKnowledgeStore):
@@ -2420,7 +2581,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
             return {"retake": True, "manifest": self.OLD}
 
         async def take(tree, addresses, **kw):
-            during.append(self.service._update_jobs())
+            during.append(self.service._update_waited())
             return {"code": 0, "seconds": 0.1, "tail": "", "head_before_run": "b" * 40,
                     "manifest_after": self.NEW, "status_before": "", "status_after": ""}
 
@@ -2430,7 +2591,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                 str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
         [[job]] = during
         self.assertEqual((job["kind"], job["unit"], job["stage"]), ("integration", self.unit, "screens"))
-        self.assertEqual(self.service._update_jobs(), [])
+        self.assertEqual(self.service._update_waited(), [])
         ended.assert_called_once()
 
     def test_no_retake_begins_while_an_update_is_applied(self):
@@ -2446,12 +2607,14 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
             taken.append(tree)
             return {}
 
-        self.service.updater.window = True
-        with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take):
-            with self.assertRaises(Invalid):
-                asyncio.run(self.service._retake_screens(
-                    str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
-        self.assertEqual((taken, self.service._update_jobs()), ([], []))
+        # `0138` R3: nor while one waits, so the wait cannot grow.
+        for window, state in ((True, "idle"), (False, "pending")):
+            self.service.updater.window, self.service.updater.state = window, state
+            with mock.patch.object(board_reader, "screens", asked), mock.patch.object(retake, "take", take):
+                with self.assertRaises(Invalid):
+                    asyncio.run(self.service._retake_screens(
+                        str(self.repo), "k", self.service._journal(), self.unit, str(self.repo), "person"))
+        self.assertEqual((taken, self.service._update_waited()), ([], []))
 
     def test_two_retakes_never_run_at_once(self):
         from coscc.units import board as board_reader

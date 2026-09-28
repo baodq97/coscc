@@ -27,12 +27,12 @@ from typing import Any, AsyncIterator
 
 import claude_agent_sdk as sdk
 
-from coscc.agent import agents, instructions, steps
+from coscc.agent import agents, instructions, steps, transcript
 from coscc.github.integrate import check_started_by
 from coscc.agent import sessions as sessions_mod
 from coscc.runlog.journal import Journal
 from coscc.agent.policy import beyond_reading, grant_for_step, is_prose_stage
-from coscc.agent.sessions import Refused, Sessions
+from coscc.agent.sessions import Refused, Sessions, Suspended
 from coscc.units.autopilot import is_recording_ship
 from coscc.knowledge import TRIAL_FIELD as KNOWLEDGE_TRIAL_FIELD
 
@@ -204,6 +204,12 @@ async def _opening_turn(
     return text, blocks, done
 
 
+async def _nothing() -> AsyncIterator[tuple[str, Any]]:
+    """`0138`. The main reply of an `opening` or `closing` turn taken up again: already said."""
+    return
+    yield
+
+
 def _turn_cost(done: dict[str, Any] | None, cost: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """`0085` R7. The `closing` field of one more turn on a step's session, and the step's
     cost once that turn is counted in. `0127`'s repair turn is costed the same way.
@@ -338,6 +344,8 @@ class Runner:
         agent: dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
         state_file: str | None = None,
+        resume: dict[str, Any] | None = None,
+        owner_extra: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `("chunk", text)` while the reply arrives, then one `("done", {...})`.
 
@@ -431,6 +439,14 @@ class Runner:
 
         `meta` is `0135` R8's: the unit's entry in the snapshot, whose answers and holds the
         prompt renders where the files' `## Answers` blocks were (`prompt.answers_for`).
+
+        `resume` is `0138`'s: a `suspend` row, with the `message` to send and the `pieces`
+        the transcript held before its safe point. The step goes on in the same session from
+        that point, under what is left of the grant's two ceilings (R10), and writes no
+        `start`; one whose ceiling is used up opens no session and ends `exhausted`. A row
+        whose `owner.kind` is `opening` or `closing` goes through the main reply again from
+        those pieces and takes up that one turn. `owner_extra` is what `Service` adds to the
+        owner a `suspend` row carries, so it can take the step up again.
         """
         check_started_by(started_by)
         grant = grant_for_step(stage, label)
@@ -438,6 +454,8 @@ class Runner:
         cwd = cwd or workspace
         if not directory.exists():
             raise RunError(f"no such work unit for {workspace}: {unit}")
+        was = dict((resume or {}).get("owner") or {})
+        turn_kind = str(was.get("kind") or "step") if resume is not None else ""
 
         if is_prose_stage(stage):
             # Belt and braces against a future edit to the table: a prose stage that
@@ -455,34 +473,40 @@ class Runner:
                     f"{stage} is a prose stage and must not carry {', '.join(beyond)}"
                 )
 
-        head = await _head_of(watch or cwd)
-        prompt, included, pointed = compose_prompt(
-            cwd, directory, unit, stage, stages, artifact,
-            writes_own=not grant.app_writes_artifact,
-            gate_said=gate_said,
-            head=head,
-            base_note=base_note,
-            last_attempt=last_attempt,
-            integration_note=integration_note,
-            screens_note=screens_note,
-            drift_note=drift_note,
-            worktree=watch or "",
-            pr_note=pr_note,
-            ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
-            knowledge=knowledge,
-            rerun=rerun,
-            rerun_note=rerun_note,
-            prior_findings=prior_findings,
-            plan_map=plan_map,
-            commands=grant.commands if stage in ("impl", "implement") else (),
-            unfinished_round=unfinished_round,
-            idea_note=idea_note,
-            siblings_note=siblings_note,
-            runs_commands="Bash" in grant.tools,
-            agent=agent,
-            unit_meta=meta,
-            state_file=state_file,
-        )
+        if resume is not None:
+            # `0138` R9: nothing of git is read or run on a step taken up again; what the
+            # first start read is in its owner.
+            head = str(was.get("head") or "")
+            prompt, included, pointed = str(resume.get("message") or ""), [], []
+        else:
+            head = await _head_of(watch or cwd)
+            prompt, included, pointed = compose_prompt(
+                cwd, directory, unit, stage, stages, artifact,
+                writes_own=not grant.app_writes_artifact,
+                gate_said=gate_said,
+                head=head,
+                base_note=base_note,
+                last_attempt=last_attempt,
+                integration_note=integration_note,
+                screens_note=screens_note,
+                drift_note=drift_note,
+                worktree=watch or "",
+                pr_note=pr_note,
+                ceilings=(grant.max_turns, grant.max_budget_usd) if stage == "spike" else None,
+                knowledge=knowledge,
+                rerun=rerun,
+                rerun_note=rerun_note,
+                prior_findings=prior_findings,
+                plan_map=plan_map,
+                commands=grant.commands if stage in ("impl", "implement") else (),
+                unfinished_round=unfinished_round,
+                idea_note=idea_note,
+                siblings_note=siblings_note,
+                runs_commands="Bash" in grant.tools,
+                agent=agent,
+                unit_meta=meta,
+                state_file=state_file,
+            )
 
         # `0041` R5 picks the `pr` steps that ran after the fix by this field being there,
         # the way `0037` picks by `system_prompt`. Only `pr` carries it.
@@ -500,8 +524,9 @@ class Runner:
         # `start` and `end`, and it is closed -- everything on disk -- before `end` is written.
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
 
-        if self.journal is not None:
-            self.journal.started(
+        start_at = was.get("start_at")
+        if self.journal is not None and resume is None:
+            start_at = self.journal.started(
                 journal_key, unit, stage, mode,
                 started_by=started_by,
                 prompt_chars=len(prompt), included=included,
@@ -565,18 +590,59 @@ class Runner:
                 # `0092` R5: whose step this is, so the next start can tell one this process
                 # still runs from one the app went down under.
                 **({"run": recorder.run, "pid": os.getpid()} if recorder is not None else {}),
+            ).get("at")
+
+        # `0138`. Whose session this is, for a `suspend` row, and all an update's next start
+        # needs to take it up again without reading git.
+        owner: dict[str, Any] = {
+            "kind": "step", "workspace": journal_key, "unit": unit, "stage": stage,
+            "start_at": start_at, "max_turns": grant.max_turns,
+            "max_budget_usd": grant.max_budget_usd, "head": head, "label": label,
+            "effort": effort, "artifact": artifact,
+            "segments": list(was.get("segments") or []),
+            **({"run": recorder.run} if recorder is not None else {}),
+            **(owner_extra or {}),
+        }
+        # R10. What is left of the two ceilings after the part of the session before the cut.
+        turns_left, budget_left = grant.max_turns, grant.max_budget_usd or None
+        used_up = ""
+        if resume is not None:
+            turns_left, budget_left, used_up = transcript.ceilings_left(
+                grant.max_turns, grant.max_budget_usd, resume
             )
+            # R11, R14: this segment, filled in when its first `done` comes.
+            owner["segments"].append({
+                "suspend_id": resume.get("suspend_id"),
+                **({"cost_unknown": True} if resume.get("cost_unknown") else {}),
+            })
+        # Review round 1, F1. The budget a closing or repair turn is given. The CLI compares it
+        # only after the turn has run, so on one turn it bounds nothing; one already spent is
+        # not passed at all, since `0` reaches `_options` as no ceiling and a negative one was
+        # never measured. `turn_spent` is what that turn would then have ended with.
+        turn_spent = budget_left is not None and budget_left <= 0
+        turn_budget = None if turn_spent else budget_left
+        # The `done` of the first call on the resumed session, which fills that segment in.
+        segment_done: dict[str, Any] | None = None
+        # Whether the `opening` or `closing` turn the update paused was reached again.
+        turn_taken = False
 
         denials = Denials()
         if recorder is not None:
             denials.listener = recorder.denied
         # `0099` R1. What the session said, one entry per stretch between two tool calls.
-        pieces = [""]
+        # `0138`: a step taken up again starts from what it had said before its safe point.
+        pieces = [*((resume or {}).get("pieces") or []), ""] if resume is not None else [""]
         # `0099` R5: how many pieces of text, blank ones aside, the session said.
-        blocks = 0
+        blocks = sum(1 for p in pieces if p.strip())
         terminal = ""
-        session_id = ""
+        session_id = str((resume or {}).get("session_id") or "")
         cost: dict[str, Any] = {}
+        if turn_kind in ("opening", "closing"):
+            # The main reply ended before the update; what it ended with is in the owner.
+            terminal = str(was.get("main_terminal") or "")
+            cost = dict(was.get("main_cost") or {})
+        elif resume is not None and resume.get("spent_usd") is not None:
+            cost = {"cost_usd": float(resume["spent_usd"])}
         # What the session says it was billed to. The `start` record says what was asked for.
         models_used: list[str] = []
         outcome = "failed"
@@ -612,12 +678,24 @@ class Runner:
             return running is not None and running.stop_requested
 
         try:
-            before = await _tree_state(watch) if watch else None
-            async for kind, payload in self.sessions.stream(
+            if resume is not None:
+                before = tuple(was["before"]) if watch and was.get("before") else None
+            else:
+                before = await _tree_state(watch) if watch else None
+                if before is not None:
+                    owner["before"] = list(before)
+            if used_up and turn_kind not in ("opening", "closing"):
+                # R10: nothing left to resume with, so no session is opened. Not for a closing
+                # or repair turn: that is one turn of its own, bounded by its timeout, and a
+                # closing turn exists only because the main reply used a ceiling up.
+                terminal = used_up
+                raise RunError("the ceiling was used up before the update, so the step was not resumed")
+            # `0138`: an `opening` or `closing` turn taken up again has its main reply already.
+            main = _nothing() if turn_kind in ("opening", "closing") else self.sessions.stream(
                 cwd,
                 prompt,
-                None,
-                max_turns=grant.max_turns,
+                session_id or None,
+                max_turns=turns_left,
                 # Only pass a gate when something was actually granted. The list is the
                 # grant's always, `[]` when it is empty: `None` would fall back to
                 # `COS_TOOLS`, and an `idea` on a machine that set it held tools with no
@@ -628,7 +706,7 @@ class Runner:
                     else None
                 ),
                 tools=list(grant.tools),
-                max_budget_usd=grant.max_budget_usd or None,
+                max_budget_usd=budget_left,
                 # Only named when it differs, so a stand-in `stream` written before `0017`
                 # without a `workspace` parameter keeps working for a plain step.
                 **({"workspace": workspace} if cwd != workspace else {}),
@@ -642,8 +720,11 @@ class Runner:
                 # `0036` R8, the same: only a preset session with an agent row passes it.
                 **({"settings": settings} if settings is not None else {}),
                 # `0034`, the same reasoning once more: only a board step has a row.
-                **({"step": running.handle} if running is not None else {}),
-            ):
+                **({"step": running.handle, "owner": owner} if running is not None else {}),
+                # `0138` R7, and only on a step taken up again.
+                **({"resume_at": resume.get("safe_uuid")} if resume is not None else {}),
+            )
+            async for kind, payload in main:
                 if kind == "chunk":
                     pieces[-1] += payload
                     if payload.strip():
@@ -672,6 +753,11 @@ class Runner:
                     cost = payload.get("cost", {}) or {}
                     terminal = str(payload.get("terminal_reason") or "")
                     models_used = list(payload.get("models_used") or [])
+                    if resume is not None and segment_done is None:
+                        segment_done = payload
+            # What the main reply ended with, for an `opening` or `closing` turn an update
+            # pauses: its next start goes through this reply again without a session.
+            owner.update(main_terminal=terminal, main_cost=dict(cost))
 
             if watch:
                 # `0039` R13. Before anything is written: a spike that touched the branch
@@ -723,6 +809,11 @@ class Runner:
             if task is not None:
                 task.uncancel()
             outcome = "stopped"
+        except Suspended:
+            # `0138`. An update paused the session and wrote its `suspend` row: like an app
+            # going down, no `attempt` and no `end`. The next start takes it up.
+            shutting_down = True
+            raise
         except (RunError, Refused) as e:
             # `spec.md` R1 a: "the step did not write impl.md" is a real reason to stop,
             # so it goes into the attempt record's `error` exactly like any other one.
@@ -801,18 +892,26 @@ class Runner:
                         review_md = "withheld"
                     else:
                         number = max((_round_number(r) for r in _rounds(_read(directory / artifact))), default=0) + 1
+                        # `0138`: the closing turn an update paused is taken up, not asked again.
+                        take_up = turn_kind == "closing"
                         reply, done = await asyncio.wait_for(
                             _closing_turn(
-                                self.sessions, cwd, closing_prompt(head, number), session_id, denials,
-                                max_budget_usd=grant.max_budget_usd or None,
+                                self.sessions, cwd,
+                                str(resume.get("message") or "") if take_up else closing_prompt(head, number),
+                                session_id, denials,
+                                max_budget_usd=turn_budget,
                                 **({"workspace": workspace} if cwd != workspace else {}),
                                 **({"model": model} if model is not None else {}),
                                 **({"effort": effort} if effort is not None else {}),
                                 **({"system_prompt": dict(preset)} if preset else {}),
                                 **({"settings": settings} if settings is not None else {}),
+                                **({"owner": {**owner, "kind": "closing"}} if running is not None else {}),
+                                **({"resume_at": resume.get("safe_uuid")} if take_up else {}),
                             ),
                             CLOSING_TIMEOUT,
                         )
+                        if take_up:
+                            turn_taken, segment_done = True, segment_done or done
                         closing, cost = _turn_cost(done, cost)
                         # R5, judged on the text, never on `after`. No `await` from here to
                         # the write, the rule the reply's road keeps.
@@ -834,6 +933,10 @@ class Runner:
                     else:
                         shutting_down = True
                         closing_pending = e
+                except Suspended as e:
+                    # `0138`: paused by an update, like the main reply -- no `end`.
+                    shutting_down = True
+                    closing_pending = e
                 except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
                     closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
                     review_md, said = "none", f"review.md: the closing turn failed: {type(e).__name__}: {e}"
@@ -858,19 +961,30 @@ class Runner:
                         opening, said = "none", f"{artifact}: the opening was not repaired: the session has no id"
                     elif not steps.seal(running):
                         opening = "withheld"
+                    elif turn_spent:
+                        # Review round 1, F1: the turn would stop at the ceiling, and be refused.
+                        turn_taken = turn_kind == "opening"
+                        opening, said = "none", f"{artifact}: the repair turn's reply was not written: it stopped at the ceiling: error_max_budget_usd"
                     else:
+                        take_up = turn_kind == "opening"
                         reply, again, done = await asyncio.wait_for(
                             _opening_turn(
-                                self.sessions, cwd, opening_prompt(artifact, unopened.problem), session_id, denials,
-                                max_budget_usd=grant.max_budget_usd or None,
+                                self.sessions, cwd,
+                                str(resume.get("message") or "") if take_up else opening_prompt(artifact, unopened.problem),
+                                session_id, denials,
+                                max_budget_usd=turn_budget,
                                 **({"workspace": workspace} if cwd != workspace else {}),
                                 **({"model": model} if model is not None else {}),
                                 **({"effort": effort} if effort is not None else {}),
                                 **({"system_prompt": dict(preset)} if preset else {}),
                                 **({"settings": settings} if settings is not None else {}),
+                                **({"owner": {**owner, "kind": "opening"}} if running is not None else {}),
+                                **({"resume_at": resume.get("safe_uuid")} if take_up else {}),
                             ),
                             OPENING_TIMEOUT,
                         )
+                        if take_up:
+                            turn_taken, segment_done = True, segment_done or done
                         closing, cost = _turn_cost(done, cost)
                         after = str((done or {}).get("terminal_reason") or "")
                         # Review round 1, F1. A turn that stopped at a ceiling writes nothing
@@ -903,6 +1017,9 @@ class Runner:
                     else:
                         shutting_down = True
                         opening_pending = e
+                except Suspended as e:
+                    shutting_down = True
+                    opening_pending = e
                 except Exception as e:  # noqa: BLE001 - the `end` row never depends on it
                     closing = {"cost_unknown": True, "error": f"{type(e).__name__}: {e}"}
                     opening, said = "none", f"{artifact}: the repair turn failed: {type(e).__name__}: {e}"
@@ -962,6 +1079,25 @@ class Runner:
                 if not cost and outcome != "stopped":
                     # A Stop's `end` says this below, beside `stopped_by`, as it has since `0034`.
                     cost_fields["cost_unknown"] = True
+            # `0138` R11, R14. Each segment an update's resume began, with the tokens of its
+            # first call and what it cost; `cost_partial` when one before it left no cost.
+            segment_fields: dict[str, Any] = {}
+            if owner["segments"]:
+                if resume is not None and segment_done is not None:
+                    segment = owner["segments"][-1]
+                    segment["first_call"] = segment_done.get("first_call")
+                    total = (segment_done.get("cost") or {}).get("cost_usd")
+                    if total is not None:
+                        # A CLI killed without its `cost-state` leaves the next one counting
+                        # from zero, so its total is this segment's alone (`spike.md ## U4`).
+                        spent = 0.0 if resume.get("cost_unknown") else float(resume.get("spent_usd") or 0.0)
+                        segment["cost_usd"] = round(float(total) - spent, 6)
+                segment_fields["segments"] = owner["segments"]
+                if any(s.get("cost_unknown") for s in owner["segments"]):
+                    segment_fields["cost_partial"] = True
+            if turn_kind in ("opening", "closing") and not turn_taken and not shutting_down:
+                said = f"the {turn_kind} turn an update paused was not reached again, so it was dropped"
+                detail = f"{detail}\n--- {said} ---" if detail else said
             # C6: an app going down writes neither record. No `end` is what an
             # interrupted step looks like, and the next start says nothing about it.
             record = self.journal is not None and not shutting_down
@@ -1027,6 +1163,7 @@ class Runner:
                     # `0127` R5-R7: only once a reply lacked its opening.
                     **({"opening": opening} if opening is not None else {}),
                     **({"opening_reason": str(unopened)} if opening == "repaired" else {}),
+                    **segment_fields,
                 )
             if progress_pending is not None:
                 raise progress_pending

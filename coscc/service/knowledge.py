@@ -20,6 +20,8 @@ from typing import Any
 from coscc import knowledge, units
 from coscc.agent.sessions import Sessions
 from coscc.knowledge import gather, measure
+from coscc.runlog.journal import BadRecord, Busy
+from coscc.update import updater as updater_mod
 
 # R25 (3): how many steps the page lists.
 RECENT = 20
@@ -37,7 +39,25 @@ class KnowledgeMixin:
 
     def _gather_soon(self, cwd: str, unit: str, key: str) -> None:
         """R1. Start `unit`'s gather in the background and return at once; the task is kept,
-        so nothing collects it while it runs."""
+        so nothing collects it while it runs.
+
+        `0138` review round 1, F2: not once Apply is pressed, which waits for a gather already
+        running and must not wait for one begun after. The refusal is the gather's own
+        `knowledge` record, `refused`, so the Knowledge page's last gather says it."""
+        try:
+            self.updater.refuse_mechanical_while_updating()
+        except updater_mod.Refused as e:
+            journal = self._journal()
+            if journal is not None:
+                try:
+                    journal.append({
+                        "kind": gather.KIND, "workspace": units.slot(cwd), "mode": "unit", "unit": unit,
+                        "cost_usd": 0.0, "outcome": "refused", "reason": f"no session opened: {e}",
+                        "dropped": [], "sessions": [], "origin_main": {},
+                    })
+                except (BadRecord, Busy):
+                    pass
+            return
         task = asyncio.create_task(self._gather_unit(cwd, unit, key))
         self._gathers.add(task)
         task.add_done_callback(self._gathers.discard)

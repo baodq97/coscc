@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import signal
 import tempfile
 import uuid
 from contextlib import aclosing, suppress
@@ -36,7 +37,7 @@ from claude_agent_sdk import (
 
 from coscc import config as cfg
 from coscc.web import frontend
-from coscc.agent import instructions
+from coscc.agent import instructions, transcript
 from coscc.config import Config
 from coscc.data import Data
 
@@ -166,6 +167,16 @@ def _drop(path: Path | None) -> None:
 
 class Refused(Exception):
     """A request the config does not allow. Carries a reason the caller can show."""
+
+
+class Suspended(Exception):
+    """`0138`. An update paused this session; it has a `suspend` row and is resumed on the
+    next start. Its owner writes no `end` for it: the `ResultMessage` the CLI sends after
+    `interrupt()` is never handed on as a `done`."""
+
+
+# `0138` review round 2, F6: what a stream begun after `suspend_all` is refused with.
+PAUSED = "every session was paused for an update, so no new one may open"
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +404,12 @@ class StepHandle:
     # `0073`. The step's `coscc/runlog/events.py` recorder, set by `Service.run_step`. `_stream`
     # hands it every message before anything else reads it; chat has no handle, so none.
     recorder: Any = None
+    # `0138`. Whose session this is (`stream`'s `owner`), its id once `init` names it, the
+    # model it was opened on, and whether `Sessions.suspend_all` paused it.
+    owner: dict[str, Any] | None = None
+    session_id: str = ""
+    model: str | None = None
+    suspended: bool = False
 
     async def close(self) -> None:
         self.closed = True
@@ -432,6 +449,72 @@ def _abandon(client: Any) -> asyncio.Task:
     transport = getattr(client, "_transport", None)
     reached = getattr(client, "_query", None) is not None
     return _begin(_shut(client, transport, reached))
+
+
+def _set(flow: Any, **values: Any) -> None:
+    """`0138`. Note something about a stream on its `StepHandle` or its `_turns` entry."""
+    if flow is None:
+        return
+    if isinstance(flow, dict):
+        flow.update(values)
+    else:
+        for name, value in values.items():
+            setattr(flow, name, value)
+
+
+def _paused(flow: Any) -> bool:
+    if flow is None:
+        return False
+    return bool(flow.get("suspended") if isinstance(flow, dict) else flow.suspended)
+
+
+# `0138` R5. How long `suspend_all` gives `interrupt()`; `spike.md ## U2` measured it
+# returning in under 0.01 s. Chosen, not measured.
+INTERRUPT_TIMEOUT = 1.0
+
+
+def _descendants(pid: int, proc: Path = Path("/proc")) -> list[tuple[int, str]]:
+    """Every process under `pid`, as `(pid, start time)`, read from `/proc/*/stat`.
+
+    `0138` R5: a CLI killed with SIGKILL leaves its Bash tree running and writing into the
+    worktree (`spike.md ## U3`). The start time is kept so a pid reused before the kill is
+    not the one killed. Empty where there is no `/proc`.
+    """
+    children: dict[int, list[tuple[int, str]]] = {}
+    for stat in proc.glob("[0-9]*/stat"):
+        try:
+            text = stat.read_text()
+        except OSError:
+            continue
+        # The command name may hold spaces and parentheses; the fields start after the last.
+        fields = text[text.rfind(")") + 2:].split()
+        if len(fields) < 20:
+            continue
+        children.setdefault(int(fields[1]), []).append((int(stat.parent.name), fields[19]))
+    out: list[tuple[int, str]] = []
+    todo = [pid]
+    while todo:
+        for child in children.get(todo.pop(), []):
+            out.append(child)
+            todo.append(child[0])
+    return out
+
+
+def _kill_left(taken: list[tuple[int, str]], proc: Path = Path("/proc")) -> int:
+    """SIGKILL each process of `taken` still alive with the same start time; how many."""
+    killed = 0
+    for pid, started in taken:
+        try:
+            text = (proc / str(pid) / "stat").read_text()
+        except OSError:
+            continue
+        fields = text[text.rfind(")") + 2:].split()
+        if len(fields) < 20 or fields[19] != started or fields[0] == "Z":
+            continue
+        with suppress(ProcessLookupError, PermissionError):
+            os.kill(pid, signal.SIGKILL)
+            killed += 1
+    return killed
 
 
 # What one turn cost, in the shape `journal.COST_FIELDS` adds up.
@@ -512,6 +595,7 @@ def _options(
     settings: str | None = None,
     *,
     data_dir: str,
+    resume_at: str | None = None,
 ) -> ClaudeAgentOptions:
     """Map the four knobs onto the SDK.
 
@@ -627,6 +711,11 @@ def _options(
         # `0033`: what `coscc/agent/models.py` resolved for this stage and label. Unset, the
         # SDK's own default applies, as it did before.
         options.effort = effort
+    if resume_at is not None:
+        # `0138` R7: the session goes on from its safe point, and nothing past it is read.
+        # `resume_drops_turn` is never set: the CLI refused 3 of 5 cuts made mid-turn with
+        # it (`0138 spike.md ## U2`, point 8), and without it took all five.
+        options.resume_session_at = resume_at
     return options
 
 
@@ -668,6 +757,10 @@ class Sessions:
         self._turns: dict[str, dict[str, Any]] = {}
         # Told when a turn ends, so the updater waiting on it need not guess by the clock.
         self.on_turn_end: Any = None
+        # `0138` review round 2, F6. Set by `suspend_all`: from then on no stream opens, so a
+        # step between two sessions while the update waits for it ends saying why, rather
+        # than open one the hand-off cuts with no `suspend` row. `resume_after_update` clears it.
+        self.paused = False
 
     def created_here(self, session_id: str) -> bool:
         return session_id in self._created_here
@@ -695,13 +788,16 @@ class Sessions:
         found += ["(running step)" for h in self._steps if _resolve(h.cwd) == target]
         return found
 
-    def _begin_turn(self, cwd: str, session_id: str | None) -> dict[str, Any]:
+    def _begin_turn(self, cwd: str, session_id: str | None, owner: dict[str, Any] | None = None,
+                    model: str | None = None) -> dict[str, Any]:
         turn = {
             "id": uuid.uuid4().hex,
             "session_id": session_id or "",
             "workspace": cwd,
             "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "task": asyncio.current_task(),
+            # `0138`: what `suspend_all` needs of a stream with no step -- chat, Gebo.
+            "owner": owner, "client": None, "cwd": cwd, "model": model, "suspended": False,
         }
         self._turns[turn["id"]] = turn
         return turn
@@ -754,6 +850,9 @@ class Sessions:
         effort: str | None = None,
         step: StepHandle | None = None,
         settings: str | None = None,
+        owner: dict[str, Any] | None = None,
+        resume_at: str | None = None,
+        spent_before: dict[str, float] | None = None,
     ):
         """Send one prompt and yield the reply as it arrives.
 
@@ -772,30 +871,56 @@ class Sessions:
         this ends -- finished, raised, closed early through the handle, or abandoned by
         its reader -- and is never kept for resuming. Without one nothing here changes:
         chat needs `_live`.
+
+        `0138`. `owner` says whose session this is -- `kind` (`step`, `opening`, `closing`,
+        `integrate`, `estimate`, `precedent`, `chat`) and what that owner needs to take it
+        up again -- and is what `suspend_all` writes into a `suspend` row. `resume_at` goes
+        on from a safe point of `session_id` (`_options`). `spent_before` is what the
+        session had cost before this client: `{}`, the default, makes `done.cost` the whole
+        session's, since the CLI's own total carries over a resume (`spike.md ## U4`).
+        A stream `suspend_all` paused raises `Suspended` and yields no `done`, and one begun
+        after it is `Refused`.
         """
+        if self.paused:
+            raise Refused(PAUSED)
+        resolved_model = model if model is not None else self.config.model
+        if step is None:
+            flow: Any = self._begin_turn(cwd, session_id, owner, resolved_model)
+        else:
+            flow = step
+            step.cwd, step.owner, step.model = cwd, owner, resolved_model
+            step.session_id = session_id or ""
         inner = self._stream(
             cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
             workspace, model, system_prompt, effort, step, settings,
+            flow=flow, resume_at=resume_at, spent_before=spent_before,
         )
         if step is None:
-            turn = self._begin_turn(cwd, session_id)
+            turn = flow
             try:
                 async with aclosing(inner):
                     async for item in inner:
                         if item[0] == "session":
                             turn["session_id"] = item[1]
                         yield item
+            except Exception as e:
+                if turn["suspended"] and not isinstance(e, Suspended):
+                    raise Suspended(f"session {turn['session_id']} was paused for an update") from e
+                raise
             finally:
                 self._turns.pop(turn["id"], None)
                 if self.on_turn_end is not None:
                     self.on_turn_end()
             return
-        step.cwd = cwd
         self._steps.add(step)
         try:
             async with aclosing(inner):
                 async for item in inner:
                     yield item
+        except Exception as e:
+            if step.suspended and not isinstance(e, Suspended):
+                raise Suspended(f"session {step.session_id} was paused for an update") from e
+            raise
         finally:
             try:
                 await step.close()
@@ -809,6 +934,7 @@ class Sessions:
     async def _stream(
         self, cwd, text, session_id, max_turns, can_use_tool, tools, max_budget_usd,
         workspace, model, system_prompt, effort, step, settings=None,
+        *, flow: Any = None, resume_at: str | None = None, spent_before: dict[str, float] | None = None,
     ):
         member =workspace if workspace is not None else cwd
         if not self.membership(member):
@@ -847,10 +973,16 @@ class Sessions:
                             effort=effort,
                             settings=settings,
                             data_dir=str(scratch),
+                            resume_at=resume_at,
                         )
                     )
                     if step is None:
                         await client.connect()
+                        _set(flow, client=client)
+                        if _paused(flow):
+                            # `0138`. Paused while it was starting: nothing is sent.
+                            await _begin(_shut(client, getattr(client, "_transport", None), True))
+                            raise Suspended("the session was paused for an update before its prompt was sent")
                     else:
                         try:
                             await client.connect()
@@ -865,9 +997,14 @@ class Sessions:
                         # transport, so a Stop before this point only marks the handle closed.
                         step.client = client
                     live = Live(
-                        client=client, session_id=session_id or "", cwd=cwd, scratch=made
+                        client=client, session_id=session_id or "", cwd=cwd, scratch=made,
+                        spent=dict(spent_before or {}),
                     )
+                else:
+                    _set(flow, client=live.client)
             if step is not None and step.closed:
+                if step.suspended:
+                    raise Suspended("the step was paused for an update before its prompt was sent")
                 raise Refused("the step was stopped before its prompt was sent")
 
             resolved = live.session_id
@@ -887,6 +1024,9 @@ class Sessions:
             told_session = bool(resolved)
             if told_session:
                 yield ("session", resolved)
+            # `0138` R14: the tokens of the first API call this client made, what reloading
+            # a resumed session cost.
+            first_call: dict[str, int] | None = None
             await live.client.query(text)
             async for message in live.client.receive_response():
                 if step is not None and step.recorder is not None:
@@ -896,7 +1036,31 @@ class Sessions:
                         step.recorder.message(message)
                     except Exception:  # noqa: BLE001
                         pass
+                if isinstance(message, sdk.SystemMessage) and message.subtype == "init":
+                    # `0138`. The id is known here, before the first reply, so an update
+                    # that pauses the session now can still name it.
+                    said = str((message.data or {}).get("session_id") or "")
+                    if said and session_id and said != session_id:
+                        # R8: a resume that came back as another session is refused.
+                        await _begin(_shut(live.client, getattr(live.client, "_transport", None), True))
+                        self._live.pop(session_id, None)
+                        raise Refused(
+                            f"resume returned {said} instead of {session_id} — "
+                            "this is the fork branch spec.md C7 warns about"
+                        )
+                    if said:
+                        resolved = said
+                        _set(flow, session_id=said)
+                        if not told_session:
+                            told_session = True
+                            yield ("session", resolved)
                 if isinstance(message, AssistantMessage):
+                    if first_call is None and isinstance(message.usage, dict):
+                        first_call = {
+                            "input_tokens": int(message.usage.get("input_tokens") or 0),
+                            "cache_creation_tokens": int(message.usage.get("cache_creation_input_tokens") or 0),
+                            "cache_read_tokens": int(message.usage.get("cache_read_input_tokens") or 0),
+                        }
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             collected.append(block.text)
@@ -909,6 +1073,7 @@ class Sessions:
                             yield ("tool", getattr(block, "name", "") or "tool")
                     if message.session_id:
                         resolved = message.session_id
+                        _set(flow, session_id=resolved)
                     if resolved and not told_session:
                         told_session = True
                         yield ("session", resolved)
@@ -931,6 +1096,11 @@ class Sessions:
                     terminal = getattr(message, "terminal_reason", None) or (
                         getattr(message, "subtype", "") or ""
                     )
+
+            if _paused(flow):
+                # `0138`. The `ResultMessage` after `interrupt()` ends the loop above like any
+                # other; it is not this session's end, and its owner must not read it as one.
+                raise Suspended(f"session {resolved} was paused for an update")
 
             if session_id and resolved != session_id:
                 # Never observed, but the failure C7 describes is silent, so it is checked
@@ -962,6 +1132,7 @@ class Sessions:
                     "cost": cost,
                     "terminal_reason": terminal,
                     "models_used": used,
+                    "first_call": first_call,
                 },
             )
         finally:
@@ -994,3 +1165,69 @@ class Sessions:
             await step.close()
             self._steps.discard(step)
             step.drop_scratch()
+
+    async def suspend_all(self) -> list[dict[str, Any]]:
+        """`0138` R4-R6. Pause every stream this process has open, all at once, and say
+        where each one can be taken up again.
+
+        Each is marked first, so its owner gets `Suspended` instead of an end; then its
+        CLI's descendants are listed, the transcript's boundary read, `interrupt()` sent and
+        the client closed by `_shut`, and whatever of that list is still alive killed. What
+        is returned is one `suspend` row's fields per stream, for the updater to write. A
+        stream with no session id or no client yet is closed all the same and marked
+        `unresumable`. Nothing here writes to a transcript or runs git.
+        """
+        self.paused = True
+        flows: list[Any] = [*self._steps, *self._turns.values()]
+        records = await asyncio.gather(*(self._suspend(f) for f in flows))
+        for f in flows:
+            if isinstance(f, dict):
+                self._turns.pop(f["id"], None)
+                live = self._live.get(f.get("session_id") or "")
+                if live is not None and live.client is f.get("client"):
+                    self._live.pop(f["session_id"], None)
+                    _drop(live.scratch)
+            else:
+                self._steps.discard(f)
+        return list(records)
+
+    async def _suspend(self, flow: Any) -> dict[str, Any]:
+        _set(flow, suspended=True)
+        get = flow.get if isinstance(flow, dict) else (lambda k: getattr(flow, k))
+        client, sid, cwd = get("client"), str(get("session_id") or ""), str(get("cwd") or "")
+        owner = dict(get("owner") or {})
+        record: dict[str, Any] = {
+            "owner": owner, "cwd": cwd, "session_id": sid, "model": get("model"),
+            "start_at": owner.get("start_at"),
+        }
+
+        async def close() -> None:
+            if isinstance(flow, StepHandle):
+                await flow.close()
+            elif client is not None:
+                await _begin(_shut(client, getattr(client, "_transport", None), True))
+
+        if client is None or not sid:
+            await close()
+            return {**record, "unresumable": "no session id yet"}
+        process = getattr(getattr(client, "_transport", None), "_process", None)
+        taken = _descendants(process.pid) if getattr(process, "pid", None) else []
+        path = transcript.path_for(cwd, sid)
+        edge = transcript.boundary(path)
+        try:
+            await asyncio.wait_for(client.interrupt(), INTERRUPT_TIMEOUT)
+        except Exception:  # noqa: BLE001 - a CLI that does not answer is closed all the same
+            pass
+        await close()
+        _kill_left(taken)
+        record["boundary"] = edge
+        try:
+            found = transcript.cut(path, edge)
+        except (transcript.Unreadable, OSError) as e:
+            return {**record, "unresumable": f"the transcript could not be read: {e}"}
+        spent = transcript.spent_after(path, edge)
+        record.update(
+            safe_uuid=found["safe_uuid"], dropped=found["dropped"], api_calls=found["api_calls"],
+            **({"spent_usd": spent} if spent is not None else {"cost_unknown": True}),
+        )
+        return record

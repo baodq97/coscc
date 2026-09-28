@@ -11,17 +11,19 @@ anything (`.claude/rules/coscc-app.md`, "A handler that decides anything is a bu
   and every six hours; offline or rate-limited keeps the old state and says nothing.
 - **LocalBuilder** (R6): `scripts/build_wheel.sh --local` of the configured workspace's
   `origin/main`, in a throwaway worktree, only when someone presses the button.
-- **Apply** (R7 to R12): wait for what is running, or cut it when the person chose to; try
-  the new version beside the old one; then hand the install to `run.main` and stop uvicorn.
+- **Apply** (R7 to R12; `0138`): wait only for a mechanical integration or a screenshot
+  retake; refuse new sessions from the start of the trial; try the new version beside the
+  old one; pause every agent session (`Sessions.suspend_all`) and cancel a local build;
+  then hand the install to `run.main` and stop uvicorn. The next start takes each paused
+  session up again (`coscc/service/resume.py`).
 
 **It is not an approval and it starts nothing** (R16): no path here asks a gate, reads
-`next` or runs a step. It stops running work only when a person chose "apply now".
+`next` or runs a step. Since `0138` one Apply pauses every running session; none is lost.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import http.client
 import json
 import os
@@ -56,9 +58,12 @@ BUILD_TIMEOUT = 15 * 60
 LOG_TAIL = 40
 HTTP_TIMEOUT = 30
 FETCH_LOCK_WAIT = 120  # chosen: how long an apply waits for a download already under way
+# `0138` review round 2, F6. Chosen: how long work with no session open is given to finish
+# after the pause. `spike.md ## U1` estimates 37 s from press to serving; 37 + 15 stays
+# under R2's 60 s.
+SETTLE_WITHIN = 15
 
 CHANNELS = ("release", "local")
-MODES = ("wait", "now")
 
 # `origin` of the local channel's workspace must be this repository, https or ssh (R6).
 _ORIGIN = re.compile(
@@ -66,7 +71,11 @@ _ORIGIN = re.compile(
 )
 
 UPDATING = "an update is being applied"
-WAITING_WARNING = "An update is waiting; starting work delays it."
+# `0138` spec.md ## Answers, câu 1 (Jera's inference): once Apply is pressed, none of the
+# things an update still waits for may begin -- since `0131` a knowledge gather among them
+# (review round 1, F2).
+WAITING = "an update is waiting to be applied"
+WAITING_WARNING = "An update waits for an integration, a screenshot retake or a knowledge gather to finish."
 
 
 class Refused(Exception):
@@ -85,14 +94,6 @@ class Updating(Refused):
     """R11: the few seconds between the trial run and the exit."""
 
     status = 503
-
-
-class Stale(Refused):
-    """R10: the cut list changed since it was shown."""
-
-    def __init__(self, message: str, listing: dict[str, Any]):
-        super().__init__(message)
-        self.listing = listing
 
 
 def _stamp() -> str:
@@ -377,27 +378,13 @@ class Updater:
         if channel.get("state") == "ready" and blocked:
             return {**channel, "state": "blocked", "reason": blocked}
         return dict(channel)
-    # -- what is running (R8) ------------------------------------------------
+    # -- what an update waits for (R8; `0138` R2, R3) --------------------------
 
-    def jobs(self) -> list[dict[str, Any]]:
-        jobs = list(self.service._update_jobs())
-        if self._build_task is not None and not self._build_task.done():
-            jobs.append({"kind": "build", "id": "build", "started": self.local.get("started", "")})
-        return jobs
-
-    def cut_list(self) -> dict[str, Any]:
-        """R10. What "apply now" would cut, and a token for exactly this list."""
-        self._require_service()
-        items = [
-            {**j, "action": "will wait" if j["kind"] == "integration" else "will be stopped"}
-            for j in self.jobs()
-        ]
-        # A step's id names only its unit: the stage and the start time make another run
-        # of that unit another list (review round 1, F2).
-        token = hashlib.sha256(json.dumps(sorted(
-            [j["id"], j.get("stage", ""), j.get("started", "")] for j in items
-        )).encode()).hexdigest()[:16]
-        return {"items": items, "token": token}
+    def waited(self) -> list[dict[str, Any]]:
+        """The only work an Apply waits for: a mechanical integration and a screenshot
+        retake (spec.md ## Answers, câu 1). Every agent session is paused instead, and a
+        local build cancelled."""
+        return list(self.service._update_waited())
 
     def job_ended(self) -> None:
         """Told by `Service` and `Sessions` whenever a step, integration or chat turn ends."""
@@ -409,7 +396,7 @@ class Updater:
             pass
 
     def _maybe_apply(self) -> None:
-        if self.state != "pending" or self.pending is None or self.jobs():
+        if self.state != "pending" or self.pending is None or self.waited():
             return
         channel, by = self.pending["channel"], self.pending["by"]
         self._begin(channel, by)
@@ -424,7 +411,7 @@ class Updater:
             return out
         # R9's ten seconds, belt and braces: a job whose end was not told still clears here.
         self._maybe_apply()
-        jobs = self.jobs() if self.state == "pending" else []
+        jobs = self.waited() if self.state == "pending" else []
         blocked = self.rollback()
         return {
             **out,
@@ -446,13 +433,22 @@ class Updater:
             raise NotHere(f"{update.UNAVAILABLE}: {me['reason']}")
 
     def refuse_while_updating(self) -> None:
-        """R11. Called before a step, an integration, a chat turn or a build begins."""
+        """R11. Called before a step, an integration, a chat turn or a build begins. Since
+        `0138` the window opens when the trial begins (R3)."""
         if self.window:
             raise Updating(UPDATING)
 
-    # -- R7, R9, R10 ---------------------------------------------------------
+    def refuse_mechanical_while_updating(self) -> None:
+        """`0138` R3. Called before a mechanical integration, a screenshot retake or a knowledge
+        gather: from the press of Apply on, none begins, so the wait it began cannot grow."""
+        self.refuse_while_updating()
+        if self.state in ("pending", "applying"):
+            raise Updating(WAITING)
 
-    async def apply(self, channel: str, mode: str, by: str, token: str = "") -> dict[str, Any]:
+    # -- R7, R9; `0138` R1 ---------------------------------------------------
+
+    async def apply(self, channel: str, by: str) -> dict[str, Any]:
+        """The one way to apply (`0138` R1): wait for what `waited` names, then go."""
         self._require_service()
         self.refuse_while_updating()
         name = (by or "").strip()
@@ -460,8 +456,6 @@ class Updater:
             raise Refused("a name is required to apply an update")
         if channel not in CHANNELS:
             raise Refused(f"channel must be one of {', '.join(CHANNELS)}")
-        if mode not in MODES:
-            raise Refused(f"mode must be one of {', '.join(MODES)}")
         if self.state == "applying":
             raise Updating(UPDATING)
         if getattr(self, channel).get("state") != "ready":
@@ -469,17 +463,8 @@ class Updater:
         blocked = self.rollback()
         if blocked:
             raise Refused(blocked)
-        if mode == "now":
-            listing = self.cut_list()
-            if token != listing["token"]:
-                raise Stale("the work to be stopped has changed; review it and confirm again", listing)
-            for job in listing["items"]:
-                if job["action"] != "will be stopped":
-                    continue
-                if await self._cut(job, name):
-                    self._record("cut", name, cut=_describe(job), stopped_by=name)
         self.error = None
-        if self.jobs():
+        if self.waited():
             if self.state != "pending":
                 self.state = "pending"
                 self.pending = {"channel": channel, "by": name, "since": update.now()}
@@ -489,14 +474,6 @@ class Updater:
         else:
             self._begin(channel, name)
         return self.status()
-
-    async def _cut(self, job: dict[str, Any], by: str) -> bool:
-        if job["kind"] == "build":
-            if self._build_task is not None and not self._build_task.done():
-                self._build_task.cancel()
-                return True
-            return False
-        return await self.service._update_cut(job, by)
 
     def cancel(self, by: str) -> dict[str, Any]:
         self._require_service()
@@ -529,7 +506,7 @@ class Updater:
         self.log = str(log)
         if not await asyncio.to_thread(self._fetch_lock.acquire, True, FETCH_LOCK_WAIT):
             return self._fail("another download is still under way; try again later")
-        handed = False
+        handed = paused = False
         try:
             # Step 1: from disk, right now, before anything changes.
             if update.SERVER.server is None:
@@ -543,19 +520,34 @@ class Updater:
                 current = self._current_matches()
             if current is None:
                 return self._fail("no way back: no current wheel matches the running version")
-            # Step 2: a trial run, while this one keeps serving.
+            # Step 2: a trial run, while this one keeps serving and its sessions keep running.
+            # `0138` R3: the window of R11 opens first, so no new session starts from here; a
+            # failed trial closes it again (`_fail`) and has touched no session.
+            self.window = True
             log.write_text(f"trial of {target['version']} from {channel}, pressed by {by}\n", encoding="utf-8")
             problem = await self._trial(target, log)
             if problem:
                 return self._fail(problem, log)
-            # Step 3: the window of R11, unless something began during the trial.
-            if self.jobs():
-                self.state = "pending"
+            # Step 3: nothing this waits for began during the trial -- it was refused.
+            if self.waited():
+                self.state, self.window = "pending", False
                 self.pending = {"channel": channel, "by": by, "since": update.now(),
-                                "reason": "new work started during the trial"}
+                                "reason": "an integration, a retake or a knowledge gather began during the trial"}
                 self._record("pending", by, channel=channel, to=target["version"])
                 return
-            self.window = True
+            # `0138` R3: a local build is not a session, and is not taken up again.
+            if self._build_task is not None and not self._build_task.done():
+                self._build_task.cancel()
+                self._record("cut", by, cut={"kind": "build", "started": self.local.get("started", "")},
+                             stopped_by=by)
+            # `0138` R4-R6: every session paused, each with its `suspend` row, before the
+            # steps' tasks are cancelled below.
+            paused = True
+            await self.service.suspend_sessions(by)
+            # Review round 2, F6: what had no session open to pause gets a bounded wait, and
+            # what outlives it is named before `shutdown` cancels it.
+            for job in await self.service.settle_after_suspend(SETTLE_WITHIN):
+                self._record("cut", by, cut=job, stopped_by=by)
             # Step 4: the lifespan does not run on the real stack (`spike.md ## U5` part 2).
             await self.service.shutdown()
             await self.service.sessions.close_all()
@@ -591,6 +583,18 @@ class Updater:
             # Handed off, the lock stays held: this process exits with the wheels as they were.
             if not handed:
                 self._fetch_lock.release()
+        if paused and not handed:
+            await self._take_up_again()
+
+    async def _take_up_again(self) -> None:
+        """`0138` review round 1, F3. Every session was paused and the hand-off then failed, so
+        this process goes on serving: it takes them up now, `_fail` having closed the window,
+        rather than leave their rows to whichever start comes next, over units that moved on."""
+        try:
+            await self.service.resume_after_update()
+        except Exception as e:  # noqa: BLE001 - the panel says what went wrong
+            said = f"the paused sessions were not taken up again: {type(e).__name__}: {e}"
+            self.error = {**(self.error or {}), "message": f"{(self.error or {}).get('message', '')}; {said}"}
 
     async def _trial(self, target: dict[str, Any], log: Path) -> str:
         """R12 step 2. `""` when the new version installed, answered and was stopped."""
@@ -769,10 +773,6 @@ class Updater:
 
 class _BuildFailed(Exception):
     pass
-
-
-def _describe(job: dict[str, Any]) -> dict[str, Any]:
-    return {k: job[k] for k in ("kind", "unit", "stage", "session_id", "workspace", "started") if k in job}
 
 
 def _free_port() -> int:

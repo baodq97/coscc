@@ -138,10 +138,14 @@ whether a newer build is ready:
   `github.com/baodq97/coscc`, and runs `scripts/build_wheel.sh --local` from `origin/main`
   in a throwaway worktree. That runs upstream `main`'s build scripts under your user.
 
-*Apply* waits until no step, integration, chat turn or local build of this process is
-running, then applies. *Apply now…* lists what it would stop first; integrations are
-never stopped, only waited for. Applying tries the new version beside the running one,
-then stops the app, installs the wheel offline, checks `coscc --version`, and exits with
+*Apply* waits until no mechanical integration, screenshot retake or knowledge gather of
+this process is running, and none of those can start once it is pressed. Every other agent
+session — a step, Gebo, an estimate, Jera, a chat turn — keeps running through the trial;
+then each is paused, and whatever command it was running is killed with its children. When
+the app is back, each goes on in the same session, told which commands were cut. That needs
+its transcript under `~/.claude/projects`: delete that directory while an update is under
+way and those steps end `failed` and wait for a rerun. A local build under way is
+cancelled. Applying tries the new version beside the running one, then stops the app, installs the wheel offline, checks `coscc --version`, and exits with
 code 75 so `Restart=on-failure` brings it back. The page reloads itself when it answers
 again. Every step is written to `<COS_DATA_DIR>/updates/logs/<time>-update.log`.
 

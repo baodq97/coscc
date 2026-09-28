@@ -8,9 +8,14 @@ from __future__ import annotations
 from typing import Any, AsyncIterator
 
 from coscc.agent import sessions as reader
+from coscc.agent import transcript
 from coscc.runlog.journal import BadRecord, Busy
 from coscc.agent import models
 from coscc.service.common import Invalid
+
+# A chat turn's ceiling: `Sessions.stream`'s default, since chat names none, and no budget.
+# `0138` R10 takes what a paused turn used off it (review round 1, F5).
+CHAT_TURNS = 1
 
 
 class SessionsMixin:
@@ -72,19 +77,32 @@ class SessionsMixin:
             raise Invalid("text is required")
 
     async def stream(
-        self, cwd: str, text: str, session_id: str | None = None
+        self, cwd: str, text: str, session_id: str | None = None,
+        resume: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """Yield `(kind, payload)` exactly as the session layer does.
 
         Re-runs `check_send` so the generator is safe on its own; the checks are pure, so
         doing them twice costs nothing and leaves no caller able to skip them.
+
+        `resume` (`0138`) is a `suspend` row of a chat turn an update paused: the turn goes
+        on from its safe point, on the model it had, with what is left of its ceiling (R10),
+        and opens nothing when none is. A paused turn writes no `chat` row.
         """
         self.check_send(cwd, text)
         # `0004_no-setting-says-which-model-runs-a-stage`. Chat is a row of the same table
         # as the stages.
         model, model_source = self._model_for(models.CHAT)
+        extra: dict[str, Any] = {"owner": {"kind": "chat", "workspace": self._journal_key(cwd),
+                                           "workspace_dir": cwd, "unit": "", "stage": ""}}
+        if resume is not None:
+            model, model_source = resume.get("model") or model, "resumed"
+            turns, _, used_up = transcript.ceilings_left(CHAT_TURNS, None, resume)
+            if used_up:
+                return
+            extra.update(resume_at=resume.get("safe_uuid"), max_turns=turns)
         async for item in self.sessions.stream(
-            cwd, text, session_id, **({"model": model} if model is not None else {})
+            cwd, text, session_id, **({"model": model} if model is not None else {}), **extra,
         ):
             if item[0] == "session":
                 # `0019` plan step 2, risk 2. `api.py` treats every kind but `chunk` as

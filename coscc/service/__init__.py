@@ -38,7 +38,6 @@ from coscc.service.common import (
     Invalid,
     Updating,
     NotUpdatable,
-    StaleCutList,
     _younger_than,
     step_cwd,
     describe_base,
@@ -122,6 +121,9 @@ from coscc.service.release import (
 from coscc.service.knowledge import (
     KnowledgeMixin,
 )
+from coscc.service.resume import (
+    ResumeMixin,
+)
 
 
 @dataclass
@@ -142,6 +144,7 @@ class Service(
     IdeasMixin,
     ReleaseMixin,
     KnowledgeMixin,
+    ResumeMixin,
 ):
     config: Config
     sessions: Sessions
@@ -159,7 +162,7 @@ class Service(
     # A capture a session runs does not take it (spec C1). One process only, like `pull`.
     _screens_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     # `0111` review round 1, F3. The retake running now, if any, `{workspace, unit, started}`
-    # by an id that never leaves this process: read only by `_update_jobs`.
+    # by an id that never leaves this process: read only by `_update_waited`.
     _retakes: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
     # `0017` R8. Per workspace, created on first use.
     _create_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
@@ -179,6 +182,10 @@ class Service(
     # integration, keyed by an id that never leaves this process. Added and removed beside
     # `_active`, read only by `running`. Display only: `_active` still does the refusing.
     _running: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
+    # `0138` review round 3, F6. A step's `_after_end`, run after its `_running` entry and its
+    # mark are gone: by the same id, its entry and the task running it. Not shown on the
+    # board; an Apply's settle waits for it and `shutdown` cancels it.
+    _finishing: dict[str, tuple[dict[str, Any], asyncio.Task]] = field(default_factory=dict, init=False, repr=False)
     # `0100` R6. By `(journal key, unit)`: the last answer of `integrate.required_checks`,
     # `{head, checks | error, at}`, and the one background ask running for it. Memory only,
     # gone on a restart, and never waited on by a board read. One process only, like `pull`.

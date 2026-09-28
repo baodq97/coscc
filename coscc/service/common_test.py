@@ -247,7 +247,7 @@ class WhatTheBoardSaysBesideAUnit(unittest.TestCase):
                               {"build-local"}),
             "newer ready": ({"release": {"state": "ready", "version": "0.13.0"},
                              "local": {"state": "idle", "workspace": "p"}},
-                            {"apply-release", "now-release", "build-local"}),
+                            {"apply-release", "build-local"}),
         }
         vietnamese = re.compile(r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]", re.I)
         for name, (status, usable) in states.items():

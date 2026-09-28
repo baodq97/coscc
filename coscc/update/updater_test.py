@@ -1,8 +1,9 @@
-"""`coscc/update/updater.py`: waiting, cutting, the apply sequence, and what a restart reports.
+"""`coscc/update/updater.py`: waiting, pausing, the apply sequence, and what a restart reports.
 
-`.cos/0068_updating-the-app-is-a-manual-reinstall` plan step 7. The service is a stand-in
-that lists jobs from a Python list and records what was cut; nothing goes to the network,
-no session is opened, and the trial run is replaced where a test says so.
+`.cos/0068_updating-the-app-is-a-manual-reinstall` plan step 7, and `0138` step 9. The
+service is a stand-in that lists what an Apply waits for from a Python list and records
+when the sessions were paused; nothing goes to the network, no session is opened, and the
+trial run is replaced where a test says so.
 """
 
 from __future__ import annotations
@@ -33,11 +34,13 @@ class _Journal:
 
 
 class _Sessions:
-    def __init__(self):
+    def __init__(self, order):
         self.closed = 0
+        self.order = order
 
     async def close_all(self):
         self.closed += 1
+        self.order.append("close_all")
 
 
 class StandIn:
@@ -45,25 +48,39 @@ class StandIn:
 
     def __init__(self):
         self.jobs: list[dict] = []
-        self.cut: list[tuple[dict, str]] = []
+        self.suspended: list[str] = []
+        # What `settle_after_suspend` says still runs once its wait is over.
+        self.unsettled: list[dict] = []
         self.rows: list[dict] = []
         self.store = None
-        self.sessions = _Sessions()
+        # What happened after the trial, in order: pausing, shutting down, closing.
+        self.order: list[str] = []
+        self.sessions = _Sessions(self.order)
         self.shut = 0
 
     def _journal(self):
         return _Journal(self.rows)
 
-    def _update_jobs(self):
+    def _update_waited(self):
         return list(self.jobs)
 
-    async def _update_cut(self, job, by):
-        self.cut.append((job, by))
-        self.jobs = [j for j in self.jobs if j["id"] != job["id"]]
-        return True
+    async def suspend_sessions(self, by):
+        self.suspended.append(by)
+        self.order.append("suspend")
+        return []
+
+    async def settle_after_suspend(self, within):
+        self.order.append("settle")
+        self.within = within
+        return list(self.unsettled)
 
     async def shutdown(self):
         self.shut += 1
+        self.order.append("shutdown")
+
+    async def resume_after_update(self):
+        self.order.append("take_up")
+        return []
 
     def events(self):
         return [r["event"] for r in self.rows]
@@ -97,8 +114,6 @@ def _running_release(body: bytes = b"old wheel") -> dict[str, bytes]:
     return {wheel_url: body, sums_url: f"{hashlib.sha256(body).hexdigest()}  {update.wheel_name('0.12.0')}\n".encode()}
 
 
-STEP = {"kind": "step", "id": "step:/w:0001_a", "workspace": "/w", "unit": "0001_a", "stage": "impl", "started": "t"}
-CHAT = {"kind": "chat", "id": "chat:t1", "turn": "t1", "session_id": "s1", "workspace": "/w", "started": "t"}
 INTEGRATION = {"kind": "integration", "id": "integration:/w:0002_b", "workspace": "/w", "unit": "0002_b",
                "stage": "integrate", "started": "t"}
 
@@ -139,27 +154,27 @@ class _Base(unittest.IsolatedAsyncioTestCase):
 class NothingRunningAppliesAtOnce(_Base):
     async def test_r7(self):
         u = self.make()
-        await u.apply("release", "wait", "an")
+        await u.apply("release", "an")
         await self.settle()
         self.assertEqual(self.applied, [("release", "an")])
 
     async def test_a_name_is_required(self):
         with self.assertRaises(updater.Refused):
-            await self.make().apply("release", "wait", "  ")
+            await self.make().apply("release", "  ")
 
     async def test_a_channel_with_nothing_ready_refuses(self):
         u = self.make()
         with self.assertRaises(updater.Refused):
-            await u.apply("local", "wait", "an")
+            await u.apply("local", "an")
 
 
 class ItWaits(_Base):
     async def test_r9_pending_then_applies_once_the_last_job_ends(self):
-        self.service.jobs = [STEP]
+        self.service.jobs = [INTEGRATION]
         u = self.make()
-        status = await u.apply("release", "wait", "an")
+        status = await u.apply("release", "an")
         self.assertEqual(status["state"], "pending")
-        self.assertEqual([j["id"] for j in status["pending"]["waiting"]], [STEP["id"]])
+        self.assertEqual([j["id"] for j in status["pending"]["waiting"]], [INTEGRATION["id"]])
         self.assertEqual(status["warning"], updater.WAITING_WARNING)
         self.assertIn("pending", self.service.events())
         # A new job is not refused while waiting.
@@ -170,18 +185,18 @@ class ItWaits(_Base):
         self.assertEqual(self.applied, [("release", "an")])
 
     async def test_a_job_whose_end_was_not_told_still_clears_on_the_next_status(self):
-        self.service.jobs = [STEP]
+        self.service.jobs = [INTEGRATION]
         u = self.make()
-        await u.apply("release", "wait", "an")
+        await u.apply("release", "an")
         self.service.jobs = []
         u.status()
         await self.settle()
         self.assertEqual(self.applied, [("release", "an")])
 
     async def test_cancel_is_recorded_and_nothing_applies(self):
-        self.service.jobs = [STEP]
+        self.service.jobs = [INTEGRATION]
         u = self.make()
-        await u.apply("release", "wait", "an")
+        await u.apply("release", "an")
         u.cancel("bo")
         self.assertEqual(u.state, "idle")
         self.assertEqual(self.service.rows[-1]["event"], "cancelled")
@@ -192,46 +207,29 @@ class ItWaits(_Base):
         self.assertEqual(self.applied, [])
 
 
-class ApplyNowCutsWhatItListed(_Base):
-    async def test_the_token_changes_with_the_list_and_an_old_one_is_refused(self):
-        self.service.jobs = [STEP]
-        u = self.make()
-        first = u.cut_list()
-        self.service.jobs = [STEP, CHAT]
-        second = u.cut_list()
-        self.assertNotEqual(first["token"], second["token"])
-        with self.assertRaises(updater.Stale) as caught:
-            await u.apply("release", "now", "an", first["token"])
-        self.assertEqual(caught.exception.listing["token"], second["token"])
-        self.assertEqual(self.service.cut, [])
+class OneApply(_Base):
+    """`0138` R1, R3: one Apply, which takes no mode and no token."""
 
-    async def test_another_stage_on_the_same_unit_is_another_list(self):
-        # Review round 1, F2: the step id names only the unit, so the stage and start count.
-        self.service.jobs = [STEP]
-        u = self.make()
-        shown = u.cut_list()
-        self.service.jobs = [{**STEP, "stage": "review", "started": "t2"}]
-        with self.assertRaises(updater.Stale):
-            await u.apply("release", "now", "an", shown["token"])
-        self.assertEqual(self.service.cut, [])
-        self.service.jobs = [{**STEP, "started": "t2"}]
-        self.assertNotEqual(u.cut_list()["token"], shown["token"])
+    async def test_apply_takes_no_mode_and_no_token(self):
+        import inspect
 
-    async def test_steps_and_chats_are_cut_and_integrations_waited_for(self):
-        self.service.jobs = [STEP, CHAT, INTEGRATION]
+        self.assertEqual(list(inspect.signature(updater.Updater.apply).parameters), ["self", "channel", "by"])
+        self.assertFalse(hasattr(updater, "MODES"))
+        self.assertFalse(hasattr(updater, "Stale"))
+        self.assertFalse(hasattr(updater.Updater, "cut_list"))
+
+    async def test_a_mechanical_integration_is_refused_once_apply_is_pressed(self):
+        self.service.jobs = [INTEGRATION]
         u = self.make()
-        listing = u.cut_list()
-        actions = {i["kind"]: i["action"] for i in listing["items"]}
-        self.assertEqual(actions, {"step": "will be stopped", "chat": "will be stopped", "integration": "will wait"})
-        status = await u.apply("release", "now", "an", listing["token"])
-        self.assertEqual([(j["kind"], by) for j, by in self.service.cut], [("step", "an"), ("chat", "an")])
-        cuts = [r for r in self.service.rows if r["event"] == "cut"]
-        self.assertEqual([c["stopped_by"] for c in cuts], ["an", "an"])
-        self.assertEqual(status["state"], "pending")
-        self.service.jobs = []
-        u.job_ended()
-        await self.settle()
-        self.assertEqual(self.applied, [("release", "an")])
+        u.refuse_mechanical_while_updating()
+        await u.apply("release", "an")
+        self.assertEqual(u.state, "pending")
+        with self.assertRaises(updater.Updating):
+            u.refuse_mechanical_while_updating()
+        # A step, a chat turn or a Gebo session still begins while it waits: it is paused later.
+        u.refuse_while_updating()
+        u.cancel("an")
+        u.refuse_mechanical_while_updating()
 
 
 class TheWindowRefusesNewWork(_Base):
@@ -241,7 +239,7 @@ class TheWindowRefusesNewWork(_Base):
         with self.assertRaises(updater.Updating):
             u.refuse_while_updating()
         with self.assertRaises(updater.Updating):
-            await u.apply("release", "wait", "an")
+            await u.apply("release", "an")
         with self.assertRaises(updater.Updating):
             u.build_local("an")
 
@@ -269,7 +267,7 @@ class TheSequence(_Base):
         return u
 
     async def run_apply(self, u):
-        await u.apply("release", "wait", "an")
+        await u.apply("release", "an")
         await u._apply_task
 
     async def test_a_target_that_no_longer_matches_stops_before_anything(self):
@@ -329,7 +327,7 @@ class TheSequence(_Base):
         self.assertEqual(status["release"]["state"], "blocked")
         self.assertIn("no way back", status["release"]["reason"])
         with self.assertRaises(updater.Refused):
-            await u.apply("release", "wait", "an")
+            await u.apply("release", "an")
         self.assertIsNone(u._apply_task)
         _wheel(self.root / "current", "0.12.0+gabcdef0")
         self.assertEqual(u.status()["release"]["state"], "ready")
@@ -368,16 +366,160 @@ class TheSequence(_Base):
         _wheel(self.root / "release", "0.13.0")
         _wheel(self.root / "current", "0.12.0")
 
-        def begin_a_step():
-            self.service.jobs = [STEP]
+        def begin_an_integration():
+            self.service.jobs = [INTEGRATION]
             return ""
 
-        u = self.make_real(begin_a_step)
+        u = self.make_real(begin_an_integration)
         await self.run_apply(u)
         self.assertEqual(u.state, "pending")
         self.assertIn("during the trial", u.pending["reason"])
         self.assertFalse(u.window)
         self.assertFalse(self.server.should_exit)
+        self.assertEqual(self.service.suspended, [])
+
+    async def test_new_sessions_are_refused_from_the_start_of_the_trial(self):
+        # `0138` R3.
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+        seen: list[bool] = []
+
+        def trial():
+            seen.append(u.window)
+            try:
+                u.refuse_while_updating()
+            except updater.Updating:
+                seen.append(True)
+            return ""
+
+        u = self.make_real(trial)
+        self.assertFalse(u.window)
+        await self.run_apply(u)
+        self.assertEqual(seen, [True, True])
+
+    async def test_a_failed_trial_suspends_nothing(self):
+        # `0138` R3: the sessions ran through the trial, and go on running after it failed.
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+        u = self.make_real("the trial failed")
+        await self.run_apply(u)
+        self.assertEqual((u.state, u.window), ("idle", False))
+        self.assertEqual((self.service.suspended, self.service.order), ([], []))
+        u.refuse_while_updating()
+
+    async def test_apply_suspends_every_session_after_the_trial_and_before_shutdown(self):
+        # `0138` R4-R6.
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+
+        def trial():
+            self.assertEqual(self.service.order, [])
+            return ""
+
+        u = self.make_real(trial)
+        await self.run_apply(u)
+        self.assertIsNone(u.error)
+        self.assertEqual(self.service.suspended, ["an"])
+        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "close_all"])
+
+    async def test_work_with_no_session_is_given_time_and_what_outlives_it_is_named(self):
+        # Review round 2, F6: a step posting its round after its `end` had no session to pause;
+        # it is waited for, bounded, and one still running then gets a `cut` row before
+        # `shutdown` cancels it.
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+        job = {"kind": "step", "workspace": "/w", "unit": "0001_a", "stage": "review", "started": "t"}
+        self.service.unsettled = [job]
+        u = self.make_real()
+        await self.run_apply(u)
+        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "close_all"])
+        self.assertEqual(self.service.within, updater.SETTLE_WITHIN)
+        cut = [r for r in self.service.rows if r["event"] == "cut"]
+        self.assertEqual([(c["cut"], c["stopped_by"]) for c in cut], [(job, "an")])
+        self.assertLess(self.service.rows.index(cut[0]),
+                        [r["event"] for r in self.service.rows].index("applying"))
+
+    async def test_suspend_rows_are_written_before_hand_off(self):
+        # `0138`: the rows are the next start's only way to the sessions, so they come first.
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+        order = self.service.order
+        real = update.SERVER.hand_off
+
+        def hand_off(handoff):
+            order.append("hand_off")
+            return real(handoff)
+
+        update.SERVER.hand_off = hand_off  # type: ignore[method-assign]
+        try:
+            u = self.make_real()
+            await self.run_apply(u)
+        finally:
+            del update.SERVER.hand_off
+        self.assertEqual(order, ["suspend", "settle", "shutdown", "close_all", "hand_off"])
+        self.assertTrue(self.server.should_exit)
+
+    async def test_a_failed_hand_off_takes_every_paused_session_up_again_here(self):
+        # Review round 1, F3: this process goes on serving, so its `suspend` rows are taken up
+        # now, with the window closed -- not by whichever start comes next.
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+        seen: list[bool] = []
+        taken = self.service.resume_after_update
+
+        async def take_up():
+            seen.append(u.window)
+            return await taken()
+
+        self.service.resume_after_update = take_up  # type: ignore[method-assign]
+        update.SERVER.hand_off = lambda handoff: False  # type: ignore[method-assign]
+        try:
+            u = self.make_real()
+            await self.run_apply(u)
+        finally:
+            del update.SERVER.hand_off
+        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "close_all", "take_up"])
+        self.assertEqual(seen, [False])
+        self.assertEqual(u.state, "idle")
+        self.assertIn("uvicorn.Server was gone", u.error["message"])
+        self.assertFalse(u._fetch_lock.locked())
+
+    async def test_a_step_after_the_pause_that_fails_takes_them_up_again_too(self):
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+
+        async def breaks():
+            self.service.order.append("shutdown")
+            raise RuntimeError("shutdown broke")
+
+        self.service.shutdown = breaks  # type: ignore[method-assign]
+        u = self.make_real()
+        await self.run_apply(u)
+        self.assertEqual(self.service.order, ["suspend", "settle", "shutdown", "take_up"])
+        self.assertIn("shutdown broke", u.error["message"])
+        self.assertFalse(self.server.should_exit)
+
+    async def test_nothing_is_taken_up_when_nothing_was_paused(self):
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+        u = self.make_real("the trial failed")
+        await self.run_apply(u)
+        self.assertNotIn("take_up", self.service.order)
+
+    async def test_a_local_build_is_cancelled_and_not_resumed(self):
+        # `0138` R3: a build is no session; it is cut, with its `cut` row, and nothing takes
+        # it up again.
+        _wheel(self.root / "release", "0.13.0")
+        _wheel(self.root / "current", "0.12.0")
+        u = self.make_real()
+        u._build_task = asyncio.get_running_loop().create_task(asyncio.sleep(60))
+        await self.run_apply(u)
+        await asyncio.sleep(0)
+        self.assertTrue(u._build_task.cancelled())
+        cut = [r for r in self.service.rows if r["event"] == "cut"]
+        self.assertEqual([c["cut"]["kind"] for c in cut], ["build"])
+        self.assertEqual(cut[0]["stopped_by"], "an")
+        self.assertEqual(self.service.suspended, ["an"])
 
     async def test_the_whole_sequence_hands_off_and_stops_the_server(self):
         target = _wheel(self.root / "release", "0.13.0")
@@ -443,7 +585,7 @@ class WhatARestartReports(_Base):
         self.assertEqual(self.service.rows, [])
         self.assertEqual(set(u.status()), {"version", "commit", "commit_label", "install", "shape", "reason", "build_id"})
         with self.assertRaises(updater.NotHere):
-            u.cut_list()
+            u.cancel("an")
 
 
 class TheChecker(_Base):

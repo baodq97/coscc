@@ -38,16 +38,18 @@ for route in ("/", *(f"/{s}" for s in place.SCREENS[1:]), "/unit", "/idea"):
     app.add_page(screens.index, route=route, title="CoS Studio", on_load=StudioState.arrive)
 
 
-async def resume_autopilot() -> None:
-    """`0043` R5 c: every workspace whose autopilot switch is on starts again.
+async def resume_after_update() -> None:
+    """`0138` R7: every session an update paused is taken up again, and then -- `0043` R5 c --
+    every workspace whose autopilot switch is on starts again. One task, in that order, so
+    the autopilot never starts a step on a unit a paused one is about to take back.
 
     A Reflex lifespan task, because `api.py`'s lifespan is one the real stack never runs
     (`coscc/run.py`). The service is read when the app starts, not when this is imported.
     """
-    API.state.service.autopilot_resume()
+    await API.state.service.resume_after_update()
 
 
-app.register_lifespan_task(resume_autopilot)
+app.register_lifespan_task(resume_after_update)
 
 
 def served():

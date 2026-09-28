@@ -795,12 +795,18 @@ async def run_gebo(
     lease: tuple[str, str],
     model: str | None,
     settings: str | None = None,
+    owner: dict[str, Any] | None = None,
+    resume: dict[str, Any] | None = None,
 ) -> AsyncIterator[tuple[str, Any]]:
     """One Gebo session, streamed. Not `Runner.run`: that requires an artifact written, and
     Gebo writes none. Yields `("chunk", text)` and finally `("end", {reply, cost, ...})`.
 
     `settings` (`0036` R8) is the agent's commit attribution, beside the preset every Gebo
-    session has; `None` passes nothing."""
+    session has; `None` passes nothing.
+
+    `owner` and `resume` are `0138`'s: whose session this is, for a `suspend` row, and such
+    a row to go on from, under what is left of the grant's ceilings (R10)."""
+    from coscc.agent.transcript import ceilings_left
     from coscc.runner import CLAUDE_CODE_PRESET, Denials, permission_gate
 
     denials = Denials()
@@ -813,14 +819,24 @@ async def run_gebo(
         kwargs["model"] = model
     if settings is not None:
         kwargs["settings"] = settings
+    if owner is not None:
+        kwargs["owner"] = owner
+    turns, budget = grant.max_turns, grant.max_budget_usd or None
+    if resume is not None:
+        turns, budget, used_up = ceilings_left(grant.max_turns, grant.max_budget_usd, resume)
+        if used_up:
+            yield ("end", {"reply": "", "session_id": resume.get("session_id", ""), "terminal_reason": used_up,
+                           "cost": {}, "denials": 0, "denied": None, "background": 0})
+            return
+        kwargs["resume_at"] = resume.get("safe_uuid")
     async for kind, payload in sessions.stream(
         tree,
         prompt,
-        None,
-        max_turns=grant.max_turns,
+        (resume or {}).get("session_id") or None,
+        max_turns=turns,
         can_use_tool=permission_gate(grant, tree, denials, None, read_also=read_also, lease=lease),
         tools=list(grant.tools),
-        max_budget_usd=grant.max_budget_usd or None,
+        max_budget_usd=budget,
         **kwargs,
     ):
         if kind == "chunk":

@@ -21,8 +21,9 @@ from coscc.runlog.journal import BadRecord, Busy, Journal, timelines_of, totals_
 from coscc.agent.policy import grant_for
 from coscc.agent import models
 from coscc.runner import CEILING_MARKERS, Denials, permission_gate
-from coscc.agent.sessions import StepHandle
+from coscc.agent.sessions import StepHandle, Suspended
 from coscc.agent import steps as steps_mod
+from coscc.service.resume import nothing, resume_kwargs
 from coscc import knowledge, units
 from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate
@@ -108,7 +109,9 @@ class BacklogMixin:
             names, waiting, backlog.estimates_of(rows),
         ))}
 
-    async def propose_estimates(self, cwd: str) -> AsyncIterator[tuple[str, Any]]:
+    async def propose_estimates(
+        self, cwd: str, resume: dict[str, Any] | None = None,
+    ) -> AsyncIterator[tuple[str, Any]]:
         """R17, R18. One paid session proposes estimates and relations for the whole backlog.
 
         Refused before anything is spent while another proposal of this workspace runs: the
@@ -169,21 +172,30 @@ class BacklogMixin:
                 models.ESTIMATE, None, self._model_overrides()[0], self._effort_overrides()[0], defaults,
                 self.config.model,
             )
-            try:
-                journal.started(key, "", "estimate", "manual", started_by="person",
-                                prompt_chars=len(prompt), granted=[],
-                                max_turns=grant.max_turns, model=model, model_source=model_source,
-                                effort=effort, effort_source=effort_source)
+            start_at = ((resume or {}).get("owner") or {}).get("start_at")
+            if resume is None:
+                try:
+                    start_at = journal.started(key, "", "estimate", "manual", started_by="person",
+                                               prompt_chars=len(prompt), granted=[],
+                                               max_turns=grant.max_turns, model=model, model_source=model_source,
+                                               effort=effort, effort_source=effort_source).get("at")
+                    started = True
+                except (BadRecord, Busy):
+                    pass
+            else:
+                # `0138`: the `start` was written before the update; this ends it.
                 started = True
-            except (BadRecord, Busy):
-                pass
+            ask = resume_kwargs(resume, grant, prompt)
+            used_up = ask.pop("used_up", "")
             reply, end, failure = "", {}, ""
             try:
-                async for kind, payload in self.sessions.stream(
-                    cwd, prompt, None, max_turns=grant.max_turns, tools=[],
+                async for kind, payload in nothing() if used_up else self.sessions.stream(
+                    cwd, ask.pop("text"), ask.pop("session_id"), tools=[],
                     # `tools=[]` still lets MCP tools through (`sessions.py`); the gate refuses them.
-                    can_use_tool=permission_gate(grant, cwd, Denials()),
-                    max_budget_usd=grant.max_budget_usd, step=StepHandle(),
+                    can_use_tool=permission_gate(grant, cwd, Denials()), step=StepHandle(),
+                    owner={"kind": "estimate", "workspace": key, "workspace_dir": cwd, "unit": "",
+                           "stage": "estimate", "start_at": start_at},
+                    **ask,
                     **({"model": model} if model is not None else {}),
                     **({"effort": effort} if effort is not None else {}),
                 ):
@@ -196,8 +208,14 @@ class BacklogMixin:
                         end.update(session_id=payload.get("session_id", end.get("session_id", "")),
                                    cost=payload.get("cost") or {},
                                    terminal_reason=str(payload.get("terminal_reason") or ""))
+            except Suspended:
+                # `0138`: an update paused it and wrote its `suspend` row; no `end` here.
+                ended = True
+                raise
             except Exception as e:  # noqa: BLE001 — recorded as the reason
                 failure = f"the session failed: {e}"
+            if used_up and not failure:
+                failure = f"the session stopped at a ceiling ({used_up}) before the update"
             cost = end.get("cost") or {}
             terminal = end.get("terminal_reason", "")
             if not failure and any(m in terminal for m in CEILING_MARKERS):
@@ -278,7 +296,9 @@ class BacklogMixin:
         rules = str(prefs.get("decision_rules") or "").strip() or precedent_mod.DEFAULT_RULES
         return questions, store, precedent_mod.build_prompt(questions, store, rules)
 
-    async def precedent(self, cwd: str, unit: str, started_by: str = "person") -> dict[str, Any]:
+    async def precedent(
+        self, cwd: str, unit: str, started_by: str = "person", resume: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """`0044`. Jera answers this unit's open questions from precedent: one paid session.
 
         Started by a person's press (`POST /api/units/precedent`, *Ask Jera*), which asks
@@ -306,7 +326,9 @@ class BacklogMixin:
         key = self._journal_key(cwd)
         mark = self._take(key, unit, "precedent", "precedent")
         rid = self._mark_running(key, unit, "precedent", "precedent")
-        started = ended = False
+        # `0138` review round 3, F8: taken up again, the `start` is already written, so whatever
+        # refuses it from here ends it.
+        started, ended = resume is not None, False
         try:
             try:
                 data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
@@ -316,7 +338,12 @@ class BacklogMixin:
             if found is None:
                 raise Invalid(f"no such work unit in this workspace: {unit}")
             only = None
-            if started_by == "autopilot":
+            asked_before = ((resume or {}).get("owner") or {}).get("asked")
+            if asked_before is not None:
+                # F8: the questions the paused session was given, which its own `start` names,
+                # so `autopilot.unasked` would count every one of them asked already.
+                only = [{"artifact": a, "n": n} for a, n in asked_before]
+            elif started_by == "autopilot":
                 try:
                     only = autopilot.unasked(found, journal.records(key, unit, kinds=("start", "end", "precedent")), key)
                 except Busy as e:
@@ -337,19 +364,33 @@ class BacklogMixin:
                 models.PRECEDENT, None, self._model_overrides()[0], self._effort_overrides()[0], defaults,
                 self.config.model,
             )
+            start_at = ((resume or {}).get("owner") or {}).get("start_at")
+            if resume is None:
+                try:
+                    start_at = journal.started(
+                        key, unit, "precedent", "manual", started_by=started_by,
+                        prompt_chars=len(prompt), granted=[], max_turns=grant.max_turns,
+                        max_budget_usd=grant.max_budget_usd, model=model, model_source=model_source,
+                        effort=effort, effort_source=effort_source, questions=len(questions),
+                        entries=len(store), asked=[[q["artifact"], q["n"]] for q in questions],
+                        # `0131` R18: every `start` of the unit says its arm, or `measure` drops it.
+                        **({knowledge.TRIAL_FIELD: {"arm": knowledge.arm(unit)}}
+                           if self.config.knowledge else {})).get("at")
+                    started = True
+                except (BadRecord, Busy):
+                    pass
             try:
-                journal.started(key, unit, "precedent", "manual", started_by=started_by,
-                                prompt_chars=len(prompt), granted=[], max_turns=grant.max_turns,
-                                max_budget_usd=grant.max_budget_usd, model=model, model_source=model_source,
-                                effort=effort, effort_source=effort_source, questions=len(questions),
-                                entries=len(store), asked=[[q["artifact"], q["n"]] for q in questions],
-                                # `0131` R18: every `start` of the unit says its arm, or `measure` drops it.
-                                **({knowledge.TRIAL_FIELD: {"arm": knowledge.arm(unit)}}
-                                   if self.config.knowledge else {}))
-                started = True
-            except (BadRecord, Busy):
-                pass
-            reply, end, failure = await precedent_mod.ask(self.sessions, cwd, prompt, grant, model, effort)
+                reply, end, failure = await precedent_mod.ask(
+                    self.sessions, cwd, prompt, grant, model, effort,
+                    owner={"kind": "precedent", "workspace": key, "workspace_dir": cwd, "unit": unit,
+                           "stage": "precedent", "start_at": start_at, "started_by": started_by,
+                           "asked": [[q["artifact"], q["n"]] for q in questions]},
+                    resume=resume,
+                )
+            except Suspended:
+                # `0138`: an update paused Jera and wrote its `suspend` row; no `end` here.
+                ended = True
+                raise
             cost = end.get("cost") or {}
             session = end.get("session_id", "")
             found_v = {"failed": failure or None, "verdicts": [], "ignored": []}

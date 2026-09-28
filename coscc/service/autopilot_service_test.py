@@ -1408,18 +1408,19 @@ class ResumedAtStartUp(unittest.TestCase):
         import coscc.coscc as composed
         from coscc.state import API
 
-        self.assertIn(composed.resume_autopilot, composed.app._lifespan_tasks)
+        # `0138`: through the one task that takes paused sessions up first.
+        self.assertIn(composed.resume_after_update, composed.app._lifespan_tasks)
         calls: list[int] = []
 
         class Stand:
-            def autopilot_resume(self):
+            async def resume_after_update(self):
                 calls.append(1)
                 return []
 
         real = API.state.service
         API.state.service = Stand()
         try:
-            asyncio.run(composed.resume_autopilot())
+            asyncio.run(composed.resume_after_update())
         finally:
             API.state.service = real
         self.assertEqual(calls, [1])

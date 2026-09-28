@@ -49,6 +49,7 @@ paths:
   - "coscc/screens/knowledge.py"
   - "coscc/state/knowledge.py"
   - "coscc/service/knowledge.py"
+  - "coscc/service/resume.py"
 ---
 
 # The UI standard

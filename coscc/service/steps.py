@@ -28,6 +28,7 @@ from coscc.runlog.journal import BadRecord, Busy, Journal
 from coscc.agent.policy import grant_for
 from coscc.runner import RunError, Runner, answers_section, describe_attempt
 from coscc.agent import steps as steps_mod
+from coscc.agent.sessions import Suspended
 from coscc import units
 from coscc.git import worktrees
 from coscc.units import BadUnit, CannotCreate
@@ -378,6 +379,10 @@ class StepsMixin:
                     detail=reason, **seen,
                 ))
                 raise Invalid(reason)
+            if state == "behind" and how not in integrate.COMPLETION:
+                # `0138` R3: an Apply waits for a mechanical integration, so none begins once
+                # one is pressed.
+                self._refuse_mechanical_while_updating()
             mark = self._take(key, unit, "integrate")
             # `0114` R6: commits never pushed go to Gebo whatever the state.
             completing = how in integrate.COMPLETION
@@ -399,6 +404,9 @@ class StepsMixin:
                 # `0052`, spec answer 1: GitHub refused the rebase, and the press agreed to
                 # Gebo for that. The board shows Gebo from here on, not a rebase.
                 self._running[rid]["kind"] = "gebo"
+                # `0138`: an update waits for a mechanical integration, and a Gebo session is
+                # paused instead, so one waiting on this can go ahead.
+                self.updater.job_ended()
             async for item in self._integrate_gebo(
                 cwd, key, unit, directory, found, data, info, int(pr), tree, branch, pr_head, origin_sha,
                 journal, write, seen, refused_update,
@@ -479,7 +487,7 @@ class StepsMixin:
         data: dict[str, Any], info: dict[str, Any], pr: int, tree: Path, branch: str,
         head_before: str, origin_sha: str, journal: Journal, write: Any,
         seen: dict[str, Any], refused_update: dict[str, Any] | None = None,
-        completion: dict[str, Any] | None = None,
+        completion: dict[str, Any] | None = None, resume: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """R5–R8. One Gebo session; the outcome is read from GitHub afterwards.
 
@@ -488,44 +496,63 @@ class StepsMixin:
 
         `completion` (`0114` R6, R7): the local head to push as it is. A pull request that
         ends on any other head is `failed`, whoever pushed it.
+
+        `resume` (`0138`): a `suspend` row of this session. It goes on from its safe point
+        with the row's `message`, writes no `start`, and ends as it would have.
         """
         root = Path(cwd).expanduser().resolve()
-        rel = await self._related(root, unit, data, head_before, origin_sha)
+        was = dict((resume or {}).get("owner") or {})
+        rel = was.get("rel") or {} if resume is not None else await self._related(
+            root, unit, data, head_before, origin_sha)
         units_root = self._units_root(cwd)
-        # `0094` R14: by path; Gebo reads what it needs of them (`integrate.read_paths`).
-        own = {}
-        for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
-            path = Path(directory).resolve() / name
-            if path.exists():
-                own[name] = path
-        try:
-            skill = harness.read_skill("integrate")
-        except harness.MissingRules as e:
-            raise Invalid(f"the integrate skill could not be read: {e}") from e
         # `0036` R3, R7, R8: the `integrate` row, read once for the prompt, the records and
         # the session's commit attribution.
         agent = self._agent("integrate")
-        prompt = integrate.build_prompt(
-            skill=skill, unit=unit, branch=branch, pr=pr, state=info["state"], reason=info.get("reason", ""),
-            head_before=head_before, origin_sha=origin_sha, rel=rel, units_root=units_root, own_paths=own,
-            refused_update=refused_update, completion=completion, agent=agent,
-        )
         grant = grant_for("integrate")
-        model, model_source = self._model_for("impl")
-        app = self._app_identity()
         name = agent["name"] if agent is not None else ""
-        try:
-            journal.started(key, unit, "integrate", "manual", started_by=seen["started_by"],
-                            prompt_chars=len(prompt), granted=list(grant.tools),
-                            max_turns=grant.max_turns, head=head_before, model=model, model_source=model_source,
-                            pointed=list(own), app_version=app["version"], app_commit=app["commit"],
-                            # `0093` R8: what opened this session, for *Integrate for a conflict*.
-                            integrate_state=info["state"],
-                            **({"agent": name} if name else {}),
-                            # `0131` R18: every `start` of the unit says its arm, or `measure` drops it.
-                            **({knowledge.TRIAL_FIELD: {"arm": knowledge.arm(unit)}} if self.config.knowledge else {}))
-        except (BadRecord, Busy):
-            pass
+        start_at = was.get("start_at")
+        if resume is None:
+            # `0094` R14: by path; Gebo reads what it needs of them (`integrate.read_paths`).
+            own = {}
+            for artifact in ("intent.md", "spec.md", "plan.md", "impl.md"):
+                path = Path(directory).resolve() / artifact
+                if path.exists():
+                    own[artifact] = path
+            try:
+                skill = harness.read_skill("integrate")
+            except harness.MissingRules as e:
+                raise Invalid(f"the integrate skill could not be read: {e}") from e
+            prompt = integrate.build_prompt(
+                skill=skill, unit=unit, branch=branch, pr=pr, state=info["state"], reason=info.get("reason", ""),
+                head_before=head_before, origin_sha=origin_sha, rel=rel, units_root=units_root, own_paths=own,
+                refused_update=refused_update, completion=completion, agent=agent,
+            )
+            model, model_source = self._model_for("impl")
+            app = self._app_identity()
+            try:
+                start_at = journal.started(
+                    key, unit, "integrate", "manual", started_by=seen["started_by"],
+                    prompt_chars=len(prompt), granted=list(grant.tools),
+                    max_turns=grant.max_turns, head=head_before, model=model, model_source=model_source,
+                    pointed=list(own), app_version=app["version"], app_commit=app["commit"],
+                    # `0093` R8: what opened this session, for *Integrate for a conflict*.
+                    integrate_state=info["state"],
+                    **({"agent": name} if name else {}),
+                    # `0131` R18: every `start` of the unit says its arm, or `measure` drops it.
+                    **({knowledge.TRIAL_FIELD: {"arm": knowledge.arm(unit)}} if self.config.knowledge else {}),
+                ).get("at")
+            except (BadRecord, Busy):
+                pass
+        else:
+            prompt, model = str(resume.get("message") or ""), resume.get("model")
+        # `0138`: all `resume_integration` needs to take this session up again, no git read.
+        owner = {
+            "kind": "integrate", "workspace": key, "workspace_dir": cwd, "unit": unit,
+            "stage": "integrate", "start_at": start_at, "max_turns": grant.max_turns,
+            "max_budget_usd": grant.max_budget_usd, "pr": pr, "tree": str(tree), "branch": branch,
+            "head_before": head_before, "origin_sha": origin_sha, "seen": seen,
+            "refused_update": refused_update, "completion": completion, "rel": rel,
+        }
         end: dict[str, Any] = {}
         failure = ""
         try:
@@ -533,11 +560,15 @@ class StepsMixin:
                 self.sessions, tree=str(tree), workspace=cwd, prompt=prompt, grant=grant,
                 read_also=integrate.read_paths(units_root, unit, rel), lease=(branch, head_before), model=model,
                 settings=agents.settings_json(agent) if agent is not None else None,
+                owner=owner, resume=resume,
             ):
                 if kind == "chunk":
                     yield ("chunk", payload)
                 else:
                     end = payload
+        except Suspended:
+            # `0138`: paused by an update, with its `suspend` row. No `end` and no record.
+            raise
         except Exception as e:  # noqa: BLE001 — recorded, never swallowed silently
             failure = f"the session failed: {e}"
         details = [failure] if failure else []
@@ -1115,6 +1146,15 @@ class StepsMixin:
                     **({"started_by": started_by} if started_by != "person" else {}),
                     # `0054`. The same again: only a rerun names them.
                     **({"rerun": True, "rerun_note": note} if rerun else {}),
+                    # `0138`. What `resume_step` needs of this step, in its `suspend` row.
+                    owner_extra={
+                        "workspace_dir": cwd,
+                        "rounds_before": sorted(rounds_before) if rounds_before is not None else None,
+                        "pr_before": pr_before, "tree": tree is not None,
+                        "watch": work if scratch is not None else None,
+                        "scratch": str(scratch) if scratch is not None else None,
+                        "read_also": list(link_kw.get("read_also") or ()),
+                    },
                 ),
                 answers_before=answers_before,
             ))
@@ -1166,7 +1206,8 @@ class StepsMixin:
         async with self._screens_lock:
             # Review round 1, F3. Asked again past the lock, which another retake may have held
             # for minutes; from here to the end of `take` a pending update waits for it.
-            self._refuse_while_updating()
+            # `0138` R3: and none begins once Apply is pressed.
+            self._refuse_mechanical_while_updating()
             rid = uuid.uuid4().hex
             self._retakes[rid] = {"workspace": key, "unit": unit, "started": _now()}
             started = datetime.now().timestamp()
@@ -1198,7 +1239,7 @@ class StepsMixin:
 
     def _never_driven(self, running: steps_mod.Running, mark: steps_mod.Mark, rid: str) -> None:
         """`0050` review round 2, F2. A task cancelled before its first turn -- a Stop queued
-        ahead of it, or "apply now" -- never enters `_drive`, so its `finally` never runs.
+        ahead of it, or an update's `shutdown` -- never enters `_drive`, so its `finally` never runs.
         That `finally` is the only thing that frees the mark once the step is handed over, so
         a mark still held when the task is done means the body never ran: give back what it
         would have, and tell the reader instead of leaving it waiting."""
@@ -1219,7 +1260,7 @@ class StepsMixin:
         self, running: steps_mod.Running, mark: steps_mod.Mark, runner: Runner, cwd: str, unit: str, stage: str,
         artifact: str, directory: Path, tree: dict[str, Any] | None, base: dict[str, Any] | None,
         rounds_before: set[Any] | None, rid: str, scratch: Path | None, kwargs: dict[str, Any],
-        answers_before: bytes | None = None,
+        answers_before: bytes | None = None, resumed: bool = False,
     ) -> None:
         """One board step, start to end, as its own task (`0034`).
 
@@ -1242,10 +1283,13 @@ class StepsMixin:
         recorder = running.handle.recorder
         # `0073`. A cancel with no Stop behind it is the app going down (spec C9).
         going_down = False
+        # `0138`. Paused by an update: the next start takes the step up in the directory it had.
+        suspended = False
         try:
             if recorder is not None:
                 recorder.start()
-            if scratch is not None:
+            if scratch is not None and not resumed:
+                # `0138`: a spike taken up again goes on in the directory it had.
                 shutil.rmtree(scratch, ignore_errors=True)
                 scratch.mkdir(parents=True)
             async for item in runner.run(**kwargs, running=running):
@@ -1283,6 +1327,10 @@ class StepsMixin:
         except RunError as e:
             tell(("raise", Invalid(str(e))))
             told_done = True
+        except Suspended:
+            # `0138`. An update paused the step and wrote its `suspend` row; like the app
+            # going down, nothing is ended, nudged or recorded as a transition here.
+            going_down = suspended = True
         except asyncio.CancelledError:
             if not running.stop_requested:
                 going_down = True
@@ -1298,31 +1346,40 @@ class StepsMixin:
             if not told_done:
                 tell(("raise", Invalid(f"{unit}'s {stage} step ended without an outcome; the app may be shutting down")))
             self._release(running.workspace, running.unit, mark)
-            self._running.pop(rid, None)
-            if scratch is not None:
-                shutil.rmtree(scratch, ignore_errors=True)
-            self.steps.release(running)
-            self.updater.job_ended()
-            # `0043` R5 a: after the mark is gone, so the pass sees the unit free.
-            self._autopilot_nudge(running.workspace)
-            if recorder is not None and not recorder.closed:
-                # The runner closes it on every road that writes an `end`. Left open means the
-                # app is going down -- what can be written is, with no `end` (C9) -- or the
-                # runner raised before its own `finally`, which is an ending like any other.
-                if going_down:
-                    await recorder.abandon()
-                else:
-                    await recorder.close("failed", "the step ended without an outcome")
-            if recorder is not None:
-                self._recorders.pop(recorder.run, None)
-            if ended_done and not going_down and stage not in autopilot.NOT_STEPS:
-                # `0113` R4, R5. After the runner's `end`, which it writes before it yields
-                # `done`, and after the mark is given back: the board read it costs holds
-                # neither the reader's `done` nor the unit.
-                await self._after_end(cwd, unit, stage, running.workspace)
-            if ended_done and not going_down and stage == "ship" and self.config.knowledge:
-                # `0131` R1. Once, in the background: nothing here waits for it.
-                self._gather_soon(cwd, unit, running.workspace)
+            entry = self._running.pop(rid, None)
+            task = asyncio.current_task()
+            if entry is not None and task is not None:
+                # `0138` review round 3, F6: off the board from here, and until this task
+                # ends -- its recorder, `_after_end` -- an Apply's settle still waits for it.
+                self._finishing[rid] = (entry, task)
+            try:
+                if scratch is not None and not suspended:
+                    shutil.rmtree(scratch, ignore_errors=True)
+                self.steps.release(running)
+                self.updater.job_ended()
+                # `0043` R5 a: after the mark is gone, so the pass sees the unit free.
+                if not going_down:
+                    self._autopilot_nudge(running.workspace)
+                if recorder is not None and not recorder.closed:
+                    # The runner closes it on every road that writes an `end`. Left open means the
+                    # app is going down -- what can be written is, with no `end` (C9) -- or the
+                    # runner raised before its own `finally`, which is an ending like any other.
+                    if going_down:
+                        await recorder.abandon()
+                    else:
+                        await recorder.close("failed", "the step ended without an outcome")
+                if recorder is not None:
+                    self._recorders.pop(recorder.run, None)
+                if ended_done and not going_down and stage not in autopilot.NOT_STEPS:
+                    # `0113` R4, R5. After the runner's `end`, which it writes before it yields
+                    # `done`, and after the mark is given back: the board read it costs holds
+                    # neither the reader's `done` nor the unit.
+                    await self._after_end(cwd, unit, stage, running.workspace)
+                if ended_done and not going_down and stage == "ship" and self.config.knowledge:
+                    # `0131` R1. Once, in the background: nothing here waits for it.
+                    self._gather_soon(cwd, unit, running.workspace)
+            finally:
+                self._finishing.pop(rid, None)
 
     async def stop_step(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
         """Stop one running board step (`0034` R2, R5, R6). The route and the page's
@@ -1338,9 +1395,8 @@ class StepsMixin:
         return await self._stop_running(self._journal_key(cwd), unit, name)
 
     async def _stop_running(self, key: str, unit: str, by: str) -> dict[str, Any]:
-        """The Stop itself, shared with `0068`'s "apply now" so a step it cuts ends the
-        same way: an `end` record with `stopped` and `stopped_by`, or none for a step
-        cancelled before its first turn."""
+        """The Stop itself: an `end` record with `stopped` and `stopped_by`, or none for a
+        step cancelled before its first turn. `0068`'s "apply now" shared it until `0138`."""
         # `0114` R2: an integration is listed beside the steps but has no Stop; say what
         # holds the unit rather than that nothing runs.
         mark = self._active.get((key, unit))
