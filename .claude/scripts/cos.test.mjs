@@ -14,22 +14,26 @@ import {
   UI_STANDARD, parseStandard, globMatch, uiFiles, screensProblems, makeProbe, stageAt,
   aboveAnswers, parseReruns, RERUNNABLE, screensAnswer, screensNeeds, parseShip, normalizePatch, openLines,
   parseMoreRounds, reviewLimit, moreRounds, branchChecks, notAWorkBranch,
-  parseIdea, parseLinks, parseIdeaRef, parseUnitRef, WAITING_ON,
+  parseIdea, parseLinks, parseIdeaRef, parseUnitRef, WAITING_ON, titleProblem,
 } from './cos.mjs'
 import { createHash } from 'node:crypto'
 
-const unit = (artifacts) => ({ name: '0001_x', artifacts, problems: [] })
+// `type` is what `readUnit` reads off `Type: feat`; since `0049` the `review` and `ship` gates
+// hold `pr.md`'s title to it.
+const unit = (artifacts) => ({ name: '0001_x', type: 'feat', artifacts, problems: [] })
 const art = (status) => ({ status, skipReason: null })
 
 // A probe that answers the way git and gh would, without either. `checks` is what
 // `gh pr checks --json name,bucket` prints; `git` maps an argument string to an answer.
 const ok = (out = '') => ({ code: 0, out, err: '' })
-// `view` is what `gh pr view --json state,headRefOid,mergeCommit,mergedAt` prints; `null` means the head is the
-// reviewed commit (`SHA`, declared further down), so the diff to it is empty.
+// `view` is what `gh pr view --json state,headRefOid,mergeCommit,mergedAt,title` prints; `null` means the head is the
+// reviewed commit (`SHA`, declared further down), so the diff to it is empty. The title is `PR`'s
+// unless `view` names one; `title: undefined` is gh giving none.
+const titled = (view) => ('title' in view ? view : { ...view, title: 'feat(0001): x' })
 const greenProbe = (checks = [{ name: 'tests', bucket: 'pass' }], git = {}, view = null) => ({
   gh: (...args) =>
     args[1] === 'view'
-      ? ok(JSON.stringify(view ?? { state: 'OPEN', headRefOid: SHA }))
+      ? ok(JSON.stringify(titled(view ?? { state: 'OPEN', headRefOid: SHA })))
       : { code: 0, out: JSON.stringify(checks), err: '' },
   git: (...args) => git[args.join(' ')] ?? ok(),
 })
@@ -162,7 +166,7 @@ test('a later stage needs the earlier ones behind it', () => {
   assert.equal(checkGate(unit(withImpl), 'pr').ok, true)
   // Since `0015` the review gate also needs an open pull request with green checks, so
   // the chain alone is no longer enough; the chain is still necessary.
-  const pr = { ...art('accepted'), pr: { url: 'https://github.com/o/r/pull/7', number: 7 } }
+  const pr = { ...art('accepted'), pr: { url: 'https://github.com/o/r/pull/7', number: 7 }, title: 'feat(0001): x' }
   assert.equal(checkGate(unit({ ...withImpl, 'pr.md': pr }), 'review', { probe: greenProbe() }).ok, true)
   assert.equal(checkGate(unit({ ...upToPlan, 'pr.md': pr }), 'review', { probe: greenProbe() }).ok, false)
 })
@@ -739,7 +743,7 @@ test('status --json carries questions and open for each unit', () => {
 
 const SHA = 'a'.repeat(40)
 const FIX = 'b'.repeat(40)
-const PR = { ...art('accepted'), pr: { url: 'https://github.com/o/r/pull/7', number: 7 } }
+const PR = { ...art('accepted'), pr: { url: 'https://github.com/o/r/pull/7', number: 7 }, title: 'feat(0001): x' }
 const CHAIN = {
   'intent.md': art('accepted'), 'spec.md': art('accepted'), 'plan.md': art('accepted'),
   'impl.md': art('accepted'), 'pr.md': PR,
@@ -968,7 +972,7 @@ test('with --root and no --repo, review says there is no repository instead of r
   const { root } = questionTree({
     'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n',
     'spec.md': 'Status: accepted.\n', 'plan.md': 'Status: accepted.\n', 'impl.md': 'Status: accepted.\n',
-    'pr.md': 'PR: https://github.com/o/r/pull/1. Status: accepted.\n',
+    'pr.md': '# PR: feat(0001): x\nPR: https://github.com/o/r/pull/1. Status: accepted.\n',
   })
   const out = cli('--root', root, 'gate', '0001_q', 'review')
   assert.equal(out.status, 1)
@@ -1128,7 +1132,7 @@ function tree0028({ review, impl = implText() }) {
     'spec.md': '# S\nStatus: accepted.\n',
     'plan.md': '# P\nStatus: accepted.\n',
     'impl.md': impl,
-    'pr.md': '# PR\nPR: https://github.com/o/r/pull/7. Status: accepted.\n',
+    'pr.md': '# PR: fix(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n',
     'review.md': review,
   })
   return u
@@ -1948,7 +1952,10 @@ test('0055 R2: pr-text prints what prText reads, with the unit and its status', 
   const root = prTree({ '0001_a': PR_MD })
   const out = cli('--root', root, 'pr-text', '0001_a')
   assert.equal(out.status, 0, out.stderr)
-  assert.deepEqual(JSON.parse(out.stdout), { unit: '0001_a', ...prText(PR_MD), status: 'accepted' })
+  assert.deepEqual(JSON.parse(out.stdout), {
+    unit: '0001_a', ...prText(PR_MD), status: 'accepted',
+    titleProblem: titleProblem(prText(PR_MD).title, 'fix', '0001'),
+  })
 })
 
 test('0055 R2: no unit or no pr.md is 1; a missing or malformed name is 2', () => {
@@ -2035,8 +2042,8 @@ test('0122 R3: pr-text prints scope beside title, body, url and status', () => {
   const out = cli('--root', root, 'pr-text', '0001_a')
   assert.equal(out.status, 0, out.stderr)
   const got = JSON.parse(out.stdout)
-  assert.deepEqual(got, { unit: '0001_a', ...prText(SCOPED), status: 'accepted' })
-  assert.deepEqual(Object.keys(got).sort(), ['body', 'scope', 'status', 'title', 'unit', 'url'])
+  assert.deepEqual(got, { unit: '0001_a', ...prText(SCOPED), status: 'accepted', titleProblem: titleProblem(prText(SCOPED).title, 'fix', '0001') })
+  assert.deepEqual(Object.keys(got).sort(), ['body', 'scope', 'status', 'title', 'titleProblem', 'unit', 'url'])
   assert.equal(got.scope.files, 3)
 })
 
@@ -2543,7 +2550,7 @@ const RERUN_FILES = {
   'spec.md': '# Spec: x\nIntent: intent.md. Status: accepted.\n\nR1.\n',
   'plan.md': '# Plan: x\nStatus: accepted.\n\n1. build it\n',
   'impl.md': '# Impl: x\nStatus: accepted.\n\nbuilt\n',
-  'pr.md': '# PR: x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nbody\n',
+  'pr.md': '# PR: feat(0003): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nbody\n',
   'review.md': `# Review: x\nStatus: accepted.\n\n${round(1, 'pass')}`,
 }
 
@@ -3137,7 +3144,7 @@ const PATCH_R = hunk(27)
 const rebasedProbe = ({ patch = (c) => (c === SHA ? PATCH_R : hunk(28, 'line 28', '3333333..4444444')), base = () => ok(`${'f'.repeat(40)}\n`), checks = [{ name: 'tests', bucket: 'pass' }], calls = [], head = REB } = {}) => ({
   gh: (...a) => {
     calls.push(['gh', ...a].join(' '))
-    return a[1] === 'view' ? ok(JSON.stringify({ state: 'OPEN', headRefOid: head })) : ok(JSON.stringify(checks))
+    return a[1] === 'view' ? ok(JSON.stringify(titled({ state: 'OPEN', headRefOid: head }))) : ok(JSON.stringify(checks))
   },
   git: (...a) => {
     calls.push(a.join(' '))
@@ -3353,7 +3360,7 @@ function rebaseRepo({ binary = false } = {}) {
 }
 const realProbe = (repo, head, checks = [{ name: 'tests', bucket: 'pass' }]) => ({
   ...makeProbe(repo),
-  gh: (...a) => (a[1] === 'view' ? ok(JSON.stringify({ state: 'OPEN', headRefOid: head })) : ok(JSON.stringify(checks))),
+  gh: (...a) => (a[1] === 'view' ? ok(JSON.stringify(titled({ state: 'OPEN', headRefOid: head }))) : ok(JSON.stringify(checks))),
 })
 const passedAt = (R) => branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass').replace(SHA, R)) })
 const farFromTheHunk = (l) => l.splice(5, 0, 'inserted by main')
@@ -3682,7 +3689,7 @@ test('0116 R1: a merged pull request opens ship to record it when its branch is 
   assert.deepEqual(g, { ok: true, need: [], merged: { number: 7, commit: MERGE, at: MERGED_AT, head: SHA } })
   // One reading of the pull request, the merge commit asked for twice, and nothing else.
   assert.deepEqual(calls, [
-    'gh pr view 7 --json state,headRefOid,mergeCommit,mergedAt',
+    'gh pr view 7 --json state,headRefOid,mergeCommit,mergedAt,title',
     `cat-file -e ${MERGE}^{commit}`,
     `merge-base --is-ancestor ${MERGE} refs/remotes/origin/main`,
   ])
@@ -3781,7 +3788,7 @@ const stuckFiles = (review) => ({
   'spec.md': '# S\nStatus: accepted.\n',
   'plan.md': '# P\nStatus: accepted.\n',
   'impl.md': implText(''),
-  'pr.md': '# PR\nPR: https://github.com/o/r/pull/7. Status: accepted.\n',
+  'pr.md': '# PR: feat(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n',
   'review.md': review,
 })
 const stuck = (review, extra = {}) => questionTree({ ...stuckFiles(review), ...extra }).u
@@ -3916,7 +3923,7 @@ const headProbe = (probe, { head = HEAD_97, workflows = [PR_YML], calls = [] } =
 })
 
 test('0103 R8: #97 — branch-name red while tests pend: next stops, needs a person, with the check and check-branch\'s line', () => {
-  const u = branched({ ...CHAIN, 'pr.md': { ...art('accepted'), pr: { url: 'https://github.com/o/r/pull/97', number: 97 } } })
+  const u = branched({ ...CHAIN, 'pr.md': { ...PR, pr: { url: 'https://github.com/o/r/pull/97', number: 97 } } })
   assert.equal(branchProblem(HEAD_97), REASON_97)
   const n = nextStep(u, { probe: headProbe(greenProbe(RED_97)) })
   assert.equal(n.stage, '')
@@ -4272,12 +4279,175 @@ test('0040 R9: an unreadable Idea: shuts impl but no other gate', () => {
 
 test('0040 R7: a red check that sends the work back to impl waits on the dependency too', () => {
   const red = greenProbe([{ name: 'tests', bucket: 'fail' }])
-  const files = (header) => ({ ...toImpl(header), 'impl.md': '# Impl\nStatus: accepted.\n', 'pr.md': PR_MD })
+  const files = (header, n) => ({ ...toImpl(header), 'impl.md': '# Impl\nStatus: accepted.\n', 'pr.md': PR_MD.replace('# PR: the pr body is taken from pr.md', `# PR: feat(${n}): x`) })
   const a = store40({ '0001_x': { 'intent.md': I40('accepted') } })
-  const b = store40({ '0001_y': files('Repo: b. Depends on: a/0001_x.'), '0002_free': files('Repo: b.') })
+  const b = store40({ '0001_y': files('Repo: b. Depends on: a/0001_x.', '0001'), '0002_free': files('Repo: b.', '0002') })
   const peers = new Map([['a', a]])
   const read = (name) => readUnit(join(b, '.cos', name), name, { peers, cosDir: join(b, '.cos') })
   assert.equal(nextStep(read('0002_free'), { probe: red }).stage, 'impl', 'without a dependency, red goes back to impl')
   assert.deepEqual(nextStep(read('0001_y'), { probe: red }),
     { blocked: true, action: `${WAITING_ON}a/0001_x to merge`, stage: '', why: 'dependency' })
+})
+
+// --- 0049: the pull request's title is pr.md's, in one grammar, still so at ship ----------
+
+test('0049 R3: titleProblem refuses the titles the spec names and passes the one it names', () => {
+  const refused = [
+    ['wip: impl run 1 stopped at max_turns before committing', '0049', /is not <type>\(<NNNN>\): <text>/],
+    ['a clean rebase voids a passing review', '0049', /is not <type>\(<NNNN>\): <text>/],
+    ['feat(0049): x', '0049', /type is "feat", but intent\.md declares Type: fix/],
+    ['fix(0049): x', '0048', /names unit 0049, not 0048/],
+    ['fix(0049): wip x', '0049', /opens with "wip"/],
+    ['fix(0049): WIP: x', '0049', /opens with "wip"/],
+    ['fix(0049): tiêu đề', '0049', /carries "ê", a letter with a diacritic/],
+    ['fix(0049): de đi', '0049', /carries "đ"/],
+    ['wibble(0049): x', '0049', /type "wibble" is not one of feat, fix/],
+    [null, '0049', /no title/],
+    ['', '0049', /no title/],
+  ]
+  for (const [title, number, why] of refused) assert.match(titleProblem(title, 'fix', number) ?? 'null', why, String(title))
+  assert.equal(titleProblem('fix(0049): a pr title is taken from pr.md', 'fix', '0049'), null)
+  // `wip` is a word, not a prefix: `wipe` is text like any other.
+  assert.equal(titleProblem('fix(0049): wipe the stale manifest', 'fix', '0049'), null)
+})
+
+test('0049 R3: an em dash passes and a decomposed Vietnamese letter does not', () => {
+  assert.equal(titleProblem('fix(0049): a title — with an em dash', 'fix', '0049'), null)
+  const decomposed = 'fix(0049): tiêu'
+  assert.ok(!decomposed.includes('ê'), 'the ê is a base and a combining mark')
+  assert.match(titleProblem(decomposed, 'fix', '0049'), /carries "ê"/)
+})
+
+test('0049 R3: a unit with no type is named as the reason', () => {
+  assert.match(titleProblem('fix(0049): x', null, '0049'), /intent\.md declares no Type/)
+  const u = { ...unit({ ...CHAIN }), type: undefined }
+  assert.match(checkGate(u, 'review').need.join('\n'), /intent\.md declares no Type/)
+})
+
+test('0049 R4: pr-text prints titleProblem beside the fields it printed before, and its exit code is unchanged', () => {
+  const good = PR_MD.replace('# PR: the pr body is taken from pr.md', '# PR: fix(0049): a pr title is taken from pr.md')
+  const root = prTree({ '0049_a': good, '0050_b': PR_MD })
+  const ok49 = cli('--root', root, 'pr-text', '0049_a')
+  assert.equal(ok49.status, 0, ok49.stderr)
+  assert.deepEqual(JSON.parse(ok49.stdout), { unit: '0049_a', ...prText(good), status: 'accepted', titleProblem: null })
+  const bad = cli('--root', root, 'pr-text', '0050_b')
+  assert.equal(bad.status, 0, 'a title outside the grammar is still printed, exit 0')
+  const got = JSON.parse(bad.stdout)
+  assert.equal(got.title, 'the pr body is taken from pr.md')
+  assert.match(got.titleProblem, /is not <type>\(<NNNN>\): <text>/)
+  assert.deepEqual(Object.keys(got).sort(), ['body', 'scope', 'status', 'title', 'titleProblem', 'unit', 'url'])
+})
+
+// Every call, git's and gh's, lands in `calls`.
+const counted = (probe, calls) => ({
+  ...probe,
+  gh: (...a) => (calls.push(['gh', ...a].join(' ')), probe.gh(...a)),
+  git: (...a) => (calls.push(a.join(' ')), probe.git(...a)),
+})
+const WIP = 'wip: impl run 1 stopped at max_turns before committing'
+
+test('0049 R5: the review gate is closed on a title outside the grammar, before gh is asked', () => {
+  const calls = []
+  const u = branched({ ...CHAIN, 'pr.md': { ...PR, title: WIP } })
+  const g = checkGate(u, 'review', { probe: counted(greenProbe(), calls) })
+  assert.equal(g.ok, false)
+  assert.deepEqual(g.need, [`${titleProblem(WIP, 'feat', '0001')} — the pr stage writes the # PR: line of pr.md again`])
+  assert.deepEqual(calls, [])
+  // Read off the file, as the board reads it: a pr.md with no # PR: line at all.
+  const { u: read } = questionTree({
+    'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n',
+    'spec.md': 'Status: accepted.\n', 'plan.md': 'Status: accepted.\n', 'impl.md': 'Status: accepted.\n',
+    'pr.md': 'PR: https://github.com/o/r/pull/1. Status: accepted.\n',
+  })
+  assert.match(checkGate(read, 'review', { probe: counted(greenProbe(), calls) }).need[0], /pr\.md has no title/)
+  assert.deepEqual(calls, [])
+  // And with a good one the gate reads CI as before.
+  assert.equal(checkGate(branched(CHAIN), 'review', { probe: greenProbe() }).ok, true)
+})
+
+test('0049 R5: next names no stage for a unit whose pr.md title is outside the grammar', () => {
+  const calls = []
+  const n = nextStep(branched({ ...CHAIN, 'pr.md': { ...PR, title: 'a clean rebase voids a passing review' } }), { probe: counted(greenProbe(), calls) })
+  assert.equal(n.stage, '')
+  assert.equal(n.blocked, true)
+  assert.match(n.action, /the title "a clean rebase voids a passing review" is not <type>\(<NNNN>\): <text> — the pr stage writes/)
+  assert.deepEqual(calls, [])
+})
+
+const passedTitled = (title) => branched({ ...CHAIN, 'pr.md': { ...PR, title }, 'review.md': reviewArt('accepted', round(1, 'pass')) })
+
+test('0049 R6: the ship gate is closed on a title outside the grammar, before gh is asked', () => {
+  const calls = []
+  const g = checkGate(passedTitled('fix(0001): x'), 'ship', { probe: counted(greenProbe(), calls) })
+  assert.equal(g.ok, false)
+  assert.deepEqual(g.need, [`${titleProblem('fix(0001): x', 'feat', '0001')} — the pr stage writes the # PR: line of pr.md again`])
+  assert.deepEqual(calls, [])
+})
+
+test('0049 R6: the ship gate is closed when the open pull request\'s title differs from pr.md, and names both', () => {
+  const differs = greenProbe(undefined, {}, { state: 'OPEN', headRefOid: SHA, title: 'wip: something else' })
+  const g = checkGate(passedOnce(), 'ship', { probe: differs })
+  assert.equal(g.ok, false)
+  assert.equal(g.need.length, 1, 'the title is the only reason')
+  assert.equal(g.need[0], '#7 carries the title "wip: something else", not pr.md\'s "feat(0001): x" — put pr.md onto it (write-pr step 5), or start ship from the board, which does that first')
+  // gh giving no title is not a title that matches.
+  const none = checkGate(passedOnce(), 'ship', { probe: greenProbe(undefined, {}, { state: 'OPEN', headRefOid: SHA, title: undefined }) })
+  assert.equal(none.ok, false)
+  assert.match(none.need[0], /#7 carries no title gh could read, not pr\.md's "feat\(0001\): x"/)
+  // Only once everything else is open: a finding still open is named, and the title is not.
+  const open = branched({ ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass', ['- F1 [open] x'])) })
+  assert.doesNotMatch(checkGate(open, 'ship', { probe: differs }).need.join('\n'), /carries the title/)
+})
+
+test('0049 R6: titles that differ only in surrounding whitespace pass', () => {
+  const spaced = greenProbe(undefined, {}, { state: 'OPEN', headRefOid: SHA, title: '  feat(0001): x \n' })
+  assert.deepEqual(checkGate(passedOnce(), 'ship', { probe: spaced }), { ok: true, need: [], head: SHA })
+  assert.equal(checkGate(passedOnce(), 'ship', { probe: greenProbe(undefined, {}, { state: 'OPEN', headRefOid: SHA, title: 'feat(0001): X' }) }).ok, false)
+})
+
+test('0049 R6: a merged pull request\'s title is not compared', () => {
+  const g = checkGate(passedOnce(), 'ship', { probe: mergedProbe({ view: mergedView({ title: 'wip: not the one pr.md gives' }) }) })
+  assert.deepEqual(g, { ok: true, need: [], merged: { number: 7, commit: MERGE, at: MERGED_AT, head: SHA } })
+})
+
+test('0049 R6: the title is read from the one gh pr view the ship gate already asks', () => {
+  const calls = []
+  assert.equal(checkGate(passedOnce(), 'ship', { probe: counted(greenProbe(), calls) }).ok, true)
+  assert.deepEqual(calls.filter((c) => c.startsWith('gh ')), ['gh pr view 7 --json state,headRefOid,mergeCommit,mergedAt,title'])
+  const differs = []
+  checkGate(passedOnce(), 'ship', { probe: counted(greenProbe(undefined, {}, { state: 'OPEN', headRefOid: SHA, title: 'feat(0001): y' }), differs) })
+  assert.deepEqual(differs.filter((c) => c.startsWith('gh ')), ['gh pr view 7 --json state,headRefOid,mergeCommit,mergedAt,title'])
+})
+
+test('0049: next offers ship when a differing title is the only thing closing its gate', () => {
+  const differs = greenProbe(undefined, {}, { state: 'OPEN', headRefOid: SHA, title: 'feat(0001): y' })
+  const n = nextStep(passedOnce(), { probe: differs })
+  assert.equal(n.stage, 'ship')
+  assert.equal(n.blocked, true)
+  assert.match(n.action, /^write-ship — #7 carries the title "feat\(0001\): y", not pr\.md's "feat\(0001\): x"/)
+  // A draft ship.md a refused merge left, against the last round: the same.
+  const refused = branched({
+    ...CHAIN, 'review.md': reviewArt('accepted', round(1, 'pass')),
+    'ship.md': { ...art('draft'), ship: { round: 1, refused: 'Pull request is not mergeable' } },
+  })
+  assert.deepEqual(nextStep(refused, { probe: differs }), {
+    blocked: true, stage: 'ship',
+    action: 'write-ship — #7 carries the title "feat(0001): y", not pr.md\'s "feat(0001): x" — put pr.md onto it (write-pr step 5), or start ship from the board, which does that first',
+  })
+  // Any other reason alongside it and ship is not offered: the title is compared last.
+  const behind = greenProbe(undefined, { [`merge-base --is-ancestor refs/remotes/origin/main ${SHA}`]: { code: 1, out: '', err: '' } }, { state: 'OPEN', headRefOid: SHA, title: 'feat(0001): y' })
+  const late = nextStep(passedOnce(), { probe: behind })
+  assert.equal(late.stage, '')
+  assert.doesNotMatch(late.action, /carries the title/)
+})
+
+test('0049 R1: no skill opens a pull request with --fill, and write-pr names the title grammar', () => {
+  const skills = join(REPO, '.claude', 'skills')
+  const files = readdirSync(skills, { recursive: true }).filter((p) => p.endsWith('.md'))
+  assert.ok(files.length > 5, files.join(', '))
+  for (const f of files) assert.doesNotMatch(readFileSync(join(skills, f), 'utf8'), /--fill/, f)
+  const pr = readFileSync(join(skills, 'write-pr', 'SKILL.md'), 'utf8')
+  assert.match(pr, /<type>\(<NNNN>\): <text>/)
+  assert.match(pr, /gh pr create --title/)
+  assert.match(pr, /cos\.mjs pr-text <NNNN_slug>/)
 })

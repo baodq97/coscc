@@ -963,7 +963,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
         (d / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8")
         for f in ("spec.md", "plan.md", "impl.md"):
             (d / f).write_text("Status: accepted.\n", encoding="utf-8")
-        (d / "pr.md").write_text("PR: https://github.com/o/r/pull/3. Status: accepted.\n", encoding="utf-8")
+        (d / "pr.md").write_text(f"# PR: feat({name[:4]}): x\nPR: https://github.com/o/r/pull/3. Status: accepted.\n", encoding="utf-8")
         (d / "review.md").write_text(review, encoding="utf-8")
         return d
 

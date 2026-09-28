@@ -408,7 +408,7 @@ class TheGateIsAskedByTheApp(unittest.TestCase):
         (d / "intent.md").write_text("# I\nAuthor: t. Type: feat. Status: accepted.\n")
         for f in ("spec.md", "plan.md", "impl.md"):
             (d / f).write_text("Status: accepted.\n")
-        (d / "pr.md").write_text("PR: https://github.com/o/r/pull/3. Status: accepted.\n")
+        (d / "pr.md").write_text("# PR: feat(0001): x\nPR: https://github.com/o/r/pull/3. Status: accepted.\n")
         return name
 
     def test_without_a_repo_the_review_gate_says_so_instead_of_reading_the_store(self):
@@ -751,7 +751,7 @@ class TheStagesAnAnsweredDraftRunsAgainAreCarriedFromTheScript(unittest.TestCase
 
 
 PR_MD = (
-    "# PR: a title\n"
+    "# PR: fix(0001): a title\n"
     "Intent: intent.md. Impl: impl.md. PR: https://github.com/o/r/pull/7. Author: a. Status: accepted.\n"
     "\n## Where\n\nchecks pending.\n"
 )
@@ -765,10 +765,12 @@ class ThePrTextIsCopiedFromTheScript(unittest.TestCase):
             unit = Path(tmp) / ".cos" / "0001_a"
             unit.mkdir(parents=True)
             (unit / "pr.md").write_text(PR_MD, encoding="utf-8")
+            (unit / "intent.md").write_text("# I\nType: fix. Status: accepted.\n", encoding="utf-8")
             got = run(board.pr_text(tmp, "0001_a"))
         self.assertEqual(got, {
-            "unit": "0001_a", "title": "a title", "body": "## Where\n\nchecks pending.\n",
+            "unit": "0001_a", "title": "fix(0001): a title", "body": "## Where\n\nchecks pending.\n",
             "url": "https://github.com/o/r/pull/7", "scope": None, "status": "accepted",
+            "titleProblem": None,
         })
 
     def test_a_unit_without_pr_md_is_an_answer_with_code_one(self):

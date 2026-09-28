@@ -24,7 +24,7 @@ from coscc.service import Invalid, Service
 from coscc.agent.sessions import Sessions
 
 SHA = "a" * 40
-PR_MD = "# PR: x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân cũ\n"
+PR_MD = "# PR: feat(0001): x\nPR: https://github.com/o/r/pull/7. Status: accepted.\n\nthân cũ\n"
 ARTIFACTS = {
     "intent.md": "# Intent: x\nType: feat. Status: accepted.\n\n## Open questions\n\n1. Một?\n",
     "spec.md": "# Spec: x\nIntent: intent.md. Status: accepted.\n\nR1.\n",
