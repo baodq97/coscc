@@ -67,7 +67,12 @@ from typing import Any, Iterator
 # would never reach a `cos.db` already at 3. The refusal applies once more (that unit's
 # `spec.md` C6): **a build from before `0073` answers `500` on a database this one has
 # touched.** Rolling the app back means rolling the database back with it.
-SCHEMA_VERSION = 4
+#
+# 5 added `decisions` for `.cos/0137_agent-inferences-count-as-the-originators-decisions`: the
+# person's own decisions and delegations, entered only on the Settings screen. The refusal
+# applies once more (that unit's `spec.md` ## Concerns): **a build from before `0137`
+# answers `500` on a database this one has touched.**
+SCHEMA_VERSION = 5
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -250,6 +255,23 @@ CREATE TABLE IF NOT EXISTS step_events (
     event TEXT NOT NULL,
     bytes INTEGER NOT NULL,
     PRIMARY KEY (run, seq)
+)""",
+    """-- `0137` R4: a decision the person made, or a delegation to one agent, typed on the
+-- Settings screen and never over HTTP. `AUTOINCREMENT` so `D<n>` is never reused, even once
+-- the last row is gone. Days are ISO dates; `''` is "none": every workspace, no end, not
+-- withdrawn. A row is never deleted: withdrawing it writes `withdrawn` once.
+CREATE TABLE IF NOT EXISTS decisions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT NOT NULL,
+    text       TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    workspace  TEXT NOT NULL,
+    agent      TEXT NOT NULL,
+    covers     TEXT NOT NULL,
+    from_day   TEXT NOT NULL,
+    until_day  TEXT NOT NULL,
+    withdrawn  TEXT NOT NULL,
+    created_at TEXT NOT NULL
 )""",
 )
 
@@ -434,7 +456,7 @@ class Data:
         # An equal number is the whole common path: one pragma read, and nothing else.
         # A lower number re-runs `_create`, and that is the whole migration mechanism:
         # every statement in `_SCHEMA` is `IF NOT EXISTS`, so a v1 database meets the
-        # tables 2, 3 and 4 added and keeps every row it already had. This works for *adding*. A
+        # tables 2, 3, 4 and 5 added and keeps every row it already had. This works for *adding*. A
         # version that has to change or drop a column will need a real migration here, and
         # will not be able to reuse this path.
 
@@ -581,6 +603,39 @@ class Data:
             for row in rows
             if str(row["key"]).startswith(prefix)
         }
+
+    # -- the person's decisions (`0137`) ------------------------------------
+    #
+    # Only `Service` calls these, and only from the Settings screen's handlers: no route
+    # writes here (`0137` R4).
+
+    _DECISION_FIELDS = ("kind", "text", "source", "workspace", "agent", "covers", "from_day", "until_day")
+
+    def decisions(self) -> list[dict[str, Any]]:
+        """Every decision, withdrawn and expired included, oldest first."""
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM decisions ORDER BY id").fetchall()
+        return [{k: row[k] for k in row.keys()} for row in rows]
+
+    def decision_add(self, **fields: str) -> int:
+        """One new decision; its `id`. Every field of `_DECISION_FIELDS` is text, `''` for none."""
+        values = [str(fields.get(k) or "") for k in self._DECISION_FIELDS]
+        with self.write() as conn:
+            cur = conn.execute(
+                f"INSERT INTO decisions ({', '.join(self._DECISION_FIELDS)}, withdrawn, created_at) "
+                f"VALUES ({', '.join('?' for _ in self._DECISION_FIELDS)}, '', ?)",
+                (*values, now()),
+            )
+            return int(cur.lastrowid)
+
+    def decision_withdraw(self, decision_id: int, day: str) -> bool:
+        """Write the day `decision_id` was withdrawn, once. False when there is no such row or it
+        was withdrawn already; the row is never deleted."""
+        with self.write() as conn:
+            cur = conn.execute(
+                "UPDATE decisions SET withdrawn = ? WHERE id = ? AND withdrawn = ''", (day, int(decision_id))
+            )
+            return cur.rowcount > 0
 
     # -- the login (`0070`) -------------------------------------------------
     #
