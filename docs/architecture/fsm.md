@@ -239,7 +239,8 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
   Holds, reruns, answers and more-rounds are *both* a markdown block and (some of them) a row.
 - Three triggers drive the autopilot (timer, end, answer); several events that change what it
   should do (Jera, hold, shortlist) do not nudge it.
-- `overlap` sees only running steps, not open PRs.
+- `overlap` sees only running steps, not open PRs. *Fixed by `0136` R22: an `impl` whose
+  plan shares a file with another unit's open PR waits with `overlap-pr #n`.*
 - There is no poller for CI or merge state; freshness depends on board reads and the 300 s pass.
 - pr.md and ship.md are agent sessions for what is mechanical (title/body from metadata; merge
   with a pinned head) — 5% of spend and 11 failures across 90 units.

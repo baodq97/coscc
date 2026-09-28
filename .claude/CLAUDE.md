@@ -14,7 +14,7 @@ npm test                                           # every test, both runtimes
 uv sync                                            # dependencies, after a fresh clone
 
 node .claude/scripts/cos.mjs status [--json]       # where every unit stands
-node .claude/scripts/cos.mjs gate <unit> <stage> [--repo <dir>]   # 0 open · 1 blocked, with reasons · 2 misuse
+node .claude/scripts/cos.mjs gate <unit> <stage> [--repo <dir>] [--json]   # 0 open · 1 blocked, with reasons · 2 misuse
 node .claude/scripts/cos.mjs next <unit> [--repo <dir>]           # JSON: the one stage to run now, or "" and why
 node .claude/scripts/cos.mjs new-path <slug>       # allocates the number, validates the slug
 node .claude/scripts/cos.mjs new-idea <slug>       # an idea several units share: .claude/docs/ideas.md
@@ -33,7 +33,8 @@ that directory's numbers as taken. `status`, `gate`, `next`, `rerun`, `unit-bran
 without it: `uv run coscc state <workspace> | node … --state - …` (`0135`). `gate` and `next` take `--repo <dir>`, the
 checkout whose branch and pull request the `review` and `ship` gates read: with `--root` and no `--repo`
 those two gates stay closed. `next` names a stage and opens nothing — ask `gate` before
-running it. `COS_REVIEW_ROUNDS` (default 3) is how many review rounds may ask for changes
+running it. `next` and `gate --json` hand out `reasons`, codes of `coscc/units/guards.py`
+`REASONS`: code branches on those, never on the words. `COS_REVIEW_ROUNDS` (default 3) is how many review rounds may ask for changes
 before the loop needs a person.
 
 Tests must be green before any task is reported complete; never skip or delete a failing

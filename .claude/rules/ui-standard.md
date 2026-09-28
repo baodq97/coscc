@@ -121,7 +121,9 @@ A violation looks like: a greyed *Run* with no sentence saying what it waits for
   rewritten after `impl` took them: the same command, with the addresses `impl` chose.
 - **Who looks.** The `review` agent, by opening each PNG with `Read`. It is an agent looking
   at screenshots, not a person, and its `### Screens` section says so.
-- **What the gate reads.** The `ship` gate reads the words of the last passing round's
-  `### Screens` in `review.md` — its header line, its `.png` lines, and whether `Taken at`
-  is still current — never the images. A finding whose text after the severity opens with
-  `S<n>` always blocks, even when rated `low`.
+- **What the gate reads.** Since `0136`, the `ship` gate reads the round object the review
+  run handed back through `submit`: its `screens`, each image's path, size, address and
+  result, and whether the `taken` the app read from `.screens/manifest.json` is still
+  current. It never reads the images, nor the `### Screens` the app renders into `review.md`
+  from that object. A finding whose `rule` is an `S<n>` always blocks, even when rated `low`.
+  A round with no object, written before `0136`, is still read from its words.
