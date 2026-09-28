@@ -21,8 +21,11 @@ def _entry_row(row: rx.Var[KnowledgeEntry]) -> rx.Component:
         rx.table.cell(rx.vstack(rx.foreach(row.sources, lambda x: s.text(x, size="1", white_space="nowrap")),
                                 spacing="1")),
         rx.table.cell(s.text(row.measured, size="1", white_space="nowrap")),
+        # A reason may name a slot, a path or `PATH`: behind a closed detail (S3).
         rx.table.cell(rx.vstack(s.badge(row.status, row.color),
-                                rx.cond(row.reason != "", s.text(row.reason, size="1")), spacing="1")),
+                                rx.cond(row.reason != "", _details("kn-why-" + row.id, "Why",
+                                                                   s.text(row.reason, size="1"))),
+                                spacing="1")),
     )
 
 
@@ -32,7 +35,8 @@ def _gather_row(row: rx.Var[KnowledgeGather]) -> rx.Component:
         rx.table.cell(_mono(row.unit)),
         rx.table.cell(s.text(row.outcome, size="1")),
         rx.table.cell(_mono(row.cost)),
-        rx.table.cell(s.text(row.reason, size="1")),
+        rx.table.cell(rx.cond(row.reason != "", _details("kn-gather-why", "Why", s.text(row.reason, size="1")),
+                              s.text("—", size="1"))),
     )
 
 
@@ -43,7 +47,12 @@ def _step_row(row: rx.Var[KnowledgeStep]) -> rx.Component:
         rx.table.cell(s.text(row.at, size="1", white_space="nowrap")),
         rx.table.cell(s.badge(row.arm, "iris")),
         rx.table.cell(_mono(row.carried)),
-        rx.table.cell(s.text(row.withheld, size="1")),
+        rx.table.cell(rx.vstack(
+            _mono(row.withheld),
+            rx.cond(row.why.length() > 0, _details(row.key, "Why", rx.vstack(
+                rx.foreach(row.why, lambda x: s.text(x, size="1")), spacing="1"))),
+            spacing="1",
+        )),
     )
 
 

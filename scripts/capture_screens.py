@@ -340,8 +340,9 @@ def seed_run(work: Path, data_dir: Path, proj: Path) -> None:
 
 def seed_knowledge(work: Path, data_dir: Path, proj: Path) -> None:
     """`0131` spec Design 7: a small store for `proj` — one `tool:` entry, two `workspace:`
-    ones — a `health.json` that calls one of them broken, one gather after a ship, and steps
-    that carried an arm, so `/knowledge` shows every table filled."""
+    ones — a `health.json` that calls two of them broken, one gather after a ship that the fetch
+    refused, and steps that carried an arm, so `/knowledge` shows every table filled. The
+    reasons name a slot and a path, as real ones do, and stay behind *Why* (review F2, F3)."""
     from coscc import knowledge, units
     from coscc.data import Data
     from coscc.knowledge import admit, gather
@@ -360,10 +361,11 @@ def seed_knowledge(work: Path, data_dir: Path, proj: Path) -> None:
     )
     knowledge.save(knowledge.path_of(data_dir) / knowledge.STORE, text)
     admit.save_health(data_dir, {slot: "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c"},
-                      {"K1": "", "K2": "", "K3": "ref missing: coscc/gone.py"})
+                      {"K1": f"no pin in {slot}", "K2": "", "K3": "ref missing: coscc/gone.py"})
     journal, key = Journal(work, Data(data_dir)), str(proj.resolve())
     journal.append({"kind": gather.KIND, "workspace": slot, "mode": "unit", "unit": "0004_finished",
-                    "cost_usd": 0.47, "outcome": "saved", "dropped": [], "sessions": []})
+                    "cost_usd": 0, "outcome": "refused", "dropped": [], "sessions": [],
+                    "reason": f"git fetch origin main in {proj.resolve()} failed: could not read from remote repository"})
     for unit, stage, arm in (("0002_open-question", "spec", knowledge.ON), ("0002_open-question", "impl", knowledge.ON),
                              ("0004_finished", "plan", knowledge.OFF)):
         extra = {knowledge.TRIAL_FIELD: {"arm": arm}}

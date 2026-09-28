@@ -1562,7 +1562,12 @@ class KnowledgeIsReadWhereItIsShown(unittest.TestCase):
         self.assertTrue(f["kn_checked"].endswith("on origin/main " + "a" * 12))
         self.assertNotIn("a" * 13, f["kn_checked"])
         self.assertNotIn("T00:00", f["kn_checked"] + f["kn_gathers"][0].at + f["kn_steps"][0].at)
-        self.assertEqual((f["kn_gathers"][0].cost, f["kn_steps"][0].withheld), ("$0.470", "K2: a.py is not on HEAD"))
+        self.assertEqual(f["kn_gathers"][0].cost, "$0.470")
+        # Review F2: a reason may carry a path, so only the ids are in view and the reasons are
+        # a detail; F3: the same for an entry's, which may name a slot (S3).
+        self.assertEqual((f["kn_steps"][0].withheld, f["kn_steps"][0].why, f["kn_steps"][0].key),
+                         ("K2", ["K2: a.py is not on HEAD"], "kn-step-0"))
+        self.assertEqual(f["kn_entries"][1].reason, "ref missing: a.py")
         self.assertEqual((f["kn_verdict"], f["kn_reduction"], f["kn_deadline"]), ("too few units yet", "25%", "Oct 16, 2026"))
         self.assertEqual(kn.knowledge_fields({"checked": None})["kn_checked"], "Not checked yet.")
 

@@ -20,7 +20,8 @@ VERDICTS = {"đạt": "passes", "không đạt": "fails", "chưa đủ mẫu": "
 
 @dataclasses.dataclass
 class KnowledgeEntry:
-    """One entry: its sources without their workspace, which only `slots` names (S3)."""
+    """One entry: its sources without their workspace, which only `slots` names (S3). `reason`
+    may name a slot (`admit.health`), so the page shows it only in a detail."""
 
     id: str = ""
     scope: str = ""
@@ -35,6 +36,8 @@ class KnowledgeEntry:
 
 @dataclasses.dataclass
 class KnowledgeGather:
+    """`reason` may carry a path (`admit.fresh_main`, `gather.read_store`): a detail only (S3)."""
+
     at: str = ""
     unit: str = ""
     outcome: str = ""
@@ -44,12 +47,17 @@ class KnowledgeGather:
 
 @dataclasses.dataclass
 class KnowledgeStep:
+    """`withheld` is the ids; `why` their reasons, which may carry a path (`knowledge.for_step`)
+    and so are a detail keyed by `key` (S3)."""
+
+    key: str = ""
     unit: str = ""
     stage: str = ""
     at: str = ""
     arm: str = ""
     carried: str = ""
     withheld: str = ""
+    why: list[str] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -90,10 +98,11 @@ def knowledge_fields(page: dict) -> dict:
         reason=last.get("reason") or "",
     )] if last else []
     steps = [KnowledgeStep(
-        unit=r["unit"], stage=r["stage"], at=present.when(r["at"]), arm=r["arm"],
+        key=f"kn-step-{n}", unit=r["unit"], stage=r["stage"], at=present.when(r["at"]), arm=r["arm"],
         carried=", ".join(r["ids"]) or "—",
-        withheld=", ".join(f"{w.get('id')}: {w.get('reason')}" for w in r["withheld"]) or "—",
-    ) for r in page.get("recent") or []]
+        withheld=", ".join(str(w.get("id")) for w in r["withheld"]) or "—",
+        why=[f"{w.get('id')}: {w.get('reason')}" for w in r["withheld"]],
+    ) for n, r in enumerate(page.get("recent") or [])]
     m = page.get("measure") or {}
     on, off = m.get("on") or {}, m.get("off") or {}
     metrics = [KnowledgeMetric(metric="Units", on=_figure(on.get("n")), off=_figure(off.get("n")))]
