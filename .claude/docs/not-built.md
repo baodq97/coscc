@@ -144,22 +144,32 @@ Read this before adding a route, a button or a grant, and before copying this ha
   person's estimate wins over an agent's whichever came later. *Propose estimates* opens one paid session under the grant
   `estimate`. Each board step's `start` row records where its unit stood in the shortlist,
   so `verify_0074 --measure` can tell afterwards whether work was taken from it.
-- **An answer from precedent is not a person's, and nothing starts it.** Since `0044` *Ask
-  Jera* on a unit's Questions tab (`POST /api/units/precedent`) opens one paid session under
-  the grant `precedent` — no tools, one turn, $1.00 — that answers the unit's open questions
-  from the Settings text *Decision preferences* and the answers already given in the same
-  workspace. An answer that cites only that store, in none of the five categories that
-  need a person, is appended as `Answered by: Jera. … Via: precedent.`; everything else is a
-  `needs-person` row in the run log and writes nothing. Only a press starts it: no read, no
-  step, no answer and no timer. It opens no gate — `cos.mjs` reads Jera's block exactly as a
-  person's — but every later stage reads it as decided, and the prompt only says it is an
-  agent's. Which category a question falls in is Jera's word. Whoever holds the password or
-  a live session can press it, and a person cannot answer under the name `Jera`. What
-  follows the press is not held back: with the workspace's autopilot on and the unit on its
-  shortlist, an answer of Jera's that clears the unit's last open question lets the next
-  pass (`autopilot.POLL_SECONDS`, 300 s) start the stage after it, with nobody pressing
-  anything. `precedent` does not wake the autopilot as a person's answer does, which only
-  delays that. Jera's own `start` and `end` rows are no step to the autopilot
+- **An answer from precedent is not a person's, and the autopilot starts it unpressed.**
+  Since `0044` *Ask Jera* on a unit's Questions tab (`POST /api/units/precedent`) opens one
+  paid session under the grant `precedent` — no tools, one turn — that answers the unit's
+  open questions from the Settings text *Decision preferences*, the answers already given in
+  the same workspace and, since `0101`, the rules in Settings' *Decision rules* (the app's
+  default while that box is empty). An answer that cites only that store, or `practice` on a
+  question of category `other`, in none of the four categories that need a person
+  (`product-direction`, `security-or-permissions`, `significant-spend`, `external-action`;
+  no rule removes one), is appended as `Answered by: Jera. … Via: precedent.`; everything
+  else is a `needs-person` row in the run log and writes nothing. `practice` is a best
+  practice Jera names in its answer: it has no source anyone can check (`0101` C2). It opens
+  no gate — `cos.mjs` reads Jera's block exactly as a person's — but every later stage reads
+  it as decided, and the prompt only says it is an agent's. Which category a question falls
+  in is Jera's word. Whoever holds the password or a live session can press it, and a person
+  cannot answer under the name `Jera`.
+  Since `0101` the autopilot opens it too, with nobody pressing anything: a unit on the
+  shortlist that would stop on an open question is picked for Jera first (an
+  `autopilot-pick` of `precedent`, then a `start` with `started_by: autopilot`). Each
+  question is asked once — until the stage that writes its artifact runs again — and a
+  session that failed, was cancelled or ran out counts its questions as asked, so they go
+  to a person. The session holds a place under `max_parallel` and is counted against the
+  day's cap at its ceiling. The ceiling is set by the prompt's length, from $1.00 to $3.00
+  (`precedent.ceiling`); past $3.00 no session opens, from a press or a pass, and the unit
+  stops on its questions. When Jera ends, the autopilot is woken: an answer that clears the
+  unit's last open question lets it start the stage after it, or run a `draft` again
+  (`0106`), at once. Jera's own `start` and `end` rows are no step to the autopilot
   (`autopilot.NOT_STEPS`).
 - **Watching a step is not an approval, and it changes nothing.** Since `0073` a board step
   records every event of its session — each message, tool call and result, thought,

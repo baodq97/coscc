@@ -6,8 +6,9 @@ and `Sessions.stream` itself replaced by a counter that fails if anything reache
 `node`; missing is exit 2. Each claim prints `PASS R<n>` or `FAIL R<n>: <why>`: R1, R3, R5,
 R7, R9, R11 and R14 (`cos.test.mjs`'s own test, run by name).
 
-`--measure --cwd <workspace>` spends real money, up to 8 sessions at the `precedent` grant's
-ceiling ($1.00 each, chosen, not measured). For each of the eight units `spec.md` R16 names
+`--measure --cwd <workspace>` spends real money, up to 8 sessions, each at the ceiling the app
+gives its prompt (`precedent.grant_for_prompt`, $1.00 to $3.00 by its length since `0101`
+R5; none past $3.00). For each of the eight units `spec.md` R16 names
 it takes the questions that already have an answer, hides the answers, builds the store of
 precedent without any block of those eight units, and asks Jera. It writes into no artifact
 and no run log: only `<COS_DATA_DIR>/measurements/0044-<YYYY-MM-DD>.json` and a `.md` beside
@@ -296,7 +297,7 @@ async def measure(cwd: str) -> int:
         return EXIT_ENV
     prefs = str(Data(config.data_dir).prefs().get("decision_preferences") or "")
     entries = precedent.entries(data["units"], prefs, {u["name"] for u in wanted})
-    grant = grant_for("precedent")
+    base = grant_for("precedent")
     stored = Data(config.data_dir).prefs()
     model_over = {k[len(models.PREFIX):]: str(v) for k, v in stored.items() if k.startswith(models.PREFIX)}
     effort_over = {k[len(models.EFFORT_PREFIX):]: str(v) for k, v in stored.items()
@@ -314,6 +315,12 @@ async def measure(cwd: str) -> int:
             if not questions:
                 continue
             prompt = precedent.build_prompt(questions, entries)
+            # `0101` R5: the ceiling the app would give this prompt, and no session past the cap.
+            grant = precedent.grant_for_prompt(base, prompt)
+            if grant.max_budget_usd > precedent.PRECEDENT_MAX_USD:
+                runs.append({"unit": u["name"], "questions": len(questions), "cost": {}, "session_id": "",
+                             "failed": f"the prompt needs {grant.max_budget_usd:.2f} USD, past the cap"})
+                continue
             got, end, failure = await precedent.ask(sessions, cwd, prompt, grant, model, effort)
             found = precedent.verdicts(got, questions, {e["id"] for e in entries})
             runs.append({"unit": u["name"], "questions": len(questions), "failed": failure or found["failed"],
