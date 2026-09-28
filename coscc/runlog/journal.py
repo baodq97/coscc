@@ -266,20 +266,25 @@ class Journal:
         return stamped
 
     def append_with(
-        self, record: dict[str, Any], also: Callable[[Any], None], timeout: float | None = None,
-    ) -> dict[str, Any]:
-        """`0135` C8. `append`, with `also(conn)` written in the same transaction: a hold's row
-        in `unit_holds` and its `hold` record here are both written or neither is."""
-        if not isinstance(record, dict) or not record.get("kind"):
-            raise BadRecord("a journal record needs a 'kind'")
-        stamped = {"v": VERSION, "at": _now(), **record}
-        try:
-            json.dumps(stamped, ensure_ascii=False, sort_keys=False)
-        except (TypeError, ValueError) as e:
-            raise BadRecord(f"record is not JSON-serialisable: {e}") from e
+        self, records: list[dict[str, Any]], also: Callable[[Any], None], timeout: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """`0135` C8. `append` of every record, with `also(conn)` written in the same
+        transaction: a hold's row in `unit_holds` and its `hold` record here, or each
+        answer's row in `unit_answers` and its `answer` record, are all written or none is."""
+        stamped = []
+        for record in records:
+            if not isinstance(record, dict) or not record.get("kind"):
+                raise BadRecord("a journal record needs a 'kind'")
+            one = {"v": VERSION, "at": _now(), **record}
+            try:
+                json.dumps(one, ensure_ascii=False, sort_keys=False)
+            except (TypeError, ValueError) as e:
+                raise BadRecord(f"record is not JSON-serialisable: {e}") from e
+            stamped.append(one)
         with self.transaction(timeout) as conn:
             also(conn)
-            self._insert(conn, stamped)
+            for one in stamped:
+                self._insert(conn, one)
         BELL.ring()
         return stamped
 

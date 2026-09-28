@@ -732,6 +732,24 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.intent.read_bytes(), before)
         self.assertEqual(self.rows(), [("intent.md", "2", "Phong", "product", "Tách ra. MARK-0016")])
 
+    async def test_an_answer_writes_its_journal_row_in_the_same_transaction(self):
+        import sqlite3
+
+        from coscc.runlog.journal import Journal
+
+        def answers() -> list:
+            return Journal(str(Path(self.cwd).parent), self.data_dir).records(kind="answer")
+
+        got = await self.post()
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual((len(self.rows()), len(answers())), (1, 1))
+        # The run-log row fails after the answer's row was written: neither is kept (C8).
+        with mock.patch.object(Journal, "_insert", side_effect=sqlite3.OperationalError("disk I/O error")):
+            got = await self.post(question=1, answer="Có.")
+        self.assertEqual(got.status_code, 400, got.text)
+        self.assertIn("the answer was not recorded", got.text)
+        self.assertEqual((len(self.rows()), len(answers())), (1, 1))
+
     async def test_the_board_then_counts_one_fewer_open(self):
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
         self.assertEqual(board["units"][0]["open"], 3)

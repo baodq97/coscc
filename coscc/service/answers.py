@@ -413,9 +413,10 @@ class AnswersMixin:
             found = next((u for u in data["units"] if u["name"] == unit), None)
             if found is None:
                 raise Invalid(f"no such work unit in this workspace: {unit}")
+            texts: list[str] = []
             for artifact, question, answer in items:
                 try:
-                    number, finding = self._append_one(
+                    number, finding, text = self._append_one(
                         cwd, unit, found, artifact, question, str(answer or "").strip("\n"), name, via,
                         today, jera, delegation,
                     )
@@ -425,6 +426,14 @@ class AnswersMixin:
                     skipped.append({"artifact": artifact, "question": question, "reason": str(e)})
                     continue
                 written.append({"artifact": artifact, "question": finding or number})
+                texts.append(text)
+            try:
+                self._record_answers(cwd, unit, found, written, texts, name, today, via)
+            except Invalid as e:
+                if not jera:
+                    raise
+                skipped += [{**w, "reason": str(e)} for w in written]
+                written = []
 
         # `0016` plan, in place of spec R9: the store is not a git repository, so there is
         # no commit to make. The provenance this app already keeps is a row in `outputs`.
@@ -446,32 +455,44 @@ class AnswersMixin:
                 except (OSError, BadTransition, Busy):
                     pass
 
-        self._journal_answers(cwd, unit, found, written, via)
         return {"written": written, "skipped": skipped, "date": today}
 
-    def _journal_answers(
-        self, cwd: str, unit: str, found: dict[str, Any], written: list[dict[str, Any]], via: str,
+    def _record_answers(
+        self, cwd: str, unit: str, found: dict[str, Any], written: list[dict[str, Any]], texts: list[str],
+        name: str, today: str, via: str,
     ) -> None:
-        """`0106` R4. One `answer` record per block written, so the run log can tell which
-        answer finished a draft's questions (`completes`) and what the autopilot then did.
-        It starts nothing. Never raises, like the `outputs` row above it."""
-        journal = self._journal()
-        if journal is None or not written:
+        """`0135` R8, C8. Each answer's row in `unit_answers` and its `answer` record in the run
+        log in one transaction: all are written or none is. Raises `Invalid` when none was.
+
+        `0106` R4: one `answer` record per answer, so the run log can tell which answer
+        finished a draft's questions (`completes`) and what the autopilot then did. It
+        starts nothing. With no run log (`_journal`) there is only the row to write.
+        """
+        if not written:
             return
         key = self._journal_key(cwd)
+        meta = self._unit_meta()
+
+        def rows(conn) -> None:
+            for w, text in zip(written, texts):
+                meta.add_answer(key, unit, w["artifact"], w["question"], text, name, today, via, conn=conn)
+
+        journal = self._journal()
         try:
+            if journal is None:
+                with meta.data.write() as conn:
+                    rows(conn)
+                return
             listed, _ = backlog.shortlist_of(journal.records(workspace=key, kind="shortlist"))
             on = bool(self._autopilot_values(key)["autopilot"])
-        except (Busy, OSError):
-            return
-        stages = {s["file"]: s for s in found.get("stages") or []}
-        given: dict[str, set[Any]] = {}
-        for w in written:
-            artifact = w["artifact"]
-            given.setdefault(artifact, set()).add(w["question"])
-            row = stages.get(artifact) or {}
-            try:
-                journal.append({
+            stages = {s["file"]: s for s in found.get("stages") or []}
+            given: dict[str, set[Any]] = {}
+            records = []
+            for w in written:
+                artifact = w["artifact"]
+                given.setdefault(artifact, set()).add(w["question"])
+                row = stages.get(artifact) or {}
+                records.append({
                     "kind": "answer", "workspace": key, "unit": unit, "stage": row.get("stage", ""),
                     "artifact": artifact, "question": w["question"], "via": via,
                     "status": row.get("status", ""),
@@ -479,15 +500,17 @@ class AnswersMixin:
                     "autopilot": on, "shortlisted": unit in ((listed or {}).get("units") or []),
                     "held": bool(found.get("hold")),
                 })
-            except (BadRecord, Busy):
-                pass
+            journal.append_with(records, rows)
+        except (BadRecord, Busy, sqlite3.Error, OSError) as e:
+            said = ", ".join(f"{w['artifact']} {w['question']}" for w in written)
+            raise Invalid(f"the answer was not recorded ({said}): {e}") from e
 
     def _append_one(
         self, cwd: str, unit: str, found: dict[str, Any], artifact: str, question: Any, text: str,
         name: str, via: str, today: str, jera: bool, delegation: str = "",
-    ) -> tuple[int | str, str]:
-        """Check one answer against the board read `found` and record it. Raises `Invalid`
-        before a row is written; returns `(number, finding)`."""
+    ) -> tuple[int | str, str, str]:
+        """Check one answer against the board read `found`. Raises `Invalid`; returns
+        `(number, finding, text)`, the text as its row keeps it. `_record_answers` writes it."""
         if jera:
             # `0044` R3. Decided by the name of the file and the shape of the heading, never
             # by what the session said.
@@ -551,16 +574,9 @@ class AnswersMixin:
         if delegation:
             # `0137` R10. Last of the refusals, and still before the row is written.
             text = f"{text}\n\n{precedent_mod.DELEGATION} {self._delegation_or_refuse(cwd, name, delegation, today)}"
-
         # `0135` R8. A row in `cos.db`, and no byte of the artifact: the snapshot hands it to
         # `cos.mjs`, and a stage's prompt renders it as the block it once was.
-        try:
-            self._unit_meta().add_answer(
-                self._journal_key(cwd), unit, artifact, finding or number, text.strip(), name, today, via,
-            )
-        except (Busy, sqlite3.Error, OSError) as e:
-            raise Invalid(f"could not record the answer to {artifact}: {e}") from e
-        return number, finding
+        return number, finding, text.strip()
 
     def _delegation_or_refuse(self, cwd: str, name: str, delegation: str, today: str) -> str:
         """`0137` R10. The `D<n>` an answer under `name` may cite today in `cwd`, or `Invalid`
@@ -962,9 +978,9 @@ class AnswersMixin:
             meta = self._unit_meta()
             try:
                 journal.append_with(
-                    hold_rules.record(
+                    [hold_rules.record(
                         workspace=key, unit=unit, from_=from_, to=to, reason=reason, by=by, effects=effects,
-                    ),
+                    )],
                     lambda conn: meta.add_hold(key, unit, to, reason, by, today, "product", conn=conn),
                 )
             except (BadRecord, Busy, sqlite3.Error, OSError) as e:
