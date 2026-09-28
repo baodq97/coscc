@@ -2223,7 +2223,7 @@ class AShipThatEndsDoneGathersItsUnit(unittest.TestCase):
 
                 self.assertEqual(asyncio.run(go()), [])
                 self.assertEqual((began, service._gathers), ([], set()))
-                [row] = [r for r in service._journal().records() if r.get("kind") == gather.KIND]
+                [row] = service._journal().records(unit=self.unit, kind=gather.KIND)
                 self.assertEqual((row["unit"], row["outcome"], row["cost_usd"]), (self.unit, "refused", 0.0))
                 self.assertIn("an update is waiting to be applied", row["reason"])
 
