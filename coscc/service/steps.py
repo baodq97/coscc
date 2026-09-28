@@ -868,6 +868,11 @@ class StepsMixin:
                     base = tree.get("base")
                 else:
                     base = await worktrees.refresh_base(cwd, unit, self.config.data_dir)
+            # `0049` R7. `pr.md`'s title and body go up before the `ship` gate compares the
+            # title, so one a person changed on GitHub, or a `pr` step left behind, does not
+            # close it. Never raises; when it fails, the gate decides.
+            if stage == "ship":
+                await self._sync_pr(cwd, unit, None, stage="ship")
             try:
                 # `work` is the checkout the `review` and `ship` gates read git and the pull
                 # request from (`0015`). The store has no git to read.

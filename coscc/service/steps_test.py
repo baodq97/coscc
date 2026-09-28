@@ -1576,7 +1576,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
         def of(self, sub: str, json_: str | None = None):
             return [c for c in self.calls if c[0][:2] == ["pr", sub] and (json_ is None or c[0][-1] == json_)]
 
-    def _run(self, text, gh, stage="pr", hold=False, prepare=None):
+    def _run(self, text, gh, stage="pr", hold=False, prepare=None, gate=None):
         from coscc.units import board as board_reader
         from coscc.github import integrate, prcomment
 
@@ -1591,6 +1591,8 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, f"open: {stage} may proceed"
+
+        open_gate = gate or open_gate
 
         async def go():
             agen = self.service.run_step(str(self.repo), unit, stage)
@@ -1707,6 +1709,46 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             {"verdict": "mismatch", "differ": ["files"], "only_in_pr_md": ["b.py"], "only_on_github": ["c.py"]},
         )
         self.assertEqual((directory / "pr.md").read_text(encoding="utf-8"), self.SCOPED)
+
+    def _pr_md(self, text):
+        return lambda d: (d / "pr.md").write_text(text, encoding="utf-8")
+
+    def test_0049_r7_a_ship_step_puts_pr_md_up_before_the_gate_is_asked(self):
+        gh = self.Gh(listed=True, title="changed on GitHub")
+        seen: list[str] = []
+
+        async def gate(units_root, unit, stage, repo=None, **kw):
+            seen.append(gh.title)
+            return True, f"open: {stage} may proceed"
+
+        _, rows, _ = self._run(None, gh, stage="ship", prepare=self._pr_md(self.ACCEPTED), gate=gate)
+        self.assertEqual(seen, [self.TITLE])
+        self.assertEqual((gh.title, gh.body), (self.TITLE, self.BODY))
+        [row] = rows
+        self.assertEqual((row["stage"], row["outcome"], row["pr"]), ("ship", "updated", "https://github.com/o/r/pull/7"))
+        self.assertNotIn("existed", row)
+
+    def test_0049_r7_ship_reads_no_scope(self):
+        gh = self.Gh(listed=True, title=self.TITLE, body=self.BODY, scope=self.GH_SCOPE)
+        _, [row], _ = self._run(None, gh, stage="ship", prepare=self._pr_md(self.SCOPED))
+        self.assertEqual(gh.of("view", prscope.FIELDS), [])
+        self.assertNotIn("scope", row)
+        self.assertEqual(row["stage"], "ship")
+
+    def test_0049_r7_a_failed_sync_still_asks_the_gate_and_a_closed_gate_refuses(self):
+        gh = self.Gh(listed=True, fail="edit")
+        asked: list[str] = []
+
+        async def closed(units_root, unit, stage, repo=None, **kw):
+            asked.append(stage)
+            return False, "blocked: ship cannot proceed\n  - #7 carries the title \"temporary\""
+
+        with self.assertRaises(Invalid) as refused:
+            self._run(None, gh, stage="ship", prepare=self._pr_md(self.ACCEPTED), gate=closed)
+        self.assertIn("carries the title", str(refused.exception))
+        self.assertEqual(asked, ["ship"])
+        [row] = self.service._journal().records(self.service._journal_key(str(self.repo)), kind="pr-sync")
+        self.assertEqual((row["stage"], row["outcome"], row["detail"]), ("ship", "failed", "HTTP 422: Validation Failed"))
         self.assertEqual(len(gh.of("edit")), 1, "the scope read writes nothing of its own")
 
     def test_0122_a_skipped_sync_has_no_scope_and_no_read(self):
