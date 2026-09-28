@@ -63,6 +63,19 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
 
         return asyncio.run(go())
 
+    def test_every_stage_column_carries_its_glyph_and_label(self):
+        # `0036` R5: every stage the board read names, from the table, overrides included.
+        self.service.set_agent("review", {"name": "Judge"})
+        data = asyncio.run(self.service.board(str(self.repo)))
+        self.assertEqual(set(data["stage_agents"]), set(data["stages"]))
+        self.assertEqual(data["stage_agents"]["plan"], {
+            "glyph": "ᚱ", "label": "Raidho (agent, plan)",
+            "meaning": "journey: the right road in the right order",
+            "role": "Orders the work and names its proof, and writes no code.",
+        })
+        self.assertEqual(data["stage_agents"]["review"]["label"], "Judge (agent, review)")
+        self.assertEqual(data["stage_agents"]["spike"]["meaning"], "")
+
     def test_one_entry_while_the_step_runs_and_none_after_done(self):
         self._run("spec")
         [[entry]] = self.seen

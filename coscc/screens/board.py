@@ -10,7 +10,7 @@ import reflex as rx
 from coscc.web import studio as s
 from coscc.service import CONSEQUENCE
 from coscc.state import AutopilotStop, Card
-from coscc.screens.common import P, _MONO, _details
+from coscc.screens.common import P, _MONO, _RUNIC, _details
 from coscc.screens.overview import _empty_board
 
 
@@ -51,6 +51,27 @@ def _unit_card(unit: rx.Var[Card], grouped: bool = False) -> rx.Component:
     )
 
 
+def _stage_glyph(stage: rx.Var[str]) -> rx.Component:
+    """`0036` R5. The lane's agent: its glyph as a button, `<Name> (agent, <stage>)` on
+    hover and to a screen reader, and a small panel with its meaning and role on a press."""
+    label = P.stage_labels[stage]
+    return rx.popover.root(
+        rx.popover.trigger(
+            rx.el.button(
+                P.stage_glyphs[stage], type="button", title=label, aria_label=label,
+                font_family=_RUNIC, font_size="15px", line_height="1", color=s.MUTED,
+                background="transparent", border="none", padding="2px", cursor="pointer",
+                data_testid="stage-glyph",
+            ),
+        ),
+        rx.popover.content(
+            rx.text(label, size="2", weight="medium"),
+            s.text(P.stage_notes[stage], size="1", white_space="pre-line", margin_top="4px"),
+            max_width="260px", size="1",
+        ),
+    )
+
+
 def _lane(stage: rx.Var[str]) -> rx.Component:
     """`0133` R1, R2. One stage's lane: its name and count, then its cards wrapping in the
     width left, so the board is never wider than the page. The stages are the board read's,
@@ -58,6 +79,7 @@ def _lane(stage: rx.Var[str]) -> rx.Component:
     count = P.stage_counts[stage]
     return rx.flex(
         rx.hstack(
+            rx.cond(P.stage_glyphs.contains(stage), _stage_glyph(stage)),
             rx.text(stage, size="2", weight="medium"),
             s.text(count.to_string(), size="1"),
             width=rx.breakpoints(initial="100%", md="112px"), flex_shrink="0", align="center",

@@ -1130,6 +1130,39 @@ class TheBoardIsDrawnFromTheStages(unittest.TestCase):
         self.assertEqual(counts, {"alpha": 1, "beta": 2})
         self.assertEqual({c.id: c.at for c in cards}, {u["name"]: u["at"] for u in Other.BOARD["units"]})
 
+    def test_the_board_and_settings_show_what_the_service_resolved(self):
+        """`0036` R2, R5. The glyph, label and notes of each column, and each Settings row,
+        copied from the service with nothing worked out here."""
+        from types import SimpleNamespace
+
+        from coscc.agent import agents
+        from coscc.service import unit_state
+        from coscc.state import StudioState
+
+        class Named(_Page):
+            BOARD = {"stages": ["alpha", "beta"], "recording": True, "units": [
+                {"name": "0001_alpha", "stages": [], "next": "x", "problems": [], "at": "alpha", "why": "missing"},
+            ], "stage_agents": {"alpha": {"glyph": "ᚨ", "label": "Aa (agent, alpha)", "meaning": "m", "role": "r"}}}
+
+        for u in Named.BOARD["units"]:
+            u["state"] = unit_state(u, None, None)
+
+        async def ask(arrive, manager):
+            studio = await _studio(manager, "state-test-0036-agents")
+            return dict(studio.stage_glyphs), dict(studio.stage_labels), dict(studio.stage_notes)
+
+        _, _, (glyphs, labels, notes) = _sample_read("state-test-0036-agents", ask, Named())
+        self.assertEqual((glyphs, labels, notes), ({"alpha": "ᚨ"}, {"alpha": "Aa (agent, alpha)"}, {"alpha": "m\nr"}))
+
+        page = SimpleNamespace()
+        table = agents.table({"review": {"name": "Judge"}})
+        table["rows"][0]["overridden"] = False
+        StudioState._show_agents(page, {**table, "problems": ["p"]})
+        review = next(r for r in page.agent_rows if r.key == "review")
+        self.assertEqual((review.name, review.name_source, review.glyph_source), ("Judge", "override", "default"))
+        self.assertEqual(len(page.agent_rows), 11)
+        self.assertEqual(page.agent_problems, ["p"])
+
 
 class NoCardLosesWhatItShowed(unittest.TestCase):
     """`0053` R13: a card carries every field its card draws with the value the whole unit

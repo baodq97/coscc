@@ -98,6 +98,7 @@ from coscc.state.views import (
     Event,
     Knob,
     ModelRow,
+    AgentRow,
     GrantRow,
     _run_target,
     _run_waiting,
@@ -179,6 +180,12 @@ class StudioState(
 
     # -- board
     stages: list[str] = []
+    # `0036` R5. Each column's agent, by stage, as `Service.board` resolved it: the glyph,
+    # `<Name> (agent, <stage>)`, and its meaning and role one per line. A stage with no
+    # row is not a key.
+    stage_glyphs: dict[str, str] = {}
+    stage_labels: dict[str, str] = {}
+    stage_notes: dict[str, str] = {}
     # `0053`. Every unit of the last board read, whole, keyed by id in board order. Backend
     # only: the page gets `cards` and, for the one unit open, `current_unit`. Always
     # assigned a new dict, never changed in place (`spike.md ## U3` measured only that).
@@ -287,6 +294,9 @@ class StudioState(
     # is `model_target`, the same one-box-at-a-time shape the answers use.
     model_rows: list[ModelRow] = []
     model_problems: list[str] = []
+    # `0036` R2. The agent table, and why a field fell back. Each row is its own form.
+    agent_rows: list[AgentRow] = []
+    agent_problems: list[str] = []
     # `0043` R2. One workspace's autopilot settings, as `Service.autopilot_settings` has them.
     ap_on: bool = False
     ap_may_ship: bool = False
@@ -533,8 +543,22 @@ class StudioState(
         ]
         self.model_problems = [str(p) for p in data.get("problems") or []]
 
+    def _show_agents(self, data: dict) -> None:
+        self.agent_rows = [
+            AgentRow(
+                key=str(r["key"]),
+                **{f: str(r.get(f) or "") for f in ("glyph", "name", "meaning", "role")},
+                **{f"{f}_source": str((r.get("source") or {}).get(f) or "")
+                   for f in ("glyph", "name", "meaning", "role")},
+                overridden=bool(r.get("overridden")),
+            )
+            for r in data.get("rows") or []
+        ]
+        self.agent_problems = [str(p) for p in data.get("problems") or []]
+
     async def _load_models(self) -> None:
         self._show_models(await SERVICE.stage_models())
+        self._show_agents(SERVICE.agent_table())
         self._load_autopilot()
 
     def _show_autopilot_block(self, block: dict) -> None:
@@ -636,6 +660,12 @@ class StudioState(
             return
 
         self.stages = list(data["stages"])
+        found = data.get("stage_agents") or {}
+        self.stage_glyphs = {k: str(v.get("glyph") or "") for k, v in found.items()}
+        self.stage_labels = {k: str(v.get("label") or "") for k, v in found.items()}
+        self.stage_notes = {
+            k: "\n".join(str(v.get(f) or "") for f in ("meaning", "role") if v.get(f)) for k, v in found.items()
+        }
         self._show_ideas(data)
         for name, value in backlog_view(data).items():
             setattr(self, name, value)
@@ -1276,6 +1306,36 @@ class StudioState(
             if model is not None
             else f"{name} is back on its default."
         )
+
+    @rx.event
+    def save_agent(self, form: dict):
+        """`0036` R2. One row's form, as typed. Whether it may be saved is
+        `Service.set_agent`'s call; a field left as it was is not sent."""
+        key = str(form.get("key") or "")
+        row = next((r for r in self.agent_rows if r.key == key), None)
+        if row is None:
+            return
+        fields = {
+            f: str(form.get(f) or "").strip() for f in ("glyph", "name", "meaning", "role")
+            if f in form and str(form.get(f) or "").strip() != getattr(row, f)
+        }
+        if not fields:
+            self.notice = "Nothing changed."
+            return
+        self._change_agent(key, fields)
+
+    @rx.event
+    def reset_agent(self, key: str):
+        """Remove the row's override, so every field is back on its default."""
+        self._change_agent(key, {})
+
+    def _change_agent(self, key: str, fields: dict) -> None:
+        try:
+            self._show_agents(SERVICE.set_agent(key, fields))
+        except Invalid as e:
+            self.notice = str(e)
+            return
+        self.notice = f"The {key} agent is saved; the next step that starts uses it."
 
     @rx.event
     def set_autopilot_on(self, value: bool):

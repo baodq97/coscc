@@ -995,6 +995,23 @@ class ModelRow:
 
 
 @dataclasses.dataclass
+class AgentRow:
+    """`0036` R2. One row of the agent table as Settings shows it: each field and where it
+    came from. Copied from `Service.agent_table`; nothing is resolved here."""
+
+    key: str = ""
+    glyph: str = ""
+    name: str = ""
+    meaning: str = ""
+    role: str = ""
+    glyph_source: str = ""
+    name_source: str = ""
+    meaning_source: str = ""
+    role_source: str = ""
+    overridden: bool = False
+
+
+@dataclasses.dataclass
 class GrantRow:
     stage: str = ""
     tools: str = ""

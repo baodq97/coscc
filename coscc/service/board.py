@@ -225,6 +225,17 @@ class BoardMixin:
         # what it was.
         if peer_problems:
             data["peer_problems"] = peer_problems
+        # `0036` R5. Each stage column's agent, by the one lookup, for the page to show only.
+        # A stage the table has no row for is left out, and its column has no glyph.
+        overrides = self._agent_overrides()[0]
+        data["stage_agents"] = {}
+        for stage in data["stages"]:
+            row = agents.agent_for(stage, overrides)
+            if row is not None:
+                data["stage_agents"][stage] = {
+                    "glyph": row["glyph"], "label": agents.label({**row, "key": stage}),
+                    "meaning": row["meaning"], "role": row["role"],
+                }
         name = self._workspace_name(cwd)
         for unit in data["units"]:
             if unit.get("repo") and name and unit["repo"] != name:
