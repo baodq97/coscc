@@ -673,6 +673,14 @@ def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
             "open_ids": [str(f.get("id")) for f in found if f.get("label") == "open"],
             "dropped": [str(x) for x in r.get("dropped") or []],
             "unfinished": bool(r.get("unfinished")),
+            # `0136`: what `coscc/units/prose_import.py` reads a round only the prose holds
+            # from, once. Copied off `parseReview`'s list, never parsed here.
+            "reviewed": r.get("reviewed"),
+            "found": [
+                {"id": f.get("id"), "label": f.get("label"), "fixed_by": f.get("fixedBy"), "text": f.get("text")}
+                for f in found
+            ],
+            "screens": r.get("screens") if isinstance(r.get("screens"), dict) else None,
         })
     return out
 

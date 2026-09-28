@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from coscc.units import backlog
+from coscc.units import backlog, prose_import
 from coscc.agent import agents
 from coscc.units import board as board_reader
 from coscc.git import gitops
@@ -279,6 +279,27 @@ class BoardMixin:
             except (BadRecord, Busy):
                 pass
 
+    async def _import_rounds(self, cwd: str, units_: list[dict[str, Any]]) -> None:
+        """`0136`: the review rounds only the prose of a store holds, into `cos.db`, on the
+        first board read that finds the store unimported (`coscc/units/prose_import.py`). The
+        board this read shows is the same either way. One that cannot write goes to the log and
+        is tried on the next read."""
+        meta = self._unit_meta()
+        key = self._journal_key(cwd)
+        try:
+            if meta.data.has_run(prose_import.key(meta.root, key)):
+                return
+            root = Path(cwd).expanduser().resolve()
+            heads: dict[str, str] = {}
+            for sha in {str(r.get("reviewed")) for u in units_ for r in u.get("rounds") or [] if r.get("reviewed")}:
+                try:
+                    heads[sha] = await gitops.rev_parse(root, sha)
+                except GitError:
+                    pass
+            prose_import.import_rounds(meta, key, units_, heads)
+        except (Busy, sqlite3.Error, OSError) as e:
+            print(f"coscc: the review rounds of {key} could not be imported: {e}", file=sys.stderr)
+
     def _workspace_name(self, cwd: str) -> str:
         """The name the app shows for `cwd`, or "" when it is not one of the workspaces."""
         here = Path(cwd).expanduser().resolve()
@@ -306,6 +327,7 @@ class BoardMixin:
             data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd, peers=peers))
         except Unavailable as e:
             raise Invalid(str(e)) from e
+        await self._import_rounds(cwd, data["units"])
         # `0040` R14, R15. Only when there is something to say, so every other payload is
         # what it was.
         if peer_problems:
