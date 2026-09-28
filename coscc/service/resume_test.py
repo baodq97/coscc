@@ -239,6 +239,56 @@ class TakingUpAfterAnUpdate(_Base):
         [end] = self.ends()
         self.assertEqual(end["outcome"], "failed")
 
+    def test_what_an_estimate_jera_or_chat_refuses_is_asked_before_the_resume_row(self):
+        # Review round 2, F7: F4's rule for the three kinds its fix did not cover. None of the
+        # owners is reached, and the `resume` row says `failed` with the owner's own reason.
+        reached: list[str] = []
+
+        async def estimates(cwd, resume=None):
+            reached.append("estimate")
+            return
+            yield
+
+        async def precedent(cwd, unit, started_by="person", resume=None):
+            reached.append("precedent")
+
+        async def chat(cwd, record):
+            reached.append("chat")
+
+        cases = {
+            "the workspace was taken off the list": lambda: mock.patch.object(self.service, "_is_member", lambda cwd: False),
+            "an update is being applied": lambda: mock.patch.object(self.service.updater, "window", True),
+        }
+        with mock.patch.object(self.service, "propose_estimates", estimates), \
+                mock.patch.object(self.service, "precedent", precedent), \
+                mock.patch.object(self.service, "_resume_chat", chat):
+            for why, refusal in cases.items():
+                with self.subTest(why), refusal():
+                    for kind in ("estimate", "precedent", "chat"):
+                        self.paused(kind)
+                    said = self.up()
+                    self.assertEqual([(s["kind"], s["result"]) for s in said],
+                                     [("estimate", "failed"), ("precedent", "failed"), ("chat", "failed")])
+            self.assertEqual(reached, [])
+            rows = self.journal.records(self.key, kind="resume")
+            self.assertEqual({r["result"] for r in rows}, {"failed"})
+            self.assertTrue(all(r["detail"] for r in rows))
+            # An estimate and Jera had a `start`; each ends `failed`. A chat turn had none.
+            self.assertEqual(sorted(e["stage"] for e in self.ends()), ["estimate", "estimate", "precedent", "precedent"])
+
+    def test_a_unit_jera_would_find_held_writes_a_failed_resume_row(self):
+        reached: list[str] = []
+
+        async def precedent(cwd, unit, started_by="person", resume=None):
+            reached.append(unit)
+
+        self.paused("precedent")
+        self.service._take(self.key, self.unit, "step", "plan")
+        with mock.patch.object(self.service, "precedent", precedent):
+            [said] = self.up()
+        self.assertEqual((reached, said["result"]), ([], "failed"))
+        self.assertIn(self.unit, said["detail"])
+
     def test_taking_up_again_lets_sessions_open_once_more(self):
         # Review round 2, F6: `suspend_all` closed `Sessions` to new streams; after a failed
         # hand-off this same process takes its rows up, and must open them again.

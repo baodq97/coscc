@@ -157,6 +157,8 @@ class ResumeMixin:
                     steps_mod.describe(unit, steps_mod.Mark("step", held.stage, "running", held.started_at))
                     if held is not None else ""
                 )
+            if not problem and kind in ("estimate", "precedent", "chat"):
+                problem = self._owner_refuses(kind, owner)
             if not problem and kind == "chat":
                 # Review round 1, F5: R10 for a chat turn, said here so its `resume` row does.
                 used_up = transcript.ceilings_left(CHAT_TURNS, None, row)[2]
@@ -186,6 +188,24 @@ class ResumeMixin:
                 _spawn(start)
         self.autopilot_resume()
         return said
+
+    def _owner_refuses(self, kind: str, owner: dict[str, Any]) -> str:
+        """Review round 2, F7. What an estimate, Jera or a chat turn refuses before its
+        session, asked before the `resume` row as F4's claim is, so that row says what
+        happened. Each owner holds what it takes before its first `await`, and its task runs
+        before the autopilot's, so nothing comes between this and that."""
+        cwd, key, unit = str(owner.get("workspace_dir") or ""), str(owner.get("workspace") or ""), str(owner.get("unit") or "")
+        try:
+            self._workspace_or_refuse(cwd)
+            self._refuse_while_updating()
+        except Invalid as e:
+            return str(e)
+        if kind == "precedent":
+            return self._busy(key, unit)
+        held = self._active.get((key, "")) if kind == "estimate" else None
+        if held is not None:
+            return f"a proposal for this workspace is already running since {held.started_at}; wait for it to end"
+        return ""
 
     def _end_unresumed(self, journal: Any, row: dict[str, Any], kind: str, problem: str) -> None:
         """R8. The step, integration, estimate or Jera ends `failed` and waits for a rerun; a
