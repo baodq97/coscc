@@ -116,6 +116,28 @@ class EveryFieldIsWrittenOrSaysItIsNotKnown(Fixture):
                     self.assertIsNotNone(row[name], name)
                     self.assertNotEqual(str(row[name]).strip(), "", name)
 
+    def test_a_row_with_no_guard_says_so_rather_than_leaving_it_blank(self):
+        # `0136` step 1: the four columns of R15 follow R3 like every other.
+        row = self.history.record(WS, UNIT, "intent.md", "draft")
+        self.assertEqual(
+            (row["guard"], row["authority"], row["run"], row["inputs"]),
+            (UNKNOWN, UNKNOWN, UNKNOWN, "{}"),
+        )
+
+    def test_guard_authority_run_and_inputs_are_stored_as_given(self):
+        self.history.record(
+            WS, UNIT, "intent.md", "draft",
+            guard="stage-result", authority="agent", run="r1", inputs={"revision": "ab", "pr": 7},
+        )
+        row = self.rows()[-1]
+        self.assertEqual((row["guard"], row["authority"], row["run"]), ("stage-result", "agent", "r1"))
+        self.assertEqual(json.loads(row["inputs"]), {"pr": 7, "revision": "ab"})
+
+    def test_an_authority_outside_the_four_is_refused(self):
+        with self.assertRaises(BadTransition):
+            self.history.record(WS, UNIT, "intent.md", "draft", authority="owner")
+        self.assertEqual(self.rows(), [])
+
     def test_the_state_set_the_row_was_written_under_is_recorded(self):
         # `spec.md` C5: two configurations comparing states that never meant the same
         # thing is a failure that runs rather than stops. The row has to say which.

@@ -78,7 +78,12 @@ from typing import Any, Iterator
 # more, and costs more than before (that unit's `spec.md` C7): **a build from before `0135`
 # answers `500` on a database this one has touched, and the answers and holds recorded
 # since exist only here** — a build that reads them from the markdown does not see them.
-SCHEMA_VERSION = 6
+#
+# 7 added, for `.cos/0136_transitions-are-decided-by-parsing-prose`, the guard, authority, run
+# and inputs of every transition (its R15) and the tables a submitted object lands in. The first
+# version to add *columns*: `_COLUMNS` below. The refusal applies once more: **a build from
+# before `0136` answers `500` on a database this one has touched.**
+SCHEMA_VERSION = 7
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
@@ -161,6 +166,8 @@ CREATE TABLE IF NOT EXISTS prefs (
 -- `machine` names the state set the row was written under. Without it, a database written
 -- under one configuration and read under another compares states that never meant the
 -- same thing, and `spec.md` C5 says that failure runs rather than stops.
+--
+-- `guard`, `authority`, `run` and `inputs` are added by `_COLUMNS` (`0136` R15).
 CREATE TABLE IF NOT EXISTS transitions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     at         TEXT NOT NULL,
@@ -390,6 +397,99 @@ CREATE TABLE IF NOT EXISTS unit_seen (
     questions INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (root, workspace, unit, artifact)
 )""",
+    """-- `0136` R2, R4: a stage's result as the `submit` tool received it. `object` is the whole
+-- object as JSON; `judgement` is beside it so a guard can narrow without parsing. `revision`
+-- is the SHA-256 the app took of the artifact when the object arrived (R3 b). Where the
+-- artifact stands is still the fold over `transitions`, never a column here (`0013` R1).
+CREATE TABLE IF NOT EXISTS stage_results (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    at        TEXT NOT NULL,
+    root      TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    unit      TEXT NOT NULL,
+    stage     TEXT NOT NULL,
+    run       TEXT NOT NULL,
+    revision  TEXT NOT NULL,
+    judgement TEXT NOT NULL,
+    object    TEXT NOT NULL
+)""",
+    """CREATE INDEX IF NOT EXISTS stage_results_scope ON stage_results (root, workspace, unit, id)""",
+    """-- `0136` R5: one review round. `head` is the SHA the app recorded when the run opened, never
+-- one the model wrote (R3 c); `screens` is the JSON list of images the round looked at.
+CREATE TABLE IF NOT EXISTS review_rounds (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    at        TEXT NOT NULL,
+    root      TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    unit      TEXT NOT NULL,
+    n         INTEGER NOT NULL,
+    run       TEXT NOT NULL,
+    head      TEXT NOT NULL,
+    verdict   TEXT NOT NULL,
+    screens   TEXT NOT NULL DEFAULT '[]'
+)""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS review_rounds_n ON review_rounds (root, workspace, unit, n)""",
+    """-- `0136` R5: the findings of one round. `finding` is `F<k>`; `open` is 1 while the finding
+-- is `[open]`, not a status column (`coscc/units/history_test.py`). `rule` is `S<n>` or ''.
+CREATE TABLE IF NOT EXISTS review_findings (
+    round    INTEGER NOT NULL,
+    finding  TEXT NOT NULL,
+    open     INTEGER NOT NULL,
+    fixed_in TEXT NOT NULL DEFAULT '',
+    severity TEXT NOT NULL,
+    rule     TEXT NOT NULL DEFAULT '',
+    path     TEXT NOT NULL DEFAULT '',
+    lines    TEXT NOT NULL DEFAULT '',
+    text     TEXT NOT NULL,
+    PRIMARY KEY (round, finding)
+)""",
+    """-- `0136` R6: a finding `impl` claims only a person can close, by its round and id. The guard
+-- checks each against the open findings of the last round before a row is written.
+CREATE TABLE IF NOT EXISTS impl_claims (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    at        TEXT NOT NULL,
+    root      TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    unit      TEXT NOT NULL,
+    run       TEXT NOT NULL,
+    round     INTEGER NOT NULL,
+    finding   TEXT NOT NULL
+)""",
+    """CREATE INDEX IF NOT EXISTS impl_claims_scope ON impl_claims (root, workspace, unit, id)""",
+    """-- `0136` R10, R22: what one read of a pull request found at one head -- the files its diff
+-- names from the merge-base with `origin/main` (JSON, or NULL when they could not be read,
+-- which R22 counts as every file) and, once merged, the merge commit. Where the pull request
+-- stands (`open`, `merge-requested`, `merged`, `closed`) and its CI are transitions of the
+-- PR/CI machine, folded like any other (`0013` R1).
+CREATE TABLE IF NOT EXISTS pull_requests (
+    root         TEXT NOT NULL,
+    workspace    TEXT NOT NULL,
+    unit         TEXT NOT NULL,
+    number       INTEGER NOT NULL,
+    head         TEXT NOT NULL,
+    files        TEXT,
+    merge_commit TEXT NOT NULL DEFAULT '',
+    at           TEXT NOT NULL,
+    PRIMARY KEY (root, workspace, number, head)
+)""",
+    """CREATE INDEX IF NOT EXISTS pull_requests_unit ON pull_requests (root, workspace, unit)""",
+)
+
+# Columns added to a table that already existed, as `(table, column, declaration)`. `_SCHEMA`
+# cannot carry them: `CREATE TABLE IF NOT EXISTS` leaves an old table as it was. `_create`
+# adds each one a table lacks, on a fresh database and an old one alike, so this is the only
+# place they are declared. SQLite will not add a `NOT NULL` column without a default, so the
+# default is the word a row that predates the column carries (`coscc/units/history.py` R3).
+_COLUMNS = (
+    # `0136` R15: which guard decided a transition, on whose authority, in which run, reading
+    # what (JSON: SHA, revision, PR number).
+    ("transitions", "guard", "TEXT NOT NULL DEFAULT 'unknown'"),
+    ("transitions", "authority", "TEXT NOT NULL DEFAULT 'unknown'"),
+    ("transitions", "run", "TEXT NOT NULL DEFAULT 'unknown'"),
+    ("transitions", "inputs", "TEXT NOT NULL DEFAULT '{}'"),
+    # `0136` R3 a, b: the head and the artifacts' revisions a run was handed when it opened.
+    ("step_runs", "head", "TEXT NOT NULL DEFAULT ''"),
+    ("step_runs", "revisions", "TEXT NOT NULL DEFAULT '{}'"),
 )
 
 
@@ -573,9 +673,10 @@ class Data:
         # An equal number is the whole common path: one pragma read, and nothing else.
         # A lower number re-runs `_create`, and that is the whole migration mechanism:
         # every statement in `_SCHEMA` is `IF NOT EXISTS`, so a v1 database meets the
-        # tables 2, 3, 4, 5 and 6 added and keeps every row it already had. This works for *adding*. A
-        # version that has to change or drop a column will need a real migration here, and
-        # will not be able to reuse this path.
+        # tables 2, 3, 4, 5, 6 and 7 added and keeps every row it already had, and `_COLUMNS`
+        # adds the columns 7 put on older tables. This works for *adding*. A version that has
+        # to change or drop a column will need a real migration here, and will not be able to
+        # reuse this path.
 
     @staticmethod
     def _user_version(conn: sqlite3.Connection) -> int:
@@ -599,6 +700,10 @@ class Data:
             if found < SCHEMA_VERSION:
                 for statement in _SCHEMA:
                     conn.execute(statement)
+                for table, column, declaration in _COLUMNS:
+                    have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+                    if column not in have:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
                 # Not parameterisable; `SCHEMA_VERSION` is this module's own integer.
                 conn.execute(f"PRAGMA user_version={int(SCHEMA_VERSION)}")
         except BaseException:

@@ -31,6 +31,7 @@ unit is wrong from the second step onward (`intent.md` constraint 2).
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -53,9 +54,15 @@ KINDS = (DELIVERABLE, CODE)
 
 LOCK_TIMEOUT = BUSY_TIMEOUT
 
+# `0136` R15: whose decision a transition is. `person` and `delegated` are the originator and
+# the one they delegated to; `agent` is what a model inferred and never counts as either;
+# `code` is a guard reading git, `gh` or the database. A row from before `0136` says `UNKNOWN`.
+AUTHORITIES = ("person", "delegated", "agent", "code")
+
 _TRANSITION_COLUMNS = (
     "at", "root", "workspace", "unit", "artifact", "stage",
     "from_state", "to_state", "actor", "session", "source", "machine", "once_key",
+    "guard", "authority", "run", "inputs",
 )
 
 _OUTPUT_COLUMNS = (
@@ -116,6 +123,10 @@ class History:
         source: str = UNKNOWN,
         at: str | None = None,
         once_key: str = "",
+        guard: str = UNKNOWN,
+        authority: str = UNKNOWN,
+        run: str = UNKNOWN,
+        inputs: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         """Append one transition. Returns the row as it was stored.
@@ -142,6 +153,10 @@ class History:
                     "source": source,
                     "at": at,
                     "once_key": once_key,
+                    "guard": guard,
+                    "authority": authority,
+                    "run": run,
+                    "inputs": inputs,
                 }
             ],
             timeout=timeout,
@@ -205,6 +220,13 @@ class History:
         if complaint is not None:
             raise BadTransition(complaint)
 
+        authority = _text(item.get("authority"))
+        if authority not in (*AUTHORITIES, UNKNOWN):
+            raise BadTransition(f"authority must be one of {', '.join(AUTHORITIES)}, got {authority!r}")
+        inputs = item.get("inputs") or {}
+        if not isinstance(inputs, dict):
+            raise BadTransition("a transition's inputs are an object: SHA, revision, PR number")
+
         from_state = item.get("from_state")
         return {
             "at": str(item.get("at") or "").strip() or _now(),
@@ -222,6 +244,10 @@ class History:
             # Not `_text`: an absent key means "do not deduplicate this", and turning that
             # into the word `unknown` would make every keyless row collide with the first.
             "once_key": str(item.get("once_key") or ""),
+            "guard": _text(item.get("guard")),
+            "authority": authority,
+            "run": _text(item.get("run")),
+            "inputs": json.dumps(inputs, ensure_ascii=False, sort_keys=True),
         }
 
     def _stage_of(self, artifact: str) -> str:

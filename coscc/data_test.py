@@ -182,8 +182,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
     def test_a_v5_database_rises_to_6_keeping_every_runs_and_transitions_row(self):
         """`0135` R1: 6 adds the `unit_*` tables and `idea_meta`; the rows a v5 database
         already had in `runs` and `transitions` are all still there after. The plan says 5:
-        `0137` took 5 on `main` first."""
-        self.assertEqual(SCHEMA_VERSION, 6)
+        `0137` took 5 on `main` first. It rises past 6 since `0136` made 7 this build's own."""
         new = {
             "unit_meta", "unit_links", "idea_meta", "unit_questions", "unit_answers",
             "unit_holds", "unit_unknowns", "unit_seen",
@@ -204,7 +203,7 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
                     conn.execute(f"DROP TABLE {table}")
                 conn.execute("PRAGMA user_version=5")
 
-            self.assertEqual(data.version(), 6)
+            self.assertEqual(data.version(), SCHEMA_VERSION)
             with data.connect() as conn:
                 tables = {
                     row["name"]
@@ -215,9 +214,44 @@ class TheSchemaRefusesToGuess(unittest.TestCase):
             self.assertEqual(new - tables, set())
             self.assertEqual((runs, transitions), (1, 1))
 
+    def test_a_v6_database_rises_to_7_and_its_old_transitions_say_no_guard_is_known(self):
+        """`0136` step 1: 7 adds four columns to `transitions`, two to `step_runs` and the
+        tables a submitted object lands in. A row written before them reads `unknown`, never a
+        blank (`coscc/units/history.py` R3)."""
+        self.assertEqual(SCHEMA_VERSION, 7)
+        new = {"stage_results", "review_rounds", "review_findings", "impl_claims", "pull_requests"}
+        with tempfile.TemporaryDirectory() as d:
+            data = Data(d)
+            with data.connect() as conn:
+                for table in new:
+                    conn.execute(f"DROP TABLE {table}")
+                for column in ("guard", "authority", "run", "inputs"):
+                    conn.execute(f"ALTER TABLE transitions DROP COLUMN {column}")
+                for column in ("head", "revisions"):
+                    conn.execute(f"ALTER TABLE step_runs DROP COLUMN {column}")
+                conn.execute(
+                    "INSERT INTO transitions (at, root, workspace, unit, artifact, stage, "
+                    "from_state, to_state, actor, session, source, machine) VALUES "
+                    "('t', '/w', 'p', '0001_x', 'intent.md', 'intent', 'not started', 'draft', "
+                    "'a', 's', 'src', 'coscc-default')"
+                )
+                conn.execute("PRAGMA user_version=6")
+
+            self.assertEqual(data.version(), 7)
+            with data.connect() as conn:
+                tables = {
+                    row["name"]
+                    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+                row = conn.execute("SELECT guard, authority, run, inputs FROM transitions").fetchone()
+                runs = {r[1] for r in conn.execute("PRAGMA table_info(step_runs)")}
+            self.assertEqual(new - tables, set())
+            self.assertEqual(tuple(row), ("unknown", "unknown", "unknown", "{}"))
+            self.assertLessEqual({"head", "revisions"}, runs)
+
     def test_a_newer_database_is_still_refused(self):
         """Was `version_5` until `0137` made 5 this build's own number, then `version_6`
-        until `0135` made 6 its own."""
+        until `0135` made 6 its own, and 7 is `0136`'s."""
         with tempfile.TemporaryDirectory() as d:
             data = Data(d)
             data.version()
