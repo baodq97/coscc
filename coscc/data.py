@@ -568,6 +568,24 @@ class Data:
                 (key, payload),
             )
 
+    def update_pref(self, key: str, change: "Callable[[Any], Any]", default: Any = None) -> Any:
+        """Read one preference, `change` it, and write what it returns, in one `write()`: a
+        value derived from a read is written under the same lock (`0036` review F4). A value
+        that does not parse reads as `default`, as in `pref`. Returns what was written."""
+        with self.write() as conn:
+            row = conn.execute("SELECT value FROM prefs WHERE key = ?", (key,)).fetchone()
+            try:
+                current = default if row is None else json.loads(row["value"])
+            except (TypeError, ValueError):
+                current = default
+            value = change(current)
+            conn.execute(
+                "INSERT INTO prefs (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, json.dumps(value, ensure_ascii=False)),
+            )
+        return value
+
     def prefs(self) -> dict[str, Any]:
         with self.connect() as conn:
             rows = conn.execute("SELECT key, value FROM prefs").fetchall()
