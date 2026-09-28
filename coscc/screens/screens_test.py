@@ -238,6 +238,18 @@ class ThePage(unittest.TestCase):
         self.assertIn("in_force", row.split("Withdraw")[0])
         self.assertNotIn("COS_", _render(page._names_panel()) + form)
 
+    def test_settings_has_the_import_report_as_a_table(self):
+        """`0135` R4; S5: one row per field, with a sentence when there is none; S3: no path."""
+        from coscc.screens import settings as page
+
+        settings = _render(screens._settings())
+        for said in ("import-panel", "Import report", "Workspace", "Field", "Every field of every unit was read."):
+            self.assertIn(said, settings)
+        panel = _render(page._import_panel())
+        self.assertIn("import_rows", panel)
+        self.assertNotIn("COS_", panel)
+        self.assertNotRegex(panel, r"/home/|/tmp/")
+
     def test_f2_a_grants_tools_are_a_list_behind_details(self):
         settings = _render(screens._settings())
         self.assertNotIn("tools: ", settings)

@@ -258,5 +258,41 @@ class AnswersAndHolds(Base):
         self.assertEqual(unit["next"]["why"], "paused")
 
 
+class TheImportReport(unittest.TestCase):
+    """R4, through `Service.settings`: what the import could not read, by workspace name."""
+
+    def setUp(self):
+        from coscc import units
+        from coscc.config import Config
+        from coscc.agent.sessions import Sessions
+        from coscc.service import Service
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        self.cwd = str(tmp / "work" / "proj")
+        Path(self.cwd).mkdir(parents=True)
+        config = Config(workspaces=(self.cwd,), working_dir=str(tmp / "work"), data_dir=str(tmp / "data"))
+        self.service = Service(config, Sessions(config))
+        self.store = units.root(self.cwd, config.data_dir)
+
+    def test_settings_lists_each_unreadable_field_by_workspace_name_and_not_a_failed_ingest(self):
+        shutil.copytree(FIXTURE, self.store)
+        asyncio.run(self.service.board(self.cwd))
+        self.service._unit_meta().ingest_failed(self.service._journal_key(self.cwd), "0013_open-question", "boom")
+        report = self.service.settings()["import_report"]
+        self.assertEqual(report["problem"], "")
+        found = {(r["workspace"], r["unit"], r["artifact"], r["field"]) for r in report["rows"]}
+        self.assertIn(("proj", "0016_bad-status", "spec.md", "status"), found)
+        self.assertIn(("proj", "0015_no-status", "intent.md", "status"), found)
+        self.assertNotIn("ingest", {r["field"] for r in report["rows"]})
+        self.assertFalse(any("/" in r["workspace"] for r in report["rows"]))
+
+    def test_a_store_read_cleanly_has_no_row(self):
+        self.store.mkdir(parents=True)
+        asyncio.run(self.service.create_unit(self.cwd, "a-problem", "x"))
+        asyncio.run(self.service.board(self.cwd))
+        self.assertEqual(self.service.settings()["import_report"], {"rows": [], "problem": ""})
+
+
 if __name__ == "__main__":
     unittest.main()

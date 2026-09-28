@@ -233,6 +233,21 @@ class ActivityMixin:
                 )
             ],
             "prose_stages": list(PROSE_STAGES),
+            "import_report": self._import_report(),
+        }
+
+    def _import_report(self) -> dict[str, Any]:
+        """`0135` R4. Every field an import could not read, its workspace by name (S3), not a
+        failed ingest: the card shows that one. A database that cannot be read is `problem`,
+        in place of a Settings screen that does not load at all."""
+        names = {self._journal_key(r["path"]): str(r["name"]) for r in self.workspaces()["workspaces"]}
+        try:
+            found = self._unit_meta().unknowns()
+        except Exception as e:  # noqa: BLE001 — `Busy`, `Protected`, `Incompatible` alike
+            return {"rows": [], "problem": f"The import report could not be read: {e}"}
+        return {
+            "rows": [{**r, "workspace": names.get(r["workspace"], "a removed workspace")} for r in found],
+            "problem": "",
         }
 
     # -- artifacts and preferences ------------------------------------------
