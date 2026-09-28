@@ -254,7 +254,11 @@ class BoardMixin:
         try:
             unknowns = meta.import_store(key, store)
         except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
-            raise Invalid(f"the units of {key} could not be imported: {e}") from e
+            # The workspace by name and the error in the log: `key` is a path, and `Busy` and
+            # `MetaError` carry the database's path or `cos.mjs`'s stderr (S3).
+            print(f"coscc: the units of {key} could not be imported: {e}", file=sys.stderr)
+            name = self._workspace_name(key) or "a workspace"
+            raise Invalid(f"the units of {name} could not be imported") from e
         # Only when there is something to report, so a store read cleanly adds no row: a
         # board read writes nothing to the run log (`0047` R9).
         if not unknowns:

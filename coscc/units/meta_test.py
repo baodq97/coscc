@@ -305,6 +305,21 @@ class TheImportReport(unittest.TestCase):
         self.assertEqual(report, {"rows": [], "problem": "The import report could not be read."})
         self.assertIn("cos.db", log.getvalue())
 
+    def test_an_import_that_fails_names_the_workspace_and_logs_the_error(self):
+        # Review F9, S3: the note on the board names no path; the log keeps what went wrong.
+        from coscc.data import Busy
+        from coscc.service.common import Invalid
+
+        shutil.copytree(FIXTURE, self.store)
+        busy = Busy(self.service.config.data_dir + "/cos.db")
+        with mock.patch("coscc.units.meta.UnitMeta.import_store", side_effect=busy), \
+                mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            with self.assertRaises(Invalid) as said:
+                self.service._snapshot(self.cwd)
+        self.assertEqual(str(said.exception), "the units of proj could not be imported")
+        self.assertIn("cos.db", log.getvalue())
+        self.assertIn(self.service._journal_key(self.cwd), log.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
