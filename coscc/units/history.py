@@ -161,25 +161,33 @@ class History:
         what makes an import re-runnable (`coscc/data.py` `transitions_once`).
         """
         prepared = [self._validate(item) for item in items]
-        stored: list[dict[str, Any]] = []
         with self.data.write(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
-            latest = self._latest(conn)
-            for row in prepared:
-                key = (row["workspace"], row["unit"], row["artifact"])
-                if row["from_state"] is None:
-                    row["from_state"] = latest.get(key, self.machine.absent)
-                complaint = self.machine.refuse(row["artifact"], row["from_state"])
-                if complaint is not None:
-                    raise BadTransition(complaint)
-                placeholders = ", ".join("?" for _ in _TRANSITION_COLUMNS)
-                cursor = conn.execute(
-                    f"INSERT OR IGNORE INTO transitions ({', '.join(_TRANSITION_COLUMNS)}) "
-                    f"VALUES ({placeholders})",
-                    tuple(row[name] for name in _TRANSITION_COLUMNS),
-                )
-                if cursor.rowcount:
-                    latest[key] = row["to_state"]
-                    stored.append(dict(row))
+            return self._insert(conn, prepared)
+
+    def record_in(self, conn: sqlite3.Connection, items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        """`record_many` inside a transaction the caller already holds (`0135`): the unit
+        import writes its transitions in the same `Data.write()` as everything else it read."""
+        return self._insert(conn, [self._validate(item) for item in items])
+
+    def _insert(self, conn: sqlite3.Connection, prepared: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        stored: list[dict[str, Any]] = []
+        latest = self._latest(conn)
+        for row in prepared:
+            key = (row["workspace"], row["unit"], row["artifact"])
+            if row["from_state"] is None:
+                row["from_state"] = latest.get(key, self.machine.absent)
+            complaint = self.machine.refuse(row["artifact"], row["from_state"])
+            if complaint is not None:
+                raise BadTransition(complaint)
+            placeholders = ", ".join("?" for _ in _TRANSITION_COLUMNS)
+            cursor = conn.execute(
+                f"INSERT OR IGNORE INTO transitions ({', '.join(_TRANSITION_COLUMNS)}) "
+                f"VALUES ({placeholders})",
+                tuple(row[name] for name in _TRANSITION_COLUMNS),
+            )
+            if cursor.rowcount:
+                latest[key] = row["to_state"]
+                stored.append(dict(row))
         return stored
 
     def _validate(self, item: dict[str, Any]) -> dict[str, Any]:

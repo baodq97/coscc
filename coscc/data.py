@@ -307,16 +307,15 @@ CREATE TABLE IF NOT EXISTS unit_links (
     pos       INTEGER NOT NULL
 )""",
     """CREATE INDEX IF NOT EXISTS unit_links_scope ON unit_links (root, workspace, unit)""",
-    """-- One row per file under `.cos/ideas/`, as `cos.mjs meta` read it: `units` and
--- `problems` are its JSON lists.
+    """-- One row per file under `.cos/ideas/`: `read` is what `cos.mjs meta` read of it, as
+-- JSON (`{title, status, units, problems}`), replaced whole on the next read. Not a column
+-- per field: an idea has no transitions, and a `status` column here would be the current
+-- state `0013` R1 keeps out of every table (`coscc/units/history_test.py`).
 CREATE TABLE IF NOT EXISTS idea_meta (
     root      TEXT NOT NULL,
     workspace TEXT NOT NULL,
     idea      TEXT NOT NULL,
-    title     TEXT,
-    status    TEXT,
-    units     TEXT NOT NULL,
-    problems  TEXT NOT NULL,
+    read      TEXT NOT NULL,
     PRIMARY KEY (root, workspace, idea)
 )""",
     """-- The questions under an artifact's `## Open questions`, replaced per artifact on each
@@ -349,14 +348,14 @@ CREATE TABLE IF NOT EXISTS unit_answers (
     """CREATE INDEX IF NOT EXISTS unit_answers_scope ON unit_answers (root, workspace, unit, id)""",
     """CREATE UNIQUE INDEX IF NOT EXISTS unit_answers_once
     ON unit_answers (once_key) WHERE once_key <> ''""",
-    """-- `0135` R8: a hold decision, `state` `paused`, `dropped` or `active`. Appended; the hold
--- in force is the fold `cos.mjs` makes over the rows by `HOLD_MOVES`.
+    """-- `0135` R8: a hold decision, the `move` to `paused`, `dropped` or `active`. Appended; the
+-- hold in force is the fold `cos.mjs` makes over the rows by `HOLD_MOVES`.
 CREATE TABLE IF NOT EXISTS unit_holds (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     root       TEXT NOT NULL,
     workspace  TEXT NOT NULL,
     unit       TEXT NOT NULL,
-    state      TEXT NOT NULL,
+    move       TEXT NOT NULL,
     reason     TEXT NOT NULL,
     decided_by TEXT NOT NULL,
     date       TEXT NOT NULL,
