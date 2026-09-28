@@ -388,9 +388,10 @@ GRANTS: dict[str, Grant] = {
         max_budget_usd=1.0,
         warning=PRECEDENT_WARNING,
     ),
-    # `0090`. Not a stage either: one batch of `coscc knowledge gather`, a command run at a
-    # terminal that no route, button or autopilot starts (`spec.md` R9). No tools, no
-    # commands, one turn; the app checks the reply and writes the store (`coscc/knowledge/gather.py`).
+    # `0090`. Not a stage either: one batch of a gather — `coscc knowledge gather` at a
+    # terminal, or since `0131` R1 the one the app starts after a `ship` ends `done`; no route,
+    # button or autopilot pass starts one. No tools, no commands, one turn; the app checks the
+    # reply and writes the store (`coscc/knowledge/gather.py`).
     # $2.00 is chosen, not measured: nobody has measured a batch of 64 KiB of sources, and
     # the CLI checks it after the turn has run (`0085` `spike.md ## U2`), so a batch can pass it.
     "knowledge": Grant(
@@ -399,8 +400,9 @@ GRANTS: dict[str, Grant] = {
     ),
 }
 
-# `0090` spec, *Design*: no screen changes. The grants of commands run only at a terminal,
-# which `Service.settings` leaves off the page's list of what the board's steps may use.
+# `0090` spec, *Design*: no screen changes. The grants no board step runs under, which
+# `Service.settings` leaves off the page's list of what the board's steps may use. `0131`
+# Design 1 keeps `knowledge` here though the app now gathers too: it is still no step's grant.
 TERMINAL_ONLY = frozenset({"knowledge"})
 
 # `0062`. The ceilings a step gets when its plan's label is `novel` (`coscc/agent/labels.py`),

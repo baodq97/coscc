@@ -605,6 +605,9 @@ class _Page:
             "running_steps": counted("running_steps", []),
             "timeline": counted("timeline", {"runs": []}),
             "cost": counted("cost", {"recording": False}),
+            # `0131`: read only on arriving at Knowledge.
+            "knowledge_page": counted("knowledge_page", {"note": "No knowledge has been gathered yet.",
+                                                         "entries": [], "recent": [], "measure": {}}),
             "unit_cost": counted("unit_cost", {"by_stage": [], "anomalies": [], "recording": True}),
             "artifact": counted("artifact", {"file": "impl.md", "exists": False, "text": ""}),
             # `0137`: read only on arriving at Settings.
@@ -1502,6 +1505,64 @@ class CostIsReadWhereItIsShown(unittest.TestCase):
             asyncio.run(go())
         self.assertEqual([c for c, _ in seen], [0, 0, 1, 1, 2, 2, 3])
         self.assertEqual([u for _, u in seen], [0, 0, 0, 0, 0, 1, 1])
+
+
+class KnowledgeIsReadWhereItIsShown(unittest.TestCase):
+    """`0131` R24. `SERVICE.knowledge_page` is asked once per arrival at *Knowledge*."""
+
+    def test_knowledge_is_read_once_per_arrival_and_on_no_other_screen(self):
+        import asyncio
+
+        fake = _Page()
+        token = "state-test-knowledge-read"
+        steps = [("/board?ws=a", "s1"), ("/cost?ws=a", "s1"), ("/knowledge?ws=a", "s1"),
+                 ("/board?ws=a", "s1"), ("/knowledge?ws=a", "s1"), ("/unit?ws=a&id=0009_x", "s1"),
+                 ("/knowledge/?ws=a", "s2")]
+        seen = []
+
+        async def go():
+            manager, processor, _ = _processor(token)
+            arrive = _arrival(manager, processor, token)
+            async with processor:
+                for address, sid in steps:
+                    await arrive(address, sid)
+                    seen.append(fake.calls["knowledge_page"])
+                await arrive("/sessions?ws=a", "s9")
+                await asyncio.sleep(0.15)
+
+        with fake.patches():
+            asyncio.run(go())
+        self.assertEqual(seen, [0, 0, 1, 1, 2, 2, 3])
+
+    def test_the_fields_say_not_checked_yet_hide_the_slot_and_shorten_the_sha(self):
+        from coscc.state import knowledge as kn
+
+        page = {
+            "note": "", "log_note": "", "checked": {"sha": "a" * 40, "at": "2026-09-27T00:00:00+00:00"},
+            "entries": [
+                {"id": "K1", "scope": "tool:reflex 0.9.12", "statement": "S.", "measured": "2026-09-25",
+                 "sources": [{"slot": "proj-aaaaaaaaaaaa", "unit": "0001_a", "file": "plan.md", "anchor": "## Order"}],
+                 "refs": [], "broken": None},
+                {"id": "K2", "scope": "workspace:proj-aaaaaaaaaaaa", "statement": "T.", "measured": "",
+                 "sources": [], "refs": ["a.py"], "broken": "ref missing: a.py"},
+            ],
+            "last_gather": {"at": "2026-09-27T00:00:00+00:00", "unit": "0001_a", "outcome": "saved",
+                            "cost_usd": 0.47, "reason": ""},
+            "recent": [{"unit": "0001_a", "stage": "impl", "at": "2026-09-27T00:00:00+00:00", "arm": "on",
+                        "ids": ["K1"], "withheld": [{"id": "K2", "reason": "a.py is not on HEAD"}]}],
+            "measure": {"verdict": "chưa đủ mẫu", "reduction": 0.25, "deadline": "2026-10-16",
+                        "on": {"n": 1, "median": {"turns": 40}, "mean": {"ci_red": 0}}, "off": {"n": 0}},
+        }
+        f = kn.knowledge_fields(page)
+        self.assertEqual([(e.status, e.color) for e in f["kn_entries"]], [("not checked yet", "gray"), ("broken", "red")])
+        self.assertEqual((f["kn_entries"][0].sources, f["kn_entries"][0].slots),
+                         (["0001_a · plan.md · ## Order"], "proj-aaaaaaaaaaaa"))
+        self.assertTrue(f["kn_checked"].endswith("on origin/main " + "a" * 12))
+        self.assertNotIn("a" * 13, f["kn_checked"])
+        self.assertNotIn("T00:00", f["kn_checked"] + f["kn_gathers"][0].at + f["kn_steps"][0].at)
+        self.assertEqual((f["kn_gathers"][0].cost, f["kn_steps"][0].withheld), ("$0.470", "K2: a.py is not on HEAD"))
+        self.assertEqual((f["kn_verdict"], f["kn_reduction"], f["kn_deadline"]), ("too few units yet", "25%", "Oct 16, 2026"))
+        self.assertEqual(kn.knowledge_fields({"checked": None})["kn_checked"], "Not checked yet.")
 
 
 class CostRowsAreCopiedAndLabelled(unittest.TestCase):
