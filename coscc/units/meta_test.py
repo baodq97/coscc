@@ -263,6 +263,45 @@ class AnswersAndHolds(Base):
         self.assertEqual(unit["next"]["why"], "paused")
 
 
+class AnImportedAnswerSaysWhoseItIs(Base):
+    """`0136` R15, and plan step 14: an answer read from a file says whose it was by what the
+    file carries — Jera's `Via: precedent.`, a delegation's line — and every other is a
+    person's. Answers `0135` imported as `unknown` are classified once."""
+
+    UNIT = "0013_open-question"
+    BLOCKS = (
+        "\n### Câu 2\nAnswered by: Jera. Date: 2026-09-24. Via: precedent.\n\nBao duyệt, như D1.\n"
+        "\n### Câu 3\nAnswered by: Leif. Date: 2026-09-24. Via: product.\n\nKhông.\n\nTheo ủy quyền: D2, Bao, 2026-09-20.\n"
+    )
+
+    def setUp(self):
+        super().setUp()
+        spec = self.store / ".cos" / self.UNIT / "spec.md"
+        spec.write_text(spec.read_text(encoding="utf-8") + self.BLOCKS, encoding="utf-8")
+
+    def authorities(self) -> dict[str, str]:
+        unit = self.meta.snapshot(WS, NAMES)["units"][f"proj/{self.UNIT}"]
+        return {str(a["n"]): a["authority"] for a in unit["answers"]}
+
+    def test_the_import_reads_whose_answer_each_was(self):
+        self.meta.import_store(WS, self.store)
+        self.assertEqual(self.authorities(), {"1": "person", "2": "agent", "3": "delegated"})
+
+    def test_answers_imported_before_0136_are_classified_once(self):
+        self.meta.import_store(WS, self.store)
+        with self.data.write() as conn:
+            conn.execute("UPDATE unit_answers SET authority = 'unknown'")
+            conn.execute("DELETE FROM migrations WHERE key = ?", (self.meta.authority_key(WS),))
+        self.assertEqual(set(self.authorities().values()), {"unknown"})
+        self.assertIsNone(self.meta.import_store(WS, self.store))
+        self.assertEqual(self.authorities(), {"1": "person", "2": "agent", "3": "delegated"})
+        # Once: a row that says `unknown` afterwards is left as it is.
+        with self.data.write() as conn:
+            conn.execute("UPDATE unit_answers SET authority = 'unknown' WHERE ref = '1'")
+        self.meta.import_store(WS, self.store)
+        self.assertEqual(self.authorities()["1"], "unknown")
+
+
 class TheImportReport(unittest.TestCase):
     """R4, through `Service.settings`: what the import could not read, by workspace name."""
 

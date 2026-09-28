@@ -22,7 +22,7 @@ from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import harness
+from coscc.agent import harness, precedent
 from coscc.data import Data, now
 from coscc.units.history import History
 from coscc.units.states import Machine
@@ -65,6 +65,18 @@ def _no_status(artifact: str, raw: str | None, machine: Machine) -> str:
     return machine.refuse(artifact, raw) or f'status "{raw}" is not one the app records'
 
 
+def authority_of(via: str | None, text: str | None) -> str:
+    """`0136` R15, of an answer read from a file, which does not say whose it was: Jera's,
+    `Via: precedent.`, is `agent`; one opening a line with `precedent.DELEGATION` was given
+    under a delegation, `delegated`; any other is `person`, as the answer route defaults.
+    Read only on an import, once; an answer the app takes now is classified by its road."""
+    if via == precedent.VIA:
+        return "agent"
+    if any(line.startswith(precedent.DELEGATION) for line in (text or "").splitlines()):
+        return "delegated"
+    return "person"
+
+
 class UnitMeta:
     """The metadata of every unit under one working folder, as `History` is its transitions.
 
@@ -89,6 +101,29 @@ class UnitMeta:
     def import_key(self, workspace: str) -> str:
         return f"unit-meta:0135:{self.root}/{workspace}"
 
+    def authority_key(self, workspace: str) -> str:
+        return f"unit-meta:0136-authority:{self.root}/{workspace}"
+
+    def classify_answers(self, workspace: str) -> None:
+        """`0136` R15, once per store: the answers `0135`'s import read from files before a
+        row said whose answer it was, classified as `authority_of` classifies one it reads now.
+        Every answer since carries its own, from the road it came by (`Service._append_answers`)."""
+        key = self.authority_key(workspace)
+        if self.data.has_run(key):
+            return
+        with self.data.write() as conn:
+            if self.data.has_run(key, conn):
+                return
+            rows = conn.execute(
+                "SELECT id, via, text FROM unit_answers WHERE root = ? AND workspace = ? AND authority = 'unknown'",
+                (self.root, workspace),
+            ).fetchall()
+            conn.executemany(
+                "UPDATE unit_answers SET authority = ? WHERE id = ?",
+                [(authority_of(r["via"], r["text"]), r["id"]) for r in rows],
+            )
+            Data.mark_run(conn, key)
+
     def imported(self, workspace: str) -> bool:
         return self.data.has_run(self.import_key(workspace))
 
@@ -101,6 +136,7 @@ class UnitMeta:
         """
         key = self.import_key(workspace)
         if self.data.has_run(key):
+            self.classify_answers(workspace)
             return None
         found = read(store)
         with self.data.write() as conn:
@@ -111,6 +147,8 @@ class UnitMeta:
                 unknowns += self._apply(conn, workspace, unit, meta, imported=True)
             self._write_ideas(conn, workspace, found.get("ideas"))
             Data.mark_run(conn, key)
+            # Its answers were classified as they were read, just above.
+            Data.mark_run(conn, self.authority_key(workspace))
         return unknowns
 
     # -- ingest, at the end of a step ----------------------------------------
@@ -248,7 +286,8 @@ class UnitMeta:
         if imported:
             for i, a in enumerate(meta.get("answers") or []):
                 self._answer(conn, workspace, unit, a["artifact"], a["id"] or str(a["n"]), a["text"],
-                             a["by"], a["date"], a["via"], f"{SOURCE}:{workspace}/{unit}/{a['artifact']}/answer/{i}")
+                             a["by"], a["date"], a["via"], f"{SOURCE}:{workspace}/{unit}/{a['artifact']}/answer/{i}",
+                             authority=authority_of(a["via"], a["text"]))
             for i, h in enumerate(meta.get("holds") or []):
                 if h.get("by") is None:
                     unknowns.append({"unit": unit, "artifact": "intent.md", "field": "hold",

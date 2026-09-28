@@ -222,6 +222,8 @@ class BoardMixin:
                 if not (units.root(key, self.config.data_dir) / units.COS_DIR).is_dir():
                     continue
                 if meta.imported(key):
+                    # `0136` R15: the answers imported before a row said whose each was.
+                    meta.classify_answers(key)
                     self._imported.add(key)
                 else:
                     self._import(meta, key)
