@@ -18,9 +18,10 @@ paths:
     by its literal path walks past both.
   - A board step's directory is removed after its CLI is closed. Gebo's and a chat's live
     with their client in `Sessions._live` — Gebo streams with no `step` — and nothing in the
-    app closes one but `Sessions.close_all`, which the installed service runs only on an
-    update, and `cut_turn`, only on "apply now": every Gebo run and every new chat adds
-    one that stays until then. A SIGKILL of the app, or any restart without that update,
+    app closes one but `Sessions.suspend_all` and `Sessions.close_all`, which the installed
+    service runs only on an update: every Gebo run and every new chat adds one that stays
+    until then. A paused session goes on after the restart from its transcript under
+    `~/.claude/projects`, which is not the scratch root (0138 C8). A SIGKILL of the app, or any restart without that update,
     leaves every `/tmp/coscc-session-*` behind for good, and nothing sweeps them (C4, size
     unmeasured). Chat does not fall back to `~/.cos` (C6).
   - A measuring script's `--measure` run inside a step reads an empty database and exits

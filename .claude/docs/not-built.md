@@ -124,9 +124,10 @@ Read this before adding a route, a button or a grant, and before copying this ha
   while a step of that unit runs — but only one this process started.
 - **An update is not an approval, and anyone holding the password can press it.** Since
   `0068` an install made by `install.sh` updates itself from the Board
-  (`POST /api/update/apply`, `/cancel`, `/build-local`). Applying can stop every running
-  step and chat turn of this process when the person chooses *Apply now*, and restarts
-  the process; the local build runs upstream `main`'s build scripts under this user.
+  (`POST /api/update/apply`, `/cancel`, `/build-local`). Applying pauses every running
+  agent session of this process, kills what their commands left running, and restarts the
+  process; the next start takes each session up again with nobody asked (`0138`). The
+  local build runs upstream `main`'s build scripts under this user.
   Whoever holds the password or a live session can do all of it; the run log's `by` says
   `owner` since `0082`, not who. The only constraint is what gets installed: a wheel from
   `github.com/baodq97/coscc` checked against its release's `SHA256SUMS`, or one this
