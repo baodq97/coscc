@@ -752,6 +752,27 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("disk I/O error", got.text)
         self.assertEqual((len(self.rows()), len(answers())), (1, 1))
 
+    async def test_a_locked_database_before_the_answer_is_one_sentence_without_its_path(self):
+        """Review F11 (S3): the snapshot the answer is checked against reads `cos.db`, and
+        `Busy` names the database's path. The dialog gets one sentence; the log gets the path."""
+        import contextlib
+        import io
+
+        from coscc.data import Busy
+        from coscc.units.meta import UnitMeta
+
+        held = "another process is holding /tmp/somewhere/cos.db"
+        before = self.intent.read_bytes()
+        err = io.StringIO()
+        with mock.patch.object(UnitMeta, "snapshot", side_effect=Busy(held)), \
+                contextlib.redirect_stderr(err):
+            got = await self.post()
+        self.assertEqual(got.status_code, 400, got.text)
+        self.assertIn("could not be read", got.text)
+        self.assertNotIn("/tmp/somewhere", got.text)
+        self.assertIn(held, err.getvalue())
+        self.assertEqual((self.rows(), self.intent.read_bytes()), ([], before))
+
     async def test_the_board_then_counts_one_fewer_open(self):
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
         self.assertEqual(board["units"][0]["open"], 3)

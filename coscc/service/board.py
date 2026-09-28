@@ -209,21 +209,26 @@ class BoardMixin:
         `UnitMeta.snapshot` says. A store not imported yet is imported first (R3).
 
         Raises `Invalid` when an import cannot run: a board read on metadata nobody could
-        read would show every unit as not started. `peers` is `_peer_table`'s, when the
-        caller read it already.
+        read would show every unit as not started. So also when `cos.db` cannot be read, in one
+        sentence that names the workspace; the error, which may name the database's path, goes
+        to the log (review F11, S3). `peers` is `_peer_table`'s, when the caller read it already.
         """
         meta = self._unit_meta()
         own = self._journal_key(cwd)
         names = {name: self._journal_key(path) for name, path in (self._peer_table()[0] if peers is None else peers)}
-        for key in {own, *names.values()} - self._imported:
-            # A workspace with no units yet has nothing to import: one `stat`, not a query.
-            if not (units.root(key, self.config.data_dir) / units.COS_DIR).is_dir():
-                continue
-            if meta.imported(key):
-                self._imported.add(key)
-            else:
-                self._import(meta, key)
-        return meta.snapshot(own, names, units_)
+        try:
+            for key in {own, *names.values()} - self._imported:
+                # A workspace with no units yet has nothing to import: one `stat`, not a query.
+                if not (units.root(key, self.config.data_dir) / units.COS_DIR).is_dir():
+                    continue
+                if meta.imported(key):
+                    self._imported.add(key)
+                else:
+                    self._import(meta, key)
+            return meta.snapshot(own, names, units_)
+        except (Busy, sqlite3.Error, OSError) as e:
+            print(f"coscc: the units of {own} could not be read: {e}", file=sys.stderr)
+            raise Invalid(f"the units of {self._workspace_name(own) or 'a workspace'} could not be read") from e
 
     def _meta_of(self, cwd: str, unit: str) -> dict[str, Any]:
         """`unit`'s entry in the snapshot, `{}` when the app has none."""
