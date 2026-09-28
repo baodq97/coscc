@@ -28,8 +28,9 @@ node .claude/scripts/cos.mjs check-version         # the five places a version i
 
 The first eight take `--root <dir>` and read another repository's `.cos/`; the last three
 refuse it, and `new-path` alone also takes `--reserve-from <dir>` (repeatable) to count
-that directory's numbers as taken. `status`, `next` and `gate` take `--peer <ws>=<dir>`
-(repeatable), the stores a unit's links name. `gate` and `next` take `--repo <dir>`, the
+that directory's numbers as taken. `status`, `gate`, `next`, `rerun`, `unit-branch` and
+`pr-text` need `--state <file|->`, the app's snapshot of every unit's metadata, and exit 2
+without it: `uv run coscc state <workspace> | node … --state - …` (`0135`). `gate` and `next` take `--repo <dir>`, the
 checkout whose branch and pull request the `review` and `ship` gates read: with `--root` and no `--repo`
 those two gates stay closed. `next` names a stage and opens nothing — ask `gate` before
 running it. `COS_REVIEW_ROUNDS` (default 3) is how many review rounds may ask for changes
@@ -44,11 +45,11 @@ One directory, `.cos/NNNN_<slug>/`, holding its artifacts (eight, or nine with `
 and nothing else. The slug names the problem rather than the solution and is fixed at
 creation.
 
-The app writes into an artifact a stage wrote in exactly one way: it appends a
-`## Answers` section, and blocks under it, to the end of the file. Nothing above that
-section is ever rewritten. `intent.md`'s section also holds `### Paused`, `### Dropped` and
-`### Resumed` blocks, and `cos.mjs` reads them: a held unit is offered no stage and every
-gate is closed on it.
+Since `0135` a unit's status, `Type:`, links, questions, answers and holds live in the app's
+`cos.db`, read from the files once when a step ends; an answer or a hold is a row and no byte
+of an artifact, and a held unit is offered no stage and every gate is closed on it. The app
+still appends `### Rerun`, `### More rounds` and `### Outcome` blocks under `## Answers`,
+and never rewrites a byte above that section.
 
 Run `cos.mjs status` for the stages, their order and what each one reads.
 `.claude/scripts/cos.mjs` is the one place the loop is defined; nothing may hold a second
@@ -58,8 +59,8 @@ copy of it.
 `[unmeasured] U<n>` puts it between `spec` and `plan`, and `plan` does not open until every
 `U<n>` has `Verdict: holds`.
 
-**`plan.md: done` is terminal.** `cos.mjs` reports a unit finished without reading a single
-later artifact. Set it only after the proof command has passed, and never to close a unit
+**`plan.md: done` is terminal.** Once the app has read it, `cos.mjs` reports a unit finished
+without reading a single later artifact. Set it only after the proof command has passed, and never to close a unit
 that still has stages left.
 
 Reading an artifact of a unit below `0010`: `.claude/docs/old-units.md` and

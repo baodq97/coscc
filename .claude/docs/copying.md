@@ -10,6 +10,11 @@ file — and the ruleset is the only thing here that actually stops a push. Sinc
 the pull request's **required** checks: a repository with no CI and no required check has
 a `review` gate that never opens.
 
+**The loop needs the coscc app and its database (`0135`).** `cos.mjs status`, `gate`,
+`next`, `rerun`, `unit-branch` and `pr-text` decide on the snapshot `--state` hands them, which
+`uv run coscc state <workspace>` prints from `cos.db`; without it they exit 2. An artifact
+written at a terminal reaches that database only when a step of the app next ends on its unit.
+
 Copy `.claude/`. That is the whole harness, and nothing lands in the host repository's own
 tree. Claude Code loads `.claude/CLAUDE.md` as project instructions, so no import, symlink
 or root file is needed. Then put that repository's real build and test commands under
