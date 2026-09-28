@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -4492,6 +4492,58 @@ test('meta of one unit reads only the artifacts named, and intent.md brings its 
   assert.equal(metaOf('0013_open-question', 'intent.md').units['0013_open-question'].type, 'feat')
   assert.equal(cli('--root', META_STORE, 'meta', '0013_open-question', 'notes.md').status, 2)
   assert.equal(cli('--root', META_STORE, 'meta', '../x').status, 2)
+})
+
+// Test glue, never in `cos.mjs` (plan step 8): the snapshot the app would build from `meta`,
+// for a store whose one workspace is `proj`.
+const snapshotOf = ({ units, ideas }) => ({
+  workspace: 'proj',
+  workspaces: ['proj'],
+  units: Object.fromEntries(Object.entries(units).map(([name, m]) => [`proj/${name}`, {
+    artifacts: Object.fromEntries(Object.entries(m.artifacts).map(([f, a]) => [f, { status: a.status, raw: a.raw, questions: a.questions }])),
+    type: m.type ?? null,
+    links: m.links ?? { idea: null, repo: null, dependsOn: null },
+    holds: (m.holds ?? []).filter((h) => h.by !== null),
+    answers: m.answers,
+    unknowns: [],
+  }])),
+  ideas: { proj: ideas ?? [] },
+})
+
+const strip = (text) => {
+  const lines = text.split('\n')
+  const cut = lines.findIndex((l) => l === '## Open questions' || l === '## Answers')
+  return (cut === -1 ? lines : lines.slice(0, cut)).join('\n')
+    .replace(/\b(Status|Type|Idea|Repo|Depends on):\s*[^\s]+(?:,\s*[^\s]+)*\.?/g, '')
+}
+
+test('0135 R6: stripping Status, Type, Idea, Depends on, Open questions and Answers lines leaves status, next and gate unchanged', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cos-0135-'))
+  cpSync(META_STORE, dir, { recursive: true })
+  const state = JSON.stringify(snapshotOf(metaOf()))
+  const ask = (...args) => {
+    const out = spawnSync(process.execPath, [fileURLToPath(new URL('./cos.mjs', import.meta.url)), '--root', dir, '--state', '-', ...args], { encoding: 'utf8', input: state })
+    return { status: out.status, stdout: out.stdout.replace(dir, '<root>'), stderr: out.stderr }
+  }
+  const questions = [['status', '--json'], ['next', '0013_open-question'], ['next', '0017_linked'], ['next', '0011_paused-then-resumed'],
+    ['gate', '0013_open-question', 'plan'], ['gate', '0012_dropped', 'spec'], ['gate', '0017_linked', 'spec']]
+  const before = questions.map((q) => ask(...q))
+  // Real answers, not seven refusals: status reads, the draft spec shuts `plan`, the drop shuts `spec`.
+  assert.deepEqual(before.map((b) => b.status), [0, 0, 0, 0, 1, 1, 0])
+  const files = () => cli('--root', dir, 'status', '--json').stdout.replace(dir, '<root>')
+  const unstripped = files()
+  const cos = join(dir, '.cos')
+  for (const unit of readdirSync(cos)) {
+    for (const f of readdirSync(join(cos, unit))) {
+      const path = join(cos, unit, f)
+      writeFileSync(path, strip(readFileSync(path, 'utf8')))
+    }
+  }
+  assert.equal(readFileSync(join(cos, '0013_open-question', 'spec.md'), 'utf8').includes('Status:'), false)
+  const after = questions.map((q) => ask(...q))
+  assert.deepEqual(after, before)
+  // Without `--state` the same files now say something else, so what was stripped was read.
+  assert.notEqual(files(), unstripped)
 })
 
 test('status --json of the fixture store is what it was before meta existed', () => {
