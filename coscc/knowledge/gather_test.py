@@ -21,6 +21,7 @@ from coscc import knowledge, units
 from coscc.knowledge import admit, gather
 from coscc.knowledge.admit_test import failing_fetch, lock, make_repo, no_fetch
 from coscc.runlog.journal import Journal
+from coscc.agent.submit_test import submits as _submits
 
 # Set by `setUpModule`: the slots of two repositories, `other-` sorting before `proj-`.
 A = B = ""
@@ -61,6 +62,7 @@ class Replies:
         self.cwds.append(cwd)
         yield ("chunk", self.replies.pop(0))
         cost = {"turns": 1} if self.cost is None else {"cost_usd": self.cost, "turns": 1}
+        await _submits(kw)
         yield ("done", {"session_id": f"s{len(self.prompts)}", "cost": cost})
 
 

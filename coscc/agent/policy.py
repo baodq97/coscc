@@ -72,6 +72,11 @@ class Grant:
     # `0041` R3: no `git push` may force — `--force`, `-f`, `--force-with-lease`,
     # `--force-if-includes` or a `+` refspec. A plain push stays open.
     push_no_force: bool = False
+    # `0136` R2. Whether the session is handed `submit` (`coscc/agent/submit.py`), the one
+    # tool beyond this grant's list `decide` lets through. It writes nothing and runs nothing,
+    # and is not in `tools`: `--tools` names the built-in set, and an SDK server's tool
+    # reaches the session without it (`0136 spike.md ## U1`).
+    submits: bool = False
 
     @property
     def opens_anything(self) -> bool:
@@ -81,6 +86,8 @@ class Grant:
 # Tools that only read. Safe for a step that has to understand a repository before changing
 # it, and listed separately so the write set is short enough to read in one go.
 READ_TOOLS = ("Read", "Glob", "Grep")
+# `0136`. `coscc/agent/submit.py`'s `NAME`, spelled here so this module imports nothing of it.
+SUBMIT_TOOL = "mcp__cos__submit"
 WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 EXEC_TOOLS = ("Bash",)
 
@@ -436,12 +443,26 @@ def beyond_reading(grant: Grant) -> tuple[str, ...]:
     return tuple(t for t in grant.tools if t not in READ_TOOLS) + tuple(grant.commands)
 
 
+# `0136` R2, R4. The stages whose run hands back a stage result through `submit`.
+# `coscc/agent/submit.py` holds the same tuple as `STAGE_RESULT`; `policy_test` pins the two.
+# A set, not the loop's order: that is `cos.mjs`'s alone (`autopilot_test`, `0115` R4).
+SUBMITTING = ("idea", "impl", "intent", "plan", "spec", "spike")
+# The fewest turns such a step gets: `idea` and `intent` had one, and a call to `submit` ends
+# a turn. Chosen, not measured, from `0136 spike.md ## U2`: a refused object was submitted
+# again after one more turn, so four holds a call, a refusal, a second call and the reply.
+SUBMIT_TURNS = 4
+
+
 def grant_for(stage: str) -> Grant:
     """The grant for one step. A stage the table does not name is locked, not open.
 
     No mode: `0020` `spec.md` `## Answers`, answer 1 — the tools go with the stage's task.
+    `0136`: a stage in `SUBMITTING` gets `submits`, and at least `SUBMIT_TURNS` turns.
     """
-    return GRANTS.get(stage, Grant())
+    grant = GRANTS.get(stage, Grant())
+    if stage not in SUBMITTING:
+        return grant
+    return replace(grant, submits=True, max_turns=max(grant.max_turns, SUBMIT_TURNS))
 
 
 def grant_for_step(stage: str, label: str | None) -> Grant:
@@ -1337,6 +1358,10 @@ def decide(
     units). Writing keeps its roots. `lease` is `(branch, head)`, which a grant with
     `push_needs_lease` binds every `git push` to.
     """
+    if tool == SUBMIT_TOOL and grant.submits:
+        # `0136` spec C4. The one MCP tool a grant lets through, by its exact name: the app's
+        # own in-process server, whose handler writes nothing and runs nothing.
+        return ""
     if tool not in grant.tools:
         # Covers MCP tools by construction: their names are never in a grant.
         return f"this step was not granted {tool}"

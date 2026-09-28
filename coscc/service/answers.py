@@ -27,7 +27,9 @@ from coscc.git.gitops import GitError
 from coscc.units.history import UNKNOWN, BadTransition
 from coscc.data import Data
 from coscc.units.meta import MetaError, UnitMeta
-from coscc.runlog.journal import BadRecord, Busy
+from coscc.runlog.journal import BadRecord, Busy, Journal
+from coscc.agent import submit
+from coscc.units import transitions
 from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.git import worktrees
@@ -205,20 +207,28 @@ class AnswersMixin:
         a failure is no longer dropped (spec C3): the `done` item carries `ingest_error`,
         and a row in `unit_unknowns` says so to the snapshot. The transition carries the
         stage, session and source `0014` R6 gave it.
+
+        `0136` R4: a step whose run submitted a stage result takes its artifact's status and
+        questions from that object, through `transitions.apply` and guard `stage-result`, and
+        never from the file. A guard that closes is a failure like any other here.
         """
         if done.get("outcome") != "done":
             return {}
         meta = self._unit_meta()
         workspace = self._journal_key(cwd)
         stage = str(done.get("stage") or "")
+        submitted = done.get("submitted") if wrote else None
         try:
             await asyncio.to_thread(
                 meta.ingest, workspace, self._units_root(cwd), unit,
                 actor=f"stage:{stage}",
                 session=str(done.get("session_id") or "") or UNKNOWN,
                 source=f"run:{stage}",
-                wrote=wrote,
+                wrote=None if submitted else wrote,
+                decided=(wrote,) if submitted else (),
             )
+            if submitted:
+                await asyncio.to_thread(self._apply_result, meta, workspace, unit, stage, wrote, submitted, done)
             return {}
         except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
             # One fixed sentence on the card and the step, the error in the log: `MetaError`
@@ -236,6 +246,29 @@ class AnswersMixin:
             except (Busy, sqlite3.Error, OSError):
                 pass
             return {"ingest_error": reason}
+
+    def _apply_result(
+        self, meta: UnitMeta, workspace: str, unit: str, stage: str, artifact: str,
+        submitted: dict[str, Any], done: dict[str, Any],
+    ) -> None:
+        """`0136` R4. The stage result a run submitted, as the status of `artifact`: one
+        transition through guard `stage-result`, carrying the object, and the row and questions
+        `UnitMeta.record_result` writes, in one transaction with its event (R16)."""
+        journal = self._journal() or Journal(meta.root, self.config.data_dir)
+        obj = dict(submitted.get("object") or {})
+        applied = transitions.apply(
+            meta.history, journal,
+            machine="unit", transition="result",
+            workspace=workspace, unit=unit, artifact=artifact,
+            to_state=submit.JUDGEMENTS[str(obj.get("judgement"))],
+            inputs=submitted, authority="agent",
+            run=str(submitted.get("run") or UNKNOWN),
+            session=str(done.get("session_id") or "") or UNKNOWN,
+            actor=f"stage:{stage}", source=f"run:{stage}",
+            also=lambda conn: meta.record_result(conn, workspace, unit, stage, artifact, submitted),
+        )
+        if not applied.open:
+            raise BadTransition(f"guard {applied.guard} refused {artifact}: {', '.join(applied.reasons)}")
 
     def _refresh_ideas(self, cwd: str) -> None:
         """`0135`. `cwd`'s ideas into `cos.db` again, after the app wrote one. A failure is

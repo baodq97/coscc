@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from coscc.agent import agents, harness
+from coscc.agent import agents, harness, submit
 from coscc.knowledge import STAGES as KNOWLEDGE_STAGES
 from coscc.agent.policy import is_prose_stage
 from coscc.runner.review import (
@@ -954,7 +954,55 @@ def compose_prompt(
             "code fence, no commentary. The first lines must carry the `Status:` line the "
             "rules above describe. Prose in Vietnamese; filenames and headings in English."
         )
+    block = submit_block(stage, artifact, writes_own)
+    if block:
+        parts.append(block)
     return "\n\n---\n\n".join(parts), included, pointed
+
+
+def submit_block(stage: str, artifact: str, writes_own: bool) -> str:
+    """`0136` R2, R4. How a stage hands back its judgement: the object, never the `Status:`
+    line, is what the app reads. `""` for a stage that hands back no stage result. English:
+    an instruction to the model."""
+    if stage not in submit.STAGE_RESULT:
+        return ""
+    fields = [
+        f"- `stage`: `{stage}`.",
+        "- `judgement`: `ready` when the file is finished (its header says `Status: accepted`), "
+        "`not-ready` when it is not (`Status: draft`).",
+        "- `questions`: every item under `## Open questions` still waiting on a person, as "
+        "`{n, text}` with the number the file gives it; `[]` when there is none.",
+    ]
+    if stage == "spec":
+        fields.append("- `unmeasured`: every `U<n>` id a `## Concerns` item opens with `[unmeasured]`; `[]` for none.")
+    if stage == "spike":
+        fields.append("- `verdicts`: one `{id, verdict}` per `## U<n>` section, `verdict` being `holds` or `fails`.")
+    when = (
+        f"Call it once `{artifact}` is written and final. Writing the file again after that "
+        "makes the object stale, and the app refuses it."
+        if writes_own
+        else f"Call it before you reply; once it answers, reply with `{artifact}` and nothing after it."
+    )
+    return (
+        "# Hand back your judgement\n\n"
+        f"The app does not read `Status:` or `## Open questions` out of `{artifact}`: it takes "
+        f"them from the object you hand it through the `submit` tool (`{submit.NAME}`). "
+        f"{when} The object:\n\n" + "\n".join(fields) + "\n\n"
+        "If `submit` returns an error, the app has checked your object against the unit: "
+        f"{submit.AGAIN} Keep calling it until it is accepted. A step that hands back no object "
+        "ends failed, whatever its file says."
+    )
+
+
+def submit_prompt(stage: str, artifact: str, why: str) -> str:
+    """`0136` R2. The repair turn a step gets when its session ended without an accepted
+    object: the tool again, and nothing else."""
+    return (
+        f"Your step ended without handing back its object: {why}\n\n"
+        f"Call the `submit` tool now with your judgement of `{artifact}` as it stands, as "
+        "*Hand back your judgement* above sets out. Do not change any file and do not reply "
+        f"with the artifact again. {submit.AGAIN}"
+    )
 
 
 # `0080` R1, R3. The file a spike keeps in its `cwd` as it measures, read when its reply is

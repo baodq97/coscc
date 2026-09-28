@@ -18,7 +18,7 @@ import json
 import re
 import sqlite3
 import subprocess
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -125,6 +125,7 @@ class UnitMeta:
         session: str,
         source: str,
         wrote: str | None = None,
+        decided: Collection[str] = (),
     ) -> list[dict[str, Any]]:
         """R7: read one unit's files through `cos.mjs meta`, and write what changed.
 
@@ -135,6 +136,9 @@ class UnitMeta:
         R6, because rewriting a settled artifact is the event `0013` counts. Answers and
         holds are not read: since `0135` the app writes them here and nowhere else. Raises
         `MetaError` or `sqlite3.Error`; the caller records the failure (spec C3).
+
+        `0136` R4: an artifact in `decided` takes its status and its questions from the
+        object its run submitted (`record_result`), so neither is read from its file here.
         """
         found = read(store, unit)
         meta = (found.get("units") or {}).get(unit) or {}
@@ -143,6 +147,7 @@ class UnitMeta:
             return self._apply(
                 conn, workspace, unit, meta, imported=False,
                 provenance={"actor": actor, "session": session, "source": source}, wrote=wrote,
+                decided=decided,
             )
 
     def ingest_failed(self, workspace: str, unit: str, reason: str) -> None:
@@ -170,6 +175,7 @@ class UnitMeta:
         imported: bool,
         provenance: Mapping[str, str] | None = None,
         wrote: str | None = None,
+        decided: Collection[str] = (),
     ) -> list[dict[str, Any]]:
         """Write one unit's `meta` output. Returns the fields it could not read."""
         scope = (self.root, workspace, unit)
@@ -193,6 +199,14 @@ class UnitMeta:
         ]
         for artifact, a in changed:
             conn.execute(f"DELETE FROM unit_unknowns WHERE {_ONE} AND artifact = ?", (*scope, artifact))
+            if artifact in decided:
+                # `0136` R4: its `Status:` and `## Open questions` are prose for a reader now.
+                conn.execute(
+                    "INSERT INTO unit_seen (root, workspace, unit, artifact, sha256, questions) VALUES (?, ?, ?, ?, ?, 1) "
+                    "ON CONFLICT (root, workspace, unit, artifact) DO UPDATE SET sha256 = excluded.sha256",
+                    (*scope, artifact, str(a.get("sha256") or "")),
+                )
+                continue
             status, raw = a.get("status"), a.get("raw")
             if status is not None and self.machine.refuse(artifact, status) is None:
                 if artifact == wrote or latest.get((workspace, unit, artifact), self.machine.absent) != status:
@@ -250,6 +264,32 @@ class UnitMeta:
              for u in unknowns],
         )
         return unknowns
+
+    def record_result(
+        self, conn: sqlite3.Connection, workspace: str, unit: str, stage: str, artifact: str,
+        submitted: Mapping[str, Any],
+    ) -> None:
+        """`0136` R4. What a stage result carries beside its transition, in the caller's
+        transaction (`transitions.apply(also=…)`): its row in `stage_results`, and the
+        artifact's open questions, which the snapshot reads as it read them from the file."""
+        obj = dict(submitted.get("object") or {})
+        scope = (self.root, workspace, unit)
+        conn.execute(
+            "INSERT INTO stage_results (at, root, workspace, unit, stage, run, revision, judgement, object) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (now(), *scope, stage, str(submitted.get("run") or ""), str(submitted.get("revision") or ""),
+             str(obj.get("judgement") or ""), json.dumps(obj, ensure_ascii=False)),
+        )
+        conn.execute(f"DELETE FROM unit_questions WHERE {_ONE} AND artifact = ?", (*scope, artifact))
+        conn.executemany(
+            "INSERT INTO unit_questions (root, workspace, unit, artifact, n, text) VALUES (?, ?, ?, ?, ?, ?)",
+            [(*scope, artifact, int(q["n"]), str(q["text"])) for q in obj.get("questions") or []],
+        )
+        conn.execute(
+            "INSERT INTO unit_seen (root, workspace, unit, artifact, sha256, questions) VALUES (?, ?, ?, ?, '', 1) "
+            "ON CONFLICT (root, workspace, unit, artifact) DO UPDATE SET questions = 1",
+            (*scope, artifact),
+        )
 
     def _write_ideas(self, conn: sqlite3.Connection, workspace: str, ideas: Iterable[Mapping[str, Any]] | None) -> None:
         conn.execute("DELETE FROM idea_meta WHERE root = ? AND workspace = ?", (self.root, workspace))

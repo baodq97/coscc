@@ -21,6 +21,7 @@ from coscc.config import Config
 from coscc.runlog.journal import Busy, Journal
 from coscc.service import Invalid, Service
 from coscc.agent.sessions import Sessions
+from coscc.agent.submit_test import submits as _submits
 
 
 class _Replies:
@@ -40,6 +41,8 @@ class _Replies:
         yield ("chunk", "# Spec: x\n" if self.calls == 1 else "# Plan: x\n")
         await asyncio.wait_for(self.release.wait(), 20)
         yield ("chunk", f"Author: proof. Status: {status}.\n")
+        # `0136` R4: the object is what the app reads; the line above is for a reader.
+        await _submits(kw, judgement="ready" if status == "accepted" else "not-ready")
         yield ("done", {"session_id": f"s{self.calls}", "terminal_reason": "success",
                         "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.01}})
 
@@ -271,7 +274,7 @@ class OnTheRealLoop(_Base):
     async def test_r3_a_rerun_that_keeps_its_answered_question_is_not_run_again(self):
         # The draft the rerun writes still asks question 1, which the kept block answers, so
         # `next` says `rerun` again with no new answer behind it (review.md F2).
-        self.service.sessions = _Intents("\n## Open questions\n\n1. Một?\n")
+        self.service.sessions = _Intents("\n## Open questions\n\n1. Một?\n", questions=((1, "Một?"),))
         unit = await self.unit("kept", "Status: draft.\n\n## Open questions\n\n1. Một?")
         self.listed(unit)
         self.service.set_autopilot(self.ws, "autopilot", True)
@@ -400,11 +403,14 @@ class OnTheRealLoop(_Base):
 class _Intents:
     """A session that rewrites `intent.md` as a draft, with no open questions unless `asks`."""
 
-    def __init__(self, asks: str = ""):
+    def __init__(self, asks: str = "", questions: tuple = ()):
         self.asks = asks
+        # `0136` R4: the questions the object hands back, which the app reads; `asks` is prose.
+        self.questions = [{"n": n, "text": t} for n, t in questions]
 
     async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
         yield ("chunk", "# Intent: x\nAuthor: proof. Type: fix. Status: draft.\n\n## Problem\n\nx\n" + self.asks)
+        await _submits(kw, judgement="not-ready", questions=self.questions)
         yield ("done", {"session_id": "s1", "terminal_reason": "success",
                         "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.01}})
 
@@ -428,6 +434,7 @@ class _Jera:
             "text": "Theo thông lệ: một.", "reason": "", "cites": ["practice"],
         }]) + "\n```"
         yield ("chunk", reply)
+        await _submits(kw)
         yield ("done", {"session_id": f"j{self.calls}", "terminal_reason": "success",
                         "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.02}})
 

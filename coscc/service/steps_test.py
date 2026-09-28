@@ -20,6 +20,7 @@ from coscc.service.common import Invalid, describe_base, step_cwd
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.service.service_test import create_sync
+from coscc.agent.submit_test import submits as _submits
 
 
 class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
@@ -39,6 +40,7 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
     class Replies:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-30", "cost": {"output_tokens": 3}})
 
     def setUp(self):
@@ -239,6 +241,7 @@ class AnImplIsToldWhatMainChangedSinceThePlan(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.prompts.append(text)
             yield ("chunk", self.reply)
+            await _submits(kw)
             yield ("done", {"session_id": "sess-42", "cost": {"output_tokens": 3}})
 
     def setUp(self):
@@ -369,6 +372,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
     class Replies:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-42", "cost": {"output_tokens": 3}})
 
     def setUp(self):
@@ -463,6 +467,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
     def test_a_failed_step_records_nothing(self):
         class Empty:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-0", "cost": {}})
 
         self.service.sessions = Empty()
@@ -487,11 +492,14 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
     whether the unit merged. Driven like `AStepRecordsTheTransitionItCaused`."""
 
     ASKS = "# Spec: a problem\nAuthor: t. Status: draft.\n\n## Body\n\n## Open questions\n\n1. Which one?\n"
+    # `0136` R4: what the session hands back beside `ASKS`; the questions are the object's.
+    ASKED = {"judgement": "not-ready", "questions": [{"n": 1, "text": "Which one?"}]}
 
-    def replies(self, text: str, outcome: dict | None = None):
+    def replies(self, text: str, outcome: dict | None = None, **fields):
         class Replies:
             async def stream(self, cwd, prompt, session_id=None, max_turns=1, **kw):
                 yield ("chunk", text)
+                await _submits(kw, **fields)
                 yield ("done", outcome or {"session_id": "sess-1", "cost": {"output_tokens": 3}})
 
         return Replies()
@@ -505,7 +513,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.config = Config(
             workspaces=(str(self.repo),), working_dir=str(self.root / "work"), data_dir=str(self.root / "data"),
         )
-        self.service = Service(self.config, self.replies(self.ASKS))
+        self.service = Service(self.config, self.replies(self.ASKS, **self.ASKED))
         self.made = create_sync(self.service, str(self.repo), "a-problem", "some words")
         self.unit = self.made["unit"]
         (Path(self.made["path"]) / "intent.md").write_text(
@@ -535,7 +543,8 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         _, payload = self._run()[-1]
         self.assertEqual(payload["outcome"], "done")
         kinds = [r["kind"] for r in self.records()]
-        self.assertEqual(kinds[-2:], ["end", "questions"])
+        # `0136` R16: the status the object set, and its event, between the two.
+        self.assertEqual(kinds[-3:], ["end", "transition", "questions"])
         [asked] = [r for r in self.records() if r["kind"] == "questions"]
         self.assertEqual((asked["workspace"], asked["stage"]), (self.key, "spec"))
         self.assertEqual(asked["questions"], [{"artifact": "spec.md", "n": 1}])
@@ -587,7 +596,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         with mock.patch.object(board_reader, "read", broken):
             _, payload = self._run()[-1]
         self.assertEqual(payload["outcome"], "done")
-        self.assertEqual([r["kind"] for r in self.records()][-1], "end")
+        self.assertEqual([r["kind"] for r in self.records()][-2:], ["end", "transition"])
         self.assertEqual(self.service._active, {})
 
     async def _ended(self, after_end) -> asyncio.Task:
@@ -627,7 +636,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
             return left
 
         self.assertEqual(asyncio.run(go()), [])
-        self.assertEqual([r["kind"] for r in self.records()][-2:], ["end", "questions"])
+        self.assertEqual([r["kind"] for r in self.records()][-3:], ["end", "transition", "questions"])
         self.assertEqual(self.service._finishing, {})
 
     def test_an_after_end_that_outlives_the_settle_is_named_and_cancelled(self):
@@ -669,6 +678,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
                 yield ("chunk", "# Spec: a problem\n")
                 await asyncio.wait_for(self.gate(unit).wait(), 10)
                 yield ("chunk", "Author: t. Status: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-7", "terminal_reason": "success",
                                 "cost": {"output_tokens": 3, "cost_usd": 0.01}})
             finally:
@@ -809,6 +819,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
     class Empty:
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("session", "sess-fail")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-fail", "cost": {"turns": 3, "cost_usd": 0.02}})
 
     def setUp(self):
@@ -846,6 +857,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 self.seen = text
                 yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-ok", "cost": {}})
 
         probe = Probe()
@@ -858,6 +870,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
         class Replies:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-1", "cost": {}})
 
         self.service.sessions = Replies()
@@ -870,6 +883,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 self.seen = text
                 yield ("chunk", "# Spec: x\nAuthor: t. Status: accepted.\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-2", "cost": {}})
 
         probe = Probe()
@@ -934,6 +948,7 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
             # once to repair it. That is the same step, so only a new session is counted.
             self.calls += session_id is None
             yield ("chunk", "# Ship: no\nAuthor: t. Status: accepted.\n\n## Body\n")
+            await _submits(kw)
             yield ("done", {"session_id": "s", "cost": {}})
 
     def setUp(self):
@@ -1042,6 +1057,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.test.seen.append({**kw, "max_turns": max_turns})
             (self.test.dir / "impl.md").write_text("# Impl: x\nStatus: accepted.\n", encoding="utf-8")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-i", "cost": {}, "terminal_reason": self.test.terminal})
 
     def _run(self):
@@ -1439,6 +1455,7 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
                 raise RuntimeError("the session broke")
             yield ("chunk", "# Spike: x\nSpec: spec.md. Round: 1. Status: accepted.\n\n"
                             "## U1\n\nVerdict: holds.\n\n```\n$ x\n1\n```\n")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-spike", "cost": {}})
 
     class RunsOut:
@@ -1450,6 +1467,7 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             (Path(cwd) / "spike.md").write_text(self.PROGRESS, encoding="utf-8")
             yield ("chunk", "Tôi hết lượt.")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-spike", "terminal_reason": "max_turns", "cost": {}})
 
     def test_the_progress_file_is_read_before_the_scratch_is_removed(self):
@@ -1564,6 +1582,7 @@ class APrStepIsHandedItsPullRequest(unittest.TestCase):
                 encoding="utf-8",
             )
             yield ("chunk", "done")
+            await _submits(kw)
             yield ("done", {"session_id": "sess-41", "cost": {}})
 
     def _run_pr(self, stdout: str, code: int = 0) -> tuple[str, dict, str]:
@@ -1646,6 +1665,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
                 yield ("chunk", self.reply)
                 if self.hold:
                     await asyncio.sleep(10)
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-55", "cost": {}})
             finally:
                 if step is not None:

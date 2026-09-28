@@ -28,6 +28,7 @@ from coscc.data import Data
 from coscc.runlog.journal import Journal, last_runs, timelines_of, totals_of
 from coscc.runner import Runner
 from coscc.state import _cell_label, _usd
+from coscc.agent.submit_test import submits as _submits
 
 UNIT = "0009_a-step-that-dies"
 STAGES = ["idea", "intent", "spec", "spike", "plan", "impl", "pr", "review", "ship"]
@@ -59,6 +60,7 @@ class Dies:
             raise self.then
         if self.then.get("terminal_reason") == "success":
             yield ("chunk", REPLY)
+        await _submits(kw)
         yield ("done", self.then)
 
 

@@ -15,6 +15,7 @@ from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.service.service_test import create_sync
+from coscc.agent.submit_test import submits as _submits
 
 
 class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
@@ -33,6 +34,7 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 test.seen.append(list(test.service._running.values()))
                 yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-51", "cost": {}})
 
         self.service = Service(

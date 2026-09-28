@@ -222,6 +222,17 @@ class OptionsCarryTheKnobs(unittest.TestCase):
         options = _options(Config(), "/p", None)
         self.assertEqual(options.setting_sources, [])
         self.assertIs(options.strict_mcp_config, True)
+        self.assertEqual(options.mcp_servers, {})
+
+    def test_the_apps_own_submit_server_is_the_only_one_a_step_gets(self):
+        """`0136` R2: the server the runner hands in, and strict config kept beside it."""
+        from coscc.agent.submit import Channel
+
+        server = Channel(run="r1", stage="spec", directory="/nonexistent", artifact="spec.md", own=False).server()
+        options = _options(Config(), "/p", None, mcp_servers={"cos": server})
+        self.assertEqual(list(options.mcp_servers), ["cos"])
+        self.assertEqual(options.mcp_servers["cos"]["type"], "sdk")
+        self.assertIs(options.strict_mcp_config, True)
 
     def test_the_prompt_reaches_the_model_as_written(self):
         """No `@path` expansion and no slash-command dispatch, for every session.

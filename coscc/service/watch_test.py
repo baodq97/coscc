@@ -13,6 +13,7 @@ from coscc.config import Config
 from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.service.service_test import create_sync
+from coscc.agent.submit_test import submits as _submits
 
 
 class AStepCanBeWatched(unittest.TestCase):
@@ -36,6 +37,7 @@ class AStepCanBeWatched(unittest.TestCase):
                     recorder.denied("Bash", {"command": f"c{i}"}, "not granted")
                 await test.release.wait()
                 yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "sess-73", "cost": {}})
 
         self.service = Service(

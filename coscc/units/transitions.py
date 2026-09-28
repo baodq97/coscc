@@ -49,17 +49,20 @@ def apply(
     inputs: Mapping[str, Any],
     authority: str,
     run: str = UNKNOWN,
+    session: str = UNKNOWN,
     actor: str = UNKNOWN,
     source: str = UNKNOWN,
     lane: str = "full",
     lanes: states.Lanes | None = None,
     notify: Callable[[Applied], None] | None = None,
+    also: Callable[[Any], None] | None = None,
 ) -> Applied:
     """Guard, then transition and event in one transaction, then `notify`.
 
     `inputs` is what the guard reads, and is stored whole on the row: a reader of the log sees
     exactly what decided it. `authority` must be one of the four; a new row never says
-    `unknown` about whose decision it was.
+    `unknown` about whose decision it was. `also(conn)` writes what the transition carries
+    with it -- a stage result's row and its questions -- in the same transaction.
     """
     if authority not in AUTHORITIES:
         raise BadTransition(f"authority must be one of {', '.join(AUTHORITIES)}, got {authority!r}")
@@ -79,7 +82,7 @@ def apply(
         "artifact": artifact,
         "to_state": to_state,
         "actor": actor,
-        "session": run,
+        "session": session,
         "source": source,
         "guard": g.id,
         "authority": authority,
@@ -101,7 +104,12 @@ def apply(
         "authority": authority,
         "run": run,
     }
-    journal.append_with([event], also=lambda conn: stored.extend(history.record_in(conn, [item])))
+    def write(conn: Any) -> None:
+        stored.extend(history.record_in(conn, [item]))
+        if also is not None:
+            also(conn)
+
+    journal.append_with([event], also=write)
     applied = Applied(True, g.id, g.label, (), stored[0] if stored else None)
     if notify is not None:
         notify(applied)

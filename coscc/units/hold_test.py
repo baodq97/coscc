@@ -23,6 +23,7 @@ from coscc.config import Config
 from coscc.data import Data
 from coscc.runlog.journal import Journal
 from coscc.service import Invalid, Service
+from coscc.agent.submit_test import submits as _submits
 
 SLUG = "proof-of-hold"
 # What `Service` hands `hold.refusal` while a spec step runs on the unit (`0050` R3).
@@ -222,6 +223,7 @@ class NoSession:
 
     async def stream(self, *a, **kw):
         self.opened += 1
+        await _submits(kw)
         yield ("done", {"session_id": "none"})
 
 

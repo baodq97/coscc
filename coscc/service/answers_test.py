@@ -16,6 +16,7 @@ from coscc.service.common import STAGE_FILES, Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.service.service_test import create_sync
+from coscc.agent.submit_test import submits as _submits
 
 
 REVIEW_ONE = (
@@ -64,6 +65,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             yield ("chunk", REVIEW_ONE + ROUND_TWO)
+            await _submits(kw)
             yield ("done", {"session_id": "sess-r", "cost": {}})
 
     def setUp(self):
@@ -167,6 +169,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         class Spec:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n")
+                await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {}})
 
         (self.dir / "intent.md").write_text(

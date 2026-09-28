@@ -20,6 +20,7 @@ import httpx
 from coscc import update
 from coscc.web.api import build
 from coscc.config import Config
+from coscc.agent.submit_test import submits as _submits
 
 
 def _tmp_config(test: unittest.TestCase) -> Config:
@@ -940,6 +941,7 @@ class AskingJeraOverHttp(unittest.IsolatedAsyncioTestCase):
         async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
             self.calls += 1
             yield ("chunk", self.text)
+            await _submits(kw)
             yield ("done", {"session_id": "s", "cost": {"cost_usd": 0.01, "turns": 1}})
 
     async def asyncSetUp(self):
@@ -1645,6 +1647,7 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
         class Replies:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
                 yield ("chunk", "not json")
+                await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {"cost_usd": 0.01}})
 
         self.app.state.service.sessions = Replies()

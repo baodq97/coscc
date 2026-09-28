@@ -27,6 +27,7 @@ from coscc.git import fetches
 from coscc import service as service_mod
 from coscc.config import Config
 from coscc.service import Invalid, Service
+from coscc.agent.submit_test import submits as _submits
 
 SLUG = "proof-of-gebo"
 PR = 7
@@ -60,6 +61,7 @@ class StandIn:
         self.kws.append(kw)
         reply = await self.act(Path(cwd), kw["can_use_tool"])
         yield ("chunk", reply)
+        await _submits(kw)
         yield ("done", {"session_id": "stand-in", "cost": {"cost_usd": 0.25, "turns": 3}})
 
 

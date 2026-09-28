@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.github import integrate as ig
+from coscc.agent.submit_test import submits as _submits
 
 HEAD = "a" * 40
 NEW = "b" * 40
@@ -588,6 +589,7 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
                 seen["push_ok"] = await gate("Bash", {"command": f"git push --force-with-lease=feat/x:{HEAD} origin feat/x"}, None)
                 seen["push_bad"] = await gate("Bash", {"command": "git push --force origin feat/x"}, None)
                 yield ("chunk", "[needs-person] A vs B")
+                await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {"usd": 0.1}})
 
         async def go():
@@ -616,6 +618,7 @@ class GeboRunsUnderItsGrantAndLease(unittest.TestCase):
             async def stream(self, cwd, prompt, session_id, **kw):
                 await kw["can_use_tool"]("Bash", {"command": "npm test &"}, None)
                 await kw["can_use_tool"]("Bash", {"command": "git push --force origin feat/x"}, None)
+                await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {}})
 
         async def go():

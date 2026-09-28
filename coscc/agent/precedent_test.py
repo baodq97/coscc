@@ -8,6 +8,7 @@ import unittest
 
 from coscc.agent import precedent
 from coscc.agent.policy import grant_for
+from coscc.agent.submit_test import submits as _submits
 
 
 def _unit(name: str, answers=(), questions=(), next_: str = "write-plan") -> dict:
@@ -379,6 +380,7 @@ class TheSession(unittest.TestCase):
         async def stream(self, cwd, text, session_id=None, **kw):
             self.kw = kw
             yield ("chunk", "hi")
+            await _submits(kw)
             yield ("done", self.done)
 
     def test_it_runs_with_no_tools_and_the_grants_ceilings(self):

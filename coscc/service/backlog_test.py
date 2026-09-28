@@ -22,6 +22,7 @@ from coscc.service.common import Invalid
 from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from coscc.service.service_test import REPO, _service, create_sync
+from coscc.agent.submit_test import submits as _submits
 
 
 class TheUnitHistoryReadPath(unittest.TestCase):
@@ -414,6 +415,7 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
             if self.gate is not None:
                 await self.gate.wait()
             yield ("chunk", self.text)
+            await _submits(kw)
             yield ("done", {"session_id": "sess-1", "cost": {"cost_usd": 0.12, "turns": 1}})
 
     def setUp(self):
@@ -603,6 +605,7 @@ class JeraAnswersFromPrecedent(unittest.TestCase):
             if self.gate is not None:
                 await self.gate.wait()
             yield ("chunk", self.text)
+            await _submits(kw)
             yield ("done", {"session_id": "s1", "cost": {"cost_usd": 0.02, "turns": 1}})
 
     def setUp(self):
