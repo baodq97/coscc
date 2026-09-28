@@ -106,6 +106,16 @@ def _question_row(q: rx.Var[Question]) -> rx.Component:
                 s.text("Jera's proposal", size="1", weight="medium"),
                 rx.box(rx.markdown(q.proposal), width="100%"),
                 s.text(q.reason, size="1", color=rx.color("red", 11)),
+                # `0101` R9: fills the box below and sends nothing; hidden where no answer may
+                # be given, or there is nothing to use (S8).
+                rx.cond(
+                    (q.proposal != "") & ~P.unit_dropped & P.current_unit.answerable,
+                    rx.button(
+                        rx.icon("clipboard-paste", size=14), "Use this proposal",
+                        on_click=P.use_proposal(q.key, q.proposal), size="1", variant="soft",
+                        id="use-proposal-" + q.key,
+                    ),
+                ),
                 spacing="1", width="100%", margin_top="8px", align="start",
             ),
         ),

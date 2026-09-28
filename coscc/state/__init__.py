@@ -84,6 +84,7 @@ from coscc.state.views import (
     Message,
     Conversation,
     AutopilotStop,
+    GuideItem,
     RunningStep,
     Run,
     WatchEvent,
@@ -228,6 +229,11 @@ class StudioState(
     autopilot_stops: list[AutopilotStop] = []
     autopilot_cap: str = ""
     autopilot_refused: str = ""
+    # `0101` R10. The board's `guide` block, copied: what runs, what needs a person, and what
+    # Jera decided lately. Nothing here decides anything.
+    guide_running: list[GuideItem] = []
+    guide_needs_you: list[GuideItem] = []
+    guide_decided: list[GuideItem] = []
     run_log: str = ""
     # The unit whose step this page is streaming into `run_log`, so another unit's
     # reply is never shown under the one now open.
@@ -432,6 +438,12 @@ class StudioState(
         return place.href(place.Place("board", ws))
 
     @rx.var
+    def settings_href(self) -> str:
+        """`0101` R10. Where the guide sends a person to turn the autopilot on."""
+        ws = next((w.name for w in self.workspaces if w.id == self.cwd), "")
+        return place.href(place.Place("settings", ws))
+
+    @rx.var
     def open_questions_here(self) -> list[Question]:
         """`0016`. The open unit's unanswered questions, counted artifact's first. `0044`:
         then the ones Jera answered, so a person can read them and answer over them."""
@@ -578,6 +590,34 @@ class StudioState(
             + f"{cap.get('running', 0):.2f} running, cap {cap.get('limit', 0):.2f} USD"
         )
 
+    def _show_guide(self, block: dict) -> None:
+        """`0101` R10. Copied from the board; every word of `needs_you` is the service's."""
+        ws = self._name_of(self.cwd)
+
+        def link(screen: str, unit: str = "", tab: str = "overview") -> str:
+            if screen == "unit" and not unit:
+                return ""
+            return place.href(place.Place(screen, ws, unit, tab or "overview"))
+
+        self.guide_running = [
+            GuideItem(unit=str(r.get("unit") or ""),
+                      what=" · ".join(x for x in (str(r.get("stage") or ""), str(r.get("agent") or "")) if x),
+                      detail="started " + present.when(r.get("started")),
+                      href=link("unit", str(r.get("unit") or "")))
+            for r in block.get("running") or []
+        ]
+        self.guide_needs_you = [
+            GuideItem(unit=str(r.get("unit") or ""), what=str(r.get("do") or ""), detail=str(r.get("reason") or ""),
+                      href=link(str(r.get("screen") or ""), str(r.get("unit") or ""), str(r.get("tab") or "")))
+            for r in block.get("needs_you") or []
+        ]
+        self.guide_decided = [
+            GuideItem(unit=str(r.get("unit") or ""), what=f"{r.get('artifact')} question {r.get('n')}",
+                      detail=present.when(r.get("at")),
+                      href=link("unit", str(r.get("unit") or ""), str(r.get("tab") or "")))
+            for r in block.get("decided") or []
+        ]
+
     def _show_autopilot(self, data: dict) -> None:
         self.ap_on = bool(data.get("autopilot"))
         self.ap_may_ship = bool(data.get("autopilot_may_ship"))
@@ -675,6 +715,7 @@ class StudioState(
         }
         self.recording = bool(data["recording"])
         self._show_autopilot_block(data.get("autopilot") or {})
+        self._show_guide(data.get("guide") or {})
         # `0046`. Copied from the board; the panel decides nothing.
         self._show_release(data.get("release"))
         read_only = READ_ONLY_NOTE if data.get("read_only_because") else ""
@@ -1010,6 +1051,7 @@ class StudioState(
             self.density = str(prefs.get("density") or "comfortable")
             self.board_view = str(prefs.get("board_view") or "Board")
             self.decision_preferences = str(prefs.get("decision_preferences") or "")
+            self.decision_rules = str(prefs.get("decision_rules") or "")
             self._load_workspaces()
         except Invalid as e:
             self._fail(e)
@@ -1263,6 +1305,19 @@ class StudioState(
         """`0044` R8a. Kept as typed; each paragraph becomes one `pref:<k>` Jera may cite."""
         self._remember("decision_preferences", self.decision_preferences)
         self.notice = "Decision preferences saved; Jera reads them on its next run."
+
+    @rx.event
+    def edit_decision_rules(self, value: str):
+        self.decision_rules = value
+
+    @rx.event
+    def save_decision_rules(self):
+        """`0101` R8. Kept as typed; an empty box is the default rules again."""
+        self._remember("decision_rules", self.decision_rules)
+        self.notice = (
+            "Decision rules saved; Jera reads them on its next run." if self.decision_rules.strip()
+            else "Decision rules cleared; Jera reads the default rules on its next run."
+        )
 
     @rx.event
     def set_density(self, value: str):
