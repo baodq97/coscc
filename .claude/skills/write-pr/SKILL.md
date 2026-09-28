@@ -35,18 +35,21 @@ leave the file behind:
    request, already looked up*. At a terminal, or when that block says the lookup failed,
    ask once: `gh pr view --json url,number,mergeable`. If one is open for this branch, use
    its URL and skip step 2 — never open a second pull request for one branch.
-2. **Open it.** Write `pr.md` with its three body sections, `Status: draft` and no `PR:`
-   yet, and `## Scope of the diff` left empty — there is no pull request yet to count. Then:
+2. **Open it.** Write `pr.md` with its `# PR:` line in the title grammar under `## Output`,
+   its three body sections, `Status: draft` and no `PR:` yet, and `## Scope of the diff`
+   left empty — there is no pull request yet to count. Run
+   `node .claude/scripts/cos.mjs pr-text <NNNN_slug>`; while its `titleProblem` is not
+   `null`, fix the `# PR:` line and run it again. Then, with the `title` it printed:
 
    ```
    git push -u origin HEAD
-   gh pr create --fill-first --body-file <that pr.md>
+   gh pr create --title '<title>' --body-file <that pr.md>
    ```
 
    The push is listed because `gh pr create` cannot open a pull request for a branch the
    remote has never seen, and in a non-interactive session it has no way to ask. The title
-   and body this puts up are temporary — the first commit's subject, and a `pr.md` still
-   `draft` — and step 5 replaces both.
+   is never a commit's subject. The body this puts up is temporary — a `pr.md` still
+   `draft` — and step 5 replaces it.
 3. **Record it at once.** As soon as you have the URL — from step 1 or step 2 — run
    `gh pr view <url> --json files,changedFiles,additions,deletions`, write
    `## Scope of the diff` from what it returned in the grammar under `## Output`, then put
@@ -101,6 +104,13 @@ Intent: intent.md. Impl: impl.md. PR: <url>. Author: <name>. Status: accepted.
 
 ## What a reviewer should look at first
 ```
+
+The title on the `# PR:` line is `<type>(<NNNN>): <text>`: `<type>` is `intent.md`'s `Type:`,
+`<NNNN>` the unit's four digits, and `<text>` English, not empty, not opening with `wip`,
+with no letter carrying a diacritic — an em dash is fine. It becomes the squash commit's
+subject. `cos.mjs pr-text` prints `titleProblem`, `null` or what is wrong; the `review` and
+`ship` gates stay closed on any title it refuses, and `ship` also on a pull request whose
+title differs from this line.
 
 `PR: <url>` is the URL `gh pr create` printed — or, when the pull request already existed,
 the one the lookup or `gh pr view` returned — ending in `/pull/<number>`. `## Where`
