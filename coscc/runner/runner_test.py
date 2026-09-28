@@ -1956,6 +1956,30 @@ class TheLastTurnEndsTheSession(unittest.TestCase):
                 self.assertEqual(self.prompt_of(stage), 0)
 
 
+class AStepThatRunsCommandsIsToldWhereTheHarnessIs(unittest.TestCase):
+    """A step with `Bash` is handed this app's `cos.mjs` and its unit's `--root`, so it never
+    goes looking for them (`0137` ship, 2026-09-28: `find /` held the step seven minutes)."""
+
+    def test_the_path_and_root_are_in_the_prompt_of_every_stage_with_bash(self):
+        from coscc.agent import harness
+        from coscc.runner.prompt import HARNESS_HEADING
+
+        root = Path("/store")
+        for stage in ("impl", "spike", "pr", "ship"):
+            with self.subTest(stage=stage):
+                prompt = compose_prompt(
+                    "/w", root / ".cos" / UNIT, UNIT, stage, STAGES, f"{stage}.md", runs_commands=True
+                )[0]
+                self.assertEqual(prompt.count(HARNESS_HEADING), 1)
+                self.assertIn(f"`node {harness.script()} <command> --root {root}`", prompt)
+
+    def test_a_prose_stage_is_not_told(self):
+        from coscc.runner.prompt import HARNESS_HEADING
+
+        prompt = compose_prompt("/w", "/store/.cos/" + UNIT, UNIT, "spec", STAGES, "spec.md")[0]
+        self.assertNotIn(HARNESS_HEADING, prompt)
+
+
 class AStepRecordsThePlanMapItCarried(AStepRecordsTheBaseItRanOn):
     """`0096` R11: the record handed in is the record written, and none is no field."""
 
