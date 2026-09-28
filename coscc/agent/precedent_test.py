@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import unittest
 
 from coscc.agent import precedent
-from coscc.agent.policy import grant_for
+from coscc.agent import submit
+from coscc.agent.policy import SUBMIT_TURNS, grant_for
 from coscc.agent.submit_test import submits as _submits
 
 
-def _unit(name: str, answers=(), questions=(), next_: str = "write-plan") -> dict:
-    return {"name": name, "answers": list(answers), "questions": list(questions), "next": next_}
+def _unit(name: str, answers=(), questions=(), why: str = "next-stage") -> dict:
+    return {"name": name, "answers": list(answers), "questions": list(questions), "why": why}
 
 
 def _answer(artifact: str, n: int, by: str = "owner", via: str = "product", text: str = "yes") -> dict:
@@ -27,8 +27,15 @@ Q = [{"unit": "0002_b", "artifact": "spec.md", "n": 1, "text": "a?"},
 IDS = {"pref:1": "originator", "0001_a/spec.md#Câu 1": "originator"}
 
 
-def _reply(*items: dict) -> str:
-    return "thinking\n```json\n" + json.dumps(list(items), ensure_ascii=False) + "\n```\n"
+def _reply(*items: dict) -> dict:
+    """The object Jera hands back through `submit` (`0136` R8)."""
+    return {"verdicts": list(items)}
+
+
+def _json_of(items: list) -> str:
+    import json
+
+    return json.dumps(items, ensure_ascii=False)
 
 
 def _ok(n: int = 1, **over) -> dict:
@@ -68,9 +75,11 @@ class TheQuestions(unittest.TestCase):
         self.assertEqual(precedent.asked(u), [{"unit": "0002_b", "artifact": "spec.md", "n": 1, "text": "a"}])
 
     def test_none_on_a_finished_or_closed_unit(self):
+        """`0136` R11: by `why`, the rule of `decide` that answered, not by `next`'s words."""
         q = [{"artifact": "spec.md", "n": 1, "text": "a", "answered": False}]
-        for nxt in ("finished", "closed — rejected"):
-            self.assertEqual(precedent.asked(_unit("0002_b", questions=q, next_=nxt)), [], nxt)
+        for why in ("finished", "rejected"):
+            self.assertEqual(precedent.asked({**_unit("0002_b", questions=q, why=why), "next": "anything"}), [], why)
+        self.assertEqual(len(precedent.asked({**_unit("0002_b", questions=q), "next": "finished"})), 1)
 
 
 class ThePrompt(unittest.TestCase):
@@ -91,10 +100,11 @@ class TheFilter(unittest.TestCase):
         self.assertIsNone(got["failed"])
         return got["verdicts"]
 
-    def test_a_reply_with_no_json_fails_whole(self):
-        got = precedent.verdicts("no json here", Q, IDS)
-        self.assertTrue(got["failed"])
-        self.assertEqual(got["verdicts"], [])
+    def test_no_object_fails_whole(self):
+        for none in (None, {}, {"verdicts": "no list"}):
+            got = precedent.verdicts(none, Q, IDS)
+            self.assertEqual(got["failed"], precedent.NO_OBJECT)
+            self.assertEqual(got["verdicts"], [])
 
     def test_a_cited_answer_stays_an_answer(self):
         v = self.verdict(_ok(1), _ok(2))
@@ -387,9 +397,29 @@ class TheSession(unittest.TestCase):
         s = self._S({"session_id": "s", "cost": {"cost_usd": 0.1}})
         reply, end, failure = asyncio.run(precedent.ask(s, "/w", "p", grant_for("precedent"), "m", None))
         self.assertEqual((reply, end["session_id"], failure), ("hi", "s", ""))
-        self.assertEqual((s.kw["tools"], s.kw["max_turns"]), ([], 1))
+        # `0136` R8: turns enough to submit, be refused and submit again.
+        self.assertEqual((s.kw["tools"], s.kw["max_turns"]), ([], SUBMIT_TURNS))
+        self.assertNotIn("mcp_servers", s.kw, "no channel given, none opened: a knowledge batch")
         self.assertEqual(s.kw["max_budget_usd"], grant_for("precedent").max_budget_usd)
         self.assertNotIn("effort", s.kw)
+
+    def test_the_verdicts_are_the_object_handed_back_not_the_reply(self):
+        """`0136` R8: the reply holds a JSON block saying one thing and the object another."""
+        class S(self._S):
+            async def stream(self, cwd, text, session_id=None, **kw):
+                self.kw = kw
+                yield ("chunk", "```json\n" + _json_of([_ok(1), _ok(2)]) + "\n```\n")
+                await _submits(kw, verdicts=[_ok(1, verdict="needs-person", reason="r")])
+                yield ("done", self.done)
+
+        s = S({"session_id": "s"})
+        channel = submit.Collector("precedent")
+        reply, _, failure = asyncio.run(precedent.ask(s, "/w", "p", grant_for("precedent"), None, None,
+                                                      channel=channel))
+        self.assertEqual(failure, "")
+        got = precedent.verdicts(channel.object(), Q, IDS)["verdicts"]
+        self.assertEqual([v["verdict"] for v in got], ["needs-person", "needs-person"])
+        self.assertTrue(s.kw["can_use_tool"])
 
     def test_a_ceiling_is_a_failure(self):
         s = self._S({"session_id": "s", "terminal_reason": "error_max_budget_usd"})

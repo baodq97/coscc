@@ -330,11 +330,13 @@ class UnitMeta:
 
     # -- answers and holds, which only the app writes -------------------------
 
-    def _answer(self, conn, workspace, unit, artifact, ref, text, by, date, via, once_key="") -> None:
+    def _answer(self, conn, workspace, unit, artifact, ref, text, by, date, via, once_key="",
+                authority="unknown") -> None:
         conn.execute(
-            "INSERT OR IGNORE INTO unit_answers (root, workspace, unit, artifact, ref, text, answered_by, date, via, once_key) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (self.root, workspace, unit, artifact, str(ref), text, by, date, via, once_key),
+            "INSERT OR IGNORE INTO unit_answers "
+            "(root, workspace, unit, artifact, ref, text, answered_by, date, via, once_key, authority) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (self.root, workspace, unit, artifact, str(ref), text, by, date, via, once_key, authority),
         )
 
     def _hold(self, conn, workspace, unit, state, reason, by, date, via, once_key="") -> None:
@@ -347,12 +349,15 @@ class UnitMeta:
     def add_answer(
         self, workspace: str, unit: str, artifact: str, ref: str | int, text: str,
         by: str, date: str, via: str, conn: sqlite3.Connection | None = None,
+        authority: str = "unknown",
     ) -> None:
-        """R8. `ref` is a question's number or a finding's `F<k>`; the last row for it wins."""
+        """R8. `ref` is a question's number or a finding's `F<k>`; the last row for it wins.
+        `authority` (`0136` R8, R15) is `person`, `delegated` or `agent`: whose answer it is,
+        which no name in `by` settles."""
         if conn is not None:
-            return self._answer(conn, workspace, unit, artifact, ref, text, by, date, via)
+            return self._answer(conn, workspace, unit, artifact, ref, text, by, date, via, authority=authority)
         with self.data.write() as c:
-            self._answer(c, workspace, unit, artifact, ref, text, by, date, via)
+            self._answer(c, workspace, unit, artifact, ref, text, by, date, via, authority=authority)
 
     def add_hold(
         self, workspace: str, unit: str, state: str, reason: str,
@@ -492,14 +497,15 @@ class UnitMeta:
                     e["links"]["dependsOn"] = [*(e["links"]["dependsOn"] or []), r["ref"]]
                 else:
                     e["links"][r["kind"]] = r["ref"]
-            for r in rows("SELECT workspace, unit, artifact, ref, text, answered_by, date, via FROM unit_answers WHERE {where} ORDER BY id"):
+            for r in rows("SELECT workspace, unit, artifact, ref, text, answered_by, date, via, authority "
+                          "FROM unit_answers WHERE {where} ORDER BY id"):
                 e = entry(r)
                 if e is not None:
                     number = r["ref"].isdigit()
                     e["answers"].append({
                         "artifact": r["artifact"], "n": int(r["ref"]) if number else None,
                         "id": None if number else r["ref"], "by": r["answered_by"], "date": r["date"],
-                        "via": r["via"], "text": r["text"],
+                        "via": r["via"], "text": r["text"], "authority": r["authority"],
                     })
             for r in rows("SELECT workspace, unit, move, reason, decided_by, date, via FROM unit_holds WHERE {where} ORDER BY id"):
                 e = entry(r)

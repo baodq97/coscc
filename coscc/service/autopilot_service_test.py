@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -418,8 +417,8 @@ class _Intents:
 
 class _Jera:
     """`0101`. Jera's session: one verdict of `verdict` for `intent.md` question 1, citing
-    `practice` — or, with `verdict` empty, a reply with no JSON. Any other prompt goes to
-    `then`, a step's stand-in."""
+    `practice`, handed back through `submit` (`0136` R8) — or, with `verdict` empty, no
+    object at all. Any other prompt goes to `then`, a step's stand-in."""
 
     def __init__(self, verdict: str, then=None):
         self.verdict, self.then, self.calls = verdict, then, 0
@@ -430,12 +429,12 @@ class _Jera:
                 yield item
             return
         self.calls += 1
-        reply = "no json" if not self.verdict else "```json\n" + json.dumps([{
-            "artifact": "intent.md", "n": 1, "verdict": self.verdict, "category": "other",
-            "text": "Theo thông lệ: một.", "reason": "", "cites": ["practice"],
-        }]) + "\n```"
-        yield ("chunk", reply)
-        await _submits(kw)
+        yield ("chunk", "Done.")
+        if self.verdict:
+            await _submits(kw, verdicts=[{
+                "artifact": "intent.md", "n": 1, "verdict": self.verdict, "category": "other",
+                "text": "Theo thông lệ: một.", "reason": "", "cites": ["practice"],
+            }])
         yield ("done", {"session_id": f"j{self.calls}", "terminal_reason": "success",
                         "cost": {"output_tokens": 3, "turns": 1, "cost_usd": 0.02}})
 

@@ -97,9 +97,9 @@ def stage_result_schema(stage: str) -> dict[str, Any]:
 # what the review made of impl's claim or of a person's answer.
 FINDING_STATES = ("open", "fixed", "needs-person", "claim-rejected", "answered")
 
-# Three more kinds of R2, whose fields the spec's Design names, each wired by the step of
-# `plan.md` that moves its place. Jera's and the estimate's come with theirs (step 12): their
-# fields are what `precedent.py` and `backlog.py` check today, and are copied from there then.
+# The other kinds of R2, whose fields the spec's Design names. Jera's and the estimate's are
+# the fields `precedent.verdicts` and `backlog.parse_proposal` check, which still decide what
+# of each object is written: the schema holds their types, and the app its rules.
 SCHEMAS: dict[str, dict[str, Any]] = {
     "review-round": {
         "type": "object",
@@ -166,6 +166,76 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["needs_person"],
         "additionalProperties": False,
     },
+    "precedent-verdicts": {
+        "type": "object",
+        "properties": {
+            "verdicts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "artifact": {"type": "string"},
+                        "n": {"type": "integer", "minimum": 1},
+                        "verdict": {"type": "string", "enum": ["answer", "needs-person"]},
+                        "category": {"type": "string"},
+                        "text": {"type": "string"},
+                        "reason": {"type": "string"},
+                        "cites": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["artifact", "n", "verdict", "category", "text", "reason", "cites"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["verdicts"],
+        "additionalProperties": False,
+    },
+    "estimate": {
+        "type": "object",
+        "properties": {
+            "units": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "unit": {"type": "string"},
+                        "value": {"type": "integer"},
+                        "effort": {"type": "string"},
+                        "similar": {"type": "array", "items": {"type": "string"}},
+                        "basis": {"type": "string"},
+                        "relations": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {"type": "string"},
+                                    "other": {"type": "string"},
+                                    "reason": {"type": "string"},
+                                },
+                                "required": ["type", "other", "reason"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    "required": ["unit", "value", "effort", "similar", "basis", "relations"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["units"],
+        "additionalProperties": False,
+    },
+}
+
+# R7, R8, R9. The sessions that are no stage and hand back an object, each by its grant's
+# name, with the schema it submits against and what its tool says it is for.
+SESSIONS: dict[str, tuple[str, str]] = {
+    "estimate": ("estimate", "Hand the app your estimate of every backlog unit, with the relations you propose."),
+    "integrate": (
+        "integrate-result",
+        "Hand the app the commits only a person can settle, each with why; `[]` when there is none.",
+    ),
+    "precedent": ("precedent-verdicts", "Hand the app your verdict on every question you were asked."),
 }
 
 
@@ -217,7 +287,7 @@ def refusal(what: str) -> dict[str, Any]:
 
 # Each channel by the server it made, so `Channel.of` finds it again: a stand-in session in a
 # test calls the handler through it as the SDK would. Weak, so a finished run keeps nothing.
-_CHANNELS: weakref.WeakKeyDictionary[Any, Channel] = weakref.WeakKeyDictionary()
+_CHANNELS: weakref.WeakKeyDictionary[Any, Channel | Collector] = weakref.WeakKeyDictionary()
 
 
 class Channel:
@@ -339,14 +409,60 @@ class Channel:
 
     def server(self) -> Any:
         """The SDK MCP server carrying this channel's one tool, for `mcp_servers`."""
-        from claude_agent_sdk import create_sdk_mcp_server, tool
-
-        config = create_sdk_mcp_server(SERVER, "1.0.0", [tool(TOOL, self.description(), self.schema)(self.handle)])
-        _CHANNELS[config["instance"]] = self
-        return config
+        return _serve(self)
 
     @staticmethod
-    def of(config: Mapping[str, Any]) -> Channel | None:
+    def of(config: Mapping[str, Any]) -> Channel | Collector | None:
         """The channel whose `server()` gave `config`, if it is still alive."""
         instance = config.get("instance") if isinstance(config, Mapping) else None
         return _CHANNELS.get(instance) if instance is not None else None
+
+
+class Collector:
+    """The `submit` of a session that is no stage: Gebo, Jera, an estimate (R7, R8, R9).
+
+    It has no artifact to hash and no unit run to match, so it checks the schema alone — the
+    SDK does that — and keeps the last object handed in. What of it is written is still the
+    caller's to decide, as it was of the JSON these sessions used to reply with; what is gone
+    is reading that JSON, or a `[needs-person]` line, out of the reply (R2).
+    """
+
+    def __init__(self, kind: str):
+        self.kind = self.stage = kind
+        name, self._what = SESSIONS[kind]
+        self.schema = SCHEMAS[name]
+        self.received: dict[str, Any] | None = None
+
+    def object(self) -> dict[str, Any] | None:
+        return self.received["object"] if self.received is not None else None
+
+    async def handle(self, args: dict[str, Any]) -> dict[str, Any]:
+        self.received = {"object": dict(args or {})}
+        return {"content": [{"type": "text", "text": f"received: {self.kind}"}]}
+
+    def description(self) -> str:
+        return (
+            f"{self._what} Call it once, when you are done; a later call replaces the earlier "
+            f"object. If it returns an error, the object did not fit its schema: {AGAIN}"
+        )
+
+    def server(self) -> Any:
+        return _serve(self)
+
+
+# R2. The guard that decides whether a session that is no stage ends `done`: it handed back an
+# object. Its id goes on that session's `end` row.
+RUN_SUBMITTED = "run-submitted"
+
+
+def submitted(collector: Collector) -> bool:
+    """Whether guard `run-submitted` opens on what `collector` received."""
+    return guards.guard(RUN_SUBMITTED).check({"submitted": collector.object() is not None}).open
+
+
+def _serve(channel: Channel | Collector) -> Any:
+    from claude_agent_sdk import create_sdk_mcp_server, tool
+
+    config = create_sdk_mcp_server(SERVER, "1.0.0", [tool(TOOL, channel.description(), channel.schema)(channel.handle)])
+    _CHANNELS[config["instance"]] = channel
+    return config

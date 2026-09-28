@@ -19,6 +19,7 @@ from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc import knowledge
 from coscc.agent import agents, harness
+from coscc.agent import submit as submit_mod
 from coscc.github import integrate
 from coscc.units import planmap, priorfindings, retake
 from coscc.units.board import Unavailable
@@ -556,12 +557,14 @@ class StepsMixin:
         }
         end: dict[str, Any] = {}
         failure = ""
+        # `0136` R7: what Gebo says needs a person is the object it hands back, not its words.
+        collector = submit_mod.Collector("integrate")
         try:
             async for kind, payload in integrate.run_gebo(
                 self.sessions, tree=str(tree), workspace=cwd, prompt=prompt, grant=grant,
                 read_also=integrate.read_paths(units_root, unit, rel), lease=(branch, head_before), model=model,
                 settings=agents.settings_json(agent) if agent is not None else None,
-                owner=owner, resume=resume,
+                owner=owner, resume=resume, channel=collector,
             ):
                 if kind == "chunk":
                     yield ("chunk", payload)
@@ -585,7 +588,10 @@ class StepsMixin:
             head_now = head_before
             details.append(f"could not read the pull request's head afterwards: {e}")
         reply = str(end.get("reply") or "")
-        outcome = integrate.outcome_of_session(head_before, head_now, reply)
+        needs_person = integrate.needs_person_of(collector.object())
+        outcome = integrate.outcome_of_session(head_before, head_now, needs_person)
+        if outcome == "failed" and not submit_mod.submitted(collector):
+            details.append("no-submission: the session handed back no result through submit")
         if outcome == "pushed":
             # `0052` review round 2, F1: a head that moved is Gebo's push only if Gebo's tree
             # ends on it. A GitHub rebase finishing late, which the lease then refused Gebo's
@@ -626,7 +632,7 @@ class StepsMixin:
         rec = write(integrate.record(
             workspace=key, unit=unit, pr=pr, mode="agent", head_before=head_before, head_after=head_now,
             origin_sha=origin_sha, outcome=outcome, related_=rel, report=reply,
-            needs_person=integrate.parse_needs_person(reply), detail="; ".join(details),
+            needs_person=needs_person, detail="; ".join(details),
             update_branch=refused_update, agent=name, **seen,
         ))
         yield ("done", {"integration": rec})

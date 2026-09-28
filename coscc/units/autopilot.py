@@ -226,7 +226,7 @@ def stop_for(
 
     kind = (last or {}).get("kind")
     outcome = str((last or {}).get("outcome") or "")
-    # d. Gebo ended on `[needs-person]`.
+    # d. Gebo's integration ended `needs-person`: the object it handed back said so (`0136` R7).
     if kind == "integration" and outcome == "needs-person":
         said = "; ".join(str(x) for x in (last or {}).get("needs_person") or []) or "no reason given"
         return _stop("d", f"the last integration needs a person: {said}")

@@ -293,7 +293,7 @@ def r14() -> bool:
 async def measure(cwd: str) -> int:
     from coscc.units import board as board_reader
     from coscc import units
-    from coscc.agent import models, precedent
+    from coscc.agent import models, precedent, submit
     from coscc.config import from_env
     from coscc.data import Data
     from coscc.agent.policy import grant_for
@@ -338,8 +338,10 @@ async def measure(cwd: str) -> int:
                 runs.append({"unit": u["name"], "questions": len(questions), "cost": {}, "session_id": "",
                              "failed": f"the prompt needs {grant.max_budget_usd:.2f} USD, past the cap"})
                 continue
-            got, end, failure = await precedent.ask(sessions, cwd, prompt, grant, model, effort)
-            found = precedent.verdicts(got, questions, {e["id"]: e["who"] for e in entries})
+            # `0136` R8: the verdicts are the object Jera hands back through `submit`.
+            collector = submit.Collector("precedent")
+            _, end, failure = await precedent.ask(sessions, cwd, prompt, grant, model, effort, channel=collector)
+            found = precedent.verdicts(collector.object(), questions, {e["id"]: e["who"] for e in entries})
             runs.append({"unit": u["name"], "questions": len(questions), "failed": failure or found["failed"],
                          "cost": end.get("cost") or {}, "session_id": end.get("session_id", "")})
             for v in found["verdicts"]:

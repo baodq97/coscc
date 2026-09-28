@@ -14,6 +14,8 @@ from coscc.units import board as board_reader
 from coscc.git import fetches, gitops
 from coscc.units import hold as hold_rules
 from coscc.agent import precedent as precedent_mod
+from coscc.agent import submit as submit_mod
+from coscc.agent.submit import RUN_SUBMITTED, submitted
 from coscc.units.board import Unavailable
 from coscc.git.gitops import GitError
 from coscc.units.history import History, settled_edits
@@ -118,7 +120,8 @@ class BacklogMixin:
         unit `""` in `_active`, which no real unit is ever called. Streams like `integrate`.
         Writes `start`/`end` (stage `estimate`, unit `""`) so Activity counts the money, one
         `estimate` record for the run, and each valid part of the reply through
-        `append_checked`. A reply over a ceiling or not JSON writes no estimate.
+        `append_checked`. A session over a ceiling, or one that handed back no object through
+        `submit` (`0136` R9), writes no estimate.
         """
         self._workspace_or_refuse(cwd)
         self._refuse_while_updating()
@@ -188,11 +191,15 @@ class BacklogMixin:
             ask = resume_kwargs(resume, grant, prompt)
             used_up = ask.pop("used_up", "")
             reply, end, failure = "", {}, ""
+            # `0136` R9: the estimate is the object handed back, never the reply's words.
+            collector = submit_mod.Collector("estimate")
             try:
                 async for kind, payload in nothing() if used_up else self.sessions.stream(
                     cwd, ask.pop("text"), ask.pop("session_id"), tools=[],
-                    # `tools=[]` still lets MCP tools through (`sessions.py`); the gate refuses them.
+                    # `tools=[]` still lets MCP tools through (`sessions.py`); the gate refuses
+                    # every one but `submit`.
                     can_use_tool=permission_gate(grant, cwd, Denials()), step=StepHandle(),
+                    mcp_servers={submit_mod.SERVER: collector.server()},
                     owner={"kind": "estimate", "workspace": key, "workspace_dir": cwd, "unit": "",
                            "stage": "estimate", "start_at": start_at},
                     **ask,
@@ -220,12 +227,15 @@ class BacklogMixin:
             terminal = end.get("terminal_reason", "")
             if not failure and any(m in terminal for m in CEILING_MARKERS):
                 failure = f"the session stopped at a ceiling ({terminal}); nothing was recorded"
+            # `0136` R2: no object, no estimate, whatever the reply says.
+            if not failure and not submitted(collector):
+                failure = backlog.NO_OBJECT
             session = end.get("session_id", "")
             names = [u["name"] for u in data["units"]]
             parsed = {"records": [], "rejected": [], "failed": failure or None}
             if not failure:
                 parsed = backlog.parse_proposal(
-                    reply, waiting, names, found, session, backlog.relations_of(rows), workspace=key,
+                    collector.object(), waiting, names, found, session, backlog.relations_of(rows), workspace=key,
                     undetermined=left_out,
                 )
             written, rejected = 0, list(parsed["rejected"])
@@ -245,7 +255,7 @@ class BacklogMixin:
             outcome = "failed" if parsed["failed"] else "done"
             try:
                 journal.finished(key, "", "estimate", outcome, session_id=session,
-                                 detail=parsed["failed"], **cost)
+                                 detail=parsed["failed"], guard=RUN_SUBMITTED, **cost)
                 ended = True
             except (BadRecord, Busy):
                 pass
@@ -379,13 +389,15 @@ class BacklogMixin:
                     started = True
                 except (BadRecord, Busy):
                     pass
+            # `0136` R8: Jera's verdicts are the object it hands back, never its reply's words.
+            collector = submit_mod.Collector("precedent")
             try:
                 reply, end, failure = await precedent_mod.ask(
                     self.sessions, cwd, prompt, grant, model, effort,
                     owner={"kind": "precedent", "workspace": key, "workspace_dir": cwd, "unit": unit,
                            "stage": "precedent", "start_at": start_at, "started_by": started_by,
                            "asked": [[q["artifact"], q["n"]] for q in questions]},
-                    resume=resume,
+                    resume=resume, channel=collector,
                 )
             except Suspended:
                 # `0138`: an update paused Jera and wrote its `suspend` row; no `end` here.
@@ -393,15 +405,19 @@ class BacklogMixin:
                 raise
             cost = end.get("cost") or {}
             session = end.get("session_id", "")
+            # `0136` R2: a Jera that handed back no object ends `failed`, whatever it replied.
+            if not failure and not submitted(collector):
+                failure = precedent_mod.NO_OBJECT
             found_v = {"failed": failure or None, "verdicts": [], "ignored": []}
             who = {e["id"]: e["who"] for e in store}
             if not failure:
-                found_v = precedent_mod.verdicts(reply, questions, who)
+                found_v = precedent_mod.verdicts(collector.object(), questions, who)
             if found_v["failed"]:
                 try:
                     # R13. The tail is chosen at 2000 characters, not measured.
                     journal.finished(key, unit, "precedent", "failed", session_id=session,
-                                     detail=f"{found_v['failed']}; the reply ended: {reply[-2000:]}", **cost)
+                                     detail=f"{found_v['failed']}; the reply ended: {reply[-2000:]}",
+                                     guard=RUN_SUBMITTED, **cost)
                     ended = True
                 except (BadRecord, Busy):
                     pass
@@ -430,7 +446,7 @@ class BacklogMixin:
                 except (BadRecord, Busy):
                     pass
             try:
-                journal.finished(key, unit, "precedent", "done", session_id=session, **cost)
+                journal.finished(key, unit, "precedent", "done", session_id=session, guard=RUN_SUBMITTED, **cost)
                 ended = True
             except (BadRecord, Busy):
                 pass

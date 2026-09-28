@@ -466,8 +466,13 @@ class AnswersMixin:
         board read already shows answered — a person got there while Jera ran.
         Returns `{written: [{artifact, question}], skipped: [{artifact, question, reason}],
         date}`.
+
+        `0136` R8, R15: each row says whose answer it is by the road it came, never by the
+        name typed — Jera's `agent`, one under a delegation `delegated`, any other `person` —
+        so no guard can take Jera's answer for a person's.
         """
         jera = via == precedent_mod.VIA
+        authority = "agent" if jera else "delegated" if delegation else "person"
         name = answered_by
         today = date.today().isoformat()
         written: list[dict[str, Any]] = []
@@ -496,7 +501,7 @@ class AnswersMixin:
                 written.append({"artifact": artifact, "question": finding or number})
                 texts.append(text)
             try:
-                self._record_answers(cwd, unit, found, written, texts, name, today, via)
+                self._record_answers(cwd, unit, found, written, texts, name, today, via, authority)
             except Invalid as e:
                 if not jera:
                     raise
@@ -527,7 +532,7 @@ class AnswersMixin:
 
     def _record_answers(
         self, cwd: str, unit: str, found: dict[str, Any], written: list[dict[str, Any]], texts: list[str],
-        name: str, today: str, via: str,
+        name: str, today: str, via: str, authority: str = "person",
     ) -> None:
         """`0135` R8, C8. Each answer's row in `unit_answers` and its `answer` record in the run
         log in one transaction: all are written or none is. Raises `Invalid` when none was.
@@ -543,7 +548,8 @@ class AnswersMixin:
 
         def rows(conn) -> None:
             for w, text in zip(written, texts):
-                meta.add_answer(key, unit, w["artifact"], w["question"], text, name, today, via, conn=conn)
+                meta.add_answer(key, unit, w["artifact"], w["question"], text, name, today, via, conn=conn,
+                                authority=authority)
 
         journal = self._journal()
         try:
@@ -562,7 +568,7 @@ class AnswersMixin:
                 row = stages.get(artifact) or {}
                 records.append({
                     "kind": "answer", "workspace": key, "unit": unit, "stage": row.get("stage", ""),
-                    "artifact": artifact, "question": w["question"], "via": via,
+                    "artifact": artifact, "question": w["question"], "via": via, "authority": authority,
                     "status": row.get("status", ""),
                     "completes": autopilot.answer_completes(found, artifact, given[artifact]),
                     "autopilot": on, "shortlisted": unit in ((listed or {}).get("units") or []),

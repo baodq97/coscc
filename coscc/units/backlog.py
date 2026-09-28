@@ -15,11 +15,11 @@ The numbers below are chosen, not measured (`spec.md` C5).
 
 from __future__ import annotations
 
-import json
 import math
 import re
 from typing import Any, Iterable
 
+from coscc.agent.submit import AGAIN as SUBMIT_AGAIN
 from coscc.runlog import journal
 from coscc.units.hold import _line_problem
 
@@ -531,7 +531,7 @@ def build_prompt(
 ) -> str:
     """R17. Instructions in English; the three value goals stay in the words `check_estimate` matches."""
     lines = [
-        "You estimate the backlog of a software project. You have no tools and one turn.",
+        "You estimate the backlog of a software project. You have no tools but `submit`.",
         "",
         "For every unit listed under *Backlog*, give:",
         "- `value`: a whole number 1-5, judged against the goal \"CoS thay người\" — "
@@ -547,11 +547,13 @@ def build_prompt(
         + ". \"thay thế\" means this unit replaces `other`; \"phụ thuộc\" means this unit needs `other` done first. "
         "`reason` is one line.",
         "",
-        "Reply with one JSON block and nothing else:",
+        "Hand your estimate back through the `submit` tool; the app does not read your reply. "
+        "The object:",
         "```json",
         '{"units":[{"unit":"NNNN_slug","value":3,"effort":"M","similar":["NNNN_slug"],'
         '"basis":"...","relations":[{"type":"liên quan","other":"NNNN_slug","reason":"..."}]}]}',
         "```",
+        f"If `submit` returns an error: {SUBMIT_AGAIN}",
         "",
         "## Backlog",
     ]
@@ -582,25 +584,23 @@ def title_of(text: str) -> str:
     return first[0].lstrip("# ").strip() if first else ""
 
 
-_JSON_BLOCK = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
+# `0136` R2, R9. Why a proposal is `failed` when the session handed back no object.
+NO_OBJECT = "no-submission: the session handed back no estimate through submit"
 
 
 def parse_proposal(
-    reply: str, backlog: Iterable[str], store_names: Iterable[str],
+    submitted: dict[str, Any] | None, backlog: Iterable[str], store_names: Iterable[str],
     found: dict[str, dict[str, Any]], session: str, active: list[dict[str, Any]],
     workspace: str = "", undetermined: int = 0,
 ) -> dict[str, Any]:
     """R18. `{records, rejected, failed}`. Relations are checked one after another, so two in
-    one reply cannot close a cycle between them."""
-    m = _JSON_BLOCK.search(reply or "")
-    raw = m.group(1) if m else (reply or "")
-    try:
-        data = json.loads(raw)
-    except (ValueError, TypeError) as e:
-        return {"records": [], "rejected": [], "failed": f"the reply is not JSON: {e}"}
-    entries = data.get("units") if isinstance(data, dict) else None
+    one object cannot close a cycle between them.
+
+    `submitted` is the object the session handed back through `submit` (`0136` R9), `None`
+    when there is none; its reply is never read. Every record carries `authority: agent`."""
+    entries = submitted.get("units") if isinstance(submitted, dict) else None
     if not isinstance(entries, list):
-        return {"records": [], "rejected": [], "failed": "the reply has no \"units\" list"}
+        return {"records": [], "rejected": [], "failed": NO_OBJECT}
     by = f"{AGENT_PREFIX}{session or 'unknown'}"
     waiting, names = set(backlog), list(store_names)
     live = list(active)
@@ -625,6 +625,7 @@ def parse_proposal(
                 "kind": "estimate-value", "workspace": workspace, "unit": unit, "value": e["value"],
                 "effort": got["effort"] or e["effort"], "effort_source": got["effort_source"],
                 "effort_basis": got["effort_basis"], "similar": similar, "basis": e["basis"], "by": by,
+                "authority": "agent",
             })
         proposed = e.get("relations") if isinstance(e.get("relations"), list) else []
         for rel in proposed:
@@ -638,7 +639,7 @@ def parse_proposal(
                 rejected.append({"unit": unit, "reason": f"relation {rtype} {other}: {said}"})
                 continue
             rec = {"kind": "relation", "workspace": workspace, "unit": unit, "other": other, "type": rtype,
-                   "op": "add", "reason": reason, "by": by}
+                   "op": "add", "reason": reason, "by": by, "authority": "agent"}
             records.append(rec)
             live.append({"unit": unit, "other": other, "type": rtype})
     return {"records": records, "rejected": rejected, "failed": None}

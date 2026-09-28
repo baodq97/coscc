@@ -493,6 +493,8 @@ _COLUMNS = (
     # `0136` R3 a, b: the head and the artifacts' revisions a run was handed when it opened.
     ("step_runs", "head", "TEXT NOT NULL DEFAULT ''"),
     ("step_runs", "revisions", "TEXT NOT NULL DEFAULT '{}'"),
+    # `0136` R8, R15: whose answer a row is — `person`, `delegated` or `agent` (Jera's).
+    ("unit_answers", "authority", "TEXT NOT NULL DEFAULT 'unknown'"),
 )
 
 

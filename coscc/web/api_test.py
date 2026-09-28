@@ -1646,8 +1646,8 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
     async def test_propose_streams_and_a_refusal_is_a_400(self):
         class Replies:
             async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                # `0136` R9: it hands back no object, so the proposal fails.
                 yield ("chunk", "not json")
-                await _submits(kw)
                 yield ("done", {"session_id": "s", "cost": {"cost_usd": 0.01}})
 
         self.app.state.service.sessions = Replies()

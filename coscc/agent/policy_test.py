@@ -66,10 +66,23 @@ class SubmitIsTheOneToolAddedToAProseStage(unittest.TestCase):
                 self.assertEqual(policy.beyond_reading(g), (), stage)
 
     def test_no_other_mcp_tool_and_no_other_stage_gets_through(self):
-        for stage in ("pr", "ship", "integrate", "estimate", "precedent", "x"):
+        for stage in ("pr", "ship", "knowledge", "x"):
             self.assertIn("not granted", decide(grant_for(stage), policy.SUBMIT_TOOL, {}, "/tmp/ws"), stage)
         for name in ("mcp__cos__other", "mcp__other__submit", "submit"):
             self.assertIn("not granted", decide(grant_for("spec"), name, {}, "/tmp/ws"), name)
+
+    def test_gebo_jera_and_the_estimate_gain_submit_and_nothing_else(self):
+        """`0136` R7, R8, R9: the sessions that are no stage, each with its old grant but
+        `submits` and at least `SUBMIT_TURNS` turns."""
+        from coscc.agent import submit
+
+        self.assertEqual(set(policy.SUBMITTING_SESSIONS), set(submit.SESSIONS))
+        for kind in policy.SUBMITTING_SESSIONS:
+            g, old = grant_for(kind), policy.GRANTS[kind]
+            self.assertEqual(replace(g, submits=False, max_turns=old.max_turns), old, kind)
+            self.assertEqual(g.max_turns, max(old.max_turns, policy.SUBMIT_TURNS), kind)
+            self.assertEqual(decide(g, submit.NAME, {}, "/tmp/ws"), "", kind)
+            self.assertIn("not granted", decide(g, "mcp__cos__other", {}, "/tmp/ws"), kind)
 
     def test_the_tool_touches_no_disk_and_runs_nothing(self):
         import ast
@@ -365,25 +378,27 @@ class TheKnownLimit(unittest.TestCase):
 
 
 class TheEstimateGrantOpensNothing(unittest.TestCase):
-    """`0074` R17, R19: one turn, $2.00, no tool, no command, and a warning for the page."""
+    """`0074` R17, R19: $2.00, no tool, no command, and a warning for the page. One turn
+    until `0136` R9 handed it `submit` and `SUBMIT_TURNS`."""
 
     def test_the_grant(self):
         g = grant_for("estimate")
         self.assertFalse(g.opens_anything)
-        self.assertEqual((g.max_turns, g.max_budget_usd), (1, 2.0))
+        self.assertEqual((g.max_turns, g.max_budget_usd), (policy.SUBMIT_TURNS, 2.0))
         self.assertIn("paid session", g.warning)
         self.assertIn("password", g.warning)
 
 
 class TheJeraGrantOpensNothing(unittest.TestCase):
-    """`0044` R13: Jera starts from the locked position — no tool, no command, one turn, $1.00."""
+    """`0044` R13: Jera starts from the locked position — no tool, no command, $1.00. One turn
+    until `0136` R8 handed it `submit` and `SUBMIT_TURNS`."""
 
     def test_the_grant(self):
         g = grant_for("precedent")
         self.assertEqual((g.tools, g.commands), ((), ()))
         self.assertEqual(policy.beyond_reading(g), ())
         self.assertFalse(g.opens_anything)
-        self.assertEqual((g.max_turns, g.max_budget_usd), (1, 1.0))
+        self.assertEqual((g.max_turns, g.max_budget_usd), (policy.SUBMIT_TURNS, 1.0))
         self.assertIn("paid session", g.warning)
         self.assertIn("password", g.warning)
 

@@ -48,10 +48,15 @@ def commit(where: Path, text: str, push: str) -> None:
 
 
 class StandIn:
-    """`Sessions` as `run_gebo` uses it: `stream` runs `act` in the tree, then replies."""
+    """`Sessions` as `run_gebo` uses it: `stream` runs `act` in the tree, then replies.
 
-    def __init__(self, act):
+    `0136` R7: like a Gebo that follows its rules, it hands back through `submit` one
+    `needs_person` item per `[needs-person] <why>` line its reply carries, unless `said` is
+    set, which it hands back instead. The app reads only the object."""
+
+    def __init__(self, act, said: list[dict] | None = None):
         self.act = act
+        self.said = said
         self.membership = None
         self.prompts: list[str] = []
         self.kws: list[dict] = []
@@ -61,7 +66,12 @@ class StandIn:
         self.kws.append(kw)
         reply = await self.act(Path(cwd), kw["can_use_tool"])
         yield ("chunk", reply)
-        await _submits(kw)
+        marker = "[needs-person] "
+        said = self.said if self.said is not None else [
+            {"commit": "", "why": line.strip()[len(marker):]} for line in reply.splitlines()
+            if line.strip().startswith(marker)
+        ]
+        await _submits(kw, needs_person=said)
         yield ("done", {"session_id": "stand-in", "cost": {"cost_usd": 0.25, "turns": 3}})
 
 

@@ -273,6 +273,178 @@ class Place3(_Review):
         self.assertIn("no-submission", done["error"])
 
 
+class Place4(unittest.TestCase):
+    """§6, 4: "Gebo's `[needs-person]` lines decide the integration outcome." Now the outcome
+    is R7's order: the head on git moved, else the `needs_person` of the object Gebo handed
+    back through `submit`, else `failed`. A real conflict on a bare remote, as
+    `integrate_service_test.GeboThroughTheService` sets it up."""
+
+    from coscc.service.integrate_service_test import GeboThroughTheService as _G
+
+    setUp, _gh, _no_act, remote_head, records = _G.setUp, _G._gh, _G._no_act, _G.remote_head, _G.records
+    del _G
+
+    def _integrate(self, reply: str, said: list[dict]) -> dict:
+        from coscc.service.integrate_service_test import StandIn
+
+        async def act(tree, gate):
+            return reply
+
+        self.service.sessions = StandIn(act, said=said)
+
+        async def go():
+            done = {}
+            async for kind, payload in self.service.integrate(self.cwd, self.unit):
+                if kind == "done":
+                    done = payload["integration"]
+            return done
+
+        return asyncio.run(go())
+
+    def test_a_needs_person_line_the_object_does_not_carry_decides_nothing(self):
+        rec = self._integrate("[needs-person] f.txt: one side wants `main`, the other `branch`", [])
+        self.assertEqual((rec["outcome"], rec["needs_person"]), ("failed", []))
+        self.assertEqual(self.remote_head(), self.head_before)
+
+    def test_the_objects_needs_person_decides_when_the_reply_says_nothing(self):
+        rec = self._integrate("Stopped.", [{"commit": "", "why": "A keeps x, B drops x"}])
+        self.assertEqual((rec["outcome"], rec["needs_person"]), ("needs-person", ["A keeps x, B drops x"]))
+
+
+class _Jera(unittest.TestCase):
+    """A unit with two open questions, a finished one whose answer is precedent, and Jera."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.repo = root / "work" / "proj"
+        self.repo.mkdir(parents=True)
+        self.config = Config(
+            workspaces=(str(self.repo),), working_dir=str(root / "work"), data_dir=str(root / "data"),
+        )
+        self.service = Service(self.config, _Nobody())
+        intent = "# Intent: x\nAuthor: t. Type: feat. Status: accepted.\n\n## Problem\n\np\n"
+        earlier = create_sync(self.service, str(self.repo), "earlier", "x")
+        (Path(earlier["path"]) / "intent.md").write_text(intent, encoding="utf-8")
+        (Path(earlier["path"]) / "spec.md").write_text(
+            "# Spec: e\nIntent: intent.md. Author: t. Status: accepted.\n\n## Open questions\n\n1. Nhánh?\n",
+            encoding="utf-8")
+        self.cite = f"{earlier['unit']}/spec.md#Câu 1"
+        made = create_sync(self.service, str(self.repo), "asked", "x")
+        self.unit = made["unit"]
+        (Path(made["path"]) / "intent.md").write_text(intent, encoding="utf-8")
+        (Path(made["path"]) / "spec.md").write_text(
+            "# Spec: a\nIntent: intent.md. Author: t. Status: draft.\n\n## Open questions\n\n1. Nhánh mới?\n2. Tiền?\n",
+            encoding="utf-8")
+        # After every file is written: the first read imports them all once (`0135`).
+        asyncio.run(self.service.answer(str(self.repo), earlier["unit"], "spec.md", 1, "Từ Type.", ""))
+
+    def _stream(self, reply: str, obj: dict | None):
+        class Jera:
+            def in_flight(self):
+                return []
+
+            async def stream(self, cwd, text, session_id=None, max_turns=1, **kw):
+                yield ("chunk", reply)
+                if obj is not None:
+                    await submits(kw, **obj)
+                yield ("done", {"session_id": "s1", "cost": {"cost_usd": 0.02, "turns": 1}})
+
+        self.service.sessions = Jera()
+
+    def _verdict(self, n: int, **over) -> dict:
+        return {"artifact": "spec.md", "n": n, "verdict": "answer", "category": "other", "text": f"Trả lời {n}.",
+                "reason": "", "cites": [self.cite], **over}
+
+    def _answers(self) -> list[tuple]:
+        with self.service._unit_meta().data.connect() as conn:
+            return [tuple(r) for r in conn.execute(
+                "SELECT ref, answered_by, via, authority FROM unit_answers WHERE unit = ? ORDER BY id", (self.unit,))]
+
+    def _end(self, stage: str, unit: str) -> dict:
+        from coscc.runlog.journal import Journal
+
+        journal = Journal(Path(self.config.working_dir), Path(self.config.data_dir))
+        key = self.service._journal_key(str(self.repo))
+        return [r for r in journal.records(key, unit, kind="end") if r.get("stage") == stage][-1]
+
+
+class Place5(_Jera):
+    """§6, 5: "Jera's JSON becomes `### Câu N` answers." Now Jera hands its verdicts back
+    through `submit`, guard `run-submitted` ends the run, and every answer it writes carries
+    `authority: agent` (R8)."""
+
+    def test_the_answers_are_the_objects_and_an_agents(self):
+        prose = "```json\n" + json.dumps([self._verdict(1), self._verdict(2)]) + "\n```"
+        self._stream(prose, {"verdicts": [self._verdict(1), self._verdict(2, verdict="needs-person", reason="r")]})
+        done = asyncio.run(self.service.precedent(str(self.repo), self.unit))
+        self.assertEqual(done["outcome"], "done")
+        self.assertEqual(self._answers(), [("1", "Jera", "precedent", "agent")])
+        self.assertEqual(self._end("precedent", self.unit)["guard"], guards.guard("run-submitted").id)
+
+    def test_a_json_block_in_the_reply_with_no_object_writes_nothing(self):
+        prose = "```json\n" + json.dumps([self._verdict(1), self._verdict(2)]) + "\n```"
+        self._stream(prose, None)
+        done = asyncio.run(self.service.precedent(str(self.repo), self.unit))
+        self.assertEqual(done["outcome"], "failed")
+        self.assertIn("no-submission", done["detail"])
+        self.assertEqual(self._answers(), [])
+        end = self._end("precedent", self.unit)
+        self.assertEqual((end["outcome"], end["guard"]), ("failed", "run-submitted"))
+
+    def test_no_guard_takes_jeras_answer_for_a_persons(self):
+        """R8, R14: guard `skip-decision` reads `authority`, and Jera's never opens it."""
+        self._stream("", {"verdicts": [self._verdict(1), self._verdict(2)]})
+        asyncio.run(self.service.precedent(str(self.repo), self.unit))
+        authorities = {a for _, _, _, a in self._answers()}
+        self.assertEqual(authorities, {"agent"})
+        for a in authorities:
+            self.assertFalse(guards.guard("skip-decision").check({"authority": a}).open)
+        # A person's answer, by the same road, is a person's.
+        asyncio.run(self.service.answer(str(self.repo), self.unit, "spec.md", 1, "Của tôi.", "Jera's friend"))
+        self.assertEqual(self._answers()[-1][3], "person")
+
+
+class Place6(_Jera):
+    """§6, 6: "The estimate's JSON becomes backlog rows." Now the estimate is the object the
+    session hands back through `submit`, guard `run-submitted` ends the run, and every row it
+    writes carries `authority: agent` (R9)."""
+
+    GOAL = "bớt can thiệp tay"
+
+    def _estimate(self, prose: str, obj: dict | None) -> dict:
+        self._stream(prose, obj)
+
+        async def go():
+            return [item async for item in self.service.propose_estimates(str(self.repo))]
+
+        return asyncio.run(go())[-1][1]["estimate"]
+
+    def _rows(self) -> list[dict]:
+        from coscc.runlog.journal import Journal
+
+        journal = Journal(Path(self.config.working_dir), Path(self.config.data_dir))
+        return journal.records(self.service._journal_key(str(self.repo)), kind="estimate-value")
+
+    def _one(self, value: int) -> dict:
+        return {"unit": self.unit, "value": value, "effort": "S", "similar": [], "basis": f"{self.GOAL}: x",
+                "relations": []}
+
+    def test_the_rows_are_the_objects_and_an_agents(self):
+        prose = "```json\n" + json.dumps({"units": [self._one(5)]}) + "\n```"
+        done = self._estimate(prose, {"units": [self._one(2)]})
+        self.assertEqual(done["outcome"], "done")
+        self.assertEqual([(r["unit"], r["value"], r["authority"]) for r in self._rows()], [(self.unit, 2, "agent")])
+        self.assertEqual(self._end("estimate", "")["guard"], "run-submitted")
+
+    def test_a_json_block_in_the_reply_with_no_object_writes_nothing(self):
+        done = self._estimate("```json\n" + json.dumps({"units": [self._one(5)]}) + "\n```", None)
+        self.assertEqual(done["outcome"], "failed")
+        self.assertIn("no-submission", done["detail"])
+        self.assertEqual(self._rows(), [])
+
+
 class Place8(unittest.TestCase):
     """§6, 8: "The autopilot matches English substrings of `cos.mjs`'s messages." Now `next`
     and the gate hand out codes from `guards.REASONS` beside their words, and the autopilot
