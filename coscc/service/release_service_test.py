@@ -254,6 +254,21 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.assertEqual(self.block()["state"], "published")
         self.assertEqual([r["outcome"] for r in self.records()], ["opened", "refused", "refused", "tagged"])
 
+    def test_a_refused_push_leaves_no_branch_and_the_next_prepare_runs(self):
+        # Review F2: the local branch stayed at the release commit and blocked every retry.
+        hook = self.fx.remote / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\necho 'no credentials here' >&2\nexit 1\n", encoding="utf-8")
+        hook.chmod(0o755)
+        rec = press(self.service, "prepare", self.fx.cwd, "0.2.0")
+        self.assertEqual(rec["outcome"], "failed")
+        self.assertIn("no credentials here", rec["detail"])
+        self.assertEqual(git(self.fx.workspace, "branch", "--list", "chore/release-0-2-0"), "")
+        self.assertFalse(self.service._release_tree_path(self.fx.cwd).exists())
+        hook.unlink()
+        rec = press(self.service, "prepare", self.fx.cwd, "0.2.0")
+        self.assertEqual(rec["outcome"], "opened", rec.get("detail"))
+        self.assertEqual(self.fx.remote_ref("refs/heads/chore/release-0-2-0"), rec["head"])
+
     def test_a_push_after_the_checks_passed_is_not_merged(self):
         # Review F1: the merge used to read the pull request again and pin whatever head it found.
         opened = press(self.service, "prepare", self.fx.cwd, "0.2.0")["head"]

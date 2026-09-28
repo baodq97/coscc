@@ -271,6 +271,7 @@ class ReleaseMixin:
         journal, key, root, facts, tree, version, write = await self._release_press(cwd, "prepare", version)
         branch = release.branch_name(version)
         cut = False
+        head = ""
         try:
             code, said = await release.cos(tree, "check-branch", branch)
             if code != 0:
@@ -303,10 +304,16 @@ class ReleaseMixin:
             rec = write("failed", detail=str(e))
             try:
                 await self._release_tree_gone(cwd, root, tree)
-                if cut:
-                    await gitops.delete_merged_branch(root, branch, facts["origin_sha"])
             except GitError:
                 pass
+            if cut:
+                # Only where the app left it: at `origin/main`, or at its own commit that
+                # changes the version and nothing else. Left behind, the next Prepare of
+                # this version stops at `create_branch` (review F2).
+                try:
+                    await gitops.delete_merged_branch(root, branch, head or facts["origin_sha"])
+                except GitError:
+                    pass
             yield ("done", {"release": rec})
         finally:
             self._releasing.discard(key)
