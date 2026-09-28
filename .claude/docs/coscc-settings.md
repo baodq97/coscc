@@ -23,6 +23,14 @@ Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST
   shown on Settings as `impl:novel`), so one press can spend twice as much. `max` is refused
   from `models.json` and taken from an override, so anyone holding the password can set it.
   The password is what stands in front; `COS_HOST=127.0.0.1` still narrows who can try it.
+- **`POST /api/settings/agents` renames any agent, for whoever holds the password.** Since
+  `0036`, `{key, name?, glyph?, meaning?, role?}` sets fields of an `agent:<key>` row in
+  `prefs` over `coscc/agent/agents.json`; `""` clears one field, `{key}` alone the row. The
+  name goes into every prompt's `# Who you are`, the `Author:` a session writes, the
+  `Co-authored-by:` trailer of a preset session's commits and the review comment's first line;
+  a change applies from the next step. A wrong field is a 400 and nothing is written; every
+  change is a `setting` record with `old` and `new`. A name opens and closes nothing (spec
+  C6), and a mid-unit rename leaves one unit under two names (C2).
 - **With `COS_EFFORT_TRIAL` on, Settings does not show the effort a routine `impl` runs at.**
   Since `0123`, a unit whose name hashes to the `trial` arm (`coscc/knowledge/efforttrial.py`) runs a
   routine `impl` at `high`, between an override and `models.json`, while the `impl` row

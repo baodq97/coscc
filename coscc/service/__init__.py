@@ -86,6 +86,9 @@ from coscc.service.models import (
     _positive_number,
     ModelsMixin,
 )
+from coscc.service.agents import (
+    AgentsMixin,
+)
 from coscc.service.workspaces import (
     WorkspacesMixin,
 )
@@ -129,6 +132,7 @@ class Service(
     BacklogMixin,
     SessionsMixin,
     ModelsMixin,
+    AgentsMixin,
     AutopilotMixin,
     ActivityMixin,
     NoticesMixin,

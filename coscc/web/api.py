@@ -163,6 +163,31 @@ def build(config: Config | None = None) -> FastAPI:
         except Invalid as e:
             return _bad(str(e))
 
+    @api.get("/api/settings/agents")
+    async def get_agents() -> Any:
+        """`0036`. Every agent row, each field with where it came from, and what was wrong."""
+        return service.agent_table()
+
+    @api.post("/api/settings/agents")
+    async def set_agent(request: Request) -> Any:
+        """`0036` R2. `{key, name?, glyph?, meaning?, role?}` sets those fields' override, `""`
+        removes one field's, and `{key}` alone removes the row's. A wrong field is a 400 and
+        nothing is written.
+
+        Behind the password like every route here: whoever holds it or a live session can
+        rename any agent. The trace is a `setting` record in the run log.
+        """
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return _bad("body must be JSON")
+        if not isinstance(body, dict):
+            return _bad("body must be a JSON object")
+        try:
+            return service.set_agent(body.get("key"), {k: v for k, v in body.items() if k != "key"})
+        except Invalid as e:
+            return _bad(str(e))
+
     @api.get("/api/settings/autopilot")
     async def get_autopilot(request: Request) -> Any:
         """`0043`. One workspace's autopilot switches, `max_parallel`, and the app's daily cap."""

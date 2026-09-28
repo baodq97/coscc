@@ -375,12 +375,15 @@ class BoardMixin:
         """
         self._workspace_or_refuse(cwd)
         key = self._journal_key(cwd)
+        # `0036` R5: through the one lookup, so an override shows here too. Read once per call.
+        overrides = self._agent_overrides()[0]
         running: dict[str, list[dict[str, Any]]] = {}
         for entry in self._running.values():
             if entry["workspace"] != key:
                 continue
             kind = entry["kind"]
-            agent = None if kind == "rebase" else agents.agent_for(entry["stage"])
+            row = None if kind == "rebase" else agents.agent_for(entry["stage"], overrides)
+            agent = {"glyph": row["glyph"], "name": row["name"]} if row else None
             running.setdefault(entry["unit"], []).append({
                 "kind": kind, "stage": entry["stage"], "agent": agent,
                 "started": entry["started"], "turns": entry["turns"], "cost_usd": entry["cost_usd"],
@@ -401,7 +404,8 @@ class BoardMixin:
             if unit in running:
                 continue
             rows = [
-                {"stage": r["stage"], "started": r["started"]}
+                # `0036` R7: the name the `start` carries, or its stage's for an older one.
+                {"stage": r["stage"], "started": r["started"], "agent": agents.of_record(r, overrides)}
                 for r in found["open"]
                 if r.get("started") and r["started"] == found["last_start"]
                 and _younger_than(r["started"], oldest)

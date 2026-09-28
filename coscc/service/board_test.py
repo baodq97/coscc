@@ -142,7 +142,22 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
         rec = self.journal.started(self.key, "0009_x", "plan", "manual")
         got = self.service.running(self.cwd)
         self.assertEqual(got["running"], {})
-        self.assertEqual(got["unknown_end"], {"0009_x": [{"stage": "plan", "started": rec["at"]}]})
+        # `0036` R7: a start with no `agent` is named from its stage.
+        self.assertEqual(
+            got["unknown_end"], {"0009_x": [{"stage": "plan", "started": rec["at"], "agent": "Raidho"}]}
+        )
+
+    def test_an_orphan_start_keeps_the_name_it_was_written_with(self):
+        self.journal.started(self.key, "0009_x", "plan", "manual", agent="Wayfarer")
+        [row] = self.service.running(self.cwd)["unknown_end"]["0009_x"]
+        self.assertEqual(row["agent"], "Wayfarer")
+
+    def test_an_override_reaches_the_running_line(self):
+        # `0036` R5: the running line reads the one lookup, overrides included.
+        self.service.set_agent("impl", {"name": "Builder", "glyph": "ᛒ"})
+        self.service._mark_running(self.key, "0009_x", "impl", "step")
+        [row] = self.service.running(self.cwd)["running"]["0009_x"]
+        self.assertEqual(row["agent"], {"glyph": "ᛒ", "name": "Builder"})
 
     def test_a_later_start_retires_the_orphan(self):
         self.journal.append({
