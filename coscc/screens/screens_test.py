@@ -130,6 +130,42 @@ class ThePage(unittest.TestCase):
         self.assertIn("waiting on you", dialog)
         self.assertIn("unit-badges", dialog)
 
+    def test_0133_a_card_is_one_line_with_its_number_title_and_state_word(self):
+        """`0133` R3, R4, R7."""
+        from coscc.screens.common import P
+
+        card = _render(screens._unit_card(P.cards[0])).replace('\\"', '"')
+        self.assertRegex(card, r"data-state|dataState")
+        self.assertRegex(card, r"text-overflow|textOverflow")
+        self.assertIn('["state_label"]', card)
+        for gone in ("Next: ", "waiting on you", "main: ", "outcome: ", "waits for ",
+                     '["relations_text"]', '["live"]'):
+            self.assertNotIn(gone, card)
+
+    def test_0133_the_lanes_come_from_the_board_read_and_no_screen_names_a_stage(self):
+        """`0133` R8. With `StudioStateStages` (`state_test.py`), which builds the board's
+        counts on two made-up stages."""
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parents[2]
+        mjs = (repo / ".claude" / "scripts" / "cos.mjs").read_text(encoding="utf-8")
+        stages = re.findall(r"name: '(\w+)'", mjs.split("const STAGES = [", 1)[1].split("\n]", 1)[0])
+        self.assertEqual(len(stages), 9)
+        named = re.compile(r"""["'](%s)["']""" % "|".join(stages))
+        found = []
+        for path in sorted((repo / "coscc" / "screens").glob("*.py")):
+            if path.name.endswith("_test.py"):
+                continue
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                # A screen's name, not a stage's.
+                if named.search(line) and '("idea", _idea_screen())' not in line:
+                    found.append(f"{path.name}:{n}: {line.strip()}")
+        self.assertEqual(found, [])
+        board = _render(screens._board())
+        self.assertRegex(board, r'"iterable": "[\w.]*\.stages_rx_state_"')
+        self.assertIn("column-", board)
+        self.assertIn("lane-label", board)
+
     def test_f2_a_grants_tools_are_a_list_behind_details(self):
         settings = _render(screens._settings())
         self.assertNotIn("tools: ", settings)
