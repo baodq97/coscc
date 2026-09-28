@@ -615,6 +615,12 @@ class Runner:
                 "suspend_id": resume.get("suspend_id"),
                 **({"cost_unknown": True} if resume.get("cost_unknown") else {}),
             })
+        # Review round 1, F1. The budget a closing or repair turn is given. The CLI compares it
+        # only after the turn has run, so on one turn it bounds nothing; one already spent is
+        # not passed at all, since `0` reaches `_options` as no ceiling and a negative one was
+        # never measured. `turn_spent` is what that turn would then have ended with.
+        turn_spent = budget_left is not None and budget_left <= 0
+        turn_budget = None if turn_spent else budget_left
         # The `done` of the first call on the resumed session, which fills that segment in.
         segment_done: dict[str, Any] | None = None
         # Whether the `opening` or `closing` turn the update paused was reached again.
@@ -678,8 +684,10 @@ class Runner:
                 before = await _tree_state(watch) if watch else None
                 if before is not None:
                     owner["before"] = list(before)
-            if used_up:
-                # R10: nothing left to resume with, so no session is opened.
+            if used_up and turn_kind not in ("opening", "closing"):
+                # R10: nothing left to resume with, so no session is opened. Not for a closing
+                # or repair turn: that is one turn of its own, bounded by its timeout, and a
+                # closing turn exists only because the main reply used a ceiling up.
                 terminal = used_up
                 raise RunError("the ceiling was used up before the update, so the step was not resumed")
             # `0138`: an `opening` or `closing` turn taken up again has its main reply already.
@@ -891,7 +899,7 @@ class Runner:
                                 self.sessions, cwd,
                                 str(resume.get("message") or "") if take_up else closing_prompt(head, number),
                                 session_id, denials,
-                                max_budget_usd=budget_left,
+                                max_budget_usd=turn_budget,
                                 **({"workspace": workspace} if cwd != workspace else {}),
                                 **({"model": model} if model is not None else {}),
                                 **({"effort": effort} if effort is not None else {}),
@@ -953,6 +961,10 @@ class Runner:
                         opening, said = "none", f"{artifact}: the opening was not repaired: the session has no id"
                     elif not steps.seal(running):
                         opening = "withheld"
+                    elif turn_spent:
+                        # Review round 1, F1: the turn would stop at the ceiling, and be refused.
+                        turn_taken = turn_kind == "opening"
+                        opening, said = "none", f"{artifact}: the repair turn's reply was not written: it stopped at the ceiling: error_max_budget_usd"
                     else:
                         take_up = turn_kind == "opening"
                         reply, again, done = await asyncio.wait_for(
@@ -960,7 +972,7 @@ class Runner:
                                 self.sessions, cwd,
                                 str(resume.get("message") or "") if take_up else opening_prompt(artifact, unopened.problem),
                                 session_id, denials,
-                                max_budget_usd=budget_left,
+                                max_budget_usd=turn_budget,
                                 **({"workspace": workspace} if cwd != workspace else {}),
                                 **({"model": model} if model is not None else {}),
                                 **({"effort": effort} if effort is not None else {}),

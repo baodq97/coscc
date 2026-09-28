@@ -1183,20 +1183,26 @@ class AReviewThatRunsOutGetsAClosingTurn(unittest.TestCase):
         sessions = self.Closes()
         sessions.calls.append({"text": "the main reply, before the update"})
 
+        # Review round 1, F1: a closing turn comes only after a ceiling, so its row has used
+        # both of them up, and the turn is taken up all the same, with no spent budget passed.
         def resume(head):
             return {"suspend_id": "c1", "session_id": "s1", "safe_uuid": "u7",
                     "message": f"MSG Reviewed: {head}. Verdict: incomplete", "pieces": ["Tôi hết lượt."],
-                    "api_calls": 0, "spent_usd": 1.0,
+                    "api_calls": 500, "spent_usd": 50.0,
                     "owner": {"kind": "closing", "start_at": "t0", "head": head, "main_terminal": "max_turns",
                               "main_cost": {"turns": 41, "cost_usd": 1.0}}}
 
         out, [end], review, head, _ = self.run_review(sessions, resume=resume)
         [closing] = sessions.calls[1:]
         self.assertEqual((closing["session_id"], closing["resume_at"]), ("s1", "u7"))
+        self.assertEqual(closing["max_turns"], 1)
+        self.assertIsNone(closing["max_budget_usd"])
         self.assertTrue(closing["text"].startswith("MSG "))
         self.assertIn(f"## Round 2\n\nReviewed: {head}. Verdict: incomplete.", review)
         self.assertEqual((end["outcome"], end["review_md"]), ("exhausted", "incomplete"))
         self.assertNotIn("was not reached again", end["detail"])
+        self.assertNotIn("not resumed", end["detail"])
+        self.assertIn("review.md: Round 2 incomplete, written by the closing turn", end["detail"])
 
     def test_the_closing_turn_denies_every_tool_and_counts_it(self):
         sessions = self.Closes()
@@ -1321,7 +1327,7 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
             yield ("done", {"session_id": self.session, "terminal_reason": self.repair_terminal,
                             "cost": {"turns": 1, "cost_usd": 3.1}})
 
-    def go(self, sessions, stage="plan", existing=None, act=None, running=True):
+    def go(self, sessions, stage="plan", existing=None, act=None, running=True, resume=None):
         from coscc.agent import steps
 
         with tempfile.TemporaryDirectory() as d:
@@ -1341,6 +1347,7 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
                         workspace=d, directory=directory, journal_key=d, unit=UNIT, stage=stage,
                         artifact=f"{stage}.md", stages=STAGES, mode="autonomous",
                         **({"running": handle} if handle is not None else {}),
+                        **({"resume": resume} if resume is not None else {}),
                     ):
                         out.append(item)
 
@@ -1414,6 +1421,38 @@ class AReplyWithoutItsOpeningGetsOneRepairTurn(unittest.TestCase):
             "--- plan.md: the repair turn's reply was not written: it stopped at the ceiling: error_max_budget_usd ---",
             end["detail"],
         )
+
+    def _paused_repair(self, spent_usd):
+        # `0138`: an update paused the repair turn; its main reply is the pieces before it.
+        return {"suspend_id": "o1", "session_id": "s1", "safe_uuid": "u3", "message": "MSG go on",
+                "pieces": [UNOPENED_PLAN], "api_calls": 500, "spent_usd": spent_usd,
+                "owner": {"kind": "opening", "start_at": "t0", "main_terminal": "success",
+                          "main_cost": {"turns": 12, "cost_usd": 2.0}}}
+
+    def test_a_resumed_repair_turn_resumes_that_turn_past_the_turns_used(self):
+        # Review round 1, F1: the main reply's turns are no ceiling on the one repair turn.
+        sessions = self.Repairs()
+        sessions.calls.append({"text": "the main reply, before the update"})
+        _, [end], _, written, _ = self.go(sessions, resume=self._paused_repair(1.0))
+        [repair] = sessions.calls[1:]
+        self.assertEqual((repair["session_id"], repair["resume_at"], repair["text"]), ("s1", "u3", "MSG go on"))
+        self.assertEqual(repair["max_turns"], 1)
+        self.assertGreater(repair["max_budget_usd"], 0)
+        self.assertTrue(written.decode("utf-8").startswith(REPAIRED_PLAN))
+        self.assertEqual((end["outcome"], end["opening"]), ("done", "repaired"))
+
+    def test_a_resumed_repair_turn_with_its_budget_spent_is_not_opened(self):
+        # Review round 1, F1: it would stop at the ceiling and be refused; a spent budget is
+        # never handed to the CLI as `0` or less.
+        sessions = self.Repairs()
+        sessions.calls.append({"text": "the main reply, before the update"})
+        _, [end], _, written, _ = self.go(sessions, resume=self._paused_repair(50.0))
+        self.assertEqual(len(sessions.calls), 1)
+        self.assertIsNone(written)
+        self.assertEqual((end["outcome"], end["opening"]), ("failed", "none"))
+        self.assertIn("it stopped at the ceiling: error_max_budget_usd", end["detail"])
+        self.assertNotIn("not resumed", end["detail"])
+        self.assertNotIn("was not reached again", end["detail"])
 
     def test_a_repaired_reply_is_written_and_the_step_ends_done(self):
         section = "## Answers\n\n### Câu 1\nAnswered by: Lan. Date: 2026-09-26. Via: product.\n\ncó\n"
