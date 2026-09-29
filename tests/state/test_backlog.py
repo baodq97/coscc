@@ -175,11 +175,15 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
             mock.patch.object(
                 page.SERVICE, "running", lambda cwd: {"running": {}, "unknown_end": {}}
             ),
-            mock.patch.object(page.SERVICE, "branch_here", branch_here),
+            mock.patch.object(page.SERVICE.backlog, "branch_here", branch_here),
             mock.patch.object(page.SERVICE, "board", read_board),
-            mock.patch.object(page.SERVICE, "sessions_for", lambda cwd, limit: {"sessions": []}),
             mock.patch.object(
-                page.SERVICE, "activity_and_usage", mock.Mock(side_effect=page.Invalid("not here"))
+                page.SERVICE.chat, "sessions_for", lambda cwd, limit: {"sessions": []}
+            ),
+            mock.patch.object(
+                page.SERVICE.activity,
+                "activity_and_usage",
+                mock.Mock(side_effect=page.Invalid("not here")),
             ),
         ):
             cards, unestimated = asyncio.run(go())

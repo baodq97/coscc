@@ -32,9 +32,9 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(Updating):
             await self.s.integrate(self.tmp.name, "0001_a").__anext__()
         with self.assertRaises(Updating):
-            self.s.check_send(self.tmp.name, "hi")
+            self.s.chat.check_send(self.tmp.name, "hi")
         self.s.updater.window = False
-        self.s.check_send(self.tmp.name, "hi")
+        self.s.chat.check_send(self.tmp.name, "hi")
 
     async def test_apply_waits_only_for_a_mechanical_integration_or_a_retake(self):
         # A step, an estimate and a chat turn are paused, not waited for.

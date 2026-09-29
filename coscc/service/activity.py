@@ -1,7 +1,4 @@
-"""Activity, usage and cost, an artifact's text, settings and preferences.
-
-A mixin with no fields, inherited by `Service`.
-"""
+"""Activity, usage and cost, an artifact's text, settings and preferences."""
 
 from __future__ import annotations
 
@@ -16,10 +13,18 @@ from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, PROSE_STAGES, grant_for_s
 from coscc.agent import labels
 from coscc.service.common import Invalid, STAGE_FILES, consequence
 
+from coscc.config import Config
+
+from coscc.service.workspaces import Workspaces
+
 log = logging.getLogger(__name__)
 
 
-class ActivityMixin:
+class Activity:
+    def __init__(self, config: Config, ws: Workspaces) -> None:
+        self.config = config
+        self.ws = ws
+
     # -- activity, usage and settings ---------------------------------------
 
     def _records_or_none(self, cwd: str) -> list[dict[str, Any]] | None:

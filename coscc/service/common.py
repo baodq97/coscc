@@ -12,6 +12,9 @@ from typing import Any
 from coscc.agent import steps as steps_mod
 from coscc.data import now as _now
 from coscc.git import gitops
+from coscc.github import integrate
+from coscc.runlog.journal import BadRecord, Journal
+from coscc.data import Busy
 
 
 # The eight stage names, in stage order. Repeated here because the board read is async and
@@ -88,6 +91,42 @@ class Holds:
             "cost_usd": None,
         }
         return rid
+
+
+def log_setting(journal: Journal | None, key: str, old: Any, new: Any) -> None:
+    """One `setting` record of a changed setting, its old and new value."""
+    if journal is None:
+        return
+    try:
+        journal.append(
+            {
+                "kind": "setting",
+                "workspace": "",
+                "unit": "",
+                "stage": "",
+                "name": key,
+                "old": old,
+                "new": new,
+            }
+        )
+    except (BadRecord, Busy) as e:
+        raise Invalid(f"the setting was saved but not logged: {e}") from e
+
+
+def open_prs_once(cwd: str):
+    """`integrate.open_prs` for `cwd`, asked at most once however often it is awaited;
+    `gh`'s error as a string."""
+    held: list[Any] = []
+
+    async def prs() -> list[dict[str, Any]] | str:
+        if not held:
+            try:
+                held.append(await integrate.open_prs(str(Path(cwd).expanduser().resolve())))
+            except integrate.IntegrateError as e:
+                held.append(str(e))
+        return held[0]
+
+    return prs
 
 
 class Updating(Invalid):

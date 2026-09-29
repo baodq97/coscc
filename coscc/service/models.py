@@ -1,9 +1,8 @@
-"""Which model and effort each stage runs on, and the autopilot's settings. A mixin with no fields."""
+"""Which model and effort each stage runs on."""
 
 from __future__ import annotations
 
 import logging
-import math
 from pathlib import Path
 from typing import Any
 
@@ -11,56 +10,47 @@ from coscc.units import autopilot
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable
 from coscc.data import Data
-from coscc.runlog.journal import BadRecord, Journal
-from coscc.data import Busy
+from coscc.runlog.journal import Journal
 from coscc.agent import labels, models, modeltrial
 from coscc.github import prmachine
-from coscc.config import LOOPBACK
 from coscc.runner import SESSIONS_PER_STEP
-from coscc.service.common import Invalid
+from coscc.service.common import Invalid, log_setting
+
+from coscc.config import Config
+
+from coscc.service.workspaces import Workspaces
 
 log = logging.getLogger(__name__)
 
 
-def _whole_at_least_one(value: Any) -> bool:
-    """`max_parallel`: an int, not a bool, 1 or more."""
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+class Models:
+    def __init__(self, config: Config, ws: Workspaces) -> None:
+        self.config = config
+        self.ws = ws
 
-
-def _positive_number(value: Any) -> bool:
-    """`daily_cap_usd`: a finite number above 0, not a bool."""
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-        and value > 0
-    )
-
-
-class ModelsMixin:
     # -- which model each stage runs on --------------------------------------
     #
     # The resolving is `coscc/agent/models.py`; this gathers its inputs: the stage list from
     # `cos.mjs`, the overrides from `prefs`, `COS_MODEL` from `Config`.
 
-    def _model_overrides(self) -> tuple[dict[str, str], list[str]]:
+    def model_overrides(self) -> tuple[dict[str, str], list[str]]:
         return models.overrides_from(Data(self.config.data_dir).pref_rows(models.PREFIX))
 
-    def _effort_overrides(self) -> tuple[dict[str, str], list[str]]:
+    def effort_overrides(self) -> tuple[dict[str, str], list[str]]:
         return models.overrides_from(
             Data(self.config.data_dir).pref_rows(models.EFFORT_PREFIX), models.EFFORT_PREFIX
         )
 
-    def _model_for(self, name: str) -> tuple[str | None, str]:
+    def model_for(self, name: str) -> tuple[str | None, str]:
         """`(model, source)` for chat, and for Gebo on `impl`'s base row. Never raises on bad data.
 
         A board step goes through `_stage_config` instead, which also reads the label.
         """
-        overrides, _ = self._model_overrides()
+        overrides, _ = self.model_overrides()
         defaults, _ = models.load_defaults()
         return models.resolve(name, None, overrides, {}, defaults, self.config.model)[:2]
 
-    def _stage_config(
+    def stage_config(
         self, stage: str, stages: list[str], directory: Path, journal: Journal, key: str, unit: str
     ) -> dict[str, Any]:
         """The label a step runs under, the model and effort it resolves to, and for `impl`
@@ -86,8 +76,8 @@ class ModelsMixin:
         model, model_source, effort, effort_source = models.resolve(
             stage,
             label,
-            self._model_overrides()[0],
-            self._effort_overrides()[0],
+            self.model_overrides()[0],
+            self.effort_overrides()[0],
             models.load_defaults()[0],
             self.config.model,
             **trial_kw,
@@ -110,7 +100,7 @@ class ModelsMixin:
             ),
         }
 
-    async def _ci_red(self, cwd: str, unit: str, repo: str) -> bool | None:
+    async def ci_red(self, cwd: str, unit: str, repo: str) -> bool | None:
         """Whether `cos.mjs next` sends `unit` back to `impl` because CI is red, read with
         `autopilot.is_ci_red`; `None` when it could not be asked. Never raises."""
         try:
@@ -123,7 +113,7 @@ class ModelsMixin:
             log.exception("whether the CI of %s is red could not be read", unit)
             return None
 
-    async def _findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, Any]:
+    async def findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, Any]:
         """The findings in the rounds a `review` step added, off the board (`parseReview`'s
         count, read the way `_post_new_rounds` reads it), and those rounds' verdicts."""
         data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
@@ -145,8 +135,8 @@ class ModelsMixin:
             stages = [s for s in await board_reader.stages() if s not in prmachine.STAGES]
         except Unavailable as e:
             return {"rows": [], "problems": [str(e)], "cos_model": self.config.model}
-        overrides, bad_rows = self._model_overrides()
-        efforts, bad_efforts = self._effort_overrides()
+        overrides, bad_rows = self.model_overrides()
+        efforts, bad_efforts = self.effort_overrides()
         defaults, bad_defaults = models.load_defaults()
         table = models.table(
             stages, overrides, efforts, defaults, self.config.model, SESSIONS_PER_STEP
@@ -172,24 +162,6 @@ class ModelsMixin:
             raise Invalid(f"no such stage: {name} (use one of {', '.join(allowed)})")
         return name
 
-    def _log_setting(self, key: str, old: Any, new: Any) -> None:
-        journal = self.ws.journal()
-        if journal is not None:
-            try:
-                journal.append(
-                    {
-                        "kind": "setting",
-                        "workspace": "",
-                        "unit": "",
-                        "stage": "",
-                        "name": key,
-                        "old": old,
-                        "new": new,
-                    }
-                )
-            except (BadRecord, Busy) as e:
-                raise Invalid(f"the setting was saved but not logged: {e}") from e
-
     async def set_stage_model(self, name: Any, model: Any = None) -> dict[str, Any]:
         """Set one row's model, or remove the override when `model` is None.
 
@@ -205,12 +177,12 @@ class ModelsMixin:
 
         data = Data(self.config.data_dir)
         key = models.PREFIX + name
-        old = self._model_overrides()[0].get(name)
+        old = self.model_overrides()[0].get(name)
         if model is None:
             data.delete_pref(key)
         else:
             data.set_pref(key, model)
-        self._log_setting(key, old, model)
+        log_setting(self.ws.journal(), key, old, model)
         return await self.stage_models()
 
     async def set_stage_effort(self, name: Any, effort: Any = None) -> dict[str, Any]:
@@ -226,94 +198,10 @@ class ModelsMixin:
 
         data = Data(self.config.data_dir)
         key = models.EFFORT_PREFIX + name
-        old = self._effort_overrides()[0].get(name)
+        old = self.effort_overrides()[0].get(name)
         if effort is None:
             data.delete_pref(key)
         else:
             data.set_pref(key, effort)
-        self._log_setting(key, old, effort)
+        log_setting(self.ws.journal(), key, old, effort)
         return await self.stage_models()
-
-    # -- the autopilot's settings ---------------------------------------------
-    #
-    # In the data root's `prefs`, not the workspace's repository. Three per workspace, keyed by
-    # the journal key; the cap is one for the whole app, since the quota is the machine's account.
-    # Not in `PREFERENCES`: those are the page's.
-
-    AUTOPILOT_SETTINGS = ("autopilot", "autopilot_may_ship", "max_parallel", "daily_cap_usd")
-    CAP_PREF = "autopilot_daily_cap_usd"
-
-    def _autopilot_pref(self, name: str, key: str) -> str:
-        return self.CAP_PREF if name == "daily_cap_usd" else f"{name}:{key}"
-
-    def _autopilot_values(self, key: str) -> dict[str, Any]:
-        """The four values in effect. A hand-edited value of the wrong type reads as its
-        default, and the default of both switches is off."""
-        data = Data(self.config.data_dir)
-
-        def read(name: str, ok: Any, default: Any) -> Any:
-            value = data.pref(self._autopilot_pref(name, key), default)
-            return value if ok(value) else default
-
-        return {
-            "autopilot": read("autopilot", lambda v: v is True or v is False, False),
-            "autopilot_may_ship": read(
-                "autopilot_may_ship", lambda v: v is True or v is False, False
-            ),
-            "max_parallel": read(
-                "max_parallel", _whole_at_least_one, autopilot.DEFAULT_MAX_PARALLEL
-            ),
-            "daily_cap_usd": float(
-                read("daily_cap_usd", _positive_number, autopilot.DEFAULT_DAILY_CAP_USD)
-            ),
-        }
-
-    def _off_loopback(self) -> str:
-        """Why the autopilot may not run on this bind, or `""`."""
-        if self.config.host in LOOPBACK:
-            return ""
-        # No variable name here: the page shows it verbatim.
-        return f"The app listens on {self.config.host}, beyond this machine; restart it on 127.0.0.1 to use the autopilot."
-
-    def autopilot_settings(self, cwd: str) -> dict[str, Any]:
-        """The four settings of one workspace, and whether the bind lets the autopilot run."""
-        self.ws.check(cwd)
-        return {
-            "cwd": cwd,
-            **self._autopilot_values(self.ws.key(cwd)),
-            "refused_because": self._off_loopback(),
-        }
-
-    def set_autopilot(self, cwd: str, name: Any, value: Any) -> dict[str, Any]:
-        """Set one of the four. A wrong value is refused and nothing is written.
-
-        Behind the password like every route: whoever holds it can turn the autopilot on,
-        raise the cap, or let it ship. The trace is the `setting` record. Turning it on is
-        refused while the app listens beyond loopback.
-        """
-        self.ws.check(cwd)
-        if name not in self.AUTOPILOT_SETTINGS:
-            raise Invalid(
-                f"no such setting: {name} (use one of {', '.join(self.AUTOPILOT_SETTINGS)})"
-            )
-        if name in ("autopilot", "autopilot_may_ship"):
-            if value is not True and value is not False:
-                raise Invalid(f"{name} must be true or false")
-        elif name == "max_parallel":
-            if not _whole_at_least_one(value):
-                raise Invalid("max_parallel must be a whole number, 1 or more")
-        elif not _positive_number(value):
-            raise Invalid("daily_cap_usd must be a number above 0")
-        if name == "autopilot" and value and self._off_loopback():
-            raise Invalid(f"the autopilot was not turned on: {self._off_loopback()}")
-        key = self.ws.key(cwd)
-        old = self._autopilot_values(key)[name]
-        stored = float(value) if name == "daily_cap_usd" else value
-        Data(self.config.data_dir).set_pref(self._autopilot_pref(name, key), stored)
-        self._log_setting(self._autopilot_pref(name, key), old, stored)
-        if name == "autopilot":
-            if value:
-                self.autopilot_start(cwd)
-            else:
-                self.autopilot_stop(key)
-        return self.autopilot_settings(cwd)

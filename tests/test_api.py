@@ -19,6 +19,7 @@ import httpx
 from coscc import update
 from coscc.api import build
 from coscc.config import Config
+from tests.service.test_service import use_sessions
 
 
 def _tmp_config(test: unittest.TestCase) -> Config:
@@ -1805,7 +1806,7 @@ class TheBacklogOverHttp(unittest.IsolatedAsyncioTestCase):
                 yield ("chunk", "not json")
                 yield ("done", {"session_id": "s", "cost": {"cost_usd": 0.01}})
 
-        self.app.state.service.sessions = Replies()
+        use_sessions(self.app.state.service, Replies())
         got = await self.client.post("/api/backlog/propose", json={"cwd": self.cwd})
         self.assertEqual(got.status_code, 200)
         last = json.loads(got.text.strip().splitlines()[-1])
@@ -2137,7 +2138,7 @@ class OneFeatureOverTwoWorkspaces(unittest.IsolatedAsyncioTestCase):
             place.href(place.Place("unit", "api", back.json()["unit"])),
             f"/unit?ws=api&id={back.json()['unit']}",
         )
-        page = await self.app.state.service.idea(self.cwd["proj"], "0001_one-feature")
+        page = await self.app.state.service.ideas.idea(self.cwd["proj"], "0001_one-feature")
         self.assertEqual(
             [(r["ref"], r["repo"], r["waits_for"]) for r in page["units"]],
             [

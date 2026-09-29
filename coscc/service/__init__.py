@@ -16,64 +16,32 @@ from coscc.agent.sessions import Sessions
 from coscc.agent import steps as steps_mod
 from coscc.update import updater as updater_mod
 
-# Re-exported so `coscc.service.<name>` resolves; a patch reaches only the module that looks it up.
+from coscc.service.activity import Activity
+from coscc.service.agents import Agents
+from coscc.service.answers import AnswersMixin
+from coscc.service.autopilot import AutopilotMixin
+from coscc.service.backlog import Backlog
 from coscc.service.board import BoardMixin
+from coscc.service.common import Holds
+from coscc.service.ideas import Ideas
+from coscc.service.models import Models
+from coscc.service.notices import Notices
+from coscc.service.release import Release
+from coscc.service.resume import ResumeMixin
+from coscc.service.sessions import Chat
 from coscc.service.steps import StepsMixin
 from coscc.service.update import UpdateMixin
-from coscc.service.models import ModelsMixin
-from coscc.service.agents import (
-    AgentsMixin,
-)
+from coscc.service.watch import Watch
 from coscc.service.workspaces import Workspaces
-from coscc.service.common import Holds
-from coscc.service.watch import (
-    WatchMixin,
-)
-from coscc.service.answers import (
-    AnswersMixin,
-)
-from coscc.service.backlog import (
-    BacklogMixin,
-)
-from coscc.service.sessions import (
-    SessionsMixin,
-)
-from coscc.service.autopilot import (
-    AutopilotMixin,
-)
-from coscc.service.activity import (
-    ActivityMixin,
-)
-from coscc.service.notices import (
-    NoticesMixin,
-)
-from coscc.service.ideas import (
-    IdeasMixin,
-)
-from coscc.service.release import (
-    ReleaseMixin,
-)
-from coscc.service.resume import (
-    ResumeMixin,
-)
 
 
 @dataclass
 class Service(
     BoardMixin,
     StepsMixin,
-    WatchMixin,
     UpdateMixin,
     AnswersMixin,
-    BacklogMixin,
-    SessionsMixin,
-    ModelsMixin,
-    AgentsMixin,
     AutopilotMixin,
-    ActivityMixin,
-    NoticesMixin,
-    IdeasMixin,
-    ReleaseMixin,
     ResumeMixin,
 ):
     config: Config
@@ -93,8 +61,6 @@ class Service(
     _create_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     # One lock per workspace held across an integration's check-and-mark.
     _integrate_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
-    # Journal keys with a release press running now, checked and marked with no `await` between.
-    _releasing: set[str] = field(default_factory=set, init=False, repr=False)
     # By `(journal key, unit)`: the last answer of `integrate.required_checks`,
     # `{head, checks | error, at}`, and the one background ask running for it. Never waited
     # on by a board read.
@@ -140,3 +106,15 @@ class Service(
         # Told of every step, integration and chat turn that ends.
         self.updater = updater_mod.Updater(self.config, self)
         self.sessions.on_turn_end = self.updater.job_ended
+        # The parts below `Service`, each given what it reads.
+        self.agents = Agents(self.config, self.ws)
+        self.models = Models(self.config, self.ws)
+        self.notices = Notices(self.ws)
+        self.activity = Activity(self.config, self.ws)
+        self.watch = Watch(self.config, self.ws, self._recorders)
+        self.chat = Chat(self.config, self.ws, self.sessions, self.updater, self.models)
+        self.ideas = Ideas(self.config, self.ws)
+        self.backlog = Backlog(
+            self.config, self.ws, self.holds, self.sessions, self.updater, self.models
+        )
+        self.release = Release(self.config, self.ws, self.updater)

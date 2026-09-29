@@ -477,7 +477,7 @@ class AnImportedAnswerSaysWhoseItIs(Base):
 
 
 class TheImportReport(unittest.TestCase):
-    """Through `Service.settings`: what the import could not read, by workspace name."""
+    """Through `Activity.settings`: what the import could not read, by workspace name."""
 
     def setUp(self):
         from coscc import units
@@ -501,7 +501,7 @@ class TheImportReport(unittest.TestCase):
         self.service.ws.unit_meta().ingest_failed(
             self.service.ws.key(self.cwd), "0013_open-question", "boom"
         )
-        report = self.service.settings()["import_report"]
+        report = self.service.activity.settings()["import_report"]
         self.assertEqual(report["problem"], "")
         found = {(r["workspace"], r["unit"], r["artifact"], r["field"]) for r in report["rows"]}
         self.assertIn(("proj", "0016_bad-status", "spec.md", "status"), found)
@@ -513,7 +513,9 @@ class TheImportReport(unittest.TestCase):
         self.store.mkdir(parents=True)
         asyncio.run(self.service.create_unit(self.cwd, "a-problem", "x"))
         asyncio.run(self.service.board(self.cwd))
-        self.assertEqual(self.service.settings()["import_report"], {"rows": [], "problem": ""})
+        self.assertEqual(
+            self.service.activity.settings()["import_report"], {"rows": [], "problem": ""}
+        )
 
     def test_a_database_that_cannot_be_read_is_one_sentence_without_its_path(self):
         from coscc.data import Busy
@@ -523,7 +525,7 @@ class TheImportReport(unittest.TestCase):
             mock.patch("coscc.units.meta.UnitMeta.unknowns", side_effect=busy),
             self.assertLogs("coscc", "WARNING") as log,
         ):
-            report = self.service.settings()["import_report"]
+            report = self.service.activity.settings()["import_report"]
         self.assertEqual(report, {"rows": [], "problem": "The import report could not be read."})
         self.assertIs(log.records[-1].exc_info[1], busy)
 

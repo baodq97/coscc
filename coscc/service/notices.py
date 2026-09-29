@@ -5,7 +5,7 @@ tells; nothing here writes and no sentence reads as approval. A sentence names t
 the workspace's folder name and never carries a `reason`, `detail`, path, SHA or `run` (a
 reason can hold any of them, or `gh`'s words). The whole record goes out beside it as `record`.
 
-`NoticesMixin` has no fields; it reads and writes nothing but the lines it hands out.
+`Notices` holds only the workspaces; it reads and writes nothing but the lines it hands out.
 """
 
 from __future__ import annotations
@@ -58,6 +58,7 @@ ENDED = {
     "stopped": "was stopped",
     "cancelled": "was cancelled",
 }
+from coscc.service.workspaces import Workspaces
 
 
 def _where(record: dict[str, Any]) -> str:
@@ -133,7 +134,10 @@ def notice_of(id: int, record: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-class NoticesMixin:
+class Notices:
+    def __init__(self, ws: Workspaces) -> None:
+        self.ws = ws
+
     # -- notices -------------------------------------------------------------
     #
     # One stream for every listener. A connection lasts `LIFETIME_SECONDS` at most, then

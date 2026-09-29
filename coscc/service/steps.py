@@ -35,7 +35,9 @@ from coscc.agent.sessions import Suspended
 from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate
+from coscc.service.update import refuse_while_updating, refuse_mechanical_while_updating
 from coscc.service.common import (
+    open_prs_once,
     BRANCH_REMOTE,
     BRANCH_TRUNK,
     CONSEQUENCE,
@@ -128,7 +130,7 @@ class StepsMixin:
         root = Path(cwd).expanduser().resolve()
         last = self._last_integrations(journal, key)
         # The board's one `gh pr list`, shared with the release block.
-        prs: list[dict[str, Any]] | str = await (prs_once or self._prs_once(cwd))()
+        prs: list[dict[str, Any]] | str = await (prs_once or open_prs_once(cwd))()
         asks: list[tuple[tuple[str, str], str, int, str]] = []
         oldest = datetime.fromisoformat(_now()) - timedelta(seconds=CI_REFRESH)
         for u in window:
@@ -283,7 +285,7 @@ class StepsMixin:
                 gebo or fallback,
                 grant_for("integrate").warning,
                 fallback=fallback,
-                name=(self._agent("integrate") or {}).get("name", ""),
+                name=(self.agents.agent("integrate") or {}).get("name", ""),
             ),
             "consequence": CONSEQUENCE["integrate"],
         }
@@ -319,7 +321,7 @@ class StepsMixin:
         except ValueError as e:
             raise Invalid(str(e)) from e
         self.ws.check(cwd)
-        self._refuse_while_updating()
+        refuse_while_updating(self.updater)
         journal = self.ws.journal()
         if journal is None:
             raise Invalid(
@@ -502,7 +504,7 @@ class StepsMixin:
             if state == "behind" and how not in integrate.COMPLETION:
                 # An Apply waits for a mechanical integration, so none begins once
                 # one is pressed.
-                self._refuse_mechanical_while_updating()
+                refuse_mechanical_while_updating(self.updater)
             mark = self.holds.take(key, unit, "integrate")
             # Commits never pushed go to Gebo whatever the state.
             completing = how in integrate.COMPLETION
@@ -685,7 +687,7 @@ class StepsMixin:
         units_root = self.ws.units_root(cwd)
         # The `integrate` row, read once for the prompt, the records and
         # the session's commit attribution.
-        agent = self._agent("integrate")
+        agent = self.agents.agent("integrate")
         grant = grant_for("integrate")
         name = agent["name"] if agent is not None else ""
         start_at = was.get("start_at")
@@ -716,7 +718,7 @@ class StepsMixin:
                 completion=completion,
                 agent=agent,
             )
-            model, model_source = self._model_for("impl")
+            model, model_source = self.models.model_for("impl")
             app = self._app_identity()
             try:
                 start_at = journal.started(
@@ -1099,7 +1101,7 @@ class StepsMixin:
         except ValueError as e:
             raise Invalid(str(e)) from e
         self.ws.check(cwd)
-        self._refuse_while_updating()
+        refuse_while_updating(self.updater)
         journal = self.ws.journal()
         if journal is None:
             raise Invalid(
@@ -1292,7 +1294,7 @@ class StepsMixin:
             # `Runner` does not read the run log itself; `build_prompt` only places what it is
             # handed, the same as `base_note`.
             try:
-                config = self._stage_config(
+                config = self.models.stage_config(
                     stage, list(data["stages"]), directory, journal, key, unit
                 )
                 failed = journal.failed_attempts(key, unit, stage)
@@ -1304,21 +1306,21 @@ class StepsMixin:
                 modeltrial.FIELD in (config.get("trial_record") or {})
                 and (config.get("impl_run") or 0) > 1
             ):
-                config.setdefault("trial_record", {})[modeltrial.CI_RED] = await self._ci_red(
+                config.setdefault("trial_record", {})[modeltrial.CI_RED] = await self.models.ci_red(
                     cwd, unit, work
                 )
             end_fields = None
             if rounds_before is not None:
 
                 async def end_fields() -> dict[str, Any]:
-                    return await self._findings_added(cwd, unit, rounds_before)
+                    return await self.models.findings_added(cwd, unit, rounds_before)
 
             # The integration pushed since the last review round, for `review` only.
             integration_note = ""
             if stage == "review":
                 since = integration_since_review(journal, key, unit)
                 integration_note = (
-                    integrate.describe_for_review(since, self._agent_overrides()[0])
+                    integrate.describe_for_review(since, self.agents.agent_overrides()[0])
                     if since
                     else ""
                 )
@@ -1391,11 +1393,11 @@ class StepsMixin:
             if state_file:
                 link_kw["state_file"] = state_file
             if stage == "intent":
-                idea_note = self._idea_note(cwd, unit)
+                idea_note = self.ideas.idea_note(cwd, unit)
                 if idea_note:
                     link_kw["idea_note"] = idea_note
             if stage in ("impl", "implement"):
-                sibling_paths, siblings_note = await self._siblings(cwd, unit)
+                sibling_paths, siblings_note = await self.ideas.siblings(cwd, unit)
                 if siblings_note:
                     link_kw.update(siblings_note=siblings_note, read_also=sibling_paths)
             runner = Runner(self.sessions, journal, app=self._app_identity())
@@ -1469,7 +1471,7 @@ class StepsMixin:
                         pr_before=pr_before,
                         # The stage's row with today's overrides, read once
                         # as the step starts: a rename later reaches the next step, not this one.
-                        agent=self._agent(stage),
+                        agent=self.agents.agent(stage),
                         **plan_kw,
                         **unfinished_kw,
                         **link_kw,
@@ -1551,7 +1553,7 @@ class StepsMixin:
             # Asked again past the lock, which another retake may have held
             # for minutes; from here to the end of `take` a pending update waits for it.
             # And none begins once Apply is pressed.
-            self._refuse_mechanical_while_updating()
+            refuse_mechanical_while_updating(self.updater)
             rid = uuid.uuid4().hex
             self._retakes[rid] = {"workspace": key, "unit": unit, "started": _now()}
             started = datetime.now().timestamp()

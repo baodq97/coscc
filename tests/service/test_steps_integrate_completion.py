@@ -25,6 +25,7 @@ from coscc.config import Config
 from tests.service.test_steps_integrate import BRANCH, PR, SLUG, StandIn, git
 from coscc.service import Service
 from coscc.service.common import Invalid
+from tests.service.test_service import use_sessions, use_config
 
 REFUSED = ("is not the pull request's head", "the last integration was refused")
 
@@ -155,7 +156,7 @@ class ACutIntegration(unittest.TestCase):
         return self.service.ws.journal().records(self.key, kind=kind)
 
     def press(self, act=None) -> dict:
-        self.service.sessions = StandIn(act or self._no_act)
+        use_sessions(self.service, StandIn(act or self._no_act))
 
         async def go():
             done = {}
@@ -169,8 +170,8 @@ class ACutIntegration(unittest.TestCase):
     def autopilot_pass(self, act) -> dict:
         """One autopilot pass with the real `integrate`, read to its end, and the pass the
         integration's end nudges. Returns the stops left once both are done."""
-        self.service.sessions = StandIn(act)
-        self.service.config = dataclasses.replace(self.service.config, host="127.0.0.1")
+        use_sessions(self.service, StandIn(act))
+        use_config(self.service, dataclasses.replace(self.service.config, host="127.0.0.1"))
 
         async def next_step(cwd, unit):
             return {

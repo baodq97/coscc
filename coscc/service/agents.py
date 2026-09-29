@@ -1,7 +1,7 @@
 """Which agent each stage's session is, with the overrides Settings holds.
 
 The resolving is `coscc/agent/agents.py`; this is where the overrides are read from `prefs`
-and written back. A mixin with no fields, which `Service` inherits.
+and written back.
 """
 
 from __future__ import annotations
@@ -11,11 +11,17 @@ from typing import Any
 
 from coscc.agent import agents
 from coscc.data import Data, Unusable
-from coscc.service.common import Invalid
+from coscc.service.common import Invalid, log_setting
+from coscc.config import Config
+from coscc.service.workspaces import Workspaces
 
 
-class AgentsMixin:
-    def _agent_overrides(self) -> tuple[dict[str, dict[str, str]], list[str]]:
+class Agents:
+    def __init__(self, config: Config, ws: Workspaces) -> None:
+        self.config = config
+        self.ws = ws
+
+    def agent_overrides(self) -> tuple[dict[str, dict[str, str]], list[str]]:
         """The stored overrides, or none and why when `cos.db` cannot be read: a name is
         never a reason to refuse a step or a board read."""
         try:
@@ -24,14 +30,14 @@ class AgentsMixin:
             return {}, [f"the agent overrides could not be read, so the defaults apply: {e}"]
         return agents.overrides_from(rows)
 
-    def _agent(self, key: str) -> dict[str, Any] | None:
+    def agent(self, key: str) -> dict[str, Any] | None:
         """The resolved row for `key`, overrides included, or `None`. Every place in the
         service that shows or writes an agent's name asks this. Never raises on bad data."""
-        return agents.agent_for(key, self._agent_overrides()[0])
+        return agents.agent_for(key, self.agent_overrides()[0])
 
     def agent_table(self) -> dict[str, Any]:
         """Every row Settings shows, each with `overridden`, and what was wrong."""
-        overrides, bad = self._agent_overrides()
+        overrides, bad = self.agent_overrides()
         found = agents.table(overrides)
         for row in found["rows"]:
             row["overridden"] = row["key"] in overrides
@@ -94,5 +100,5 @@ class AgentsMixin:
             data.delete_pref(agents.PREFIX + key)
         else:
             data.set_pref(agents.PREFIX + key, new)
-        self._log_setting(agents.PREFIX + key, old, new)
+        log_setting(self.ws.journal(), agents.PREFIX + key, old, new)
         return self.agent_table()

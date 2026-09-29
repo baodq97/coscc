@@ -1,4 +1,4 @@
-"""Tests for `AgentsMixin` in `coscc/service/agents.py`."""
+"""Tests for `Agents` in `coscc/service/agents.py`."""
 
 from __future__ import annotations
 
@@ -34,15 +34,15 @@ class AnOverrideIsCheckedSavedAndLogged(unittest.TestCase):
         return {r["key"]: r for r in table["rows"]}
 
     def test_a_valid_override_is_saved_and_logged_with_old_and_new(self):
-        table = self.service.set_agent("review", {"name": "Judge"})
+        table = self.service.agents.set_agent("review", {"name": "Judge"})
         row = self._rows(table)["review"]
         self.assertEqual(
             (row["name"], row["source"]["name"], row["overridden"]), ("Judge", "override", True)
         )
         self.assertEqual((row["glyph"], row["source"]["glyph"]), ("ᛏ", "default"))
-        self.service.set_agent("review", {"role": "Reads it all."})
-        self.assertEqual(self.service._agent("review")["name"], "Judge")
-        self.assertEqual(self.service._agent("review")["role"], "Reads it all.")
+        self.service.agents.set_agent("review", {"role": "Reads it all."})
+        self.assertEqual(self.service.agents.agent("review")["name"], "Judge")
+        self.assertEqual(self.service.agents.agent("review")["role"], "Reads it all.")
         self.assertEqual(
             self._settings(),
             [
@@ -74,54 +74,54 @@ class AnOverrideIsCheckedSavedAndLogged(unittest.TestCase):
         ]
         for key, fields in wrong:
             with self.assertRaises(Invalid, msg=(key, fields)):
-                self.service.set_agent(key, fields)
+                self.service.agents.set_agent(key, fields)
         self.assertEqual(self.data.pref_rows("agent:"), {})
         self.assertEqual(self._settings(), [])
 
     def test_a_name_taken_by_an_override_is_refused_too(self):
-        self.service.set_agent("plan", {"name": "Road"})
+        self.service.agents.set_agent("plan", {"name": "Road"})
         with self.assertRaises(Invalid):
-            self.service.set_agent("spec", {"name": "road"})
+            self.service.agents.set_agent("spec", {"name": "road"})
         # A row may keep its own name.
-        self.service.set_agent("plan", {"name": "ROAD"})
-        self.assertEqual(self.service._agent("plan")["name"], "ROAD")
+        self.service.agents.set_agent("plan", {"name": "ROAD"})
+        self.assertEqual(self.service.agents.agent("plan")["name"], "ROAD")
 
     def test_a_default_name_coming_back_is_checked_too(self):
-        self.service.set_agent("review", {"name": "Judge", "role": "Reads it all."})
-        self.service.set_agent("impl", {"name": "Tiwaz"})
+        self.service.agents.set_agent("review", {"name": "Judge", "role": "Reads it all."})
+        self.service.agents.set_agent("impl", {"name": "Tiwaz"})
         # Reset, and clearing the name alone, would both bring `Tiwaz` back to `review`.
         for fields in ({}, {"name": ""}):
             with self.assertRaises(Invalid, msg=fields):
-                self.service.set_agent("review", fields)
-        self.assertEqual(self.service._agent("review")["name"], "Judge")
+                self.service.agents.set_agent("review", fields)
+        self.assertEqual(self.service.agents.agent("review")["name"], "Judge")
         self.assertEqual(len(self._settings()), 2)
-        self.service.set_agent("impl")
-        self.service.set_agent("review")
-        self.assertEqual(self.service._agent("review")["name"], "Tiwaz")
+        self.service.agents.set_agent("impl")
+        self.service.agents.set_agent("review")
+        self.assertEqual(self.service.agents.agent("review")["name"], "Tiwaz")
 
     def test_an_unreadable_store_writes_nothing(self):
-        self.service.set_agent("review", {"name": "Judge"})
+        self.service.agents.set_agent("review", {"name": "Judge"})
         with mock.patch.object(Data, "pref_rows", side_effect=Busy("locked")):
             with self.assertRaises(Invalid):
-                self.service.set_agent("review", {"role": "Reads it all."})
+                self.service.agents.set_agent("review", {"role": "Reads it all."})
         self.assertEqual(self.data.pref_rows("agent:"), {"agent:review": '{"name": "Judge"}'})
         self.assertEqual(len(self._settings()), 1)
 
     def test_the_key_alone_removes_the_rows_override(self):
-        self.service.set_agent("impl", {"name": "Builder", "glyph": "ᛒ"})
-        self.service.set_agent("impl", {"glyph": ""})
-        self.assertEqual(self.service._agent("impl")["glyph"], "ᚢ")
-        self.assertEqual(self.service._agent("impl")["name"], "Builder")
-        table = self.service.set_agent("impl")
+        self.service.agents.set_agent("impl", {"name": "Builder", "glyph": "ᛒ"})
+        self.service.agents.set_agent("impl", {"glyph": ""})
+        self.assertEqual(self.service.agents.agent("impl")["glyph"], "ᚢ")
+        self.assertEqual(self.service.agents.agent("impl")["name"], "Builder")
+        table = self.service.agents.set_agent("impl")
         self.assertFalse(self._rows(table)["impl"]["overridden"])
-        self.assertEqual(self.service._agent("impl")["name"], "Uruz")
+        self.assertEqual(self.service.agents.agent("impl")["name"], "Uruz")
         self.assertEqual(self.data.pref_rows("agent:"), {})
         self.assertEqual(self._settings()[-1], ("agent:impl", {"name": "Builder"}, None))
 
     def test_a_broken_stored_override_falls_back_and_is_named(self):
         self.data.set_pref("agent:spec", {"name": "has space", "glyph": "ᚲᚲ"})
         self.data.set_pref("agent:deploy", {"name": "Nobody"})
-        table = self.service.agent_table()
+        table = self.service.agents.agent_table()
         row = self._rows(table)["spec"]
         self.assertEqual((row["name"], row["glyph"]), ("Kenaz", "ᚲᚲ"))
         self.assertEqual(len(table["problems"]), 2, table["problems"])

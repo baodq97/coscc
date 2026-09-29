@@ -31,6 +31,7 @@ from coscc.agent import steps as steps_mod
 from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate, ideas
+from coscc.service.autopilot import autopilot_values
 from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
 
 log = logging.getLogger(__name__)
@@ -131,7 +132,7 @@ class AnswersMixin:
         n = rnd.get("n")
         pr_url = (found.get("pr") or {}).get("url") or ""
         # The `review` agent as the table names it now, overrides included.
-        reviewer = self._agent("review")
+        reviewer = self.agents.agent("review")
         result = await prcomment.post(
             unit,
             n,
@@ -348,14 +349,6 @@ class AnswersMixin:
                 f"guard {applied.guard} refused {artifact}: {', '.join(applied.reasons)}"
             )
 
-    def _refresh_ideas(self, cwd: str) -> None:
-        """`cwd`'s ideas into `cos.db` again, after the app wrote one. A failure is left to
-        the board: `cos.mjs` then reports the idea link it cannot find."""
-        try:
-            self.ws.unit_meta().refresh_ideas(self.ws.key(cwd), self.ws.units_root(cwd))
-        except MetaError, Busy, sqlite3.Error, OSError:
-            pass
-
     def _create_lock(self, cwd: str) -> asyncio.Lock:
         """One lock per workspace, held across numbering and making the tree."""
         return self._create_locks.setdefault(units.key(cwd), asyncio.Lock())
@@ -379,7 +372,7 @@ class AnswersMixin:
             raise Invalid(
                 "depends_on needs an idea: it names a unit already under the idea's Units."
             )
-        linked = self._idea_link(cwd, idea, brief, depends_on) if idea else None
+        linked = self.ideas.idea_link(cwd, idea, brief, depends_on) if idea else None
         root = Path(cwd).expanduser().resolve()
         async with self._create_lock(cwd):
             reserve = [root]
@@ -408,7 +401,7 @@ class AnswersMixin:
                         f"{made['unit']} was made, but {idea} could not list it: {e}"
                     ) from e
                 made["idea"] = idea
-                self._refresh_ideas(linked["home"])
+                self.ideas.refresh_ideas(linked["home"])
             # The new unit's row, and its `idea.md`'s status.
             made.update(
                 await self._ingest(cwd, made["unit"], {"outcome": "done", "stage": "create"})
@@ -549,7 +542,7 @@ class AnswersMixin:
 
         # The store is not a git repository, so provenance is a row in `outputs`. Never
         # raises: the answer is recorded, and failing now would say it was not.
-        history = self._history()
+        history = self.backlog.history()
         if history is not None:
             for w in written:
                 try:
@@ -612,7 +605,7 @@ class AnswersMixin:
                     rows(conn)
                 return
             listed, _ = backlog.shortlist_of(journal.records(workspace=key, kind="shortlist"))
-            on = bool(self._autopilot_values(key)["autopilot"])
+            on = bool(autopilot_values(self.config, key)["autopilot"])
             stages = {s["file"]: s for s in found.get("stages") or []}
             given: dict[str, set[Any]] = {}
             records = []
@@ -956,7 +949,7 @@ class AnswersMixin:
 
         # As above: provenance is a row in `outputs`; a failure to write it never fails a
         # block already on disk.
-        history = self._history()
+        history = self.backlog.history()
         if history is not None:
             try:
                 history.add_output(

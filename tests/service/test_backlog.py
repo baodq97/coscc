@@ -1,4 +1,4 @@
-"""Tests for `BacklogMixin` in `coscc/service/backlog.py`, split from
+"""Tests for `Backlog` in `coscc/service/backlog.py`, split from
 `tests/service/test_service.py`."""
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         return History(self.work, self.root / "data")
 
     def test_a_unit_with_no_history_answers_with_empty_rather_than_refusing(self):
-        found = self.service.unit_history(REPO, "0001_a-problem")
+        found = self.service.backlog.unit_history(REPO, "0001_a-problem")
         self.assertTrue(found["recording"])
         self.assertEqual(found["transitions"], [])
         self.assertEqual(found["settled_edits"], 0)
@@ -53,7 +53,7 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         log = self._log()
         log.record(REPO, "0001_a-problem", "intent.md", "draft")
         log.record(REPO, "0001_a-problem", "intent.md", "accepted")
-        found = self.service.unit_history(REPO, "0001_a-problem")
+        found = self.service.backlog.unit_history(REPO, "0001_a-problem")
         # Not two sources: the last transition's destination *is* the state.
         self.assertEqual(found["state"]["intent.md"], found["transitions"][-1]["to_state"])
         self.assertEqual(found["state"]["intent.md"], "accepted")
@@ -71,7 +71,7 @@ class TheUnitHistoryReadPath(unittest.TestCase):
             run="r-1",
             inputs={"merge_commit": "f" * 40, "number": 7},
         )
-        old, merged = self.service.timeline(REPO, "0001_a-problem")["transitions"]
+        old, merged = self.service.backlog.timeline(REPO, "0001_a-problem")["transitions"]
         self.assertEqual((old["guard"], old["guard_label"], old["head"]), ("unknown", "", ""))
         self.assertEqual(
             (
@@ -95,12 +95,14 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         log.record(REPO, "0001_a-problem", "intent.md", "draft")
         log.record(REPO, "0001_a-problem", "intent.md", "accepted")
         log.record(REPO, "0001_a-problem", "intent.md", "accepted", source="commit:abc")
-        self.assertEqual(self.service.unit_history(REPO, "0001_a-problem")["settled_edits"], 1)
+        self.assertEqual(
+            self.service.backlog.unit_history(REPO, "0001_a-problem")["settled_edits"], 1
+        )
 
     def test_a_unit_retired_from_the_working_tree_still_has_a_history(self):
         log = self._log()
         log.record(REPO, "0099_retired", "intent.md", "accepted")
-        self.assertEqual(self.service.units_with_history(REPO)["units"], ["0099_retired"])
+        self.assertEqual(self.service.backlog.units_with_history(REPO)["units"], ["0099_retired"])
 
     def test_cost_and_unit_cost_read_the_run_log(self):
         j = self.service.ws.journal()
@@ -108,14 +110,14 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         j.finished(key, "0001_a-problem", "spec", "done", cost_usd=2.0)
         j.finished(key, "0001_a-problem", "spec", "failed")
         j.finished(key, "0002_other", "plan", "done", cost_usd=20.0)
-        found = self.service.cost(REPO, {"0001_a-problem": ["changes-requested"]})
+        found = self.service.activity.cost(REPO, {"0001_a-problem": ["changes-requested"]})
         self.assertTrue(found["recording"])
         self.assertEqual(
             [(r["key"], r["usd"], r["over"]) for r in found["by_unit"]],
             [("0002_other", 20.0, True), ("0001_a-problem", 2.0, False)],
         )
         self.assertEqual(found["waste"][-1]["count"], 1)
-        mine = self.service.unit_cost(REPO, "0001_a-problem")
+        mine = self.service.activity.unit_cost(REPO, "0001_a-problem")
         self.assertEqual(
             [(r["key"], r["steps"], r["unknown"]) for r in mine["by_stage"]], [("spec", 2, 1)]
         )
@@ -123,26 +125,26 @@ class TheUnitHistoryReadPath(unittest.TestCase):
 
     def test_cost_with_no_working_folder_says_it_is_not_recording(self):
         service = _service()
-        self.assertFalse(service.cost(REPO)["recording"])
+        self.assertFalse(service.activity.cost(REPO)["recording"])
         self.assertEqual(
-            service.unit_cost(REPO, "0001_a-problem"),
+            service.activity.unit_cost(REPO, "0001_a-problem"),
             {"by_stage": [], "anomalies": [], "recording": False},
         )
 
     def test_the_gate_applies_to_both_reads(self):
         for call in (
-            lambda: self.service.unit_history("/etc", "0001_a-problem"),
-            lambda: self.service.units_with_history("/etc"),
+            lambda: self.service.backlog.unit_history("/etc", "0001_a-problem"),
+            lambda: self.service.backlog.units_with_history("/etc"),
         ):
             with self.assertRaises(Invalid):
                 call()
 
     def test_with_no_working_folder_it_says_it_is_not_recording(self):
         service = _service()
-        found = service.unit_history(REPO, "0001_a-problem")
+        found = service.backlog.unit_history(REPO, "0001_a-problem")
         self.assertFalse(found["recording"])
         self.assertEqual(found["transitions"], [])
-        self.assertFalse(service.units_with_history(REPO)["recording"])
+        self.assertFalse(service.backlog.units_with_history(REPO)["recording"])
 
     def test_a_unit_holding_rows_from_two_state_sets_says_so(self):
         """Said out loud rather than refused, because refusing a read would hide the only evidence
@@ -171,13 +173,13 @@ class TheUnitHistoryReadPath(unittest.TestCase):
             REPO, "0001_a-problem", "ticket.txt", "open"
         )
 
-        found = self.service.unit_history(REPO, "0001_a-problem")
+        found = self.service.backlog.unit_history(REPO, "0001_a-problem")
         self.assertEqual(found["written_under"], ["coscc-default", "two-step"])
         self.assertIn("two-step", found["mixed_state_sets"])
 
     def test_one_state_set_reports_no_mixture(self):
         self._log().record(REPO, "0001_a-problem", "intent.md", "draft")
-        found = self.service.unit_history(REPO, "0001_a-problem")
+        found = self.service.backlog.unit_history(REPO, "0001_a-problem")
         self.assertEqual(found["written_under"], ["coscc-default"])
         self.assertIsNone(found["mixed_state_sets"])
 
@@ -253,12 +255,12 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         with self.assertRaises(Invalid):
             create_sync(self.service, "/etc", "a-problem")
         with self.assertRaises(Invalid):
-            asyncio.run(self.service.start_branch("/etc", "0001_a-problem"))
+            asyncio.run(self.service.backlog.start_branch("/etc", "0001_a-problem"))
 
     def test_the_branch_is_refused_until_the_intent_says_what_type_this_is(self):
         made = create_sync(self.service, str(self.repo), "a-problem", "some words")
         with self.assertRaises(Invalid) as caught:
-            asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
+            asyncio.run(self.service.backlog.start_branch(str(self.repo), made["unit"]))
         self.assertIn("intent.md", str(caught.exception))
 
     def test_the_branch_name_is_the_one_the_intents_type_implies(self):
@@ -267,18 +269,20 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         (directory / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
-        got = asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
+        got = asyncio.run(self.service.backlog.start_branch(str(self.repo), made["unit"]))
         self.assertEqual(got["branch"], "fix/a-problem")
         # Cut in the unit's worktree; the workspace stays on `main`.
-        self.assertEqual(asyncio.run(self.service.branch_here(str(self.repo)))["branch"], "main")
+        self.assertEqual(
+            asyncio.run(self.service.backlog.branch_here(str(self.repo)))["branch"], "main"
+        )
         tree = Path(got["worktree"])
         self.assertEqual(asyncio.run(gitops.current_branch(tree)), "fix/a-problem")
         self.assertTrue(got["prepare"]["ok"])
 
     def test_two_units_each_get_their_own_tree_and_the_workspace_never_moves(self):
         a, b = self._typed_unit("a-problem"), self._typed_unit("b-problem")
-        got_a = asyncio.run(self.service.start_branch(str(self.repo), a))
-        got_b = asyncio.run(self.service.start_branch(str(self.repo), b))
+        got_a = asyncio.run(self.service.backlog.start_branch(str(self.repo), a))
+        got_b = asyncio.run(self.service.backlog.start_branch(str(self.repo), b))
         self.assertNotEqual(got_a["worktree"], got_b["worktree"])
         self.assertEqual(
             asyncio.run(gitops.current_branch(Path(got_a["worktree"]))), "fix/a-problem"
@@ -308,10 +312,10 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
-        asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
+        asyncio.run(self.service.backlog.start_branch(str(self.repo), made["unit"]))
         self._git("switch", "-q", "main")
         with self.assertRaises(Invalid) as caught:
-            asyncio.run(self.service.start_branch(str(self.repo), made["unit"]))
+            asyncio.run(self.service.backlog.start_branch(str(self.repo), made["unit"]))
         self.assertIn("already exists", str(caught.exception))
 
     def test_an_empty_board_counts_the_units_the_host_repository_holds(self):
@@ -387,14 +391,14 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         local = self._git("rev-parse", "main").strip()
         self.assertNotEqual(local, ahead)
         unit = self._typed_unit()
-        got = asyncio.run(self.service.start_branch(str(self.repo), unit))
+        got = asyncio.run(self.service.backlog.start_branch(str(self.repo), unit))
         self.assertEqual(self._git("rev-parse", got["branch"]).strip(), ahead)
         # The local trunk was not moved to get there.
         self.assertEqual(self._git("rev-parse", "main").strip(), local)
 
     def test_the_result_names_the_ref_and_the_commit_it_was_cut_from(self):
         self._advance_remote()
-        got = asyncio.run(self.service.start_branch(str(self.repo), self._typed_unit()))
+        got = asyncio.run(self.service.backlog.start_branch(str(self.repo), self._typed_unit()))
         self.assertEqual(got["base"], "origin/main")
         self.assertEqual(got["sha"], self._git("rev-parse", "--short=7", "origin/main").strip())
 
@@ -404,19 +408,21 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         self._git("remote", "set-url", "origin", str(self.root / "gone.git"))
         before = self._git("rev-parse", "HEAD").strip()
         with self.assertRaises(Invalid) as caught:
-            asyncio.run(self.service.start_branch(str(self.repo), unit))
+            asyncio.run(self.service.backlog.start_branch(str(self.repo), unit))
         said = str(caught.exception)
         self.assertIn("origin", said)
         self.assertIn("no branch was cut", said)
         self.assertEqual(self._git("rev-parse", "HEAD").strip(), before)
         self.assertEqual(self._git("branch", "--list", "fix/a-problem").strip(), "")
-        self.assertEqual(asyncio.run(self.service.branch_here(str(self.repo)))["branch"], "main")
+        self.assertEqual(
+            asyncio.run(self.service.backlog.branch_here(str(self.repo)))["branch"], "main"
+        )
 
     def test_a_repository_with_no_origin_is_refused_the_same_way(self):
         unit = self._typed_unit()
         self._git("remote", "remove", "origin")
         with self.assertRaises(Invalid) as caught:
-            asyncio.run(self.service.start_branch(str(self.repo), unit))
+            asyncio.run(self.service.backlog.start_branch(str(self.repo), unit))
         self.assertIn("no branch was cut", str(caught.exception))
         self.assertEqual(self._git("branch", "--list", "fix/a-problem").strip(), "")
 
@@ -424,7 +430,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         """Plan Risk 5, first half: the fetch is not stopped by a dirty tree."""
         ahead = self._advance_remote("g.txt")
         (self.repo / "README.md").write_text("edited here\n", encoding="utf-8")
-        got = asyncio.run(self.service.start_branch(str(self.repo), self._typed_unit()))
+        got = asyncio.run(self.service.backlog.start_branch(str(self.repo), self._typed_unit()))
         self.assertEqual(self._git("rev-parse", got["branch"]).strip(), ahead)
         self.assertIn("README.md", self._git("status", "--porcelain"))
 
@@ -438,7 +444,7 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
         tree = worktrees.path(str(self.repo), unit, str(self.root / "data"))
         (tree / "README.md").write_text("edited here\n", encoding="utf-8")
         with self.assertRaises(Invalid):
-            asyncio.run(self.service.start_branch(str(self.repo), unit))
+            asyncio.run(self.service.backlog.start_branch(str(self.repo), unit))
         self.assertEqual(self._git("branch", "--list", "fix/a-problem").strip(), "")
         self.assertEqual((tree / "README.md").read_text(encoding="utf-8"), "edited here\n")
 
@@ -546,11 +552,13 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
             return data
 
         before = self.board()
-        asyncio.run(self.service.record_estimate(self.cwd, self.a, 4, "S", "vì", "Leif"))
+        asyncio.run(self.service.backlog.record_estimate(self.cwd, self.a, 4, "S", "vì", "Leif"))
         asyncio.run(
-            self.service.record_relation(self.cwd, self.a, self.b, "phụ thuộc", "add", "r", "Leif")
+            self.service.backlog.record_relation(
+                self.cwd, self.a, self.b, "phụ thuộc", "add", "r", "Leif"
+            )
         )
-        asyncio.run(self.service.record_shortlist(self.cwd, [self.a], "r", "Leif"))
+        asyncio.run(self.service.backlog.record_shortlist(self.cwd, [self.a], "r", "Leif"))
         after = self.board()
         self.assertEqual(strip(before), strip(after))
         self.assertEqual(
@@ -565,13 +573,15 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
     def test_three_writes_touch_no_file_and_refusals_insert_nothing(self):
         before = self.store_hash()
         refusals = [
-            lambda: self.service.record_estimate(self.cwd, self.a, 9, "S", "x", "Leif"),
-            lambda: self.service.record_estimate(self.cwd, self.a, 3, "S", "x", "agent:me"),
-            lambda: self.service.record_estimate(self.cwd, "0003_finished", 3, "S", "x", "Leif"),
-            lambda: self.service.record_relation(
+            lambda: self.service.backlog.record_estimate(self.cwd, self.a, 9, "S", "x", "Leif"),
+            lambda: self.service.backlog.record_estimate(self.cwd, self.a, 3, "S", "x", "agent:me"),
+            lambda: self.service.backlog.record_estimate(
+                self.cwd, "0003_finished", 3, "S", "x", "Leif"
+            ),
+            lambda: self.service.backlog.record_relation(
                 self.cwd, self.a, self.a, "trùng", "add", "r", "Leif"
             ),
-            lambda: self.service.record_shortlist(
+            lambda: self.service.backlog.record_shortlist(
                 self.cwd, [self.a], "r", "Leif"
             ),  # no estimate yet
         ]
@@ -581,11 +591,13 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         self.assertEqual(
             self.journal.records(self.key, kinds=("estimate-value", "relation", "shortlist")), []
         )
-        asyncio.run(self.service.record_estimate(self.cwd, self.a, "4", "S", "vì", "Leif"))
+        asyncio.run(self.service.backlog.record_estimate(self.cwd, self.a, "4", "S", "vì", "Leif"))
         asyncio.run(
-            self.service.record_relation(self.cwd, self.a, self.b, "trùng", "add", "r", "Leif")
+            self.service.backlog.record_relation(
+                self.cwd, self.a, self.b, "trùng", "add", "r", "Leif"
+            )
         )
-        asyncio.run(self.service.record_shortlist(self.cwd, [self.a], "r", "Leif"))
+        asyncio.run(self.service.backlog.record_shortlist(self.cwd, [self.a], "r", "Leif"))
         self.assertEqual(self.store_hash(), before)
         self.assertEqual(self.board()["backlog"]["shortlist"][0]["estimate"]["value"], 4)
 
@@ -603,8 +615,8 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
     def test_the_start_record_says_where_the_unit_stood(self):
         first = self._start_of_spec()
         self.assertEqual(first["shortlist"], {"rank": None, "of": None, "record": None})
-        asyncio.run(self.service.record_estimate(self.cwd, self.b, 3, "M", "vì", "Leif"))
-        asyncio.run(self.service.record_shortlist(self.cwd, [self.b], "r", "Leif"))
+        asyncio.run(self.service.backlog.record_estimate(self.cwd, self.b, 3, "M", "vì", "Leif"))
+        asyncio.run(self.service.backlog.record_shortlist(self.cwd, [self.b], "r", "Leif"))
         second = self._start_of_spec()
         self.assertEqual((second["shortlist"]["rank"], second["shortlist"]["of"]), (1, 1))
         self.assertEqual(second["shortlist"]["record"]["n"], 1)
@@ -628,7 +640,7 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
     def _propose(self):
         async def go():
             out = []
-            async for item in self.service.propose_estimates(self.cwd):
+            async for item in self.service.backlog.propose_estimates(self.cwd):
                 out.append(item)
             return out
 
@@ -664,7 +676,7 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
         async def go():
             gate = asyncio.Event()
             self.sessions.gate = gate
-            first = self.service.propose_estimates(self.cwd)
+            first = self.service.backlog.propose_estimates(self.cwd)
             task = asyncio.create_task(first.__anext__())
             for _ in range(200):
                 await asyncio.sleep(0.01)
@@ -672,7 +684,7 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
                     break
             jobs = self.service._update_waited()
             with self.assertRaises(Invalid):
-                await self.service.propose_estimates(self.cwd).__anext__()
+                await self.service.backlog.propose_estimates(self.cwd).__anext__()
             gate.set()
             await task
             async for _ in first:

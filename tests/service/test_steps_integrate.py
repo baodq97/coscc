@@ -25,6 +25,7 @@ from coscc.service import Service
 from coscc.service.common import Invalid
 from tests.units.test_submit import submits as _submits
 from coscc.service.steps import CI_REFRESH
+from tests.service.test_service import use_sessions, use_config
 
 SLUG = "proof-of-gebo"
 PR = 7
@@ -180,7 +181,7 @@ class GeboThroughTheService(unittest.TestCase):
         return 1, "", f"stand-in gh: unexpected {argv}"
 
     def integrate_with(self, act) -> dict:
-        self.service.sessions = StandIn(act)
+        use_sessions(self.service, StandIn(act))
 
         async def go():
             done = {}
@@ -236,12 +237,14 @@ class GeboThroughTheService(unittest.TestCase):
         # A pull request GitHub calls conflicting opened this one.
         self.assertEqual(starts[0]["integrate_state"], "conflicting")
         self.assertEqual(ends[0]["outcome"], "done")
-        runs = self.service.timeline(self.cwd, self.unit)
+        runs = self.service.backlog.timeline(self.cwd, self.unit)
         self.assertEqual([r.get("stage") for r in runs["runs"]], ["integrate"])
         self.assertEqual(runs["cost"]["cost_usd"], 0.25)
-        self.assertEqual(self.service.usage(self.cwd)["per_unit"][self.unit]["cost_usd"], 0.25)
-        self.service.unit_history(self.cwd, self.unit)
-        self.service.activity(self.cwd)
+        self.assertEqual(
+            self.service.activity.usage(self.cwd)["per_unit"][self.unit]["cost_usd"], 0.25
+        )
+        self.service.backlog.unit_history(self.cwd, self.unit)
+        self.service.activity.activity(self.cwd)
 
     @staticmethod
     async def _needs_person() -> str:
@@ -284,7 +287,7 @@ class GeboThroughTheService(unittest.TestCase):
         async def act(tree, gate):
             return "[needs-person] f.txt: both"
 
-        self.service.set_agent("integrate", {"name": "Weaver"})
+        self.service.agents.set_agent("integrate", {"name": "Weaver"})
         rec = self.integrate_with(act)
         [start] = [r for r in self.records("start") if r.get("stage") == "integrate"]
         self.assertEqual(start["agent"], "Weaver")
@@ -760,7 +763,7 @@ class AStaleOriginMain(unittest.TestCase):
             encoding="utf-8",
         )
         ingest(self.service, self.cwd, self.unit)
-        self.service.config = dataclasses.replace(self.service.config, host="127.0.0.1")
+        use_config(self.service, dataclasses.replace(self.service.config, host="127.0.0.1"))
         calls: list[tuple[str, str]] = []
 
         def integrate_(cwd, unit, started_by="person"):

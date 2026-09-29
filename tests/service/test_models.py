@@ -1,4 +1,4 @@
-"""Tests for `ModelsMixin` in `coscc/service/models.py`, split from `tests/service/test_service.py`."""
+"""Tests for `Models` in `coscc/service/models.py`, split from `tests/service/test_service.py`."""
 
 from __future__ import annotations
 
@@ -66,14 +66,14 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertEqual(self._start()["model_source"], "default")
 
     def test_an_override_reaches_the_session_and_the_log_then_goes_away(self):
-        asyncio.run(self.service.set_stage_model("spec", "claude-sonnet-5"))
+        asyncio.run(self.service.models.set_stage_model("spec", "claude-sonnet-5"))
         self._run("spec")
         self.assertEqual(self.probe.models[-1], "claude-sonnet-5")
         self.assertEqual(
             (self._start()["model"], self._start()["model_source"]),
             ("claude-sonnet-5", "override"),
         )
-        asyncio.run(self.service.set_stage_model("spec", None))
+        asyncio.run(self.service.models.set_stage_model("spec", None))
         self._run("spec")
         self.assertEqual(self._start()["model_source"], "default")
 
@@ -119,12 +119,12 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
     def test_bad_names_and_empty_models_are_invalid(self):
         for name, model in (("bogus", "m"), ("spec", "  "), ("spec", 3), ("", "m"), (None, "m")):
             with self.assertRaises(Invalid, msg=(name, model)):
-                asyncio.run(self.service.set_stage_model(name, model))
+                asyncio.run(self.service.models.set_stage_model(name, model))
 
     def test_each_change_leaves_one_setting_record(self):
-        asyncio.run(self.service.set_stage_model("impl", "a"))
-        asyncio.run(self.service.set_stage_model("impl", "b"))
-        asyncio.run(self.service.set_stage_model("impl", None))
+        asyncio.run(self.service.models.set_stage_model("impl", "a"))
+        asyncio.run(self.service.models.set_stage_model("impl", "b"))
+        asyncio.run(self.service.models.set_stage_model("impl", None))
         records = self.service.ws.journal().records("", kind="setting")
         self.assertEqual(
             [(r["name"], r["old"], r["new"]) for r in records],
@@ -143,7 +143,7 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
 
         with mock.patch.object(board_reader, "gate", spy):
             self._run("spec")
-            asyncio.run(self.service.set_stage_model("spec", "x"))
+            asyncio.run(self.service.models.set_stage_model("spec", "x"))
             self._run("spec")
         self.assertEqual(len(seen), 2)
         # The snapshot is the unit as it stands, and the first step wrote `spec.md` between the two
@@ -161,8 +161,8 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertNotIn("impl_run", start)
 
     def test_an_effort_override_of_max_is_taken_and_logged(self):
-        asyncio.run(self.service.set_stage_effort("impl:novel", "max"))
-        asyncio.run(self.service.set_stage_effort("impl:novel", None))
+        asyncio.run(self.service.models.set_stage_effort("impl:novel", "max"))
+        asyncio.run(self.service.models.set_stage_effort("impl:novel", None))
         records = self.service.ws.journal().records("", kind="setting")
         self.assertEqual(
             [(r["name"], r["old"], r["new"]) for r in records],
@@ -175,21 +175,21 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
             ("bogus", "low"),
         ):
             with self.assertRaises(Invalid, msg=(name, effort)):
-                asyncio.run(self.service.set_stage_effort(name, effort))
+                asyncio.run(self.service.models.set_stage_effort(name, effort))
 
     def test_a_novel_row_takes_a_model_override(self):
-        asyncio.run(self.service.set_stage_model("review:novel", "m"))
-        rows = {r["name"]: r for r in asyncio.run(self.service.stage_models())["rows"]}
+        asyncio.run(self.service.models.set_stage_model("review:novel", "m"))
+        rows = {r["name"]: r for r in asyncio.run(self.service.models.stage_models())["rows"]}
         self.assertEqual(
             (rows["review:novel"]["model"], rows["review:novel"]["source"]), ("m", "override")
         )
         self.assertEqual(rows["review"]["source"], "default")
 
     def test_model_prefs_are_not_preferences(self):
-        asyncio.run(self.service.set_stage_model("impl", "a"))
-        self.assertNotIn("model:impl", self.service.preferences())
+        asyncio.run(self.service.models.set_stage_model("impl", "a"))
+        self.assertNotIn("model:impl", self.service.activity.preferences())
         with self.assertRaises(Invalid):
-            self.service.set_preference("model:impl", "b")
+            self.service.activity.set_preference("model:impl", "b")
 
     def test_chat_uses_cos_model_and_is_logged(self):
         service = Service(
@@ -203,7 +203,7 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         )
 
         async def go():
-            return [i async for i in service.stream(str(self.repo), "hi")]
+            return [i async for i in service.chat.stream(str(self.repo), "hi")]
 
         asyncio.run(go())
         self.assertEqual(self.probe.models[-1], "env-model")
@@ -211,11 +211,11 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertEqual((rec["model"], rec["model_source"]), ("env-model", "COS_MODEL"))
 
     def test_settings_names_cos_model_as_the_fallback(self):
-        self.assertIn("cos_model", self.service.settings())
-        self.assertNotIn("model", self.service.settings())
+        self.assertIn("cos_model", self.service.activity.settings())
+        self.assertNotIn("model", self.service.activity.settings())
 
     def test_settings_shows_the_novel_impl_ceilings_after_impl(self):
-        rows = self.service.settings()["grants"]
+        rows = self.service.activity.settings()["grants"]
         stages = [r["stage"] for r in rows]
         impl, novel = rows[stages.index("impl")], rows[stages.index("impl:novel")]
         self.assertEqual(stages.index("impl:novel"), stages.index("impl") + 1)
@@ -227,18 +227,18 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
             self.assertNotIn(stage, stages)
 
     def test_settings_shows_each_grants_ceiling(self):
-        rows = {r["stage"]: r for r in self.service.settings()["grants"]}
+        rows = {r["stage"]: r for r in self.service.activity.settings()["grants"]}
         self.assertNotIn("precedent", rows)
         self.assertEqual(rows["impl"]["budget"], "$8.00")
 
     def test_settings_never_show_the_trial(self):
         """Settings shows `models.json` and the overrides, never an arm's model."""
-        rows = asyncio.run(self.service.stage_models())["rows"]
+        rows = asyncio.run(self.service.models.stage_models())["rows"]
         self.assertFalse([r for r in rows if r["source"] == "trial"])
 
     def test_a_grants_tools_and_commands_are_also_lists(self):
         """The page lists them; the joined strings stay in the API as they were."""
-        for row in self.service.settings()["grants"]:
+        for row in self.service.activity.settings()["grants"]:
             self.assertEqual(", ".join(row["tool_list"]) or "none", row["tools"], row["stage"])
             self.assertEqual(
                 ", ".join(row["command_list"]) or "none", row["commands"], row["stage"]

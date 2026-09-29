@@ -16,7 +16,6 @@ from coscc.units import backlog, prose_import
 from coscc.agent import agents
 from coscc.units import board as board_reader
 from coscc.git import gitops
-from coscc.github import integrate
 from coscc.units.board import Unavailable
 from coscc.data import Data
 from coscc.git.gitops import GitError
@@ -27,6 +26,7 @@ from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit
 from coscc.service.common import (
+    open_prs_once,
     CONSEQUENCE,
     Invalid,
     _younger_than,
@@ -165,7 +165,7 @@ class BoardMixin:
             data["peer_problems"] = peer_problems
         # Each stage column's agent, by the one lookup, for the page to show only.
         # A stage the table has no row for is left out, and its column has no glyph.
-        overrides = self._agent_overrides()[0]
+        overrides = self.agents.agent_overrides()[0]
         data["stage_agents"] = {}
         for stage in data["stages"]:
             row = agents.agent_for(stage, overrides)
@@ -257,9 +257,9 @@ class BoardMixin:
 
         await self._attach_worktrees(cwd, data["units"])
         # One `gh pr list` for the whole read, asked only by whichever block needs it.
-        prs = self._prs_once(cwd)
+        prs = open_prs_once(cwd)
         asks = await self._attach_integration(cwd, data["units"], journal, key, prs)
-        data["release"] = await self._attach_release(cwd, data["units"], journal, key, prs)
+        data["release"] = await self.release.attach_release(cwd, data["units"], journal, key, prs)
         for unit in data["units"]:
             # From the timelines read above: no second scan of the run log.
             ended = [r for r in timelines.get(unit["name"], []) if r.get("ended") is not None]
@@ -289,22 +289,6 @@ class BoardMixin:
         # Started last and never awaited: their answers count from the next read.
         self._ask_ci(asks)
         return data
-
-    @staticmethod
-    def _prs_once(cwd: str):
-        """`integrate.open_prs` for `cwd`, asked at most once however often it is awaited;
-        `gh`'s error as a string."""
-        held: list[Any] = []
-
-        async def prs() -> list[dict[str, Any]] | str:
-            if not held:
-                try:
-                    held.append(await integrate.open_prs(str(Path(cwd).expanduser().resolve())))
-                except integrate.IntegrateError as e:
-                    held.append(str(e))
-            return held[0]
-
-        return prs
 
     def _running_here(self, key: str, overrides: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         """`running`'s `running`, from memory alone: what `_guide_block` reads too."""
@@ -347,7 +331,7 @@ class BoardMixin:
         self.ws.check(cwd)
         key = self.ws.key(cwd)
         # Through the one lookup, so an override shows here too. Read once per call.
-        overrides = self._agent_overrides()[0]
+        overrides = self.agents.agent_overrides()[0]
         running = self._running_here(key, overrides)
         out: dict[str, Any] = {"running": running, "unknown_end": {}}
         journal = self.ws.journal()

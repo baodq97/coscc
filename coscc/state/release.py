@@ -1,6 +1,6 @@
 """The board's *Release* panel: the board's `release` block, and its two buttons.
 
-Nothing here decides: whether a press may run is `Service.release_prepare`/`release_publish`'s answer.
+Nothing here decides: whether a press may run is `Release.release_prepare`/`release_publish`'s answer.
 """
 
 from __future__ import annotations
@@ -114,7 +114,11 @@ class ReleaseMixin(rx.State, mixin=True):
                 return
             self.releasing = True
             phase, cwd, version = self.rel_phase, self.cwd, self.rel_version
-        run = SERVICE.release_prepare if phase == "prepare" else SERVICE.release_publish
+        run = (
+            SERVICE.release.release_prepare
+            if phase == "prepare"
+            else SERVICE.release.release_publish
+        )
         done: dict = {}
         notice = ""
         try:

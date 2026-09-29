@@ -40,7 +40,7 @@ _ANSWERS = "## Answers"
 
 def check_field(field: str, value: Any) -> str:
     """Why `value` may not be `field`'s, or `""`. The duplicate-name rule needs the other
-    rows (`Service.set_agent`)."""
+    rows (`Agents.set_agent`)."""
     if field not in FIELDS:
         return f"no such field: {field} (use one of {', '.join(FIELDS)})"
     if not isinstance(value, str):

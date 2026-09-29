@@ -140,7 +140,7 @@ class NoRouteReachesThem(unittest.TestCase):
             posted = asyncio.run(post_all())
         self.assertGreater(posted, 20)
         self.assertEqual([c for c in called if c in self.WRITERS], [])
-        for path in sorted((REPO / "coscc" / "web").glob("*.py")):
+        for path in (REPO / "coscc" / "api.py",):
             text = path.read_text(encoding="utf-8")
             for writer in self.WRITERS:
                 self.assertNotIn(f".{writer}(", text, f"{path.name} calls {writer}")

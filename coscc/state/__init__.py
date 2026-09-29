@@ -476,7 +476,7 @@ class StudioState(
     # -- loading -------------------------------------------------------------
 
     def _load_settings(self) -> None:
-        data = SERVICE.settings()
+        data = SERVICE.activity.settings()
         self.working_dir = data.get("working_dir") or ""
         self.data_dir = data.get("data_dir") or ""
         self.host_port = f"{data.get('host')}:{data.get('port')}"
@@ -550,8 +550,8 @@ class StudioState(
         self.agent_problems = [str(p) for p in data.get("problems") or []]
 
     async def _load_models(self) -> None:
-        self._show_models(await SERVICE.stage_models())
-        self._show_agents(SERVICE.agent_table())
+        self._show_models(await SERVICE.models.stage_models())
+        self._show_agents(SERVICE.agents.agent_table())
         self._load_autopilot()
 
     def _show_autopilot_block(self, block: dict) -> None:
@@ -687,7 +687,7 @@ class StudioState(
         if not self.cwd:
             return
         try:
-            self.branch = (await SERVICE.branch_here(self.cwd))["branch"]
+            self.branch = (await SERVICE.backlog.branch_here(self.cwd))["branch"]
         except Invalid:
             # A workspace that is not a git checkout still has a board. Saying nothing is
             # right here: there is no branch to show, and that is not an error to report.
@@ -822,7 +822,7 @@ class StudioState(
             self.session_id = ""
             return
         try:
-            data = SERVICE.sessions_for(self.cwd, limit=40)
+            data = SERVICE.chat.sessions_for(self.cwd, limit=40)
         except Invalid as e:
             self._fail(e)
             return
@@ -848,7 +848,7 @@ class StudioState(
             self.messages, self._history = [], []
             return
         try:
-            data = SERVICE.history(self.cwd, self.session_id)
+            data = SERVICE.chat.history(self.cwd, self.session_id)
         except Invalid as e:
             self._fail(e)
             return
@@ -892,7 +892,7 @@ class StudioState(
         try:
             # One read for both halves of this screen; `activity` and `usage` on their own
             # would each scan and parse the identical rows.
-            feed = SERVICE.activity_and_usage(self.cwd, limit=40)
+            feed = SERVICE.activity.activity_and_usage(self.cwd, limit=40)
         except Invalid as e:
             self._fail(e)
             return
@@ -954,7 +954,7 @@ class StudioState(
             return
         rounds = {key: [r.verdict for r in u.rounds] for key, u in self.get_value("_full").items()}
         try:
-            data = SERVICE.cost(self.cwd, rounds)
+            data = SERVICE.activity.cost(self.cwd, rounds)
         except Invalid as e:
             self._fail(e)
             return
@@ -982,7 +982,7 @@ class StudioState(
         if not (self.cwd and self.unit_id):
             return
         try:
-            data = SERVICE.unit_cost(self.cwd, self.unit_id)
+            data = SERVICE.activity.unit_cost(self.cwd, self.unit_id)
         except Invalid as e:
             self._fail(e)
             return
@@ -994,7 +994,7 @@ class StudioState(
         if not (self.cwd and self.unit_id):
             return
         try:
-            data = SERVICE.timeline(self.cwd, self.unit_id)
+            data = SERVICE.backlog.timeline(self.cwd, self.unit_id)
         except Invalid as e:
             self._fail(e)
             return
@@ -1032,7 +1032,7 @@ class StudioState(
         if not stage:
             return
         try:
-            data = SERVICE.artifact(self.cwd, self.unit_id, stage)
+            data = SERVICE.activity.artifact(self.cwd, self.unit_id, stage)
         except Invalid as e:
             self._fail(e)
             return
@@ -1046,7 +1046,7 @@ class StudioState(
         """The first half of what a page's first arrival reads: enough to pick a workspace."""
         try:
             self._load_settings()
-            prefs = SERVICE.preferences()
+            prefs = SERVICE.activity.preferences()
             self.density = str(prefs.get("density") or "comfortable")
             self.board_view = str(prefs.get("board_view") or "Board")
             self._load_workspaces()
@@ -1307,7 +1307,7 @@ class StudioState(
 
     @rx.event
     async def save_model(self, name: str):
-        """Set one row's model. Whether it may be set is `Service.set_stage_model`'s call."""
+        """Set one row's model. Whether it may be set is `Models.set_stage_model`'s call."""
         if name != self.model_target or not self.model_text.strip():
             self.notice = "Type a model name in that row's box first."
             return
@@ -1321,7 +1321,7 @@ class StudioState(
     async def _change_model(self, name: str, model: str | None) -> None:
         self.saving_model = True
         try:
-            self._show_models(await SERVICE.set_stage_model(name, model))
+            self._show_models(await SERVICE.models.set_stage_model(name, model))
         except Invalid as e:
             self.notice = str(e)
             return
@@ -1336,7 +1336,7 @@ class StudioState(
 
     @rx.event
     def save_agent(self, form: dict):
-        """One row's form, as typed. Whether it may be saved is `Service.set_agent`'s call;
+        """One row's form, as typed. Whether it may be saved is `Agents.set_agent`'s call;
         a field left as it was is not sent."""
         key = str(form.get("key") or "")
         row = next((r for r in self.agent_rows if r.key == key), None)
@@ -1359,7 +1359,7 @@ class StudioState(
 
     def _change_agent(self, key: str, fields: dict) -> None:
         try:
-            self._show_agents(SERVICE.set_agent(key, fields))
+            self._show_agents(SERVICE.agents.set_agent(key, fields))
         except Invalid as e:
             self.notice = str(e)
             return
@@ -1401,7 +1401,7 @@ class StudioState(
 
     @rx.event
     async def save_effort(self, name: str, effort: str):
-        """Set one row's effort. Whether it may be set is `Service.set_stage_effort`'s call."""
+        """Set one row's effort. Whether it may be set is `Models.set_stage_effort`'s call."""
         await self._change_effort(name, effort)
 
     @rx.event
@@ -1412,7 +1412,7 @@ class StudioState(
     async def _change_effort(self, name: str, effort: str | None) -> None:
         self.saving_model = True
         try:
-            self._show_models(await SERVICE.set_stage_effort(name, effort))
+            self._show_models(await SERVICE.models.set_stage_effort(name, effort))
         except Invalid as e:
             self.notice = str(e)
             return
@@ -1426,7 +1426,7 @@ class StudioState(
 
     def _remember(self, key: str, value: str) -> None:
         try:
-            SERVICE.set_preference(key, value)
+            SERVICE.activity.set_preference(key, value)
         except Invalid as e:
             self._fail(e)
 
@@ -1677,8 +1677,8 @@ class StudioState(
         ]
         yield
         try:
-            SERVICE.check_send(self.cwd, text)
-            async for kind, payload in SERVICE.stream(self.cwd, text, self.session_id or None):
+            SERVICE.chat.check_send(self.cwd, text)
+            async for kind, payload in SERVICE.chat.stream(self.cwd, text, self.session_id or None):
                 if kind == "chunk":
                     self.messages[-1].text += payload
                     self.messages = list(self.messages)

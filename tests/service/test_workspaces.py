@@ -1,4 +1,4 @@
-"""Tests for `WorkspacesMixin` in `coscc/service/workspaces.py`, split from
+"""Tests for `Workspaces` in `coscc/service/workspaces.py`, split from
 `tests/service/test_service.py`."""
 
 from __future__ import annotations

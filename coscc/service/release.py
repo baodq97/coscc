@@ -1,7 +1,6 @@
 """Cutting a release: the board's *Release* block and its two presses.
 
-A mixin with no fields of its own; `_releasing` is on `Service`. `coscc/github/release.py`
-holds the pure decisions and the `gh`/`node`/`uv` calls, `coscc/git/gitops.py` the git ones.
+`coscc/github/release.py` holds the pure decisions and the `gh`/`node`/`uv` calls, `coscc/git/gitops.py` the git ones.
 """
 
 from __future__ import annotations
@@ -19,9 +18,13 @@ from coscc.data import Busy
 from coscc.units import BadUnit
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable
-from coscc.service.common import CONSEQUENCE, Invalid
+from coscc.service.update import refuse_while_updating
+from coscc.service.common import CONSEQUENCE, Invalid, open_prs_once
 
 PrsOnce = Callable[[], Awaitable["list[dict[str, Any]] | str"]]
+from coscc.config import Config
+from coscc.service.workspaces import Workspaces
+from coscc.update.updater import Updater
 
 
 def _empty_block(state: str, reason: str) -> dict[str, Any]:
@@ -48,7 +51,14 @@ def _empty_block(state: str, reason: str) -> dict[str, Any]:
     }
 
 
-class ReleaseMixin:
+class Release:
+    def __init__(self, config: Config, ws: Workspaces, updater: Updater) -> None:
+        self.config = config
+        self.ws = ws
+        self.updater = updater
+        # Journal keys with a release press running now, checked and marked with no `await` between.
+        self._releasing: set[str] = set()
+
     def _release_records(self, journal: Journal | None, key: str) -> list[dict[str, Any]]:
         if journal is None:
             return []
@@ -163,7 +173,7 @@ class ReleaseMixin:
             if status["release"] == "published":
                 block["state"], block["reason"] = "published", f"{block['last_tag']} is published"
 
-    async def _attach_release(
+    async def attach_release(
         self,
         cwd: str,
         units_: list[dict[str, Any]],
@@ -189,7 +199,7 @@ class ReleaseMixin:
 
     def _release_start(self, cwd: str) -> tuple[Journal, str, Path]:
         self.ws.check(cwd)
-        self._refuse_while_updating()
+        refuse_while_updating(self.updater)
         journal = self.ws.journal()
         if journal is None:
             raise Invalid(
@@ -197,7 +207,7 @@ class ReleaseMixin:
             )
         return journal, self.ws.key(cwd), Path(cwd).expanduser().resolve()
 
-    def _release_tree_path(self, cwd: str) -> Path:
+    def release_tree_path(self, cwd: str) -> Path:
         """`worktrees.release_path` for `cwd`, worked out again on every call: it is the `expected`
         each writing `gitops` function checks the tree it was handed against.
         """
@@ -208,7 +218,7 @@ class ReleaseMixin:
 
     async def _release_tree_fresh(self, cwd: str, root: Path, sha: str) -> Path:
         """The release worktree, detached at `sha`; a tree left over is removed first."""
-        tree = self._release_tree_path(cwd)
+        tree = self.release_tree_path(cwd)
         await self._release_tree_gone(cwd, root, tree)
         tree.parent.mkdir(parents=True, exist_ok=True)
         await gitops.worktree_add(root, tree, sha)
@@ -217,7 +227,7 @@ class ReleaseMixin:
     async def _release_tree_gone(self, cwd: str, root: Path, tree: Path) -> None:
         listed = {str(Path(t["path"]).resolve()) for t in await gitops.worktree_list(root)}
         if str(tree.resolve()) in listed:
-            await gitops.release_tree_remove(root, tree, self._release_tree_path(cwd))
+            await gitops.release_tree_remove(root, tree, self.release_tree_path(cwd))
 
     async def _release_press(
         self,
@@ -264,7 +274,7 @@ class ReleaseMixin:
                 raise Invalid(f"could not read the workspace: {e}") from e
             # Asked before the facts, tag or no tag: an open release pull request is a refusal reason.
             # `_release_facts` gets the same answer, not a second call.
-            prs_once = self._prs_once(str(root))
+            prs_once = open_prs_once(str(root))
             prs = await prs_once()
             records = self._release_records(journal, key)
             facts = await self._release_facts(root, data["units"], prs_once, records)
@@ -370,23 +380,23 @@ class ReleaseMixin:
             if code != 0 or (said.split() or [""])[0] != version:
                 raise release.ReleaseError(f"check-version printed {said!r}, not {version}")
             extra = release.extra_diff(
-                await gitops.diff_u0(tree, self._release_tree_path(cwd)), facts["old"], version
+                await gitops.diff_u0(tree, self.release_tree_path(cwd)), facts["old"], version
             )
             if extra:
                 raise release.ReleaseError(
                     "the change is more than the version lines: " + "; ".join(extra)
                 )
             head = await gitops.commit_files(
-                tree, self._release_tree_path(cwd), f"chore(release): {version}"
+                tree, self.release_tree_path(cwd), f"chore(release): {version}"
             )
-            await gitops.push_branch(tree, self._release_tree_path(cwd), branch)
+            await gitops.push_branch(tree, self.release_tree_path(cwd), branch)
             number = await release.create_pr(
                 str(tree),
                 branch,
                 f"chore(release): {version}",
                 release.pr_body(version, facts["units"], facts["unmatched"]),
             )
-            await gitops.detach_here(tree, self._release_tree_path(cwd))
+            await gitops.detach_here(tree, self.release_tree_path(cwd))
             rec = write("opened", pr=number, head=head)
             yield ("done", {"release": rec})
         except (GitError, release.ReleaseError) as e:
@@ -442,7 +452,7 @@ class ReleaseMixin:
                 raise release.ReleaseError(
                     f"check-version at {sha[:7]} printed {said!r}, not {version}"
                 )
-            await gitops.push_tag(tree, self._release_tree_path(cwd), tag, sha)
+            await gitops.push_tag(tree, self.release_tree_path(cwd), tag, sha)
             rec = write("tagged", **merged)
             try:
                 await self._release_tree_gone(cwd, root, tree)

@@ -1,4 +1,4 @@
-"""Tests for `NoticesMixin` in `coscc/service/notices.py`.
+"""Tests for `Notices` in `coscc/service/notices.py`.
 
 The generator is read directly, with `beat` shortened: `httpx.ASGITransport` collects a whole
 response body, so a stream that lasts `notices.LIFETIME_SECONDS` is read through it only with
@@ -59,8 +59,8 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
             await s.aclose()
 
     def follow(self, after=None, workspace="", beat=BEAT, lifetime=None):
-        s = self.service.follow_notices(
-            self.service.notice_scope(workspace), after, beat=beat, lifetime=lifetime
+        s = self.service.notices.follow_notices(
+            self.service.notices.notice_scope(workspace), after, beat=beat, lifetime=lifetime
         )
         self.streams.append(s)
         return s
@@ -212,7 +212,7 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
     async def test_an_unknown_workspace_is_refused(self):
         for workspace in ("/etc", str(self.ws.parent)):
             with self.assertRaises(Invalid):
-                self.service.notice_scope(workspace)
+                self.service.notices.notice_scope(workspace)
 
     async def test_a_closed_stream_leaves_no_ticket_behind(self):
         before = len(BELL)

@@ -1,5 +1,5 @@
 """The backlog: estimates, relations, the shortlist, starting a unit's branch,
-and a unit's history. A mixin with no fields."""
+and a unit's history."""
 
 from __future__ import annotations
 
@@ -29,7 +29,20 @@ from coscc.service.resume import nothing, resume_kwargs
 from coscc import units
 from coscc.units import worktrees
 from coscc.units import BadUnit, CannotCreate
+from coscc.service.update import refuse_while_updating
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, OWNER
+
+from coscc.config import Config
+
+from coscc.service.workspaces import Workspaces
+
+from coscc.service.common import Holds
+
+from coscc.agent.sessions import Sessions
+
+from coscc.update.updater import Updater
+
+from coscc.service.models import Models
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +64,23 @@ def _labelled(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-class BacklogMixin:
+class Backlog:
+    def __init__(
+        self,
+        config: Config,
+        ws: Workspaces,
+        holds: Holds,
+        sessions: Sessions,
+        updater: Updater,
+        models: Models,
+    ) -> None:
+        self.config = config
+        self.ws = ws
+        self.holds = holds
+        self.sessions = sessions
+        self.updater = updater
+        self.models = models
+
     # -- backlog --------------------------------------------------------------
 
     async def _backlog_context(self, cwd: str) -> tuple[Journal, str, dict[str, Any]]:
@@ -203,7 +232,7 @@ class BacklogMixin:
         no estimate.
         """
         self.ws.check(cwd)
-        self._refuse_while_updating()
+        refuse_while_updating(self.updater)
         journal = self.ws.journal()
         if journal is None:
             raise Invalid(
@@ -261,8 +290,8 @@ class BacklogMixin:
             model, model_source, effort, effort_source = models.resolve(
                 models.ESTIMATE,
                 None,
-                self._model_overrides()[0],
-                self._effort_overrides()[0],
+                self.models.model_overrides()[0],
+                self.models.effort_overrides()[0],
                 defaults,
                 self.config.model,
             )
@@ -511,7 +540,7 @@ class BacklogMixin:
         """
         self.ws.check(cwd)
         journal = self.ws.journal()
-        history = self._history()
+        history = self.history()
         if journal is None or history is None:
             return {"cwd": cwd, "unit": unit, "runs": [], "cost": {}, "transitions": []}
         key = self.ws.key(cwd)
@@ -528,7 +557,7 @@ class BacklogMixin:
             "transitions": [_labelled(r) for r in rows],
         }
 
-    def _history(self) -> History | None:
+    def history(self) -> History | None:
         """The transition log, or `None` when there is no working folder to keep it in.
 
         Same reasoning as `Workspaces.journal`: with nothing set, the safe direction to fail in is read-only.
@@ -552,7 +581,7 @@ class BacklogMixin:
         `settled_edits` is the number of times an artifact was rewritten after it had been settled.
         """
         self.ws.check(cwd)
-        history = self._history()
+        history = self.history()
         key = self.ws.key(cwd)
         if history is None:
             return {
@@ -614,7 +643,7 @@ class BacklogMixin:
         history, and this is the only place it can be seen.
         """
         self.ws.check(cwd)
-        history = self._history()
+        history = self.history()
         if history is None:
             return {"cwd": cwd, "recording": False, "units": []}
         try:
