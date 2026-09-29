@@ -25,11 +25,11 @@ paths:
   - The head is read once, so a rebase finishing later races the session: the lease refuses the
     push, the row is `failed`, the tree is moved to the new head, and the session is paid for.
   - Every press costs one fetch (`coscc/git/fetches.py`), which moves `refs/remotes/origin/main`
-    for every worktree, and one `gh pr view` up to `GH_TIMEOUT` (`coscc/github/integrate.py:43`).
+    for every worktree, and one `gh pr view` up to `gh.TIMEOUT` (`coscc/git/gh.py:16`).
     Every attempt is one `integration` row.
 - Every board read of a unit between `pr` and `ship` costs one `gh pr list` (up to
-  `GH_TIMEOUT`), plus `gh pr checks` for a unit at its last pushed head; offline each reads
+  `gh.TIMEOUT`), plus `gh pr checks` for a unit at its last pushed head; offline each reads
   `unknown` after the wait. The read does not fetch, but an autopilot pass does when a unit is
   at `ship`. A background `gh pr checks` runs no oftener than `CI_REFRESH` per head.
-- Every `pr` step costs one `gh pr list` (`coscc/github/prmachine.py`), up to `GH_TIMEOUT`, and
+- Every `pr` step costs one `gh pr list` (`coscc/github/prmachine.py`), up to `gh.TIMEOUT`, and
   opens no session.

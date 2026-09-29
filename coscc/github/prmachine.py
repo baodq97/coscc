@@ -27,8 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from coscc.data import now as _now
-from coscc.git import gitops
-from coscc.github import integrate
+from coscc.git import gh, gitops
 from coscc.runlog.journal import Journal
 from coscc.units import transitions
 from coscc.units.history import History
@@ -42,7 +41,6 @@ STAGES = ("pr", "ship")
 # finds it by its branch.
 STATES = ("none", "open", "merge-requested", "merged", "closed")
 
-Gh = Callable[[list[str], str], Awaitable[tuple[int, str, str]]]
 Push = Callable[[str, str], Awaitable[Any]]
 Head = Callable[[str], Awaitable[str]]
 
@@ -357,7 +355,7 @@ class Machine:
         history: History,
         journal: Journal,
         *,
-        gh: Gh | None = None,
+        gh: gh.Run | None = None,
         push: Push | None = None,
         head: Head | None = None,
         notify: Callable[[transitions.Applied], None] | None = None,
@@ -372,16 +370,15 @@ class Machine:
         self.notify = notify
 
     async def gh(self, argv: list[str], cwd: str) -> tuple[int, str, str]:
-        run = self._gh or integrate._gh
-        try:
-            return await run(argv, cwd)
-        except integrate.IntegrateError as e:
-            raise PrError(str(e)) from e
+        got = await gh.call(self._gh or gh.run, argv, cwd)
+        if isinstance(got, str):
+            raise PrError(got)
+        return got
 
     async def _json(self, argv: list[str], cwd: str) -> Any:
         code, out, err = await self.gh(argv, cwd)
         if code != 0:
-            raise PrError(integrate._said(out, err))
+            raise PrError(gh.said(code, out, err))
         try:
             return json.loads(out or "null")
         except ValueError as e:
@@ -578,7 +575,7 @@ class Machine:
                     u.tree,
                 )
                 if code != 0:
-                    raise PrError(integrate._said(out, err))
+                    raise PrError(gh.said(code, out, err))
                 url = (out.strip().splitlines() or [""])[-1].strip()
                 number = int(url.rstrip("/").rsplit("/", 1)[-1]) if "/pull/" in url else 0
                 if not number:
@@ -727,7 +724,7 @@ class Machine:
         except ValueError:
             rows = None
         if not isinstance(rows, list):
-            raise PrError(integrate._said(out, err) if code else "gh pr checks returned no list")
+            raise PrError(gh.said(code, out, err) if code else "gh pr checks returned no list")
         return [r for r in rows if isinstance(r, dict)]
 
     async def _merge(self, u: Unit, number: int, head: str, round_n: int | None) -> Outcome:
@@ -747,7 +744,7 @@ class Machine:
                 ],
                 u.tree,
             )
-            said = "" if code == 0 else integrate._said(out, err)
+            said = "" if code == 0 else gh.said(code, out, err)
             view = await self.view(u.tree, number)
         except PrError as e:
             return Outcome("failed", number, head=head, detail=str(e))

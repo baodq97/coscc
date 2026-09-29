@@ -20,5 +20,5 @@ paths:
   `~/.gitconfig`. The in-process mark stops a second press in this process only.
 - A board read of a workspace with a `vX.Y.Z` tag costs one `node cos.mjs check-tag` per
   candidate, plus `gh pr checks` or `gh release view` and `gh run list`, each up to
-  `GH_TIMEOUT`; offline reads `unknown` after that wait. Only a press fetches tags, so a
+  `gh.TIMEOUT`; offline reads `unknown` after that wait. Only a press fetches tags, so a
   proposal can be behind.
