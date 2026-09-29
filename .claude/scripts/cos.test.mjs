@@ -76,6 +76,8 @@ const art = (status) => ({ status, skipReason: null })
 // snapshots taken before lanes existed do not hold.
 const LANE_FIELDS = ['lane', 'enteredFast', 'laneMissing']
 const withoutLane = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => !LANE_FIELDS.includes(k)))
+// What they say of every unit that is not a fix.
+const FULL_LANE = { lane: 'full', enteredFast: false, laneMissing: [] }
 const statusWithoutLane = (out) => {
   const json = JSON.parse(out)
   return `${JSON.stringify({ ...json, units: json.units.map(withoutLane) }, null, 2)}\n`
@@ -1183,7 +1185,7 @@ test('cos.mjs next prints one JSON line, and misuse is exit 2', () => {
   const { root } = questionTree({ 'intent.md': '# I\nAuthor: t. Type: feat. Status: accepted.\n' })
   const out = cli('--root', root, 'next', '0001_q')
   assert.equal(out.status, 0)
-  assert.deepEqual(JSON.parse(out.stdout), { unit: '0001_q', stage: 'spec', action: 'write-spec — it assesses whether to skip first', blocked: true, reasons: ['missing'] })
+  assert.deepEqual(JSON.parse(out.stdout), { unit: '0001_q', stage: 'spec', action: 'write-spec — it assesses whether to skip first', blocked: true, reasons: ['missing'], ...FULL_LANE })
   assert.equal(cli('--root', root, 'next').status, 2)
   assert.equal(cli('--root', root, 'next', '0009_nope').status, 2)
   assert.equal(cli('--root', root, 'next', '0001_q', '--repo', tmpdir()).status, 0)
@@ -2950,7 +2952,7 @@ function answeredTree(files) {
 
 test('0106 R1: a draft intent with every question answered is rerun: intent, and nothing else changes', () => {
   const { next } = answeredTree({ 'intent.md': DRAFT_INTENT + answerBlock(1, 'A', 'x') + answerBlock(2, 'A', 'y') })
-  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept intent.md', blocked: true, rerun: 'intent', reasons: ['draft'] })
+  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept intent.md', blocked: true, rerun: 'intent', reasons: ['draft'], ...FULL_LANE })
 })
 
 test('0106 R1: one question left unanswered is no rerun', () => {
@@ -3009,7 +3011,7 @@ test('0115 R1: a draft impl with an open question is listed and counted', () => 
 
 test('0115 R3: a draft impl answered in full is rerun: impl', () => {
   const { next } = implTree(`${DRAFT_IMPL}\n## Answers\n${answerBlock(1, 'A', 'x')}`)
-  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept impl.md', blocked: true, rerun: 'impl', reasons: ['draft'] })
+  assert.deepEqual(next(), { unit: '0001_q', stage: '', action: 'finish and accept impl.md', blocked: true, rerun: 'impl', reasons: ['draft'], ...FULL_LANE })
 })
 
 test('0115 R3: a draft impl with one question unanswered is no rerun', () => {
@@ -4465,7 +4467,7 @@ test('0139 R5: a dependency opens on the merged row, not on ship.md', () => {
 test('0040 R7: next says why dependency and names the ref', () => {
   const { a, b } = pair40()
   assert.deepEqual(json40(cli('--root', b, 'next', '0001_y', '--peer', `a=${a}`)),
-    { unit: '0001_y', stage: '', action: `${WAITING_ON}a/0001_x to merge`, blocked: true, why: 'dependency', reasons: ['dependency', 'waiting-on'] })
+    { unit: '0001_y', stage: '', action: `${WAITING_ON}a/0001_x to merge`, blocked: true, why: 'dependency', reasons: ['dependency', 'waiting-on'], ...FULL_LANE })
   const [u] = json40(cli('--root', b, 'status', '--json', '--peer', `a=${a}`)).units
   assert.equal(u.next.why, 'dependency')
   assert.equal(u.next.action, `${WAITING_ON}a/0001_x to merge`)
@@ -4902,8 +4904,8 @@ test('next, status --json and gate at every stage answer every fixture unit as b
 // An intent carrying the three sections a fix enters the fast lane with; `null` leaves one out.
 const REPRO = '```\nnode --test x.test.mjs\n```'
 const EXPECTED = 'Source: coscc/units/guards.py:19-30\nThe table names every code cos.mjs hands out.'
-const intentOf = ({ type = 'fix', repro = REPRO, expected = EXPECTED, actual = 'It names one fewer.' } = {}) => [
-  '# Intent: x', `Author: t. Type: ${type}. Status: accepted.`, '',
+const intentOf = ({ type = 'fix', status = 'accepted', header = null, repro = REPRO, expected = EXPECTED, actual = 'It names one fewer.' } = {}) => [
+  '# Intent: x', `Author: t. Type: ${type}. Status: ${status}.`, ...(header ? [header] : []), '',
   ...(repro === null ? [] : ['## Reproduction', '', repro, '']),
   ...(expected === null ? [] : ['## Expected', '', expected, '']),
   ...(actual === null ? [] : ['## Actual', '', actual, '']),
@@ -4959,4 +4961,117 @@ test('a spec, a plan or Lane: full in the impl header keeps a fix in the full la
   assert.deepEqual(laneFor({}, { impl: '# Impl: x\nIntent: intent.md. Lane: full. Status: draft.\n\n## Why full\n\nBigger.\n' }), left)
   // Only the header decides: the words further down are prose.
   assert.deepEqual(laneFor({}, { impl: '# Impl: x\nIntent: intent.md. Status: draft.\n\n## What was built\n\nNot Lane: full.\n' }), FAST)
+})
+
+// One store holding `0001_x` with `files`, asked through the command line as the app asks it.
+const laneTree = (files) => {
+  const root = store40({ '0001_x': files })
+  const ask = (...args) => cli('--root', root, ...args)
+  return {
+    dir: join(root, '.cos', '0001_x'),
+    ask,
+    next: () => JSON.parse(ask('next', '0001_x').stdout),
+    gate: (stage) => JSON.parse(ask('gate', '0001_x', stage, '--json').stdout),
+  }
+}
+
+test('a fix in the fast lane goes from its accepted intent to impl, and spec, spike and plan are not its stages', () => {
+  const t = laneTree({ 'intent.md': intentOf() })
+  const n = t.next()
+  assert.deepEqual([n.stage, n.lane, n.enteredFast, n.laneMissing], ['impl', 'fast', true, []])
+  assert.deepEqual(t.gate('impl'), { ok: true, lines: ['open: impl may proceed for 0001_x'], reasons: [] })
+  for (const stage of ['spec', 'spike', 'plan']) {
+    const g = t.gate(stage)
+    assert.equal(g.ok, false, stage)
+    assert.equal(g.reasons[0], 'not-in-lane', stage)
+    assert.match(g.lines[1], new RegExp(`${stage} is not a stage of the fast lane`))
+  }
+  for (const stage of ['idea', 'intent', 'pr', 'review', 'ship']) assert.ok(!t.gate(stage).reasons.includes('not-in-lane'), stage)
+  const status = JSON.parse(t.ask('status', '--json').stdout)
+  assert.deepEqual([status.units[0].lane, status.units[0].enteredFast, status.units[0].laneMissing], ['fast', true, []])
+  assert.ok(status.stages.every((s) => !('lanes' in s)))
+})
+
+test('a fix in the fast lane still waits on its intent being accepted', () => {
+  const t = laneTree({ 'intent.md': intentOf({ status: 'draft' }) })
+  assert.deepEqual([t.next().stage, t.next().action, t.next().lane], ['', 'finish and accept intent.md', 'fast'])
+  assert.deepEqual(t.gate('impl').reasons, ['draft'])
+})
+
+test('gate impl in the fast lane stays shut while the intent is stale, the unit is held, or a dependency is not merged', () => {
+  const text = intentOf()
+  const rerun = `\n## Answers\n\n### Rerun\nRequested by: owner. Date: 2026-09-29. Via: product.\nStage: intent.\nStale: intent.md sha256:${aboveAnswers(text)}\n`
+  const stale = laneTree({ 'intent.md': text + rerun })
+  assert.equal(stale.gate('impl').ok, false)
+  assert.ok(stale.gate('impl').reasons.includes('stale'))
+  assert.equal(stale.next().stage, 'intent')
+
+  const held = laneTree({ 'intent.md': `${text}\n## Answers\n${holdBlock('Paused', 'chờ một bản khác')}` })
+  assert.deepEqual([held.gate('impl').ok, held.gate('impl').reasons], [false, ['paused']])
+  assert.equal(held.next().stage, '')
+
+  const header = 'Idea: ideas/0001_f.md. Repo: b. Depends on: a/0001_x.'
+  const a = store40({ '0001_x': { 'intent.md': I40('accepted'), 'ship.md': '# Ship\nStatus: draft.\n' } })
+  const b = store40({ '0001_y': { 'intent.md': intentOf({ header }) } }, { '0001_f.md': IDEA40('- a/0001_x.', '- b/0001_y. Depends on: a/0001_x.') })
+  const gate = () => JSON.parse(cli('--root', b, 'gate', '0001_y', 'impl', '--json', '--peer', `a=${a}`).stdout)
+  const next = () => JSON.parse(cli('--root', b, 'next', '0001_y', '--peer', `a=${a}`).stdout)
+  assert.deepEqual([gate().ok, gate().reasons], [false, ['waiting-on']])
+  assert.deepEqual([next().stage, next().why, next().lane], ['', 'dependency', 'fast'])
+  writeFileSync(join(a, '.cos', '0001_x', 'ship.md'), '# Ship\nStatus: accepted.\n')
+  assert.equal(gate().ok, true)
+  assert.equal(next().stage, 'impl')
+})
+
+test('a fix whose intent cites no source walks the full lane from spec', () => {
+  const t = laneTree({ 'intent.md': intentOf({ expected: 'It should name every code.' }) })
+  const n = t.next()
+  assert.deepEqual([n.stage, n.lane, n.enteredFast, n.laneMissing], ['spec', 'full', false, ['c']])
+  assert.equal(t.gate('spec').ok, true)
+  assert.deepEqual(t.gate('impl').reasons, ['missing'])
+})
+
+test('review and ship ask a fix in the fast lane what they ask one in the full lane', () => {
+  const FAST_CHAIN = { 'intent.md': art('accepted'), 'impl.md': art('accepted'), 'pr.md': PR }
+  const both = (extra) => [branched({ ...CHAIN, ...extra }), { ...branched({ ...FAST_CHAIN, ...extra }), lane: 'fast' }]
+  const red = greenProbe([{ name: 'tests', bucket: 'fail' }])
+  const probes = [greenProbe(), red, greenProbe([{ name: 'tests', bucket: 'pending' }]), greenProbe([]), movedTo(['src/a.py']), null]
+  const out = [1, 2, 3].map((n) => round(n, 'changes-requested', ['- F1 [open] x'])).join('\n')
+  const reviews = [{}, { 'review.md': reviewArt('accepted', round(1, 'pass')) }, { 'review.md': reviewArt('changes-requested', out) }]
+  for (const extra of reviews) {
+    for (const probe of probes) {
+      const [full, fast] = both(extra)
+      for (const stage of ['review', 'ship']) assert.deepEqual(gateAnswer(fast, stage, { probe }), gateAnswer(full, stage, { probe }), stage)
+      assert.deepEqual(nextAnswer(fast, { probe }), nextAnswer(full, { probe }))
+    }
+  }
+  // What was compared closes and opens: red CI, the rounds used, the head the pass pins.
+  const [, fast] = both({})
+  assert.ok(gateAnswer(fast, 'review', { probe: red }).reasons.includes('ci-red'))
+  const [, spent] = both(reviews[2])
+  assert.match(nextAnswer(spent, { probe: greenProbe() }).action, /needs a person — review used 3 of 3 rounds/)
+  const [, passed] = both(reviews[1])
+  assert.equal(gateAnswer(passed, 'ship', { probe: greenProbe() }).head, SHA)
+  assert.equal(gateAnswer(passed, 'ship', { probe: movedTo(['src/a.py']) }).ok, false)
+})
+
+test('an impl that takes a fix out of the fast lane sends it to spec, and impl runs again after the plan', () => {
+  const t = laneTree({
+    'intent.md': intentOf(),
+    'impl.md': '# Impl: x\nIntent: intent.md. Author: Uruz. Lane: full. Status: draft.\n\n## Why full\n\nThe source says otherwise.\n',
+  })
+  let n = t.next()
+  assert.deepEqual([n.stage, n.lane, n.enteredFast, n.laneMissing], ['spec', 'full', true, ['e']])
+  assert.equal(t.gate('spec').ok, true)
+  writeFileSync(join(t.dir, 'spec.md'), '# Spec: x\nIntent: intent.md. Status: accepted.\n')
+  assert.equal(t.gate('plan').ok, true)
+  assert.equal(t.next().stage, 'plan')
+  writeFileSync(join(t.dir, 'plan.md'), '# Plan: x\nIntent: intent.md. Spec: spec.md. Status: accepted.\n')
+  n = t.next()
+  assert.deepEqual([n.stage, n.reasons, n.lane], ['impl', ['missing'], 'full'])
+  assert.match(n.action, /leaving the fast lane/)
+  assert.equal(t.gate('impl').ok, true)
+  // Once impl rewrites its record without the line, a spec already keeps the unit in full.
+  writeFileSync(join(t.dir, 'impl.md'), '# Impl: x\nIntent: intent.md. Author: Uruz. Status: draft.\n')
+  n = t.next()
+  assert.deepEqual([n.stage, n.action, n.lane, n.laneMissing], ['', 'finish and accept impl.md', 'full', ['e']])
 })

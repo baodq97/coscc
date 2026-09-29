@@ -35,9 +35,9 @@ const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const STAGES = [
   { name: 'idea', file: 'idea.md', optional: true, hint: 'write-idea', statuses: ['draft', 'accepted', 'rejected'] },
   { name: 'intent', file: 'intent.md', hint: 'write-intent — the unit has no intent.md', statuses: ['draft', 'accepted', 'rejected'] },
-  { name: 'spec', file: 'spec.md',hint: 'write-spec — it assesses whether to skip first', statuses: ['draft', 'accepted', 'rejected', 'skipped'] },
-  { name: 'spike', file: 'spike.md',when: 'unmeasured', hint: 'write-spike — spec.md has [unmeasured] items', statuses: ['draft', 'accepted', 'rejected'] },
-  { name: 'plan', file: 'plan.md',hint: 'write-plan', statuses: ['draft', 'accepted', 'rejected', 'done'] },
+  { name: 'spec', file: 'spec.md', lanes: ['full'], hint: 'write-spec — it assesses whether to skip first', statuses: ['draft', 'accepted', 'rejected', 'skipped'] },
+  { name: 'spike', file: 'spike.md', lanes: ['full'], when: 'unmeasured', hint: 'write-spike — spec.md has [unmeasured] items', statuses: ['draft', 'accepted', 'rejected'] },
+  { name: 'plan', file: 'plan.md', lanes: ['full'], hint: 'write-plan', statuses: ['draft', 'accepted', 'rejected', 'done'] },
   { name: 'impl', file: 'impl.md', hint: 'write-impl — implementation starts', statuses: ['draft', 'accepted', 'rejected', 'done'] },
   // `0139` R12: `pr` and `ship` are the app's PR machine, with no session and no skill, so
   // their hint names the stage the board's button starts, never a `write-*` skill.
@@ -993,6 +993,11 @@ export function readUnit(dir, name, { state } = {}) {
     unit.branch = branchFor(name, type).branch ?? null
   }
   Object.assign(unit, laneOf(unit, { intent: intentText, impl: texts['impl.md'] ?? null }))
+  // The draft an impl leaves when it takes a fix out of the fast lane records why, and is no
+  // impl of the plan written after it. Attached only when it is one, as `stale` below.
+  if (unit.enteredFast && statusOf(unit, 'impl.md') === 'draft' && LANE_FULL.test(headerOf(texts['impl.md'] ?? ''))) {
+    unit.artifacts['impl.md'].leftLane = true
+  }
   // `0047`: read from the text already in hand, never another file. `nextAction` and
   // `checkGate` do not read it — a finished unit stays finished whatever it says.
   unit.outcome = intentText === null ? null : unitOutcome(intentText)
@@ -1334,13 +1339,17 @@ export function laneOf(unit, { intent = null, impl = null } = {}) {
     b: fencedFilled(lines('Reproduction')),
     c: expectedCited(lines('Expected')),
     d: filled(lines('Actual') ?? []),
-    e: !present(unit, 'spec.md') && !present(unit, 'plan.md') && !/\bLane:\s*full\b/.test(headerOf(impl ?? '')),
+    e: !present(unit, 'spec.md') && !present(unit, 'plan.md') && !LANE_FULL.test(headerOf(impl ?? '')),
   }
   const lane = Object.values(marks).every(Boolean) ? 'fast' : 'full'
   const enteredFast = marks.a && marks.b && marks.c && marks.d
   const laneMissing = marks.a && lane === 'full' ? Object.keys(marks).filter((k) => !marks[k]) : []
   return { lane, enteredFast, laneMissing }
 }
+
+const LANE_FULL = /\bLane:\s*full\b/
+// A unit read by no `readUnit` has no lane, and walks every stage it always walked.
+const inLane = (unit, s) => !s.lanes || s.lanes.includes(unit.lane ?? 'full')
 
 // What comes before a file's first `## ` heading: the title and the header lines under it.
 const headerOf = (text) => {
@@ -1381,7 +1390,7 @@ function expectedCited(lines) {
 // when, `spec.md` names a `U<n>` (`0136` R14): a `spike.md` a spec rewritten without its
 // questions left behind no longer makes it. Never when the spec was skipped.
 export function required(unit, s) {
-  if (s.lanes && !s.lanes.includes(unit.lane ?? 'full')) return false
+  if (!inLane(unit, s)) return false
   if (!s.when) return !s.optional
   if (statusOf(unit, 'spec.md') === 'skipped') return false
   return unmeasuredOf(unit).ids.length > 0
@@ -1470,8 +1479,8 @@ function decideFiles(unit, limit) {
       // `0039` R2: before `required`, so an item with no readable id still stops the loop.
       const problems = unmeasuredOf(unit).problems
       if (problems.length) return { blocked: true, action: `fix spec.md — ${problems[0].replace(/^spec\.md: /, '')}`, stage: '', why: 'unreadable' }
-      if (!required(unit, s)) continue
     }
+    if (!s.optional && !required(unit, s)) continue
     const status = statusOf(unit, s.file)
     if (s.when && status === 'accepted') {
       const found = spikeFindings(unit)
@@ -1518,6 +1527,10 @@ function decideFiles(unit, limit) {
       const used = roundsUsed(unit)
       if (used >= limit) return { blocked: true, action: needsAPerson(used, limit), stage: '', why: 'needs-person' }
       return { blocked: true, action: `review round ${lastRound(unit).n} is incomplete — write-review again`, stage: 'review', why: 'review-incomplete' }
+    }
+    // Reached only once the spec and plan it asked for are behind the unit: impl runs on them.
+    if (status === 'draft' && unit.artifacts[s.file].leftLane) {
+      return { blocked: true, action: `${s.hint.split(' ')[0]} — impl.md records the fix leaving the fast lane: impl runs again on plan.md`, stage: s.name, why: 'missing' }
     }
     if (status === 'draft') {
       // `0112` R6 and review F1: a `ship.md` naming its `Round` records a merge that did not
@@ -2334,10 +2347,11 @@ function gateReasons(unit, stage, need, said) {
   const target = stageOf(stage)
   if (!target) return [code('unreadable')]
   if (unit.hold) return [unit.hold.state === 'dropped' ? code('dropped') : code('paused')]
-  const codes = []
+  // First: no stage before it being done opens a stage the unit's lane does not walk.
+  const codes = inLane(unit, target) ? [] : [code('not-in-lane')]
   for (const s of STAGES) {
     if (s.name === target.name) break
-    if (s.optional || (s.when && !required(unit, s))) continue
+    if (s.optional || !required(unit, s)) continue
     const status = statusOf(unit, s.file)
     if (status === null) codes.push(code('missing'))
     else if (status === 'rejected') codes.push(code('rejected'), code('closed'))
@@ -2377,11 +2391,12 @@ function evaluate(unit, stage, { probe = null, limit = REVIEW_ROUNDS } = {}) {
   // Every stage ahead of the requested one has to be behind us. The loop replaces the three
   // hand-written cases it grew out of; `spike`, the ninth, added only its own `when` below.
   const need = []
-  if (target.when && !required(unit, target)) need.push(`${target.name} is not required: spec.md has no [unmeasured] item`)
+  if (!inLane(unit, target)) {
+    need.push(`${target.name} is not a stage of the ${unit.lane} lane: intent.md carries the fix's reproduction, expected and actual result, so impl follows intent`)
+  } else if (target.when && !required(unit, target)) need.push(`${target.name} is not required: spec.md has no [unmeasured] item`)
   for (const s of STAGES) {
     if (s.name === target.name) break
-    if (s.optional) continue
-    if (s.when && !required(unit, s)) continue
+    if (s.optional || !required(unit, s)) continue
     const status = statusOf(unit, s.file)
     // Only a file that may legitimately be skipped gets told it has that option.
     const canSkip = s.statuses.includes('skipped')
@@ -2652,7 +2667,7 @@ function stepOf(unit, { probe = null, limit = REVIEW_ROUNDS } = {}, seen = {}) {
 // `idea` never, and `spike` only while it is required.
 export function rerunLater(unit, name) {
   const at = STAGES.findIndex((s) => s.name === name)
-  return STAGES.slice(at + 1).filter((s) => !s.optional && (!s.when || required(unit, s))).map((s) => s.name)
+  return STAGES.slice(at + 1).filter((s) => !s.optional && required(unit, s)).map((s) => s.name)
 }
 
 // R1 (b) and (c): why nothing may be run again on `unit` at all, or `null`.
@@ -2929,8 +2944,10 @@ function cmdStatus(json, cosDir, limit, state) {
 
   if (json) {
     // The stage list ships with the data so a reader never has to keep its own copy of it,
-    // and so do the stages an answered draft runs again (`0115` R4).
-    console.log(JSON.stringify({ root: cosDir, stages: STAGES, afterAnswers: RERUN_STAGES, units: rows, ...(ideas ? { ideas } : {}) }, null, 2))
+    // and so do the stages an answered draft runs again (`0115` R4). Without `lanes`: each
+    // unit says its own lane, and the table stays the one the app compares with its own.
+    const stages = STAGES.map(({ lanes, ...s }) => s)
+    console.log(JSON.stringify({ root: cosDir, stages, afterAnswers: RERUN_STAGES, units: rows, ...(ideas ? { ideas } : {}) }, null, 2))
     return 0
   }
 
@@ -2979,9 +2996,11 @@ function cmdNext(unitName, cosDir, repoDir, limit, state) {
   // `waiting` only when a person is awaited (`0028`), `dropped` only when the last round left
   // out an earlier finding (`0027`), `hold` only when the unit is held (`0045`), `rerun` only
   // when a draft's questions are all answered (`0106`), `why` only when `impl` waits on a
-  // dependency (`0040`). `reasons` always (`0136` R11): the codes the autopilot reads.
+  // dependency (`0040`). `reasons` always (`0136` R11): the codes the autopilot reads. The
+  // lane last, always, so a measure of the lane joins it to the runs it paid for.
   const hold = unit.hold ? { hold: unit.hold } : {}
-  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...(dropped?.length ? { dropped } : {}), ...hold, ...(rerun ? { rerun } : {}), ...(why === 'dependency' ? { why } : {}), reasons }))
+  const { lane, enteredFast, laneMissing } = unit
+  console.log(JSON.stringify({ unit: unitName, stage, action, blocked, ...(waiting?.length ? { waiting } : {}), ...(dropped?.length ? { dropped } : {}), ...hold, ...(rerun ? { rerun } : {}), ...(why === 'dependency' ? { why } : {}), reasons, lane, enteredFast, laneMissing }))
   return 0
 }
 
