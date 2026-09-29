@@ -1088,7 +1088,7 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
         self._run()
         first, second = self._starts()[-2:]
         self.assertEqual((first["label"], first["label_source"], first["model"], first["effort"]),
-                         ("routine", "declared", "claude-sonnet-5[1m]", "medium"))
+                         ("routine", "declared", "claude-sonnet-5-5[1m]", "medium"))
         self.assertEqual((second["label"], second["label_source"], second["model"]),
                          ("novel", "escalated", "claude-opus-5-5[1m]"))
         self.assertEqual((first["impl_run"], second["impl_run"]), (1, 2))

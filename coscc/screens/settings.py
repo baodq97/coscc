@@ -79,7 +79,7 @@ def _model_row(row: rx.Var[ModelRow]) -> rx.Component:
             rx.input(
                 value=rx.cond(P.model_target == row.name, P.model_text, ""),
                 on_change=lambda v: P.edit_model(row.name, v),
-                placeholder="model id, e.g. claude-sonnet-5",
+                placeholder="model id, e.g. claude-sonnet-5-5",
                 aria_label="Model for " + row.name, size="1", width="100%",
             ),
             rx.button("Save", on_click=P.save_model(row.name), size="1",
