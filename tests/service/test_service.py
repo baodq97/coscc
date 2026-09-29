@@ -22,7 +22,7 @@ REPO = str(Path(__file__).resolve().parents[2])
 
 
 def create_sync(service: Service, *args):
-    return asyncio.run(service.create_unit(*args))
+    return asyncio.run(service.answers.create_unit(*args))
 
 
 def _service(**kw) -> Service:
@@ -257,7 +257,9 @@ class ARefusalFromRunnerStaysARefusal(unittest.TestCase):
             try:
 
                 async def go():
-                    async for _ in service.run_step(str(workspace), "0009_a-test-unit", "plan"):
+                    async for _ in service.steps.run_step(
+                        str(workspace), "0009_a-test-unit", "plan"
+                    ):
                         pass
 
                 with self.assertRaises(Invalid) as caught:

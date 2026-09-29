@@ -1,4 +1,4 @@
-"""Tests for `StepsMixin` in `coscc/service/steps.py`, split from `tests/service/test_service.py`."""
+"""Tests for `Steps` in `coscc/service/steps.py`, split from `tests/service/test_service.py`."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from coscc.config import Config
 from coscc.units import autopilot
 from coscc.service.common import Invalid, describe_base, step_cwd
 from coscc.service import Service
+from coscc.service.answers import Answers
 from coscc.agent.sessions import Sessions
 from tests.service.test_service import create_sync
 from tests.units.test_submit import submits as _submits
@@ -129,7 +130,7 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
     def _run_step(self, unit: str, stage: str = "spec") -> dict:
         async def go():
             last = None
-            async for item in self.service.run_step(str(self.repo), unit, stage):
+            async for item in self.service.steps.run_step(str(self.repo), unit, stage):
                 last = item
             return last
 
@@ -436,7 +437,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
     def _run(self, stage: str) -> None:
         async def go():
-            async for _ in self.service.run_step(str(self.repo), self.made["unit"], stage):
+            async for _ in self.service.steps.run_step(str(self.repo), self.made["unit"], stage):
                 pass
 
         asyncio.run(go())
@@ -473,7 +474,9 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         async def go():
             return [
                 item
-                async for item in self.service.run_step(str(self.repo), self.made["unit"], "spec")
+                async for item in self.service.steps.run_step(
+                    str(self.repo), self.made["unit"], "spec"
+                )
             ]
 
         # The store is imported on its first read, before `meta` is broken: only the ingest fails.
@@ -506,7 +509,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
             self.assertLogs("coscc", "WARNING") as log,
         ):
             said = asyncio.run(
-                self.service._ingest(
+                self.service.answers.ingest(
                     str(self.repo), self.made["unit"], {"outcome": "done", "stage": "spec"}
                 )
             )
@@ -523,7 +526,9 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
         async def go():
             out = []
-            async for item in self.service.run_step(str(self.repo), self.made["unit"], "spec"):
+            async for item in self.service.steps.run_step(
+                str(self.repo), self.made["unit"], "spec"
+            ):
                 out.append(item)
             return out
 
@@ -574,11 +579,11 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
 
     def _run(self, stage: str = "spec") -> list:
         async def go():
-            stream = self.service.run_step(str(self.repo), self.unit, stage)
+            stream = self.service.steps.run_step(str(self.repo), self.unit, stage)
             items = [await stream.__anext__()]
-            running = self.service.steps.get(self.key, self.unit)
+            running = self.service.steps.registry.get(self.key, self.unit)
             items += [item async for item in stream]
-            # The reader has its `done` before `_after_end` runs, last in the step's task.
+            # The reader has its `done` before `after_end` runs, last in the step's task.
             if running is not None:
                 await running.task
             return items
@@ -624,7 +629,7 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
             return {"units": [{"name": self.unit, "why": why, "questions": []}]}
 
         with mock.patch.object(board_reader, "read", read):
-            asyncio.run(self.service._after_end(str(self.repo), self.unit, stage, self.key))
+            asyncio.run(self.service.steps.after_end(str(self.repo), self.unit, stage, self.key))
         return [r for r in self.records() if r["kind"] == "ship"]
 
     def test_a_done_ship_records_shipped_when_the_unit_is_finished(self):
@@ -659,12 +664,12 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.assertEqual(self.service.holds.marks, {})
 
     async def _ended(self, after_end) -> asyncio.Task:
-        """A step run to its `done` with `after_end` as its `_after_end`, returned once its
+        """A step run to its `done` with `after_end` as its `after_end`, returned once its
         task is past `holds.running` and in `holds.finishing`."""
-        self.service._after_end = after_end
-        stream = self.service.run_step(str(self.repo), self.unit, "spec")
+        self.service.steps.after_end = after_end
+        stream = self.service.steps.run_step(str(self.repo), self.unit, "spec")
         await stream.__anext__()
-        task = self.service.steps.get(self.key, self.unit).task
+        task = self.service.steps.registry.get(self.key, self.unit).task
         [_ async for _ in stream]
         for _ in range(500):
             if self.service.holds.finishing:
@@ -674,9 +679,9 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         return task
 
     def test_an_apply_waits_for_the_after_end_of_a_step_that_just_ended(self):
-        # `_drive` gives back the unit and its `holds.running` entry before `_after_end`; the settle
+        # `drive` gives back the unit and its `holds.running` entry before `after_end`; the settle
         # still waits, and the `questions` row is written.
-        real = self.service._after_end
+        real = self.service.steps.after_end
 
         async def go():
             gate = asyncio.Event()
@@ -780,7 +785,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         self.sessions.gate(made["unit"]).set()
 
     async def _first_chunk(self, made):
-        agen = self.service.run_step(self.ws, made["unit"], "spec")
+        agen = self.service.steps.run_step(self.ws, made["unit"], "spec")
         first = await agen.__anext__()
         self.assertEqual(first[0], "chunk")
         return agen
@@ -795,7 +800,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         async def go():
             agen = await self._first_chunk(a)
             await agen.aclose()  # the NDJSON client went away
-            running = self.service.steps.get(self.service.ws.key(self.ws), a["unit"])
+            running = self.service.steps.registry.get(self.service.ws.key(self.ws), a["unit"])
             self.assertIsNotNone(running)
             self._release(a)
             await running.task
@@ -811,16 +816,16 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         async def go():
             first = await self._first_chunk(a)
             with self.assertRaises(Invalid):
-                await self.service.run_step(self.ws, a["unit"], "spec").__anext__()
+                await self.service.steps.run_step(self.ws, a["unit"], "spec").__anext__()
             self.assertEqual(self.sessions.calls, 1)  # refused before a session
             second = await self._first_chunk(b)
-            listed = self.service.running_steps(self.ws)
+            listed = self.service.steps.running_steps(self.ws)
             self.assertEqual(sorted(r["unit"] for r in listed), sorted([a["unit"], b["unit"]]))
             self._release(a)
             self._release(b)
             outs = [[i async for i in g] for g in (first, second)]
             self.assertEqual([o[-1][1]["outcome"] for o in outs], ["done", "done"])
-            self.assertEqual(self.service.running_steps(self.ws), [])
+            self.assertEqual(self.service.steps.running_steps(self.ws), [])
 
         asyncio.run(go())
 
@@ -829,12 +834,12 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
 
         async def go():
             agen = await self._first_chunk(a)
-            said = await self.service.stop_step(self.ws, a["unit"], "Lan")
+            said = await self.service.steps.stop_step(self.ws, a["unit"], "Lan")
             self.assertEqual(said, {"unit": a["unit"], "stage": "spec", "stopped_by": "Lan"})
             # A second press is the same stop.
-            running = self.service.steps.get(self.service.ws.key(self.ws), a["unit"])
+            running = self.service.steps.registry.get(self.service.ws.key(self.ws), a["unit"])
             if running is not None:
-                await self.service.stop_step(self.ws, a["unit"], "Minh")
+                await self.service.steps.stop_step(self.ws, a["unit"], "Minh")
             rest = [i async for i in agen]
             return rest
 
@@ -847,7 +852,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         found = self.service.backlog.unit_history(self.ws, a["unit"])
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
         self.assertIn("Status: accepted.", (Path(a["path"]) / "intent.md").read_text())
-        self.assertEqual(self.service.running_steps(self.ws), [])
+        self.assertEqual(self.service.steps.running_steps(self.ws), [])
 
     def test_stopping_nothing_is_refused_and_no_name_stops_as_owner(self):
         """A Stop with no name used to be refused; it now records `owner`."""
@@ -855,9 +860,9 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
 
         async def go():
             with self.assertRaises(Invalid):
-                await self.service.stop_step(self.ws, a["unit"], "Lan")
+                await self.service.steps.stop_step(self.ws, a["unit"], "Lan")
             agen = await self._first_chunk(a)
-            done = await self.service.stop_step(self.ws, a["unit"], "  ")
+            done = await self.service.steps.stop_step(self.ws, a["unit"], "  ")
             self.assertEqual(done["stopped_by"], "owner")
             self._release(a)
             try:
@@ -878,7 +883,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
 
         asyncio.run(go())
         self.assertEqual(self._ends(a["unit"]), [])
-        self.assertEqual(self.service.running_steps(self.ws), [])
+        self.assertEqual(self.service.steps.running_steps(self.ws), [])
 
 
 class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
@@ -908,7 +913,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
 
     def _run(self, stage: str) -> None:
         async def go():
-            async for _ in self.service.run_step(str(self.repo), self.made["unit"], stage):
+            async for _ in self.service.steps.run_step(str(self.repo), self.made["unit"], stage):
                 pass
 
         asyncio.run(go())
@@ -1040,7 +1045,7 @@ class AStepTheGateClosesNeverStarts(unittest.TestCase):
     def _run(self, stage: str):
         async def go():
             out = []
-            async for item in self.service.run_step(str(self.repo), self.made["unit"], stage):
+            async for item in self.service.steps.run_step(str(self.repo), self.made["unit"], stage):
                 out.append(item)
             return out
 
@@ -1139,7 +1144,10 @@ class AnImplStepRunsUnderThePlansLabel(unittest.TestCase):
 
         async def go():
             return [
-                i async for i in self.service.run_step(str(self.repo), self.made["unit"], "impl")
+                i
+                async for i in self.service.steps.run_step(
+                    str(self.repo), self.made["unit"], "impl"
+                )
             ]
 
         # A routine run asks for its arm's model; the Sonnet arm is `models.json`'s.
@@ -1277,7 +1285,8 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
         async def go():
             return [
-                i async for i in self.service.run_step(str(self.repo), self.made["unit"], stage)
+                i
+                async for i in self.service.steps.run_step(str(self.repo), self.made["unit"], stage)
             ]
 
         with (
@@ -1425,7 +1434,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
 
 class TheNextStageComesFromTheScript(unittest.TestCase):
-    """`Service.next_step` asks `cos.mjs next` and chooses nothing itself."""
+    """`Steps.next_step` asks `cos.mjs next` and chooses nothing itself."""
 
     # The fixture of the class above, borrowed rather than inherited so its tests run once.
     NeverCalled = AStepTheGateClosesNeverStarts.NeverCalled
@@ -1434,7 +1443,7 @@ class TheNextStageComesFromTheScript(unittest.TestCase):
 
     def _next(self, unit: str | None = None, cwd: str | None = None):
         return asyncio.run(
-            self.service.next_step(
+            self.service.steps.next_step(
                 str(self.repo) if cwd is None else cwd,
                 self.made["unit"] if unit is None else unit,
             )
@@ -1650,8 +1659,8 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
         tree = {"path": str(self.tree), "branch": "feat/a-problem", "base": None}
 
         async def go():
-            with mock.patch.object(Service, "_worktree", mock.AsyncMock(return_value=tree)):
-                return [i async for i in service.run_step(str(self.repo), self.unit, "spike")]
+            with mock.patch.object(Answers, "worktree", mock.AsyncMock(return_value=tree)):
+                return [i async for i in service.steps.run_step(str(self.repo), self.unit, "spike")]
 
         return asyncio.run(go())
 
@@ -1688,7 +1697,7 @@ class ASpikeRunsInAScratchTheAppRemoves(unittest.TestCase):
         shutil.rmtree(self.repo / ".git")
 
         async def go():
-            return [i async for i in service.run_step(str(self.repo), self.unit, "spike")]
+            return [i async for i in service.steps.run_step(str(self.repo), self.unit, "spike")]
 
         with self.assertRaises(Invalid) as caught:
             asyncio.run(go())
@@ -1749,7 +1758,7 @@ class APrStepIsMechanical(unittest.TestCase):
             return True, "open: pr may proceed"
 
         async def go():
-            return [item async for item in self.service.run_step(str(self.repo), unit, "pr")]
+            return [item async for item in self.service.steps.run_step(str(self.repo), unit, "pr")]
 
         with (
             mock.patch.object(board_reader, "gate", open_gate),
@@ -1919,7 +1928,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
 
     def _run(self, text, gh, stage="pr", hold=False, prepare=None, gate=None, via_step=False):
         """A `pr` step writes `pr.md` itself and runs no session, so a `pr.md` of any other words --
-        `text` -- reaches `_sync_pr` only by calling it as the step does, with the lookup the
+        `text` -- reaches `sync_pr` only by calling it as the step does, with the lookup the
         step makes. `via_step` runs the step itself."""
         from coscc.units import board as board_reader
         from coscc.github import integrate
@@ -1942,7 +1951,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             if stage == "pr" and not via_step:
                 if text is not None:
                     (directory / "pr.md").write_text(text, encoding="utf-8")
-                await self.service._ingest(
+                await self.service.answers.ingest(
                     str(self.repo), unit, {"outcome": "done", "stage": "pr"}, "pr.md"
                 )
                 lookup = await integrate.pr_for_branch(str(self.repo), "fix/a-problem")
@@ -1952,11 +1961,13 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
                         "done",
                         {
                             "outcome": "done",
-                            "pr_sync": await self.service._sync_pr(str(self.repo), unit, before),
+                            "pr_sync": await self.service.answers.sync_pr(
+                                str(self.repo), unit, before
+                            ),
                         },
                     )
                 ]
-            agen = self.service.run_step(str(self.repo), unit, stage)
+            agen = self.service.steps.run_step(str(self.repo), unit, stage)
             return [i async for i in agen]
 
         with (
@@ -2199,7 +2210,7 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
             return {"unit": unit, "stage": stage, "outcome": "done"}
 
         async def go(stage):
-            return [i async for i in service.run_step(str(self.repo), self.unit, stage)]
+            return [i async for i in service.steps.run_step(str(self.repo), self.unit, stage)]
 
         for stage in ("pr", "ship"):
             with (
@@ -2208,9 +2219,9 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
                 mock.patch(
                     "coscc.service.steps.Runner", side_effect=AssertionError("a runner was made")
                 ),
-                mock.patch.object(service, "_worktree", tree),
-                mock.patch.object(service, "_sync_pr", mock.AsyncMock()),
-                mock.patch.object(service, "_mechanical", mechanical),
+                mock.patch.object(service.answers, "worktree", tree),
+                mock.patch.object(service.answers, "sync_pr", mock.AsyncMock()),
+                mock.patch.object(service.steps, "mechanical", mechanical),
             ):
                 self.assertEqual(
                     asyncio.run(go(stage)),
@@ -2266,14 +2277,14 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
             return {"state": "none", "url": ""}
 
         async def go():
-            async for _ in service.run_step(str(self.repo), self.unit, stage):
+            async for _ in service.steps.run_step(str(self.repo), self.unit, stage):
                 pass
 
         before = len(self.seen)
         with (
             mock.patch.object(board_reader, "gate", open_gate),
             mock.patch("coscc.service.steps.Runner", StandIn),
-            mock.patch.object(service, "_worktree", tree),
+            mock.patch.object(service.answers, "worktree", tree),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
             mock.patch.object(integrate, "pr_for_branch", no_pr),
         ):
@@ -2318,7 +2329,7 @@ class RunStepHandsOnThePlanMap(unittest.TestCase):
 
 
 class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
-    """`_drive` takes `Suspended` as the app going down. No session opens: the runner is a stand-in
+    """`drive` takes `Suspended` as the app going down. No session opens: the runner is a stand-in
     that raises it."""
 
     def setUp(self):
@@ -2378,7 +2389,7 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
 
         async def go():
             with self.assertRaises(Invalid):
-                async for _ in service.run_step(str(self.repo), self.unit, "spike"):
+                async for _ in service.steps.run_step(str(self.repo), self.unit, "spike"):
                     pass
             others = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
             await asyncio.gather(*others, return_exceptions=True)
@@ -2386,17 +2397,17 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
         with (
             mock.patch.object(board_reader, "gate", open_gate),
             mock.patch("coscc.service.steps.Runner", StandIn),
-            mock.patch.object(service, "_worktree", tree),
+            mock.patch.object(service.answers, "worktree", tree),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
             mock.patch.object(integrate, "pr_for_branch", no_pr),
-            mock.patch.object(service, "_after_end", after_end),
-            mock.patch.object(service, "_autopilot_nudge", nudged.append),
+            mock.patch.object(service.steps, "after_end", after_end),
+            mock.patch.object(service.autopilot, "nudge", nudged.append),
             mock.patch.object(events.Recorder, "abandon", abandon),
         ):
             asyncio.run(go())
         self.assertEqual(len(abandoned), 1)
         self.assertEqual((nudged, after), ([], []))
-        self.assertEqual(service.steps.all(), [])
+        self.assertEqual(service.steps.registry.all(), [])
         # The spike's directory stays for the step taken up again.
         self.assertTrue(
             units.spike_dir(str(self.repo), self.unit, service.config.data_dir).is_dir()
@@ -2404,7 +2415,7 @@ class AStepAnUpdatePausedIsLeftAsItWas(unittest.TestCase):
 
 
 class APrOrShipEndsThroughTheMachine(unittest.TestCase):
-    """`_drive` ends a `pr` or a `ship` through the PR machine and leaves the unit's last word.
+    """`drive` ends a `pr` or a `ship` through the PR machine and leaves the unit's last word.
     No session opens: the runner and the machine are stand-ins throughout."""
 
     def setUp(self):
@@ -2479,25 +2490,25 @@ class APrOrShipEndsThroughTheMachine(unittest.TestCase):
             return "feat/a-problem"
 
         async def go():
-            async for _ in service.run_step(str(self.repo), self.unit, stage):
+            async for _ in service.steps.run_step(str(self.repo), self.unit, stage):
                 pass
-            # `_drive` runs as its own task; wait for it, and anything it left, to end.
+            # `drive` runs as its own task; wait for it, and anything it left, to end.
             others = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
             await asyncio.gather(*others, return_exceptions=True)
 
         with (
-            mock.patch.object(service, "_pr_machine", Machine),
+            mock.patch.object(service.steps, "pr_machine", Machine),
             mock.patch.object(units, "branch_name", lambda *a, **kw: "feat/a-problem"),
             mock.patch.object(gitops, "current_branch", on_branch),
             mock.patch.object(board_reader, "gate", open_gate),
             mock.patch("coscc.service.steps.Runner", StandIn),
-            mock.patch.object(service, "_worktree", tree),
+            mock.patch.object(service.answers, "worktree", tree),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
             mock.patch.object(integrate, "pr_for_branch", no_pr),
-            mock.patch.object(service, "_ingest", nothing),
-            mock.patch.object(service, "_cleanup", nothing),
-            mock.patch.object(service, "_after_end", nothing),
-            mock.patch.object(service, "_sync_pr", nothing),
+            mock.patch.object(service.answers, "ingest", nothing),
+            mock.patch.object(service.steps, "cleanup", nothing),
+            mock.patch.object(service.steps, "after_end", nothing),
+            mock.patch.object(service.answers, "sync_pr", nothing),
         ):
             asyncio.run(go())
 
@@ -2606,7 +2617,7 @@ class _AReviewStep:
             return result
 
         async def go():
-            async for _ in self.service.run_step(str(self.repo), self.unit, "review"):
+            async for _ in self.service.steps.run_step(str(self.repo), self.unit, "review"):
                 pass
 
         with (
@@ -2614,7 +2625,7 @@ class _AReviewStep:
             mock.patch.object(board_reader, "screens", asked),
             mock.patch.object(retake, "take", take),
             mock.patch("coscc.service.steps.Runner", StandIn),
-            mock.patch.object(self.service, "_worktree", tree),
+            mock.patch.object(self.service.answers, "worktree", tree),
         ):
             with self.assertRaises(Invalid) as refused:
                 asyncio.run(go())
@@ -2731,7 +2742,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         with mock.patch.object(board_reader, "screens", unavailable):
             with self.assertRaises(Invalid):
                 asyncio.run(
-                    self.service._retake_screens(
+                    self.service.steps.retake_screens(
                         str(self.repo),
                         "k",
                         self.service.ws.journal(),
@@ -2760,7 +2771,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         ):
             with self.assertRaises(Invalid) as refused:
                 asyncio.run(
-                    self.service._retake_screens(
+                    self.service.steps.retake_screens(
                         str(self.repo),
                         "k",
                         self.service.ws.journal(),
@@ -2830,7 +2841,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
             mock.patch.object(self.service.updater, "job_ended") as ended,
         ):
             asyncio.run(
-                self.service._retake_screens(
+                self.service.steps.retake_screens(
                     str(self.repo),
                     "k",
                     self.service.ws.journal(),
@@ -2868,7 +2879,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
             ):
                 with self.assertRaises(Invalid):
                     asyncio.run(
-                        self.service._retake_screens(
+                        self.service.steps.retake_screens(
                             str(self.repo),
                             "k",
                             self.service.ws.journal(),
@@ -2907,7 +2918,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
             journal = self.service.ws.journal()
             await asyncio.gather(
                 *(
-                    self.service._retake_screens(
+                    self.service.steps.retake_screens(
                         str(self.repo), "k", journal, u, str(self.repo), "person"
                     )
                     for u in ("0001_a", "0002_b", "0003_c")

@@ -1,6 +1,6 @@
 """What the autopilot decides, with no I/O: every function here is pure.
 
-The autopilot starts the stage `cos.mjs next` names through the same `Service.run_step` a
+The autopilot starts the stage `cos.mjs next` names through the same `Steps.run_step` a
 person's press goes through, which still asks the gate. What it decides is where it must
 stop for a person, whether the day's money allows one more step, and which candidate steps
 may start now. Starting a step is not a person's approval of anything.
@@ -153,7 +153,7 @@ def stop_for(
 ) -> dict[str, str] | None:
     """The first stop that holds for one unit, as `{kind, reason}`, or `None`.
 
-    `unit_row` is the unit as `Service.board` has it; `nxt` is `Service.next_step`'s answer;
+    `unit_row` is the unit as `Service.board` has it; `nxt` is `Steps.next_step`'s answer;
     `last` the unit's latest `end`, `integration`, `screens` or `PR_MACHINE` record, or
     `None`. `None` back means no stop, which is not the same as something to run.
     `exhausted` and `unopened` are how many steps of `last`'s stage ended `exhausted` or

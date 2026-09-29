@@ -423,7 +423,7 @@ class ShutdownClosesSessions(unittest.IsolatedAsyncioTestCase):
 
 
 class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
-    """The route decides nothing; it translates `Service.stop_step`."""
+    """The route decides nothing; it translates `Steps.stop_step`."""
 
     async def asyncSetUp(self):
         self.app = build(_tmp_config(self))
@@ -449,7 +449,7 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
 
     async def test_a_stop_of_a_running_step_is_a_200_naming_it(self):
-        running = self.service.steps.claim(self.service.ws.key("/tmp"), "0001_a", "spec")
+        running = self.service.steps.registry.claim(self.service.ws.key("/tmp"), "0001_a", "spec")
         r = await self.client.post(
             "/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": "Lan"}
         )
@@ -461,7 +461,7 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), []
         )
-        self.service.steps.claim(self.service.ws.key("/tmp"), "0001_a", "plan")
+        self.service.steps.registry.claim(self.service.ws.key("/tmp"), "0001_a", "plan")
         [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual((row["unit"], row["stage"], row["stopping"]), ("0001_a", "plan", False))
         self.assertEqual(row["kind"], "step")
@@ -508,7 +508,7 @@ class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.live.denied("Bash", {}, "no")
         self.live._emit("end", outcome="done", detail="")
         self.live.closed = True
-        self.service._recorders["r-live"] = self.live
+        self.service.steps.recorders["r-live"] = self.live
 
     async def asyncTearDown(self):
         await self.client.aclose()
@@ -1001,7 +1001,7 @@ class AnsweringAQuestionOverHttp(unittest.IsolatedAsyncioTestCase):
 
 class RecordingAnOutcomeOverHttp(unittest.IsolatedAsyncioTestCase):
     """The route appends one `### Outcome` block or writes nothing at all; what it refuses is
-    `Service.record_outcome`'s decision, tested there."""
+    `Answers.record_outcome`'s decision, tested there."""
 
     async def asyncSetUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1179,7 +1179,7 @@ class AllowingOneMoreRoundOverHttp(unittest.IsolatedAsyncioTestCase):
             after = first.read_bytes()
             self.assertTrue(after.startswith(before))
             added = more_rounds.block("owner", date.today().isoformat())
-            # `_append_to_answers` opens the section first when the file has none.
+            # `append_to_answers` opens the section first when the file has none.
             self.assertEqual(after[len(before) :].decode("utf-8"), "\n## Answers\n" + added)
             self.assertEqual(second.read_bytes(), other)
             # The real `cos.mjs`, no `--repo`: past the limit, the gate stops at the repository.
@@ -1828,7 +1828,7 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
         app = build(self.config)
         self.service = app.state.service
         self.started: list[str] = []
-        self.service.autopilot_start = self.started.append
+        self.service.autopilot.start = self.started.append
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
         self.addAsyncCleanup(client.aclose)
         return client
@@ -1876,7 +1876,7 @@ class TheAutopilotsSettingsOverHttp(unittest.IsolatedAsyncioTestCase):
         from coscc.service.common import Invalid
 
         with self.assertRaises(Invalid):
-            self.service.set_autopilot("/tmp", "daily_cap_usd", float("inf"))
+            self.service.autopilot.set_setting("/tmp", "daily_cap_usd", float("inf"))
         self.assertEqual(self.prefs(), {})
         self.assertEqual(self.started, [])
 
@@ -1930,8 +1930,8 @@ class NoRequestIsTheAutopilot(unittest.IsolatedAsyncioTestCase):
             yield ("done", {"integration": {}})
 
         service = app.state.service
-        service.run_step = run_step
-        service.integrate = integrate
+        service.steps.run_step = run_step
+        service.steps.integrate = integrate
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://t"
         ) as client:
@@ -1956,7 +1956,7 @@ class ARerunIsReadOffTheBodyOnlyWhenItSaysTrue(unittest.IsolatedAsyncioTestCase)
             called.append((args, kwargs))
             yield ("done", {"outcome": "done"})
 
-        app.state.service.run_step = run_step
+        app.state.service.steps.run_step = run_step
         base = {"cwd": "/tmp", "unit": "0001_a", "stage": "pr"}
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://t"

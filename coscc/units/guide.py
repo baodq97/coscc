@@ -1,7 +1,7 @@
 """What the board's guide says, with no I/O: every function here is pure.
 
 Two lists for a person: what runs now, and what waits for them and where to do it.
-`Service._guide_block` hands in what it already read.
+`Autopilot.guide_block` hands in what it already read.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ TODO: dict[str, tuple[str, str, str]] = {
 
 def running(entries: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
     """Every step and integration running now, `[{unit, stage, agent,
-    started}]`, oldest first. `entries` is `Service.running`'s `running`: by unit, each with
+    started}]`, oldest first. `entries` is `Board.running`'s `running`: by unit, each with
     its `agent` (`coscc/agent/agents.py`), `None` for a rebase."""
     out = [
         {

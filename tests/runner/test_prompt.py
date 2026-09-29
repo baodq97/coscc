@@ -893,7 +893,7 @@ class TheNextReviewGoesOnFromAnIncompleteRound(unittest.TestCase):
 
 
 class TheNextReviewIsToldWhyARoundDidNotCount(unittest.TestCase):
-    """`service.run_step` hands over the round `cos.mjs` read as unfinished; this module only places
+    """`service.steps.run_step` hands over the round `cos.mjs` read as unfinished; this module only places
     it."""
 
     HEADING = "# The round that did not count"
@@ -942,7 +942,7 @@ class TheNextReviewIsToldWhyARoundDidNotCount(unittest.TestCase):
 
 
 class ThePlanMapAndTheCommands(unittest.TestCase):
-    """`service.run_step` builds the map and `Runner.run` hands on the grant's words; this module
+    """`service.steps.run_step` builds the map and `Runner.run` hands on the grant's words; this module
     places both for `impl` only, and every other stage's prompt is what it was, byte for byte."""
 
     MAP = "- `coscc/runner/__init__.py` — 2000 lines\n  - 307 def compose_prompt MAP-MARKER"

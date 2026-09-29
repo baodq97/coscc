@@ -55,8 +55,7 @@ select = ["F", "BLE", "S110", "S112", "RUF100"]
 exclude = ["tests/**"]
 
 [tool.ty.rules]
-# Reflex `Var` fields, and `Service` mixins reaching attributes another mixin sets: ty follows
-# neither, so these four report about 2,000 false findings.
+# Reflex `Var` fields: ty does not follow them, so these four report about 2,000 false findings.
 unresolved-attribute = "ignore"
 invalid-argument-type = "ignore"
 invalid-assignment = "ignore"

@@ -300,8 +300,8 @@ class StartingAUnitAndItsBranch(unittest.TestCase):
 
         async def both():
             return await asyncio.gather(
-                self.service.create_unit(str(self.repo), "one-problem", "w"),
-                self.service.create_unit(str(self.repo), "two-problem", "w"),
+                self.service.answers.create_unit(str(self.repo), "one-problem", "w"),
+                self.service.answers.create_unit(str(self.repo), "two-problem", "w"),
             )
 
         made = asyncio.run(both())
@@ -603,7 +603,7 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
 
     def _start_of_spec(self):
         async def go():
-            async for _ in self.service.run_step(self.cwd, self.b, "spec"):
+            async for _ in self.service.steps.run_step(self.cwd, self.b, "spec"):
                 pass
 
         try:

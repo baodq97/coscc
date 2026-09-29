@@ -173,7 +173,7 @@ class TheBacklogPanelIsCopied(unittest.TestCase):
 
         with (
             mock.patch.object(
-                page.SERVICE, "running", lambda cwd: {"running": {}, "unknown_end": {}}
+                page.SERVICE.boards, "running", lambda cwd: {"running": {}, "unknown_end": {}}
             ),
             mock.patch.object(page.SERVICE.backlog, "branch_here", branch_here),
             mock.patch.object(page.SERVICE, "board", read_board),

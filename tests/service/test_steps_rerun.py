@@ -56,9 +56,9 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         )
         self.service = Service(config, Sessions(config))
         self.cwd = str(self.repo)
-        self.unit = asyncio.run(self.service.create_unit(self.cwd, "awaiting-ship", "words"))[
-            "unit"
-        ]
+        self.unit = asyncio.run(
+            self.service.answers.create_unit(self.cwd, "awaiting-ship", "words")
+        )["unit"]
         self.dir = self.service.ws.unit_dir(self.cwd, self.unit)
         for name, text in ARTIFACTS.items():
             (self.dir / name).write_text(text, encoding="utf-8")
@@ -74,7 +74,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         file: str = "pr.md",
         **kw,
     ):
-        """`Service.run_step`, with `Runner` a stand-in that writes `file` as `write` and
+        """`Steps.run_step`, with `Runner` a stand-in that writes `file` as `write` and
         ends `done` — or, `write` None, fails before writing anything."""
         seen, directory = self.seen, self.dir
 
@@ -128,15 +128,15 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
             return "feat/awaiting-ship"
 
         async def go():
-            async for item in self.service.run_step(self.cwd, self.unit, stage, **kw):
+            async for item in self.service.steps.run_step(self.cwd, self.unit, stage, **kw):
                 self.items.append(item)
 
         with (
-            mock.patch.object(self.service, "_pr_machine", machine),
+            mock.patch.object(self.service.steps, "pr_machine", machine),
             mock.patch.object(gitops, "current_branch", on_branch),
             mock.patch("coscc.service.steps.Runner", StandIn),
-            mock.patch.object(self.service, "_worktree", tree),
-            mock.patch.object(self.service, "_sync_pr", no_sync),
+            mock.patch.object(self.service.answers, "worktree", tree),
+            mock.patch.object(self.service.answers, "sync_pr", no_sync),
             mock.patch.object(worktrees, "read_prepare", lambda *a: {"ok": True}),
             mock.patch.object(integrate, "pr_for_branch", no_pr),
         ):
@@ -149,7 +149,7 @@ class APrRunAgainClosesShipUntilAReview(unittest.TestCase):
         return asyncio.run(coro)
 
     def test_the_offers_are_cos_mjs_answer(self):
-        offers = self.ask(self.service.rerun_offers(self.cwd, self.unit))
+        offers = self.ask(self.service.steps.rerun_offers(self.cwd, self.unit))
         self.assertEqual([o["stage"] for o in offers["offers"]], ["intent", "spec", "plan", "pr"])
         self.assertEqual(
             next(o for o in offers["offers"] if o["stage"] == "pr")["later"], ["review", "ship"]

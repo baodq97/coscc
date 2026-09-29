@@ -15,8 +15,7 @@ uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you 
 - `ruff format --check`: one format, line length 100. Never format by hand.
 - `ty check`: types, on `coscc/` and `scripts/`, not on `tests/` (running them checks them).
   - Off everywhere: `unresolved-attribute`, `invalid-argument-type`, `invalid-assignment` and
-    `not-subscriptable`. Reflex `Var` fields and the `Service` mixins make them report about
-    2,000 false findings.
+    `not-subscriptable`. Reflex `Var` fields make them report about 2,000 false findings.
   - Also off in `coscc/screens/` and `coscc/state/` (Reflex): `unsupported-operator`,
     `deprecated`, `no-matching-overload` and `invalid-return-type`.
   - What stays on catches a name that does not import, a call with wrong arguments and an

@@ -240,7 +240,7 @@ class OpenQuestionsAreCopiedNotRecounted(unittest.TestCase):
 
 
 class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
-    """The card's hold is `cos.mjs`'s; the handler calls `SERVICE.hold` and never a step."""
+    """The card's hold is `cos.mjs`'s; the handler calls `SERVICE.answers.hold` and never a step."""
 
     TEXT = (
         "# Intent: q\nAuthor: t. Type: feat. Status: accepted.\n\n## Answers\n\n"
@@ -333,8 +333,8 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
             if isinstance(n, ast.AsyncFunctionDef) and n.name == "set_hold"
         ]
         text = "\n".join(ast.unparse(s) for s in handler.body[1:])  # past the docstring
-        self.assertIn("SERVICE.hold(", text)
-        for forbidden in ("run_step", "run_next", "SERVICE.integrate"):
+        self.assertIn("SERVICE.answers.hold(", text)
+        for forbidden in ("run_step", "run_next", "SERVICE.steps.integrate"):
             self.assertNotIn(forbidden, text)
         raised = next(
             i
@@ -347,7 +347,7 @@ class AHoldIsCopiedAndStartsNothing(unittest.TestCase):
 
 
 class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
-    """The unit's `more_rounds` is `cos.mjs`'s; the handler calls `SERVICE.more_rounds` and never a
+    """The unit's `more_rounds` is `cos.mjs`'s; the handler calls `SERVICE.answers.more_rounds` and never a
     step."""
 
     def test_the_more_rounds_handler_calls_the_service_and_no_step(self):
@@ -358,8 +358,8 @@ class MoreRoundsIsCopiedAndStartsNothing(unittest.TestCase):
             if isinstance(n, ast.AsyncFunctionDef) and n.name == "allow_more_rounds"
         ]
         text = "\n".join(ast.unparse(s) for s in handler.body[1:])  # past the docstring
-        self.assertIn("SERVICE.more_rounds(", text)
-        for forbidden in ("run_step", "run_next", "SERVICE.integrate"):
+        self.assertIn("SERVICE.answers.more_rounds(", text)
+        for forbidden in ("run_step", "run_next", "SERVICE.steps.integrate"):
             self.assertNotIn(forbidden, text)
         raised = next(
             i

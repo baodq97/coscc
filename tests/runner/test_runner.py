@@ -247,7 +247,7 @@ class AStepRecordsTheCommitItRanOn(unittest.TestCase):
             self.assertEqual(self._start_record(d)["head"], "")
 
     def test_the_shortlist_stamp_is_carried_into_start_only_when_given(self):
-        """The runner carries it; `service.run_step` works it out."""
+        """The runner carries it; `service.steps.run_step` works it out."""
         stamp = {"rank": 2, "of": 5, "record": {"at": "t", "n": 3}}
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self._start_record(d, shortlist=stamp)["shortlist"], stamp)
@@ -2035,7 +2035,7 @@ class AReviewAfterAnUnfinishedRoundIsHandedIt(unittest.TestCase):
 
 
 class TheScreenshotsTakenAgain(unittest.TestCase):
-    """`service.run_step` builds the section after a retake; this module places it for `review`
+    """`service.steps.run_step` builds the section after a retake; this module places it for `review`
     only, after the integration's, and every other prompt is what it was."""
 
     NOTE = "# The screenshots, taken again\n\nSCREENS-MARKER"

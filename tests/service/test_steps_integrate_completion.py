@@ -67,7 +67,7 @@ class ACutIntegration(unittest.TestCase):
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
         self.service = Service(config, StandIn(self._no_act))
-        made = asyncio.run(self.service.create_unit(self.cwd, SLUG, "fixture"))
+        made = asyncio.run(self.service.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
@@ -89,7 +89,7 @@ class ACutIntegration(unittest.TestCase):
         git(seed, "push", "-q", "origin", "main")
         git(self.workspace, "fetch", "-q", "origin")
         git(self.workspace, "branch", BRANCH, f"origin/{BRANCH}")
-        self.tree = Path(asyncio.run(self.service._worktree(self.cwd, self.unit))["path"])
+        self.tree = Path(asyncio.run(self.service.answers.worktree(self.cwd, self.unit))["path"])
         # A fresh coordinator after the tree's own fetch, so a press fetches for itself.
         shared = mock.patch.object(fetches, "shared", fetches.Fetches())
         shared.start()
@@ -160,7 +160,7 @@ class ACutIntegration(unittest.TestCase):
 
         async def go():
             done = {}
-            async for kind, payload in self.service.integrate(self.cwd, self.unit):
+            async for kind, payload in self.service.steps.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done
@@ -183,11 +183,11 @@ class ACutIntegration(unittest.TestCase):
             }
 
         async def go():
-            self.service.set_autopilot(self.cwd, "autopilot", True)
+            self.service.autopilot.set_setting(self.cwd, "autopilot", True)
             # A loop that never passes on its own: this test asks for its passes.
-            self.service.autopilot_stop(self.key)
-            self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
-            self.service._autopilot_cwd[self.key] = self.cwd
+            self.service.autopilot.stop(self.key)
+            self.service.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
+            self.service.autopilot.cwds[self.key] = self.cwd
             self.service.ws.journal().append(
                 {
                     "kind": "shortlist",
@@ -198,18 +198,18 @@ class ACutIntegration(unittest.TestCase):
                     "by": "proof",
                 }
             )
-            self.service.next_step = next_step
-            await self.service._autopilot_pass(self.key)
-            runs = dict(self.service._autopilot_runs.get(self.key) or {})
+            self.service.steps.next_step = next_step
+            await self.service.autopilot.run_pass(self.key)
+            runs = dict(self.service.autopilot.runs.get(self.key) or {})
             self.assertEqual(
                 [stage for stage, _ in runs.values()],
                 ["integrate"],
-                f"the pass did not start integrate: {self.service._autopilot_stops.get(self.key)}",
+                f"the pass did not start integrate: {self.service.autopilot.stops.get(self.key)}",
             )
             await asyncio.gather(*(task for _, task in runs.values()))
-            await asyncio.gather(*list(self.service._autopilot_pending))
-            stops = dict(self.service._autopilot_stops.get(self.key) or {})
-            self.service.autopilot_stop(self.key)
+            await asyncio.gather(*list(self.service.autopilot.pending))
+            stops = dict(self.service.autopilot.stops.get(self.key) or {})
+            self.service.autopilot.stop(self.key)
             return stops
 
         return asyncio.run(go())

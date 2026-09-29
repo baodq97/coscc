@@ -89,7 +89,7 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
         self.fake = _Sessions()
         use_sessions(self.service, self.fake)
         self.ws = str(workspace)
-        made = await self.service.create_unit(self.ws, "raced", "words for the proof")
+        made = await self.service.answers.create_unit(self.ws, "raced", "words for the proof")
         (Path(made["path"]) / "intent.md").write_text(
             "# Intent: x\nAuthor: proof. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
@@ -204,7 +204,7 @@ class TenAtOnce(_OneUnit):
             return None
 
         with (
-            mock.patch.object(self.service, "_worktree", fake_worktree),
+            mock.patch.object(self.service.answers, "worktree", fake_worktree),
             mock.patch.object(worktrees, "refresh_base", fake_refresh_base),
         ):
             tasks, _ = await self.race()
@@ -219,7 +219,7 @@ class TenAtOnce(_OneUnit):
         tasks, _ = await self.race()
         winners = [t for t in tasks if not t.done()]
         self.assertEqual(len(winners), 1)
-        # Listed is not yet driven: a Stop before `_drive`'s first turn cancels a step that never
+        # Listed is not yet driven: a Stop before `drive`'s first turn cancels a step that never
         # began, and that road writes no `end` by design.
         try:
             await asyncio.wait_for(self.fake.entered.wait(), 20)
@@ -270,7 +270,7 @@ class TheMarkIsAlwaysReturned(_OneUnit):
             await never.wait()
 
         with mock.patch.object(board_reader, "gate", waiting_gate):
-            stream = self.service.run_step(self.ws, self.unit, "spec")
+            stream = self.service.steps.run_step(self.ws, self.unit, "spec")
             task = asyncio.create_task(stream.__anext__())
             await asyncio.wait_for(asked.wait(), 10)
 
@@ -303,7 +303,7 @@ class TheMarkIsAlwaysReturned(_OneUnit):
 
         with mock.patch.object(board_reader, "gate", broken_gate):
             with self.assertRaises(RuntimeError):
-                async for _ in self.service.run_step(self.ws, self.unit, "spec"):
+                async for _ in self.service.steps.run_step(self.ws, self.unit, "spec"):
                     pass
         self.assertEqual(self.service.holds.marks, {})
 
@@ -315,7 +315,7 @@ class TheMarkIsAlwaysReturned(_OneUnit):
 
         with mock.patch("coscc.service.steps.describe_base", broken):
             with self.assertRaises(RuntimeError):
-                async for _ in self.service.run_step(self.ws, self.unit, "spec"):
+                async for _ in self.service.steps.run_step(self.ws, self.unit, "spec"):
                     pass
         self.assertEqual(self.service.holds.marks, {})
         self.assertEqual(self.service.holds.running, {})
@@ -325,24 +325,24 @@ class TheMarkIsAlwaysReturned(_OneUnit):
         self.assertEqual((await task).status_code, 200)
 
     async def test_after_a_stop_that_cancels_the_step_before_it_began(self):
-        """A Stop whose turn comes before `_drive`'s first one cancels a task whose body never runs,
-        so `_drive`'s `finally` cannot be what gives it back."""
+        """A Stop whose turn comes before `drive`'s first one cancels a task whose body never runs,
+        so `drive`'s `finally` cannot be what gives it back."""
         real_create_task = asyncio.create_task
         stops: list[asyncio.Task] = []
 
         def stop_first(coro, **kw):
-            # The real Stop, queued ahead of `_drive`'s first turn: it finds the row `claim`
+            # The real Stop, queued ahead of `drive`'s first turn: it finds the row `claim`
             # just listed, closes a handle with no client yet, and cancels the task.
-            if getattr(coro, "__name__", "") == "_drive":
+            if getattr(coro, "__name__", "") == "drive":
                 stops.append(
                     real_create_task(
-                        self.service._stop_running(self.key, self.unit, "Proof person")
+                        self.service.steps.stop_running(self.key, self.unit, "Proof person")
                     )
                 )
             return real_create_task(coro, **kw)
 
         async def drain():
-            async for _ in self.service.run_step(self.ws, self.unit, "spec"):
+            async for _ in self.service.steps.run_step(self.ws, self.unit, "spec"):
                 pass
 
         with mock.patch("asyncio.create_task", stop_first):

@@ -1,4 +1,4 @@
-"""Tests for `Ideas` in `coscc/service/ideas.py` and the peers `BoardMixin` passes."""
+"""Tests for `Ideas` in `coscc/service/ideas.py` and the peers `Board` passes."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ class PeersAreEveryWorkspaceByName(Fixture):
         self.assertNotIn("peer_problems", self.run_(self.service.board(self.api)))
 
     def test_a_unit_whose_repo_differs_from_its_workspace_gets_a_problem(self):
-        made = self.run_(self.service.create_unit(self.proj, "x"))
+        made = self.run_(self.service.answers.create_unit(self.proj, "x"))
         (Path(made["path"]) / "intent.md").write_text(
             "# I\nType: feat. Status: accepted.\nRepo: api.\n", encoding="utf-8"
         )
@@ -89,9 +89,11 @@ class AUnitOpenedFromAnIdea(Fixture):
         self.idea = self.service.ideas.create_idea(
             self.proj, "one-feature", "backend adds, frontend calls"
         )
-        self.back = self.run_(self.service.create_unit(self.api, "backend", idea=self.idea["ref"]))
+        self.back = self.run_(
+            self.service.answers.create_unit(self.api, "backend", idea=self.idea["ref"])
+        )
         self.front = self.run_(
-            self.service.create_unit(
+            self.service.answers.create_unit(
                 self.proj, "frontend", idea=self.idea["ref"], depends_on=f"api/{self.back['unit']}"
             )
         )
@@ -110,7 +112,7 @@ class AUnitOpenedFromAnIdea(Fixture):
         )
 
     def test_a_brief_opened_unit_has_no_note_and_no_siblings(self):
-        plain = self.run_(self.service.create_unit(self.proj, "plain", "words"))
+        plain = self.run_(self.service.answers.create_unit(self.proj, "plain", "words"))
         self.assertEqual(self.service.ideas.idea_note(self.proj, plain["unit"]), "")
         self.assertEqual(self.run_(self.service.ideas.siblings(self.proj, plain["unit"])), ((), ""))
 
@@ -126,7 +128,9 @@ class AUnitOpenedFromAnIdea(Fixture):
     def test_a_brief_with_an_idea_is_refused_and_nothing_is_made(self):
         before = self.run_(board_reader.read(self.service.ws.units_root(self.api)))["count"]
         with self.assertRaises(Invalid):
-            self.run_(self.service.create_unit(self.api, "again", "a copy", idea=self.idea["ref"]))
+            self.run_(
+                self.service.answers.create_unit(self.api, "again", "a copy", idea=self.idea["ref"])
+            )
         self.assertEqual(
             self.run_(board_reader.read(self.service.ws.units_root(self.api)))["count"], before
         )

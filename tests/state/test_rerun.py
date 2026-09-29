@@ -31,7 +31,7 @@ class TheRerunHoldsNoCopyOfTheRule(unittest.TestCase):
     def test_only_load_next_sets_the_offers_and_it_takes_them_from_the_service(self):
         self.assertEqual(self.setters_of("rerun_stages"), {"load_next"})
         self.assertEqual(self.setters_of("rerun_later"), {"load_next"})
-        self.assertIn("SERVICE.rerun_offers", ast.unparse(self.methods["load_next"]))
+        self.assertIn("SERVICE.steps.rerun_offers", ast.unparse(self.methods["load_next"]))
 
     def test_only_run_rerun_runs_a_stage_again(self):
         callers = {
@@ -39,14 +39,14 @@ class TheRerunHoldsNoCopyOfTheRule(unittest.TestCase):
             for name, fn in self.methods.items()
             for node in ast.walk(fn)
             if isinstance(node, ast.Call)
-            and ast.unparse(node.func) == "SERVICE.run_step"
+            and ast.unparse(node.func) == "SERVICE.steps.run_step"
             and any(k.arg == "rerun" for k in node.keywords)
         }
         self.assertEqual(callers, {"run_rerun"})
         call = next(
             n
             for n in ast.walk(self.methods["run_rerun"])
-            if isinstance(n, ast.Call) and ast.unparse(n.func) == "SERVICE.run_step"
+            if isinstance(n, ast.Call) and ast.unparse(n.func) == "SERVICE.steps.run_step"
         )
         self.assertEqual(
             ast.unparse(next(k.value for k in call.keywords if k.arg == "rerun")), "True"
