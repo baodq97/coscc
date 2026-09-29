@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, AsyncIterator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from coscc.auth import WS_RECHECK
 from coscc.data import Busy
@@ -159,7 +160,7 @@ class Notices:
         after: int | None,
         beat: float = BEAT_SECONDS,
         lifetime: float | None = None,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """With no `after`, or one past every row, a `head` line first; with one, every notice
         past it first. Then each notice as it lands, in `id` order and none twice, and a `beat`
         after `beat` seconds without a line. Ends `lifetime` seconds in.

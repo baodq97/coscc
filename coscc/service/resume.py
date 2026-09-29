@@ -180,10 +180,15 @@ class Resume:
         # process never had it.
         self.sessions.paused = False
         journal = self.ws.journal()
+        if journal is None:
+            # No working folder: `suspend_sessions` wrote no row, so there is none to take up.
+            await self.steps.reconcile_prs()
+            self.autopilot.resume()
+            return []
         said: list[dict[str, Any]] = []
         starts: list[Any] = []
         try:
-            rows = journal.unresumed() if journal is not None else []
+            rows = journal.unresumed()
         except Busy:
             rows = []
         # Judged before any row is written, so the `end` of one that fails is not read as the
@@ -313,6 +318,8 @@ class Resume:
         key, cwd = str(owner["workspace"]), str(owner["workspace_dir"])
         unit, stage, artifact = str(owner["unit"]), str(owner["stage"]), str(owner["artifact"])
         journal = self.ws.journal()
+        if journal is None:
+            raise Invalid("no working folder is set, so nothing can be taken up")
         directory = self.ws.unit_dir(cwd, unit)
         mark = self.holds.take(key, unit, "step", stage)
         try:
@@ -398,9 +405,11 @@ class Resume:
         claimed now; the returned coroutine runs the session and what follows it."""
         owner = record["owner"]
         key, cwd, unit = str(owner["workspace"]), str(owner["workspace_dir"]), str(owner["unit"])
+        journal = self.ws.journal()
+        if journal is None:
+            raise Invalid("no working folder is set, so nothing can be taken up")
         mark = self.holds.take(key, unit, "integrate")
         rid = self.holds.mark_running(key, unit, "integrate", "gebo")
-        journal = self.ws.journal()
 
         def write(rec: dict[str, Any]) -> dict[str, Any]:
             try:

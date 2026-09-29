@@ -1163,7 +1163,8 @@ class Sessions:
             await close()
             return {**record, "unresumable": "no session id yet"}
         process = getattr(getattr(client, "_transport", None), "_process", None)
-        taken = _descendants(process.pid) if getattr(process, "pid", None) else []
+        pid = getattr(process, "pid", None)
+        taken = _descendants(pid) if pid else []
         path = transcript.path_for(cwd, sid)
         edge = transcript.boundary(path)
         try:

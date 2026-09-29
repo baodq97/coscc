@@ -55,8 +55,7 @@ select = ["F", "BLE", "S110", "S112", "RUF100"]
 exclude = ["tests/**"]
 
 [tool.ty.rules]
-# Reflex `Var` fields: ty does not follow them, so these four report about 2,000 false findings.
-unresolved-attribute = "ignore"
+# Reflex `Var` fields: ty does not follow them, so these three report false findings.
 invalid-argument-type = "ignore"
 invalid-assignment = "ignore"
 not-subscriptable = "ignore"
@@ -64,7 +63,7 @@ not-subscriptable = "ignore"
 [[tool.ty.overrides]]
 # Reflex components and state: `str + Var`, `~Var` and event namespaces type as errors.
 include = ["coscc/screens/**", "coscc/state/**"]
-rules = { unsupported-operator = "ignore", deprecated = "ignore", no-matching-overload = "ignore", invalid-return-type = "ignore" }
+rules = { unresolved-attribute = "ignore", unsupported-operator = "ignore", deprecated = "ignore", no-matching-overload = "ignore", invalid-return-type = "ignore" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

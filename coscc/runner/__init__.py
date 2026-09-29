@@ -954,7 +954,7 @@ class Runner:
                             _closing_turn(
                                 self.sessions,
                                 cwd,
-                                str(resume.get("message") or "")
+                                str((resume or {}).get("message") or "")
                                 if take_up
                                 else closing_prompt(head, number),
                                 session_id,
@@ -970,7 +970,11 @@ class Runner:
                                     if running is not None
                                     else {}
                                 ),
-                                **({"resume_at": resume.get("safe_uuid")} if take_up else {}),
+                                **(
+                                    {"resume_at": (resume or {}).get("safe_uuid")}
+                                    if take_up
+                                    else {}
+                                ),
                             ),
                             CLOSING_TIMEOUT,
                         )
@@ -1058,7 +1062,7 @@ class Runner:
                             _opening_turn(
                                 self.sessions,
                                 cwd,
-                                str(resume.get("message") or "")
+                                str((resume or {}).get("message") or "")
                                 if take_up
                                 else opening_prompt(artifact, unopened.problem),
                                 session_id,
@@ -1074,7 +1078,11 @@ class Runner:
                                     if running is not None
                                     else {}
                                 ),
-                                **({"resume_at": resume.get("safe_uuid")} if take_up else {}),
+                                **(
+                                    {"resume_at": (resume or {}).get("safe_uuid")}
+                                    if take_up
+                                    else {}
+                                ),
                             ),
                             OPENING_TIMEOUT,
                         )
@@ -1240,12 +1248,14 @@ class Runner:
             # record is captured below is refused (`Finishing`) rather than told "stopped" and logged as
             # something else. `seal` is False only when a Stop already came, and that one is honoured.
             stop_came = not steps.seal(running)
+            # Only a step with a `running` entry can be stopped; after the seal no stop changes it.
+            stopped_by = running.stopped_by if running is not None else None
             if not shutting_down and stop_came and outcome != "done":
                 # Whatever the stop raised on its way in (a closed stream, a cancel, `_Stopped` at the seal),
                 # a person asked, and that is the outcome.
                 outcome = "stopped"
                 error = None
-                detail = f"stopped by {running.stopped_by}"
+                detail = f"stopped by {stopped_by}"
                 if not terminal:
                     # No `ResultMessage` came back, so nothing was billed that this app saw. Absent, not zero.
                     cost = {}
@@ -1369,7 +1379,7 @@ class Runner:
                     terminal=terminal or None,
                     **(
                         {
-                            "stopped_by": running.stopped_by,
+                            "stopped_by": stopped_by,
                             **({} if cost else {"cost_unknown": True}),
                         }
                         if outcome == "stopped"
@@ -1428,7 +1438,7 @@ class Runner:
                 "cost": cost,
                 "model": model,
                 "model_source": model_source,
-                **({"stopped_by": running.stopped_by} if outcome == "stopped" else {}),
+                **({"stopped_by": stopped_by} if outcome == "stopped" else {}),
                 # What guard `stage-result` read, for `Answers.ingest` to apply.
                 **(
                     {
