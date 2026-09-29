@@ -46,7 +46,7 @@ def _limit(raw: str | None) -> int | None:
         return None
 
 
-def build(config: Config | None = None) -> FastAPI:
+def build(config: Config | None = None) -> FastAPI:  # noqa: C901, PLR0915 - still to split
     config = config or from_env()
     sessions = Sessions(config)
     service = Service(config, sessions)

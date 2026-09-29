@@ -48,7 +48,19 @@ line-length = 100
 
 [tool.ruff.lint]
 # `BLE`, `S110`, `S112`: a blind `except` logs its traceback, or says in a `noqa` why not.
-select = ["F", "BLE", "S110", "S112", "RUF100"]
+# `C901`, `PLR0915`: a function stays small; its `noqa` marks one still to split, and `RUF100`
+# drops the mark once it is. `ARG`: an argument is read, or named `_x` for a caller's signature.
+select = ["F", "BLE", "S110", "S112", "RUF100", "C901", "PLR0915", "ARG"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 20
+
+[tool.ruff.lint.pylint]
+max-statements = 60
+
+[tool.ruff.lint.per-file-ignores]
+# A fake takes the arguments of what it stands in for.
+"tests/**" = ["ARG"]
 
 [tool.ty.src]
 # Tests are checked by running them.

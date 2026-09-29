@@ -112,7 +112,7 @@ async def _closing_turn(
     new handle has no recorder, so nothing of this turn reaches the step's live view.
     """
 
-    async def deny_all(tool: str, tool_input: dict, context: Any):
+    async def deny_all(tool: str, tool_input: dict, _context: Any):
         reason = "the closing turn holds no tools"
         denials.record(tool, reason, tool_input)
         return sdk.PermissionResultDeny(message=reason)
@@ -152,7 +152,7 @@ async def _opening_turn(
     callback that refuses every call, one turn.
     """
 
-    async def deny_all(tool: str, tool_input: dict, context: Any):
+    async def deny_all(tool: str, tool_input: dict, _context: Any):
         reason = "the opening turn holds no tools"
         denials.record(tool, reason, tool_input)
         return sdk.PermissionResultDeny(message=reason)
@@ -344,7 +344,7 @@ class Runner:
         # `start` without them.
         self.app = app
 
-    async def run(
+    async def run(  # noqa: C901, PLR0915 - still to split
         self,
         workspace: str,
         directory: str | Path,

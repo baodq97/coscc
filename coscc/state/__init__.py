@@ -1087,7 +1087,7 @@ class StudioState(
         return next((w.name for w in self.workspaces if w.id == cwd), "")
 
     @rx.event
-    async def arrive(self):
+    async def arrive(self):  # noqa: C901, PLR0915 - still to split
         """Put the page where its address says, reading once.
 
         A first arrival (a load, a reload, a typed address) is told from a move inside the

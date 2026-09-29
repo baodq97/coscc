@@ -854,7 +854,7 @@ class Sessions:
                 # After the close, so the CLI is gone before its data root is.
                 step.drop_scratch()
 
-    async def _stream(
+    async def _stream(  # noqa: C901, PLR0915 - still to split
         self,
         cwd,
         text,

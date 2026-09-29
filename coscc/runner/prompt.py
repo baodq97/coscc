@@ -363,7 +363,7 @@ def build_prompt(*args: Any, **kwargs: Any) -> tuple[str, list[str]]:
     return prompt, included
 
 
-def compose_prompt(
+def compose_prompt(  # noqa: C901, PLR0915 - still to split
     workspace: str | Path,
     directory: str | Path,
     unit: str,

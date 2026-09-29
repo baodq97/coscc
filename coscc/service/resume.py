@@ -376,7 +376,6 @@ class Resume:
             owner_extra=extra,
             **({"watch": owner["watch"]} if owner.get("watch") else {}),
         )
-        tree = {"path": str(record.get("cwd") or "")} if owner.get("tree") else None
         scratch = Path(owner["scratch"]) if owner.get("scratch") else None
         running.task = asyncio.create_task(
             self.steps.drive(
@@ -388,7 +387,6 @@ class Resume:
                 stage,
                 artifact,
                 directory,
-                tree,
                 None,
                 rounds,
                 rid,
@@ -423,7 +421,6 @@ class Resume:
                     cwd,
                     key,
                     unit,
-                    None,
                     None,
                     None,
                     None,

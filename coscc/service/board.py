@@ -131,7 +131,7 @@ class Board:
         except (Busy, sqlite3.Error, OSError) as e:
             log.warning("the review rounds of %s could not be imported: %s", key, e)
 
-    async def read(self, cwd: str) -> dict[str, Any]:
+    async def read(self, cwd: str) -> dict[str, Any]:  # noqa: PLR0915 - still to split
         """Every unit in this workspace, each with its eight stages, modes and cost.
 
         The status of a stage comes from the artifact and the mode comes from the journal,

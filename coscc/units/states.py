@@ -224,7 +224,7 @@ def load_lanes(path: str | Path | None = None, machine: Machine | None = None) -
     return build_lanes(raw, source, machine)
 
 
-def build_lanes(raw: Any, source: str | Path = "<memory>", machine: Machine | None = None) -> Lanes:
+def build_lanes(raw: Any, source: str | Path = "<memory>", machine: Machine | None = None) -> Lanes:  # noqa: C901 - still to split
     """A `Lanes` from parsed data, refused whole when a guard the machines need is missing."""
     machine = machine or default()
     if not isinstance(raw, dict):

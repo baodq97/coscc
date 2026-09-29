@@ -327,7 +327,7 @@ class Autopilot:
             except BadRecord, Busy:
                 pass
 
-    async def run_pass(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
+    async def run_pass(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:  # noqa: C901, PLR0915 - still to split
         """One look at a workspace: follow its shortlist, find each listed unit's stop or why it waits,
         then start what may start, highest first, each after its record.
         """

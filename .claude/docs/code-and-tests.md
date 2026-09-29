@@ -12,6 +12,11 @@ uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you 
 - `ruff check`: the pyflakes rules (`F`): unused imports and variables, undefined names,
   redefinitions; the blind-`except` rules (`BLE`, `S110`, `S112`, below); and `RUF100`, a
   `noqa` nothing needs. No style rule.
+  - Size: a function stays within complexity 20 (`C901`) and 60 statements (`PLR0915`). One
+    still over carries `# noqa: C901, PLR0915 - still to split`; split it and `RUF100` makes
+    the mark go.
+  - `ARG`: an argument is read. A callback that must take one it ignores names it `_x`.
+    Tests are exempt (a fake takes what it stands in for).
 - `ruff format --check`: one format, line length 100. Never format by hand.
 - `ty check`: types, on `coscc/` and `scripts/`, not on `tests/` (running them checks them).
   - Off everywhere: `invalid-argument-type`, `invalid-assignment` and `not-subscriptable`.
