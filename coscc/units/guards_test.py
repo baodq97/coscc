@@ -131,6 +131,15 @@ class TheGuards(unittest.TestCase):
         self.assertEqual(guards.ship_ready({**ok, "ci": "red", "rebased": {"reviewed": reviewed, "head": head}}).reasons,
                          ("ci-red",))
 
+    def test_a_round_naming_the_head_by_a_short_sha_passes_it(self):
+        """Review round 2, F7: `cos.mjs` `ROUND_META` takes a `Reviewed:` of 7 to 40 characters."""
+        head = "a" * 40
+        ok = {"ci": "green", "verdict": "pass", "head": head}
+        for reviewed in (head[:7], head[:39]):
+            self.assertEqual(guards.ship_ready({**ok, "reviewed_head": reviewed}), OPEN, reviewed)
+        for reviewed in (head[:6], "b" * 7):
+            self.assertEqual(guards.ship_ready({**ok, "reviewed_head": reviewed}).reasons, ("head-moved",), reviewed)
+
     def test_a_run_that_submitted_nothing_is_not_done(self):
         self.assertEqual(guards.run_submitted({"submitted": True}), OPEN)
         self.assertEqual(guards.run_submitted({}).reasons, ("no-submission",))

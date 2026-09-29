@@ -169,7 +169,7 @@ def ship_ready(inputs: Mapping[str, Any]) -> Verdict:
         str(rebased.get("reviewed") or ""), reviewed)
     if not head:
         reasons.append("no-head")
-    elif head != reviewed and not clean:
+    elif not _same_commit(head, reviewed) and not clean:
         reasons.append("head-moved")
     return _closed(*reasons) if reasons else OPEN
 
