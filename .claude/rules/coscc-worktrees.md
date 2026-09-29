@@ -19,8 +19,8 @@ paths:
     the branch only when `gh` says merged at the local head. Otherwise every board read costs a
     `gh pr view` until someone removes it by hand; nothing remembers the refusal.
   - A still-detached tree's HEAD moves to `origin/main` after a fetch before every step, costing
-    a fetch up to `FETCH_TIMEOUT` (`coscc/git/gitops.py:244`) unless one is already running or
-    succeeded under `REUSE_SECONDS` (`coscc/git/fetches.py:36`); a commit pushed in that window
+    a fetch up to `FETCH_TIMEOUT` (`coscc/git/gitops.py:189`) unless one is already running or
+    succeeded under `REUSE_SECONDS` (`coscc/git/fetches.py:29`); a commit pushed in that window
     is not in the base. The step still runs and says so in its prompt and the run log.
   - A board read with a branch whose tree is detached or missing calls `worktrees.ensure`,
     fetching each time. Offline it raises, `next_step` swallows it into `None`, and the run

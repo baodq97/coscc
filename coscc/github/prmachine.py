@@ -1,25 +1,21 @@
 """The pull request machine: `pr` and `ship` as the app's own actions, with no session.
 
-`.cos/0136_transitions-are-decided-by-parsing-prose` R10, R12, R13, spec Design "Máy PR/CI":
-`none → open(n, head) → merge-requested(head) → merged(commit) | closed`. Each move is a
-transition through `transitions.apply`, on the artifact the loop already reads it from, so
-`cos.mjs` needs no second vocabulary:
+`none -> open(n, head) -> merge-requested(head) -> merged(commit) | closed`. Each move is a
+transition through `transitions.apply`, on the artifact the loop already reads it from:
 
 - `open` is `pr.md: accepted`, guard `branch-named`;
 - `merge-requested` is `ship.md: draft`, guard `ship-ready`;
 - `merged` is `ship.md: accepted`, guard `merge-read`.
 
-Where the machine stands is a fold over those rows (`state`), never a column. The files
-`pr.md` and `ship.md` are written by the app from the same values after the transition, so a
-reader has prose and `cos.mjs` finds the files it checks exist; nothing reads them back to
-decide (R18).
+Where the machine stands is a fold over those rows (`state`), never a column. `pr.md` and
+`ship.md` are written by the app from the same values after the transition; nothing reads
+them back to decide.
 
-**What this module does on GitHub**: `git push` of the unit's own branch (no `--force`),
-`gh pr list`/`view`/`checks` to read, `gh pr create`, and `gh pr merge --squash
---delete-branch --match-head-commit <head>` with the head this module's own read gave the
-guard (R10). It merges only when guard `ship-ready` is open, and only after the
-`merge-requested` row is committed (R13 step 1), so a restart can tell a merge it may have
-made from one it never asked for.
+On GitHub this module does: `git push` of the unit's own branch (no `--force`), `gh pr
+list`/`view`/`checks` to read, `gh pr create`, and `gh pr merge --squash --delete-branch
+--match-head-commit <head>` with the head its own read gave the guard. It merges only when
+guard `ship-ready` is open and after the `merge-requested` row is committed, so a restart can
+tell a merge it may have made from one it never asked for.
 """
 
 from __future__ import annotations
@@ -40,10 +36,10 @@ from coscc.units.history import History
 PR_FILE = "pr.md"
 SHIP_FILE = "ship.md"
 MACHINE = "pr"
-# The stages the board runs through this module rather than a session (R12, R13).
+# The stages the board runs through this module rather than a session.
 STAGES = ("pr", "ship")
-# What `state` answers. `none` is a unit whose pull request the app never opened, or one
-# opened by a `pr` session before `0136`: `ship` then finds it by its branch.
+# What `state` answers. `none` is a unit whose pull request the app never opened: `ship` then
+# finds it by its branch.
 STATES = ("none", "open", "merge-requested", "merged", "closed")
 
 Gh = Callable[[list[str], str], Awaitable[tuple[int, str, str]]]
@@ -84,7 +80,7 @@ class Outcome:
     detail: str = ""
     guard: str = ""
     calls: list[list[str]] = field(default_factory=list)
-    # `0136` R23: the id of the transition it recorded, where it recorded one.
+    # The id of the transition it recorded, where it recorded one.
     transition: int | None = None
 
     @property
@@ -100,14 +96,15 @@ class Outcome:
 
 
 def title_of(name: str, type_: str | None) -> str:
-    """R12: `<type>(<NNNN>): <slug, hyphens as spaces>`, the grammar `cos.mjs titleProblem`
-    holds a title to (`0049`). The slug is English by `cos.mjs new-path`'s grammar."""
+    """`<type>(<NNNN>): <slug, hyphens as spaces>`, the grammar `cos.mjs titleProblem` holds a
+    title to. The slug is English by `cos.mjs new-path`'s grammar.
+    """
     number, _, slug = name.partition("_")
     return f"{type_ or 'chore'}({number}): {slug.replace('-', ' ')}"
 
 
 def body_of(name: str) -> str:
-    """R12: from the unit's metadata, never from a commit (`0049`)."""
+    """From the unit's metadata, never from a commit."""
     return (
         f"Work unit `{name}`.\n\n"
         "Opened by coscc, not by a session: the `pr` step is mechanical (`0136` R12). What the "
@@ -116,8 +113,9 @@ def body_of(name: str) -> str:
 
 
 def render_pr(u: Unit, title: str, url: str, head: str, at: str = "") -> str:
-    """`at` is when the app wrote it: a `pr` run again (`0054`) writes other bytes, so the
-    artifact it made stale is not stale any more (`cos.mjs` compares hashes)."""
+    """`at` is when the app wrote it: a `pr` run again writes other bytes, so the artifact it made
+    stale is not stale any more (`cos.mjs` compares hashes).
+    """
     return (
         f"# PR: {title}\n"
         f"Author: coscc (code, pr). Status: accepted. PR: {url}\n\n"
@@ -127,8 +125,7 @@ def render_pr(u: Unit, title: str, url: str, head: str, at: str = "") -> str:
 
 
 def _write_keeping_answers(path: Path, text: str) -> None:
-    """The app's `## Answers` section of the file stays, byte for byte, below what is written
-    (`.claude/CLAUDE.md`: the app never rewrites a byte above it, nor it)."""
+    """The app's `## Answers` section of the file stays, byte for byte, below what is written."""
     try:
         old = path.read_text(encoding="utf-8")
     except OSError:
@@ -139,8 +136,9 @@ def _write_keeping_answers(path: Path, text: str) -> None:
 
 def render_ship(u: Unit, *, status: str, round_n: int | None, number: int, head: str,
                 merge_commit: str = "", refused: str = "") -> str:
-    """`Round:` on the header line and `Refused:` under `## What went out` are what
-    `cos.mjs parseShip` reads (`0112`)."""
+    """`Round:` on the header line and `Refused:` under `## What went out` are what `cos.mjs
+    parseShip` reads.
+    """
     lines = [
         f"# Ship: {u.name}",
         f"Author: coscc (code, ship). Status: {status}."
@@ -170,7 +168,8 @@ def ci_of(rows: list[dict]) -> str:
 
 def state(history: History, workspace: str, unit: str) -> dict[str, Any]:
     """Where the unit's pull request stands: a fold over the rows the machine's guards wrote.
-    `ci` is the one the reader last recorded, at `head`; `None` until it has read one."""
+    `ci` is the one the reader last recorded, at `head`; `None` until it has read one.
+    """
     now: dict[str, Any] = {"state": "none"}
     for row in history.transitions(workspace, unit):
         g, artifact = row.get("guard"), row.get("artifact")
@@ -191,7 +190,7 @@ def state(history: History, workspace: str, unit: str) -> dict[str, Any]:
     return now
 
 
-# R23: the states whose pull request the reader watches.
+# The states whose pull request the reader watches.
 WATCHED = ("open", "merge-requested")
 # A `ci` the reader does not read again at the same head.
 SETTLED_CI = ("green", "red", "unfixable")
@@ -199,7 +198,8 @@ SETTLED_CI = ("green", "red", "unfixable")
 
 def watched(history: History, workspace: str) -> list[tuple[str, dict[str, Any]]]:
     """`(unit, state)` for each unit of `workspace` whose pull request is `open` or
-    `merge-requested`: what the reader reads, and what R22 holds an `impl` behind."""
+    `merge-requested`: what the reader reads, and what holds an `impl` behind.
+    """
     with history.data.connect() as conn:
         names = [r["unit"] for r in conn.execute(
             "SELECT DISTINCT unit FROM transitions WHERE root = ? AND workspace = ? AND guard = 'branch-named'",
@@ -214,8 +214,9 @@ def watched(history: History, workspace: str) -> list[tuple[str, dict[str, Any]]
 
 
 def files_held(history: History, workspace: str, number: int, head: str) -> list[str] | None:
-    """R22: the files the reader recorded for this pull request at this head; `None` when it
-    has not read them, or could not."""
+    """The files the reader recorded for this pull request at this head; `None` when it has not
+    read them, or could not.
+    """
     with history.data.connect() as conn:
         row = conn.execute(
             "SELECT files FROM pull_requests WHERE root = ? AND workspace = ? AND number = ? AND head = ?",
@@ -231,8 +232,9 @@ def files_held(history: History, workspace: str, number: int, head: str) -> list
 
 
 def ci_held(history: History, workspace: str, number: int, head: str) -> dict[str, Any] | None:
-    """`0139` R8: the CI answer the row holds for this pull request at this head, as
-    `{head, ci, checks, at}`; `None` until one was read there."""
+    """The CI answer the row holds for this pull request at this head, as `{head, ci, checks, at}`;
+    `None` until one was read there.
+    """
     with history.data.connect() as conn:
         row = conn.execute(
             "SELECT ci, ci_head, ci_checks, ci_at FROM pull_requests "
@@ -250,8 +252,9 @@ def ci_held(history: History, workspace: str, number: int, head: str) -> dict[st
 
 
 def open_prs(history: History, workspace: str) -> list[dict[str, Any]]:
-    """R22: `{unit, number, files}` for `autopilot.pick`, from the machine's own rows; `files`
-    a set, as `autopilot.files_of` gives a plan's."""
+    """`{unit, number, files}` for `autopilot.pick`, from the machine's own rows; `files` a set, as
+    `autopilot.files_of` gives a plan's.
+    """
     out = []
     for name, now in watched(history, workspace):
         files = files_held(history, workspace, now["number"], str(now.get("head") or ""))
@@ -260,7 +263,7 @@ def open_prs(history: History, workspace: str) -> list[dict[str, Any]]:
 
 
 def last_round(history: History, workspace: str, unit: str) -> dict[str, Any] | None:
-    """The last review round the app holds: `n`, the head it reviewed (R3 c) and its verdict."""
+    """The last review round the app holds: `n`, the head it reviewed and its verdict."""
     with history.data.connect() as conn:
         row = conn.execute(
             "SELECT n, head, verdict FROM review_rounds WHERE root = ? AND workspace = ? AND unit = ? "
@@ -279,8 +282,9 @@ async def _push(tree: str, branch: str) -> Any:
 
 
 async def _files(tree: str, head: str) -> list[str] | None:
-    """R22: the paths the diff names from the merge-base with `origin/main` to `head`, in the
-    local repository, with no fetch; `None` when that cannot be read (C12)."""
+    """The paths the diff names from the merge-base with `origin/main` to `head`, in the local
+    repository, with no fetch; `None` when that cannot be read.
+    """
     try:
         base = await gitops.rev_parse(Path(tree), "refs/remotes/origin/main")
         if not await gitops.has_commit(Path(tree), head):
@@ -292,9 +296,10 @@ async def _files(tree: str, head: str) -> list[str] | None:
 
 @dataclass
 class Read:
-    """What one read of a workspace's pull requests did (R23). `moved` holds `(unit,
-    transition)` for each transition recorded; `error` is `gh`'s words when the list could
-    not be read, and nothing was recorded after it."""
+    """What one read of a workspace's pull requests did. `moved` holds `(unit, transition)` for each
+    transition recorded; `error` is `gh`'s words when the list could not be read, and nothing was
+    recorded after it.
+    """
 
     moved: list[tuple[str, str]] = field(default_factory=list)
     error: str = ""
@@ -310,8 +315,9 @@ class Read:
 class Machine:
     """`pr`, `ship` and the reconcile after a restart, for one working folder.
 
-    `gh`, `push` and `head` default to the real calls and are looked up at call time, so a
-    test hands in fakes; `notify` goes to `transitions.apply` (R23)."""
+    `gh`, `push` and `head` default to the real calls and are looked up at call time, so a test
+    hands in fakes; `notify` goes to `transitions.apply`.
+    """
 
     def __init__(
         self, history: History, journal: Journal, *, gh: Gh | None = None,
@@ -364,9 +370,9 @@ class Machine:
 
     def _pull_request_row(self, u: Unit, number: int, head: str, merge_commit: str = "",
                           files: list[str] | None = None, checks: list[dict] | None = None) -> Callable[[Any], None]:
-        """A read of the files keeps the ones an earlier read at the same head found: they
-        are the same diff. `checks` (`0139` R8) is handed in only by a `ci` transition, the
-        one write of the row's `ci`."""
+        """A read of the files keeps the ones an earlier read at the same head found: they are the same
+        diff. `checks` is handed in only by a `ci` transition, the one write of the row's `ci`.
+        """
         def write(conn: Any) -> None:
             conn.execute(
                 "INSERT INTO pull_requests (root, workspace, unit, number, head, files, merge_commit, at) "
@@ -386,10 +392,10 @@ class Machine:
         return write
 
     def record_ci(self, u: Unit, number: int, head: str, checks: list[dict]) -> bool:
-        """`0139` R8. The board's read of the required checks at `head`, as the reader's own:
-        a `ci` transition through `ci-at-head` when the head or the answer moved, and the
-        row's `ci` written with it. An answer that did not move only says when it was read
-        again. Whether it was taken is returned."""
+        """The board's read of the required checks at `head`, as the reader's own: a `ci` transition
+        through `ci-at-head` when the head or the answer moved, and the row's `ci` written with it. An
+        answer that did not move only says when it was read again. Returns whether it was taken.
+        """
         now = state(self.history, u.workspace, u.name)
         ci = ci_of(checks)
         if head == now.get("head") and ci == now.get("ci") and ci_held(self.history, u.workspace, number, head):
@@ -406,12 +412,12 @@ class Machine:
                               also=self._pull_request_row(u, number, head, checks=checks))
         return applied.open
 
-    # -- pr -------------------------------------------------------------------
 
     async def open_pr(self, u: Unit, again: bool = False) -> Outcome:
-        """R12. Push the branch, take the open pull request it already has or create one, and
-        record `open`. A second press finds the first one's row and creates nothing; one run
-        `again` from the board (`0054`) writes `pr.md` again from the same row."""
+        """Push the branch, take the open pull request it already has or create one, and record `open`.
+        A second press finds the first one's row and creates nothing; one run `again` from the board
+        writes `pr.md` again from the same row.
+        """
         now = state(self.history, u.workspace, u.name)
         if now["state"] in ("open", "merge-requested", "merged"):
             out = Outcome("already", now.get("number"), str(now.get("url") or ""), str(now.get("head") or ""))
@@ -452,12 +458,11 @@ class Machine:
         _write_keeping_answers(u.directory / PR_FILE, render_pr(u, title_of(u.name, u.type), url, head))
         return Outcome(result, number, url, head, guard=applied.guard)
 
-    # -- ship -----------------------------------------------------------------
 
     async def _number(self, u: Unit, now: dict[str, Any]) -> int | None:
         if now.get("number"):
             return int(now["number"])
-        # A pull request a `pr` session opened before `0136`: found by its branch, on GitHub.
+        # A pull request opened outside the app: found by its branch, on GitHub.
         found = await self.open_of(u.tree, u.branch) if u.branch else None
         return int(found["number"]) if found else None
 
@@ -478,11 +483,12 @@ class Machine:
                        transition=(applied.row or {}).get("id"))
 
     async def ship(self, u: Unit, authority: str = "person", rebased: dict[str, str] | None = None) -> Outcome:
-        """R13. Reconcile first; a merge made anywhere else is only recorded. Otherwise guard
-        `ship-ready` reads CI at the head this read found, and the last round the app holds;
-        open, it records `merge-requested`, merges pinned to that head, and records `merged`.
-        `rebased` is the `ship` gate's read that the head is a clean rebase of a reviewed
-        commit (`0067`); the guard takes it only when both commits match its own inputs."""
+        """Reconcile first; a merge made anywhere else is only recorded. Otherwise guard `ship-ready`
+        reads CI at the head this read found, and the last round the app holds; open, it records
+        `merge-requested`, merges pinned to that head, and records `merged`. `rebased` is the `ship`
+        gate's read that the head is a clean rebase of a reviewed commit; the guard takes it only when
+        both commits match its own inputs.
+        """
         now = state(self.history, u.workspace, u.name)
         if now["state"] == "merged":
             return Outcome("already", now.get("number"), merge_commit=str(now.get("merge_commit") or ""))
@@ -527,8 +533,9 @@ class Machine:
         return [r for r in rows if isinstance(r, dict)]
 
     async def _merge(self, u: Unit, number: int, head: str, round_n: int | None) -> Outcome:
-        """R13 steps 2 and 3. A non-zero exit is read again before it counts: `--delete-branch`
-        in a worktree merges and then fails (`0116`)."""
+        """Merge and record. A non-zero exit is read again before it counts: `--delete-branch` in a
+        worktree merges and then fails.
+        """
         try:
             code, out, err = await self.gh(
                 ["pr", "merge", str(int(number)), "--squash", "--delete-branch", "--match-head-commit", head], u.tree)
@@ -544,12 +551,11 @@ class Machine:
             encoding="utf-8")
         return Outcome("failed", number, head=head, detail=refused)
 
-    # -- after a restart --------------------------------------------------------
 
     async def reconcile(self, units: list[Unit]) -> list[Outcome]:
-        """Spec Design "Đối soát sau khởi động lại": a unit left at `merge-requested` whose pull
-        request GitHub says is merged is recorded, and nothing is merged. One still open is
-        left as it is; the next `ship` asks the guard again from the start."""
+        """A unit left at `merge-requested` whose pull request GitHub says is merged is recorded, and
+        nothing is merged. One still open is left as it is; the next `ship` asks the guard again.
+        """
         done: list[Outcome] = []
         for u in units:
             now = state(self.history, u.workspace, u.name)
@@ -565,17 +571,16 @@ class Machine:
                 done.append(await self._record_merged(u, int(now["number"]), view, round_["n"] if round_ else None, "recorded"))
         return done
 
-    # -- the reader (R23) -------------------------------------------------------
 
     async def read(self, root: str, workspace: str, directory_of: Callable[[str], Path]) -> Read:
-        """Spec Design "Người đọc PR": one read of `workspace`'s pull requests.
+        """One read of `workspace`'s pull requests.
 
-        No call at all when no unit's pull request is `open` or `merge-requested`. Otherwise
-        one `gh pr list`; `gh pr checks --required` only for a pull request whose `ci` at the
-        head the list gave is not settled; `gh pr view` only for one gone from the list. Each
-        change is a transition -- `ci` (a new head or a new answer at the same head),
-        `merged`, `closed` -- and nothing is written when nothing changed. A call that fails is
-        not asked again before the next read (C11)."""
+        No call at all when no unit's pull request is `open` or `merge-requested`. Otherwise one
+        `gh pr list`; `gh pr checks --required` only for a pull request whose `ci` at the head the list
+        gave is not settled; `gh pr view` only for one gone from the list. Each change is a transition
+        -- `ci`, `merged`, `closed` -- and nothing is written when nothing changed. A call that fails
+        is not asked again before the next read.
+        """
         out = Read()
         watching = watched(self.history, workspace)
         if not watching:

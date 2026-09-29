@@ -1,28 +1,9 @@
 """The set of states a unit can be in, loaded from a file rather than written here.
 
-`0013`'s `spec.md` R6 has two halves and this module exists to make both of them checkable.
-The first half is that the default is today's set — eight stages, the statuses
-`.claude/scripts/cos.mjs:25-34` already enforces — so nothing changes for work already in
-flight. The second half is that a different set can be loaded **without editing Python**,
-and the only honest proof of that is a test that loads one and drives a unit through it.
-`coscc/units/states_test.py` is that test; without it "configuration" is a word.
-
-**Nothing else may name a state.** `coscc/units/history.py` validates every transition against a
-`Machine` and `coscc/units/backfill.py` decides what counts as settled by asking one. The moment
-a second module writes `"accepted"` as a literal, the file below stops being the definition
-and becomes a copy of one.
-
-**`absent` is a state, and giving it a name is the point.** `coscc/units/board.py:63-81` derives
-"not started" from a missing file, which is fine when the only question is where a unit is
-now. A transition log has to record the move *out of* nothing, so nothing needs a name it
-can be stored under. It is deliberately not a member of any stage's `statuses`: an artifact
-can leave it but nothing may ever write it as a destination.
-
-**What this module does not decide.** Which transitions are *allowed* in the sense of a
-workflow engine — "you may not go from `draft` to `ship`" — is not here and is not in
-`cos.mjs` either. What is enforced is narrower and is the part that catches real mistakes:
-a state that the stage it is attached to cannot carry. Widening that later is adding a key
-to the file, which is the shape this whole module is arguing for.
+The default is the packaged `states.json`; a different set loads without editing Python.
+Nothing else may name a state. `absent` is a state so a transition log can record a move out
+of nothing; it is a member of no stage's `statuses`, so nothing may write it as a destination.
+Which transitions are allowed is not decided here; only that a stage can carry the state.
 """
 
 from __future__ import annotations
@@ -33,18 +14,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-# The packaged default. `coscc/agent/harness.py` makes the same argument for `cos.mjs` and the
-# skills: a wheel has to carry the rules it runs on. `wheel_complaints` refuses a wheel
-# that does not have this file, for exactly the reason `0012` cost a unit.
+# The packaged default; a wheel has to carry the rules it runs on (`wheel_complaints`).
 DEFAULT_PATH = Path(__file__).resolve().parent / "states.json"
 
 
 class BadMachine(ValueError):
-    """A state definition this module will not load, carrying what is wrong with it.
-
-    Raised rather than defaulted. A definition with a typo in it would otherwise load,
-    agree with every write, and disagree with the one query that mattered.
-    """
+    """A state definition this module will not load. Raised, never defaulted: a typo would otherwise load and disagree with one query."""
 
 
 @dataclass(frozen=True)
@@ -66,7 +41,6 @@ class Machine:
     settled: frozenset[str]
     stages: tuple[Stage, ...]
 
-    # -- lookups ------------------------------------------------------------
 
     @property
     def stage_names(self) -> tuple[str, ...]:
@@ -74,7 +48,7 @@ class Machine:
 
     @property
     def artifacts(self) -> tuple[str, ...]:
-        """In stage order. Every projection reports in this order, so it is defined once."""
+        """In stage order; every projection reports in this order."""
         return tuple(s.artifact for s in self.stages)
 
     def stage(self, name: str) -> Stage | None:
@@ -92,15 +66,9 @@ class Machine:
     def knows(self, artifact: str) -> bool:
         return self.for_artifact(artifact) is not None
 
-    # -- questions the log asks ---------------------------------------------
 
     def is_settled(self, state: str) -> bool:
-        """Whether a state means "this stage is behind us".
-
-        The same question `cos.mjs:123` answers, asked of configuration instead of a
-        literal. `0013`'s outcome is counted in terms of it: an artifact edited while in a
-        settled state is the event that used to leave no trace.
-        """
+        """Whether a state means "this stage is behind us"."""
         return state in self.settled
 
     def allows(self, artifact: str, state: str) -> bool:
@@ -129,8 +97,7 @@ class Machine:
 def load(path: str | Path | None = None) -> Machine:
     """Read a state set from a file. `None` means the packaged default.
 
-    Every failure here is a `BadMachine` naming the file, because the alternative — a
-    half-loaded set — disagrees with the log that was written under the whole one.
+    Every failure is a `BadMachine` naming the file, never a half-loaded set.
     """
     source = Path(path) if path is not None else DEFAULT_PATH
     try:
@@ -143,8 +110,7 @@ def load(path: str | Path | None = None) -> Machine:
 
 
 def build(raw: Any, source: str | Path = "<memory>") -> Machine:
-    """A `Machine` from already-parsed data, validated. Exposed for tests and callers
-    that hold a definition in memory rather than on disk."""
+    """A `Machine` from already-parsed data, validated."""
     if not isinstance(raw, dict):
         raise BadMachine(f"{source}: a state set is an object, not {type(raw).__name__}")
 
@@ -179,8 +145,7 @@ def build(raw: Any, source: str | Path = "<memory>") -> Machine:
             raise BadMachine(f"{source}: stage {stage_name!r} needs a non-empty 'statuses'")
         statuses = tuple(str(s) for s in statuses)
         if absent in statuses:
-            # Otherwise a stage could be written back into nothing, and the projection
-            # would have two ways to say "not started" that a query cannot tell apart.
+            # Otherwise `absent` would be a second way to say "not started".
             raise BadMachine(
                 f"{source}: stage {stage_name!r} lists the absent state {absent!r} as a "
                 "status it can be written to"
@@ -203,9 +168,7 @@ def build(raw: Any, source: str | Path = "<memory>") -> Machine:
     every = {s for stage in stages for s in stage.statuses}
     unknown = sorted(settled - every)
     if unknown:
-        # A settled name no stage can carry makes nothing settled, silently -- and
-        # `0013`'s whole count is "edited while settled", so it would come back zero and
-        # look like good news.
+        # A settled name no stage can carry makes nothing settled, silently.
         raise BadMachine(
             f"{source}: 'settled' names {', '.join(unknown)}, which no stage can carry"
         )
@@ -219,15 +182,12 @@ def default() -> Machine:
     return load(None)
 
 
-# -- lanes ------------------------------------------------------------------
-#
-# `0136` R1: which stages a lane runs, under what condition, and which guard decides each
-# transition of the three machines. Beside `states.json` and carried in the wheel for the same
-# reason (`coscc/agent/harness.py` `wheel_complaints`).
+# -- lanes: which stages a lane runs, under what condition, and which guard decides each
+# transition of the three machines. Carried in the wheel beside `states.json`.
 LANES_PATH = Path(__file__).resolve().parent / "lanes.json"
 
 # How a stage on a lane's path is entered. `unless-skipped` needs the `skip` guard's decision
-# to be passed over; `if-unmeasured` runs only when the spec named a `U<n>` (R14).
+# to be passed over; `if-unmeasured` runs only when the spec named a `U<n>`.
 WHEN = ("always", "unless-skipped", "if-unmeasured")
 
 
@@ -270,8 +230,7 @@ def load_lanes(path: str | Path | None = None, machine: Machine | None = None) -
 def build_lanes(raw: Any, source: str | Path = "<memory>", machine: Machine | None = None) -> Lanes:
     """A `Lanes` from parsed data, refused whole when a guard the machines need is missing.
 
-    Imported here rather than at the top: `guards` is the table this checks against, and the
-    state set has no business knowing it for anything else.
+    `guards` is imported here, not at the top, because the state set knows it for nothing else.
     """
     from coscc.units import guards
 

@@ -1,8 +1,6 @@
 """The Workspaces screen: the list, the form that adds or edits one, removing and pulling.
 
-Split from `coscc/state/__init__.py` (`0095`). `StudioState` inherits it, so its vars and handlers
-keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
-because this module cannot import `coscc.state` at the top (`spike.md ## U1`).
+Handlers import `SERVICE` in their bodies: this module cannot import `coscc.state` at the top.
 """
 
 from __future__ import annotations
@@ -93,7 +91,7 @@ class WorkspacesMixin(rx.State, mixin=True):
 
     @rx.event
     async def remove_workspace(self):
-        """De-lists only. The directory stays on disk — `spec.md` R18."""
+        """De-lists only. The directory stays on disk."""
         from coscc.state import SERVICE
         name, self.remove_name = self.remove_name, ""
         if not name:

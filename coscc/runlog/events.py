@@ -1,23 +1,17 @@
-"""What a board step does, event by event, for anyone watching it (`0073`).
+"""The recorder each board step carries: what the step does, event by event, for anyone watching.
 
-A step's session used to reach one place: the request that pressed *Run*, as text. The
-tool calls, the refusals, the turns and the cost stopped in the runner, and a browser that
-opened the board later saw nothing until the step was over. This module is the recorder
-each board step carries (`spec.md` Design 1): every message the SDK hands `Sessions._stream`,
-every refusal `permission_gate` makes and the runner's outcome become numbered events, kept
-in memory for the life of the step, pushed to whoever follows it, and written to two tables
-of `cos.db` beside the run log -- never into it (Design 2).
+Every SDK message `Sessions._stream` gets, every refusal `permission_gate` makes and the
+runner's outcome become numbered events, kept in memory for the life of the step, pushed to
+followers, and written to two tables of `cos.db` (never into the run log).
 
-**Nothing here may change the step.** `message` and `denied` run on the SDK's read loop, so
-they are synchronous, never wait for a reader or for the database, and swallow every error
-into `lost` (R5). A reader that falls `SUB_LIMIT` events behind is cut, not waited for (R8).
-The writes happen in a task of their own, off that loop. `close` waits at most
-`2 * CLOSE_WAIT` for the last write and as long again to close the index row -- 20 s in all,
-which the runner's `end` record waits for.
+Nothing here may change the step. `message` and `denied` run on the SDK's read loop, so they
+are synchronous, never wait for a reader or the database, and swallow every error into `lost`.
+A reader `SUB_LIMIT` events behind is cut, not waited for. Writes happen in a task of their
+own. `close` waits at most `2 * CLOSE_WAIT` for the last write and as long again for the
+index row (20 s in all, which the runner's `end` record waits for).
 
-**Everything a step saw is kept and handed out.** Commands, paths, thinking and tool output,
-unfiltered (`intent.md ## Answers, câu 6`), for up to `KEEP_DAYS` and `KEEP_BYTES`, to
-whoever holds the password or a live session. `.claude/CLAUDE.md` says so.
+Everything a step saw is kept and handed out unfiltered (commands, paths, thinking, tool
+output), up to `KEEP_DAYS` and `KEEP_BYTES`, to whoever holds the password or a live session.
 """
 
 from __future__ import annotations
@@ -41,11 +35,10 @@ from claude_agent_sdk import (
 
 from coscc.runlog.journal import TOKEN_FIELDS
 
-# R4. Characters a text field keeps, and an `input` keeps once it is JSON. Chosen, not
-# measured.
+# Characters a text field keeps, and an `input` keeps once it is JSON. Chosen, not measured.
 FIELD_MAX = 64_000
 
-# R6. Seconds between two writes of what has been recorded. Chosen.
+# Seconds between two writes of what has been recorded. Chosen.
 FLUSH_EVERY = 1.0
 
 # Seconds the periodic write waits for `cos.db`. Chosen: short, so a busy database delays
@@ -53,26 +46,23 @@ FLUSH_EVERY = 1.0
 WRITE_WAIT = 2.0
 
 # Seconds `close` gives `cos.db` for the last write before counting what is left as lost, and
-# again for closing the index row. Chosen. Each is awaited up to twice this, since a write the
-# periodic task began still holds `Data`'s lock, so the `end` record can wait up to
-# `4 * CLOSE_WAIT` (`plan.md` Risk 9, unmeasured).
+# again for closing the index row. Each is awaited up to twice this, since a write the periodic
+# task began still holds `Data`'s lock, so the `end` record can wait up to `4 * CLOSE_WAIT`.
 CLOSE_WAIT = 5.0
 
-# R8. Events a follower may leave unread before it is cut. Chosen.
+# Events a follower may leave unread before it is cut. Chosen.
 SUB_LIMIT = 5_000
 
-# R7. `PAGE_DEFAULT` is the example in `intent.md ## Answers, câu 3`, not a threshold.
+# `PAGE_DEFAULT` is an example, not a threshold.
 PAGE_DEFAULT = 200
 PAGE_MAX = 500
 
-# R12. What a collapsed field shows: this many lines, and no more than this many characters.
-# Chosen.
+# What a collapsed field shows: this many lines, and no more than this many characters. Chosen.
 COLLAPSE_LINES = 20
 COLLAPSE_CHARS = 2_000
 
-# R14, `spec.md ## Answers, câu 1`: "Giữ 30 ngày, và tổng không quá 200 MB". MB is read as
-# 10**6 bytes of stored event JSON -- not the size of the file, which never shrinks without
-# a `VACUUM` (spec C5).
+# Keep 30 days and no more than 200 MB in total. MB is 10**6 bytes of stored event JSON, not
+# the size of the file, which never shrinks without a `VACUUM`.
 KEEP_DAYS = 30
 KEEP_BYTES = 200_000_000
 
@@ -80,7 +70,7 @@ KEEP_BYTES = 200_000_000
 # loop can notice it was closed. Chosen.
 IDLE_WAKE = 5.0
 
-# The fields every event carries; everything else is the kind's own, and is what R4 cuts.
+# The fields every event carries; everything else is the kind's own, and is what gets cut.
 COMMON = ("run", "seq", "at", "kind")
 
 
@@ -93,9 +83,10 @@ def _json(value: Any) -> str:
 
 
 def _cut(event: dict[str, Any]) -> dict[str, Any]:
-    """R4. Every field longer than `FIELD_MAX` once it is text is kept as its first
-    `FIELD_MAX` characters. A dict or a list is measured as JSON and, when too long, kept as
-    the cut JSON string. `length` is the longest original length among the cut fields."""
+    """Every field longer than `FIELD_MAX` once it is text is kept as its first `FIELD_MAX`
+    characters. A dict or a list is measured as JSON and, when too long, kept as the cut JSON
+    string. `length` is the longest original length among the cut fields.
+    """
     cut: list[str] = []
     longest = 0
     for name, value in list(event.items()):
@@ -114,7 +105,7 @@ def _cut(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def _result_fields(message: Any) -> dict[str, Any]:
-    """R3 `result`: turns, cost, the four token fields `journal.TOKEN_FIELDS` adds, time."""
+    """`result`: turns, cost, the four token fields `journal.TOKEN_FIELDS` adds, time."""
     from coscc.agent.sessions import _cumulative  # the one reading of `model_usage`
 
     total = _cumulative(message)
@@ -128,7 +119,7 @@ def _result_fields(message: Any) -> dict[str, Any]:
 
 
 def _system_fields(thing: Any) -> dict[str, Any]:
-    """R3 `system`: anything else the SDK hands over, by class name, with its data as JSON."""
+    """`system`: anything else the SDK hands over, by class name, with its data as JSON."""
     try:
         data = vars(thing)
     except TypeError:
@@ -145,9 +136,9 @@ def _system_fields(thing: Any) -> dict[str, Any]:
 class Recorder:
     """The events of one board step's `run`. One per step, made by `Service.run_step`.
 
-    `events` holds every event of the run until it ends (spec C7, unmeasured); `pending` what
-    is not on disk yet; `subscribers` the followers' queues. All three are touched only on
-    the event loop, and never across an `await`.
+    `events` holds every event of the run until it ends; `pending` what is not on disk yet;
+    `subscribers` the followers' queues. All three are touched only on the event loop, and never
+    across an `await`.
     """
 
     def __init__(self, run: str, data: Any, root: str, workspace: str, unit: str, stage: str):
@@ -169,7 +160,6 @@ class Recorder:
         self._task: asyncio.Task | None = None
         self._opened = False
 
-    # -- what goes in (the SDK's read loop: synchronous, never raises) ---------------------
 
     def _emit(self, kind: str, **fields: Any) -> None:
         try:
@@ -179,7 +169,7 @@ class Recorder:
             self.pending.append(event)
             for q in list(self.subscribers):
                 if q.qsize() >= SUB_LIMIT:
-                    # R8: cut, and told where to read again from. The step does not wait.
+                    # Cut, and told where to read again from. The step does not wait.
                     self.subscribers.discard(q)
                     q.put_nowait(("cut", self.seq))
                 else:
@@ -188,13 +178,13 @@ class Recorder:
             self.lost += 1
 
     def message(self, msg: Any) -> None:
-        """R3. One SDK message, as one or more events. Synchronous: no `await` on this path."""
+        """One SDK message, as one or more events. Synchronous: no `await` on this path."""
         try:
             before = self.seq
             if isinstance(msg, AssistantMessage):
                 mid = getattr(msg, "message_id", None)
                 if mid and mid not in self._message_ids:
-                    # A turn is a message id not seen before (`spike.md ## U1`, C11).
+                    # A turn is a message id not seen before.
                     self._message_ids.add(mid)
                     self.turns += 1
                     self._emit("turn", n=self.turns)
@@ -210,7 +200,7 @@ class Recorder:
             elif isinstance(msg, ResultMessage):
                 self._emit("result", **_result_fields(msg))
             if self.seq == before:
-                # R3: every message yields at least one event, whatever it is.
+                # Every message yields at least one event, whatever it is.
                 self._emit("system", **_system_fields(msg))
         except Exception:  # noqa: BLE001 - R5
             self.lost += 1
@@ -225,8 +215,7 @@ class Recorder:
         elif isinstance(block, ToolResultBlock):
             extra: dict[str, Any] = {}
             if isinstance(persisted, dict) and persisted.get("persistedOutputPath"):
-                # The CLI's own file for an output it did not stream whole. Named, never read
-                # (spec C3).
+                # The CLI's own file for an output it did not stream whole. Named, never read.
                 extra = {
                     "persisted_path": str(persisted.get("persistedOutputPath")),
                     "persisted_size": persisted.get("persistedOutputSize"),
@@ -239,13 +228,12 @@ class Recorder:
             self._emit("system", **_system_fields(block))
 
     def denied(self, tool: str, tool_input: Any, reason: str) -> None:
-        """R3 `denied`: one refusal of the grant's gate. Every one, not the first five."""
+        """`denied`: one refusal of the grant's gate. Every one, not the first five."""
         self._emit("denied", tool=tool, input=tool_input, reason=reason)
 
-    # -- followers ---------------------------------------------------------------------
 
     def subscribe(self, after: int) -> tuple[asyncio.Queue, list[dict[str, Any]]]:
-        """Register first, then read what is there (`spike.md ## U3`): nothing falls between."""
+        """Register first, then read what is there: nothing falls between."""
         q: asyncio.Queue = asyncio.Queue()
         self.subscribers.add(q)
         return q, [e for e in self.events if e["seq"] > after]
@@ -253,7 +241,6 @@ class Recorder:
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self.subscribers.discard(q)
 
-    # -- the disk (a task of its own) --------------------------------------------------
 
     def start(self) -> None:
         """Begin writing. The index row goes first, so a step cut off early still has one."""
@@ -296,8 +283,9 @@ class Recorder:
             await asyncio.gather(task, return_exceptions=True)
 
     async def close(self, outcome: str, detail: str | None) -> int:
-        """R3 `end`, then everything left to disk, before the runner writes its `end` record
-        (R6). Returns how many events never reached disk. Never raises, bar a cancel."""
+        """`end`, then everything left to disk, before the runner writes its `end` record.
+        Returns how many events never reached disk. Never raises, bar a cancel.
+        """
         if self.closed:
             return self.lost
         self._emit("end", outcome=outcome, detail=detail or "")
@@ -323,9 +311,10 @@ class Recorder:
         return self.lost
 
     async def stored_turns(self) -> tuple[int | None, str]:
-        """`0092` R1. After `close`: the turns of this run as stored, and where the number came
-        from -- `"events"`, or `"memory"` when `cos.db` could not be read and the count held
-        here stands in for it. Never raises, bar a cancel."""
+        """After `close`: the turns of this run as stored, and where the number came from --
+        `"events"`, or `"memory"` when `cos.db` could not be read and the count held here stands in.
+        Never raises, bar a cancel.
+        """
         try:
             n = await asyncio.wait_for(asyncio.to_thread(
                 self.data.step_turns, self.run, timeout=CLOSE_WAIT,
@@ -337,8 +326,9 @@ class Recorder:
             return (self.turns if isinstance(self.turns, int) else None), "memory"
 
     async def abandon(self) -> None:
-        """The app is going down with the step running (spec C9): what can be written is, and
-        no `end` -- the index row keeps `ended_at` empty, which reads `ended-unknown`."""
+        """The app is going down with the step running: what can be written is, and no `end` -- the
+        index row keeps `ended_at` empty, which reads `ended-unknown`.
+        """
         if self.closed:
             return
         self.closed = True
@@ -349,7 +339,6 @@ class Recorder:
             pass
 
 
-# -- what the page shows (R12) -------------------------------------------------------
 
 
 def _clip(text: str) -> tuple[str, bool]:
@@ -420,8 +409,9 @@ def when(at_ms: Any) -> str:
 
 
 def collapse(event: dict[str, Any]) -> dict[str, Any]:
-    """R12. An event as the page holds it: a label, a body at most `COLLAPSE_LINES` lines or
-    `COLLAPSE_CHARS` characters, and whether that is all of it. The page never holds more."""
+    """An event as the page holds it: a label, a body at most `COLLAPSE_LINES` lines or
+    `COLLAPSE_CHARS` characters, and whether that is all of it. The page never holds more.
+    """
     body, collapsed = _clip(_body(event))
     persisted = ""
     if event.get("persisted_path"):
@@ -446,20 +436,20 @@ def collapse(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def full_text(event: dict[str, Any]) -> str:
-    """R12 *Expand*: the body as stored, whole (R4's cut is all that was ever kept)."""
+    """*Expand*: the body as stored, whole (the field cut is all that was ever kept)."""
     return _body(event)
 
 
-# -- R14 -----------------------------------------------------------------------------
 
 
 async def purge(
     data: Any, journal: Any, now: int | None = None,
     keep_days: int = KEEP_DAYS, keep_bytes: int = KEEP_BYTES,
 ) -> tuple[int, int]:
-    """R14, at startup only. Whole runs, oldest first: past `keep_days`, then while the total
-    is over `keep_bytes`. Index rows stay, with `purged_at`. One `events-purge` row in the run
-    log when anything went, and only when there is a run log."""
+    """At startup only. Whole runs, oldest first: past `keep_days`, then while the total is over
+    `keep_bytes`. Index rows stay, with `purged_at`. One `events-purge` row in the run log when
+    anything went, and only when there is a run log.
+    """
     from coscc.data import now as iso_now
 
     at = now_ms() if now is None else int(now)
@@ -473,8 +463,9 @@ async def purge(
 
 
 def purge_on_start(config: Any) -> tuple[int, int]:
-    """What `coscc/run.py` calls before the server is built: a `Data` and a `Journal` built
-    from `config` the way `Service` builds them, and nothing else of the app."""
+    """What `coscc/run.py` calls before the server is built: a `Data` and a `Journal` built from
+    `config` the way `Service` builds them, nothing else of the app.
+    """
     from coscc.data import Data
     from coscc.runlog.journal import Journal
 

@@ -1,25 +1,15 @@
-"""Taking a UI unit's screenshots again after its branch was rewritten (`0111`).
+"""Taking a UI unit's screenshots again after its branch was rewritten.
 
-`0083` ties a unit's screenshots to the commit they were taken at: `.screens/manifest.json`
-names it, and `review` writes it as `Taken at`. A rebase — by the app's integration, by Gebo,
-or by a person at a terminal — gives the branch a new head, and a review round was spent
-saying only that the manifest was stale. So before a `review` step, when `cos.mjs screens`
-says so, the app runs the branch's own `scripts/capture_screens.py` in the unit's worktree
-with the addresses `impl` chose, and checks what it wrote. Whether to is `cos.mjs`'s rule;
-this module only runs the command, judges its result, and says what happened.
+Before a `review` step, when `cos.mjs screens` says the manifest is stale, the app runs the
+branch's own `scripts/capture_screens.py` in the unit's worktree and checks what it wrote.
+This module runs the command, judges its result and says what happened.
 
-**It runs the branch's code with this process's environment**, less every `__REFLEX_*`
-(set blank, as `sessions.child_env` does for a session) and with this app's `cos.db` named in
-`config.PROTECTED_DB_VAR`. That is the environment `spike.md ## U1` measured exit 0 in (57.7 s
-cold, 26.1 s warm); with the `__REFLEX_*` names left as `coscc/run.py` sets them the build
-fails and overwrites `reflex.lock/package.json`, a tracked file. No session is involved, and
-nothing narrows the environment further, since nothing narrower was measured.
+The command runs with this process's environment, every `__REFLEX_*` set blank and this
+app's `cos.db` named in `config.PROTECTED_DB_VAR`; left as `coscc/run.py` sets them the
+build fails and overwrites the tracked `reflex.lock/package.json`.
 
-**A retake that fails leaves `.screens/` as it found it** (review round 1, F1). The command
-removes the last run's images and manifest before it opens a browser (`clear_out`), so one
-that fails past that point would take the evidence `impl` left with it, and the next review
-would find no manifest to retake from. What it would remove is copied aside first and put
-back unless `judge` passes. `.screens/` is ignored by git: no tracked file is put back.
+A failed retake leaves `.screens/` as it found it: the command clears the last run's images
+and manifest first, so what it would remove is copied aside and put back unless `judge` passes.
 """
 
 from __future__ import annotations
@@ -37,21 +27,20 @@ from typing import Any, Iterable
 from coscc import config
 from coscc.data import Data
 
-# Chosen, not measured: about five times the cold run `spike.md ## U1` measured (57.7 s).
+# About five times a cold run.
 RETAKE_TIMEOUT = 300.0
-# The command, with the addresses after it. Relative to the worktree it runs in.
+# The command, with the addresses after it, relative to the worktree.
 COMMAND = ("uv", "run", "python", "scripts/capture_screens.py")
 SCREENS = Path(".screens")
 MANIFEST = SCREENS / "manifest.json"
 TAIL_LINES = 12
-# What is kept of the output while it runs; only its last lines are ever recorded.
+# What is kept of the output while it runs; only its last lines are recorded.
 _KEEP_BYTES = 64 * 1024
 
 
 def env(data_dir: str | os.PathLike[str] | None = None) -> dict[str, str]:
     """This process's environment, every `__REFLEX_*` blank, and this app's `cos.db` protected.
 
-    `capture_screens.py` deletes the blank ones itself (`scripts/capture_screens.py:346`).
     `data_dir` is the app's data root, `None` meaning the default `~/.cos`.
     """
     e = dict(os.environ)
@@ -71,8 +60,7 @@ async def _git(tree: Path, *args: str) -> str:
 
 
 def _kill(proc: asyncio.subprocess.Process) -> None:
-    """The whole group: `uv`, the app server and chromium `capture_screens.py` started. Only
-    `uv` killed would leave port 18783 held, and every capture after it refused."""
+    """The whole group: `uv`, the app server and chromium. Killing only `uv` leaves port 18783 held."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
@@ -88,8 +76,7 @@ def read_manifest(tree: Path) -> dict[str, Any] | None:
 
 
 def _replaced(out: Path) -> list[Path]:
-    """What a run of the command replaces in `out`: what `clear_out` removes
-    (`scripts/capture_screens.py:393-397`), and nothing else."""
+    """What a run of the command replaces in `out`: what `clear_out` removes, and nothing else."""
     if not out.is_dir():
         return []
     return [f for f in [*out.glob("*.png"), *out.glob("*.txt"), out / "manifest.json"] if f.is_file()]
@@ -123,11 +110,9 @@ async def take(
 ) -> dict[str, Any]:
     """Run the capture in `tree` and return what `judge` needs. Never raises for the command.
 
-    `{code, seconds, tail, head_before_run, manifest_after, status_before, status_after}`:
     `code` is 124 when it ran past `timeout` and was killed. Cancelled, the group is killed
-    and the cancel raised again. `manifest_after` is what the run left; unless `judge` passes
-    it, `.screens/` is then put back as it was before the run. `argv` replaces the command,
-    for tests only.
+    and the cancel raised again. Unless `judge` passes, `.screens/` is put back as it was.
+    `argv` replaces the command, for tests only.
     """
     tree = Path(tree)
     head = (await _git(tree, "rev-parse", "HEAD")).strip()
@@ -191,10 +176,10 @@ def _changed(before: str, after: str) -> list[str]:
 
 
 def judge(result: dict[str, Any]) -> tuple[bool, str]:
-    """`0111` R4: taken only when the command exited 0, the manifest names the `HEAD` it
-    started on and a clean tree, and `git status` is what it was. An exit other than 0 fails
-    whatever the manifest on disk says: after one, it is the previous run's
-    (`spike.md ## U1`, result 5). Returns `(ok, detail)`; `detail` is `""` when ok."""
+    """Taken only when the command exited 0, the manifest names the `HEAD` it started on and a clean tree, and `git status` is what it was.
+
+    After a non-zero exit the manifest on disk is the previous run's. Returns `(ok, detail)`.
+    """
     problems: list[str] = []
     code = result.get("code")
     if code != 0:
@@ -223,7 +208,7 @@ def record(
     workspace: str, unit: str, old: dict[str, Any], result: dict[str, Any], ok: bool, detail: str,
     started_by: str,
 ) -> dict[str, Any]:
-    """`0111` R6: the one run-log line a retake leaves, taken or not. No screen shows it."""
+    """The one run-log line a retake leaves, taken or not."""
     new = result.get("manifest_after") or {}
     return {
         "kind": "screens",
@@ -251,7 +236,7 @@ def _hits(manifest: dict[str, Any]) -> str:
 
 
 def describe_for_review(old: dict[str, Any], new: dict[str, Any]) -> str:
-    """`0111` R7: the section the `review` prompt carries after a retake that was taken."""
+    """The section the `review` prompt carries after a retake that was taken."""
     before, after = str(old.get("head") or ""), str(new.get("head") or "")
     return (
         "# The screenshots, taken again\n\n"

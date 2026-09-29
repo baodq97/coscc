@@ -1,8 +1,7 @@
-"""Cutting a release: the board's *Release* block and its two presses (`0046`).
+"""Cutting a release: the board's *Release* block and its two presses.
 
-A mixin with no fields of its own, like the others `Service` inherits; `_releasing` is on
-`Service`. `coscc/github/release.py` holds the pure decisions and the `gh`/`node`/`uv` calls,
-`coscc/git/gitops.py` the git ones.
+A mixin with no fields of its own; `_releasing` is on `Service`. `coscc/github/release.py`
+holds the pure decisions and the `gh`/`node`/`uv` calls, `coscc/git/gitops.py` the git ones.
 """
 
 from __future__ import annotations
@@ -34,7 +33,6 @@ def _empty_block(state: str, reason: str) -> dict[str, Any]:
 
 class ReleaseMixin:
 
-    # -- reading (R1, R4, R9, R11, R12) ---------------------------------------
 
     def _release_records(self, journal: Journal | None, key: str) -> list[dict[str, Any]]:
         if journal is None:
@@ -49,9 +47,10 @@ class ReleaseMixin:
     ) -> dict[str, Any]:
         """What git and `gh` say now, and the state `release.classify` makes of it.
 
-        Reads only, against the `origin/main` and tags the last fetch brought. A block whose
-        `state` is `unknown` or `nothing` carries only its reason. `prs` is awaited only once
-        a release tag is found, so a workspace never released asks `gh` nothing here."""
+        Reads only, against the `origin/main` and tags the last fetch brought. A block whose `state`
+        is `unknown` or `nothing` carries only its reason. `prs` is awaited only once a release tag
+        is found, so a workspace never released asks `gh` nothing here.
+        """
         if not (root / release.SCRIPT).is_file():
             return _empty_block("unknown", "this workspace has no cos.mjs, so it is not released from here")
         try:
@@ -94,8 +93,9 @@ class ReleaseMixin:
         return block
 
     async def _release_detail(self, root: Path, block: dict[str, Any], records: list[dict[str, Any]]) -> None:
-        """The button, whether it may be pressed, and R11's workflow. Only the state that
-        needs one asks `gh` again."""
+        """The button, whether it may be pressed, and the workflow. Only the state that needs one asks
+        `gh` again.
+        """
         state = block["state"]
         block["button"] = release.BUTTON.get(state, "")
         block["enabled"] = bool(block["button"])
@@ -122,12 +122,12 @@ class ReleaseMixin:
     async def _attach_release(
         self, cwd: str, units_: list[dict[str, Any]], journal: Journal | None, key: str, prs: PrsOnce,
     ) -> dict[str, Any] | None:
-        """R1: the board's `release` block, or None for a workspace that is not a git checkout.
+        """The board's `release` block, or None for a workspace that is not a git checkout.
 
-        Costs, at most: `git` reads, one `node cos.mjs check-tag` per candidate tag, and
-        once a release tag is found the board's shared `gh pr list`, then `gh pr checks` on
-        an open release pull request or `gh release view` and `gh run list` after a tag this
-        app pushed. No fetch."""
+        Costs, at most: `git` reads, one `node cos.mjs check-tag` per candidate tag, and once a
+        release tag is found the board's shared `gh pr list`, then `gh pr checks` on an open release
+        pull request or `gh release view` and `gh run list` after a tag this app pushed. No fetch.
+        """
         root = Path(cwd).expanduser().resolve()
         if not (root / ".git").exists():
             return None
@@ -138,7 +138,6 @@ class ReleaseMixin:
             block.pop(k, None)
         return block
 
-    # -- pressing (R5, R6, R7, R10, R13, R15) -----------------------------------
 
     def _release_start(self, cwd: str) -> tuple[Journal, str, Path]:
         self._workspace_or_refuse(cwd)
@@ -149,15 +148,16 @@ class ReleaseMixin:
         return journal, self._journal_key(cwd), Path(cwd).expanduser().resolve()
 
     def _release_tree_path(self, cwd: str) -> Path:
-        """`worktrees.release_path` for `cwd`, worked out again on every call: it is the
-        `expected` each writing `gitops` function checks the tree it was handed against."""
+        """`worktrees.release_path` for `cwd`, worked out again on every call: it is the `expected`
+        each writing `gitops` function checks the tree it was handed against.
+        """
         try:
             return worktrees.release_path(cwd, self.config.data_dir)
         except BadUnit as e:
             raise GitError(str(e)) from e
 
     async def _release_tree_fresh(self, cwd: str, root: Path, sha: str) -> Path:
-        """The release worktree, detached at `sha`; a tree left from before is removed first."""
+        """The release worktree, detached at `sha`; a tree left over is removed first."""
         tree = self._release_tree_path(cwd)
         await self._release_tree_gone(cwd, root, tree)
         tree.parent.mkdir(parents=True, exist_ok=True)
@@ -172,8 +172,9 @@ class ReleaseMixin:
     async def _release_press(
         self, cwd: str, phase: str, version: str,
     ) -> tuple[Journal, str, Path, dict[str, Any], Path, str, Callable[..., dict[str, Any]]]:
-        """Everything R13 asks before a press changes anything: the fetch, the facts, the
-        release tree at `origin/main` and `cos.mjs` there. Refuses with one `refused` record."""
+        """Everything asked before a press changes anything: the fetch, the facts, the release tree at
+        `origin/main` and `cos.mjs` there. Refuses with one `refused` record.
+        """
         journal, key, root = self._release_start(cwd)
         version = str(version or "").strip()
         ctx: dict[str, Any] = {}
@@ -185,7 +186,7 @@ class ReleaseMixin:
             except (BadRecord, Busy):
                 return rec
 
-        # Check-and-mark with no `await` between, as `_take` does (R13, first reason).
+        # Check-and-mark with no `await` between, as `_take` does.
         if key in self._releasing:
             reason = release.refusal(active=True, phase=phase, open_release_pr=None, has_script=True,
                                      check_version=(0, ""), version_problem_="", state="")
@@ -199,8 +200,8 @@ class ReleaseMixin:
             except (GitError, Unavailable) as e:
                 write("failed", detail=f"could not read the workspace: {e}")
                 raise Invalid(f"could not read the workspace: {e}") from e
-            # Asked before the facts, tag or no tag: an open release pull request is R13's
-            # second reason. `_release_facts` gets the same answer, not a second call.
+            # Asked before the facts, tag or no tag: an open release pull request is a refusal reason.
+            # `_release_facts` gets the same answer, not a second call.
             prs_once = self._prs_once(str(root))
             prs = await prs_once()
             records = self._release_records(journal, key)
@@ -246,8 +247,8 @@ class ReleaseMixin:
                 reason = release.publish_problem(
                     checks, str(row.get("headRefOid") or ""), opened, f"v{version}" in facts.get("tags", []), version)
                 ctx.update(pr=row.get("number"), head=str(row.get("headRefOid") or ""))
-                # R10.1: the merge is pinned to the head R9 just passed, which is the one
-                # the app pushed; the pull request is not read a second time.
+                # The merge is pinned to the head just checked, which is the one the app pushed; the pull
+                # request is not read a second time.
                 checked = {"checked_pr": int(row["number"]), "checked_head": opened}
             if reason:
                 if tree is not None:
@@ -265,8 +266,9 @@ class ReleaseMixin:
             raise
 
     async def release_prepare(self, cwd: str, version: str) -> AsyncIterator[tuple[str, Any]]:
-        """R6, the first press: a `chore/release-X-Y-Z` pull request that changes the four
-        version files and nothing else. One `release` record whatever happens (R15)."""
+        """The first press: a `chore/release-X-Y-Z` pull request that changes the four version files
+        and nothing else. One `release` record whatever happens.
+        """
         journal, key, root, facts, tree, version, write = await self._release_press(cwd, "prepare", version)
         branch = release.branch_name(version)
         cut = False
@@ -274,7 +276,7 @@ class ReleaseMixin:
         try:
             code, said = await release.cos(tree, "check-branch", branch)
             if code != 0:
-                # R6.3: still before anything changed, so a 400 like every other refusal.
+                # Still before anything changed, so a 400 like every other refusal.
                 write("refused", detail=f"check-branch refused {branch}: {said}")
                 try:
                     await self._release_tree_gone(cwd, root, tree)
@@ -306,9 +308,8 @@ class ReleaseMixin:
             except GitError:
                 pass
             if cut:
-                # Only where the app left it: at `origin/main`, or at its own commit that
-                # changes the version and nothing else. Left behind, the next Prepare of
-                # this version stops at `create_branch` (review F2).
+                # Only where the app left it: at `origin/main`, or at its own commit that changes the version
+                # and nothing else. Left behind, the next Prepare of this version stops at `create_branch`.
                 try:
                     await gitops.delete_merged_branch(root, branch, head or facts["origin_sha"])
                 except GitError:
@@ -318,9 +319,9 @@ class ReleaseMixin:
             self._releasing.discard(key)
 
     async def release_publish(self, cwd: str, version: str) -> AsyncIterator[tuple[str, Any]]:
-        """R10, the second press: merge the release pull request, then tag its merge commit.
-        From `merged-untagged` it starts at the tag (R12). Never started by anything but a
-        request (R14)."""
+        """The second press: merge the release pull request, then tag its merge commit. From
+        `merged-untagged` it starts at the tag. Never started by anything but a request.
+        """
         journal, key, root, facts, tree, version, write = await self._release_press(cwd, "publish", version)
         tag = f"v{version}"
         merged: dict[str, Any] = {}

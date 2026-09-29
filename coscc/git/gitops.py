@@ -1,23 +1,14 @@
-"""Running `git`, with the smallest surface that does the job.
+"""Running `git` with the smallest surface that does the job.
 
-`spec.md` C3 said it plainly: any path in this app that runs a command from text the
-user sent is the path that leaks the login token. This module is that path, so it is built
-to make the leak impossible rather than unlikely.
+Any path that runs a command from user text can leak the login token, so this one is built
+to make that impossible:
 
-Four rules, each answering `spec.md` R15:
-
-1. **argv, never a shell.** No string is ever interpreted; `repo_url` is one element of a
-   list, so quoting, `;`, `$(...)` and friends have no meaning.
-2. **Fixed subcommands.** `clone`, `pull --ff-only`, and for branches `fetch` of the
-   trunk, `rev-parse` and `switch -c`. No flag reaches `git` from a caller, and a URL that
-   begins with `-` is refused before `git` is invoked so it cannot be read as one.
-3. **A constructed environment.** The child gets `PATH`, `HOME`, and the two variables that
-   make it non-interactive. It does **not** inherit ours, so `CLAUDE_CODE_OAUTH_TOKEN`
-   cannot reach a process that talks to the network.
+1. **argv, never a shell.** No string is interpreted; `repo_url` is one list element.
+2. **Fixed subcommands.** No flag reaches `git` from a caller, and a URL beginning with `-`
+   is refused before `git` runs.
+3. **A constructed environment.** The child gets `PATH`, `HOME` and the two non-interactive
+   variables, never ours, so `CLAUDE_CODE_OAUTH_TOKEN` cannot reach a networked process.
 4. **A deadline.** A silent host must not hold a request forever.
-
-The timeouts were invented when this was written (`spec.md` C3 recorded them as
-having no source). They now have one — see `CLONE_TIMEOUT`.
 """
 
 from __future__ import annotations
@@ -28,32 +19,18 @@ import re
 import shutil
 from pathlib import Path
 
-# Measured 2026-09-21 on this machine and network, cloning over https:
-#
-#     Hello-World      1.14s    ~0 MB      pull 0.83s
-#     Spoon-Knife      1.18s    ~0 MB      pull 0.88s
-#     click            4.19s    7.8 MB     pull 0.84s
-#     requests         4.80s   19.2 MB     pull 0.92s
-#
-# That is roughly 4 MB/s, and a pull with nothing to fetch costs about a second
-# regardless of size. **Unverifiable beyond this machine:** one network, one day, four
-# public repositories — it bounds the ordinary case and says nothing about a slow link.
-#
-# So these are not the measurement, they are derived from it: at the measured throughput
-# 120s covers about 480 MB of clone and 60s about 240 MB of fetch. Both are far larger
-# than anything a person would reasonably open in a chat tool, which is the point — the
-# deadline exists to stop a silent host holding a request forever, not to police size.
-# Lower them and an ordinary clone starts failing; the measurement above is what says
-# how much room there is before that happens.
+# # Measured cloning over https: about 4 MB/s, and a pull with nothing to fetch costs about a
+# # second whatever the size. Unverifiable beyond one network. These deadlines are derived:
+# # 120s covers about 480 MB of clone, 60s about 240 MB of fetch. They exist to stop a silent
+# # host, not to police size; lowering them makes ordinary clones fail.
 CLONE_TIMEOUT = 120.0
 PULL_TIMEOUT = 60.0
 
-# Only this scheme. `git@`, `ssh://` and `file://` all reach credentials or the local disk
-# by routes this unit does not want, and `spec.md` puts private repos out of scope.
+# # Only this scheme: `git@`, `ssh://` and `file://` reach credentials or the local disk.
 ALLOWED_PREFIX = "https://"
 
-# Everything a caller is not allowed to smuggle into the child environment. Matched by
-# prefix because the point is the whole family, not four names that could grow to five.
+# # Everything a caller must not smuggle into the child environment, matched by prefix so the
+# # whole family is covered.
 SCRUB_PREFIXES = ("CLAUDE", "COS_", "ANTHROPIC")
 
 
@@ -76,12 +53,7 @@ def check_url(repo_url: str) -> str:
 
 
 def child_env() -> dict[str, str]:
-    """The environment `git` runs in. Built up, never filtered down.
-
-    Filtering an inherited environment is the version of this that goes wrong: it works
-    until someone adds a variable nobody thought to exclude. Starting empty means a new
-    secret is excluded by default.
-    """
+    """The environment `git` runs in. Built up, never filtered down: a new secret is excluded by default."""
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": os.environ.get("HOME", "/tmp"),
@@ -92,8 +64,7 @@ def child_env() -> dict[str, str]:
         "GIT_CONFIG_NOSYSTEM": "1",
         "LC_ALL": "C",
     }
-    # Belt and braces: if any of the above ever picks up a value from elsewhere, this is
-    # the assertion that catches it. Cheap, and it turns a leak into a crash.
+    # Belt and braces: turns a leaked value into a crash.
     for key in list(env):
         if any(key.startswith(p) for p in SCRUB_PREFIXES):
             del env[key]
@@ -127,10 +98,7 @@ async def _run(
 async def _run_code(argv: list[str], timeout: float, cwd: str | None = None) -> tuple[int, str]:
     """Like `_run`, but hands the exit code back instead of raising on a non-zero one.
 
-    `0030`. `merge-base --is-ancestor` uses exit 1 to mean "no" rather than "failed", and
-    `_run` cannot tell that apart from a real error — it turns every non-zero code into a
-    `GitError`. This is the same subprocess, the same `child_env()`, the same deadline;
-    only what happens with the exit code differs, which is why `_run` itself is unchanged.
+    For `merge-base --is-ancestor`, where exit 1 means "no", not "failed".
     """
     proc = await asyncio.create_subprocess_exec(
         *argv,
@@ -159,88 +127,65 @@ async def clone(repo_url: str, dest: Path, timeout: float = CLONE_TIMEOUT) -> st
 
 
 async def pull(path: Path, timeout: float = PULL_TIMEOUT) -> str:
-    """Fast-forward only.
-
-    Failing on a dirty tree or a diverged branch is correct behaviour, not a defect
-    (`spec.md` C7). What would be a defect is failing quietly, so the output comes back to
-    the caller either way.
-    """
+    """Fast-forward only. A dirty tree or diverged branch fails, and the output comes back either way."""
     if not (path / ".git").exists():
         raise GitError(f"not a git repository: {path}")
     return await _run(["git", "-C", str(path), "pull", "--ff-only"], timeout)
 
 
-# --- branches ----------------------------------------------------------------
-#
-# `0014` R5. This is the first thing in this app that **writes** to somebody else's git,
-# and it is not covered by `coscc/agent/policy.py`: that table says what a *session* may do, and
-# these run with the app process's own authority. So the limit has to live here, and it is
-# a short list on purpose.
-#
-# The app may: fetch the trunk from `origin` into `refs/remotes/origin/main`, and create a
-# branch from the commit that fetch brought, in a workspace a caller has already passed the
-# membership gate for, with a name `cos.mjs unit-branch` produced. The fetch writes one
-# remote-tracking ref and moves nothing a person works on.
-#
-# Since `0017` it may also, and only in the ways the functions below spell out:
-#
-# - `worktree add` a unit's own working tree outside the workspace, detached at a full SHA
-#   or on a branch that already exists; `worktree list --porcelain` to find it again;
-#   `worktree remove` it, **never** with `--force`, so a tree with changes stays.
-# - `status --porcelain`, to know whether a tree is clean.
-# - `switch main` in the workspace itself, and only when that tree is clean
-#   (`0017` `spec.md ## Answers, câu 2`). This is the one exception to "move nothing a
-#   person works on", and the page is told whenever it happens.
-# - `branch -D` a unit's branch after its pull request merged, and only when the local
-#   branch still points at the head GitHub merged. `-d` always refuses after a squash, so
-#   the head comparison is the only thing standing between this and a lost commit.
-# - Since `0030`, `switch --detach` a unit's own worktree to the commit a fetch just
-#   brought, and only when the tree carries no branch of its own, is clean, and its
-#   current HEAD is an ancestor of that commit — so a commit nobody pushed is never left
-#   behind (`0030_a-unit-branch-starts-from-a-stale-main` plan R1/R5). `merge-base
-#   --is-ancestor` and `rev-list --count` are the two reads that decide that and measure
-#   how far a branch is behind, neither writing anything.
-# - Since `0048`, `rev-parse --git-common-dir`, a read that writes nothing: it names the git
-#   dir a workspace and all its worktrees share, so fetches into it can be coordinated.
-# - Since `0046`, in the release worktree only (`worktrees.release_path`) and only through the
-#   functions under `# --- releasing (0046) ---`: fetch `main` with tags, commit the four
-#   version files on a `chore/release-X-Y-Z` branch, push that branch without force, create
-#   and push a `vX.Y.Z` tag, detach the tree, and remove it with `--force`.
-#
-# The app may **not**: push, merge, commit, move `main` to another commit, or delete any
-# branch but that one — except the release branch and tag above. Those are a step's
-# business — the `pr` grant carries `git` and `gh` and a warning that says what that
-# reaches (`coscc/agent/policy.py:96-99`) — or nobody's.
-#
-# `plan.md` Risk 1 names the weakness honestly: this is a hand-written list, not a
-# mechanism, in the same way `policy.check_command` is. What makes it narrow is that the
-# only argument that reaches git from a request is a branch name, and that name is not the
-# caller's: it comes back from `cos.mjs`.
+# # --- branches ----------------------------------------------------------------
+# #
+# # These write to somebody else's git and are not covered by `coscc/agent/policy.py` (which
+# # limits *sessions*): they run with the app's own authority, so the limit lives here and is
+# # a short list on purpose.
+# #
+# # The app may: fetch the trunk into `refs/remotes/origin/main`; create a branch from the
+# # fetched commit with a name `cos.mjs unit-branch` produced; and, only as the functions
+# # below spell out:
+# #
+# # - `worktree add` a unit's tree outside the workspace (detached at a full SHA or on an
+# #   existing branch), `worktree list --porcelain`, and `worktree remove` **never** with
+# #   `--force`, so a tree with changes stays.
+# # - `status --porcelain` to know whether a tree is clean.
+# # - `switch main` in the workspace itself, only when clean; the page is told whenever it
+# #   happens.
+# # - `branch -D` a unit's branch after its PR merged, only when the local branch still points
+# #   at the head GitHub merged. `-d` always refuses after a squash, so the head comparison
+# #   is all that stands between this and a lost commit.
+# # - `switch --detach` a unit's worktree to a freshly fetched commit, only when the tree has
+# #   no branch, is clean, and its HEAD is an ancestor of that commit, so an unpushed commit
+# #   is never left behind. `merge-base --is-ancestor` and `rev-list --count` are the reads.
+# # - `rev-parse --git-common-dir`, so fetches into a shared git dir can be coordinated.
+# # - In the release worktree only (`worktrees.release_path`), through the functions under
+# #   `# --- releasing ---`: fetch `main` with tags, commit the four version files on a
+# #   `chore/release-X-Y-Z` branch, push it without force, push a `vX.Y.Z` tag, detach the
+# #   tree, and remove it with `--force`.
+# #
+# # The app may **not** push, merge, commit, move `main`, or delete any other branch; those
+# # belong to a step (`coscc/agent/policy.py`) or nobody.
+# #
+# # This is a hand-written list, not a mechanism. What keeps it narrow is that the only
+# # argument reaching git from a request is a branch name, and it comes back from `cos.mjs`.
 
 BRANCH_TIMEOUT = 30.0
 
-# The branch a unit is cut from. Named rather than taken from the current checkout: cutting
-# from wherever somebody happened to be standing is how a unit's branch quietly contains
-# another unit's work.
+# # The branch a unit is cut from. Named, not taken from the checkout, or a unit's branch
+# # quietly contains another unit's work.
 TRUNK = "main"
 
-# What a branch name may look like. `cos.mjs check-branch` owns the grammar and this is the
-# guard that stops a name reaching `git` at all — `-` or `--` at the front would be read as
-# an option, and that is the one shape that turns a name into a flag.
+# # What a branch name may look like. `cos.mjs check-branch` owns the grammar; this stops a
+# # name reaching `git` as an option (`-` or `--` at the front).
 _BRANCH_RE = re.compile(r"^[a-z]+/[a-z0-9]+(?:-[a-z0-9]+)*$")
 
-# A remote name or a trunk name handed to `fetch`. No leading `-`, no `/`, no `:` — so
-# neither can become an option or reshape the refspec it is spliced into.
+# # A remote or trunk name handed to `fetch`. No leading `-`, `/` or `:`, so neither can become
+# # an option or reshape the refspec.
 _REF_PART_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
-# The only start point `create_branch` takes.
+# # The only start point `create_branch` takes.
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
-# Seconds. **Not measured**: the figure is `0001_product-describes-a-state-it-is-not-in`
-# `spec.md` R2's, chosen there and marked unverifiable. The nearest measurement with a
-# source is a `pull` with nothing to fetch, 0.83-0.92s on this machine (the table at the
-# top of this file). So it bounds the ordinary case and says nothing about a slow link —
-# and while it runs, the page's request waits (`spec.md` C7).
+# # Seconds. Not measured; a `pull` with nothing to fetch costs under a second. The page's
+# # request waits while it runs.
 FETCH_TIMEOUT = 20.0
 
 
@@ -256,13 +201,9 @@ async def fetch(
 ) -> str:
     """Bring `refs/remotes/<remote>/<branch>` up to date, and touch nothing else.
 
-    `0001_product-describes-a-state-it-is-not-in` R1. The refspec is spelled out so that
-    ref is updated even when the remote's config carries no default refspec, and no tags
-    come along with it. A fetch moves no local branch and does not look at the working
-    tree, which is why a dirty checkout does not stop it.
-
-    Raises `GitError` on failure or on the deadline, like everything else here: `_run`
-    already carries git's own words back, so a second return shape would say less.
+    The refspec is spelled out so the ref updates even without a default refspec, and no tags
+    come along. No local branch moves and the working tree is not read, so a dirty checkout
+    does not stop it. Raises `GitError` on failure or deadline.
     """
     if not (path / ".git").exists():
         raise GitError(f"not a git repository: {path}")
@@ -278,9 +219,7 @@ async def fetch(
 async def common_dir(path: Path, timeout: float = BRANCH_TIMEOUT) -> Path:
     """The git dir `path` shares with every other worktree of its clone, absolute.
 
-    `0048` R1. Every worktree writes `refs/remotes/origin/main` into this one directory, so
-    it is what two fetches race on. git prints it relative to `path` from the main working
-    tree and absolute from a linked one; both come back absolute and resolved.
+    Every worktree writes `refs/remotes/origin/main` here, so it is what two fetches race on.
     """
     _require_repo(path)
     out = await _run(["git", "-C", str(path), "rev-parse", "--git-common-dir"], timeout)
@@ -306,15 +245,10 @@ async def rev_parse(path: Path, ref: str, timeout: float = BRANCH_TIMEOUT) -> st
 async def is_ancestor(
     path: Path, ancestor: str, descendant: str, timeout: float = BRANCH_TIMEOUT
 ) -> bool:
-    """Whether `ancestor` is reachable from `descendant` — `merge-base --is-ancestor`.
+    """Whether `ancestor` is reachable from `descendant` (`merge-base --is-ancestor`).
 
-    `0030` R1/R5. Exit 0 is yes, exit 1 is no, and git turns anything else — an unknown
-    commit, most likely — into a third answer that is neither. `_run` cannot tell exit 1
-    apart from a real failure, which is why this calls `_run_code` instead of `_run`.
-
-    Both arguments are full SHAs and nothing else, the same restriction `create_branch`
-    puts on `base`: a ref name would let the answer drift between the moment this checks
-    and the moment a caller acts on it.
+    Exit 0 is yes, 1 is no, anything else is an error; hence `_run_code`. Both arguments are
+    full SHAs so the answer cannot drift between the check and the caller's act.
     """
     if not (path / ".git").exists():
         raise GitError(f"not a git repository: {path}")
@@ -332,11 +266,9 @@ async def is_ancestor(
 
 
 async def count_missing(path: Path, have: str, want: str, timeout: float = BRANCH_TIMEOUT) -> int:
-    """How many commits `want` carries that `have` does not — `rev-list --count have..want`.
+    """How many commits `want` carries that `have` does not (`rev-list --count have..want`).
 
-    `0030` `plan.md` R7's own measurement, and also the `behind` a caller reports: zero
-    means `have` already carries everything `want` does. Both arguments are full SHAs, for
-    the same reason `is_ancestor` requires them.
+    Both arguments are full SHAs, as for `is_ancestor`.
     """
     if not (path / ".git").exists():
         raise GitError(f"not a git repository: {path}")
@@ -355,23 +287,16 @@ async def create_branch(
 ) -> str:
     """Cut `name` from the commit `base` and switch to it. Creates nothing else, pushes nothing.
 
-    `base` is a full SHA and nothing else. Since `0001_product-describes-a-state-it-is-not-in`
-    the caller decides the start point — fetch, then read the SHA — so what this reports as
-    cut is exactly what was cut, even if another fetch lands in between. A SHA also carries
-    no upstream, and `--no-track` says so explicitly: cut from `origin/main` by name, git
-    would set the new branch to track `main`, and a later `git pull` on it would pull the
-    trunk in without anybody asking.
+    `base` is a full SHA so what is reported as cut is exactly what was cut, even if another
+    fetch lands in between. `--no-track`: cut from `origin/main` by name, git would track
+    `main` and a later `git pull` would pull the trunk in unasked.
 
-    Refuses rather than reuses when the branch already exists: switching to a branch that
-    somebody else's work is already on is a different act from starting one, and the two
-    should not share a button.
+    Refuses rather than reuses when the branch already exists.
     """
     if not (path / ".git").exists():
         raise GitError(f"not a git repository: {path}")
-    # Before the grammar check, not after. `_BRANCH_RE` requires a `<type>/` prefix and so
-    # already excludes `main` today, which would make this line unreachable — found by
-    # writing the test for it. Ordered this way it stays alive: it keeps holding if the
-    # grammar is ever loosened, and it gives the reason rather than the shape.
+    # Before the grammar check: it keeps holding if the grammar is loosened, and gives the reason
+    # rather than the shape.
     if name == TRUNK:
         raise GitError(f"{TRUNK} is the trunk and this app does not create or move it")
     if not _BRANCH_RE.fullmatch(name or ""):
@@ -385,22 +310,21 @@ async def create_branch(
     if existing.strip():
         raise GitError(f"branch already exists: {name}")
 
-    # `switch -c <name> <start>` is one command that cannot fall back to the current HEAD:
-    # given a start point it either uses it or fails. It does fail when a file modified in
-    # the working tree also differs between HEAD and `base` — git refuses rather than
-    # overwrite, and creates no branch; that output reaches the page as it is.
+    # `switch -c <name> <start>` cannot fall back to the current HEAD. It fails when a modified
+    # working-tree file also differs between HEAD and `base`, creating no branch; that output
+    # reaches the page as it is.
     return await _run(
         ["git", "-C", str(path), "switch", "--no-track", "-c", name, base], timeout
     )
 
 
-# --- worktrees (`0017`) --------------------------------------------------------
-#
-# One working tree per unit, so cutting one unit's branch cannot take another's away
-# (`0017` intent). Everything here takes paths the caller computed (`coscc/git/worktrees.py`)
-# and refs that passed `_SHA_RE` or `_BRANCH_RE`, so no request text reaches `git`.
+# # --- worktrees ---------------------------------------------------------------
+# #
+# # One working tree per unit, so cutting one unit's branch cannot take another's away. Paths
+# # come from `coscc/git/worktrees.py` and refs passed `_SHA_RE` or `_BRANCH_RE`, so no request
+# # text reaches `git`.
 
-WORKTREE_TIMEOUT = 60.0  # seconds. Chosen, not measured: `worktree add` checks a tree out.
+WORKTREE_TIMEOUT = 60.0  # WORKTREE_TIMEOUT = 60.0  # seconds; `worktree add` checks a tree out.
 
 
 def _require_repo(path: Path) -> None:
@@ -419,9 +343,8 @@ async def is_clean(path: Path, timeout: float = BRANCH_TIMEOUT) -> bool:
 async def switch_trunk(root: Path, timeout: float = BRANCH_TIMEOUT) -> str:
     """Put the workspace back on `main`. Refused unless its tree is clean.
 
-    Plain `switch main`: no `-c`, no `--force`, no start point, so it moves no branch and
-    discards nothing. A dirty tree is refused here rather than left to git, because git
-    would carry the change across when it can and that is still moving somebody's work.
+    Plain `switch main`. A dirty tree is refused here because git would carry the change
+    across, which still moves somebody's work.
     """
     _require_repo(root)
     if not await is_clean(root, timeout):
@@ -440,20 +363,14 @@ async def switch_existing(tree: Path, name: str, timeout: float = BRANCH_TIMEOUT
 
 
 async def advance_detached(tree: Path, sha: str, timeout: float = BRANCH_TIMEOUT) -> str:
-    """Move a unit's detached worktree to `sha`, and refuse rather than guess when it is not safe.
+    """Move a unit's detached worktree to `sha`, refusing rather than guessing. Never `--force`.
 
-    `0030` `plan.md` R1/R5. `git switch --detach <sha>`, never `--force`. The three
-    conditions below are checked here, together, rather than left to git or split across a
-    caller, because a caller that skipped one would have no way to know it did:
+    Checked together so no caller can skip one; any failure raises `GitError` naming which and
+    leaves the tree where it was:
 
-    - the tree carries no branch of its own (`current_branch` is empty) — a branch is
-      somebody's own work, and this function does not touch one;
-    - the tree is clean — nothing of a person's is discarded;
-    - the tree's current HEAD is an ancestor of `sha` — so a commit made on the detached
-      tree is never silently left behind, and moving forward never means moving away from
-      something nobody pushed.
-
-    Any one missing raises `GitError` naming which; the tree is left exactly where it was.
+    - the tree carries no branch of its own (`current_branch` is empty);
+    - the tree is clean;
+    - the tree's HEAD is an ancestor of `sha`, so a commit made on the tree is never left behind.
     """
     _require_repo(tree)
     if not _SHA_RE.fullmatch(sha or ""):
@@ -477,7 +394,7 @@ async def worktree_add(
 ) -> str:
     """Add a working tree at `path`: detached at a full SHA, or on an existing branch.
 
-    Never `-b`/`-B`: creating the branch stays `create_branch`'s job, with its checks.
+    Never `-b`/`-B`: creating the branch stays `create_branch`'s job.
     """
     _require_repo(root)
     if Path(path).exists():
@@ -529,8 +446,8 @@ async def delete_merged_branch(
 ) -> bool:
     """`branch -D <name>`, only when the local branch is exactly `expected_head`.
 
-    Returns False, deleting nothing, when the branch is already gone or points anywhere
-    else — a local commit after the merged head is somebody's unpushed work.
+    Returns False, deleting nothing, when the branch is gone or points elsewhere: a later local
+    commit is somebody's unpushed work.
     """
     _require_repo(root)
     if name == TRUNK or not _BRANCH_RE.fullmatch(name or ""):
@@ -550,11 +467,10 @@ async def delete_merged_branch(
     return True
 
 
-# --- reading a failed attempt's tree (`0019`) -----------------------------------
-#
-# Read-only, all four. `0019_a-failed-step-destroys-the-work-that-succeeded`
-# `plan.md` step 1: what a stopped step left behind, in a shape that can be checked
-# character for character against `git log` and `git status` run by hand later.
+# # --- reading a failed attempt's tree ----------------------------------------
+# #
+# # Read-only, all four: what a stopped step left behind, in a shape that can be checked
+# # against `git log` and `git status` run by hand.
 
 
 async def head_and_branch(path: Path, timeout: float = BRANCH_TIMEOUT) -> tuple[str, str]:
@@ -568,8 +484,7 @@ async def head_and_branch(path: Path, timeout: float = BRANCH_TIMEOUT) -> tuple[
 async def merge_base(path: Path, timeout: float = BRANCH_TIMEOUT) -> tuple[str, str]:
     """`merge-base HEAD` against the trunk, falling back when `origin/main` is absent.
 
-    The ref is one of exactly two, fixed here — never a caller's choice — so a
-    branch's own base cannot be pointed anywhere else.
+    The ref is one of exactly two, fixed here, never a caller's choice.
     """
     _require_repo(path)
     ref = "refs/remotes/origin/main"
@@ -584,7 +499,7 @@ async def merge_base(path: Path, timeout: float = BRANCH_TIMEOUT) -> tuple[str, 
 async def log_range(
     path: Path, base: str, head: str, timeout: float = BRANCH_TIMEOUT
 ) -> list[dict[str, str]]:
-    """`git log base..head`, one dict per commit, oldest-first order `git log` gives."""
+    """`git log base..head`, one dict per commit, in `git log` order."""
     _require_repo(path)
     for sha in (base, head):
         if not _SHA_RE.fullmatch(sha or ""):
@@ -600,10 +515,10 @@ async def log_range(
 
 
 async def diff_names(path: Path, a: str, b: str, timeout: float = BRANCH_TIMEOUT) -> list[str]:
-    """`git diff a..b --name-only`, verbatim — the command `0042`'s intent checks with.
+    """`git diff a..b --name-only`, verbatim.
 
-    No `-z`, `--no-renames` or `core.quotePath`: the check and the computation must print
-    the same list, quoting and renames included (`0042` plan, Risk 6).
+    No `-z`, `--no-renames` or `core.quotePath`: a hand-run check must print the same list,
+    quoting and renames included.
     """
     _require_repo(path)
     for sha in (a, b):
@@ -614,8 +529,8 @@ async def diff_names(path: Path, a: str, b: str, timeout: float = BRANCH_TIMEOUT
 
 
 async def status_porcelain(path: Path, timeout: float = BRANCH_TIMEOUT) -> list[str]:
-    """`git status --porcelain`, each line verbatim — the leading space of a line like
-    `" M a.txt"` matters, so this is one of the two callers that ask `_run` not to strip.
+    """`git status --porcelain`, each line verbatim; the leading space of `" M a.txt"` matters, so
+    `_run` is asked not to strip.
     """
     _require_repo(path)
     out = await _run(
@@ -625,7 +540,7 @@ async def status_porcelain(path: Path, timeout: float = BRANCH_TIMEOUT) -> list[
 
 
 async def tree_state(path: Path, timeout: float = BRANCH_TIMEOUT) -> tuple[str, str]:
-    """`(HEAD, git status --porcelain)` — what `0039` R13 compares before and after a spike.
+    """`(HEAD, git status --porcelain)`, compared before and after a spike.
 
     Read-only. A file `.gitignore` covers is not in `status`, so a write there is not seen.
     """
@@ -637,11 +552,11 @@ async def tree_state(path: Path, timeout: float = BRANCH_TIMEOUT) -> tuple[str, 
     return head, porcelain
 
 
-# --- integrating a unit that fell behind (`0035`) ---------------------------------
-#
-# Every ref here is a full SHA or a unit branch that passed `_BRANCH_RE`; nothing a request
-# carries reaches `git`. The one function that moves anything is `reset_branch_to`, and it
-# checks its four conditions together for the reason `advance_detached` does.
+# # --- integrating a unit that fell behind -------------------------------------
+# #
+# # Every ref is a full SHA or a unit branch that passed `_BRANCH_RE`. The one function that
+# # moves anything is `reset_branch_to`, which checks its four conditions together like
+# # `advance_detached`.
 
 
 def _require_shas(*shas: str) -> None:
@@ -660,7 +575,7 @@ async def merge_base_of(path: Path, a: str, b: str, timeout: float = BRANCH_TIME
 async def commits_between(
     path: Path, base: str, head: str, timeout: float = BRANCH_TIMEOUT
 ) -> list[dict[str, str]]:
-    """`base..head` as `{sha, subject}` — `log_range`, named for what `0035` asks of it."""
+    """`base..head` as `{sha, subject}`."""
     return await log_range(path, base, head, timeout)
 
 
@@ -715,11 +630,9 @@ async def reset_branch_to(
 ) -> str:
     """Move the unit's own branch in its own tree from `expected_old` to `new_sha`.
 
-    `0035` R4: after GitHub rebased the pull request, the local branch follows it. Refused,
-    with nothing changed, unless all four hold: the tree is clean; it is on `branch`; its
-    HEAD is `expected_old`; and `new_sha` is present after `git fetch origin <branch>`.
-    `reset --keep`, never `--hard`: `--keep` refuses rather than discard a local change,
-    so even a race past the clean check loses nothing.
+    Used after GitHub rebased the pull request. Refused, changing nothing, unless the tree is
+    clean, on `branch`, at `expected_old`, and `new_sha` is present after `git fetch origin
+    <branch>`. `reset --keep`, never `--hard`: it refuses rather than discard a local change.
     """
     _require_repo(tree)
     if branch == TRUNK or not _BRANCH_RE.fullmatch(branch or ""):
@@ -733,8 +646,7 @@ async def reset_branch_to(
     head = await _run(["git", "-C", str(tree), "rev-parse", "HEAD"], timeout)
     if head != expected_old:
         raise GitError(f"{tree}'s HEAD is {head[:7]}, not {expected_old[:7]}, so nothing was moved")
-    # Not `fetch`: its name check takes one path part, and a unit branch has two. The
-    # branch already passed `_BRANCH_RE`, which is stricter than `_REF_PART_RE`.
+    # Not `fetch`: its name check takes one path part, and a unit branch has two.
     await _run(
         ["git", "-C", str(tree), "fetch", "--no-tags", "--", "origin",
          f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
@@ -745,21 +657,19 @@ async def reset_branch_to(
     return await _run(["git", "-C", str(tree), "reset", "--keep", new_sha], timeout)
 
 
-# --- releasing (0046) -----------------------------------------------------------
-#
-# The first functions here that commit, push and tag. They take a release branch that passed
-# `_RELEASE_BRANCH_RE`, a tag that passed `_RELEASE_TAG_RE`, a full SHA, or a file named in
-# `RELEASE_FILES`. The two expressions keep a string from being read as a flag; the grammar
-# is `cos.mjs check-branch` and `check-tag`, which the caller asks first. Every function
-# that writes to a tree takes it twice: the tree it works in, and `expected`, the path
-# `worktrees.release_path` names, which the caller works out again from the workspace rather
-# than passing the same variable. Both must agree, and the tree must itself be a linked
-# worktree named `RELEASE_TREE`, so a wrong path in both is still refused.
+# # --- releasing ---------------------------------------------------------------
+# #
+# # The only functions that commit, push and tag. They take a release branch that passed
+# # `_RELEASE_BRANCH_RE`, a tag that passed `_RELEASE_TAG_RE`, a full SHA, or a file in
+# # `RELEASE_FILES`; the caller asked `cos.mjs check-branch`/`check-tag` first. Every writer
+# # takes the tree twice: the tree it works in and `expected`, the path `worktrees.release_path`
+# # names, recomputed by the caller from the workspace. Both must agree and the tree must be a
+# # linked worktree named `RELEASE_TREE`, so a wrong path in both is still refused.
 
 _RELEASE_BRANCH_RE = re.compile(r"^chore/release-\d+-\d+-\d+$")
 _RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 RELEASE_FILES = ("pyproject.toml", "package.json", "package-lock.json", "uv.lock")
-# The release tree's own name. Not a `NNNN_slug`, so no unit's tree carries it.
+# # The release tree's own name. Not a `NNNN_slug`, so no unit's tree carries it.
 RELEASE_TREE = "release"
 
 
@@ -781,16 +691,18 @@ def _is_release_path(path: Path, expected: Path) -> bool:
 
 
 def _release_tree(tree: Path, expected: Path) -> None:
-    """Refuses unless `tree` is `expected` and a linked worktree named `release`: a
-    workspace's own checkout holds a `.git` directory, a linked tree a `.git` file."""
+    """Refuses unless `tree` is `expected` and a linked worktree named `release` (a workspace's
+    own checkout holds a `.git` directory, a linked tree a `.git` file).
+    """
     _require_repo(tree)
     if not _is_release_path(tree, expected) or not (Path(tree) / ".git").is_file():
         raise GitError(f"{tree} is not the release worktree, so nothing was written")
 
 
 async def fetch_with_tags(path: Path, timeout: float = FETCH_TIMEOUT) -> str:
-    """`fetch --tags origin +refs/heads/main:refs/remotes/origin/main`. `fetch` above keeps
-    `--no-tags`; only a release press brings the tags (R6.1)."""
+    """`fetch --tags origin +refs/heads/main:refs/remotes/origin/main`. Plain `fetch` keeps
+    `--no-tags`; only a release brings the tags.
+    """
     _require_repo(path)
     return await _run(
         ["git", "-C", str(path), "fetch", "--tags", "--", "origin",
@@ -826,9 +738,9 @@ async def show_file(path: Path, sha: str, name: str, timeout: float = BRANCH_TIM
 
 
 async def diff_u0(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOUT) -> str:
-    """`git diff -U0 HEAD`: every change in the tree, staged or not, new files included
-    once `add -N` would show them — so R7 reads what a commit of the whole tree would hold.
-    `add -N` writes the index, so only in the release tree."""
+    """`git diff -U0 HEAD`: every change in the tree, staged or not, new files included after
+    `add -N` (which writes the index, so only in the release tree).
+    """
     _release_tree(tree, expected)
     await _run(["git", "-C", str(tree), "add", "--intent-to-add", "--all"], timeout)
     return await _run(["git", "-C", str(tree), "diff", "-U0", "--no-color", "HEAD"], timeout, strip=False)
@@ -852,8 +764,9 @@ async def push_branch(tree: Path, expected: Path, branch: str, timeout: float = 
 
 
 async def push_unit_branch(tree: Path, branch: str, timeout: float = FETCH_TIMEOUT) -> str:
-    """`0136` R12: a unit's branch to `origin`, as the mechanical `pr` pushes it. No `--force`:
-    a branch someone rewrote on GitHub is refused here rather than overwritten."""
+    """Push a unit's branch to `origin`. No `--force`: a branch rewritten on GitHub is refused
+    rather than overwritten.
+    """
     if not _BRANCH_RE.match(branch or ""):
         raise GitError(f"not a unit branch name: {branch!r}")
     return await _run(
@@ -861,10 +774,9 @@ async def push_unit_branch(tree: Path, branch: str, timeout: float = FETCH_TIMEO
 
 
 async def push_tag(tree: Path, expected: Path, tag: str, sha: str, timeout: float = FETCH_TIMEOUT) -> str:
-    """`push origin <sha>:refs/tags/<tag>`: a lightweight tag made on the remote, the push that
-    builds the release (R10.4, R10.5). No local tag first, so a refused push leaves none
-    behind to hide the release that still needs one; a fetch brings it back. No force, so a
-    tag already there is refused."""
+    """`push origin <sha>:refs/tags/<tag>`: a lightweight tag made on the remote; the push builds
+    the release. No local tag first, so a refused push leaves none behind. No force.
+    """
     _release_tree(tree, expected)
     _release_tag(tag)
     _require_shas(sha)
@@ -873,15 +785,17 @@ async def push_tag(tree: Path, expected: Path, tag: str, sha: str, timeout: floa
 
 async def detach_here(tree: Path, expected: Path, timeout: float = BRANCH_TIMEOUT) -> str:
     """`switch --detach` where the tree stands, so `gh pr merge --delete-branch` never has to
-    delete a branch that is checked out (plan Risk 3)."""
+    delete a checked-out branch.
+    """
     _release_tree(tree, expected)
     return await _run(["git", "-C", str(tree), "switch", "--detach"], timeout)
 
 
 async def release_tree_remove(root: Path, path: Path, expected: Path, timeout: float = WORKTREE_TIMEOUT) -> str:
-    """`worktree remove --force`, the one forced removal: only of the release tree, whose
-    changes are the app's own (R7 removes it with them). Not `.git`-checked like the others:
-    a tree whose directory is already gone is still listed, and still removed."""
+    """`worktree remove --force`, the one forced removal: only of the release tree, whose changes
+    are the app's own. Not `.git`-checked: a tree whose directory is gone is still listed and
+    removed.
+    """
     _require_repo(root)
     if not _is_release_path(path, expected) or Path(path).resolve() == Path(root).resolve():
         raise GitError(f"{path} is not the release worktree, so it was not removed")

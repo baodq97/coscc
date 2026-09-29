@@ -1,12 +1,4 @@
-"""The names the effort trial of `0123` wrote into `start`, kept so its rows can be read.
-
-`0123_no-one-knows-if-each-stage-runs-at-the-right-effort` ran a routine `impl` of half the
-units at a higher effort while `COS_EFFORT_TRIAL` was on. `0139` R18 ended it: nothing picks
-an effort here any more, and `coscc/knowledge/modeltrial.py` divides the units instead. The
-rows already written keep `FIELD` and `CI_RED`, and `coscc/knowledge/effort_measure.py` and
-`coscc/knowledge/measure.py` read them back by these names (`.claude/rules/coscc-data.md`).
-`CI_RED` is still written, by the model trial and by `COS_KNOWLEDGE`.
-"""
+"""The effort-trial field names in `start` rows, kept so already-written rows can be read back."""
 
 from __future__ import annotations
 

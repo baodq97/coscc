@@ -1,15 +1,13 @@
 """The knowledge store: what earlier units measured, for the stages that plan the next one.
 
-`0090_agents-relearn-what-earlier-units-already-knew`. One Markdown file under
-`COS_DATA_DIR`, in no repository (`spec.md` R5), beside the manifest of the sources it was
-gathered from (R11) and, since `0131`, `HEALTH`: what the last check on a fetched
-`origin/main` found of each entry (R12). A person can read it and edit it by hand; a block
-this module cannot read is skipped, never a reason to read nothing.
+One Markdown file under `COS_DATA_DIR`, in no repository, beside the manifest of its sources
+and `HEALTH`: what the last check on a fetched `origin/main` found of each entry. A person can
+edit it by hand; a block this module cannot read is skipped, never a reason to read nothing.
 
-`coscc/knowledge/gather.py` writes it, only through `validate` and `save`. `Service.run_step` reads it
-once per `spec`, `spike`, `plan` or `impl` step, only while `COS_KNOWLEDGE` is on and the unit
-is in the `ON` arm (`0131` R14-R17), and hands the slice this workspace receives, less what is
-no longer true of the step's `HEAD` (R9), to `runner.compose_prompt`, which does not read the disk.
+`coscc/knowledge/gather.py` writes it, only through `validate` and `save`. `Service.run_step`
+reads it once per `spec`, `spike`, `plan` or `impl` step, only while `COS_KNOWLEDGE` is on and
+the unit is in the `ON` arm, and hands the slice this workspace receives, less what is no
+longer true of the step's `HEAD`, to `runner.compose_prompt`, which does not read the disk.
 
 Every function here but `load`, `save` and `for_step` is pure.
 """
@@ -25,11 +23,10 @@ from typing import Any, Iterable
 
 from coscc.data import Data
 
-# `spec.md` R3, C3. The stages that receive the store; `review` is deliberately not one.
-# `0131` R14: `impl` too, on every run of it.
+# The stages that receive the store; `review` is deliberately not one.
 STAGES = ("spec", "spike", "plan", "impl")
 
-# `spec.md` R6, C4: the bytes of entries one workspace receives. Chosen, not measured.
+# The bytes of entries one workspace receives. Chosen, not measured.
 CAP_BYTES = 8192
 # The bytes of one entry. Chosen, not measured: a statement of one or two sentences and its
 # fields fit several times over, and one entry cannot take the whole cap.
@@ -38,16 +35,15 @@ ENTRY_BYTES = 600
 DIR = "knowledge"
 STORE = "knowledge.md"
 SOURCES = "sources.json"
-# `0131` R12. `{sha: {slot: sha}, at, entries: {"K<n>": "" | why}}`, rewritten whole by `save`.
+# `{sha: {slot: sha}, at, entries: {"K<n>": "" | why}}`, rewritten whole by `save`.
 HEALTH = "health.json"
 
-# `0131` R16, R18. The `start` field every step carries while `COS_KNOWLEDGE` is on, and its
+# The `start` field every step carries while `COS_KNOWLEDGE` is on, and its
 # two arms; `coscc/knowledge/measure.py` reads them back by these names.
 TRIAL_FIELD = "knowledge_trial"
 ON, OFF = "on", "off"
 
 TITLE = "# Knowledge"
-# `0131` R3: `spec.md` and `plan.md` too.
 SOURCE_FILES = ("plan.md", "review.md", "spec.md", "spike.md")
 
 _HEADER = re.compile(r"^Version:\s*(\d+)\.\s+Gathered:\s*(\S*?)\.\s+Max id:\s*K(\d+)\.\s*$")
@@ -109,7 +105,7 @@ def _entry(n: int, lines: list[str]) -> tuple[dict[str, Any] | None, str]:
 
 def format_entry(e: dict[str, Any]) -> str:
     """The block of an entry from its fields, in the grammar's order. `coscc/knowledge/admit.py` sets
-    `text` to this once it has written the date and the version (`0108` R1, R4)."""
+    `text` to this once it has written the date and the version."""
     lines = [f"## K{e['id']}", f"Scope: {e['scope']}"]
     lines += [f"Source: {s}" for s in e["sources"]]
     lines += [f"Ref: {r}" for r in e.get("refs") or []]
@@ -121,8 +117,7 @@ def format_entry(e: dict[str, Any]) -> str:
 
 def parse(text: str) -> dict[str, Any]:
     """`{header, entries, skipped}`. A store with no header reads as `empty_header()`, and a
-    block missing its scope, a source or a statement is in `skipped` with why (R5: the file
-    may be edited by hand). So is every line outside the entries but the title and the
+    block missing its scope, a source or a statement is in `skipped` with why. So is every line outside the entries but the title and the
     header: `render` writes back nothing else, so a line nobody names would be lost."""
     header = empty_header()
     entries: list[dict[str, Any]] = []
@@ -196,7 +191,7 @@ def render(header: dict[str, Any], entries: Iterable[dict[str, Any]]) -> str:
 
 
 def for_workspace(entries: Iterable[dict[str, Any]], slot: str) -> list[dict[str, Any]]:
-    """R6: every `tool:` entry, and the `workspace:` entries of this workspace only."""
+    """Every `tool:` entry, and the `workspace:` entries of this workspace only."""
     return [
         e for e in entries
         if e["scope"].startswith("tool:") or e["scope"] == f"workspace:{slot}"
@@ -204,19 +199,19 @@ def for_workspace(entries: Iterable[dict[str, Any]], slot: str) -> list[dict[str
 
 
 def arm(unit: str) -> str:
-    """`0131` R16. `ON` when the first byte of the SHA-256 of `"knowledge:" + unit` is even.
-    The prefix keeps it apart from `efforttrial.arm`, which hashes the bare name (C1)."""
+    """`ON` when the first byte of the SHA-256 of `"knowledge:" + unit` is even.
+    The prefix keeps it apart from `efforttrial.arm`, which hashes the bare name."""
     return ON if hashlib.sha256(("knowledge:" + unit).encode("utf-8")).digest()[0] % 2 == 0 else OFF
 
 
 def version_of(section: str) -> str:
-    """R4: the first twelve hex of the sha256 of what went into the prompt."""
+    """The first twelve hex of the sha256 of what went into the prompt."""
     return hashlib.sha256(section.encode("utf-8")).hexdigest()[:12]
 
 
 def slice_for(text: str, slot: str) -> tuple[str, dict[str, Any]]:
     """`(section, record)`: the blocks this workspace receives, by id, never over
-    `CAP_BYTES`, and `{version, entries, bytes}` for the `start` record (R4, R6).
+    `CAP_BYTES`, and `{version, entries, bytes}` for the `start` record.
 
     A store edited by hand past the cap gives the newest entries first, whole, and puts
     them back in id order. `validate` keeps a gathered store under it, so this is the
@@ -273,7 +268,7 @@ def _drop_id(item: dict[str, Any]) -> int | None:
 
 
 def date_of(e: dict[str, Any], dates: dict[str, str]) -> str:
-    """`0108` R3: the latest date of the sources an entry cites, `""` when none has one."""
+    """The latest date of the sources an entry cites, `""` when none has one."""
     return max((dates.get(label_of(s), "") for s in e["sources"]), default="")
 
 
@@ -287,17 +282,17 @@ def validate(
     others: Iterable[dict[str, Any]] = (),
     dates: dict[str, str] | None = None,
 ) -> list[str]:
-    """`spec.md` R13. Every reason `new_text` may not replace `old_slice`; `[]` is a pass.
+    """Every reason `new_text` may not replace `old_slice`; `[]` is a pass.
 
     `old_slice` is the part of the store the gathering session was given, `new_text` what it
     gave back, `dropped` its `[{id, reason, merged_into?}]`, `batch_sources` the labels it
     read, `slot` the batch's workspace and `max_id` the store header's. `others` are the
     entries of the store it was not given — other workspaces' — so the cap is checked for
-    what each of them would receive too, and no new entry takes one of their ids (R7).
+    what each of them would receive too, and no new entry takes one of their ids.
 
-    `0108`: a `Measured:` the session wrote is not read — the code writes it (R1). With
-    `dates`, label to `YYYY-MM-DD`, an entry merged into one whose sources are older is a
-    reason (R3); without it that is not checked, and `coscc/knowledge/gather.py` always passes it."""
+    A `Measured:` the session wrote is not read: the code writes it. With `dates`, label to
+    `YYYY-MM-DD`, an entry merged into one whose sources are older is a reason; without it
+    that is not checked, and `coscc/knowledge/gather.py` always passes it."""
     others = list(others)
     old = parse(old_slice)["entries"]
     new = parse(new_text)
@@ -382,7 +377,7 @@ def load(path: str | os.PathLike[str]) -> str:
 
 
 def save(path: str | os.PathLike[str], text: str) -> None:
-    """R8: a temporary file in the same directory, flushed to disk, then renamed over the
+    """A temporary file in the same directory, flushed to disk, then renamed over the
     store, so a reader gets the old file or the new one and never half of either."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -407,12 +402,12 @@ def for_step(data_dir: str | os.PathLike[str] | None, slot: str,
     that cannot be read (absent, refused, not UTF-8, a bug here) is no section and a record
     carrying `error`, and the step runs as it would have.
 
-    `0131` R9, R10. Each entry is checked on `HEAD` of `worktree`, the tree the step works on,
+    Each entry is checked on `HEAD` of `worktree`, the tree the step works on,
     and one no longer true of it is withheld: a `workspace:` entry whose `Ref:` is not there, a
     `tool:` entry whose version is not the pin there. The record says which were carried
     (`ids`), which withheld and why (`withheld`) and the `HEAD` read (`head`, `""` for none).
     When git cannot answer, every `workspace:` entry is withheld with its reason and every
-    `tool:` entry is carried: R9 names only the first."""
+    `tool:` entry is carried."""
     try:
         applicable = for_workspace(parse(load(path_of(data_dir) / STORE))["entries"], slot)
         kept, withheld, head = _checked(applicable, str(worktree or ""))

@@ -1,6 +1,6 @@
 """Activity, usage and cost, an artifact's text, settings and preferences.
 
-Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
+A mixin with no fields, inherited by `Service`.
 """
 
 from __future__ import annotations
@@ -20,19 +20,11 @@ from coscc.service.common import Invalid, STAGE_FILES, consequence
 class ActivityMixin:
 
     # -- activity, usage and settings ---------------------------------------
-    #
-    # Three read-only methods. `spec.md` said `Service` would not change,
-    # and this is the one place it does — recorded as a departure in `plan.md`. The
-    # alternative was to let the new page read `Journal` and `policy` directly, and that
-    # would break the rule this module exists for (see the module docstring), which is a
-    # far worse trade than three methods that only read.
 
     def _records_or_none(self, cwd: str) -> list[dict[str, Any]] | None:
         """Every record for this workspace, or `None` when nothing is being recorded.
 
-        `activity` and `usage` both want the same rows and are always called together by
-        the Activity screen. Shared so the scan is written once — see `activity_and_usage`
-        for why it is also *read* once.
+        Shared by `activity` and `usage`; see `activity_and_usage` for why it is read once.
         """
         self._workspace_or_refuse(cwd)
         journal = self._journal()
@@ -56,27 +48,25 @@ class ActivityMixin:
                 "artifact": r.get("artifact") or "",
                 "denials": int(r.get("denials") or 0),
                 "cost": {f: r.get(f) for f in COST_FIELDS + (COST_USD,) if r.get(f)},
-                # `0045` R10. A `hold` row's move, reason, name and side effects; empty on
-                # every other kind.
+                # A `hold` row's move, reason, name and side effects; empty on every other kind.
                 "from": r.get("from") or "",
                 "to": r.get("to") or "",
                 "reason": r.get("reason") or "",
                 "by": r.get("by") or "",
                 "effects": [e for e in r.get("effects") or [] if isinstance(e, dict)],
-                # `0046` R15. A `release` row's version and what happened; empty on every other kind.
+                # A `release` row's version and what happened; empty on every other kind.
                 "version": str(r.get("version") or "") if r.get("kind") == "release" else "",
                 "detail": str(r.get("detail") or "") if r.get("kind") == "release" else "",
             }
             for r in rows
-            # `0111` R6: a retake of the screenshots is recorded, and shown on no screen.
+            # A retake of the screenshots is recorded, and shown on no screen.
             if r.get("kind") != "screens"
         ]
         events.reverse()
         return {"cwd": cwd, "events": events[:limit], "recording": True}
 
     def _usage_of(self, cwd: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
-        # `0092` R7. Only known costs are added; `unknown` counts the `end` rows that carried
-        # no `cost_usd`, so the sum is never shown as the whole of it.
+        # Only known costs are added; `unknown` counts the `end` rows that carried no `cost_usd`, so the sum is never shown as the whole of it.
         per_unit: dict[str, dict[str, Any]] = {}
         for record in rows:
             if record.get("kind") != "end":
@@ -93,9 +83,7 @@ class ActivityMixin:
     def activity(self, cwd: str, limit: int = 40) -> dict[str, Any]:
         """What has happened across the whole workspace, newest first.
 
-        `timeline` answers the same question for one unit. This one exists because the
-        Activity screen is workspace-wide, and building it by calling `timeline` once per
-        unit would spawn one board read per unit to find out what the units are.
+        Built from one read, not by calling `timeline` once per unit, which would spawn one board read per unit.
         """
         rows = self._records_or_none(cwd)
         if rows is None:
@@ -105,8 +93,7 @@ class ActivityMixin:
     def usage(self, cwd: str) -> dict[str, Any]:
         """What this workspace has cost, added up from its records.
 
-        Added rather than stored, for the reason `journal.totals` gives: a stored total is
-        a second number that can disagree with the first.
+        Added rather than stored: a stored total is a second number that can disagree with the first.
         """
         rows = self._records_or_none(cwd)
         if rows is None:
@@ -114,12 +101,7 @@ class ActivityMixin:
         return self._usage_of(cwd, rows)
 
     def activity_and_usage(self, cwd: str, limit: int = 40) -> dict[str, Any]:
-        """Both of the above, from one read.
-
-        The Activity screen wants both at once. Calling the two public methods meant two
-        connections and two full parses of the identical rows; they stay for the JSON API,
-        and this is what the page calls.
-        """
+        """Both of the above, from one read: the page calls this rather than the two public methods, which parse the same rows twice."""
         rows = self._records_or_none(cwd)
         if rows is None:
             return {
@@ -128,10 +110,9 @@ class ActivityMixin:
         return {**self._events_of(cwd, rows, limit), **self._usage_of(cwd, rows)}
 
     def cost(self, cwd: str, rounds: dict[str, list[str]] | None = None) -> dict[str, Any]:
-        """`0093`. Where this workspace's money went, from one read of its run log.
+        """Where this workspace's money went, from one read of its run log.
 
-        `rounds` is each unit's review verdicts, from the board read the page already has
-        (R9). Read only; no figure here is read by a gate (R13).
+        `rounds` is each unit's review verdicts, from the board read the page already has. Read only; no gate reads a figure here.
         """
         rows = self._records_or_none(cwd)
         if rows is None:
@@ -139,10 +120,9 @@ class ActivityMixin:
         return {**spend.model(rows, rounds), "recording": True}
 
     def unit_cost(self, cwd: str, unit: str) -> dict[str, Any]:
-        """`0093` R11. One unit's cost by stage and its anomalies.
+        """One unit's cost by stage and its anomalies.
 
-        The whole log is read, not the unit's rows: a token-per-turn median is the
-        workspace's (spec `## Design` §1).
+        The whole log is read, not the unit's rows: a token-per-turn median is the workspace's.
         """
         rows = self._records_or_none(cwd)
         if rows is None:
@@ -157,18 +137,9 @@ class ActivityMixin:
     def settings(self) -> dict[str, Any]:
         """The safety posture, as something a screen can render. Read only.
 
-        `spec.md` R18: this screen shows the four knobs and the grant table and can
-        change neither. There is no setter here for the same reason there is none in
-        `config.from_env` — a request that could turn a knob is a request that could turn
-        it on.
+        The screen shows the four knobs and the grant table and can change neither; there is no setter here, as in `config.from_env`.
 
-        **The model per stage is the one thing Settings can change**, and it is not here:
-        `stage_models` and `set_stage_model` are. `0004_no-setting-says-which-model-runs-
-        a-stage` made it changeable on purpose — a model is a choice of cost, not of
-        capability, and the originator asked for it without a release. The price is a
-        route that decides what every step spends for whoever holds the password or a live
-        session. `cos_model` below is only
-        the fallback for a row nothing else answers.
+        The model per stage is the one thing Settings can change (`stage_models`, `set_stage_model`), so it is not here. The route decides what every step spends for whoever holds the password or a live session. `cos_model` below is only the fallback for a row nothing else answers.
         """
         c = self.config
         return {
@@ -203,22 +174,20 @@ class ActivityMixin:
                     "detail": "The app resumes only the sessions it created.",
                 },
             ],
-            # The board's own grants, from `policy.py` rather than from the config. They
-            # are separate on purpose, and the screen has to show that they are. `0062`
-            # R9: a stage with its own `novel` ceilings shows them as `<stage>:novel`,
-            # right after its own row.
+            # The board's own grants, from `policy.py` rather than from the config; they are
+            # separate on purpose, and the screen shows that. A stage with its own `novel`
+            # ceilings shows them as `<stage>:novel`, right after its own row.
             "grants": [
                 {
                     "stage": name,
                     "tools": ", ".join(grant.tools) or "none",
                     "commands": ", ".join(grant.commands) or "none",
-                    # `0082` F2: the same, one item each, for the page to list (S5).
+                    # The same, one item each, for the page to list.
                     "tool_list": list(grant.tools),
                     "command_list": list(grant.commands),
                     "max_turns": grant.max_turns,
                     "max_budget_usd": grant.max_budget_usd,
-                    # `0101` R5: Jera's ceiling follows its prompt, so its row says the
-                    # range; the grant's own figure is only the floor.
+                    # Jera's ceiling follows its prompt, so its row says the range; the grant's own figure is only the floor.
                     "budget": (f"${precedent.PRECEDENT_FLOOR_USD:.2f}–${precedent.PRECEDENT_MAX_USD:.2f}"
                                if name == "precedent" else f"${grant.max_budget_usd:.2f}"),
                     "app_writes_artifact": grant.app_writes_artifact,
@@ -238,10 +207,7 @@ class ActivityMixin:
         }
 
     def _import_report(self) -> dict[str, Any]:
-        """`0135` R4. Every field an import could not read, its workspace by name (S3), not a
-        failed ingest: the card shows that one. A database that cannot be read is `problem`,
-        in place of a Settings screen that does not load at all. What went wrong goes to the
-        log, not the screen: `Busy` and `Incompatible` name the database's path (S3)."""
+        """Every field an import could not read, its workspace by name, not a failed ingest: the card shows that one. A database that cannot be read is `problem`, in place of a Settings screen that does not load. What went wrong goes to the log, not the screen: `Busy` and `Incompatible` name the database's path."""
         names = {self._journal_key(r["path"]): str(r["name"]) for r in self.workspaces()["workspaces"]}
         try:
             found = self._unit_meta().unknowns()
@@ -258,9 +224,7 @@ class ActivityMixin:
     def artifact(self, cwd: str, unit: str, stage: str) -> dict[str, Any]:
         """The text of one stage's artifact, or why there is none.
 
-        The path is built by `runner.unit_dir`, which validates the unit name against the
-        `NNNN_slug` shape. That is the same function the runner uses, so a name this
-        refuses is a name no step could run against either — one rule, not two.
+        The path is built by `runner.unit_dir`, which validates the unit name against the `NNNN_slug` shape, so a name this refuses is one no step could run against either.
         """
         self._workspace_or_refuse(cwd)
         if stage not in STAGE_FILES:
@@ -275,11 +239,10 @@ class ActivityMixin:
             raise Invalid(f"could not read {filename}: {e}") from e
         return {"unit": unit, "stage": stage, "file": filename, "text": text, "exists": True}
 
-    # Which preferences the page may keep. An open key/value store reachable from a
-    # request is a place to put anything; this is the list of things the Settings screen
-    # actually remembers, and nothing else is writable.
-    # `0044` R8a: `decision_preferences`, the text Jera reads as precedent, word for word.
-    # `0101` R8: `decision_rules`, what Jera's prompt says about deciding; empty is the default.
+    # Which preferences the page may keep: an open key/value store reachable from a request
+    # is a place to put anything, so only the keys the Settings screen remembers are writable.
+    # `decision_preferences` is the text Jera reads as precedent, word for word;
+    # `decision_rules` is what Jera's prompt says about deciding, empty being the default.
     PREFERENCES = {"density": "comfortable", "screen": "overview", "board_view": "Board",
                    "decision_preferences": "", "decision_rules": ""}
 

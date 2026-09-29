@@ -1,7 +1,4 @@
-"""The dialogs outside a unit: watching a step, a workspace's form, removing one, the command
-palette and the mobile menu.
-Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
-"""
+"""The dialogs outside a unit: watching a step, a workspace's form, removing one, the command palette and the mobile menu."""
 
 from __future__ import annotations
 
@@ -13,24 +10,20 @@ from coscc.screens.common import P, _MONO
 from coscc.screens.chrome import _nav, _workspace_select
 
 
-# --- watching a step (`0073`) -------------------------------------------------
+# --- watching a step ---------------------------------------------------------
 
-# Two observers, and nothing else: the first row coming into view presses *older*, and a
+# Two observers and nothing else: the first row coming into view presses *older*, and a
 # list that was at its bottom before a change is put back there. Every rule about what the
 # list holds is `StudioState`'s; this only scrolls.
 #
-# Away from the bottom, the row being read stays where it was whatever changed the list:
-# the first row in view is remembered by its `data-seq` and offset on every scroll, and
-# brought back to that offset after every change. Rows are drawn by position, so a page
-# prepended, a full list dropping its newest rows (`review.md` F5) and a live batch
-# dropping its oldest while following (F6 a) all rewrite rows in place, and neither the
-# scroll height nor the row nodes say where the row went; the seq does. The anchor is
-# never spent on the first change, so a live batch landing between *older* and its page
-# does not leave the page to arrive with none (F6 b). *Older* pressed at the bottom
-# anchors too; *Jump to latest* drops the anchor and goes to the bottom. `data-seq` is watched as
-# an attribute because a list that stays at `WATCH_WINDOW` rows changes no child at all.
-# The browser's own scroll anchoring is off on `#watch-list`, so this is the one thing
-# that moves it.
+# Away from the bottom, the row being read stays put whatever changed the list: the first
+# row in view is remembered by its `data-seq` and offset on every scroll, and brought back
+# after every change. Rows are drawn by position, so a prepended page, a full list dropping
+# its newest rows and a live batch dropping its oldest all rewrite rows in place, and only
+# the seq says where the row went. The anchor is never spent on the first change, so a live
+# batch landing between *older* and its page does not leave the page to arrive with none.
+# `data-seq` is watched as an attribute because a list that stays at `WATCH_WINDOW` rows
+# changes no child. Browser scroll anchoring is off on `#watch-list`.
 _WATCH_JS = """
 (function () {
   if (window.__coscc_watch) return;
@@ -94,7 +87,7 @@ _WATCH_COLOR = {"denied": "red", "result": "grass", "end": "iris", "turn": "ambe
 
 
 def _watch_row(e: rx.Var[WatchEvent]) -> rx.Component:
-    """R10, R12. One event: when, kind, what it says, and its body collapsed unless opened."""
+    """One event: when, kind, what it says, and its body collapsed unless opened."""
     opened = P.watch_open_seq == e.seq
     return rx.box(
         rx.hstack(
@@ -134,7 +127,7 @@ def _watch_row(e: rx.Var[WatchEvent]) -> rx.Component:
 
 
 def _watch_dialog() -> rx.Component:
-    """`0073` R10-R13. One step's events, oldest at the top; opens at the bottom."""
+    """One step's events, oldest at the top; opens at the bottom."""
     return rx.dialog.root(
         rx.dialog.content(
             rx.hstack(

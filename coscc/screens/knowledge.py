@@ -1,4 +1,4 @@
-"""The *Knowledge* screen (`0131` R24-R26). Four tables and no button (S1, S5)."""
+"""The *Knowledge* screen: four tables and no button."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def _entry_row(row: rx.Var[KnowledgeEntry]) -> rx.Component:
         rx.table.cell(rx.vstack(rx.foreach(row.sources, lambda x: s.text(x, size="1", white_space="nowrap")),
                                 spacing="1")),
         rx.table.cell(s.text(row.measured, size="1", white_space="nowrap")),
-        # A reason may name a slot, a path or `PATH`: behind a closed detail (S3).
+        # A reason may name a slot, a path or `PATH`: behind a closed detail.
         rx.table.cell(rx.vstack(s.badge(row.status, row.color),
                                 rx.cond(row.reason != "", _details("kn-why-" + row.id, "Why",
                                                                    s.text(row.reason, size="1"))),

@@ -1,32 +1,9 @@
 """What happened to a unit: the transitions, and the projection of where it is now.
 
-`.cos/0013_board-cannot-say-what-happened/intent.md` measured what the old arrangement
-cost. A stage's state was read out of the `Status:` line of a file on disk, so rewriting
-that file destroyed every state it had held before — 42 such rewrites had already happened
-in this repository by 2026-09-22, and the board could show none of them.
-
-**R1 is the whole design: the transition is the record.** There is no column anywhere
-holding a current state, and `state()` below is a fold over the log rather than a read of
-a stored value. The test that proves it deletes the last row of a unit by hand and watches
-the projection fall back on its own. A design carrying both a log and a state column has
-two truths, and the one people edit is never the one they read.
-
-**R3 is why nothing here is optional.** Every field is written on every row, and a caller
-that does not know something writes `UNKNOWN` rather than leaving it out. `intent.md`
-exists because "nobody recorded this" currently looks exactly like "this did not happen";
-a blank column would be that confusion moved into the database.
-
-The first use of this is the git import, and it can supply neither an actor nor a session
-— git knows who authored a commit, not which session produced it. So the imported history
-arrives with both fields `UNKNOWN`, deliberately and visibly. `spec.md` C1 says so: the
-provenance this unit builds is true of work done **after** it, not of work already in git.
-
-**A unit has a sequence of sessions, not a session.** `coscc/runner/__init__.py:271-274` passes
-`session_id=None` on every step, so eight stages make eight sessions; `coscc/agent/sessions.py:185`
-sets `fork_session=False`, so one chat keeps one id across many turns. Those are different
-mechanisms and `sessions_of()` keeps them apart: one multi-turn session is one row, and a
-unit that ran eight steps has eight rows. Anything holding a singular `session_id` for a
-unit is wrong from the second step onward (`intent.md` constraint 2).
+The transition is the record: no column holds a current state, and `state()` is a fold over
+the log. Every field is written on every row; a caller that does not know something writes
+`UNKNOWN`, never a blank. A unit has a sequence of sessions (one per step), not a session;
+`sessions_of()` keeps one multi-turn session as one row.
 """
 
 from __future__ import annotations
@@ -41,22 +18,20 @@ from coscc.units import states
 from coscc.data import BUSY_TIMEOUT, Data, now as _now
 from coscc.units.states import Machine
 
-# What a field says when nobody can say. R3: never a blank, never a NULL, never absent
-# from the row. One word, used everywhere, so a query can ask for it.
+# What a field says when nobody can say: never blank, never NULL, one word so a query can ask for it.
 UNKNOWN = "unknown"
 
-# R5's classifier. A deliverable is the unit's own artifact; a code change is a file in
-# somebody's repository. Two kinds in one table so that "how many altogether" is one query
-# rather than a union every caller has to remember to write.
+# A deliverable is the unit's own artifact; a code change is a file in somebody's repository.
+# One table so "how many altogether" is one query.
 DELIVERABLE = "deliverable"
 CODE = "code"
 KINDS = (DELIVERABLE, CODE)
 
 LOCK_TIMEOUT = BUSY_TIMEOUT
 
-# `0136` R15: whose decision a transition is. `person` and `delegated` are the originator and
-# the one they delegated to; `agent` is what a model inferred and never counts as either;
-# `code` is a guard reading git, `gh` or the database. A row from before `0136` says `UNKNOWN`.
+# Whose decision a transition is. `person` and `delegated` are the originator and the one they
+# delegated to; `agent` is what a model inferred and never counts as either; `code` is a guard
+# reading git, `gh` or the database. An older row says `UNKNOWN`.
 AUTHORITIES = ("person", "delegated", "agent", "code")
 
 _TRANSITION_COLUMNS = (
@@ -76,11 +51,7 @@ class BadTransition(ValueError):
 
 
 def _text(value: Any) -> str:
-    """Anything into a non-empty string, `UNKNOWN` when there is nothing to say.
-
-    One function because R3 has one rule, and applying it in eleven places by hand is how
-    ten of them stay right.
-    """
+    """Anything into a non-empty string, `UNKNOWN` when there is nothing to say."""
     out = "" if value is None else str(value).strip()
     return out or UNKNOWN
 
@@ -88,13 +59,8 @@ def _text(value: Any) -> str:
 class History:
     """The transition log and the file log for one working folder.
 
-    `data` is passed in for the same reason `Journal` takes it: a test that forgets it
-    writes into the real `~/.cos` (`coscc/runlog/journal.py:108-109`). The two new tables inherit
-    that hazard unchanged.
-
-    `machine` is the state set every write is validated against and every row records. It
-    is a constructor argument rather than a module lookup because `spec.md` R6 has to be
-    demonstrable, and a set that can only be changed by editing Python is not configuration.
+    `data` is passed in so a test that forgets it cannot write into the real `~/.cos`.
+    `machine` is the state set every write is validated against and every row records.
     """
 
     def __init__(
@@ -108,7 +74,6 @@ class History:
         self.machine = machine or states.default()
         self._root = str(self.working_dir)
 
-    # -- writing ------------------------------------------------------------
 
     def record(
         self,
@@ -131,14 +96,9 @@ class History:
     ) -> dict[str, Any]:
         """Append one transition. Returns the row as it was stored.
 
-        `from_state` is **derived from the log** unless given. That is not a convenience:
-        deriving it is what keeps the chain internally consistent under R1, because the
-        only thing that can say where an artifact was is the row before it. A caller
-        passing one is asserting something the log can contradict.
-
-        The derive and the insert are one `BEGIN IMMEDIATE` transaction
-        (`coscc/data.py` module docstring): a read followed by a write derived from it is
-        the exact shape that lost 12 of 20 workspaces before SQLite was here.
+        `from_state` is derived from the log unless given: only the row before it can say
+        where an artifact was. The derive and the insert are one `BEGIN IMMEDIATE`
+        transaction, since a read followed by a write derived from it loses concurrent writes.
         """
         rows = self.record_many(
             [
@@ -168,20 +128,15 @@ class History:
     ) -> list[dict[str, Any]]:
         """Append transitions in order, in one transaction. Returns the stored rows.
 
-        The import needs this: 42 separate transactions is 42 chances to be interrupted
-        halfway, and a log with half a unit's history in it is worse than one with none —
-        the projection would be confidently wrong rather than empty.
-
-        A row whose `once_key` is already present is skipped and **not** returned, which is
-        what makes an import re-runnable (`coscc/data.py` `transitions_once`).
+        One transaction so an interruption never leaves half a unit's history. A row whose
+        `once_key` is already present is skipped and not returned, so an import is re-runnable.
         """
         prepared = [self._validate(item) for item in items]
         with self.data.write(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
             return self._insert(conn, prepared)
 
     def record_in(self, conn: sqlite3.Connection, items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-        """`record_many` inside a transaction the caller already holds (`0135`): the unit
-        import writes its transitions in the same `Data.write()` as everything else it read."""
+        """`record_many` inside a transaction the caller already holds."""
         return self._insert(conn, [self._validate(item) for item in items])
 
     def _insert(self, conn: sqlite3.Connection, prepared: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -202,15 +157,13 @@ class History:
             )
             if cursor.rowcount:
                 latest[key] = row["to_state"]
-                # `0136` R23: the row's own id, so what it caused can name it.
                 stored.append({**row, "id": cursor.lastrowid})
         return stored
 
     def _validate(self, item: dict[str, Any]) -> dict[str, Any]:
-        """One row, checked against the state set and filled out under R3.
+        """One row, checked against the state set and filled out.
 
-        Done before the transaction opens so that a bad row in a batch refuses the batch
-        without having held the database.
+        Done before the transaction opens so a bad row refuses the batch without holding the database.
         """
         artifact = str(item.get("artifact") or "").strip()
         to_state = str(item.get("to_state") or "").strip()
@@ -242,8 +195,7 @@ class History:
             "session": _text(item.get("session")),
             "source": _text(item.get("source")),
             "machine": self.machine.name,
-            # Not `_text`: an absent key means "do not deduplicate this", and turning that
-            # into the word `unknown` would make every keyless row collide with the first.
+            # Not `_text`: an absent key means "do not deduplicate", and `unknown` would make keyless rows collide.
             "once_key": str(item.get("once_key") or ""),
             "guard": _text(item.get("guard")),
             "authority": authority,
@@ -256,11 +208,7 @@ class History:
         return stage.name if stage is not None else UNKNOWN
 
     def _latest(self, conn: sqlite3.Connection) -> dict[tuple[str, str, str], str]:
-        """The newest state of every artifact this working folder has a transition for.
-
-        One query rather than one per row: an import of a whole repository would otherwise
-        be quadratic in the number of artifacts, and it is the only caller that matters.
-        """
+        """The newest state of every artifact this working folder has a transition for, in one query."""
         rows = conn.execute(
             "SELECT workspace, unit, artifact, to_state FROM transitions "
             "WHERE root = ? AND id IN ("
@@ -270,7 +218,6 @@ class History:
         ).fetchall()
         return {(r["workspace"], r["unit"], r["artifact"]): r["to_state"] for r in rows}
 
-    # -- reading ------------------------------------------------------------
 
     def transitions(
         self,
@@ -281,9 +228,7 @@ class History:
     ) -> list[dict[str, Any]]:
         """Every transition, oldest first, optionally narrowed.
 
-        Ordered by `id`. `at` is second-resolution, so two transitions recorded in the
-        same second would have no order at all if it were the key — the same reasoning as
-        `coscc/runlog/journal.py`.
+        Ordered by `id`: `at` is second-resolution and would leave same-second rows unordered.
         """
         sql = f"SELECT id, {', '.join(_TRANSITION_COLUMNS)} FROM transitions WHERE root = ?"
         args: list[Any] = [self._root]
@@ -300,14 +245,8 @@ class History:
     ) -> dict[str, str]:
         """Where each artifact of this unit stands now. **A fold, never a stored value.**
 
-        Every artifact the state set knows appears, including ones with no transition at
-        all: those read as the absent state, which is what `coscc/units/board.py:63-81` derives
-        from a missing file today. Reported in stage order so a caller never has to know
-        the order itself.
-
-        Folded in Python rather than asked for in SQL. The volume is one unit's history —
-        42 rows for this entire repository — and a fold is a thing a reader can check
-        against R1 by looking at it.
+        Every artifact the state set knows appears; one with no transition reads as the
+        absent state. Reported in stage order.
         """
         current = {artifact: self.machine.absent for artifact in self.machine.artifacts}
         for row in self.transitions(workspace, unit, timeout=timeout):
@@ -319,11 +258,9 @@ class History:
     ) -> list[str]:
         """Which state sets the stored rows were written under, first-seen first.
 
-        `spec.md` C5 is the reason this is asked rather than assumed. A log written under
-        one set and read under another compares states that never meant the same thing,
-        and the failure *runs* rather than stopping: every query returns rows, and the
-        words in them simply mean something else. A caller that finds more than this
-        instance's own name here must say so rather than carry on comparing.
+        Rows read under a set they were not written under compare states that never meant the
+        same thing, and every query still returns rows; a caller that finds more than its own
+        name here must say so.
         """
         sql = (
             "SELECT machine, MIN(id) AS first_seen FROM transitions "
@@ -348,16 +285,11 @@ class History:
     def sessions_of(
         self, workspace: str, unit: str, timeout: float | None = None
     ) -> dict[str, Any]:
-        """R4. The sequence of sessions behind one unit, plus what is not known.
+        """The sequence of sessions behind one unit, plus what is not known.
 
-        One session appears once however many transitions it made — that is what keeps a
-        multi-turn chat from reading as several sessions. Ordered by first appearance,
-        because the order the stages ran in is the thing a reader is looking for.
-
-        `unknown` is counted separately rather than listed as a session. `UNKNOWN` is not
-        an id, and a row called "unknown" sitting in the sequence would let the imported
-        history read as though one session did all of it — precisely the misreading
-        `spec.md` C1 warns about.
+        One session appears once however many transitions it made, in order of first
+        appearance. `unknown` is counted separately, not listed as a session, so imported
+        history never reads as one session's work.
         """
         order: list[str] = []
         found: dict[str, dict[str, Any]] = {}
@@ -387,7 +319,6 @@ class History:
             "unknown_transitions": unknown,
         }
 
-    # -- what a unit produced -----------------------------------------------
 
     def add_output(
         self,
@@ -404,7 +335,7 @@ class History:
         once_key: str = "",
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        """R5. Record one file this unit produced, and which of the two kinds it is."""
+        """Record one file this unit produced, and which of the two kinds it is."""
         if kind not in KINDS:
             raise BadTransition(f"kind must be one of {', '.join(KINDS)}, got {kind!r}")
         if not str(path or "").strip():
@@ -448,8 +379,7 @@ class History:
     def output_counts(
         self, workspace: str, unit: str | None = None, timeout: float | None = None
     ) -> dict[str, int]:
-        """How many files, by kind and altogether. `total` is here rather than at the
-        call site because R5 exists so that nobody has to add the two up themselves."""
+        """How many files, by kind and altogether."""
         counts = {kind: 0 for kind in KINDS}
         rows = self.outputs(workspace, unit, timeout=timeout)
         for row in rows:
@@ -461,21 +391,10 @@ class History:
 def settled_edits(
     transitions: Iterable[dict[str, Any]], machine: Machine
 ) -> list[dict[str, Any]]:
-    """The transitions `0013`'s outcome counts: an artifact touched while already settled.
+    """The transitions where an artifact was touched while already settled.
 
-    `intent.md` measured 39 of these on 2026-09-22 and the board could show none of them.
-    It is a filter over the log rather than a column on it — the log records what happened
-    and this decides what to call interesting, which is the split that lets the definition
-    change without a migration.
-
-    Note what it does **not** require: that the state changed. Most of these are
-    `accepted → accepted`, a settled artifact rewritten in place, which is exactly the
-    event the old arrangement destroyed.
-
-    **`machine` is required, and it used to default to `states.default()`.** That default
-    was the exact failure `spec.md` C5 describes, wearing a convenience: rows written under
-    another set would be filtered by the default set's idea of "settled", match nothing,
-    and return an empty list with no error anywhere. A caller that has transitions has the
-    `History` they came from, so there is nothing to save.
+    A filter over the log, not a column. It does not require that the state changed: most are
+    `accepted -> accepted`, a settled artifact rewritten in place. `machine` is required, with
+    no default: rows written under another set would match nothing and return an empty list.
     """
     return [row for row in transitions if machine.is_settled(row["from_state"])]

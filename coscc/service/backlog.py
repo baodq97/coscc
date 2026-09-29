@@ -1,8 +1,5 @@
 """The backlog: estimates, relations, the shortlist, precedent, starting a unit's branch,
-and a unit's history.
-
-Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
-"""
+and a unit's history. A mixin with no fields."""
 
 from __future__ import annotations
 
@@ -34,9 +31,8 @@ from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, OWNER
 
 
 def _labelled(row: dict[str, Any]) -> dict[str, Any]:
-    """`0136` R20. One transition row for the timeline: its `inputs` as an object, the label of
-    its guard (`""` for a guard `guards` does not know, as on a row from before `0136`), and
-    `head`, the SHA its guard read, where it read one."""
+    """One transition row for the timeline: its `inputs` as an object, the label of its guard
+    (`""` for a guard `guards` does not know), and `head`, the SHA its guard read, if any."""
     try:
         inputs = json.loads(row.get("inputs") or "{}")
     except (TypeError, ValueError):
@@ -51,12 +47,11 @@ def _labelled(row: dict[str, Any]) -> dict[str, Any]:
 
 class BacklogMixin:
 
-    # -- backlog (`0074`) -----------------------------------------------------
+# -- backlog --------------------------------------------------------------
 
     async def _backlog_context(self, cwd: str) -> tuple[Journal, str, dict[str, Any]]:
-        """The run log, its key and one board read. The read is `node`, so it happens before
-        any transaction is opened (`plan.md` Risk 5): only the run log's part of a check is
-        read inside one."""
+        """The run log, its key and one board read. The read is `node`, so it happens before any
+        transaction is opened; only the run log's part of a check is read inside one."""
         self._workspace_or_refuse(cwd)
         journal = self._journal()
         if journal is None:
@@ -83,7 +78,7 @@ class BacklogMixin:
     async def record_estimate(
         self, cwd: str, unit: str, value: Any, effort: Any, basis: Any, by: Any,
     ) -> dict[str, Any]:
-        """R2, R6, R7. A person's estimate: always a new record, never an edit of an old one."""
+        """A person's estimate: always a new record, never an edit of an old one."""
         by = str(by or "").strip() or OWNER
         journal, key, data = await self._backlog_context(cwd)
         if isinstance(value, str) and value.strip().isdigit():
@@ -102,7 +97,7 @@ class BacklogMixin:
     async def record_relation(
         self, cwd: str, unit: str, other: str, rtype: str, op: str, reason: str, by: str,
     ) -> dict[str, Any]:
-        """R8. Add or remove one relation; checked against the ones in effect inside the write."""
+        """Add or remove one relation; checked against the ones in effect inside the write."""
         by = str(by or "").strip() or OWNER
         journal, key, data = await self._backlog_context(cwd)
         names = [u["name"] for u in data["units"]]
@@ -113,7 +108,7 @@ class BacklogMixin:
         ))}
 
     async def record_shortlist(self, cwd: str, names: Any, reason: str, by: str) -> dict[str, Any]:
-        """R10, R12, R13. The whole list, by a person, as one new record."""
+        """The whole list, by a person, as one new record."""
         by = str(by or "").strip() or OWNER
         journal, key, data = await self._backlog_context(cwd)
         for what, value in (("reason", reason), ("name", by)):
@@ -131,14 +126,14 @@ class BacklogMixin:
     async def propose_estimates(
         self, cwd: str, resume: dict[str, Any] | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
-        """R17, R18. One paid session proposes estimates and relations for the whole backlog.
+        """One paid session proposes estimates and relations for the whole backlog.
 
         Refused before anything is spent while another proposal of this workspace runs: the
-        unit `""` in `_active`, which no real unit is ever called. Streams like `integrate`.
+        unit `""` in `_active`, which no real unit is called. Streams like `integrate`.
         Writes `start`/`end` (stage `estimate`, unit `""`) so Activity counts the money, one
-        `estimate` record for the run, and each valid part of the reply through
-        `append_checked`. A session over a ceiling, or one that handed back no object through
-        `submit` (`0136` R9), writes no estimate.
+        `estimate` record, and each valid part of the reply through `append_checked`. A
+        session over a ceiling, or one that handed back no object through `submit`, writes
+        no estimate.
         """
         self._workspace_or_refuse(cwd)
         self._refuse_while_updating()
@@ -163,7 +158,7 @@ class BacklogMixin:
                 raise Invalid(str(e)) from e
             unit_timelines = timelines_of(rows)
             found = backlog.measured(unit_timelines, data["units"])
-            # `0092` R11: how many finished units are left out for a cost nobody knows.
+# How many finished units are left out for a cost nobody knows.
             left_out = len(backlog.undetermined(unit_timelines, data["units"]))
             waiting = [u["name"] for u in data["units"] if backlog.in_backlog(u)]
             if not waiting:
@@ -203,12 +198,12 @@ class BacklogMixin:
                 except (BadRecord, Busy):
                     pass
             else:
-                # `0138`: the `start` was written before the update; this ends it.
+# The `start` was written before the update; this ends it.
                 started = True
             ask = resume_kwargs(resume, grant, prompt)
             used_up = ask.pop("used_up", "")
             reply, end, failure = "", {}, ""
-            # `0136` R9: the estimate is the object handed back, never the reply's words.
+# The estimate is the object handed back, never the reply's words.
             collector = submit_mod.Collector("estimate")
             try:
                 async for kind, payload in nothing() if used_up else self.sessions.stream(
@@ -233,7 +228,7 @@ class BacklogMixin:
                                    cost=payload.get("cost") or {},
                                    terminal_reason=str(payload.get("terminal_reason") or ""))
             except Suspended:
-                # `0138`: an update paused it and wrote its `suspend` row; no `end` here.
+# An update paused it and wrote its `suspend` row; no `end` here.
                 ended = True
                 raise
             except Exception as e:  # noqa: BLE001 — recorded as the reason
@@ -244,7 +239,7 @@ class BacklogMixin:
             terminal = end.get("terminal_reason", "")
             if not failure and any(m in terminal for m in CEILING_MARKERS):
                 failure = f"the session stopped at a ceiling ({terminal}); nothing was recorded"
-            # `0136` R2: no object, no estimate, whatever the reply says.
+# No object, no estimate, whatever the reply says.
             if not failure and not submitted(collector):
                 failure = backlog.NO_OBJECT
             session = end.get("session_id", "")
@@ -301,16 +296,16 @@ class BacklogMixin:
         self, data_units: list[dict[str, Any]], found: dict[str, Any], unit: str,
         only: list[dict[str, Any]] | None = None, *, cwd: str = "",
     ) -> tuple[list[dict[str, Any]], list[dict[str, str]], str]:
-        """`0101` R5, R8. `(questions, store, prompt)` for Jera on `found`, the one place its
-        prompt is built: `precedent` runs it, and the autopilot's pass prices it (C13).
+        """`(questions, store, prompt)` for Jera on `found`, the one place its prompt is built:
+        `precedent` runs it and the autopilot's pass prices it.
 
         `only`: the questions to ask, `[{artifact, n}]`; every one Jera may be given when
         `None`. The rules are Settings' `decision_rules`, or `DEFAULT_RULES` while it is empty.
         Pure but for reading the preferences.
 
-        `0137` R7: each entry says who decided it, from the person's decisions and the names
-        marked "This was me" on Settings, both read here, and the agents' names. `cwd` is the
-        workspace `data_units` were read from; a decision scoped to another is not in force.
+        Each entry says who decided it, from the person's decisions and the names marked
+        "This was me" on Settings, and the agents' names. `cwd` is the workspace `data_units`
+        were read from; a decision scoped to another is not in force.
         """
         questions = precedent_mod.asked(found)
         if only is not None:
@@ -326,24 +321,22 @@ class BacklogMixin:
     async def precedent(
         self, cwd: str, unit: str, started_by: str = "person", resume: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """`0044`. Jera answers this unit's open questions from precedent: one paid session.
+        """Jera answers this unit's open questions from precedent: one paid session.
 
-        Started by a person's press (`POST /api/units/precedent`, *Ask Jera*), which asks
-        every open question, or since `0101` R1 by the autopilot's pass (`started_by`
-        `autopilot`), which asks only those `autopilot.unasked` names (R2). Holds the unit like
-        a step (`_take`), so Jera, a step, an integration and a hold of one unit exclude each
-        other in this process; a session at a terminal is not excluded (`spec.md` C6).
+        Started by a person's press (*Ask Jera*), which asks every open question, or by the
+        autopilot's pass (`started_by` `autopilot`), which asks only those `autopilot.unasked`
+        names. Holds the unit like a step (`_take`), so Jera, a step, an integration and a
+        hold of one unit exclude each other in this process; a terminal session is not excluded.
 
-        Its ceiling is its prompt's (`precedent.grant_for_prompt`, `0101` R5); past
-        `PRECEDENT_MAX_USD` it is refused before a `start` is written, so nothing opens.
+        Its ceiling is its prompt's (`precedent.grant_for_prompt`); past `PRECEDENT_MAX_USD`
+        it is refused before a `start` is written.
 
-        Writes a `start` and an `end` (stage `precedent`, the unit's own), the `start` with
-        who started it, its ceiling and the questions it `asked`; one `precedent` row per
-        question (R9, R12), and each `answer` that survives `precedent.verdicts` through
-        `_append_answers` as `Jera`, `Via: precedent`, `actor = agent:Jera` (R7). A
-        `needs-person` verdict writes no byte of any artifact. A reply that cannot be read
-        writes nothing either, and its tail is kept in the `end` row (R13). When it is over,
-        the autopilot is woken (`0101` R4).
+        Writes a `start` and an `end` (stage `precedent`, the unit's own), the `start` with who
+        started it, its ceiling and the questions it `asked`; one `precedent` row per question,
+        and each `answer` that survives `precedent.verdicts` through `_append_answers` as
+        `Jera`, `Via: precedent`, `actor = agent:Jera`. A `needs-person` verdict writes no byte
+        of any artifact. A reply that cannot be read writes nothing either, and its tail is
+        kept in the `end` row. When it is over, the autopilot is woken.
         """
         self._workspace_or_refuse(cwd)
         self._refuse_while_updating()
@@ -353,8 +346,7 @@ class BacklogMixin:
         key = self._journal_key(cwd)
         mark = self._take(key, unit, "precedent", "precedent")
         rid = self._mark_running(key, unit, "precedent", "precedent")
-        # `0138` review round 3, F8: taken up again, the `start` is already written, so whatever
-        # refuses it from here ends it.
+# Taken up again, the `start` is already written, so whatever refuses it from here ends it.
         started, ended = resume is not None, False
         try:
             try:
@@ -367,8 +359,8 @@ class BacklogMixin:
             only = None
             asked_before = ((resume or {}).get("owner") or {}).get("asked")
             if asked_before is not None:
-                # F8: the questions the paused session was given, which its own `start` names,
-                # so `autopilot.unasked` would count every one of them asked already.
+# The questions the paused session was given, which its own `start` names, so
+# `autopilot.unasked` would not count every one of them asked already.
                 only = [{"artifact": a, "n": n} for a, n in asked_before]
             elif started_by == "autopilot":
                 try:
@@ -400,13 +392,13 @@ class BacklogMixin:
                         max_budget_usd=grant.max_budget_usd, model=model, model_source=model_source,
                         effort=effort, effort_source=effort_source, questions=len(questions),
                         entries=len(store), asked=[[q["artifact"], q["n"]] for q in questions],
-                        # `0131` R18: every `start` of the unit says its arm, or `measure` drops it.
+# Every `start` of the unit says its arm, or `measure` drops it.
                         **({knowledge.TRIAL_FIELD: {"arm": knowledge.arm(unit)}}
                            if self.config.knowledge else {})).get("at")
                     started = True
                 except (BadRecord, Busy):
                     pass
-            # `0136` R8: Jera's verdicts are the object it hands back, never its reply's words.
+# Jera's verdicts are the object it hands back, never its reply's words.
             collector = submit_mod.Collector("precedent")
             try:
                 reply, end, failure = await precedent_mod.ask(
@@ -417,12 +409,12 @@ class BacklogMixin:
                     resume=resume, channel=collector,
                 )
             except Suspended:
-                # `0138`: an update paused Jera and wrote its `suspend` row; no `end` here.
+# An update paused Jera and wrote its `suspend` row; no `end` here.
                 ended = True
                 raise
             cost = end.get("cost") or {}
             session = end.get("session_id", "")
-            # `0136` R2: a Jera that handed back no object ends `failed`, whatever it replied.
+# A Jera that handed back no object ends `failed`, whatever it replied.
             if not failure and not submitted(collector):
                 failure = precedent_mod.NO_OBJECT
             found_v = {"failed": failure or None, "verdicts": [], "ignored": []}
@@ -431,7 +423,7 @@ class BacklogMixin:
                 found_v = precedent_mod.verdicts(collector.object(), questions, who)
             if found_v["failed"]:
                 try:
-                    # R13. The tail is chosen at 2000 characters, not measured.
+# The tail is chosen at 2000 characters.
                     journal.finished(key, unit, "precedent", "failed", session_id=session,
                                      detail=f"{found_v['failed']}; the reply ended: {reply[-2000:]}",
                                      guard=RUN_SUBMITTED, **cost)
@@ -453,7 +445,7 @@ class BacklogMixin:
                        "n": v["n"], "verdict": v["verdict"], "category": v["category"], "text": v["text"],
                        "reason": v["reason"], "cites": v["cites"], "session_id": session,
                        "written": v["verdict"] == precedent_mod.ANSWER and at not in skipped,
-                       # `0137` R9: who decided each cite as Jera was given it, not as it reads later.
+# Who decided each cite as Jera was given it, not as it reads later.
                        "cite_who": {c: precedent_mod.PRACTICE if c == precedent_mod.PRACTICE
                                     else who.get(c, "unknown") for c in v["cites"]}}
                 if at in skipped:
@@ -484,38 +476,35 @@ class BacklogMixin:
             self._release(key, unit, mark)
             self._running.pop(rid, None)
             self.updater.job_ended()
-            # `0101` R4: what Jera wrote may let the unit move on; nothing happens while off.
+# What Jera wrote may let the unit move on; nothing happens while off.
             self._autopilot_nudge(key)
 
     async def start_branch(self, cwd: str, unit: str) -> dict[str, Any]:
-        """`0014` R4. Cut this unit's branch in the workspace and switch to it.
+        """Cut this unit's branch in the workspace and switch to it.
 
-        The name is not chosen here and is not the caller's: `cos.mjs unit-branch` reads
-        the `Type:` the intent declared and prints `<type>/<slug>`. `coscc/git/gitops.py`
-        carries the list of what the app may do with it, which is this and nothing else.
+        The name is not the caller's: `cos.mjs unit-branch` reads the `Type:` the intent
+        declared and prints `<type>/<slug>`. `coscc/git/gitops.py` lists what the app may do
+        with it.
 
-        Since `0001_product-describes-a-state-it-is-not-in` it is cut from the trunk **as the
-        remote has it**, not from whatever the local `main` last saw: fetch, read the SHA
-        that fetch brought, cut from that SHA (R1). If the fetch fails nothing is cut and
-        the refusal says so (R2) — cutting from a stale `main` with a warning would still
-        open the pull request on the wrong base. The result names the ref and the commit
-        (R3). The remote and the trunk are constants here, never taken from a request.
+        It is cut from the trunk **as the remote has it**: fetch, read the SHA that fetch
+        brought, cut from that SHA. If the fetch fails nothing is cut and the refusal says so,
+        since cutting from a stale `main` would open the pull request on the wrong base. The
+        result names the ref and the commit. The remote and the trunk are constants here.
         """
         self._workspace_or_refuse(cwd)
         try:
             name = units.branch_name(cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
         except (CannotCreate, BadUnit) as e:
             raise Invalid(str(e)) from e
-        # `0017`. Cut in the unit's own worktree, never in the workspace: cutting there is
-        # what took one unit's branch away from another. The workspace stays on `main`.
+# Cut in the unit's own worktree, never in the workspace: cutting there took one unit's
+# branch away from another. The workspace stays on `main`.
         try:
             tree = await worktrees.ensure(cwd, unit, None, self.config.data_dir)
         except (GitError, BadUnit) as e:
             raise Invalid(f"Could not open {unit}'s worktree, so no branch was cut. {e}") from e
         repo = Path(tree["path"])
-        # `0048`: through the coordinator, so a step starting beside this does not race it
-        # for `refs/remotes/origin/main` — and a fetch under 30s old is reused here too
-        # (`spec.md ## Answers, câu 2`).
+# Through the coordinator, so a step starting beside this does not race it for
+# `refs/remotes/origin/main`; a fetch under 30s old is reused here too.
         try:
             await fetches.fetch(repo, BRANCH_REMOTE, BRANCH_TRUNK)
         except GitError as e:
@@ -528,10 +517,9 @@ class BacklogMixin:
             output = await gitops.create_branch(repo, name, sha)
         except GitError as e:
             raise Invalid(str(e)) from e
-        # Prepared here rather than when the tree was made (`0017` plan): the lockfiles an
-        # `impl` works with are the ones at the commit just cut from, not the local `main`.
-        # A failure is returned, not raised — the branch is cut either way — and `run_step`
-        # refuses `impl` until preparing succeeds (R6).
+# Prepared here rather than when the tree was made: the lockfiles an `impl` works with are
+# the ones at the commit just cut from. A failure is returned, not raised (the branch is cut
+# either way), and `run_step` refuses `impl` until preparing succeeds.
         prepared = await worktrees.prepare(repo, cwd, data_dir=self.config.data_dir)
         return {
             "cwd": cwd,
@@ -546,7 +534,7 @@ class BacklogMixin:
         }
 
     async def branch_here(self, cwd: str) -> dict[str, Any]:
-        """Which branch the workspace is on. A read, so the page can show it."""
+        """Which branch the workspace is on. A read."""
         self._workspace_or_refuse(cwd)
         try:
             return {
@@ -557,10 +545,10 @@ class BacklogMixin:
             raise Invalid(str(e)) from e
 
     def timeline(self, cwd: str, unit: str) -> dict[str, Any]:
-        """What has happened to one unit, oldest first (`spec.md` R15).
+        """What has happened to one unit, oldest first.
 
-        `0136` R20: `transitions` beside `runs`, each row of the log with the one-sentence
-        label of the guard that decided it; `""` for a row from before `0136`, which names none.
+        `transitions` beside `runs`, each row of the log with the one-sentence label of the
+        guard that decided it; `""` for a row that names none.
         """
         self._workspace_or_refuse(cwd)
         journal = self._journal()
@@ -579,8 +567,7 @@ class BacklogMixin:
     def _history(self) -> History | None:
         """The transition log, or `None` when there is no working folder to keep it in.
 
-        Same shape and same reasoning as `_journal`: with nothing set, the app behaves as
-        it did before, and the safe direction to fail in is read-only.
+        Same reasoning as `_journal`: with nothing set, the safe direction to fail in is read-only.
         """
         return (
             History(self.config.working_dir, self.config.data_dir)
@@ -589,20 +576,16 @@ class BacklogMixin:
         )
 
     def unit_history(self, cwd: str, unit: str) -> dict[str, Any]:
-        """`0013` R8. Everything the log knows about one unit.
+        """Everything the log knows about one unit.
 
-        **Beside the board, not instead of it.** `board()` still asks `cos.mjs` and still
-        reads state out of the `Status:` line on disk (`intent.md` constraint 3); this
-        answers from the transition log. Two sources during a transition is deliberate and
-        has a cost, and `spec.md` C2 and C5 are where that cost is written down.
+        **Beside the board, not instead of it.** `board()` still asks `cos.mjs` and reads state
+        out of the `Status:` line on disk; this answers from the transition log. Two sources
+        is deliberate and has a cost.
 
-        `state` here is a projection over `transitions` and is computed, never stored —
-        R1. It is returned alongside the transitions rather than instead of them precisely
-        so a caller can check one against the other.
+        `state` is a projection over `transitions`, computed and never stored. It is returned
+        alongside the transitions so a caller can check one against the other.
 
-        `settled_edits` is carried because it is the unit of measure `intent.md` named:
-        the number of times an artifact was rewritten after it had been settled, which
-        was 0 before this and 43 in this repository on 2026-09-22.
+        `settled_edits` is the number of times an artifact was rewritten after it had been settled.
         """
         self._workspace_or_refuse(cwd)
         history = self._history()
@@ -632,11 +615,11 @@ class BacklogMixin:
             written_under = history.machines_in(key, unit)
         except Busy as e:
             raise Invalid(str(e)) from e
-        # `spec.md` C5. Rows written under one state set and read under another compare
-        # words that never meant the same thing, and nothing about that failure looks like
-        # a failure -- every query still returns rows. Said out loud in the payload rather
-        # than refused, because refusing a *read* would hide the only evidence there is.
-        # A caller that goes on to compare these against another source must stop here.
+# Rows written under one state set and read under another compare words that never meant
+# the same thing, and nothing about that failure looks like a failure: every query still
+# returns rows. Said out loud in the payload rather than refused, because refusing a *read*
+# would hide the only evidence there is. A caller that compares these against another source
+# must stop here.
         foreign = [name for name in written_under if name != history.machine.name]
         return {
             "cwd": cwd,
@@ -662,9 +645,8 @@ class BacklogMixin:
     def units_with_history(self, cwd: str) -> dict[str, Any]:
         """Every unit the log has a transition for, in the order they first appear.
 
-        Not the same list as `board()`'s, and the difference is the point: a unit retired
-        from the working tree still has a history, and this is the only place it can be
-        seen. `.cos/` in this repository lost five units that way (`f506aae`).
+        Not the same list as `board()`'s: a unit retired from the working tree still has a
+        history, and this is the only place it can be seen.
         """
         self._workspace_or_refuse(cwd)
         history = self._history()

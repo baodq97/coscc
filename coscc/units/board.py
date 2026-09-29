@@ -1,23 +1,13 @@
-"""The eight stages of a workspace's work units, read without a second parser.
+"""The stages of a workspace's work units, read without a second parser.
 
-`spec.md` C8 chose this shape: the rules that decide what a status means live in
-`.claude/scripts/cos.mjs`, because that is the file the gate consults, and a second copy in
-Python would drift from it silently. So this module runs that script and reads its JSON
-rather than re-reading the Markdown.
+The rules that decide what a status means live in `.claude/scripts/cos.mjs`; this module
+runs that script and reads its JSON rather than re-reading the Markdown.
 
-**Which copy it runs is the security decision here.** A workspace is a repository cloned
-from a URL somebody typed, so `<workspace>/.claude/scripts/cos.mjs` is a file that
-repository controls. Executing it would hand a cloned repo everything this process has,
-which is past every knob in `coscc/config.py`. This module therefore runs **the copy that
-ships with the app**, pointed at the workspace's `.cos/` with `--root`. `coscc/agent/harness.py`
-is what makes that sentence true, and until 0012 it was not: the wheel shipped no copy at
-all, and this module answered 400 on every read. The cost of running our own copy is real
-and worth naming: a workspace that uses a different version of the harness is read with
-this app's stage list, not its own.
-
-The board reports; it never writes. What a step costs and which session ran it belong to
-the journal, and what a stage *says* belongs to the artifact on disk. This module only
-answers "where does each unit stand".
+**Which copy it runs is the security decision here.** A workspace is a cloned repository, so
+its own `.claude/scripts/cos.mjs` is a file that repository controls; running it would hand
+that repo everything this process has. This module runs the copy that ships with the app,
+pointed at the workspace's `.cos/` with `--root` (`coscc/agent/harness.py` locates it).
+The board reports; it never writes.
 """
 
 from __future__ import annotations
@@ -28,19 +18,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-# Which copy of the harness, and where it is, is `coscc/agent/harness.py`'s question and is not
-# asked again here. Until 0012 this module computed `parent.parent / ".claude"` for itself
-# and `coscc/runner/__init__.py` computed the same thing separately -- one formula in two places,
-# which is how a single packaging omission arrived as two unrelated-looking symptoms.
+# Which copy of the harness, and where, is `coscc/agent/harness.py`'s question.
 from coscc.agent import harness
 from coscc.agent.harness import child_env as _child_env
 from coscc.units import guards
 
-# Measured 2026-09-21 on this machine: five runs over the eight units in this repository
-# took 0.05s each, node v24.20.0. Ten seconds is therefore about two hundred times the
-# observed cost. Like `store.LOCK_TIMEOUT` it exists to turn a hung child into an error,
-# not to bound the work. **Unverifiable beyond this machine:** one machine, one day, eight
-# units.
+# Turns a hung child into an error rather than bounding the work (like `store.LOCK_TIMEOUT`).
 TIMEOUT = 10.0
 
 
@@ -49,9 +32,8 @@ class Unavailable(Exception):
 
 
 class Gate(tuple):
-    """`gate`'s answer: `(open, what it said)`, unpacked as it always was, and `reasons`, the
-    codes beside the words (`0136` R11), which the app branches on instead of them.
-    `rebased`, `{reviewed, head}`, only when `ship` opened on a clean rebase (`0067`)."""
+    """`gate`'s answer: `(open, what it said)`, and `reasons`, the codes beside the words,
+    which the app branches on. `rebased`, `{reviewed, head}`, only when `ship` opened on a clean rebase."""
 
     reasons: tuple[str, ...]
     rebased: dict[str, str] | None
@@ -72,8 +54,7 @@ def _rebased(data: dict[str, Any]) -> dict[str, str] | None:
 
 
 def _codes(data: dict[str, Any]) -> tuple[str, ...]:
-    """`reasons` of a `gate --json` or `next` answer. A code outside `guards.REASONS` is this
-    app's bug, refused here so that it never reaches a caller that branches on it."""
+    """`reasons` of a `gate --json` or `next` answer. A code outside `guards.REASONS` is this app's bug, refused here."""
     codes = tuple(str(c) for c in data.get("reasons") or ())
     unknown = [c for c in codes if c not in guards.REASONS]
     if unknown:
@@ -82,11 +63,7 @@ def _codes(data: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _stage_rows(stages: list[dict[str, Any]], artifacts: dict[str, Any]) -> list[dict[str, Any]]:
-    """One row per stage, in order, whether or not the artifact exists.
-
-    `spec.md` R1 asks for all eight on every unit, and `spec.md` open question 5 settled
-    what an absent artifact means: `not started` is read off the absence, never stored.
-    """
+    """One row per stage, in order, whether or not the artifact exists; an absent one is `not started`."""
     rows = []
     for stage in stages:
         entry = artifacts.get(stage["file"]) or {}
@@ -105,11 +82,8 @@ def _stage_rows(stages: list[dict[str, Any]], artifacts: dict[str, Any]) -> list
 async def _run(argv: list[str], timeout: float, stdin: str | None = None) -> tuple[int, str, str]:
     """One `cos.mjs` invocation: its exit code and both streams, decoded.
 
-    Extracted when `gate` arrived, because the two callers want opposite things from a
-    non-zero exit. `read` treats it as a failure -- it asked a question and got no answer.
-    `gate` treats it as *the answer*: exit 1 is "blocked, and here are the reasons", which
-    is the whole point of asking. Leaving the returncode to the caller is what lets both
-    be true without a second copy of this boilerplate.
+    The returncode is left to the caller: `read` treats non-zero as a failure, `gate` treats
+    exit 1 as the answer ("blocked, and here are the reasons").
     """
     proc = await asyncio.create_subprocess_exec(
         "node",
@@ -134,14 +108,13 @@ async def _run(argv: list[str], timeout: float, stdin: str | None = None) -> tup
     )
 
 
-# `0135`. The snapshot of a store with no units, for a question that needs none: `stages`.
+# The snapshot of a store with no units, for a question that needs none: `stages`.
 EMPTY_STATE: dict[str, Any] = {"workspace": "", "workspaces": [], "units": {}, "ideas": {}}
 
 
 def _source(state: dict[str, Any] | None) -> tuple[list[str], str | None]:
-    """`0135`. A unit's metadata is the app's snapshot (`coscc/units/meta.py`), handed to
-    `cos.mjs` on stdin as `--state -`. Without one, the deciding commands refuse with exit 2,
-    which each caller reports as it reports any other refusal."""
+    """A unit's metadata is the app's snapshot (`coscc/units/meta.py`), handed to `cos.mjs` on
+    stdin as `--state -`. Without one, the deciding commands refuse with exit 2."""
     if state is None:
         return [], None
     return ["--state", "-"], json.dumps(state, ensure_ascii=False)
@@ -153,7 +126,7 @@ async def _ask(argv: list[str], timeout: float, stdin: str | None) -> tuple[int,
 
 
 def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
-    """`0040`. Each `{ref, merged, why}` of the unit's `Depends on:`, as `cos.mjs` resolved it."""
+    """Each `{ref, merged, why}` of the unit's `Depends on:`, as `cos.mjs` resolved it."""
     return [
         {"ref": str(d.get("ref") or ""), "merged": d.get("merged"), "why": str(d.get("why") or "")}
         for d in u.get("dependsOn") or []
@@ -162,7 +135,7 @@ def _depends_on_of(u: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _ideas_of(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """`0040` R3. The store's ideas, `{id, title, status, units: [{ref, depends_on}], problems}`."""
+    """The store's ideas, `{id, title, status, units: [{ref, depends_on}], problems}`."""
     return [
         {
             "id": str(i.get("id") or ""),
@@ -181,16 +154,11 @@ def _ideas_of(data: dict[str, Any]) -> list[dict[str, Any]]:
 async def read(
     units_root: str | Path, timeout: float = TIMEOUT, state: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Every unit under `units_root`, each with its eight stages.
+    """Every unit under `units_root`, each with its stages.
 
-    **`units_root` is not the workspace.** Until `0014` it was, and this module worked the
-    path out for itself alongside two others doing the same (`coscc/units/__init__.py` docstring).
-    It is now the product's own store for that workspace, because `0013` settled that
-    nothing of coscc's goes into a repository a team shares — so the caller asks
-    `coscc/units/__init__.py` and hands the answer in.
-
-    Raises `Unavailable` only when the answer is unknown — node missing, the script gone,
-    a child that failed or hung. A root with no `.cos/` is a *known* answer: no units.
+    `units_root` is the product's own store for the workspace, not the workspace itself.
+    Raises `Unavailable` only when the answer is unknown (node missing, script gone, a child
+    that failed or hung). A root with no `.cos/` is a known answer: no units.
     """
     path = Path(units_root)
     script = harness.script()
@@ -203,13 +171,8 @@ async def read(
             [str(script), "--root", str(path), *source, "status", "--json"], timeout, stdin
         )
     except (OSError, ValueError) as e:
-        # No node on PATH is the ordinary case here, and it must name itself -- *with the
-        # PATH it looked on*. Measured 2026-09-22 under the systemd user service this app
-        # installs as: `node` was on the machine, at `~/.nvm/versions/node/v24.20.0/bin`,
-        # and the service's PATH was the systemd user default, which contains no nvm. The
-        # message without this suffix said only "could not run node" and sent a reader
-        # looking for a missing program that was not missing. `docs/install.md` carries the
-        # fix; this is what points at it.
+        # No node on PATH is the ordinary case (a systemd user service has no nvm); name the
+        # PATH it looked on. `docs/install.md` carries the fix.
         raise Unavailable(
             f"could not run node: {e} — PATH was {_child_env()['PATH']}"
         ) from e
@@ -226,8 +189,7 @@ async def read(
         raise Unavailable(f"the harness script did not return JSON: {e}") from e
 
     stages = data.get("stages") or []
-    # `0115` R4. The stages whose answered draft runs again, as `cos.mjs` lists them; the app
-    # keeps no copy. An older `cos.mjs` sends none, which reads as no such stage.
+            # The stages whose answered draft runs again, as `cos.mjs` lists them; the app keeps no copy.
     after_answers = [str(s) for s in data.get("afterAnswers") or []]
     units = [
         {
@@ -235,79 +197,45 @@ async def read(
             "number": u.get("number"),
             "slug": u.get("slug"),
             "stages": _stage_rows(stages, u.get("artifacts") or {}),
-            # Carried through rather than recomputed. Two answers to "what next" is the
-            # drift this module exists to avoid.
+            # Carried through rather than recomputed.
             "next": (u.get("next") or {}).get("action", ""),
-            # `0024`. The same answer as a stage name, read off the files alone. Enough for
-            # the card's mode badge; the run button asks `next_step`, which can read git.
-            # An older `cos.mjs` sends no `stage`, which reads as the empty string.
+            # The same answer as a stage name, read off the files alone, for the card's mode badge.
             "next_stage": str((u.get("next") or {}).get("stage") or ""),
             "blocked": bool((u.get("next") or {}).get("blocked")),
-            # `0100`. The stage whose column the unit sits in, and which rule of `decide`
-            # answered `next` — both as `cos.mjs` decided them, so the board keeps no copy
-            # of the loop and never reads the English of `next` back. An older `cos.mjs`
-            # sends neither, which reads as the empty string.
+            # The stage whose column the unit sits in, and which rule of `decide` answered `next`.
             "at": str(u.get("at") or ""),
             "why": str((u.get("next") or {}).get("why") or ""),
             "problems": u.get("problems") or [],
-            # `pre-intent` or `started`, decided by `cos.mjs` `readUnit`. Copied through for
-            # the same reason as `next`: the lane reads it rather than guessing it from
-            # whether `problems` is empty. An older `cos.mjs` sends nothing, which reads as
-            # the empty string, and no lane treats that specially.
+            # `pre-intent` or `started`, decided by `cos.mjs` `readUnit`.
             "phase": u.get("phase") or "",
-            # `0046` R3. The intent's `Type:`, as `cos.mjs` read it; Python has no reader of
-            # its own. An older `cos.mjs`, or an intent with none, reads as "".
+            # The intent's `Type:`, as `cos.mjs` read it.
             "type": str(u.get("type") or ""),
-            # `0016`. Which items under `## Open questions` a person has answered, and how
-            # many are still open in the counted artifact. Both decided by `cos.mjs` and
-            # copied, never recounted here (`0016` spec R7). An older `cos.mjs` sends
-            # neither, which reads as no questions, the same way `phase` degrades.
+            # Which items under `## Open questions` a person has answered, and how many are still open; copied, never recounted.
             "questions": _questions_of(u),
-            # `0044`. Every answer in force, read off `artifacts[*].questions[].answer` as
-            # `cos.mjs` joined them — the store Jera reads its precedent from. Copied, never
-            # parsed here (`spec.md` Design 2). An older `cos.mjs` sends no `artifacts`,
-            # which reads as none.
+            # Every answer in force, off `artifacts[*].questions[].answer`, the store Jera reads its precedent from.
             "answers": _answers_of(u),
             "open": int(u.get("open") or 0),
             "counted": u.get("counted") or "",
-            # `0021`. The pull request `pr.md` names and the rounds `review.md` holds, each
-            # with its text verbatim — both read by `cos.mjs` and copied, so the round a
-            # comment carries is the round the gate counted. An older `cos.mjs` sends
-            # neither, which reads as no pull request and no rounds.
+            # The pull request `pr.md` names and the rounds `review.md` holds, verbatim, so the round a comment carries is the one the gate counted.
             "pr": _pr_of(u),
             "rounds": _rounds_of(u),
-            # `0028`. The findings the last review round confirmed need a person, each
-            # `{id, reason, answered}`, as `cos.mjs` `readUnit` decided them. Copied, never
-            # derived here: the Questions tab lists exactly these. An older `cos.mjs` sends
-            # nothing, which reads as none.
+            # The findings the last review round confirmed need a person, each `{id, reason, answered}`.
             "person_findings": _person_findings_of(u),
-            # `0035`. Whether the unit sits between `pr` and `ship`, as `cos.mjs` decided it.
-            # Copied, never derived: the integration step reads this and not `pr.md`. An
-            # older `cos.mjs` sends nothing, which reads as outside the window.
+            # Whether the unit sits between `pr` and `ship`; the integration step reads this, not `pr.md`.
             "between_pr_and_ship": bool(u.get("betweenPrAndShip")),
-            # `0028`. The ids `next` says a person is awaited on. Empty unless it said so.
+            # The ids `next` says a person is awaited on.
             "waiting": [str(x) for x in ((u.get("next") or {}).get("waiting") or [])],
-            # `0047`. The outcome deadline and the last valid `### Outcome` block, as
-            # `cos.mjs` `unitOutcome` read them from `intent.md`. Copied, never derived here;
-            # the label is the service's. An older `cos.mjs` sends nothing, which reads as None.
+            # The outcome deadline and the last valid `### Outcome` block, as `cos.mjs` `unitOutcome` read them.
             "outcome": _outcome_of(u),
-            # `0045`. The hold a person set (`{state, reason, by, date}`, or None) and the
-            # moves allowed from it, both as `cos.mjs` decided them. Copied, never derived:
-            # the route refuses and the page offers buttons off `hold_moves` alone. An older
-            # `cos.mjs` sends neither, which reads as unheld with no moves.
+            # The hold a person set (`{state, reason, by, date}`, or None) and the moves allowed from it.
             "hold": u.get("hold") or None,
             "hold_moves": [str(x) for x in u.get("holdMoves") or []],
-            # `0081` R4/R8. Whether the unit used its review rounds with findings still open,
-            # and how many rounds a person granted it, both as `cos.mjs` decided them. Copied,
-            # never derived: the route refuses and the page offers its button off
-            # `more_rounds` alone. An older `cos.mjs` sends neither, which reads as False and 0.
+            # Whether the unit used its review rounds with findings still open, and how many rounds a person granted it.
             "more_rounds": bool(u.get("moreRounds")),
             "rounds_granted": int(((u.get("artifacts") or {}).get("review.md") or {}).get("roundsGranted") or 0),
-            # `0115` R4. On each row too, so whoever holds one row from this read -- the
-            # answer route's journal, `autopilot.answer_completes` -- reads the same list.
+            # On each row too, so whoever holds one row from this read sees the same list.
             "after_answers": list(after_answers),
-            # `0040` R4. The idea the unit was opened from, its `Repo:`, and each dependency
-            # as `cos.mjs` resolved it. Copied, never resolved here; absent reads as "" and none.
+            # The idea the unit was opened from, its `Repo:`, and each dependency as `cos.mjs` resolved it.
             "idea": str(u.get("idea") or ""),
             "repo": str(u.get("repo") or ""),
             "depends_on": _depends_on_of(u),
@@ -322,8 +250,7 @@ async def read(
         "units": units,
         "ideas": _ideas_of(data),
         "count": len(units),
-        # A workspace can be perfectly healthy and hold no units at all. Saying so is not
-        # the same as failing to read it, and the page has to be able to tell them apart.
+        # A healthy workspace can hold no units; that is not a failed read.
         "empty_because": None if units else _why_empty(path),
     }
 
@@ -331,11 +258,8 @@ async def read(
 async def stages(timeout: float = TIMEOUT) -> list[str]:
     """The stage names `cos.mjs` defines, in its order, with no workspace needed.
 
-    `0004_no-setting-says-which-model-runs-a-stage`: Settings lists a model per stage
-    before anybody has added a workspace, and it must not keep a stage list of its own
-    (`.claude/CLAUDE.md`: nothing may hold a second copy of the loop). So it asks the same
-    script the board asks, pointed at an empty temporary root — `status --json` sends the
-    stage list whether or not any unit exists. Raises `Unavailable` exactly as `read` does.
+    Asks the script at an empty temporary root: `status --json` sends the stage list whether
+    or not any unit exists. Raises `Unavailable` as `read` does.
     """
     import tempfile
 
@@ -344,8 +268,7 @@ async def stages(timeout: float = TIMEOUT) -> list[str]:
     return list(data["stages"])
 
 
-# Chosen, not measured. Since `0015` the `review` gate asks GitHub for the pull request's
-# checks, so this one call now waits on a network the board's own read never touches.
+# The `review` gate asks GitHub for the pull request's checks, so this call waits on a network.
 GATE_TIMEOUT = 30.0
 
 
@@ -359,28 +282,12 @@ async def gate(
 ) -> Gate:
     """Ask `cos.mjs gate --json` whether one stage of one unit may proceed.
 
-    `repo` is the workspace -- the git checkout the unit's code lives in -- and is passed as
-    `--repo`. It is not `units_root`: since `0014` that is the product's store, which holds
-    artifacts and has no git, so the `review` and `ship` gates (`0015`) would have no branch
-    to read and no pull request to ask about. Without `repo` those two gates stay closed
-    and say so; every other stage reads files only and does not care.
+    `repo` is the git checkout the unit's code lives in, passed as `--repo`; it is not
+    `units_root`, which has no git. Without it the `review` and `ship` gates stay closed.
 
     Returns `(open, what it said)`, with the codes as `.reasons` (`Gate`). Exit 0 is open;
-    exit 1 is blocked and carries the reasons; exit 2 is misuse, which is this app's bug and
-    not the unit's, so it is reported with what the script printed rather than translated.
-
-    **Nothing in this app asked this question until now.** `.claude/CLAUDE.md` invariant 2
-    -- *"Ask `cos.mjs gate` before a stage and stop when it exits non-zero"* -- was written
-    for a person at a terminal, and every stage's skill repeats it. But the six prose
-    stages run with no tools at all, so four of them could never obey it, and
-    `coscc/service/__init__.py` `run_step` went straight from reading the board to starting the
-    session. The rule existed, the script that decides it existed, and the product walked
-    past both.
-
-    Measured 2026-09-23: the `ship` step of `0001_product-describes-a-state-it-is-not-in`
-    wrote `Status: draft` and gave "the gate for this stage has not been asked" as a
-    reason. Its gate was open. It had no way to find that out, so it assumed the worst
-    about a question the app was already in a position to answer for it.
+    exit 1 is blocked and carries the reasons; exit 2 is misuse, reported with what the
+    script printed.
     """
     path = Path(units_root)
     script = harness.script()
@@ -421,15 +328,9 @@ async def next_step(
 ) -> dict[str, Any]:
     """Ask `cos.mjs next` which one stage the run button may offer for `unit`.
 
-    `0024`. Until then the page chose for itself -- "the first required stage with no
-    artifact" -- which is a second copy of the loop `.claude/CLAUDE.md` forbids, and which
-    offered `ship` after a review asked for changes. The answer is now `cos.mjs`'s, copied:
-    `{"stage": <name or "">, "action": <why>, "blocked": <bool>}`. Nothing here reads
-    `action` to decide anything.
-
-    `repo` is passed as `--repo` exactly as `gate` passes it, so the two questions read the
-    same checkout. It costs up to two `gh` calls, which is why only the open unit asks and
-    `read` does not.
+    Returns `{"stage": <name or "">, "action": <why>, "blocked": <bool>}`; nothing here reads
+    `action` to decide anything. `repo` is passed as `--repo` as `gate` does. It costs up to
+    two `gh` calls, so only the open unit asks and `read` does not.
     """
     path = Path(units_root)
     script = harness.script()
@@ -460,20 +361,17 @@ async def next_step(
         "stage": str(data.get("stage") or ""),
         "action": str(data.get("action") or ""),
         "blocked": bool(data.get("blocked")),
-        # `0028`. Present only when a person is awaited; its absence reads as none.
+        # Present only when a person is awaited.
         "waiting": [str(x) for x in data.get("waiting") or []],
-        # `0027`. Present only when the last review round left out an earlier finding; its
-        # absence reads as none.
+        # Present only when the last review round left out an earlier finding.
         "dropped": [str(x) for x in data.get("dropped") or []],
-        # `0045`. Present only when the unit is held; its absence reads as None.
+        # Present only when the unit is held.
         "hold": data.get("hold") or None,
-        # `0106`. Present only when a draft's questions are all answered; its absence reads
-        # as "". Only the autopilot reads it; the run button follows `stage`.
+        # Present only when a draft's questions are all answered; only the autopilot reads it.
         "rerun": str(data.get("rerun") or ""),
-        # `0040` R7. `dependency` only when `impl` waits on a unit not merged; else "".
+        # `dependency` only when `impl` waits on a unit not merged; else "".
         "why": str(data.get("why") or ""),
-        # `0136` R11. The codes of what settled the answer; the autopilot reads these, never
-        # `action`.
+        # The codes of what settled the answer; the autopilot reads these, never `action`.
         "reasons": list(_codes(data)),
     }
 
@@ -484,11 +382,8 @@ async def screens(
 ) -> dict[str, Any]:
     """Ask `cos.mjs screens` whether `unit`'s screenshots in `repo` must be taken again.
 
-    `0111` R1. `repo` is the unit's worktree, the checkout its `.screens/manifest.json` and
-    its branch are in. Returns `{unit, ui, manifest, rewritten, retake, why}` as `cos.mjs`
-    printed it; whether to retake is its rule, not this module's. Any exit but 0 is misuse
-    and raises `Unavailable` with what it said, as `next_step` does. It asks `git` in `repo`
-    only, never `gh`, so it has `GATE_TIMEOUT` for the same reason the gate does.
+    `repo` is the unit's worktree. Returns `{unit, ui, manifest, rewritten, retake, why}` as
+    `cos.mjs` printed it. Any exit but 0 raises `Unavailable`. It asks `git` only, never `gh`.
     """
     path = Path(units_root)
     script = harness.script()
@@ -520,11 +415,9 @@ async def pr_text(
 ) -> dict[str, Any]:
     """Ask `cos.mjs pr-text` for the title and body `unit`'s `pr.md` puts on its pull request.
 
-    `0055`. The rule that cuts `pr.md` into a title and a body is `cos.mjs` `prText`, the
-    same one a person at a terminal pipes into `gh pr edit`, so the board and the terminal
-    put the same words up. Returns `{unit, title, body, url, scope, status}` on exit 0, and
-    `{"error": <what cos.mjs said>, "code": n}` otherwise -- exit 1 is "no such unit" or
-    "no pr.md", an answer rather than a failure. Raises `Unavailable` as `read` does.
+    Returns `{unit, title, body, url, scope, status}` on exit 0, and
+    `{"error": <what cos.mjs said>, "code": n}` otherwise (exit 1 is an answer, not a failure).
+    Raises `Unavailable` as `read` does.
     """
     path = Path(units_root)
     script = harness.script()
@@ -553,14 +446,12 @@ async def rerun(
     units_root: str | Path, unit: str, stage: str | None = None, timeout: float = TIMEOUT,
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Ask `cos.mjs rerun` which accepted stages of `unit` may run again, or -- with `stage`
-    -- for the `### Rerun` block to append before running it.
+    """Ask `cos.mjs rerun` which accepted stages of `unit` may run again, or, with `stage`,
+    for the `### Rerun` block to append before running it.
 
-    `0054` R1, R3. The rule and the block are both `cos.mjs`'s; nothing here reads or
-    hashes an artifact. Returns `{unit, offers, why}` without `stage`, `{unit, stage, later,
-    block}` with one, and `{"error": <what cos.mjs said>, "code": n}` when it exits non-zero
-    -- exit 1 is "not offered", an answer rather than a failure, as `pr_text`'s is. Reads
-    files only, so it takes no `--repo`. Raises `Unavailable` as `read` does.
+    Returns `{unit, offers, why}` without `stage`, `{unit, stage, later, block}` with one, and
+    `{"error": <what cos.mjs said>, "code": n}` when it exits non-zero (exit 1 is "not
+    offered", an answer). Takes no `--repo`. Raises `Unavailable` as `read` does.
     """
     path = Path(units_root)
     script = harness.script()
@@ -594,8 +485,7 @@ def _answer_of(unit: dict[str, Any], artifact: str, n: Any) -> dict[str, Any] | 
 
 
 def _questions_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
-    """`questions` as `cos.mjs` sent them, each with `by` added (`0044`): who gave the answer
-    in force, from the same artifact's joined answer, `""` when none."""
+    """`questions` as `cos.mjs` sent them, each with `by` added: who gave the answer in force, `""` when none."""
     out = []
     for q in unit.get("questions") or []:
         if not isinstance(q, dict):
@@ -607,8 +497,7 @@ def _questions_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _answers_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
     """`[{artifact, n, question, by, date, via, text, authority}]`, one per question with an
-    answer in force, in the order of `artifacts`. `authority` is the app's (`0136` R15), as
-    the snapshot handed it to `cos.mjs`; `""` where it gave none."""
+    answer in force, in the order of `artifacts`. `authority` is the app's; `""` where it gave none."""
     out = []
     for artifact, a in (unit.get("artifacts") or {}).items():
         for q in (a or {}).get("questions") or []:
@@ -667,10 +556,8 @@ def _pr_of(unit: dict[str, Any]) -> dict[str, Any] | None:
 def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
     """Each round of `review.md`: its number, verdict and text, as `cos.mjs` split them.
 
-    `findings` and `findings_open` are counted off `parseReview`'s own list (`0033` spec
-    R10) — the run log's numbers come from the one parser, not a second one here.
-    `dropped` and `unfinished` (`0027` R5) are carried as `parseReview` set them; whether a
-    round counts is decided there, never here.
+    `findings` and `findings_open` are counted off `parseReview`'s own list; `dropped` and
+    `unfinished` are carried as it set them.
     """
     review = ((unit.get("artifacts") or {}).get("review.md") or {}).get("review") or {}
     out = []
@@ -682,12 +569,11 @@ def _rounds_of(unit: dict[str, Any]) -> list[dict[str, Any]]:
             "n": r.get("n"), "verdict": r.get("verdict"), "text": r.get("text") or "",
             "findings": len(found),
             "findings_open": sum(1 for f in found if f.get("label") == "open"),
-            # `0136` R6: the ids an impl may claim only a person can close, off the same list.
+            # The ids an impl may claim only a person can close, off the same list.
             "open_ids": [str(f.get("id")) for f in found if f.get("label") == "open"],
             "dropped": [str(x) for x in r.get("dropped") or []],
             "unfinished": bool(r.get("unfinished")),
-            # `0136`: what `coscc/units/prose_import.py` reads a round only the prose holds
-            # from, once. Copied off `parseReview`'s list, never parsed here.
+            # What `coscc/units/prose_import.py` reads a round only the prose holds from, once.
             "reviewed": r.get("reviewed"),
             "found": [
                 {"id": f.get("id"), "label": f.get("label"), "fixed_by": f.get("fixedBy"), "text": f.get("text")}

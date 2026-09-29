@@ -1,6 +1,4 @@
-"""The Sessions, Activity and Cost screens.
-Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
-"""
+"""The Sessions, Activity and Cost screens."""
 
 from __future__ import annotations
 
@@ -23,11 +21,10 @@ def _message(message: rx.Var[Message], index: rx.Var[int]) -> rx.Component:
         s.mark(rx.cond(is_user, "ME", "AI"), "gray", "30px"),
         rx.vstack(
             rx.text(rx.cond(is_user, "You", "Claude"), size="2", weight="medium"),
-            # `0082` D17: the message as markdown. `use_raw=False`: Reflex's default passes
-            # raw HTML through (`rehypeRaw`, measured in `screens_test.py`), and a message
-            # carrying `<img onerror>` would then run on a page with a session (plan Risk 8).
+            # The message as markdown. `use_raw=False`: Reflex's default passes raw HTML through
+            # (`rehypeRaw`), and a message carrying `<img onerror>` would then run on the page.
             rx.box(rx.markdown(message.text, use_raw=False), width="100%", overflow_wrap="anywhere"),
-            # `0053` R10. The rest of a long message comes down only when asked for.
+            # The rest of a long message comes down only when asked for.
             rx.cond(
                 message.cut > 0,
                 rx.hstack(
@@ -171,13 +168,13 @@ def _activity() -> rx.Component:
     )
 
 
-# --- cost (`0093`) -----------------------------------------------------------
+# --- cost --------------------------------------------------------------------
 
 OVER_BUDGET = f"Over ${spend.BUDGET_USD:g}"
 
 
 def _spend_row(row: rx.Var[SpendRow]) -> rx.Component:
-    """R5: the steps whose cost is not known stand right beside the money."""
+    """The steps whose cost is not known stand right beside the money."""
     return rx.table.row(
         rx.table.cell(rx.hstack(_mono(row.key), rx.cond(row.over, s.badge(OVER_BUDGET, "red")),
                                 spacing="2", align="center")),
@@ -223,12 +220,12 @@ def _anomaly_row(row: rx.Var[AnomalyRow]) -> rx.Component:
 
 
 def _unit_anomaly_row(row: rx.Var[AnomalyRow]) -> rx.Component:
-    """R11: the same row in the unit's own dialog, where the unit goes without saying."""
+    """The same row in the unit's own dialog, where the unit goes without saying."""
     return rx.table.row(rx.table.cell(s.badge(row.kind, "amber")), *_anomaly_cells(row))
 
 
 def _cost() -> rx.Component:
-    """`0093` R1–R10, in the order of the spec's `## Design` §4. Tables only (S1, S2, S5)."""
+    """The cost screen. Tables only."""
     return rx.vstack(
         s.heading("Cost", "Where this workspace's money went, from the run log."),
         rx.cond(
@@ -267,7 +264,7 @@ def _cost() -> rx.Component:
 
 
 def _unit_cost() -> rx.Component:
-    """`0093` R11. The open unit's cost by stage and its anomalies; nothing when it has none."""
+    """The open unit's cost by stage and its anomalies; nothing when it has none."""
     return rx.fragment(
         rx.cond(
             P.unit_cost_stages.length() > 0,

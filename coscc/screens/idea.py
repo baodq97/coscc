@@ -1,6 +1,4 @@
-"""The `/idea` page: one idea several units share, the units it lists, and opening another
-(`0040` R15). Everything on it is what `Service.idea` returned.
-"""
+"""The `/idea` page: one idea several units share, the units it lists, and opening another."""
 
 from __future__ import annotations
 

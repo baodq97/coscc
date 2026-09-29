@@ -1,16 +1,7 @@
 """The one place a transition of the unit, the run or the pull request is applied.
 
-`.cos/0136_transitions-are-decided-by-parsing-prose`, spec Design "Một điểm áp bước chuyển":
-every transition goes through `apply`, which
-
-- asks the guard the lane config names for it (R1), and writes nothing when it is closed;
-- writes the transition, carrying guard, authority, run and inputs (R15), and its event, a
-  `runs` row of kind `transition`, in one `Data.write()` (R16);
-- tells `notify` only after that transaction has committed, so a reader woken by it finds the
-  rows (R23). `notify` writes nothing.
-
-No agent chooses the state a transition leads to: `to_state` comes from the caller, which is
-code, and the guard decides whether it may happen.
+`apply` asks the lane's guard (writing nothing when closed), writes the transition and its
+event in one transaction, then tells `notify`. `to_state` comes from code, never an agent.
 """
 
 from __future__ import annotations
@@ -59,10 +50,8 @@ def apply(
 ) -> Applied:
     """Guard, then transition and event in one transaction, then `notify`.
 
-    `inputs` is what the guard reads, and is stored whole on the row: a reader of the log sees
-    exactly what decided it. `authority` must be one of the four; a new row never says
-    `unknown` about whose decision it was. `also(conn)` writes what the transition carries
-    with it -- a stage result's row and its questions -- in the same transaction.
+    `inputs` is what the guard reads, stored whole on the row. `authority` must be one of
+    `AUTHORITIES`. `also(conn)` writes what the transition carries, in the same transaction.
     """
     if authority not in AUTHORITIES:
         raise BadTransition(f"authority must be one of {', '.join(AUTHORITIES)}, got {authority!r}")

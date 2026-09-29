@@ -6,7 +6,7 @@ paths:
 # Things that break here
 
 - The `review` and `ship` gates call `gh` and `git` in the workspace: `board.gate` passes
-  `--repo` and waits `GATE_TIMEOUT` (`coscc/units/board.py:349`). `child_env` carries only
+  `--repo` and waits `GATE_TIMEOUT` (`coscc/units/board.py:272`). `child_env` carries only
   `PATH`, `HOME` and `COS_REVIEW_ROUNDS`, so a machine logged in through `GH_TOKEN` alone sees
   `review` closed. Offline, `review` cannot start.
 - The run button offers the stage `cos.mjs next` names, even one that already has an artifact.

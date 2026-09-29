@@ -1,7 +1,7 @@
-"""Following the notices (`0113`): the run log's records a listener is told of, as they land.
+"""Following the notices: the run log's records a listener is told of, as they land.
 
-A mixin with no fields, like the others `Service` inherits. It reads and writes nothing but
-the lines it hands out (R13); `coscc/runlog/notices.py` decides what each record says.
+A mixin with no fields; it reads and writes nothing but the lines it hands out.
+`coscc/runlog/notices.py` decides what each record says.
 """
 
 from __future__ import annotations
@@ -16,16 +16,14 @@ from coscc.service.common import Invalid
 
 class NoticesMixin:
 
-    # -- notices (`0113` R1, R6–R8) -------------------------------------------
-    #
-    # One stream for every listener: the page's script, a terminal, an agent's session. It
-    # holds a connection per listener for `notices.LIFETIME_SECONDS` at most, then ends, and
-    # the listener comes back through the login door with `after`; one whose peer vanished
-    # without closing (spec C6) holds it until then or until a `beat` fails to write.
+# -- notices -------------------------------------------------------------
+#
+# One stream for every listener. A connection lasts `notices.LIFETIME_SECONDS` at most, then
+# ends and the listener comes back with `after`; a peer that vanished holds it until then or
+# until a `beat` fails to write.
 
     def notice_scope(self, workspace: str) -> str | None:
-        """The journal key to narrow to, `None` for every workspace. A workspace the app does
-        not have is refused, as is a stream with no run log to read."""
+        """The journal key to narrow to, `None` for every workspace; an unknown workspace or a stream with no run log is refused."""
         if self._journal() is None:
             raise Invalid("there is no working folder, so there is no run log to follow")
         if not workspace:
@@ -37,14 +35,13 @@ class NoticesMixin:
         self, scope: str | None, after: int | None, beat: float = notices.BEAT_SECONDS,
         lifetime: float | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        """R6, R8. With no `after`, or one past every row, a `head` line first and nothing at
-        or below it; with one, every notice past it first. Then each notice as it lands, in
-        `id` order and none twice, and a `beat` after `beat` seconds without a line. Ends
-        `lifetime` seconds in (`notices.LIFETIME_SECONDS`), once what has landed is sent.
+        """With no `after`, or one past every row, a `head` line first; with one, every notice
+        past it first. Then each notice as it lands, in `id` order and none twice, and a `beat`
+        after `beat` seconds without a line. Ends `lifetime` seconds in.
 
-        A record this process appends rings `BELL` and is read at once (R7, 5 s); one another
-        process appends is read at the next wake, at most `beat` seconds on (R7, 20 s). The
-        ticket is armed before each read, so a ring during the read is not missed."""
+        A record this process appends rings `BELL` and is read at once; one another process
+        appends is read at the next wake. The ticket is armed before each read, so a ring
+        during the read is not missed."""
         journal = self._journal()
         if journal is None:
             raise Invalid("there is no working folder, so there is no run log to follow")
@@ -52,9 +49,8 @@ class NoticesMixin:
         ends = loop.time() + (notices.LIFETIME_SECONDS if lifetime is None else lifetime)
         head = await asyncio.to_thread(journal.last_id)
         if after is None or after > head:
-            # An `after` past every row is a cursor from a run log since deleted or replaced,
-            # whose ids start again at 1: kept, it would hide every notice until the new log
-            # passed it (review round 1, F2). The `head` line sets the listener's cursor.
+# An `after` past every row is a cursor from a run log since replaced, whose ids start
+# again at 1: kept, it would hide every notice. The `head` line sets the listener's cursor.
             last = head
             yield {"type": "head", "id": head}
         else:

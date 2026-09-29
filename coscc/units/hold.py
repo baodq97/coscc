@@ -1,15 +1,10 @@
-"""`0045`. A person pauses, drops or resumes a unit from the board.
+"""A person pauses, drops or resumes a unit from the board.
 
-What a hold is, and which moves are allowed from each, is `cos.mjs`'s decision
-(`parseHold`, `HOLD_MOVES`): the board carries `hold` and `hold_moves` and this module only
-reads them. Nothing here keeps a second copy of the table (`.claude/CLAUDE.md`: "nothing may
-hold a second copy of it").
-
-Two kinds of function live here. The pure ones — `refusal`, `record` — shape what
-`Service.hold` writes; since `0135` that is a row in `cos.db`, and `coscc/runner/prompt.py`
-renders it as the block `intent.md` once carried. The two side effects of a drop (spec R12)
-— `close_pr` and `remove_tree` — each return one `{effect, result, detail}` and never raise:
-a failure in one must not stop the other.
+`cos.mjs` decides what a hold is and which moves are allowed (`parseHold`, `HOLD_MOVES`); this
+module only reads the board's `hold` and `hold_moves`. The pure functions `refusal` and
+`record` shape what `Service.hold` writes; the two side effects of a drop, `close_pr` and
+`remove_tree`, each return one `{effect, result, detail}` and never raise, so one failing
+does not stop the other.
 """
 
 from __future__ import annotations
@@ -25,11 +20,9 @@ from coscc.git import gitops, worktrees
 from coscc.git.gitops import GitError
 from coscc.units import BadUnit
 
-# The block heading for each value of `to`, the other way round from `cos.mjs` `HOLD_TO`.
-# A spelling, not a rule: which move is allowed is still read off `hold_moves`.
+# The block heading for each value of `to`; which move is allowed is read off `hold_moves`.
 HEADS = {"paused": "Paused", "dropped": "Dropped", "active": "Resumed"}
 
-# `0082` D48: one sentence. What else a drop leaves is in `.claude/CLAUDE.md`.
 DROP_WARNING = (
     "Dropping closes this unit's open pull request with this machine's gh login and "
     "removes its worktree; the remote branch is kept."
@@ -37,7 +30,7 @@ DROP_WARNING = (
 
 
 def _line_problem(what: str, value: str) -> str:
-    """R7: one line, not empty, not read as a heading."""
+    """One line, not empty, not read as a heading."""
     if not value.strip():
         return f"the {what} is empty"
     if "\n" in value or "\r" in value:
@@ -48,14 +41,14 @@ def _line_problem(what: str, value: str) -> str:
 
 
 def refusal(found: dict[str, Any] | None, to: str, reason: str, by: str, busy: str) -> str:
-    """The first reason this move is refused, or `""`. Spec R5, R6, R7, R13, in that order."""
+    """The first reason this move is refused, or `""`."""
     if found is None:
         return "no such work unit in this workspace"
     moves = list(found.get("hold_moves") or [])
     now = (found.get("hold") or {}).get("state") or "active"
     if to not in moves:
         if not moves:
-            # `0139` R11: the code decides which sentence; the words shown are `next`'s own.
+            # The code decides which sentence; the words shown are `next`'s own.
             code = str(found.get("why") or "")
             why = str(found.get("next") or "") if code in ("finished", "rejected") else "has no intent.md to record it in"
             return f"{found.get('name', 'this unit')} {why}; it cannot be paused or dropped"
@@ -65,9 +58,7 @@ def refusal(found: dict[str, Any] | None, to: str, reason: str, by: str, busy: s
         if said:
             return said
     if busy:
-        # R13, intent answer 5. `busy` is `steps.describe`'s sentence (`0050` R3): it names
-        # the Stop (`0034`) when a step is running, and what to wait for otherwise. A hold
-        # never stops either itself.
+        # `busy` names the running step, or what to wait for; a hold never stops either itself.
         return f"{busy}; a hold does not stop anything itself"
     return ""
 
@@ -75,7 +66,7 @@ def refusal(found: dict[str, Any] | None, to: str, reason: str, by: str, busy: s
 def record(
     *, workspace: str, unit: str, from_: str, to: str, reason: str, by: str, effects: list[dict[str, str]]
 ) -> dict[str, Any]:
-    """R10: the one run-log row every move leaves, side effects' results included."""
+    """The one run-log row every move leaves, side effects' results included."""
     return {
         "kind": "hold",
         "workspace": workspace,
@@ -94,11 +85,9 @@ def _effect(effect: str, result: str, detail: str) -> dict[str, str]:
 
 
 async def close_pr(root: str, branch: str, gh: prcomment.Run | None = None) -> dict[str, str]:
-    """R12(a). Close the open pull request whose head is `branch`, and no other.
+    """Close the open pull request whose head is `branch`, and no other.
 
-    The list is the one `integrate.open_prs` asks for, filtered here on `headRefName`. The
-    close is `gh pr close <number>` with a fixed argv: no `--delete-branch`, no flag from a
-    caller. `prcomment.TIMEOUT` (30s, chosen) bounds each call.
+    Fixed argv: no `--delete-branch`, no flag from a caller.
     """
     gh = gh or prcomment._gh
     if not branch:
@@ -129,8 +118,7 @@ async def close_pr(root: str, branch: str, gh: prcomment.Run | None = None) -> d
             code, out, err = said
             said = prcomment._said(code, out, err) if code != 0 else ""
         if said:
-            # Nothing retries a failed side effect (spec C6): the person cleaning up by hand
-            # needs to know which were already closed, not only which one failed.
+            # No retry: the person cleaning up by hand needs to know which were already closed.
             already = f"closed {', '.join(closed)}; " if closed else ""
             return _effect("close-pr", "failed", f"{already}#{number}: {said}")
         closed.append(f"#{number}")
@@ -140,10 +128,9 @@ async def close_pr(root: str, branch: str, gh: prcomment.Run | None = None) -> d
 async def remove_tree(
     workspace: str | os.PathLike[str], unit: str, data_dir: str | os.PathLike[str] | None = None
 ) -> dict[str, str]:
-    """R12(b). Remove the unit's worktree, never forced; the local branch stays.
+    """Remove the unit's worktree, never forced; the local branch stays.
 
-    A tree with uncommitted changes is left where it is and reported `failed` (spec C4):
-    keeping somebody's work beats removing it on the word of a route that names nobody.
+    A tree with uncommitted changes is left where it is and reported `failed`.
     """
     try:
         found = await worktrees.find(workspace, unit, data_dir)

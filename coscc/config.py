@@ -1,24 +1,8 @@
-"""The one place configuration is read.
+"""The one place configuration is read; nothing else in `coscc/` may read the environment.
 
-`spec.md` C8 argues for a central config store later and against building it now: four
-knobs do not justify a schema. What this module buys is that changing the source later is
-one edit here, not a search through the app. Nothing else in `coscc/` may read the
-environment.
-
-The defaults are the safe posture from `spec.md` C2, not suggestions. Each is off because
-turning it on hands a loopback port a capability it does not need to reach the outcome in
-`intent.md`.
-
-**`host` is the one exception, and it stopped being part of that posture on 2026-09-22.**
-`0001` set it to `127.0.0.1` deliberately, against Reflex's own `0.0.0.0` default
-(`rxconfig.py` records that). `0011` changed it to `0.0.0.0` because the app now ships to
-a VM that people reach from elsewhere -- the originator decided it that day, after being
-shown what it costs. What it costs is written in `0011`'s `spec.md` C1 and is not softened
-here. Until `0070` nothing asked for a password, so every machine that could route to
-this port could use all of it, including the two controls that spend real Claude quota.
-Since `0070` the master password in `coscc/web/auth.py` stands in front; what binding every
-interface still costs is the wire, and the startup banner in `coscc/run.py` says that out
-loud every time the address is not loopback.
+Defaults are the safe posture: each capability is off. `host` is the exception (`0.0.0.0`):
+the master password in `coscc/web/auth.py` stands in front, and `coscc/run.py` warns at
+startup whenever the address is not loopback.
 """
 
 from __future__ import annotations
@@ -27,23 +11,18 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Tools that write to disk or run commands. Kept as a named set so that knob 2 has teeth:
-# without it, a tool list could quietly grant exec while the knob still read "off".
+# Tools that write to disk or run commands: knob 2 filters on this set.
 WRITE_AND_EXEC_TOOLS = frozenset(
     {"Bash", "BashOutput", "KillShell", "Edit", "Write", "NotebookEdit"}
 )
 
 _ENV_PREFIX = "COS_"
 
-# `.cos/0076_a-step-can-migrate-the-running-apps-database`. The `cos.db` files a child of
-# this app must not open, separated by `os.pathsep`. Deliberately not a `COS_*` name: those
-# describe this app and are blanked for every child (`coscc/agent/sessions.py` `child_env`),
-# while this one is written *for* the child and read by `coscc/data.py` in it.
+# The `cos.db` files a child of this app must not open, separated by `os.pathsep`. Not a
+# `COS_*` name: those are blanked for every child (`child_env`), and this one is written for it.
 PROTECTED_DB_VAR = "COSCC_PROTECTED_DB"
 
-# Addresses that reach this machine and nowhere else. `0.0.0.0` and a bare interface
-# address are both absent on purpose: binding either is what `coscc/run.py`'s warning is
-# about. Here rather than in `run.py`, so the modules that read it import no entry point.
+# Addresses that reach this machine and nowhere else. `0.0.0.0` is absent on purpose.
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
@@ -61,7 +40,7 @@ def _list(env: dict[str, str], name: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Config:
-    """The app's entire local state: workspaces plus the four knobs of `spec.md` C2."""
+    """The app's entire local state: workspaces plus four knobs."""
 
     # Knob 1. Empty means chat only — no tools at all, not even read.
     tools: tuple[str, ...] = ()
@@ -69,74 +48,53 @@ class Config:
     allow_write_and_exec: bool = False
     # Knob 3. Off, and not settable over HTTP — see `from_env`.
     bypass_permissions: bool = False
-    # Knob 4. Off because `spec.md` open question 3 is untested, not because it is
-    # dangerous. Testing it is what turns this on.
+    # Knob 4. Off because resuming a foreign session is untested.
     resume_foreign_sessions: bool = False
 
     workspaces: tuple[str, ...] = field(default_factory=tuple)
-    # The one root under which workspaces may be created, read here and nowhere
-    # else. `spec.md` R11: no route, event handler or component can set it, because the
-    # only way in is `from_env`, and a request has no path to that function. Unset means
-    # the store is off and the app behaves as it did before there was one.
+    # The one root under which workspaces may be created. Only `from_env` sets it; a request
+    # has no path to it. Unset means the store is off.
     working_dir: str | None = None
-    # Where the app keeps its *own* state -- the SQLite database and the object
-    # folder. Unset means `~/.cos` (`coscc/data.py`). It is a separate setting from
-    # `working_dir` on purpose: `spec.md` R4 keeps workspaces out of it, so backing one up
-    # is not backing up the other, and `spec.md` C1 says that out loud because it is the
-    # kind of thing that loses somebody a directory.
+    # Where the app keeps its own state (SQLite database, object folder); unset means
+    # `~/.cos`. Kept apart from `working_dir`, so backing up one is not backing up the other.
     data_dir: str | None = None
-    # See the module docstring. `0.0.0.0` since 0011; it was `127.0.0.1` before.
     host: str = "0.0.0.0"
     port: int = 8790
     model: str | None = None
 
-    # `.cos/0068_updating-the-app-is-a-manual-reinstall`. `COS_UPDATE_CHECK=0` stops the
-    # release channel asking GitHub and downloading (R3); the local button still works.
+    # `COS_UPDATE_CHECK=0` stops the release channel asking GitHub; the local button still works.
     update_check: bool = True
-    # The workspace whose `origin/main` the *Build local* button builds (R6). Unset means
-    # no button. Set in the env file, never by a request.
+    # The workspace whose `origin/main` the *Build local* button builds. Unset means no
+    # button. Set in the env file, never by a request.
     update_local_from: str | None = None
-    # `.cos/0090_agents-relearn-what-earlier-units-already-knew` R1. On, `spec`, `spike`
-    # and `plan` carry what earlier units measured (`coscc/knowledge/__init__.py`). Off, every
-    # prompt and every `start` record is what it was before (R2). Only the env file sets it.
+    # On, `spec`, `spike` and `plan` carry what earlier units measured
+    # (`coscc/knowledge/__init__.py`). Only the env file sets it.
     knowledge: bool = False
-    # The next five are read without the `COS_` prefix, because they are not this app's
-    # settings: they are what systemd and a login shell hand every process. `invocation_id`
-    # is systemd's `INVOCATION_ID`, the second of R2's six conditions.
+    # The next five are read without the `COS_` prefix: systemd and a login shell hand
+    # them to every process. `invocation_id` is systemd's `INVOCATION_ID`.
     invocation_id: str | None = None
     # `${XDG_CONFIG_HOME:-$HOME/.config}`, where `install.sh` writes the unit file.
     config_home: str = ""
-    # Where `uv` may be, in the order `scripts/install.sh:130-138` looks: every `PATH`
-    # entry, then `UV_INSTALL_DIR`, `XDG_BIN_HOME`, `~/.local/bin`, `~/.cargo/bin`. A
-    # service's `PATH` rarely has `~/.local/bin`.
+    # Where `uv` may be, in the order `scripts/install.sh` looks: every `PATH` entry, then
+    # `UV_INSTALL_DIR`, `XDG_BIN_HOME`, `~/.local/bin`, `~/.cargo/bin`.
     uv_candidates: tuple[str, ...] = ()
-    # The environment the updater's own subprocesses get, built from these rather than
-    # inherited, so a trial run of the new version does not see `INVOCATION_ID` or a
-    # `COS_WORKING_DIR` (R12 step 2).
+    # The updater's subprocess environment is built from these, not inherited, so a trial
+    # run of the new version sees no `INVOCATION_ID` or `COS_WORKING_DIR`.
     path_env: str = ""
     home: str = ""
 
     def effective_tools(self) -> list[str]:
-        """The tool list a session is actually created with.
-
-        Knob 2 filters here rather than at the call site so that every path to a session
-        goes through the same subtraction.
-        """
+        """The tool list a session is created with; knob 2 filters here for every path."""
         if self.allow_write_and_exec:
             return list(self.tools)
         return [t for t in self.tools if t not in WRITE_AND_EXEC_TOOLS]
 
     def permission_mode(self) -> str:
-        """`bypassPermissions` only when knob 3 is on.
-
-        `default` is the right partner for chat only: with no tools there is nothing to
-        prompt about, so the mode never comes up — and if a later profile adds tools, it
-        prompts rather than silently proceeding.
-        """
+        """`bypassPermissions` only when knob 3 is on."""
         return "bypassPermissions" if self.bypass_permissions else "default"
 
     def may_resume(self, session_created_here: bool) -> bool:
-        """`spec.md` C1: the app resumes only what it created, until knob 4 is turned on."""
+        """The app resumes only what it created, until knob 4 is turned on."""
         return session_created_here or self.resume_foreign_sessions
 
     def is_workspace(self, directory: str) -> bool:
@@ -160,10 +118,9 @@ def _dir(env: dict[str, str], name: str) -> str | None:
 
 
 def protected_databases(env: dict[str, str] | None = None) -> tuple[Path, ...]:
-    """The databases `PROTECTED_DB_VAR` names, each resolved. Unset or empty is none.
+    """The databases `PROTECTED_DB_VAR` names, each resolved; `coscc/data.py` refuses them.
 
-    `0076` R5: `coscc/data.py` refuses to open any of these. Read on every call, not once,
-    so a test can set the variable around one `Data` and not the next.
+    Read on every call, so a test can set the variable around one `Data`.
     """
     e = os.environ if env is None else env
     raw = e.get(PROTECTED_DB_VAR) or ""
@@ -175,8 +132,7 @@ def protected_databases(env: dict[str, str] | None = None) -> tuple[Path, ...]:
 def protect(db_path: str | os.PathLike[str], env: dict[str, str] | None = None) -> str:
     """The value of `PROTECTED_DB_VAR` for a child that must not open `db_path`.
 
-    `0076` R4: appended, never overwritten. An app running inside a step already carries
-    the outer app's database here, and a child of the inner one must not lose it.
+    Appended, never overwritten: an app inside a step already carries the outer database.
     """
     e = os.environ if env is None else env
     kept = [part for part in (e.get(PROTECTED_DB_VAR) or "").split(os.pathsep) if part.strip()]
@@ -187,23 +143,16 @@ def protect(db_path: str | os.PathLike[str], env: dict[str, str] | None = None) 
 
 
 def from_env(env: dict[str, str] | None = None) -> Config:
-    """Build the config. This module is the only reader of the environment in this app.
+    """Build the config; the only reader of the environment.
 
-    Knob 3 is reachable from here and from nowhere else, which is the whole mechanism
-    behind "not settable over HTTP" (`spec.md` C2): a request has no path to this
-    function. There is deliberately no setter.
-
-    `data_dir` is here on the same terms and for the same reason. A request that could
-    move the data directory could point the app at a database somebody else wrote.
+    Knob 3 and `data_dir` are reachable only from here: a request has no path to this
+    function, and there is deliberately no setter.
     """
     e = dict(os.environ if env is None else env)
     working_dir = _dir(e, "WORKING_DIR")
     declared = _list(e, "WORKSPACES")
-    # The cwd fallback predates the store and stays for the sessions that rely on it:
-    # with no working folder and
-    # nothing declared, the app is about the directory it was started in. But once a
-    # working folder exists, an undeclared `COS_WORKSPACES` means *none* — silently adding
-    # cwd would put the repo in the list and make a count of "2" read as "3".
+    # With no working folder and nothing declared, the app is about the cwd. Once a working
+    # folder exists, an undeclared `COS_WORKSPACES` means none.
     fallback = () if working_dir else (str(Path.cwd()),)
     return Config(
         tools=_list(e, "TOOLS"),
@@ -213,10 +162,8 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         workspaces=declared or fallback,
         working_dir=working_dir,
         data_dir=_dir(e, "DATA_DIR"),
-        # Empty is unset, for every setting. `coscc/agent/sessions.py` `child_env` cannot remove
-        # a `COS_*` name from a session, only override it with "", so a session started
-        # from an app launched with `COS_PORT` set reads `COS_PORT=""` -- and `int("")`
-        # errored seven tests in a unit's worktree (`0017` review, F1).
+        # Empty is unset, for every setting: `child_env` can only blank a `COS_*` name, and
+        # `int("")` would raise.
         host=(e.get(_ENV_PREFIX + "HOST") or "").strip() or "0.0.0.0",
         port=int((e.get(_ENV_PREFIX + "PORT") or "").strip() or "8790"),
         model=e.get(_ENV_PREFIX + "MODEL") or None,

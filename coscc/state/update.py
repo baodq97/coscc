@@ -1,8 +1,6 @@
 """Updating the app from the board: the channel's state and the buttons.
 
-Split from `coscc/state/__init__.py` (`0095`). `StudioState` inherits it, so its vars and handlers
-keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
-because this module cannot import `coscc.state` at the top (`spike.md ## U1`).
+Handlers import `SERVICE` in their bodies: this module cannot import `coscc.state` at the top.
 """
 
 from __future__ import annotations
@@ -16,9 +14,9 @@ from coscc.state.views import _channel_line, _job_line
 
 class UpdateMixin(rx.State, mixin=True):
 
-    # -- `0068`: the *Update* panel. Every field is copied from `Service.update_status`,
-    # re-read on load, on every screen change and on every `poll_running` ask; the page
-    # decides nothing about an update. `update_pending` is what Run and Send warn on (R9).
+    # -- the *Update* panel. Every field is copied from `Service.update_status`, re-read on
+    # load, on every screen change and on every `poll_running` ask. `update_pending` is what
+    # Run and Send warn on.
     upd_version: str = ""
     upd_commit: str = ""
     upd_available: bool = False
@@ -38,14 +36,13 @@ class UpdateMixin(rx.State, mixin=True):
     upd_last_tail: str = ""
     update_pending: bool = False
     update_warning: str = ""
-    # `0082` R9: the service's line and the buttons it lists; the full sha for *Details*.
+    # The service's line and the buttons it lists; the full sha for *Details*.
     upd_line: str = ""
     upd_local_line: str = ""
     upd_actions: list[str] = []
     upd_commit_full: str = ""
 
-    # -- `0068`: updating the app. Every rule is `Updater`'s, behind `Service`; a refusal
-    # arrives here as its words.
+    # -- updating the app. Every rule is `Updater`'s, behind `Service`.
 
     def _load_update(self) -> None:
         from coscc.state import SERVICE
@@ -83,8 +80,8 @@ class UpdateMixin(rx.State, mixin=True):
 
     @rx.event
     async def apply_update(self, channel: str):
-        """R7; `0138` R1: the one Apply. It waits only for a mechanical integration or a
-        retake, then pauses every session and restarts."""
+        """The one Apply: waits only for a mechanical integration or a retake, then pauses
+        every session and restarts."""
         from coscc.state import SERVICE
         try:
             await SERVICE.update_apply(channel, "")

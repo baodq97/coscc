@@ -1,14 +1,9 @@
-"""What the autopilot decides (`0043`), with no I/O: every function here is pure.
+"""What the autopilot decides, with no I/O: every function here is pure.
 
-The autopilot starts the stage `cos.mjs next` names, through the same `Service.run_step` a
-person's press goes through, which still asks the gate. Nothing here chooses a stage or
-holds a copy of the loop. What it decides is the rest: where it must stop and wait for a
-person (R6), whether the day's money allows one more step (R7), and which of the steps it
-could start it may start now (R8). `Service` reads the board, `next`, the run log and the
-settings, hands them here, and starts what comes back.
-
-It starting a step is not a person's approval of anything, and it makes no gate more than
-advice (`.claude/docs/not-built.md`).
+The autopilot starts the stage `cos.mjs next` names through the same `Service.run_step` a
+person's press goes through, which still asks the gate. What it decides is where it must
+stop for a person, whether the day's money allows one more step, and which candidate steps
+may start now. Starting a step is not a person's approval of anything.
 """
 
 from __future__ import annotations
@@ -22,44 +17,39 @@ from coscc.agent import precedent
 from coscc.runlog import spend
 from coscc.agent.policy import GRANTS, NOVEL_CEILINGS, grant_for, grant_for_step, is_prose_stage
 
-# R2. Defaults, `intent.md ## Answers`, câu 2 and 3.
+# Defaults.
 DEFAULT_MAX_PARALLEL = 4
 DEFAULT_DAILY_CAP_USD = 50.0
-# R5 d. Seconds. Chosen, not measured.
+# Seconds. Chosen, not measured.
 POLL_SECONDS = 300.0
-# The spec's `## Design`: a `start` with no `end` counts as running for this long, then not.
-# Chosen, not measured.
+# A `start` with no `end` counts as running for this long, then not. Chosen, not measured.
 OPEN_FOR = timedelta(hours=24)
 
-# R8 b. The stages that write code, and so may not run beside another whose files overlap.
+# The stages that write code, and so may not run beside another whose files overlap.
 CODE_STAGES = ("impl", "implement", "integrate")
 
-# `0044`: Jera writes `start` and `end` on the unit it answers for, under a stage that is none
-# of the loop's. Its lines are not the unit's last step (R6 e), a start, or a failed step.
-# Since `0101` R1 the autopilot starts Jera too, as a candidate like a stage, and still none
-# of its lines is a step.
+# Jera writes `start` and `end` on the unit it answers for, under a stage that is none of the
+# loop's; none of its lines is the unit's last step, a start, or a failed step.
 NOT_STEPS = ("precedent",)
 JERA = "precedent"
 
-# R6, the one stop the spec adds beside them, `0104` R3's empty shortlist, and `0106` R3's
-# and R5's: a draft run again as often as it may, and one waiting for a free place.
+# The stop kinds `a`-`f`, plus an empty shortlist, a draft run again as often as it may, and
+# one waiting for a free place.
 STOP_KINDS = ("a", "b", "c", "d", "e", "f", "cap", "shortlist", "reruns", "full")
 
-# `0104` R6. Why a unit ranked higher on the shortlist was passed over, and nothing else.
+# Why a unit ranked higher on the shortlist was passed over, and nothing else.
 REASONS = ("held", "finished", "closed", "stop", "ci", "running", "overlap", "ship-busy", "missing", "dependency", "overlap-pr")
-# `0111`. The stop `e` of a unit whose screenshots could not be taken again before `review`.
+# The stop `e` of a unit whose screenshots could not be taken again before `review`.
 SCREENS_FAILED = "the screenshots could not be taken again before review"
-# `0104` R3. The workspace's stop line when there is no shortlist to follow.
+# The workspace's stop line when there is no shortlist to follow.
 NO_SHORTLIST = "Nothing is on the shortlist, so the autopilot starts nothing."
 
 _NUMBER = re.compile(r"^(\d+)")
 
 
-# `0136` R11: what `next` or the gate said is read by code, from `reasons` (`guards.REASONS`),
-# never from its words, which are a person's to read and `cos.mjs`'s to change.
+# What `next` or the gate said is read by code, from `reasons` (`guards.REASONS`), never from its words.
 def said(answer: Any, reason: str) -> bool:
-    """Whether `reason` is among the codes of `answer`: `next`'s dict, or anything with
-    `reasons` — a `board.Gate`, or the exception a refused step raised with it."""
+    """Whether `reason` is among the codes of `answer`: `next`'s dict, or anything with `reasons`."""
     if isinstance(answer, dict):
         codes = answer.get("reasons") or ()
     else:
@@ -68,30 +58,28 @@ def said(answer: Any, reason: str) -> bool:
 
 
 def is_waiting_on_dependency(answer: Any) -> bool:
-    """`0040` R7: `next` holds `impl` back until a dependency merges. Not a stop, like CI
-    pending: nothing a person does here would move it, and the next pass asks again."""
+    """`next` holds `impl` back until a dependency merges. Not a stop: nothing a person does would move it."""
     return said(answer, "waiting-on")
 
 
 def is_ci_pending(answer: Any) -> bool:
-    """R6: the gate or `next` is waiting on CI. Not a stop; R5 d asks again."""
+    """The gate or `next` is waiting on CI. Not a stop; the next pass asks again."""
     return said(answer, "ci-pending")
 
 
 def is_ci_red(answer: Any) -> bool:
-    """`0124` R2: `next` sends the unit back to `impl` because CI is red."""
+    """`next` sends the unit back to `impl` because CI is red."""
     return said(answer, "ci-red")
 
 
 def is_recording_ship(answer: Any) -> bool:
-    """`0126` R4: `next` or the gate names a `ship` that only records a merge already made."""
+    """`next` or the gate names a `ship` that only records a merge already made."""
     return said(answer, "recording-ship")
 
 
 def needs_a_person(answer: Any) -> bool:
-    """R6 b: `next` stops for a person — review used its rounds, a spike failed too often, a
-    red check no impl can fix, a pass left closed twice on one head, and (`0136` R14) a spec
-    or plan skipped by no person or delegate of theirs."""
+    """`next` stops for a person: review used its rounds, a spike failed too often, a red check
+    no impl can fix, a pass left closed twice on one head, or a spec or plan skipped by no person."""
     return said(answer, "needs-person") or said(answer, "awaits-person") or said(answer, "agent-cannot-skip")
 
 
@@ -100,8 +88,8 @@ def is_over(answer: Any) -> bool:
     return said(answer, "finished") or said(answer, "closed")
 
 
-# `0136` review round 1, F2. The record a `pr` or `ship` the PR machine ran leaves in place of
-# an `end`: `outcome` `done` or `failed`, and the machine's `result`, `reasons` and `detail`.
+# The record a `pr` or `ship` the PR machine ran leaves in place of an `end`: `outcome`
+# `done` or `failed`, and the machine's `result`, `reasons` and `detail`.
 PR_MACHINE = "prmachine"
 
 
@@ -115,8 +103,8 @@ def _stop(kind: str, reason: str) -> dict[str, str]:
 
 
 def open_questions(unit_row: dict[str, Any]) -> list[dict[str, Any]]:
-    """Every unanswered question of the counted artifact (`cos.mjs` `unitQuestions`): the stop
-    `a`, and since `0113` R4 the `questions` record a step that ends `done` leaves."""
+    """Every unanswered question of the counted artifact (`cos.mjs` `unitQuestions`): the stop `a`,
+    and the `questions` record a step that ends `done` leaves."""
     return [q for q in unit_row.get("questions") or [] if q.get("counted") and not q.get("answered")]
 
 
@@ -131,14 +119,12 @@ def _n(value: Any) -> Any:
 def unasked(
     unit_row: dict[str, Any], records: Iterable[dict[str, Any]], workspace: str,
 ) -> list[dict[str, Any]]:
-    """`0101` R2. The open questions of the stop `a` Jera has not been asked, `[{artifact, n}]`.
+    """The open questions of the stop `a` Jera has not been asked, `[{artifact, n}]`.
 
-    Only those `open_questions` counts that Jera may be given (`precedent.asked`: never
-    `review.md`). A question was asked when, after the latest `end` of the stage that writes
-    its artifact, the run log holds (a) a `precedent` row for it, whatever its verdict, or (b)
-    a `start` of Jera whose `asked` names it. (b) is wider than R2's words on purpose: a
-    session that failed, was cancelled or ran out writes no `precedent` row, and without it
-    every pass would open that session again (`plan.md` step 4).
+    Only those `open_questions` counts that Jera may be given (never `review.md`). A question
+    was asked when, after the latest `end` of the stage that writes its artifact, the run log
+    holds a `precedent` row for it, or a `start` of Jera whose `asked` names it; the latter
+    covers a session that failed, was cancelled or ran out, which writes no `precedent` row.
     """
     name = str(unit_row.get("name") or "")
     may = {(q["artifact"], q["n"]) for q in precedent.asked(unit_row)}
@@ -169,19 +155,19 @@ def _listed(questions: Iterable[dict[str, Any]]) -> str:
 
 
 def waiting_for_you(open_: list[dict[str, Any]]) -> dict[str, str]:
-    """`0101` R2: the stop `a` once Jera has been asked every open question it may be. `open_`
-    is every open question, `review.md`'s included, which Jera is never asked."""
+    """The stop `a` once Jera has been asked every open question it may be. `open_` is every
+    open question, `review.md`'s included, which Jera is never asked."""
     count = "1 question waits" if len(open_) == 1 else f"{len(open_)} questions wait"
     return _stop("a", f"{count} for you: {_listed(open_)}")
 
 
-# `0101` R5 point 3. The stop `a` when the prompt would cost more than one session may.
+# The stop `a` when the prompt would cost more than one session may.
 STORE_PAST_CEILING = "The precedent store is past what one Jera session may cost, so its questions wait for you."
 
 
 def skips_exhausted(nxt: dict[str, Any], last: dict[str, Any] | None, recorded: bool) -> bool:
-    """`0126` R1–R3: a `ship` that ran out of turns is no stop when `next` names a `ship` that
-    only records the merge, unless the step that ran out was itself one (`recorded`)."""
+    """A `ship` that ran out of turns is no stop when `next` names a `ship` that only records
+    the merge, unless the step that ran out was itself one (`recorded`)."""
     last = last or {}
     return (
         last.get("kind") == "end" and last.get("stage") == "ship" and last.get("outcome") == "exhausted"
@@ -199,18 +185,14 @@ def stop_for(
     unopened: int = 0,
     recorded: bool = False,
 ) -> dict[str, str] | None:
-    """The first of R6's stops that holds for one unit, as `{kind, reason}`, or `None`.
+    """The first stop that holds for one unit, as `{kind, reason}`, or `None`.
 
     `unit_row` is the unit as `Service.board` has it; `nxt` is `Service.next_step`'s answer;
-    `last` the unit's latest `end`, `integration`, `screens` (`0111`) or `PR_MACHINE` (`0136`)
-    record, or `None`. `None` back means no
-    stop, which is not the same as something to run: a finished, rejected or held unit, and
-    one waiting on CI, have neither. `exhausted` is how many steps of `last`'s stage ended
-    `exhausted` (`exhausted_of`); left at 0, an exhausted step stops as before `0120`.
-    `unopened` is how many ended `failed` for their reply's opening (`unopened_of`); left at
-    0, such a step stops as before `0127`.
-    `recorded` is whether the step that wrote `last` was a `ship` that only records (`0126`
-    R3); left `False`, an exhausted `ship` before a recording one is no stop (`skips_exhausted`).
+    `last` the unit's latest `end`, `integration`, `screens` or `PR_MACHINE` record, or
+    `None`. `None` back means no stop, which is not the same as something to run.
+    `exhausted` and `unopened` are how many steps of `last`'s stage ended `exhausted` or
+    `failed` for their reply's opening; at 0 such a step stops at once. `recorded` is whether
+    the step that wrote `last` was a `ship` that only records.
     """
     stage = str(nxt.get("stage") or "")
     action = str(nxt.get("action") or "")
@@ -219,7 +201,7 @@ def stop_for(
     if not stage and is_over(nxt):
         return None
 
-    # a. Every unanswered question of the counted artifact (`cos.mjs` `unitQuestions`).
+    # a. Every unanswered question of the counted artifact.
     open_ = open_questions(unit_row)
     if open_:
         return _stop("a", f"open questions: {_listed(open_)}")
@@ -233,18 +215,16 @@ def stop_for(
 
     kind = (last or {}).get("kind")
     outcome = str((last or {}).get("outcome") or "")
-    # d. Gebo's integration ended `needs-person`: the object it handed back said so (`0136` R7).
+    # d. Gebo's integration ended `needs-person`.
     if kind == "integration" and outcome == "needs-person":
         said = "; ".join(str(x) for x in (last or {}).get("needs_person") or []) or "no reason given"
         return _stop("d", f"the last integration needs a person: {said}")
     # e. The unit's last step did not end `done`. The first time a stage other than `ship` ends
     # `exhausted` is no stop: it runs again once, and the second time stops; `ship` stops the
-    # first time (`0120 intent.md ## Answers`, câu 3, 4). Since `0127` R8 the same holds, on a
-    # count of its own, for a prose stage that ended `failed` because its reply lacked its
-    # opening; a `failed` for any other reason still stops, even after one of those.
-    # Otherwise no retry (`spec.md ## Answers`, câu 1): `failed`, `cancelled`, `stopped`, and
-    # an integration that failed or that the autopilot started and was refused. `0126`: nor a
-    # `ship` that ran out before `next` names one that only records the merge, however many times.
+    # first time. The same holds, on its own count, for a prose stage that ended `failed`
+    # because its reply lacked its opening. Otherwise no retry: `failed`, `cancelled`,
+    # `stopped`, an integration that failed or that the autopilot started and was refused,
+    # and a `ship` that ran out before `next` names one that only records the merge.
     ran_out_once = outcome == "exhausted" and (last or {}).get("stage") != "ship" and exhausted == 1
     unopened_once = _unopened(last) and unopened == 1
     skipped = skips_exhausted(nxt, last, recorded)
@@ -255,18 +235,16 @@ def stop_for(
     ):
         detail = str(last.get("detail") or "")
         return _stop("e", f"the last integration was {outcome}" + (f": {detail}" if detail else ""))
-    # `0136` review round 1, F2: a `pr` or `ship` the PR machine ran and that failed, or whose
-    # guard refused it, stops as a session that ended `failed` did; no retry, as above.
-    # Review round 2, F6: a merge GitHub refused once the machine had requested it stops `f` on
-    # what `gh` said, as `0112` R7's refused `ship` did, so a unit the refusal left behind `main`
-    # is still integrated by the pass (`0112` R1) rather than awaiting a person.
+    # A `pr` or `ship` the PR machine ran that failed, or whose guard refused it, stops as a
+    # `failed` session does. A merge GitHub refused stops `f` on what `gh` said, so the pass
+    # can still integrate a unit the refusal left behind `main`.
     if kind == PR_MACHINE and outcome != "done":
         detail = str(last.get("detail") or "") or ", ".join(str(r) for r in last.get("reasons") or [])
         if last.get("merge_refused"):
             return _stop("f", f"ship was refused: {detail or 'no reason given'}")
         return _stop("e",f"the last {last.get('stage')} was {last.get('result') or outcome}" + (f": {detail}" if detail else ""))
-    # `0111`: the screenshots could not be taken again before `review`, which did not start.
-    # No retry, as above: a person runs it again, and a retake that is taken lifts the stop.
+    # The screenshots could not be taken again before `review`, which did not start. No retry:
+    # a person runs it again, and a retake that is taken lifts the stop.
     if kind == "screens" and outcome == "failed":
         return _stop("e", SCREENS_FAILED)
 
@@ -274,8 +252,7 @@ def stop_for(
     if stage == "ship" and not may_ship:
         return _stop("c", "ship waits for a person: the autopilot may not ship in this workspace")
 
-    # `0106` R2: a draft whose questions are all answered is a stage to run again, not a
-    # stop. Whether it may be is the pass's to say (`reruns_of`, `answered_since_start`).
+    # A draft whose questions are all answered is a stage to run again, not a stop.
     if not stage and nxt.get("rerun"):
         return None
     if not stage and is_waiting_on_dependency(nxt):
@@ -286,18 +263,18 @@ def stop_for(
     return None
 
 
-# `0124` R2, R6. How many `impl` steps the autopilot runs after its own integration turned CI
-# red (`intent.md ## Answers`, câu 1). Not `COS_REVIEW_ROUNDS`, which counts review rounds.
+# How many `impl` steps the autopilot runs after its own integration turned CI red. Not
+# `COS_REVIEW_ROUNDS`, which counts review rounds.
 IMPL_PER_INTEGRATION = 1
-# `0124` R2, R8. The stop `e` once that `impl` ran and CI is still red.
+# The stop `e` once that `impl` ran and CI is still red.
 STILL_RED = "CI is still red after the impl that followed the autopilot's last integration"
 
 
 def since_integration(
     records: Iterable[dict[str, Any]], workspace: str, unit: str,
 ) -> list[dict[str, Any]] | None:
-    """`0124`. The unit's records after its latest `integration`, up to the first `review`
-    `start` after it — or `None` when it has no `integration`, or that `start` has come."""
+    """The unit's records after its latest `integration`, up to the first `review` `start` after
+    it, or `None` when it has no `integration` or that `start` has come."""
     after: list[dict[str, Any]] | None = None
     for r in records:
         if r.get("workspace") != workspace or r.get("unit") != unit or not is_step(r):
@@ -318,16 +295,14 @@ def after_own_integration(
     nxt: dict[str, Any],
     exhausted: int = 0,
 ) -> tuple[str, dict[str, str] | None] | None:
-    """`0124` R1–R3: what follows CI red on the autopilot's own pushed integration.
+    """What follows CI red on the autopilot's own pushed integration.
 
     `integration` is the board's integration block of the unit, `last_integration` its latest
-    `integration` record, `after` what `since_integration` returns for it, `nxt` `next`'s
-    answer. `("impl", None)` runs the `impl` `next` names, once (R1); `("", stop)` is a stop
-    `e` (R2, R3 b); `None` leaves the unit to the rest of the pass — a person's integration,
-    or one CI is not red on. Gebo is never started again: no retry is the rule (`0043`
-    `spec.md ## Answers`, câu 1). `exhausted` is how many `impl` steps of the unit ended
-    `exhausted` (`exhausted_of`): while it is 1, the autopilot's `impl` that ran out is not
-    the one `impl`, which runs once more (`0120 intent.md ## Answers`, câu 4; review F3).
+    `integration` record, `after` what `since_integration` returns, `nxt` `next`'s answer.
+    `("impl", None)` runs the `impl` `next` names, once; `("", stop)` is a stop `e`; `None`
+    leaves the unit to the rest of the pass. Gebo is never started again. `exhausted` is how
+    many `impl` steps of the unit ended `exhausted`: while it is 1, the one that ran out is
+    not the one `impl`, which runs once more.
     """
     last_integration = last_integration or {}
     if started_by(last_integration) != "autopilot" or last_integration.get("outcome") != "pushed":
@@ -358,7 +333,7 @@ def after_own_integration(
     return None
 
 
-# --- R7, the day's money ------------------------------------------------------
+# --- the day's money ------------------------------------------------------
 
 
 def _moment(at: Any) -> datetime | None:
@@ -370,20 +345,19 @@ def _moment(at: Any) -> datetime | None:
 
 
 def today(now: datetime) -> str:
-    """The machine's calendar day of `now` (`intent.md ## Answers`, câu 9)."""
+    """The machine's calendar day of `now`."""
     return spend.local_day(now.isoformat())
 
 
 def spent_today(records: Iterable[dict[str, Any]], now: datetime) -> dict[str, Any]:
-    """`spent_on` the machine's day of `now`. An `end` with no `cost_usd` is counted at its
-    estimate, not as the cap reached (`0105`)."""
+    """`spent_on` the machine's day of `now`. An `end` with no `cost_usd` is counted at its estimate, not as the cap reached."""
     return spent_on(records, today(now))
 
 
 def reservation(stage: str) -> float:
     """What a step of `stage` is counted at before it ends: the largest `max_budget_usd` any
-    label can give it (`coscc/agent/policy.py` `grant_for_step`). Jera's is the most any of
-    its sessions may cost (`0101` R3, R5): the pass holds a picked one at its own ceiling."""
+    label can give it (`coscc/agent/policy.py` `grant_for_step`). Jera's is the most any of its
+    sessions may cost."""
     if stage == JERA:
         return precedent.PRECEDENT_MAX_USD
     if stage == "integrate":
@@ -395,9 +369,8 @@ def reservation(stage: str) -> float:
 
 
 def estimate(stage: str) -> float:
-    """What an `end` of `stage` with no `cost_usd` is counted at (`0105`): its reservation,
-    or, for a stage no grant gives a budget, the largest budget in the grant table — read
-    here, never copied, so a dearer grant added later raises it too."""
+    """What an `end` of `stage` with no `cost_usd` is counted at: its reservation, or, for a
+    stage no grant gives a budget, the largest budget in the grant table (read, never copied)."""
     own = reservation(stage)
     if own > 0:
         return own
@@ -409,9 +382,8 @@ def estimate(stage: str) -> float:
 
 def spent_on(records: Iterable[dict[str, Any]], day: str) -> dict[str, Any]:
     """`{known, estimated, estimated_count}`: every `end` of the machine's `day`, whoever
-    started it, every workspace. An `end` with no `cost_usd`, whatever its outcome, counts
-    at `estimate` of its stage (`0105`). An `integration` record is never added: a Gebo
-    session's cost is on its own `end`."""
+    started it, every workspace. An `end` with no `cost_usd` counts at `estimate` of its
+    stage. An `integration` record is never added: a Gebo session's cost is on its own `end`."""
     known, estimated, count = 0.0, 0.0, 0
     for r in records:
         if r.get("kind") != "end" or spend.local_day(r.get("at")) != day:
@@ -444,7 +416,7 @@ def reserved(
 ) -> float:
     """What the steps running now are counted at: every open `start`, and every step this
     process holds (`(workspace, unit, stage)`) that has not written its `start` yet. An open
-    `start` of Jera counts at the ceiling it recorded (`0101` C13)."""
+    `start` of Jera counts at the ceiling it recorded."""
     opened = open_starts(records, now)
     total = sum(_held_at(r) for r in opened.values())
     for workspace, unit, stage in active:
@@ -462,20 +434,18 @@ def _held_at(start: dict[str, Any]) -> float:
 
 
 def cap_allows(spent: float, running: float, need: float, limit: float) -> bool:
-    """R7: spent (known and estimated) + running + this step's reservation must fit under
-    the limit."""
+    """Spent (known and estimated) + running + this step's reservation must fit under the limit."""
     return spent + running + need <= limit
 
 
-# --- R8, which of the candidates run now --------------------------------------
+# --- which of the candidates run now --------------------------------------
 
 
 def files_of(plan_text: str | None) -> set[str] | None:
-    """The paths under `plan.md ## Files that change`, or `None` when there are none to
-    read — and `None` overlaps with everything (R8 b).
+    """The paths under `plan.md ## Files that change`, or `None` when there are none to read.
 
-    Only tokens that look like a path: `labels.listed_paths` keeps every word of the
-    section, and two plans sharing the word `new` do not share a file.
+    `None` overlaps with everything. Only tokens that look like a path count:
+    `labels.listed_paths` keeps every word of the section.
     """
     found = {p for p in labels.listed_paths(plan_text) if "/" in p or re.search(r"\.\w+$", p)}
     return found or None
@@ -497,20 +467,17 @@ def pick(
     room: float,
     open_prs: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any]:
-    """R8 a–f and R7 over the steps that could start, highest on the shortlist first
-    (`0104` R4).
+    """Which of the steps that could start may start now, highest on the shortlist first.
 
     Each candidate and each running entry is `{unit, stage, files}`, and a candidate also
     carries `rank`, its place on the shortlist, and `need`, its reservation. `room` is the
     money left under the cap. Returns `{"chosen": [...], "capped": [...], "held": {...}}`:
     what to start, what the cap alone held back, and `(reason, detail)` for each candidate
-    another rule held back (`0104` R6). What `max_parallel` held back is in none of them:
-    nothing after it is chosen, so nothing passes over it.
+    another rule held back. What `max_parallel` held back is in none of them.
 
-    `open_prs` is `0136` R22: `{unit, number, files}` for each pull request of the workspace
-    that is open and not merged, `files` `None` when its diff could not be read. An `impl` of
-    a unit with no pull request of its own waits while one of another unit's touches a file
-    its plan names, so two open pull requests on one file never wait on each other.
+    `open_prs` is `{unit, number, files}` for each open, unmerged pull request of the
+    workspace, `files` `None` when its diff could not be read. An `impl` of a unit with no
+    pull request of its own waits while one of another unit's touches a file its plan names.
     """
     running = list(running)
     open_prs = list(open_prs)
@@ -555,16 +522,15 @@ def pick(
     return {"chosen": chosen, "capped": capped, "held": held}
 
 
-# --- `0104`, the shortlist's order --------------------------------------------
+# --- the shortlist's order --------------------------------------------
 
 
 def reason_for(
     nxt: dict[str, Any], stage: str, stop: dict[str, str] | None,
 ) -> tuple[str, str] | None:
-    """`0104` R6. Why a unit is no candidate, as `(reason, detail)`, or `None` when it is one.
+    """Why a unit is no candidate, as `(reason, detail)`, or `None` when it is one.
 
-    Read off what the pass already has — `next`'s answer, the stage it settled on and the
-    stop it found — and never made up (spec C3): a case none of these explains raises.
+    Read off what the pass already has, never made up: a case none of these explains raises.
     """
     if stage and stop is None:
         return None
@@ -587,9 +553,8 @@ def reason_for(
 def passed_for(
     units: list[str], chosen: list[str], reasons: dict[str, tuple[str, str]],
 ) -> list[list[dict[str, str]]]:
-    """`0104` R6. For each of `chosen`, in order, every unit ranked above it on `units` that
-    was not chosen before it this pass, each `{unit, reason, detail}`. A unit with no reason
-    raises rather than be passed over for none."""
+    """For each of `chosen`, in order, every unit ranked above it on `units` that was not
+    chosen before it this pass, each `{unit, reason, detail}`. A unit with no reason raises."""
     out: list[list[dict[str, str]]] = []
     for i, name in enumerate(chosen):
         before = set(chosen[:i])
@@ -605,17 +570,15 @@ def passed_for(
     return out
 
 
-# --- `0106`, a draft whose questions are all answered -------------------------
+# --- a draft whose questions are all answered -------------------------
 
-# R3. How often one artifact runs again after its answers before a person decides the next
-# run (`intent.md ## Answers`, câu 4).
+# How often one artifact runs again after its answers before a person decides the next run.
 MAX_RERUNS = 2
 
 
 def reruns_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
-    """R3. How many `start`s of `stage` on `unit` followed an earlier one with at least one
-    `answer` record of the same unit and stage between them. Whoever started either step
-    counts (`intent.md ## Answers`, câu 7), so `started_by` is not read."""
+    """How many `start`s of `stage` on `unit` followed an earlier one with at least one
+    `answer` record of the same unit and stage between them, whoever started either."""
     count, started, answered = 0, False, False
     for r in records:
         if r.get("workspace") != workspace or r.get("unit") != unit or r.get("stage") != stage:
@@ -630,8 +593,7 @@ def reruns_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stag
 
 
 def exhausted_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
-    """`0120`. How many steps of `stage` on `unit` ended `exhausted`. Whoever started them,
-    out of turns or out of budget alike, and over the whole run log (spec C1, C2)."""
+    """How many steps of `stage` on `unit` ended `exhausted`, whoever started them and over the whole run log."""
     return sum(
         1 for r in records
         if r.get("kind") == "end" and r.get("outcome") == "exhausted" and is_step(r)
@@ -640,13 +602,13 @@ def exhausted_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, s
 
 
 def _lacks_opening(record: dict[str, Any]) -> bool:
-    """`0127` R8. The `detail` `opening_reason` opens with (`coscc/runner/reply.py`), for the
-    record's own stage; a repair turn that failed too keeps it on the first line."""
+    """The `detail` `opening_reason` opens with (`coscc/runner/reply.py`), for the record's own
+    stage; a repair turn that failed too keeps it on the first line."""
     return str(record.get("detail") or "").startswith(f"{record.get('stage')}.md lacks its opening:")
 
 
 def _unopened(last: dict[str, Any] | None) -> bool:
-    """`0127` R8. `last` is a prose stage's `end` that failed because its reply lacked its opening."""
+    """`last` is a prose stage's `end` that failed because its reply lacked its opening."""
     last = last or {}
     return (
         last.get("kind") == "end" and last.get("outcome") == "failed"
@@ -655,9 +617,8 @@ def _unopened(last: dict[str, Any] | None) -> bool:
 
 
 def unopened_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> int:
-    """`0127` R8. How many steps of `stage` on `unit` ended `failed` because their reply
-    lacked its opening. Whoever started them, and over the whole run log, as `exhausted_of`
-    counts; the two counts are apart."""
+    """How many steps of `stage` on `unit` ended `failed` because their reply lacked its
+    opening, counted as `exhausted_of` counts; the two counts are apart."""
     return sum(
         1 for r in records
         if r.get("kind") == "end" and r.get("outcome") == "failed" and is_step(r)
@@ -667,10 +628,9 @@ def unopened_of(records: Iterable[dict[str, Any]], workspace: str, unit: str, st
 
 
 def answered_since_start(records: Iterable[dict[str, Any]], workspace: str, unit: str, stage: str) -> bool:
-    """R3. Whether an `answer` record of `stage` on `unit` came after its last `start`. A run
-    again that ends `draft` keeps its answered questions' numbers (`runner._ANSWERS_ADVICE`),
-    so `cos.mjs next` can say `rerun` with no new answer behind it; without this, `reruns_of`
-    would stay where it was and the autopilot would run it again on every pass."""
+    """Whether an `answer` record of `stage` on `unit` came after its last `start`. A run
+    again that ends `draft` keeps its answered questions' numbers, so `cos.mjs next` can say
+    `rerun` with no new answer behind it; without this the autopilot would rerun on every pass."""
     fresh = False
     for r in records:
         if r.get("workspace") != workspace or r.get("unit") != unit or r.get("stage") != stage:
@@ -683,11 +643,9 @@ def answered_since_start(records: Iterable[dict[str, Any]], workspace: str, unit
 
 
 def answer_completes(unit_row: dict[str, Any], artifact: str, answered: Iterable[Any]) -> bool:
-    """R4. Whether `artifact`, of a stage whose answered draft runs again, has no numbered
-    question left unanswered: each is answered on the board read `unit_row` came from, or its
-    number is in `answered`, the blocks written since that read up to and including this one.
-    Those stages are `unit_row["after_answers"]`, as `cos.mjs` listed them on that read
-    (`0115` R4); a row without the list completes nothing."""
+    """Whether `artifact`, of a stage whose answered draft runs again, has no numbered question
+    left unanswered: each is answered on the board read `unit_row` came from, or its number is
+    in `answered`. Those stages are `unit_row["after_answers"]`; a row without the list completes nothing."""
     stage = next((s.get("stage") for s in unit_row.get("stages") or [] if s.get("file") == artifact), "")
     if not stage or stage not in (unit_row.get("after_answers") or ()):
         return False
@@ -697,41 +655,38 @@ def answer_completes(unit_row: dict[str, Any], artifact: str, answered: Iterable
 
 
 def rerun_stop(artifact: str) -> dict[str, str]:
-    """R3: the draft has run again `MAX_RERUNS` times after its answers."""
+    """The draft has run again `MAX_RERUNS` times after its answers."""
     return _stop("reruns", f"{artifact} was run again {MAX_RERUNS} times after its answers; a person decides the next run.")
 
 
 def full_stop(stage: str, max_parallel: int) -> dict[str, str]:
-    """R5: a run again that `max_parallel` alone held back. Not a wait for a person."""
+    """A run again that `max_parallel` alone held back. Not a wait for a person."""
     running = "1 step is" if max_parallel == 1 else f"{max_parallel} steps are"
     return _stop("full", f"{stage} waits to run again: {running} already running, the most this workspace allows.")
 
 
-# --- R11, what the intent's outcome is measured by ----------------------------
+# --- what the intent's outcome is measured by ----------------------------
 
 # The stages before `intent` is accepted, and those that are not a unit's stage at all.
 _BEFORE = ("idea", "intent", "estimate")
 
 
 def started_by(record: dict[str, Any]) -> str:
-    """A record written before `0043` has no `started_by`, and reads as `person` (R3)."""
+    """A record with no `started_by` reads as `person`."""
     return str(record.get("started_by") or "person")
 
 
 def measure(
     records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
 ) -> dict[str, Any]:
-    """R11. Per unit of `workspace`, over the machine's days `since`..`until` inclusive:
-    whether it reached the stop before `ship` (a `review` step ending `done` with a `pass`
-    round), how many starts the autopilot made on the way, and each person's start that
-    was not at a stop.
+    """Per unit of `workspace`, over the machine's days `since`..`until` inclusive: whether it
+    reached the stop before `ship` (a `review` step ending `done` with a `pass` round), how
+    many starts the autopilot made on the way, and each person's start that was not at a stop.
 
-    A person's start is at a stop when the last `autopilot-stop` record of the unit before
-    it names one, or when the unit's last `end` before it was not `done` (R6 e). A
-    mechanical integration writes no `start`; its `integration` record counts instead.
-
-    Since `0101` R11 each unit also carries what `_jera_of` counts, read before Jera's lines
-    are left out.
+    A person's start is at a stop when the last `autopilot-stop` record of the unit before it
+    names one, or when the unit's last `end` before it was not `done`. A mechanical
+    integration writes no `start`; its `integration` record counts instead. Each unit also
+    carries what `_jera_of` counts, read before Jera's lines are left out.
     """
     window = [
         r for r in records
@@ -788,7 +743,7 @@ def _no_jera() -> dict[str, Any]:
 
 
 def _jera_of(window: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """`0101` R11, per unit of `window`:
+    """Per unit of `window`:
 
     - `to_person`: the questions whose latest `precedent` row said `needs-person`, plus every
       `answer` not written through Jera;
@@ -797,7 +752,7 @@ def _jera_of(window: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     - `unpicked_precedent`: each `start` of Jera with no `autopilot-pick` of Jera on the unit
       since the one before it, `{at, started_by}` — a person's press, or a pick not recorded.
 
-    An answer written at a terminal leaves no `answer` row, so it is not counted (`spec.md` C6).
+    An answer written at a terminal leaves no `answer` row, so it is not counted.
     """
     out: dict[str, dict[str, Any]] = {}
     verdict: dict[tuple[str, str, Any], str] = {}
@@ -844,13 +799,13 @@ def _autopilot_step(r: dict[str, Any]) -> str | None:
 def measure_order(
     records: Iterable[dict[str, Any]], workspace: str, until: str,
 ) -> dict[str, Any]:
-    """`0104` R8. From `workspace`'s first `autopilot-pick` to the end of the machine's day
-    `until`: how many steps the autopilot started, and every violation of the shortlist's
-    order, each `{v, unit, stage, at, why}`.
+    """From `workspace`'s first `autopilot-pick` to the end of the machine's day `until`: how
+    many steps the autopilot started, and every violation of the shortlist's order, each
+    `{v, unit, stage, at, why}`.
 
     V1 a pick of a unit not on its own shortlist. V2 a unit's first pick in the whole log
-    passing over one ranked above it with no reason, or with one outside `REASONS` — one
-    picked earlier in the same `pass` is not passed over. V3 a step with no pick of its unit
+    passing over one ranked above it with no reason, or with one outside `REASONS` (one
+    picked earlier in the same `pass` is not passed over). V3 a step with no pick of its unit
     and stage since that unit's previous step.
     """
     rows = [r for r in records if r.get("workspace") == workspace]
@@ -899,7 +854,7 @@ def measure_order(
     return {"steps": steps, "violations": violations, "since": since, "until": until}
 
 
-# The outcome of `0105`'s intent, per day: its four clauses.
+# The four clauses of the per-day outcome.
 ENOUGH_INTEGRATIONS = 5
 
 
@@ -910,14 +865,13 @@ def _local_midnight_utc(day: date) -> str:
 def measure_days(
     records: Iterable[dict[str, Any]], workspace: str, since: str, until: str, cap: float,
 ) -> list[dict[str, Any]]:
-    """`0105`. Per machine's day `since`..`until` inclusive: how many integrations and
-    failed steps `workspace` had, how many starts the autopilot made there, and the day's
-    spend over every workspace, since the cap is the app's. The spend is `spent_on`'s, no
-    second sum. `utc_from`/`utc_to` are that day's local midnights in UTC, since the intent
-    counts UTC days and the cap does not.
+    """Per machine's day `since`..`until` inclusive: how many integrations and failed steps
+    `workspace` had, how many starts the autopilot made there, and the day's spend over every
+    workspace (`spent_on`'s, no second sum). `utc_from`/`utc_to` are that day's local
+    midnights in UTC.
 
-    An `integration` record carries no cost field at all, so the intent's clause "at least
-    one integration with no `cost_usd`" holds whenever `enough_integrations` does.
+    An `integration` record carries no cost field, so "at least one integration with no
+    `cost_usd`" holds whenever `enough_integrations` does.
     """
     rows = list(records)
     out: list[dict[str, Any]] = []
@@ -954,19 +908,18 @@ def measure_days(
     return out
 
 
-# `0106` R7. The intent's deadlines, in seconds: the next pass, which `POLL_SECONDS` stands in
-# for (spec C3), and ten minutes when `max_parallel` held the run back.
+# Deadlines in seconds: the next pass, which `POLL_SECONDS` stands in for, and ten minutes when
+# `max_parallel` held the run back.
 ON_TIME = 300.0
 ON_TIME_FULL = 600.0
 # What `next` says of a draft; a stop `f` in other words is the gate's refusal.
 FINISH = "finish and accept"
-# The classes that count against the intent's outcome.
+# The classes that count against the outcome.
 _MISSED = ("late", "cap", "none")
 
 
 def _rerun_class(answer: dict[str, Any], later: list[dict[str, Any]]) -> tuple[str, float | None]:
-    """One case of `measure_reruns`: its class and, when the stage was reached, the seconds
-    from the answer to the first pick or start of it."""
+    """One case of `measure_reruns`: its class and, when the stage was reached, the seconds from the answer to the first pick or start of it."""
     stage = answer.get("stage")
     at = _moment(answer.get("at"))
     full = False
@@ -1003,12 +956,12 @@ def _rerun_class(answer: dict[str, Any], later: list[dict[str, Any]]) -> tuple[s
 def measure_reruns(
     records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
 ) -> dict[str, Any]:
-    """`0106` R7. Every `answer` record of `workspace` over the machine's days `since`..`until`
-    that finished the questions of a `draft` of a shortlisted unit while the autopilot was on,
+    """Every `answer` record of `workspace` over the machine's days `since`..`until` that
+    finished the questions of a `draft` of a shortlisted unit while the autopilot was on,
     each classed by what the unit's records after it show first.
 
-    `on-time`, `held`, `reruns` and `gate` meet the intent; `late`, `cap`, `stop:<kind>` and
-    `none` miss it. `met` is `None` when there is no case, which is not met (`intent.md`).
+    `on-time`, `held`, `reruns` and `gate` meet the deadline; `late`, `cap`, `stop:<kind>` and
+    `none` miss it. `met` is `None` when there is no case, which is not met.
     """
     rows = [r for r in records if r.get("workspace") == workspace]
     cases: list[dict[str, Any]] = []
@@ -1031,19 +984,19 @@ def measure_reruns(
 
 
 # `stop_for`'s e on an `exhausted` step; an `autopilot-stop` records `stage: ""`, so the stage is
-# read from here, and `; <origin note>` may follow (`service_autopilot`, `0112` R4).
+# read from here, and `; <origin note>` may follow.
 _RAN_OUT = re.compile(r"^the last (\S+) step ended exhausted(?:;|$)")
 
 
 def measure_exhausted(
     records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
 ) -> dict[str, Any]:
-    """`0120` R6. Every stop of `workspace` over the machine's days `since`..`until` on an
-    `exhausted` step of a stage other than `ship`, with no other `exhausted` end of that unit
-    and stage before it in the window: a stop at the first time it ran out, which R1 forbids.
+    """Every stop of `workspace` over the machine's days `since`..`until` on an `exhausted`
+    step of a stage other than `ship`, with no other `exhausted` end of that unit and stage
+    before it in the window: a stop at the first time it ran out.
 
     `exhausted` counts the window's `exhausted` ends of a stage other than `ship`; `met` is
-    `None` when there is none, which is not met (`intent.md ## Proposed outcome`).
+    `None` when there is none, which is not met.
     """
     ran_out: dict[tuple[Any, str], int] = {}
     violations: list[dict[str, Any]] = []
@@ -1078,14 +1031,14 @@ _UNOPENED_STOP = re.compile(r"^the last (\S+) step ended failed(?:;|$)")
 def measure_opening(
     records: Iterable[dict[str, Any]], workspace: str, since: str, until: str,
 ) -> dict[str, Any]:
-    """`0127` R9. What became of the prose steps of `workspace` over the machine's days
-    `since`..`until` whose reply lacked its opening.
+    """What became of the prose steps of `workspace` over the machine's days `since`..`until`
+    whose reply lacked its opening.
 
     `failed` is every such `end`; `repaired` every `done` one a repair turn wrote, with that
     turn's cost; `reruns` every `start` of the same unit and stage after one of `failed`;
     `stops` every stop `e` on a unit and stage whose last `end` is one of `failed`, with
     `attempt`, how many of them there were by then. `met` is `None` with neither `failed`
-    nor `repaired`, which is not met (`intent.md ## Proposed outcome`), else `not stops`.
+    nor `repaired`, else `not stops`.
     """
     failed: list[dict[str, Any]] = []
     repaired: list[dict[str, Any]] = []

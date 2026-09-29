@@ -1,8 +1,6 @@
 """Watching a running step: the window of its events, paging and following them.
 
-Split from `coscc/state/__init__.py` (`0095`). `StudioState` inherits it, so its vars and handlers
-keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
-because this module cannot import `coscc.state` at the top (`spike.md ## U1`).
+Handlers import `SERVICE` in their bodies: this module cannot import `coscc.state` at the top.
 """
 
 from __future__ import annotations
@@ -22,8 +20,8 @@ from coscc.state.views import (
 
 
 class WatchMixin(rx.State, mixin=True):
-    # -- `0073`: the watch pane. One `run` at a time; `_watch_token` changes whenever the pane
-    # closes or opens another, and the loop following the old one stops at its next batch.
+    # -- the watch pane. One `run` at a time; `_watch_token` changes whenever the pane closes
+    # or opens another, and the loop following the old one stops at its next batch.
     watch_run: str = ""
     watch_unit: str = ""
     watch_title: str = ""
@@ -41,8 +39,8 @@ class WatchMixin(rx.State, mixin=True):
     watch_open_text: str = ""
     _watch_token: int = 0
 
-    # -- `0073`: watching a step. Every read is `Service.events_page` or `.follow_events`; the
-    # page only keeps the list under `WATCH_WINDOW`. Nothing here writes anything anywhere.
+    # -- watching a step. Every read is `Service.events_page` or `.follow_events`; the page
+    # only keeps the list under `WATCH_WINDOW`.
 
     def _watch_reset(self, run: str, title: str, unit: str) -> None:
         self._watch_token += 1
@@ -61,11 +59,10 @@ class WatchMixin(rx.State, mixin=True):
             return None
 
     def _watch_take(self, fresh: list[WatchEvent]) -> None:
-        """New events, by `plan.md` step 7's rule: at the bottom, appended and the oldest
-        dropped past `WATCH_WINDOW`; reading older ones, appended while there is room and
-        counted in `watch_pending` once there is none. An event already shown is dropped: a
-        batch the follower yielded before *Jump to latest* read the last page again is also in that
-        page (`review.md` F1)."""
+        """New events: at the bottom, appended and the oldest dropped past `WATCH_WINDOW`;
+        reading older ones, appended while there is room and counted in `watch_pending` after.
+        An event already shown is dropped: a batch yielded before *Jump to latest* is also in
+        the page it re-read."""
         last = self.watch_events[-1].seq if self.watch_events else 0
         fresh = [e for e in fresh if e.seq > last]
         if not fresh:
@@ -85,8 +82,7 @@ class WatchMixin(rx.State, mixin=True):
 
     @rx.event
     def open_watch(self, run: str, title: str, unit: str = ""):
-        """R10. Open the pane on one step's `run`. A timeline row with no `run` opens it on
-        R13's line instead."""
+        """Open the pane on one step's `run`; a row with no `run` shows `NO_RUN_NOTE`."""
         from coscc.state import StudioState
         self._watch_reset(run, title or run, unit or self.unit_id)
         if not run:
@@ -106,9 +102,8 @@ class WatchMixin(rx.State, mixin=True):
 
     @rx.event(background=True)
     async def watch_follow(self):
-        """R10, R11. The last page, then every new event of a running step, gathered up to
-        `WATCH_GATHER` seconds. Reading the page first and following from its last `seq` is
-        safe: a running step's recorder holds every event, so nothing falls in between."""
+        """The last page, then every new event of a running step, gathered up to `WATCH_GATHER`
+        seconds. Following from the page's last `seq` is safe: the recorder holds every event."""
         from coscc.state import SERVICE, StudioState
         async with self:
             token, run = self._watch_token, self.watch_run
@@ -147,9 +142,8 @@ class WatchMixin(rx.State, mixin=True):
 
     @rx.event
     def watch_older(self):
-        """R7, R10. The page before the first event shown; the pane stops following. A full
-        list drops its newest rows, and says so, for a step that has ended too
-        (`review.md` F2)."""
+        """The page before the first event shown; the pane stops following. A full list drops
+        its newest rows, and says so, for a step that has ended too."""
         if not self.watch_events or not self.watch_has_older:
             return
         page = self._watch_page(before=self.watch_events[0].seq)
@@ -177,7 +171,7 @@ class WatchMixin(rx.State, mixin=True):
 
     @rx.event
     def watch_expand(self, seq: int):
-        """R12 *Mở*: one event whole, as stored, in a var of its own."""
+        """One event whole, as stored, in a var of its own."""
         from coscc.state import SERVICE
         try:
             page = SERVICE.events_page(self.cwd, self.watch_unit, self.watch_run, seq=int(seq))

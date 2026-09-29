@@ -4,7 +4,7 @@ Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/boa
 
 - **`/api/timeline` returns what a failed paid step replied.** A step whose reply
   could not be used (`0014`) keeps the last `REPLY_KEPT` characters of it, 2000
-  (`coscc/runner/reply.py:42`), and
+  (`coscc/runner/reply.py:41`), and
   that text reaches the board as `detail`, for whoever holds the password or a live
   session.
 - **`pull` refuses only within this process.** Two copies of the app on one working folder

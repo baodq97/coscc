@@ -1,17 +1,9 @@
 """The board steps running right now, one per unit at most.
 
-`0034`. The page used to hold one `running: str` for the whole board, so a step on any
-unit greyed out the run button on every other one, though each unit has its own worktree.
-What is running lives here instead, in the process that runs it, where both the page and
-`POST /api/board/stop` read it.
-
-**In memory, this process only.** A restart forgets every row, and so does a second copy
-of the app on the same data root -- the same limit `Sessions.live_in` names.
-
-Nothing here decides whether a step may run: that is `cos.mjs gate`. Since `0050` what
-keeps a second step, a hold or an integration off a unit is a `Mark` in `Service._active`,
-taken before `run_step`'s first `await`; this registry is what *Stop* and the Board's list
-read once the step is running, and it records who asked for a stop.
+In memory, this process only: a restart forgets every row. Nothing here decides whether a
+step may run (`cos.mjs gate`); a `Mark` in `Service._active` keeps a second step, hold or
+integration off a unit, and this registry is what *Stop* and the Board's list read, and it
+records who asked for a stop.
 """
 
 from __future__ import annotations
@@ -41,12 +33,10 @@ class Finishing(ValueError):
 
 @dataclass(eq=False)  # identity, not value: `Service._release` removes this one and no other
 class Mark:
-    """What holds a unit in `Service._active`: a step, an integration, a hold (`0050`),
-    Jera (`0044`) or a review round being allowed (`0081`).
+    """What holds a unit in `Service._active`: a step, an integration, a hold, Jera or a
+    review round being allowed.
 
-    `phase` is a step's only: `preparing` from `run_step`'s first line until the registry
-    lists it, `running` after. `started_at` is the one time both the refusal and the
-    Board's list show for that step.
+    `phase` is a step's only: `preparing` until the registry lists it, `running` after.
     """
 
     kind: str  # "step" | "integrate" | "hold" | "precedent" | "more-rounds"
@@ -56,7 +46,7 @@ class Mark:
 
 
 def describe(unit: str, mark: Mark) -> str:
-    """The one sentence every refusal of a busy unit carries (`0050` R3): what, and since when."""
+    """The one sentence every refusal of a busy unit carries: what, and since when."""
     t = mark.started_at
     if mark.kind == "integrate":
         return f"{unit} is busy: it is being integrated since {t}; wait for the integration to end"
@@ -92,8 +82,7 @@ class Running:
     # point is refused rather than honoured halfway.
     sealed: bool = False
     listeners: set = field(default_factory=set)
-    # `0073` R1. The id of this step's events, set by `Service.run_step` as it hands the step
-    # to `_drive`. Empty for a row made any other way.
+    # The id of this step's events, set by `Service.run_step`. Empty for a row made any other way.
     run: str = ""
 
 
@@ -155,8 +144,7 @@ class Registry:
 def seal(running: Running | None) -> bool:
     """Close the door on a stop, unless one already came through it.
 
-    Synchronous on purpose: with no `await` between the check and the set, nothing on the
-    event loop can slip a stop in between them.
+    Synchronous on purpose: no `await` between the check and the set, so no stop slips between.
     """
     if running is None:
         return True

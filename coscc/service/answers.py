@@ -1,8 +1,5 @@
 """What is written into a unit from outside a step: review rounds posted to the pull
-request, transitions, answers, outcomes, holds and review rounds allowed (`0081`).
-
-Split from `coscc/service/__init__.py` (`0095`), whose `Service` inherits it; a mixin with no fields.
-"""
+request, transitions, answers, outcomes, holds and review rounds allowed."""
 
 from __future__ import annotations
 
@@ -37,9 +34,9 @@ from coscc.units import BadUnit, CannotCreate, ideas
 from coscc.data import Data
 from coscc.service.common import Invalid, OUTCOME_RESULTS, OWNER
 
-# `0137` R4, R6. The kinds of a decision, the longest text one may carry (chosen, not
-# measured), the preference holding the names marked "This was me", and the artifacts whose
-# answers those names are gathered from.
+# The kinds of a decision, the longest text one may carry (chosen, not measured), the
+# preference holding the names marked "This was me", and the artifacts whose answers those
+# names are gathered from.
 DECISION_KINDS = ("decision", "delegation")
 DECISION_TEXT_MAX = 2000
 NAMES_MINE = "answer_names_mine"
@@ -51,10 +48,9 @@ class AnswersMixin:
     async def _post_new_rounds(
         self, cwd: str, unit: str, before: set[Any]
     ) -> list[dict[str, Any]]:
-        """`0021` R2. Post every round the step just added. Never raises.
+        """Post every round the step just added. Never raises.
 
-        What happened to each is in the run log whatever it was, and the board shows a
-        round that did not make it as *not on the PR* with the reason.
+        What happened to each is in the run log; the board shows a failed one as *not on the PR*.
         """
         try:
             data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
@@ -72,11 +68,10 @@ class AnswersMixin:
         return out
 
     async def post_review_comment(self, cwd: str, unit: str, round_n: Any) -> dict[str, Any]:
-        """`0021` R8, R9. Post one review round to the unit's pull request, or say it is there.
+        """Post one review round to the unit's pull request, or say it is there.
 
-        The body is built from the round as `cos.mjs` read it out of `review.md`; nothing a
-        caller sends reaches GitHub but the unit's name and the round's number. Not an
-        approval, and it opens no gate: neither gate reads comments (R10).
+        The body is built from the round as `cos.mjs` read it; nothing a caller sends reaches
+        GitHub but the unit's name and the round's number. Not an approval; no gate reads it.
         """
         self._workspace_or_refuse(cwd)
         try:
@@ -100,17 +95,15 @@ class AnswersMixin:
     async def _post_round(
         self, cwd: str, found: dict[str, Any], rnd: dict[str, Any]
     ) -> dict[str, Any]:
-        """Post one round and write one `pr-comment` row saying how it went (R13).
+        """Post one round and write one `pr-comment` row saying how it went.
 
-        The caller holds `_comment_lock`. A row that cannot be written is dropped rather
-        than turned into a failure: the comment is on GitHub or it is not, and that is what
-        the person asked about. The next board read then shows the round as not posted, and
-        a second press finds the marker and says `already`.
+        The caller holds `_comment_lock`. A row that cannot be written is dropped, not turned
+        into a failure: the comment is on GitHub or it is not.
         """
         unit = found["name"]
         n = rnd.get("n")
         pr_url = (found.get("pr") or {}).get("url") or ""
-        # `0036` R6: the `review` agent as the table names it now, overrides included.
+        # The `review` agent as the table names it now, overrides included.
         reviewer = self._agent("review")
         result = await prcomment.post(
             unit, n, rnd.get("verdict"), rnd.get("text") or "", pr_url,
@@ -141,18 +134,15 @@ class AnswersMixin:
     async def _sync_pr(
         self, cwd: str, unit: str, pr_before: str | None, stage: str = "pr"
     ) -> dict[str, Any]:
-        """`0055` R3, R5. Put `pr.md`'s title and body onto its pull request. Never raises.
+        """Put `pr.md`'s title and body onto its pull request. Never raises.
 
-        Called from two places: `_drive` after a `pr` step that was not stopped (R4), and
-        `run_step` before it asks the gate of a `ship` step (`0049` R7), `stage` naming which.
-        The words are `cos.mjs pr-text`'s; `prsync` compares and writes. A `pr.md` that
-        is not accepted or names no pull request is `skipped` with no `gh` call. One
-        `pr-sync` row says how it went, `existed` from the lookup before a `pr` step -- `None`
-        when that lookup could not answer, never a guess; a `ship` row has none. A row
-        that cannot be written is dropped, as `_post_round` drops one. `pr.md` is never
-        touched. `0122` R4: after a `pr` step, once `prsync` has run, whatever it said,
-        `prscope` reads the pull request's own counts and the row carries them as `scope`,
-        with a verdict no gate reads. Before `ship` it is not read (`0049` spec C6).
+        Called by `_drive` after a `pr` step that was not stopped, and by `run_step` before
+        it asks the gate of a `ship` step; `stage` names which. The words are `cos.mjs
+        pr-text`'s; `prsync` compares and writes. A `pr.md` that is not accepted or names no
+        pull request is `skipped` with no `gh` call. One `pr-sync` row says how it went
+        (`existed` is `None` when the lookup before a `pr` step could not answer). After a
+        `pr` step `prscope` reads the pull request's own counts into the row as `scope`;
+        no gate reads it. `pr.md` is never touched.
         """
         url, outcome, detail = "", "failed", ""
         scope: dict[str, Any] | None = None
@@ -173,7 +163,7 @@ class AnswersMixin:
                     scope = await prscope.read(url, text.get("scope"), where)
         except Unavailable as e:
             detail = str(e)
-        except Exception as e:  # noqa: BLE001 — R5: the step is done whatever this does
+        except Exception as e:  # noqa: BLE001 — the step is done whatever this does
             detail = str(e) or type(e).__name__
         record: dict[str, Any] = {"unit": unit, "stage": stage, "pr": url}
         if stage == "pr":
@@ -192,25 +182,21 @@ class AnswersMixin:
         return record
 
     def _unit_meta(self) -> UnitMeta:
-        """`0135`. The unit metadata store. Unlike `_history` there is one with no working
-        folder too, its rows keyed by the data directory, the one root there is then: every
-        board read needs a snapshot, and a read-only board is still read."""
+        """The unit metadata store. Unlike `_history` there is one with no working folder too,
+        keyed by the data directory: every board read needs a snapshot."""
         data = Data(self.config.data_dir)
         return UnitMeta(self.config.working_dir or data.root, data)
 
     async def _ingest(self, cwd: str, unit: str, done: dict[str, Any], wrote: str | None = None) -> dict[str, Any]:
-        """`0135` R7. The one read of a unit's files after a step that finished, of every
-        stage, prose or not: what changed goes into `cos.db` through `cos.mjs meta`.
+        """The one read of a unit's files after a step that finished, prose or not: what
+        changed goes into `cos.db` through `cos.mjs meta`.
 
-        Replaces `0014`'s `_record_transition`, which read `Status:` with a regex that
-        stopped at a hyphen and dropped every failure. The step still ends as it ended, but
-        a failure is no longer dropped (spec C3): the `done` item carries `ingest_error`,
-        and a row in `unit_unknowns` says so to the snapshot. The transition carries the
-        stage, session and source `0014` R6 gave it.
+        The step still ends as it ended, but a failure is not dropped: the `done` item
+        carries `ingest_error`, and a `unit_unknowns` row tells the snapshot.
 
-        `0136` R4: a step whose run submitted a stage result takes its artifact's status and
-        questions from that object, through `transitions.apply` and guard `stage-result`, and
-        never from the file. A guard that closes is a failure like any other here.
+        A step whose run submitted a stage result takes its artifact's status and questions
+        from that object, through `transitions.apply` and guard `stage-result`, never from
+        the file. A guard that closes is a failure like any other here.
         """
         if done.get("outcome") != "done":
             return {}
@@ -233,8 +219,8 @@ class AnswersMixin:
             return {}
         except (MetaError, BadTransition, Busy, sqlite3.Error, OSError) as e:
             # One fixed sentence on the card and the step, the error in the log: `MetaError`
-            # carries `cos.mjs`'s stderr or its argv, `Busy` the database's path (review F10,
-            # S3). A `BadTransition` names a status and nothing else, as it is written to.
+            # carries `cos.mjs`'s stderr or its argv, `Busy` the database's path.
+            # A `BadTransition` names a status and nothing else.
             print(f"coscc: {unit} in {workspace} could not be read after its step: {e}", file=sys.stderr)
             if isinstance(e, BadTransition):
                 reason = str(e) or "a status it read is not one the app records"
@@ -252,9 +238,9 @@ class AnswersMixin:
         self, meta: UnitMeta, workspace: str, unit: str, stage: str, artifact: str,
         submitted: dict[str, Any], done: dict[str, Any],
     ) -> None:
-        """`0136` R4. The stage result a run submitted, as the status of `artifact`: one
-        transition through guard `stage-result`, carrying the object, and the row and questions
-        `UnitMeta.record_result` writes, in one transaction with its event (R16)."""
+        """The stage result a run submitted, as the status of `artifact`: one transition
+        through guard `stage-result`, and the rows `UnitMeta.record_result` writes, in one
+        transaction with its event."""
         journal = self._journal() or Journal(meta.root, self.config.data_dir)
         obj = dict(submitted.get("object") or {})
         applied = transitions.apply(
@@ -275,10 +261,10 @@ class AnswersMixin:
         self, meta: UnitMeta, workspace: str, unit: str, stage: str, artifact: str,
         submitted: dict[str, Any], done: dict[str, Any],
     ) -> None:
-        """`0136` R5. The round a review run submitted, as the status of `review.md`: one
-        transition through guard `review-round`, reading the head the app recorded when the run
-        opened (R3 c), and the round's rows, in one transaction with its event (R16). The
-        verdict reaches the history whole, `changes-requested` and all (`0134`)."""
+        """The round a review run submitted, as the status of `review.md`: one transition
+        through guard `review-round`, reading the head the app recorded when the run opened,
+        and the round's rows, in one transaction with its event. The verdict reaches the
+        history whole, `changes-requested` and all."""
         journal = self._journal() or Journal(meta.root, self.config.data_dir)
         obj = dict(submitted.get("object") or {})
         applied = transitions.apply(
@@ -296,34 +282,30 @@ class AnswersMixin:
             raise BadTransition(f"guard {applied.guard} refused {artifact}: {', '.join(applied.reasons)}")
 
     def _refresh_ideas(self, cwd: str) -> None:
-        """`0135`. `cwd`'s ideas into `cos.db` again, after the app wrote one. A failure is
-        left to the board: `cos.mjs` then reports the idea link it cannot find."""
+        """`cwd`'s ideas into `cos.db` again, after the app wrote one. A failure is left to
+        the board: `cos.mjs` then reports the idea link it cannot find."""
         try:
             self._unit_meta().refresh_ideas(self._journal_key(cwd), self._units_root(cwd))
         except (MetaError, Busy, sqlite3.Error, OSError):
             pass
 
     def _create_lock(self, cwd: str) -> asyncio.Lock:
-        """`0017` R8. One lock per workspace, held across numbering and making the tree."""
+        """One lock per workspace, held across numbering and making the tree."""
         return self._create_locks.setdefault(units.key(cwd), asyncio.Lock())
 
     async def create_unit(
         self, cwd: str, slug: str, brief: str = "", idea: str = "", depends_on: str = ""
     ) -> dict[str, Any]:
-        """`0014` R1. Start a work unit, in the product's store rather than the repository.
+        """Start a work unit, in the product's store rather than the repository.
 
-        The number and the slug grammar are `cos.mjs`'s, through `coscc/units/__init__.py`. Nothing
-        here is a second opinion about either — `.claude/CLAUDE.md` says that script is the
-        one place the loop is defined.
+        The number and the slug grammar are `cos.mjs`'s. It also opens the unit's own
+        worktree, detached at the workspace's `main`; a worktree that cannot be opened does
+        not undo the unit: the result says why under `worktree.error`.
 
-        Since `0017` it also opens the unit's own worktree, detached at the workspace's
-        `main`. A worktree that cannot be opened does not undo the unit: the result says
-        why under `worktree.error`, and the next step that needs the tree tries again.
-
-        `0040` R11: with `idea`, the unit is one side of a shared idea. Everything is checked
-        before a number is taken; the unit gets no `idea.md`, and the idea gets one line under
+        With `idea`, the unit is one side of a shared idea. Everything is checked before a
+        number is taken; the unit gets no `idea.md`, and the idea gets one line under
         `## Units`. A failed append leaves a unit the idea does not list, which `cos.mjs`
-        reports and whose `impl` it keeps shut. Without `idea`, nothing here changed.
+        reports and whose `impl` it keeps shut.
         """
         self._workspace_or_refuse(cwd)
         if depends_on and not idea:
@@ -342,10 +324,8 @@ class AnswersMixin:
             try:
                 made = {
                     "cwd": cwd,
-                    # The host repository's own `.cos/` counts toward the number, so a unit
-                    # started here cannot take a number already used there
-                    # (`0001_product-describes-a-state-it-is-not-in` R10), and since `0017`
-                    # so does every worktree's. Counting is `cos.mjs`'s.
+                    # The host repository's own `.cos/` and every worktree's count toward
+                    # the number, so a unit cannot take one already used there.
                     **units.create(cwd, slug, brief, self.config.data_dir, reserve_from=reserve),
                 }
             except (CannotCreate, BadUnit) as e:
@@ -357,7 +337,7 @@ class AnswersMixin:
                     raise Invalid(f"{made['unit']} was made, but {idea} could not list it: {e}") from e
                 made["idea"] = idea
                 self._refresh_ideas(linked["home"])
-            # `0135` Design, the flow of writes: the new unit's row, and its `idea.md`'s status.
+            # The new unit's row, and its `idea.md`'s status.
             made.update(await self._ingest(cwd, made["unit"], {"outcome": "done", "stage": "create"}))
             try:
                 made["worktree"] = await worktrees.ensure(
@@ -385,7 +365,7 @@ class AnswersMixin:
                 branch = None
             if branch is None:
                 return {"path": found["path"], "branch": ""} if found else None
-            # The branch exists and the tree is not on it: open it there (`worktrees.ensure`).
+            # The branch exists and the tree is not on it: open it there.
             made = await worktrees.ensure(cwd, unit, branch, self.config.data_dir)
             return {"path": made["path"], "branch": made["branch"], "base": made.get("base")}
         except (GitError, BadUnit) as e:
@@ -403,31 +383,25 @@ class AnswersMixin:
         answered_by: str,
         delegation: str = "",
     ) -> dict[str, Any]:
-        """`0016` R2–R4. A person answers one item under an artifact's `## Open questions`.
+        """A person answers one item under an artifact's `## Open questions`.
 
-        Since `0135` R8 the answer is a row in `cos.db` and the artifact is not touched: the
-        snapshot hands it to `cos.mjs`, and the next step's prompt renders it as the
-        `### Câu N` block the file once carried. What counts as a question and whether it is
-        answered is `cos.mjs`'s decision, read through one board read; nothing here parses
-        `## Open questions` a second time (R7).
+        The answer is a row in `cos.db`; the artifact is not touched. What counts as a
+        question and whether it is answered is `cos.mjs`'s decision, read through one board
+        read. Not an approval; it starts nothing itself, though with the autopilot on the
+        pass it nudges may start the next stage. `answered_by` is whatever name the caller
+        typed: a claim, not an identity.
 
-        Not an approval, and it starts nothing itself; with the autopilot on, the pass it
-        nudges may start the next stage (`0043`), or run again a draft this answer finished
-        (`0106`). `answered_by` is whatever name the caller
-        typed: no route in this app has a login, so it is a claim, not an identity.
+        `question` may be `"F<n>"`, a finding `cos.mjs` lists in the unit's `personFindings`;
+        then `artifact` must be `review.md`. That row is read by `cos.mjs next` and the
+        `ship` gate.
 
-        `0028`: `question` may be `"F<n>"`, a finding `cos.mjs` lists in the unit's
-        `personFindings`; then `artifact` must be `review.md` and the row's `ref` is `F<n>`.
-        Unlike a numbered answer, that row is read by `cos.mjs next` and the `ship` gate.
-
-        `0137` R10: with `delegation` `D<n>`, the answer is an agent's under a delegation the
-        person entered on Settings; `_append_one` checks it and ends the row's text with
+        With `delegation` `D<n>`, the answer is an agent's under a delegation the person
+        entered on Settings; `_append_one` checks it and ends the row's text with
         `Theo ủy quyền: D<n>`, which is what reads it back as `delegated`.
         """
         self._workspace_or_refuse(cwd)
         name = str(answered_by or "").strip() or OWNER
-        # `0044` R11. Jera's name marks the road a block came by, not who typed it, so a
-        # person may not take it.
+        # Jera's name marks the road a block came by, not who typed it, so a person may not take it.
         if precedent_mod.is_jera(name):
             raise Invalid(f"{precedent_mod.AGENT} is the agent that answers from precedent; answer under another name")
         done = await self._append_answers(
@@ -435,7 +409,7 @@ class AnswersMixin:
             delegation=str(delegation or "").strip(),
         )
         written = done["written"][0]
-        # `0043` R5 b. The answer itself still starts nothing; a pass may, if the switch is on.
+        # The answer itself starts nothing; a pass may, if the switch is on.
         self._autopilot_nudge(self._journal_key(cwd))
         return {
             "unit": unit,
@@ -456,20 +430,18 @@ class AnswersMixin:
         source: str,
         delegation: str = "",
     ) -> dict[str, Any]:
-        """The one place that records an answer (`0044` Design 3; a row since `0135`): a person's
-        through `answer`, Jera's through `precedent`. `items` is `[(artifact, question, text)]`,
-        all checked and written under one hold of `_answer_lock` and one board read.
+        """The one place that records an answer: a person's through `answer`, Jera's through
+        `precedent`. `items` is `[(artifact, question, text)]`, all checked and written under
+        one hold of `_answer_lock` and one board read.
 
-        A person's refusal raises, as `answer` always has. With `via == "precedent"` every
-        item is judged alone and a refused one is `skipped` with its reason, never raised
-        (R7): `review.md` and any `F<n>` before a file is opened (R3), and a question the
-        board read already shows answered — a person got there while Jera ran.
+        A person's refusal raises. With `via == "precedent"` every item is judged alone and
+        a refused one is `skipped` with its reason: `review.md` and any `F<n>`, and a
+        question already answered because a person got there while Jera ran.
         Returns `{written: [{artifact, question}], skipped: [{artifact, question, reason}],
         date}`.
 
-        `0136` R8, R15: each row says whose answer it is by the road it came, never by the
-        name typed — Jera's `agent`, one under a delegation `delegated`, any other `person` —
-        so no guard can take Jera's answer for a person's.
+        Each row says whose answer it is by the road it came, never by the name typed:
+        Jera's `agent`, one under a delegation `delegated`, any other `person`.
         """
         jera = via == precedent_mod.VIA
         authority = "agent" if jera else "delegated" if delegation else "person"
@@ -508,10 +480,8 @@ class AnswersMixin:
                 skipped += [{**w, "reason": str(e)} for w in written]
                 written = []
 
-        # `0016` plan, in place of spec R9: the store is not a git repository, so there is
-        # no commit to make. The provenance this app already keeps is a row in `outputs`.
-        # Never raises: the answer is recorded, and failing the request now would tell the
-        # person it was not.
+        # The store is not a git repository, so provenance is a row in `outputs`. Never
+        # raises: the answer is recorded, and failing now would say it was not.
         history = self._history()
         if history is not None:
             for w in written:
@@ -534,12 +504,11 @@ class AnswersMixin:
         self, cwd: str, unit: str, found: dict[str, Any], written: list[dict[str, Any]], texts: list[str],
         name: str, today: str, via: str, authority: str = "person",
     ) -> None:
-        """`0135` R8, C8. Each answer's row in `unit_answers` and its `answer` record in the run
-        log in one transaction: all are written or none is. Raises `Invalid` when none was.
+        """Each answer's row in `unit_answers` and its `answer` record in the run log in one
+        transaction: all are written or none is. Raises `Invalid` when none was.
 
-        `0106` R4: one `answer` record per answer, so the run log can tell which answer
-        finished a draft's questions (`completes`) and what the autopilot then did. It
-        starts nothing. With no run log (`_journal`) there is only the row to write.
+        One `answer` record per answer lets the run log tell which answer finished a draft's
+        questions (`completes`). With no run log there is only the row to write.
         """
         if not written:
             return
@@ -576,7 +545,7 @@ class AnswersMixin:
                 })
             journal.append_with(records, rows)
         except (BadRecord, Busy, sqlite3.Error, OSError) as e:
-            # The error goes to the log, not the dialog: `Busy` names the database's path (S3).
+            # The error goes to the log, not the dialog: `Busy` names the database's path.
             said = ", ".join(f"{w['artifact']} {w['question']}" for w in written)
             print(f"coscc: the answer was not recorded ({said}): {e}", file=sys.stderr)
             raise Invalid(f"the answer was not recorded ({said})") from e
@@ -588,16 +557,14 @@ class AnswersMixin:
         """Check one answer against the board read `found`. Raises `Invalid`; returns
         `(number, finding, text)`, the text as its row keeps it. `_record_answers` writes it."""
         if jera:
-            # `0044` R3. Decided by the name of the file and the shape of the heading, never
-            # by what the session said.
+            # Decided by the name of the file and the shape of the heading, never by what the session said.
             if artifact == "review.md" or re.fullmatch(r"F\d+", str(question).strip()):
                 raise Invalid(f"{precedent_mod.AGENT} never answers in review.md or a finding")
             if any(q.get("artifact") == artifact and q.get("n") == question and q.get("answered")
                    for q in found.get("questions") or []):
                 raise Invalid(f"{artifact} question {question} was answered while {precedent_mod.AGENT} ran")
-        # `0028`. A finding the last review round confirmed needs a person is answered
-        # by its id, `F<n>`, into `review.md` -- and only while `cos.mjs` lists it in
-        # `personFindings`, so what may be answered is its decision, not this route's.
+        # A finding the last review round confirmed needs a person is answered by its id,
+        # `F<n>`, into `review.md`, and only while `cos.mjs` lists it in `personFindings`.
         finding = str(question).strip() if isinstance(question, str) else ""
         finding = finding if re.fullmatch(r"F\d+", finding) else ""
         if finding:
@@ -629,17 +596,16 @@ class AnswersMixin:
         if not name or "\n" in name or "\r" in name:
             raise Invalid("say who is answering, on one line")
         nxt = str(found.get("next") or "")
-        # `0139` R11: the code decides; the words are only what the refusal says.
+        # The code decides; the words are only what the refusal says.
         if found.get("why") in ("finished", "rejected"):
             raise Invalid(f"{unit} is {nxt}; its questions can no longer be answered")
         # A line that reads as a heading would end this block early or open another in the
-        # prompt that renders it (`0135`), and the stage would read the answer wrongly.
-        # Refusing is cheaper and more honest than escaping somebody's words.
+        # prompt that renders it. Refusing is cheaper than escaping somebody's words.
         if any(line.lstrip().startswith("#") for line in text.splitlines()):
             raise Invalid("no line of an answer may start with #")
-        # `0115` review F2. A stage outside the five prose ones writes its artifact with its
-        # own tools, whenever it likes, so the questions an answer is numbered against may be
-        # renumbered under it while it runs. Checked with no `await` before the write, like `_take`.
+        # A stage outside the prose ones writes its artifact with its own tools whenever it
+        # likes, so the questions may be renumbered while it runs. Checked with no `await`
+        # before the write, like `_take`.
         mark = self._active.get((self._journal_key(cwd), unit))
         if mark is not None and mark.kind == "step" and not policy.is_prose_stage(mark.stage):
             row = next((r for r in found.get("stages") or [] if r.get("stage") == mark.stage), None)
@@ -649,15 +615,13 @@ class AnswersMixin:
                     "is running; answer it once the step ends"
                 )
         if delegation:
-            # `0137` R10. Last of the refusals, and still before the row is written.
+            # Last of the refusals, before the row is written.
             text = f"{text}\n\n{precedent_mod.DELEGATION} {self._delegation_or_refuse(cwd, name, delegation, today)}"
-        # `0135` R8. A row in `cos.db`, and no byte of the artifact: the snapshot hands it to
-        # `cos.mjs`, and a stage's prompt renders it as the block it once was.
         return number, finding, text.strip()
 
     def _delegation_or_refuse(self, cwd: str, name: str, delegation: str, today: str) -> str:
-        """`0137` R10. The `D<n>` an answer under `name` may cite today in `cwd`, or `Invalid`
-        naming why not. What the delegation `covers` is not checked (spec ## Out of scope)."""
+        """The `D<n>` an answer under `name` may cite today in `cwd`, or `Invalid` naming why
+        not. What the delegation `covers` is not checked."""
         cited = str(delegation or "").strip()
         if not re.fullmatch(r"D\d+", cited):
             raise Invalid(f"a delegation is named D<n>, got {delegation!r}")
@@ -678,14 +642,13 @@ class AnswersMixin:
             raise Invalid(f"{cited} delegates to {d['agent']}, and this answer is under {name}")
         return cited
 
-    # -- the person's decisions and names (`0137` R4-R6) ------------------------
+    # -- the person's decisions and names ------------------------
     #
     # Called only by the Settings screen's handlers (`coscc/state/answers.py`). No route
-    # reaches these: a write over HTTP would let an agent make "the person's decision" itself
-    # (spec ## Concerns). The page does not tell a person from an agent with a browser.
+    # reaches these: over HTTP an agent could make "the person's decision" itself.
 
     def _who_context(self, cwd: str) -> dict[str, Any]:
-        """What `precedent.entries` needs to say who decided each entry (`0137` R1)."""
+        """What `precedent.entries` needs to say who decided each entry."""
         data = Data(self.config.data_dir)
         return {"workspace": units.slot(cwd) if cwd else "", "decisions": data.decisions(),
                 "mine": sorted(self._names_mine(data)), "agents": self.agent_names(),
@@ -698,8 +661,8 @@ class AnswersMixin:
         return {str(n).casefold() for n in stored} if isinstance(stored, list) else set()
 
     def decisions_table(self) -> dict[str, Any]:
-        """`0137` R5. Every decision, withdrawn and expired included, each with its `state` and
-        its workspace by name (S3), and the workspace names the form offers."""
+        """Every decision, withdrawn and expired included, each with its `state` and its
+        workspace by name, and the workspace names the form offers."""
         today = date.today().isoformat()
         rows = self.workspaces()["workspaces"]
         names = {units.slot(r["path"]): str(r["name"]) for r in rows}
@@ -723,9 +686,8 @@ class AnswersMixin:
         return {"rows": out, "workspaces": sorted(dict.fromkeys(names.values()))}
 
     def add_decision(self, fields: dict[str, Any]) -> dict[str, Any]:
-        """`0137` R4, R5. One new decision from the Settings form, or `Invalid` with one sentence.
-        `from` is today, set here: a form that took it could date a decision before the
-        blocks it would then relabel."""
+        """One new decision from the Settings form, or `Invalid` with one sentence. `from` is
+        today, set here: a form that took it could date a decision before the blocks it relabels."""
         get = lambda k: str(fields.get(k) or "").strip()  # noqa: E731
         kind, text, source, until, where = get("kind"), get("text"), get("source"), get("until"), get("workspace")
         agent, covers = get("agent"), get("covers")
@@ -773,7 +735,7 @@ class AnswersMixin:
         return {"added": f"D{n}", **self.decisions_table()}
 
     def withdraw_decision(self, decision_id: Any) -> dict[str, Any]:
-        """`0137` R4, R5. Withdraw one decision in force: its row stays, with today's date."""
+        """Withdraw one decision in force: its row stays, with today's date."""
         cited = str(decision_id or "").strip()
         today = date.today().isoformat()
         table = self.decisions_table()
@@ -789,10 +751,9 @@ class AnswersMixin:
         return {"withdrawn": cited, **self.decisions_table()}
 
     async def answer_names(self) -> dict[str, Any]:
-        """`0137` R6. Every name in `Answered by:` of an answer in force in `intent.md` or
-        `spec.md`, in every workspace the app has, less `owner` and every agent's name; each
-        with how many answers carry it and whether it is marked "This was me". A workspace
-        that cannot be read is a `problems` line. Reads files and writes nothing (R11)."""
+        """Every name in `Answered by:` of an answer in force in `intent.md` or `spec.md`, in
+        every workspace, less `owner` and every agent's name; each with how many answers carry
+        it and whether it is marked "This was me". An unreadable workspace is a `problems` line."""
         agent_names = self.agent_names()
         mine = self._names_mine(Data(self.config.data_dir))
         found: dict[str, dict[str, Any]] = {}
@@ -822,8 +783,8 @@ class AnswersMixin:
         return {"rows": rows, "problems": problems}
 
     def set_name_mine(self, name: Any, on: bool) -> dict[str, Any]:
-        """`0137` R6. Mark one name as the person's, or unmark it. Stored casefolded under
-        `NAMES_MINE`, which `PREFERENCES` does not list, so `set_preference` cannot write it."""
+        """Mark one name as the person's, or unmark it. Stored casefolded under `NAMES_MINE`,
+        which `PREFERENCES` does not list, so `set_preference` cannot write it."""
         shown = str(name or "").strip()
         if not shown or "\n" in shown or "\r" in shown:
             raise Invalid("Name one name, on one line.")
@@ -854,16 +815,14 @@ class AnswersMixin:
         note: str = "",
         recorded_by: str = "",
     ) -> dict[str, Any]:
-        """`0047` R1–R4, R7. Record whether a finished unit met its intent's outcome.
+        """Record whether a finished unit met its intent's outcome.
 
-        Built on `answer()`: the same lock, the same one board read, the same refusal when a
-        section follows `## Answers`, and the same `"a"` open, so every byte above the block
-        stays the byte the stage left there. The block is `### Outcome` under `intent.md`'s
-        `## Answers`; whether it is valid and which one is in force is `cos.mjs`'s reading.
+        Same lock, board read and refusal when a section follows `## Answers` as `answer()`,
+        and appended, so every byte above the block stays as the stage left it. The block is
+        `### Outcome` under `intent.md`'s `## Answers`; `cos.mjs` reads whether it is valid.
 
-        Not an approval, and it starts nothing: no gate reads the block, and a finished unit
-        stays finished. `recorded_by` and `measured_by` are names somebody typed; no route
-        has a login, so both are claims. `source` is not checked against anything.
+        Not an approval; no gate reads it. `recorded_by` and `measured_by` are names somebody
+        typed, so both are claims. `source` is not checked against anything.
         """
         self._workspace_or_refuse(cwd)
         name = str(recorded_by or "").strip() or OWNER
@@ -899,8 +858,7 @@ class AnswersMixin:
                 raise Invalid("the result needs a source: where the figure it rests on came from")
             if kind == "unmeasurable" and not why:
                 raise Invalid("the result needs a reason: why it could not be measured")
-            # The same refusal as `answer()`, and for the same reason: a heading would end
-            # this block early or open another, and `cos.mjs` would read it wrongly.
+            # As in `answer()`: a heading would end this block early or open another.
             if any(line.lstrip().startswith("#") for line in [src, why, *text.splitlines()]):
                 raise Invalid("no line of an outcome may start with #")
 
@@ -941,8 +899,8 @@ class AnswersMixin:
             except OSError as e:
                 raise Invalid(f"could not write intent.md: {e}") from e
 
-        # As in `answer()`: the store has no git, so the provenance is a row in `outputs`,
-        # and a failure to write it never fails a block already on disk.
+        # As above: provenance is a row in `outputs`; a failure to write it never fails a
+        # block already on disk.
         history = self._history()
         if history is not None:
             try:
@@ -968,11 +926,9 @@ class AnswersMixin:
 
     async def _append_to_answers(self, path: Path, block: str, what: str) -> None:
         """Append `block` to the end of `path`, under its `## Answers`, opening that section
-        when the file has none -- the one way the app writes into an artifact a stage wrote,
-        never rewriting a byte above it. `0045`'s hold wrote this way first; `0054`'s
-        `### Rerun` block does too. Under `_answer_lock`, so two appends never interleave.
+        when the file has none; never rewrites a byte above it. Under `_answer_lock`.
         `what` names the block in the refusal when a section follows `## Answers`, where an
-        appended block would not be read at all."""
+        appended block would not be read."""
         name = path.name
         async with self._answer_lock:
             try:
@@ -999,18 +955,16 @@ class AnswersMixin:
                 raise Invalid(f"could not write {name}: {e}") from e
 
     async def hold(self, cwd: str, unit: str, to: str, reason: str, by: str) -> dict[str, Any]:
-        """`0045`. A person pauses, drops or resumes a unit (`to`: paused, dropped, active).
+        """A person pauses, drops or resumes a unit (`to`: paused, dropped, active).
 
-        Records one row in `unit_holds` and one `hold` record in the run log (R10), in one
-        transaction (`0135` C8); `intent.md` is not touched. Which moves exist is `cos.mjs`'s
-        `holdMoves`, read off the board; nothing here decides it (R6). Dropping also closes the unit's open pull request with
-        this machine's `gh` login and removes its worktree (R12); a failure there is
-        reported, never raised, and undoes nothing.
+        Records one row in `unit_holds` and one `hold` record in the run log, in one
+        transaction; `intent.md` is not touched. Which moves exist is `cos.mjs`'s
+        `holdMoves`. Dropping also closes the unit's open pull request with this machine's
+        `gh` login and removes its worktree; a failure there is reported, never raised.
 
-        Not an approval, and it starts nothing (R16): no step runs, no session opens, even on
-        a resume. `by` is whatever name the caller typed. Refused while a step or an
-        integration of this unit runs in this process (R13); it holds that same mark itself
-        while it writes, so no step can begin halfway through.
+        Not an approval; it starts nothing, even on a resume. `by` is whatever name the
+        caller typed. Refused while a step or an integration of this unit runs; it holds
+        that same mark itself while it writes, so no step can begin halfway through.
         """
         self._workspace_or_refuse(cwd)
         journal = self._journal()
@@ -1050,8 +1004,8 @@ class AnswersMixin:
                 root = str(Path(cwd).expanduser().resolve())
                 effects.append(await hold_rules.close_pr(root, branch))
                 effects.append(await hold_rules.remove_tree(cwd, unit, self.config.data_dir))
-            # `0135` R8, C8. The hold's row and its run-log record in one transaction, after
-            # the effects the record names: both are written or neither is.
+            # The hold's row and its run-log record in one transaction, after the effects
+            # the record names.
             meta = self._unit_meta()
             try:
                 journal.append_with(
@@ -1070,15 +1024,13 @@ class AnswersMixin:
         return {"unit": unit, "from": from_, "to": to, "reason": reason, "by": by, "date": today, "effects": effects}
 
     async def more_rounds(self, cwd: str, unit: str, by: str) -> dict[str, Any]:
-        """`0081` R6. A person allows one more review round to a unit that used all of its.
+        """A person allows one more review round to a unit that used all of its.
 
-        Appends one `### More rounds` block under `review.md ## Answers` — the way `hold`
-        appends, never rewriting a byte above it. Whether the unit is out of rounds is
-        `cos.mjs`'s `moreRounds`, read off the board; nothing here compares rounds with a
-        limit. Not an approval, and it starts nothing: no step, no session, no run-log row,
-        and the autopilot is not woken. `by` is whatever name the caller sent, `owner` when
-        none. Refused while a step or an integration of this unit runs in this process; it
-        holds that same mark itself while it writes.
+        Appends one `### More rounds` block under `review.md ## Answers`, never rewriting a
+        byte above it. Whether the unit is out of rounds is `cos.mjs`'s `moreRounds`. Not an
+        approval; it starts nothing and does not wake the autopilot. `by` is `owner` when
+        none. Refused while a step or an integration of this unit runs; it holds that same
+        mark itself while it writes.
         """
         self._workspace_or_refuse(cwd)
         if not unit:

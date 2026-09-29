@@ -10,7 +10,7 @@ paths:
 - `POST /api/units/review-comment` posts a round of `review.md` to the pull request verbatim,
   under this machine's `gh` login: a token or local path in a finding goes up with it, and a
   public repository's pull request is public. `run_step` also posts after writing a round,
-  holding the `done` row for two `gh` calls of `prcomment.TIMEOUT` (`coscc/github/prcomment.py:38`).
+  holding the `done` row for two `gh` calls of `prcomment.TIMEOUT` (`coscc/github/prcomment.py:28`).
 - Every `pr` step rewrites its pull request's title and body: `_sync_pr` reads `cos.mjs pr-text`
   and, when `pr.md` is `accepted` and names a pull request URL, runs `gh pr view`, `gh pr edit`
   and one `gh pr view --json changedFiles,additions,deletions,files` (`coscc/github/prscope.py`),

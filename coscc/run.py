@@ -1,34 +1,12 @@
-"""Starting the app. One process, one port.
+"""Starting the app: one process, one port, not `reflex run`.
 
-This is not `reflex run`, and the difference is a safety property rather than a preference.
-`plan.md` step 1 measured it: Reflex's two-port dev mode starts a vite server that binds
-every interface, and 0.9.11 exposes no setting for its host — only `PORT` is passed
-through. So the dev server is not a configuration this app supports.
-
-Instead the compiled frontend is mounted into the same ASGI app that serves `/api/*`
+Reflex's dev mode starts a vite server that binds every interface with no host setting, so
+it is unsupported. The compiled frontend is mounted into the ASGI app that serves `/api/*`
 (`__REFLEX_MOUNT_FRONTEND_COMPILED_APP`), and uvicorn binds it to the host in `config.py`.
 
-**Two kinds of install, and they get different answers to the same question.**
-`0011` gave this app a second shape: a wheel that carries its own compiled bundle under
-`coscc/_web/`, installed on a machine with no checkout and no Node. `coscc/web/frontend.py`
-decides which of the two is in front of us, and the branch below is the whole difference:
-
-*A checkout* can rebuild, so a bundle that disagrees with the source is a real error with a
-real fix, and this refuses to serve it — that is `0003`'s guard and it stays exactly as it
-was.
-
-*A packaged install* cannot rebuild; there is no `reflex export` to run and no Node to run
-it with. Refusing there would leave a person holding a wheel that can never start. So the
-address baked into the bundle is rewritten to the address actually being served, and the
-app comes up. `coscc/web/frontend.py` explains what is rewritten and why the `.gz` sidecar
-matters as much as the `.js`.
-
-Build the frontend first, in a checkout:
-
-    uv run coscc-build
-
-That wrapper exists rather than `reflex export` so the build leaves a fingerprint. See
-`coscc/build.py`.
+A checkout refuses a bundle that disagrees with the source (build with `uv run coscc-build`,
+which leaves a fingerprint). A packaged install cannot rebuild, so the address baked into
+the bundle is rewritten to the one being served (`coscc/web/frontend.py`).
 """
 
 from __future__ import annotations
@@ -37,11 +15,10 @@ import os
 import sys
 from pathlib import Path
 
-# Safe at module level, and the helpers below need it there: it imports nothing from
-# Reflex, so it cannot disturb the ordering the two environment variables depend on.
+# Imports nothing from Reflex, so it cannot disturb the ordering the environment variables need.
 from coscc.web import frontend
 
-# The same: standard library only (`coscc/update/__init__.py`'s docstring says why it must be).
+# Standard library only.
 from coscc import update
 from coscc.config import LOOPBACK
 
@@ -63,11 +40,8 @@ def main(argv: list[str] | None = None) -> None:
 
     config = from_env()
 
-    # The one place the question "where is the compiled frontend" is answered, and the
-    # answer is handed to Reflex rather than computed twice (`spec.md` R2). Reflex reads
-    # this variable when it composes its static mount — measured 2026-09-22: it reads it
-    # on every call rather than caching it at import — so setting it here, before the app
-    # factory runs inside uvicorn, is what makes the mount and this file agree.
+    # Handed to Reflex rather than computed twice. Reflex reads this on every call, so
+    # setting it before the app factory runs makes the mount and this file agree.
     os.environ[frontend.WEB_WORKDIR_VAR] = str(frontend.web_dir(REPO))
     static = frontend.static_dir(REPO)
 
@@ -76,26 +50,22 @@ def main(argv: list[str] | None = None) -> None:
     else:
         _refuse_a_bundle_that_does_not_match_the_source(static, config)
 
-    # `0092` R5: the steps the app went down under get their `end`, before the purge can
-    # take the events their turns are counted from.
+    # Ends the steps the app went down under, before the purge takes the events their turns
+    # are counted from.
     recover_steps(config)
-    # `0073` R14: the only time a step's events are purged, before the first request. Not in
-    # `api.py`'s lifespan, which the real stack never runs (`0068`'s `spike.md ## U5`).
+    # The only time step events are purged. Not in `api.py`'s lifespan, which the real stack
+    # never runs.
     purge_events(config)
 
     import uvicorn
 
     for line in banner(config):
         print(line)
-    # `0068` R12 step 7: the app keeps its own `Server`, because `uvicorn.run` does not
-    # hand it out and the updater has to ask it to stop from inside. Measured in
-    # `spike.md ## U5` part 1: `run()` returns 0.119 s after `should_exit` is set.
-    #
-    # `0070`: the target is the guarded app. `proxy_headers=False` because uvicorn's
-    # default trusts `X-Forwarded-For` from a loopback peer (`spike.md ## U3`), which lets
-    # any process on this machine choose the address the login limiter sees; with it off,
-    # `scope["client"]` is always the real peer (`spec.md ## Answers, câu 14`). The guard
-    # reads `X-Forwarded-Proto` from a loopback peer itself, for the cookie's `Secure`.
+    # The app keeps its own `Server`: `uvicorn.run` does not hand it out and the updater
+    # must ask it to stop from inside.
+    # `proxy_headers=False`: uvicorn would trust `X-Forwarded-For` from a loopback peer, so
+    # any local process could choose the address the login limiter sees. The guard reads
+    # `X-Forwarded-Proto` itself, for the cookie's `Secure`.
     server = uvicorn.Server(uvicorn.Config(
         "coscc.coscc:served",
         factory=True,
@@ -106,16 +76,14 @@ def main(argv: list[str] | None = None) -> None:
     ))
     update.SERVER.register(server)
     server.run()
-    # A hand-off exists only when the updater asked the server to stop. SIGTERM never gets
-    # here: the process dies with 143 first (`spike.md ## U5`, the `sigterm` control).
+    # A hand-off exists only when the updater asked the server to stop; SIGTERM never gets here.
     handoff = update.take_handoff()
     if handoff is not None:
         raise SystemExit(update.finish(handoff))
 
 
 def recover_steps(config) -> None:
-    """`0092` R5. A recovery that fails is one line on stderr, and the app starts anyway: the
-    steps keep reading "ended, unknown", as they did before it existed."""
+    """End the steps the app went down under. A failure is one stderr line; the app starts anyway."""
     from coscc.runlog import recovery
 
     try:
@@ -128,8 +96,7 @@ def recover_steps(config) -> None:
 
 
 def purge_events(config) -> None:
-    """`0073` R14. A purge that fails is one line on stderr, and the app starts anyway: the
-    events are kept longer than asked, which is not a reason to have no board."""
+    """Purge old step events. A failure is one stderr line; the app starts anyway."""
     from coscc.runlog import events
 
     try:
@@ -142,12 +109,7 @@ def purge_events(config) -> None:
 
 
 def installed_version() -> str:
-    """The version of the package this process is running from.
-
-    Read from installed metadata rather than from `pyproject.toml`, because a packaged
-    install has no `pyproject.toml` to read -- and because the number that matters is the
-    one that was installed, not the one in whatever source tree happens to be nearby.
-    """
+    """The installed package version (a packaged install has no `pyproject.toml`)."""
     from importlib.metadata import PackageNotFoundError, version
 
     try:
@@ -157,37 +119,22 @@ def installed_version() -> str:
 
 
 def _answer_and_stop(args: list[str]) -> None:
-    """`--version`, and a refusal for anything else.
+    """`--version`, the shell-only subcommands, and a refusal for anything else.
 
-    `--version` is answered before the frontend is resolved or the address written, so it
-    still answers when the bundle is broken. That is the point of it: `0011`'s outcome
-    step 3 is "the next release arrives in one command", and this is how a person -- or
-    `scripts/verify_0011.py` -- tells an update that happened from one that only appeared
-    to.
-
-    Refusing an unrecognised argument is a deliberate addition beyond `spec.md` R8, and
-    `plan.md` records it. Before `0011` this program took no arguments and ignored them
-    all; ignoring them became more expensive in the same unit that made `0.0.0.0` the
-    default, because a mistyped flag would now quietly start a server reachable from the
-    network instead of doing whatever was intended.
-
-    `reset-password` (`0070` R10) is the only way back from a forgotten master password,
-    and it is here on purpose rather than on a route: it needs a shell on this machine.
-    It clears the password and every session in the database the environment points at,
-    and says which file. It does not talk to a running process — the database is the only
-    channel, and the guard reads it on the next request.
+    `--version` answers before the frontend is resolved, so it works with a broken bundle.
+    An unrecognised argument is refused: a mistyped flag must not start a network-reachable
+    server. `reset-password` is here rather than on a route because it needs a shell on this
+    machine; it clears the password and every session in the database.
     """
     if args in (["--version"], ["-V"]):
         print(f"coscc {installed_version()}")
         return
     if args[0] == "knowledge":
-        # `0090` R9. The knowledge store's commands, here for the same reason as
-        # `reset-password`: they need a shell on this machine, and no route reaches them.
+        # Shell-only, like `reset-password`.
         from coscc.knowledge import cli as knowledge_cli
 
         raise SystemExit(knowledge_cli.main(args[1:]))
     if args[0] == "effort":
-        # `0123` R8. The effort trial's verdict, on the same terms as `knowledge`.
         from coscc.knowledge import effort_measure
 
         raise SystemExit(effort_measure.main(args[1:]))
@@ -215,13 +162,10 @@ def _answer_and_stop(args: list[str]) -> None:
 
 
 def _state(target: str) -> int:
-    """`0135` R11. The snapshot `cos.mjs --state` reads, for the workspace named `target`
-    (its name on the board, or its path), on stdout: so `cos.mjs gate` can still be asked at
-    a terminal, as `uv run coscc state coscc | node .claude/scripts/cos.mjs --root <store>
-    --state - gate <unit> <stage>`. It writes nothing but what the app would write on its
-    first read: a store not imported yet is imported first (`UnitMeta.import_store`).
-    Every workspace is named in it, as `Service._peer_table` names them: a name two share,
-    or one `valid_name` refuses, for neither.
+    """Print the snapshot `cos.mjs --state` reads for workspace `target` (board name or path).
+
+    A store not imported yet is imported first. Workspaces are named as `Service._peer_table`
+    names them: a shared name, or one `valid_name` refuses, gets none.
     """
     import json
 
@@ -252,9 +196,7 @@ def _state(target: str) -> int:
 
 
 def _workspace(config, data, target: str) -> tuple[dict[str, str], str | None]:
-    """Every workspace by its name on the board, as `Service._peer_table` names them -- a name
-    two share, or one `valid_name` refuses, for neither -- and the key of the one `target`
-    names, by name or by path. `None` when none does, and stderr says so."""
+    """Every workspace by board name (as `Service._peer_table`), and the key of `target`, or `None` (stderr says so)."""
     from collections import Counter
     from pathlib import Path
 
@@ -276,15 +218,10 @@ SKIP_USAGE = "usage: coscc skip <workspace> <unit> spec [--delegated] <reason>"
 
 
 def _skip(args: list[str]) -> int:
-    """`0136` R14. A person's decision to skip a unit's spec: the one way a skip reaches
-    `cos.db` as `person`'s, or `delegated`'s with `--delegated`. `cos.mjs` stops a unit on any
-    other skip, an agent's or one read from a file.
+    """Record a person's decision to skip a unit's spec (`delegated` with `--delegated`).
 
-    Here for the reason `reset-password` is: it needs a shell on this machine and no route
-    reaches it, so no session can make it -- `COSCC_PROTECTED_DB` refuses one the database.
-    It writes the transition through guard `skip-decision`, and no file: `cos.mjs` reads a
-    skip a person recorded without one. Only `spec`, because the unit machine
-    (`coscc/units/states.json`) has no `skipped` for `plan.md`.
+    Shell-only, so no session can make it. It writes the transition through guard
+    `skip-decision` and no file. Only `spec`: the unit machine has no `skipped` for `plan.md`.
     """
     delegated = "--delegated" in args
     rest = [a for a in args if a != "--delegated"]
@@ -345,13 +282,10 @@ def _skip(args: list[str]) -> int:
 
 
 def banner(config) -> list[str]:
-    """What is printed at startup, as lines, so a test can read them.
+    """What is printed at startup, as lines.
 
-    The warning lines are a requirement rather than a courtesy -- `0011`'s `spec.md` R5,
-    rewritten by `0070` R12. The default bind address is `0.0.0.0`. Since `0070` a master
-    password stands in front of every route, but coscc serves plain HTTP: off loopback,
-    whoever can watch the network reads the password, the session cookie and the setup
-    token as they pass. That has to be printed every time rather than documented once.
+    Off loopback the warning is printed every time: coscc serves plain HTTP, so the
+    password, session cookie and setup token cross the network readable.
     """
     lines = [f"coscc on http://{config.host}:{config.port}"]
     if config.host not in LOOPBACK:
@@ -371,14 +305,9 @@ def banner(config) -> list[str]:
 
 
 def _point_the_bundle_here(static: Path, config) -> None:
-    """A packaged bundle is built once and served wherever it lands.
-
-    Two things have to be true before it can serve at all, and the second one is the half
-    that was missed until a clean machine found it -- see `coscc/web/frontend.py`.
-    """
-    # Without this, Reflex recompiles on every start and ends that compile by shelling out
-    # to Bun or npm, which a packaged install does not have. `Type=simple` makes that look
-    # like a healthy service, so nothing short of an HTTP request notices.
+    """A packaged bundle is built once and served wherever it lands."""
+    # Without this, Reflex recompiles on every start and shells out to Bun or npm, which a
+    # packaged install lacks; the service still looks healthy.
     os.environ[frontend.SKIP_COMPILE_VAR] = "1"
 
     absent = frontend.missing_compile_marker(REPO)
@@ -395,9 +324,7 @@ def _point_the_bundle_here(static: Path, config) -> None:
     try:
         frontend.rewrite_address(static, config.host, config.port)
     except frontend.NoEnvChunk as missing:
-        # The one failure that must stop the process. Serving on is the 2026-09-21
-        # failure exactly: a page that renders, an API that is healthy, and a socket
-        # that never connects. `coscc/web/frontend.py` measurement 2.
+        # Must stop the process: serving on gives a page that renders and a socket that never connects.
         print(str(missing), file=sys.stderr)
         raise SystemExit(2)
     except OSError as denied:
@@ -410,13 +337,10 @@ def _point_the_bundle_here(static: Path, config) -> None:
 
 
 def _refuse_a_bundle_that_does_not_match_the_source(static: Path, config) -> None:
-    """A checkout can rebuild, so a mismatch is an error rather than something to fix up.
+    """A checkout can rebuild, so a mismatch is an error.
 
-    The compiled page bakes in the address it opens its `/_event` WebSocket against, so
-    serving a bundle built elsewhere renders a page that never connects while the API
-    behind it stays perfectly healthy — a failure no HTTP check can see (found 2026-09-21
-    by driving the page with a browser). The same fingerprint also catches a bundle older
-    than the page source, which is `spec.md` C3 of `0003`.
+    The page bakes in the `/_event` WebSocket address, so a bundle built elsewhere never
+    connects while the API stays healthy. The fingerprint also catches an outdated bundle.
     """
     from coscc import build
 

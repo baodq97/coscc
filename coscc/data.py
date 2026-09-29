@@ -1,32 +1,14 @@
 """The one directory this app keeps its own state in, and the one connection into it.
 
-`spec.md` R1: there is exactly one data directory, it defaults to `~/.cos`, and its
-location is read from the environment in `config.from_env` and nowhere else. This module
-is the only place that turns that setting into a path, opens the database, or knows the
-schema. Everything above it asks for a `Data` and gets handed something already correct.
+The location is read in `config.from_env` (default `~/.cos`); this module is the only place
+that turns it into a path, opens the database, or knows the schema.
 
-**Why SQLite here at all.** The previous arrangement was measured, and it cost: four
-processes adding five workspaces each to one JSON file left 8 of 20, silently. The fix
-then was `flock` around the whole read-modify-write. SQLite is a different mechanism for
-the same property, and `spec.md` C2 is explicit that it does not inherit the proof —
-`scripts/verify_0004.py` has to go green again on this code before R9 is a fact.
-
-Three settings below are what make that property hold, and none of them is a default:
-
-`journal_mode=WAL` — readers do not block the writer and the writer does not block
-readers. Without it, the board reading while a step writes is a lock conflict rather than
-a read.
-
-`busy_timeout` — the kernel-side wait. Set to the same **10 seconds** the file lock used
-(`store.LOCK_TIMEOUT` before this unit), because the number was chosen for the same
-reason: turn an indefinite block into an error, not wait for anyone.
-
-`BEGIN IMMEDIATE` in `write()` — the one that actually matters. SQLite's default
-transaction takes a read lock first and tries to upgrade on the first write, and an
-upgrade that loses the race is aborted rather than retried. Every read-modify-write in
-this app therefore declares itself a writer up front. This is the exact shape of the bug
-that measurement found, moved into a different mechanism, which is why it gets a paragraph instead
-of a line.
+Three settings make concurrent writers from several processes safe, and none is a default:
+`journal_mode=WAL` (readers and the writer do not block each other), `busy_timeout` (10 s,
+turning an indefinite block into an error), and `BEGIN IMMEDIATE` in `write()`. SQLite's
+default transaction takes a read lock and upgrades on the first write, and an upgrade that
+loses the race is aborted rather than retried, so every read-modify-write declares itself a
+writer up front.
 """
 
 from __future__ import annotations
@@ -47,67 +29,28 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 from typing import Any, Iterator
 
-# Bumped when a migration changes the shape below. `_open` refuses a database numbered
-# higher than this rather than guessing what the extra columns mean (`spec.md` R5).
-#
-# 2 added `transitions` and `outputs` for `.cos/0013_board-cannot-say-what-happened`. That
-# refusal now has a cost worth stating out loud, because it is the way back from this
-# unit: **a v0.2.3 or older build will not open a database this one has touched.** Rolling
-# the app back means rolling the database back with it, and `~/.cos/cos.db` is not
-# something a downgrade removes. `plan.md` Risk 3 records the decision.
-#
-# 3 added `auth` and `auth_sessions` for `.cos/0070_anyone-who-reaches-the-port-can-run-anything`.
-# The same refusal applies one version on: **a build from before `0070` answers `500` on a
-# database this one has touched** (that unit's `spec.md` C6), and since `0070` the login
-# guard reads the database on every request, so it is every page, not only the routes
-# that read data.
-#
-# 4 added `step_runs` and `step_events` for `.cos/0073_nobody-can-watch-what-a-running-agent-is-doing`.
-# The number had to move: `_prepare` runs `_SCHEMA` only below it, so two tables added at 3
-# would never reach a `cos.db` already at 3. The refusal applies once more (that unit's
-# `spec.md` C6): **a build from before `0073` answers `500` on a database this one has
-# touched.** Rolling the app back means rolling the database back with it.
-#
-# 5 added `decisions` for `.cos/0137_agent-inferences-count-as-the-originators-decisions`: the
-# person's own decisions and delegations, entered only on the Settings screen. The refusal
-# applies once more (that unit's `spec.md` ## Concerns): **a build from before `0137`
-# answers `500` on a database this one has touched.**
-#
-# 6 added the `unit_*` tables and `idea_meta` for `.cos/0135_unit-state-lives-in-markdown`:
-# a unit's metadata moved out of its markdown and into this file. The refusal applies once
-# more, and costs more than before (that unit's `spec.md` C7): **a build from before `0135`
-# answers `500` on a database this one has touched, and the answers and holds recorded
-# since exist only here** — a build that reads them from the markdown does not see them.
-#
-# 7 added, for `.cos/0136_transitions-are-decided-by-parsing-prose`, the guard, authority, run
-# and inputs of every transition (its R15) and the tables a submitted object lands in. The first
-# version to add *columns*: `_COLUMNS` below. The refusal applies once more: **a build from
-# before `0136` answers `500` on a database this one has touched.**
+# Bumped when a migration changes the shape below. `_open` refuses a database numbered higher
+# than this rather than guessing. The refusal runs the other way too: **an older build answers
+# `500` on a database a newer one has touched**, so rolling the app back means rolling the
+# database back with it. Version 7 added *columns* (`_COLUMNS`).
 SCHEMA_VERSION = 7
 
 DEFAULT_DIR = "~/.cos"
 DB_FILENAME = "cos.db"
 
-# Seconds. Matches the file-lock timeout this replaced; see the module docstring.
+# Seconds.
 BUSY_TIMEOUT = 10.0
 
-# How often `_retry` looks again. Same value the file lock polled at, for the same
-# reason: short enough not to be felt, long enough not to spin.
+# How often `_retry` looks again: short enough not to be felt, long enough not to spin.
 RETRY_POLL = 0.01
 
-# `0o700`, from `spec.md` R2. The directory holds a record of every workspace on this
-# machine and every prompt-shaped thing the app has run, so it is not world-readable even
-# though the app is single-user.
+# `0o700`: the directory holds a record of every workspace and prompt-shaped thing the app has run.
 DIR_MODE = 0o700
 
 # The schema, one statement per entry. Not a single script: `executescript` issues a COMMIT
-# before it runs, so it cannot be used inside the transaction that creates the schema — and
-# creating the schema outside a transaction is how four processes starting at once end up
-# racing each other through it.
-#
-# The version lives in SQLite's own `PRAGMA user_version` rather than in a table. Reading it
-# costs nothing and needs no lock, which is what lets every later connection skip all of
-# this with one read. A version table would be a second place to look and a write to reach.
+# first, so it cannot run inside the transaction that creates the schema, and creating it
+# outside one lets concurrent processes race through it. The version lives in SQLite's
+# `PRAGMA user_version`: reading it needs no lock, so every later connection skips all of this.
 _SCHEMA = (
     """-- One row per migration that has already run, so a migration cannot run twice. Keyed by
 -- a caller-chosen string rather than a number: the imports are per working folder, and
@@ -480,23 +423,21 @@ CREATE TABLE IF NOT EXISTS pull_requests (
 
 # Columns added to a table that already existed, as `(table, column, declaration)`. `_SCHEMA`
 # cannot carry them: `CREATE TABLE IF NOT EXISTS` leaves an old table as it was. `_create`
-# adds each one a table lacks, on a fresh database and an old one alike, so this is the only
-# place they are declared. SQLite will not add a `NOT NULL` column without a default, so the
-# default is the word a row that predates the column carries (`coscc/units/history.py` R3).
+# adds each one a table lacks. SQLite will not add a `NOT NULL` column without a default, so
+# the default is the word a row that predates the column carries.
 _COLUMNS = (
-    # `0136` R15: which guard decided a transition, on whose authority, in which run, reading
-    # what (JSON: SHA, revision, PR number).
+    # Which guard decided a transition, on whose authority, in which run, reading what (JSON: SHA, revision, PR number).
     ("transitions", "guard", "TEXT NOT NULL DEFAULT 'unknown'"),
     ("transitions", "authority", "TEXT NOT NULL DEFAULT 'unknown'"),
     ("transitions", "run", "TEXT NOT NULL DEFAULT 'unknown'"),
     ("transitions", "inputs", "TEXT NOT NULL DEFAULT '{}'"),
-    # `0136` R3 a, b: the head and the artifacts' revisions a run was handed when it opened.
+    # The head and the artifacts' revisions a run was handed when it opened.
     ("step_runs", "head", "TEXT NOT NULL DEFAULT ''"),
     ("step_runs", "revisions", "TEXT NOT NULL DEFAULT '{}'"),
-    # `0136` R8, R15: whose answer a row is — `person`, `delegated` or `agent` (Jera's).
+    # Whose answer a row is: `person`, `delegated` or `agent` (Jera's).
     ("unit_answers", "authority", "TEXT NOT NULL DEFAULT 'unknown'"),
-    # `0139` R8: the CI answer read at `ci_head`, written only with a `ci-at-head` transition;
-    # the checks it was read from (JSON, for the names of the red ones) and when.
+    # The CI answer read at `ci_head`, written only with a `ci-at-head` transition; the checks
+    # it was read from (JSON, for the names of the red ones) and when.
     ("pull_requests", "ci", "TEXT NOT NULL DEFAULT 'pending'"),
     ("pull_requests", "ci_head", "TEXT NOT NULL DEFAULT ''"),
     ("pull_requests", "ci_checks", "TEXT"),
@@ -507,28 +448,22 @@ _COLUMNS = (
 class Incompatible(RuntimeError):
     """The database on disk was written by a newer version of this app.
 
-    Raised rather than worked around. A newer schema may have moved something this code
-    still writes, and the failure mode of guessing is a corrupted history that looks fine.
+    Raised rather than worked around: guessing risks a corrupted history that looks fine.
     """
 
 
 class Protected(RuntimeError):
     """This database belongs to the app that started this process, which must not open it.
 
-    `.cos/0076_a-step-can-migrate-the-running-apps-database` R5. A step's code once
-    migrated the running app's `cos.db` to a schema the app could not read, and every page
-    answered `500` until somebody fixed the file by hand. The app now names its database
-    in `config.PROTECTED_DB_VAR` for every child, and this is raised before a connection
-    exists. It is a tripwire, not a lock: code that opens the file without `Data`, or a
-    branch cut before this check, walks past it (that unit's `spec.md` C1).
+    A step's code once migrated the running app's `cos.db` to a schema the app could not
+    read. The app names its database in `config.PROTECTED_DB_VAR` for every child, and this
+    is raised before a connection exists. A tripwire, not a lock: code that opens the file
+    without `Data` walks past it.
     """
 
 
 class Busy(RuntimeError):
-    """Something else held the database past the timeout.
-
-    Same contract the file lock had: an error that names the file, never a hang.
-    """
+    """Something else held the database past the timeout: an error that names the file, never a hang."""
 
 
 def now() -> str:
@@ -539,32 +474,28 @@ def now() -> str:
 class Data:
     """One data directory: the database, the object folder, and the schema in between.
 
-    Cheap to construct and safe to construct repeatedly — it opens no connection until
-    asked. Connections are per call rather than pooled, because the processes that share
-    this directory are separate OS processes and a pool would only help within one of them.
+    Cheap to construct: it opens no connection until asked. Connections are per call, not
+    pooled, because the sharing processes are separate OS processes.
     """
 
     def __init__(self, root: str | os.PathLike[str] | None = None):
         self.root = Path(root or DEFAULT_DIR).expanduser().resolve()
         self.db_path = self.root / DB_FILENAME
-        # Threads inside one process still serialise here. It is not what keeps two
-        # processes apart -- SQLite does that -- but it is cheap and it keeps a single
-        # process from spending its busy timeout fighting itself.
+# Threads inside one process still serialise here; SQLite keeps processes apart. It stops a
+# single process from spending its busy timeout fighting itself.
         self._lock = threading.Lock()
 
     # -- the directory ------------------------------------------------------
 
     def ensure_dir(self) -> Path:
-        """Create the directory if it is not there. `spec.md` R2: nobody sets this up."""
+        """Create the directory if it is not there."""
         self.root.mkdir(parents=True, exist_ok=True, mode=DIR_MODE)
-        # `mkdir(mode=...)` is a no-op when the directory already exists, and an existing
-        # directory made by an older build may be `0o755`. Tightening on every open is
-        # what makes R2 true of a directory that already exists, not only a new one.
+            # `mkdir(mode=...)` is a no-op on an existing directory, which an older build may
+            # have made `0o755`; tightening on every open covers it.
         try:
             os.chmod(self.root, DIR_MODE)
         except OSError:
-            # A directory we cannot chmod is still usable; refusing to start over a
-            # permission bit would be worse than the bit.
+            # A directory we cannot chmod is still usable.
             pass
         return self.root
 
@@ -574,18 +505,15 @@ class Data:
     def connect(self, timeout: float | None = None) -> Iterator[sqlite3.Connection]:
         """A connection with the schema present, WAL on, and a bounded wait.
 
-        `isolation_level=None` turns off the driver's implicit transaction handling, which
-        is the only way `write()` below can say `BEGIN IMMEDIATE` and have it mean what it
-        says.
+        `isolation_level=None` turns off the driver's implicit transactions, so `write()` can
+        say `BEGIN IMMEDIATE` and have it mean what it says.
 
-        **`busy_timeout` is the first statement, and that is not a style choice.** It was
-        measured on 2026-09-22: with `PRAGMA journal_mode=WAL` issued first, the journal's
-        four-writer test failed roughly one run in ten with `database is locked` raised out
-        of the pragma itself. Changing the journal mode wants an exclusive lock, and a
-        connection that has not yet been told how long to wait does not wait at all.
+        **`busy_timeout` is the first statement**: with `PRAGMA journal_mode=WAL` first, a
+        four-writer test failed about one run in ten with `database is locked` out of the
+        pragma itself, since changing the journal mode wants an exclusive lock and a
+        connection not yet told to wait does not wait.
 
-        Before any of that, and before the directory is made, a database listed in
-        `config.PROTECTED_DB_VAR` is refused (`0076` R5). Asked on every call, reads
+        Before any of that, a database listed in `config.PROTECTED_DB_VAR` is refused, reads
         included: a step must not read the running app's data either.
         """
         if self.db_path.resolve() in config.protected_databases():
@@ -610,9 +538,7 @@ class Data:
     def write(self, timeout: float | None = None) -> Iterator[sqlite3.Connection]:
         """One read-modify-write, declared as a writer from the first statement.
 
-        Every caller that reads a value and writes something derived from it must use
-        this rather than `connect`. See the module docstring for why the distinction is
-        the whole point of this file.
+        Every caller that writes something derived from a read must use this, not `connect`.
         """
         wait = BUSY_TIMEOUT if timeout is None else timeout
         with self._lock, self.connect(timeout=wait) as conn:
@@ -641,9 +567,7 @@ class Data:
     def _retry(self, work, wait: float) -> None:
         """Run something that SQLite may answer with `SQLITE_BUSY`, until the deadline.
 
-        `busy_timeout` covers ordinary statements. It does not reliably cover changing the
-        journal mode, which is why this exists at all and why it is used in exactly two
-        places below.
+        `busy_timeout` does not reliably cover changing the journal mode, which is what this is for.
         """
         deadline = time.monotonic() + max(wait, 0.0)
         while True:
@@ -662,14 +586,12 @@ class Data:
 
     def _prepare(self, conn: sqlite3.Connection, wait: float) -> None:
         """Make this connection usable. Every step here is a read in the common case."""
-        # WAL is a property of the database file, not of the connection, so it is set once
-        # in the life of the database and read on every open. Reading it needs no lock;
-        # setting it does, which is why the two are not the same statement.
+        # WAL is a property of the database file: set once, read on every open. Reading it
+        # needs no lock; setting it does.
         if str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
             self._retry(lambda: conn.execute("PRAGMA journal_mode=WAL"), wait)
-        # Armed rather than load-bearing: `_SCHEMA` declares no foreign key today, so this
-        # enforces nothing. Kept because SQLite defaults it *off* per connection, and a
-        # table added later would otherwise get no enforcement and no warning.
+        # Enforces nothing today (`_SCHEMA` declares no foreign key), but SQLite defaults it
+        # off per connection, so a table added later would get no enforcement and no warning.
         conn.execute("PRAGMA foreign_keys=ON")
 
         found = self._user_version(conn)
@@ -681,13 +603,10 @@ class Data:
             )
         if found < SCHEMA_VERSION:
             self._retry(lambda: self._create(conn), wait)
-        # An equal number is the whole common path: one pragma read, and nothing else.
-        # A lower number re-runs `_create`, and that is the whole migration mechanism:
-        # every statement in `_SCHEMA` is `IF NOT EXISTS`, so a v1 database meets the
-        # tables 2, 3, 4, 5, 6 and 7 added and keeps every row it already had, and `_COLUMNS`
-        # adds the columns 7 put on older tables. This works for *adding*. A version that has
-        # to change or drop a column will need a real migration here, and will not be able to
-        # reuse this path.
+        # Equal is the whole common path: one pragma read. A lower number re-runs `_create`,
+        # which is the whole migration mechanism: every `_SCHEMA` statement is `IF NOT EXISTS`
+        # and `_COLUMNS` adds the columns. This works for *adding*; changing or dropping a
+        # column needs a real migration.
 
     @staticmethod
     def _user_version(conn: sqlite3.Connection) -> int:
@@ -696,9 +615,8 @@ class Data:
     def _create(self, conn: sqlite3.Connection) -> None:
         """Create the schema inside one transaction, re-checking under the lock.
 
-        Four processes can reach this at the same moment on a fresh data root. The first
-        one through sets `user_version`; the rest re-read it here, inside `BEGIN
-        IMMEDIATE`, and find there is nothing left to do.
+        Several processes can reach this at once on a fresh data root: the first sets
+        `user_version`, the rest re-read it inside `BEGIN IMMEDIATE` and find nothing to do.
         """
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -745,19 +663,14 @@ class Data:
     ) -> None:
         """Run a one-shot import of `source`, inside the caller's transaction.
 
-        `Store` and `Journal` both bring a pre-SQLite file in, and both did the same three
-        things around the part that differs. `spec.md` R8 is the requirement; these
-        are the properties that make it safe to call on every path in:
+        Safe to call on every path in:
 
-        - the cheapest possible exit for the common case is one `stat` and no query, which
-          is what any machine set up after this unit takes;
-        - the `migrations` row is written **in the caller's transaction**, so an import
-          that rolls back is not recorded as done;
-        - the file is never deleted. An import that turns out wrong is recoverable only
-          while the thing it read from still exists.
+        - the common case exits after one `stat` and no query;
+        - the `migrations` row is written **in the caller's transaction**, so an import that
+          rolls back is not recorded as done;
+        - the file is never deleted, so a wrong import stays recoverable.
 
-        Only `load` differs between the two callers: what the file says, and what rows it
-        becomes.
+        Only `load` differs between callers: what the file says, and what rows it becomes.
         """
         if not source.is_file():
             return
@@ -770,9 +683,7 @@ class Data:
     def mark_run(conn: sqlite3.Connection, key: str) -> None:
         """Record a migration inside the same transaction that performed it.
 
-        Taking the connection rather than opening one is deliberate: a mark written in a
-        second transaction could survive a rollback of the first, and then the import it
-        claims to record would never run.
+        A mark written in a second transaction could survive a rollback of the first.
         """
         conn.execute(
             "INSERT OR IGNORE INTO migrations (key, at) VALUES (?, ?)", (key, now())
@@ -788,8 +699,7 @@ class Data:
         try:
             return json.loads(row["value"])
         except (TypeError, ValueError):
-            # Hand-edited into something unreadable. Same posture as the old store: drop
-            # it back to the default rather than repair a file somebody wrote themselves.
+                # Hand-edited into something unreadable: back to the default, not repaired.
             return default
 
     def set_pref(self, key: str, value: Any) -> None:
@@ -802,9 +712,9 @@ class Data:
             )
 
     def update_pref(self, key: str, change: "Callable[[Any], Any]", default: Any = None) -> Any:
-        """Read one preference, `change` it, and write what it returns, in one `write()`: a
-        value derived from a read is written under the same lock (`0036` review F4). A value
-        that does not parse reads as `default`, as in `pref`. Returns what was written."""
+        """Read one preference, `change` it, and write what it returns, in one `write()`, so a
+        value derived from a read is written under the same lock. A value that does not
+        parse reads as `default`, as in `pref`. Returns what was written."""
         with self.write() as conn:
             row = conn.execute("SELECT value FROM prefs WHERE key = ?", (key,)).fetchone()
             try:
@@ -839,10 +749,8 @@ class Data:
     def pref_rows(self, prefix: str) -> dict[str, str]:
         """Every preference whose key starts with `prefix`, **unparsed**.
 
-        `prefs()` drops a row whose JSON will not parse, silently. That is fine for a
-        screen density, and wrong for the model a stage runs on: a hand-edited
-        `model:plan` that does not parse would make `plan` fall back with nobody told why
-        (`0004_no-setting-says-which-model-runs-a-stage` spec R11). The caller parses, and
+        `prefs()` silently drops a row whose JSON will not parse, which is wrong for the model
+        a stage runs on: `plan` would fall back with nobody told why. The caller parses and
         reports what it could not.
 
         Matched in Python, not with `LIKE`, so a `_` or `%` in the prefix means itself.
@@ -855,10 +763,9 @@ class Data:
             if str(row["key"]).startswith(prefix)
         }
 
-    # -- the person's decisions (`0137`) ------------------------------------
-    #
-    # Only `Service` calls these, and only from the Settings screen's handlers: no route
-    # writes here (`0137` R4).
+# -- the person's decisions ---------------------------------------------
+#
+# Only `Service` calls these, only from the Settings screen's handlers: no route writes here.
 
     _DECISION_FIELDS = ("kind", "text", "source", "workspace", "agent", "covers", "from_day", "until_day")
 
@@ -888,10 +795,10 @@ class Data:
             )
             return cur.rowcount > 0
 
-    # -- the login (`0070`) -------------------------------------------------
-    #
-    # Only `coscc/web/auth.py` calls these. None of them reads `prefs`, and `prefs()` never
-    # reads these tables, so the hash has no road out through Settings.
+# -- the login ---------------------------------------------------------
+#
+# Only `coscc/web/auth.py` calls these. `prefs()` never reads these tables, so the hash has
+# no road out through Settings.
 
     def auth_password_hash(self) -> str | None:
         with self.connect() as conn:
@@ -901,8 +808,8 @@ class Data:
     def auth_set_password(self, password_hash: str, now: int) -> bool:
         """Store the first password. False when one is already there.
 
-        Checked and inserted under one `BEGIN IMMEDIATE`, so of two `POST /setup` racing
-        each other exactly one wins, and the loser is a refusal rather than an overwrite.
+        Checked and inserted under one `BEGIN IMMEDIATE`, so of two racing `POST /setup`
+        exactly one wins, and the loser is a refusal rather than an overwrite.
         """
         with self.write() as conn:
             if conn.execute("SELECT 1 FROM auth WHERE id = 1").fetchone() is not None:
@@ -930,11 +837,10 @@ class Data:
             )
 
     def auth_state(self, token_sha256: str) -> tuple[bool, sqlite3.Row | None]:
-        """Whether a password is set, and this session's row — one connection, one read.
+        """Whether a password is set, and this session's row: one connection, one read.
 
-        The guard asks this on every request it decides, which is what lets `coscc
-        reset-password` take effect on the next request without a restart. The row is
-        returned whatever its expiry; judging it is the caller's.
+        The guard asks this on every request, so `coscc reset-password` takes effect on the
+        next request. The row is returned whatever its expiry; judging it is the caller's.
         """
         with self.connect() as conn:
             has_password = conn.execute("SELECT 1 FROM auth WHERE id = 1").fetchone() is not None
@@ -956,10 +862,9 @@ class Data:
         with self.write() as conn:
             conn.execute("DELETE FROM auth_sessions WHERE token_sha256 = ?", (token_sha256,))
 
-    # -- a step's events (`0073`) -------------------------------------------
-    #
-    # Written by `coscc/runlog/events.py`'s recorder from a thread, read by `Service.events_page`.
-    # Nothing here reads `runs`, and no route writes through these.
+# -- a step's events ----------------------------------------------------
+#
+# Written by `coscc/runlog/events.py`'s recorder from a thread, read by `Service.events_page`.
 
     def step_run_open(
         self, run: str, root: str, workspace: str, unit: str, stage: str, started_at: int,
@@ -1017,16 +922,14 @@ class Data:
         return out
 
     def step_turns(self, run: str, timeout: float | None = None) -> int:
-        """`0092` R1. How many `turn` events of `run` are stored: the step's turns, counted
-        from what reached disk rather than from what the recorder held in memory."""
+        """How many `turn` events of `run` are stored: counted from what reached disk, not from memory."""
         with self.connect(timeout=timeout) as conn:
             return int(conn.execute(
                 "SELECT COUNT(*) FROM step_events WHERE run = ? AND kind = 'turn'", (run,)
             ).fetchone()[0])
 
     def step_tool_uses(self, run: str, timeout: float | None = None) -> list[dict[str, Any]]:
-        """`0085` R11. Every stored `tool_use` event of `run`, oldest first: what a step that
-        wrote nothing had opened, for the next run's prompt."""
+        """Every stored `tool_use` event of `run`, oldest first: what a step that wrote nothing had opened."""
         with self.connect(timeout=timeout) as conn:
             rows = conn.execute(
                 "SELECT event FROM step_events WHERE run = ? AND kind = 'tool_use' ORDER BY seq",
@@ -1035,8 +938,7 @@ class Data:
         return [json.loads(r["event"]) for r in rows]
 
     def step_runs_open(self) -> list[dict[str, Any]]:
-        """`0092` R5. Every index row nobody closed and nobody purged, each with the `at` of
-        its last stored event as `last_at` (None when it has none), oldest first."""
+        """Every index row nobody closed and nobody purged, each with the `at` of its last stored event as `last_at` (None when it has none), oldest first."""
         with self.connect() as conn:
             rows = conn.execute(
                 "SELECT r.*, (SELECT MAX(e.at) FROM step_events e WHERE e.run = r.run) AS last_at "
@@ -1068,9 +970,9 @@ class Data:
         return None if row is None else json.loads(row["event"])
 
     def step_events_purge(self, older_than_ms: int, max_bytes: int, now_iso: str) -> tuple[int, int]:
-        """`0073` R14. Whole runs only, and their index rows kept with `purged_at`: first every
-        run begun before `older_than_ms`, then the oldest while the stored total is over
-        `max_bytes`. Returns `(runs, bytes)` purged. One transaction."""
+        """Whole runs only, index rows kept with `purged_at`: first every run begun before
+        `older_than_ms`, then the oldest while the stored total is over `max_bytes`. Returns
+        `(runs, bytes)` purged. One transaction."""
         runs = 0
         freed = 0
         with self.write() as conn:

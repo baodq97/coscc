@@ -1,6 +1,4 @@
-"""The Overview and Workspaces screens.
-Split from `coscc/screens/__init__.py` (`0095`), which re-exports every name.
-"""
+"""The Overview and Workspaces screens."""
 
 from __future__ import annotations
 
@@ -15,19 +13,11 @@ from coscc.screens.chrome import _event_row, _metrics
 def _empty_board() -> rx.Component:
     """Why the board is empty, said about the directory that is actually empty.
 
-    Two branches (`0001_product-describes-a-state-it-is-not-in` R6, R7):
-
-    - The host repository's own `.cos/` holds units (`P.empty_host_units > 0`). The board
-      reads only the product's store, so it names both directories and the count, and
-      says the board does not list those units. The read-only reason, if any, follows.
-    - Otherwise the sentence from before this unit: `board_note`, or the default. There is
-      nothing in the host to explain, and the old words are true there.
-
-    Until that unit this docstring claimed `0014` `spec.md` C1 was met here. It was not:
-    no sentence on the page said so, and the one that did speak named the store's `.cos/`
-    while the reader was looking at the repository's.
+    When the host repository's own `.cos/` holds units (`P.empty_host_units > 0`), the board
+    (which reads only the product's store) names both directories and the count, and says it
+    does not list those units. Otherwise it says `board_note`, or the default.
     """
-    # `0082` D63: the count, not the two paths.
+    # The count, not the two paths.
     host_note = rx.text(
         "This repository's own .cos/ holds ", P.empty_host_units,
         " work units that this board does not list.",
@@ -79,7 +69,7 @@ def _overview() -> rx.Component:
                 s.section_head("Pick up where you left off", s.badge("IN MOTION", "iris")),
                 rx.cond(
                     P.resume_id != "",
-                    # `0053` R8: the one card `resume_id` names, picked out of `cards`.
+                    # The one card `resume_id` names, picked out of `cards`.
                     rx.foreach(P.cards, lambda u: rx.cond(u.id == P.resume_id, rx.vstack(
                         s.text(u.id, size="1", font_family="ui-monospace, monospace"),
                         rx.heading(u.title, size="6", weight="medium", letter_spacing="-0.025em"),
@@ -233,10 +223,9 @@ def _workspaces_screen() -> rx.Component:
 
 
 def _activity_line(line: rx.Var[Activity], unit_id=None) -> rx.Component:
-    """`0051` R6. `running` and `ended, unknown` differ in colour, icon and words, so one
-    is never read as the other. `rebasing` looks like `running` without an agent.
+    """`running` and `ended, unknown` differ in colour, icon and words, so one is never read as the other. `rebasing` looks like `running` without an agent.
 
-    `0073` R10: a board step's line opens the watch pane on its `run` rather than the unit."""
+    A board step's line opens the watch pane on its `run` rather than the unit."""
     plain = _activity_body(line)
     if unit_id is None:
         return plain

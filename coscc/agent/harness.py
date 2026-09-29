@@ -1,31 +1,9 @@
-"""Where the rules this app runs live, and the refusal when they are not there.
+"""Where the rules this app runs live (`cos.mjs`, the skills, `states.json`), and the refusal
+when they are not there.
 
-Two things in this app are read from outside `coscc/`: the compiled frontend, and the
-harness — `cos.mjs`, which decides what a stage's status means, and the skills, which are
-the text a step is told to follow. `0011` gave the frontend a packaged home
-(`coscc/web/frontend.py:90`) and a release step that copies it there. The harness got neither,
-and `.cos/0012_installed-copy-runs-no-stage/intent.md` is the measurement of what that
-cost: on `v0.2.2` installed from the release, `coscc/units/board.py` answered 400 and a step ran
-with 4.569 characters of its rules missing and no record that they had been.
-
-This module is the second half of that decision, and it is deliberately the *same* half.
-`root()` mirrors `coscc/web/frontend.py:106-113`: **the packaged copy wins when it is there.**
-A wheel has no checkout to fall back to, and a checkout has no `coscc/_harness/` unless
-somebody built one.
-
-**It is not a second copy of the rules.** `.claude/CLAUDE.md` says `cos.mjs` is the one
-place the loop is defined and nothing may hold a second copy of it, so `coscc/_harness/`
-is generated at release time and gitignored — exactly what `coscc/_web/` already is
-(`.gitignore:2`). The cost of that choice is written down in
-`.cos/0012_installed-copy-runs-no-stage/spec.md` C3: what makes a wheel correct is a build
-step, not a file anyone can read in the tree. `wheel_complaints` below is the answer to
-that — the check that would have caught `v0.2.2`, written so a person can run it on their
-own machine and not only so CI can.
-
-**Which copy runs is still the security decision `coscc/units/board.py:8-14` made.** Nothing here
-ever looks inside a workspace. A workspace is a repository cloned from a URL somebody
-typed; this module only ever answers with a path under this app's own installation or its
-own checkout.
+`root()` prefers the packaged copy (`coscc/_harness/`, generated at release and gitignored)
+and falls back to the checkout's `.claude/`. Nothing here looks inside a workspace: a path
+is only ever under this app's own installation or checkout.
 """
 
 from __future__ import annotations
@@ -41,18 +19,14 @@ from coscc.web import frontend
 from coscc.units import states
 from coscc.agent import agents, models
 
-# The package root, `coscc/`, not this module's own directory (`0129`): the wheel holds
-# `_harness/` there, and the checkout's `.claude/` sits beside it.
+# The package root, `coscc/`: the wheel holds `_harness/` there, and the checkout's `.claude/`
+# sits beside it.
 _HERE = Path(coscc.__file__).resolve().parent
 
-# Where the release puts the harness inside the wheel. `pyproject.toml:29-30` ships
-# everything under `coscc/`, so this is the one place a packaged tree can live -- the same
-# sentence, for the same reason, as `coscc/web/frontend.py:88-90`.
+# Where the release puts the harness inside the wheel.
 PACKAGE_HARNESS = _HERE / "_harness"
 
-# The checkout's own copy, one level up beside `coscc/`. This is the `parent.parent` that
-# `coscc/units/board.py:31` and `coscc/runner/__init__.py:39` each computed for themselves until 0012 --
-# one bug that arrived as two symptoms, because two places held the same formula.
+# The checkout's own copy, one level up beside `coscc/`.
 CHECKOUT_HARNESS = _HERE.parent / ".claude"
 
 _SCRIPTS = Path("scripts")
@@ -62,28 +36,15 @@ SKILL_FILE = "SKILL.md"
 
 
 class MissingRules(RuntimeError):
-    """The rules for a step could not be found, carrying the paths that were searched.
+    """The rules for a step could not be found; carries the paths searched.
 
-    Raised rather than returned. Until 0012 this case returned an empty string and the
-    step ran anyway (`coscc/runner/__init__.py`, *"Missing is not fatal"*), which is how a step came
-    to spend real quota on a prompt with no rules in it and leave a record indistinguishable
-    from one that had them. `spec.md` C2 records that this reverses a decision that had
-    reasons written down.
+    Raised, never returned as empty: a step must not spend quota on a prompt with no rules.
     """
 
 
 def child_env() -> dict[str, str]:
-    """The environment `cos.mjs` runs in. Built up, never filtered down — the reasoning is
-    in `gitops.child_env`.
-
-    `cos.mjs` reads files and prints JSON. It needs no secret, so it is given none: a new
-    variable added to this process is excluded here by default rather than by memory.
-
-    It lives here rather than beside one of its callers because there are now two of them:
-    `coscc/units/board.py` reads the loop and `coscc/units/__init__.py` extends it. Two copies of this
-    dictionary is how one of them quietly gains a variable the other does not have -- the
-    same shape of mistake `0012` paid for when two modules each computed where `.claude/`
-    was.
+    """The environment `cos.mjs` runs in. Built up, never filtered down (see
+    `gitops.child_env`): it needs no secret, so it is given none.
     """
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -91,12 +52,9 @@ def child_env() -> dict[str, str]:
         "LC_ALL": "C",
         "NO_COLOR": "1",
     }
-    # The one setting `cos.mjs` reads (`0015`): how many review rounds may ask for changes
-    # before the loop needs a person. Passed only when set, so an unset variable keeps
-    # meaning "the default in `cos.mjs`" rather than becoming an empty string it refuses.
-    # Since `0015` the `review` and `ship` gates also run `git` and `gh`; `gh` finds its
-    # login through `HOME`, so a machine that logs in with `GH_TOKEN` alone will see those
-    # gates closed with gh's own error. That is deliberate: no secret is passed down here.
+    # Passed only when set, so an unset variable keeps meaning "the default in `cos.mjs`".
+    # The `review` and `ship` gates run `git` and `gh`; `gh` finds its login through `HOME`, so a
+    # machine logging in with `GH_TOKEN` alone sees those gates closed. No secret is passed down.
     rounds = os.environ.get("COS_REVIEW_ROUNDS")
     if rounds:
         env["COS_REVIEW_ROUNDS"] = rounds
@@ -123,11 +81,8 @@ def skills_dir() -> Path:
 
 
 def read_skill(*names: str) -> str:
-    """The first skill that exists, by name, in order.
-
-    Raises `MissingRules` naming every path tried. The names are the caller's, because
-    which skill a stage uses is the caller's business; where skills live is this module's.
-    """
+    """The first skill that exists, by name, in order. Raises `MissingRules` naming every
+    path tried."""
     tried = []
     for name in names:
         path = skills_dir() / name / SKILL_FILE
@@ -138,22 +93,12 @@ def read_skill(*names: str) -> str:
 
 
 # --- what a runnable wheel must contain --------------------------------------
-#
-# `scripts/build_wheel.sh`, beside its copy steps, already wrote the reasoning for the
-# frontend half: without the copy step the wheel still builds, still installs, and is only missing
-# something -- and nothing else in the workflow notices. That was true of the harness too,
-# for three releases. This function is that check generalised, and it lives here rather
-# than in YAML so the same answer is available to someone building a wheel by hand.
 
-# Reaching for `frontend._LAYOUT` rather than writing "build/client" again is deliberate.
-# `scripts/build_wheel.sh` records what that string means and why flattening it breaks the page;
-# a second copy of it here is the drift that comment exists to prevent.
+# Uses `frontend._LAYOUT` rather than repeating "build/client".
 _WEB = frontend.PACKAGE_WEB.name
 _HARNESS = PACKAGE_HARNESS.name
 
-# The build stamp `scripts/build_wheel.sh` writes, and the only place an installed copy can
-# learn which commit it was built from (`.cos/0068_updating-the-app-is-a-manual-reinstall`
-# R1). `coscc/update/__init__.py` reads it under the same name.
+# The build stamp `scripts/build_wheel.sh` writes; an installed copy learns its commit only here.
 BUILD_STAMP = "_build.json"
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
 
@@ -165,27 +110,11 @@ def _posix(*parts: object) -> str:
 def wheel_complaints(wheel: str | Path) -> list[str]:
     """Everything wrong with `wheel`, as sentences. Empty means it would run.
 
-    Five entries, and each one names a wheel that installs cleanly and then fails in a
-    different way:
-
-    - no frontend: the page 404s while `/api/health` answers;
-    - no compile marker: the service reports `active` and serves nothing at all (measured
-      2026-09-22 on a clean Debian 13 VM, `coscc/web/frontend.py:64-70`);
-    - no `cos.mjs`: the Board answers 400 (measured 2026-09-22 on `v0.2.2`);
-    - no skills: a step runs without its rules;
-    - no `states.json`: nothing can read or write a transition, because `coscc/units/states.py`
-      has no state set to validate one against (`0013`);
-    - no build stamp, or one without a 40-hex commit: the board cannot say which commit it
-      runs, and a later update cannot tell two builds of one version apart (`0068`).
-
-    The last one is checked even though the file is **committed** rather than generated,
-    which the other four are not. That is the point: `0012` cost a whole unit because a
-    thing the checkout had was not a thing the wheel shipped, and whether a file arrives by
-    `git` or by a copy step is not a difference the installed copy can feel.
-
-    The skills check counts rather than naming nine, because nine is today's number
-    (`.cos/0012_installed-copy-runs-no-stage/spec.md` C4) and a list copied by hand stops
-    being true the day a tenth is written.
+    Each entry names a wheel that installs cleanly and then fails differently: no frontend
+    (page 404s), no compile marker (service is `active` and serves nothing), no `cos.mjs`
+    (Board answers 400), no skills, no `states.json`, no build stamp with a 40-hex commit.
+    The stamp is checked though committed: whether a file arrives by `git` or by a copy step
+    is invisible to the installed copy. Skills are counted, not listed by name.
     """
     path = Path(wheel)
     try:
@@ -209,26 +138,22 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
         out.append(f"no {cos} — the Board would answer 400 on every read")
     found = sum(1 for n in names if n.startswith(skills_prefix) and n.endswith("/" + SKILL_FILE))
     if not found:
-        # Not "would run without its rules" -- that was true until 0012 and this same
-        # change is what ended it. A wheel in this shape reads the Board fine and refuses
-        # every Run, which is a different thing to go looking for.
         out.append(f"no {skills_prefix}*/{SKILL_FILE} — every step would refuse to run")
     if state_set not in names:
         out.append(f"no {state_set} — no transition could be read or written")
-    # `0136` R1, on the same reasoning: without it no guard is chosen for any transition.
+    # Without it no guard is chosen for any transition.
     lanes = _posix(states.LANES_PATH.relative_to(_HERE))
     if lanes not in names:
         out.append(f"no {lanes} — no transition could be guarded")
-    # `0004_no-setting-says-which-model-runs-a-stage`, on the same reasoning as
-    # `states.json`: without it every stage falls back to `COS_MODEL`, and nothing fails.
+    # Without it every stage falls back to `COS_MODEL`, and nothing fails.
     model_set = _posix(models.DEFAULT_PATH.relative_to(_HERE))
     if model_set not in names:
         out.append(f"no {model_set} — every stage would run on COS_MODEL, silently")
-    # `0036` R1, on the same reasoning: without it no session is told its name, and nothing fails.
+    # Without it no session is told its name, and nothing fails.
     agent_set = _posix(agents.DEFAULT_PATH.relative_to(_HERE))
     if agent_set not in names:
         out.append(f"no {agent_set} — no session would be told its agent's name, silently")
-    # `0068` R1: without it the board shows `commit unknown` for a release it built itself.
+    # Without it the board shows `commit unknown`.
     stamp = _posix(BUILD_STAMP)
     if stamp not in names:
         out.append(f"no {stamp} — the board could not say which commit it runs")
@@ -241,13 +166,9 @@ def wheel_complaints(wheel: str | Path) -> list[str]:
         if not isinstance(commit, str) or not _FULL_SHA.fullmatch(commit):
             out.append(f"{stamp} carries no 40-hex commit — the board could not say which commit it runs")
 
-    # The copy step takes two named directories, never `.claude/` whole. This is what says
-    # so out loud: `.claude/settings.local.json` is a personal file (`.gitignore:19`) and a
-    # wheel is published. `plan.md` Risk 6.
-    # Matched on the basename and the extension, not on the substring. `"settings" in n`
-    # was the first version of this line and it would refuse a release over a skill
-    # legitimately named `write-settings` -- a check that fires on correct input is worse
-    # than the check it replaced, because the way past it is to delete it.
+    # The copy step takes two named directories, never `.claude/` whole: `.claude/settings.local.json`
+    # is personal and a wheel is published. Matched on basename and extension, not substring, so a
+    # skill named `write-settings` is not refused.
     leaked = sorted(
         n for n in names
         if n.startswith(_posix(_HARNESS) + "/")

@@ -1,27 +1,22 @@
-"""What an `impl` step costs, and whether units ship on fewer of them (`0096` R1, R3, R4, R7).
+"""What an `impl` step costs, and whether units ship on fewer of them.
 
-`0096_an-impl-session-grows-until-every-turn-is-expensive`. Reads `cos.db` and the unit store
-and prints one JSON object: turns, cost and time per `impl` step, the share of shipped units
-that ran `impl` twice or more, and the `changes-requested` rounds per shipped unit. With
-`--outcome` it then says whether R7 holds.
+Reads `cos.db` and the unit store and prints one JSON object: turns, cost and time per `impl`
+step, the share of shipped units that ran `impl` twice or more, and the `changes-requested`
+rounds per shipped unit. With `--outcome` it also says whether the target holds.
 
     uv run python -m coscc.runlog.turnstats --workspace <path> [--since T] [--until T] [--outcome]
         [--files PATH... [--first N]]
 
-`--files` adds `0095` R9's `touched_*` fields: the `impl` steps that aimed a `Read` or `Grep`
-at one of those paths, and over the first N of them their turns, those calls and what each
-such `Read` returned. `touched_purged` counts the steps whose events the app had already
-purged, which none of those fields can see: measure a window before its runs age out.
+`--files` adds `touched_*` fields: the `impl` steps that aimed a `Read` or `Grep` at one of
+those paths, and over the first N of them their turns, those calls and what each `Read`
+returned. `touched_purged` counts steps whose events were already purged.
 
-Run it at a terminal. A board step carries this app's `cos.db` in `COSCC_PROTECTED_DB`, and
-this command opens the file with `sqlite3` rather than through `Data`, so it asks the same
-question `Data.connect` does before it opens anything, and exits 2 on a listed database. It
-opens the file read-only, creates no schema and writes nothing.
+Run it at a terminal. A board step carries `COSCC_PROTECTED_DB`; this command opens the file
+read-only with `sqlite3`, so it asks what `Data.connect` asks and exits 2 on a listed database.
 
-`--until` is exclusive. Times are compared as the strings the run log stores. A step is
-picked by its `start`'s time and paired with it the way `spike.md ## Probe code` `pairs.py`
-does: every `impl` `end` with the latest earlier `start` of the same `(root, workspace,
-unit)`, and its own time when that `start` is not `impl`'s.
+`--until` is exclusive. Times are compared as the strings the run log stores. A step is picked
+by its `start`'s time and paired with it: every `impl` `end` with the latest earlier `start` of
+the same `(root, workspace, unit)`, and its own time when that `start` is not `impl`'s.
 """
 
 from __future__ import annotations
@@ -38,8 +33,7 @@ from typing import Any
 from coscc import config, units
 from coscc.data import DB_FILENAME, DEFAULT_DIR
 
-# `spec.md` R7. `reimpl_share` is 34/47 and `duration_mean_ms` R4's mark, both from
-# `spike.md ## U3`; the others are `intent.md ## Answers`.
+# `reimpl_share` and `duration_mean_ms` come from a measurement; the others were chosen.
 OUTCOME: tuple[tuple[str, float], ...] = (
     ("turns_mean", 49.5),
     ("over100_share", 0.116),
@@ -67,8 +61,9 @@ def _mean(values: list[float], digits: int | None) -> float | None:
 
 def open_db(data_root: str | Path) -> sqlite3.Connection:
     """`<data_root>/cos.db`, read-only. Refused before anything is opened when
-    `config.protected_databases()` lists it, as `Data.connect` refuses (`0076` R5). The file
-    is resolved, not only its directory, so a `cos.db` that links to a listed one is refused."""
+    `config.protected_databases()` lists it, as `Data.connect` refuses. The file is resolved, not
+    only its directory, so a `cos.db` that links to a listed one is refused.
+    """
     db = (Path(data_root).expanduser() / DB_FILENAME).resolve()
     if db in config.protected_databases():
         raise Refused(
@@ -105,8 +100,9 @@ def pairs(
 
 
 def step_fields(steps: list[dict[str, Any]]) -> dict[str, Any]:
-    """R1. A step whose `end` carries no `turns` (a `failed` one) is 0 turns; tokens per turn
-    are over the steps with at least one."""
+    """A step whose `end` carries no `turns` (a `failed` one) is 0 turns; tokens per turn
+    are over the steps with at least one.
+    """
     turns = [p["end"].get("turns") or 0 for p in steps]
     cost = [p["end"].get("cost_usd") or 0 for p in steps]
     duration = [p["end"].get("duration_ms") or 0 for p in steps]
@@ -130,8 +126,9 @@ def step_fields(steps: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def event_fields(conn: sqlite3.Connection, steps: list[dict[str, Any]]) -> dict[str, Any]:
-    """R8's after-ship figure: `tool_use` events per `turn` event, over the steps whose `run`
-    still has events; and R11's, how many steps carried each new part of the prompt."""
+    """After-ship figure: `tool_use` events per `turn` event, over the steps whose `run` still has
+    events; and how many steps carried each new part of the prompt.
+    """
     event_steps = turn_events = tool_uses = 0
     for p in steps:
         run = p["end"].get("run")
@@ -159,8 +156,9 @@ def event_fields(conn: sqlite3.Connection, steps: list[dict[str, Any]]) -> dict[
 
 
 def _aimed_at(tool_input: Any, files: list[str]) -> bool:
-    """`0095` R9: a `Read` or `Grep` input whose `file_path` or `path` ends in `/<file>`. A
-    `Grep` with no `path`, or one on a directory, names none of `files`."""
+    """A `Read` or `Grep` input whose `file_path` or `path` ends in `/<file>`. A `Grep` with no
+    `path`, or one on a directory, names none of `files`.
+    """
     if not isinstance(tool_input, dict):
         return False
     target = tool_input.get("file_path") or tool_input.get("path")
@@ -185,10 +183,10 @@ def _result_chars(event: dict[str, Any]) -> int:
 def file_fields(
     conn: sqlite3.Connection, steps: list[dict[str, Any]], files: list[str], first: int
 ) -> dict[str, Any]:
-    """`0095` R9: how many steps aimed a `Read` or `Grep` at one of `files`, and, over the
-    first `first` of them in `start` order, their turns, those calls per step, and the
-    characters per such `Read`. A step whose events `events.purge` deleted cannot be told
-    either way; `touched_purged` counts those, since the sample slides past them."""
+    """How many steps aimed a `Read` or `Grep` at one of `files`, and, over the first `first` of
+    them in `start` order, their turns, those calls per step, and the characters per such `Read`.
+    A step whose events `events.purge` deleted cannot be told; `touched_purged` counts those.
+    """
     touched: list[tuple[int, int, list[int]]] = []
     purged = 0
     for p in steps:
@@ -236,8 +234,9 @@ def changes_requested(text: str) -> int:
 def quality_fields(
     conn: sqlite3.Connection, workspace: str, cos_dir: Path, since: str | None, until: str | None
 ) -> dict[str, Any]:
-    """R3. Shipped is a `ship.md` → `accepted` transition in the window; (a) counts only the
-    `impl` starts in the window, (b) reads `review.md` from the unit store."""
+    """Shipped is a `ship.md` -> `accepted` transition in the window; (a) counts only the
+    `impl` starts in the window, (b) reads `review.md` from the unit store.
+    """
     shipped = sorted({
         unit for unit, at in conn.execute(
             "SELECT unit, at FROM transitions "
@@ -290,8 +289,9 @@ def measure(
 
 
 def outcome(fields: dict[str, Any]) -> list[str]:
-    """R7's conditions `fields` misses, `[]` when it holds. A figure with nothing under it —
-    no unit shipped, no review read — is not over its mark; no step at all is."""
+    """The conditions `fields` misses, `[]` when the target holds. A figure with nothing under it
+    (no unit shipped, no review read) is not over its mark; no step at all is.
+    """
     missed = [] if (fields.get("steps") or 0) >= 1 else ["steps 0 < 1"]
     for name, mark in OUTCOME:
         value = fields.get(name)

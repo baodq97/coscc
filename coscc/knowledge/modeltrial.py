@@ -1,13 +1,7 @@
-"""Which model a routine `impl` runs on: the trial that replaced `COS_EFFORT_TRIAL`.
+"""Which model a routine `impl` runs on: each unit is in one of two arms, decided by its name.
 
-`0139_some-transitions-still-read-prose`, Part 3. Every unit is in one of two arms, decided by
-its name alone, as `coscc/knowledge/efforttrial.py` divided them (spec R16), so it is in the
-same arm on every run and after every restart. The arm names the model its routine `impl`
-asks for; both arms run the same effort, so the model is the only thing that differs.
-
-Pure: it reads nothing but its arguments. `start` carries `FIELD`: `{arm, requested}` when it
-is written, and `model` once the session's `init` names it (`Journal.set_trial_model`), or
-`NEVER_STARTED` when the session ended before one.
+Pure. `start` carries `FIELD`: `{arm, requested}`, then `model` once the session's `init`
+names it, or `NEVER_STARTED` when the session ended before one.
 """
 
 from __future__ import annotations
@@ -23,7 +17,6 @@ SONNET_ARM = "sonnet-5-5"
 MODELS = {OPUS_ARM: "claude-opus-5-5[1m]", SONNET_ARM: "claude-sonnet-5-5[1m]"}
 
 FIELD = "model_trial"
-# `0139` C10: what `model` is when the session ended before its `init`.
 NEVER_STARTED = "never-started"
 
 

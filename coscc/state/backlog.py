@@ -1,9 +1,7 @@
 """The backlog, and starting a unit: estimates, relations, the shortlist, a new unit and its
 branch.
 
-Split from `coscc/state/__init__.py` (`0095`). `StudioState` inherits it, so its vars and handlers
-keep their names; a handler that needs `SERVICE` or `StudioState` imports them in its body,
-because this module cannot import `coscc.state` at the top (`spike.md ## U1`).
+Handlers import `SERVICE` in their bodies: this module cannot import `coscc.state` at the top.
 """
 
 from __future__ import annotations
@@ -17,13 +15,13 @@ from coscc.state.views import BacklogRow, tree_line
 
 class BacklogMixin(rx.State, mixin=True):
 
-    # -- starting a unit (`0014` R8)
+    # -- starting a unit
     new_slug: str = ""
     new_brief: str = ""
     starting: bool = False
     branch: str = ""
-    # `0074`. The Backlog panel, copied from `Service.board`'s `backlog` by `backlog_view`,
-    # and what a person types into it. `0082` R10: the shortlist is edited row by row.
+    # The Backlog panel, copied from `Service.board`'s `backlog` by `backlog_view`, and what
+    # a person types into it. The shortlist is edited row by row.
     backlog_rows: list[BacklogRow] = []
     backlog_rest: list[BacklogRow] = []
     backlog_unestimated: list[str] = []
@@ -52,7 +50,7 @@ class BacklogMixin(rx.State, mixin=True):
     rel_reason: str = ""
     proposing: bool = False
 
-    # -- backlog (`0074`). Every handler calls `SERVICE` and copies; none decides (R12, R15).
+    # -- backlog. Every handler calls `SERVICE` and copies; none decides.
 
     @rx.event
     def set_backlog_field(self, name: str, value: str):
@@ -62,7 +60,7 @@ class BacklogMixin(rx.State, mixin=True):
 
     @rx.event
     def edit_backlog_row(self, unit: str):
-        """`0082` R10. Open one row's estimate and relation forms, or close the open one."""
+        """Open one row's estimate and relation forms, or close the open one."""
         if self.backlog_editing == unit:
             self.backlog_editing = ""
             return
@@ -91,7 +89,7 @@ class BacklogMixin(rx.State, mixin=True):
 
     @rx.event
     def fill_shortlist(self):
-        """R12. The first seven of the computed order, into the draft. A person still saves it."""
+        """The first seven of the computed order, into the draft. A person still saves it."""
         self.shortlist_draft = list(self.backlog_suggested)
 
     @rx.event
@@ -136,7 +134,7 @@ class BacklogMixin(rx.State, mixin=True):
 
     @rx.event
     async def propose_estimates(self):
-        """R17. Opens one paid session; the warning above the button says so (R19)."""
+        """Opens one paid session; the warning above the button says so."""
         from coscc.state import SERVICE
         if self.proposing:
             return
@@ -168,22 +166,14 @@ class BacklogMixin(rx.State, mixin=True):
 
     @rx.event
     async def create_unit(self):
-        """`0014` R8. Start a work unit from the page.
-
-        The slug grammar and the number are not decided here and not decided in
-        `service.py` either — they come back from `cos.mjs`, and a bad slug arrives as its
-        refusal, word for word. A handler that decided anything would be a bug in
-        `service.py` (`.cos/0001_.../spec.md` R10).
-        """
+        """Start a work unit from the page. The slug grammar and number come back from `cos.mjs`."""
         from coscc.state import SERVICE
         slug = self.new_slug.strip()
         if not slug:
             self.notice = "Give the work a short name, like `board-cannot-say-what-happened`."
             return
         if not self.new_brief.strip():
-            # Not a validation rule of the loop — a rule of this page. The brief becomes
-            # `idea.md`, which is the only thing the intent step will have to work from,
-            # and a unit started without one wastes a paid step on an empty prompt.
+            # A rule of this page: the brief becomes `idea.md`, all intent has to work from.
             self.notice = "Say what the problem is, in your own words. The intent step reads it."
             return
         self.starting = True
@@ -200,11 +190,8 @@ class BacklogMixin(rx.State, mixin=True):
 
     @rx.event
     async def start_branch(self):
-        """`0014` R8. Cut the open unit's branch in the workspace.
-
-        The one control on this page that writes to somebody else's git.
-        `coscc/git/gitops.py` carries the list of what that may be.
-        """
+        """Cut the open unit's branch in the workspace: the one control here that writes to
+        somebody else's git (`coscc/git/gitops.py` lists what that may be)."""
         from coscc.state import SERVICE
         if not self.unit_id:
             return
@@ -213,9 +200,8 @@ class BacklogMixin(rx.State, mixin=True):
         except Invalid as e:
             self.notice = str(e)
             return
-        # R3 of `0001_product-describes-a-state-it-is-not-in`: say where it was cut from,
-        # from the fetched ref rather than the local `main`. Since `0017` it is cut in the
-        # unit's own worktree, so the workspace's branch does not change and is not reset.
+        # Say where it was cut from: the fetched ref, not the local `main`. It is cut in the
+        # unit's own worktree, so the workspace's branch does not change.
         said = f"{cut['branch']} cut from {cut['base']} at {cut['sha']}, in {cut['worktree']}."
         if cut.get("switched"):
             said += " The workspace was moved back to main to open it."

@@ -1,20 +1,6 @@
-"""The six screens, built from Python components.
+"""The six screens, built from Python components, reading only `StudioState`.
 
-`spec.md` R8: no hand-written HTML or CSS serves this app. Everything below is Python.
-
-These screens began as a prototype and keep its shape, its spacing and most of its
-words. What changed is where every value comes from: the prototype read `prototype_data.py`, and
-nothing here reads anything but `StudioState`, which reads `Service`. That swap is the
-whole of `spec.md` R12.
-
-Since `0082` (`spec.md ## Answers, câu 5`) each action whose effect costs money or leaves
-this machine keeps one sentence beside its button — `Service.CONSEQUENCE` — and nothing more.
-The lists of limits these screens used to carry (what a grant reaches, who else holds the
-password, that the app writes a prose stage's artifact) are in `.claude/docs/coscc-page-text.md`
-and the rules and documents `.claude/rules/coscc-app.md` indexes, and the full grant warnings
-are still in the API. Paths, full
-shas, UUIDs and variable names sit only inside a closed `_details`
-(`.claude/rules/ui-standard.md` S3).
+Each action whose effect costs money or leaves this machine keeps one sentence beside its button (`Service.CONSEQUENCE`). Paths, full shas, UUIDs and variable names sit only inside a closed `_details`.
 """
 
 from __future__ import annotations
@@ -23,8 +9,7 @@ import reflex as rx
 
 from coscc.web import studio as s
 
-# `0095`: these moved to modules of their own. Every name is imported back, so
-# `coscc.screens.<name>` still resolves; a patch reaches only the module that looks it up.
+# Every name is imported back so `coscc.screens.<name>` still resolves; a patch reaches only the module that looks it up.
 from coscc.screens.common import (
     P,
     _details,
@@ -181,10 +166,9 @@ def index() -> rx.Component:
         _command_dialog(), _mobile_dialog(), _watch_dialog(),
         rx.script(_RECONNECT_JS),
         rx.script(_WATCH_JS),
-        # `0113` R9: the notices, outside Reflex's state and socket (`chrome.py`).
+        # The notices, outside Reflex's state and socket (`chrome.py`).
         rx.script(_NOTICE_JS),
-        # No `on_mount`: it runs again on every path change (`.cos/0056_*/spike.md ## U3`).
-        # The first read is `StudioState.arrive`, every route's `on_load`.
+        # No `on_mount`: it runs again on every path change. The first read is `StudioState.arrive`, every route's `on_load`.
         id="studio-shell", data_density=P.density,
         background=s.CANVAS, color=s.INK, min_height="100dvh",
         style={"& button": {"cursor": "pointer"}, "& button:disabled": {"cursor": "not-allowed"}},

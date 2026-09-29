@@ -1,16 +1,7 @@
 """The only place business logic lives.
 
-`spec.md` R10: the page and the JSON API are two entry points to one capability, and two
-implementations of one capability is the surest way to have one of them fixed and the other
-not. So neither an HTTP route nor a Reflex event handler may decide anything — they
-translate a request into a call here, and a result back into their own shape.
-
-The rule that makes this checkable: nothing in this module imports a web framework, and
-nothing above it branches on business state. A conditional in a route is a bug in this
-file, not in the route.
-
-`Invalid` is how this layer refuses. Callers map it to their own vocabulary — 400 for
-HTTP, an error banner for the page — and neither gets to invent a different reason.
+The page and the JSON API translate requests into calls here and never decide anything.
+Nothing here imports a web framework; `Invalid` is how this layer refuses.
 """
 
 from __future__ import annotations
@@ -29,8 +20,7 @@ from coscc.service.store import Store
 from coscc.agent import steps as steps_mod
 from coscc.update import updater as updater_mod
 
-# `0095`: these moved to modules of their own. Every name is imported back, so
-# `coscc.service.<name>` still resolves; a patch reaches only the module that looks it up.
+# Re-exported so `coscc.service.<name>` resolves; a patch reaches only the module that looks it up.
 from coscc.service.common import (
     STAGE_FILES,
     BRANCH_REMOTE,
@@ -149,75 +139,64 @@ class Service(
     config: Config
     sessions: Sessions
     store: Store | None = field(default=None, init=False)
-    # `0016`. Held across read-check-append so two answers arriving together cannot
-    # interleave their blocks. The page and the API share this instance (`state.py`
-    # takes `API.state.service`), so one lock covers both.
+    # Held across read-check-append so two answers arriving together cannot interleave.
+    # The page and the API share this instance, so one lock covers both.
     _answer_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-    # `0021`. Held across read-comments-then-post, so two presses of *Post to PR* for one
-    # round run one after the other and the second finds the first's marker. One process
-    # only, like `pull` (`.claude/rules/coscc-app.md`).
+    # Held across read-comments-then-post, so two presses of *Post to PR* for one round
+    # run in turn and the second finds the first's marker. One process only.
     _comment_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-    # `0111` R3. Held across one retake of a unit's screenshots, for the whole app: every
-    # capture binds `127.0.0.1:18783` (`scripts/capture_screens.py:113`), so two at once fail.
-    # A capture a session runs does not take it (spec C1). One process only, like `pull`.
+    # Held across one retake of a unit's screenshots, app-wide: every capture binds
+    # `127.0.0.1:18783`, so two at once fail. A capture a session runs does not take it.
     _screens_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-    # `0111` review round 1, F3. The retake running now, if any, `{workspace, unit, started}`
-    # by an id that never leaves this process: read only by `_update_waited`.
+    # The retake running now, if any, `{workspace, unit, started}`; read only by `_update_waited`.
     _retakes: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
-    # `0017` R8. Per workspace, created on first use.
+    # Per workspace, created on first use.
     _create_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
-    # `0035` R12. `(journal key, unit)` for every step, integration or hold holding its unit
-    # now, and one lock per workspace held across an integration's check-and-mark. Since
-    # `0050` each holds a `Mark` saying what and since when, and a step takes its own before
-    # its first `await` (`_take`). One process only, like `pull`.
+    # `(journal key, unit)` for every step, integration or hold holding its unit now, each
+    # with a `Mark` (what, since when) taken before the step's first `await` (`_take`); plus
+    # one lock per workspace held across an integration's check-and-mark.
     _active: dict[tuple[str, str], steps_mod.Mark] = field(default_factory=dict, init=False, repr=False)
     _integrate_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
-    # `0135`. The journal keys whose store `cos.db` says was imported: an import is never
-    # undone, so `_snapshot` stops asking once it is (review F2, R10). One process only.
+    # Journal keys whose `cos.db` store was imported: an import is never undone, so
+    # `_snapshot` stops asking once it is.
     _imported: set[str] = field(default_factory=set, init=False, repr=False)
-    # `0046` R13. The journal keys with a release press running now, checked and marked with
-    # no `await` between. One process only, like `pull`.
+    # Journal keys with a release press running now, checked and marked with no `await` between.
     _releasing: set[str] = field(default_factory=set, init=False, repr=False)
-    # `0051` R1. What is running now, for the board to show: one entry per step or
-    # integration, keyed by an id that never leaves this process. Added and removed beside
-    # `_active`, read only by `running`. Display only: `_active` still does the refusing.
+    # What is running now, for the board to show, by an id private to this process.
+    # Display only: `_active` still does the refusing.
     _running: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
-    # `0138` review round 3, F6. A step's `_after_end`, run after its `_running` entry and its
-    # mark are gone: by the same id, its entry and the task running it. Not shown on the
-    # board; an Apply's settle waits for it and `shutdown` cancels it.
+    # A step's `_after_end`, run after its `_running` entry and mark are gone. Not shown on
+    # the board; an Apply's settle waits for it and `shutdown` cancels it.
     _finishing: dict[str, tuple[dict[str, Any], asyncio.Task]] = field(default_factory=dict, init=False, repr=False)
-    # `0100` R6. By `(journal key, unit)`: the last answer of `integrate.required_checks`,
-    # `{head, checks | error, at}`, and the one background ask running for it. Memory only,
-    # gone on a restart, and never waited on by a board read. One process only, like `pull`.
+    # By `(journal key, unit)`: the last answer of `integrate.required_checks`,
+    # `{head, checks | error, at}`, and the one background ask running for it. Never waited
+    # on by a board read.
     _ci: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
     _ci_asks: dict[tuple[str, str], asyncio.Task] = field(default_factory=dict, init=False, repr=False)
-    # `0034`. The board steps running now, each as its own task, so a reader that goes
-    # away does not take the step with it and a Stop has something to cancel.
+    # Board steps running now, each its own task, so a departing reader does not take the
+    # step with it and a Stop has something to cancel.
     steps: steps_mod.Registry = field(default_factory=lambda: steps_mod.Registry(), init=False, repr=False)
-    # `0073`. The recorder of every board step running in this process, by `run`: what
-    # `events_page` reads and `follow_events` subscribes to. A step leaves it when `_drive`
-    # ends, after its recorder has written what it holds; from then the tables answer.
+    # The recorder of every running board step, by `run`: what `events_page` reads and
+    # `follow_events` subscribes to. A step leaves it when `_drive` ends; then the tables answer.
     _recorders: dict[str, events.Recorder] = field(default_factory=dict, init=False, repr=False)
-    # `0043`. The autopilot, per journal key: the lock every pass holds (the spec's
-    # *Tuần tự hóa*), the poll loop of a workspace that has it on, the workspace directory
-    # it was turned on for, the reader of each step it started, the stops the last pass
-    # found by unit, and the passes scheduled but not yet run. One process only, like `pull`.
+    # The autopilot, per journal key: the lock every pass holds, the poll loop, the workspace
+    # directory it was turned on for, the reader of each step it started, the stops the last
+    # pass found by unit, and the passes scheduled but not yet run.
     _autopilot_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
     _autopilot_tasks: dict[str, asyncio.Task] = field(default_factory=dict, init=False, repr=False)
     _autopilot_cwd: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _autopilot_runs: dict[str, dict[str, tuple[str, asyncio.Task]]] = field(default_factory=dict, init=False, repr=False)
     _autopilot_stops: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict, init=False, repr=False)
     _autopilot_pending: set[asyncio.Task] = field(default_factory=set, init=False, repr=False)
-    # `0136` R22. What the last pass held back by unit, `(code, detail)`, for the card to show.
+    # What the last pass held back by unit, `(code, detail)`, for the card to show.
     _autopilot_held: dict[str, dict[str, tuple[str, str]]] = field(default_factory=dict, init=False, repr=False)
-    # `0136` R23. The reader of each workspace's pull requests, while its autopilot is on.
+    # The reader of each workspace's pull requests, while its autopilot is on.
     _pr_readers: dict[str, asyncio.Task] = field(default_factory=dict, init=False, repr=False)
-    # `0131` R1. The gathers after a ship running now, kept so none is collected mid-run.
+    # The gathers after a ship running now, kept so none is collected mid-run.
     _gathers: set[asyncio.Task] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        # No working folder means no store, and the app behaves as it did before one existed.
-        # That is what keeps `scripts/verify_0001.py` running unchanged (`spec.md` R6).
+        # No working folder means no store.
         self.store = (
             Store(self.config.working_dir, self.config.data_dir)
             if self.config.working_dir
@@ -225,6 +204,6 @@ class Service(
         )
         # One question, asked in two places. See `Sessions.membership`.
         self.sessions.membership = self._is_member
-        # `0068`. Told of every step, integration and chat turn that ends (R9).
+        # Told of every step, integration and chat turn that ends.
         self.updater = updater_mod.Updater(self.config, self)
         self.sessions.on_turn_end = self.updater.job_ended

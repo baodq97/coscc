@@ -1,13 +1,9 @@
-"""Reading a session's transcript at the moment an update cut it (`0138`).
+"""Reading a session's transcript at the moment an update cut it. Pure: nothing here writes.
 
-Pure: every function here reads, none writes. The CLI keeps a session as JSONL under
-`~/.claude/projects`, outside `COS_DATA_DIR` (`0138 spike.md ## U2`, point 1), one line per
-block: an assistant turn that calls two tools is two lines with one `message.id`.
-
-The **boundary** is how many whole lines the file had just before `interrupt()`. Everything
-the CLI writes after it -- a `tool_result` saying "The user doesn't want to proceed…", the
-`[Request interrupted…]` line, the `cost-state` of its exit -- is the interruption's own and
-is never counted as the session's work (`0138` R4).
+The CLI keeps a session as JSONL under `~/.claude/projects`, one line per block (a turn
+calling two tools is two lines with one `message.id`). The boundary is how many whole lines
+the file had just before `interrupt()`; whatever the CLI writes after it belongs to the
+interruption and is never counted as the session's work.
 """
 
 from __future__ import annotations
@@ -17,12 +13,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-# How much of a dropped call's input a record keeps (`0138` R6: "phần đầu của input").
+# How much of a dropped call's input a record keeps.
 INPUT_HEAD = 200
 
 
 class Unreadable(Exception):
-    """A line before the boundary that is not JSON (`0138` R8)."""
+    """A line before the boundary that is not JSON."""
 
 
 def projects_root() -> Path:
@@ -32,9 +28,8 @@ def projects_root() -> Path:
 def path_for(cwd: str, session_id: str, root: Path | None = None) -> Path:
     """Where the CLI keeps `session_id` for a session run in `cwd`.
 
-    Every character that is not a letter or a digit becomes `-`, `_` and `.` included: a
-    copy placed under a name that kept `_` was not found, and the CLI wrote into the same id
-    in another project instead (`0138 spike.md ## U5`, "Sự cố").
+    Every character that is not a letter or a digit becomes `-`, `_` and `.` included; a copy
+    under a name that kept `_` was not found and the CLI wrote into the same id elsewhere.
     """
     return (root or projects_root()) / re.sub(r"[^A-Za-z0-9]", "-", cwd) / f"{session_id}.jsonl"
 
@@ -83,13 +78,10 @@ def cut(path: Path, until: int) -> dict[str, Any]:
     """The safe point of `path` read up to `until` whole lines, and what lies past it.
 
     `safe_uuid` is the last user entry such that every `tool_use` before it has its
-    `tool_result` before the boundary: a `tool_result` or a turn's prompt (R4). A turn left
-    half answered, a parallel one included, is dropped whole. `None` when no user entry is.
-
-    `dropped` is every `tool_use` after the safe point; `api_calls` the distinct
-    `message.id`s of the assistant lines before the boundary, the call under way included
-    (R10, spec C7); `pieces` the assistant's text up to the safe point, split at each tool
-    call the way `Runner` splits a reply.
+    `tool_result` before the boundary; a half-answered turn, a parallel one included, is
+    dropped whole. `None` when no user entry is. `dropped` is every `tool_use` after the safe
+    point; `api_calls` the distinct `message.id`s before the boundary; `pieces` the assistant's
+    text up to the safe point, split at each tool call the way `Runner` splits a reply.
     """
     entries = [e for e in _entries(path, until) if not e.get("isSidechain")]
     # Every call is opened before its result, so one walk in order knows at each user entry
@@ -136,11 +128,10 @@ def cut(path: Path, until: int) -> dict[str, Any]:
 def ceilings_left(
     max_turns: int, max_budget_usd: float | None, record: dict[str, Any]
 ) -> tuple[int, float | None, str]:
-    """`0138` R10. `(max_turns, max_budget_usd, used_up)` for a session taken up again.
+    """`(max_turns, max_budget_usd, used_up)` for a session taken up again.
 
-    The CLI counts both ceilings from zero in every process (`spike.md ## U4`), so what the
-    part before the cut used is taken off the grant's: its API calls, and what it had cost
-    when the CLI exited. With that cost unknown the budget is the grant's whole (spec C9).
+    The CLI counts both ceilings from zero in every process, so what the part before the cut
+    used is taken off the grant's. With that cost unknown the budget is the grant's whole.
     `used_up` is the `terminal` a step reaching its ceiling today would have, or `""`.
     """
     turns = int(max_turns) - int(record.get("api_calls") or 0)
@@ -156,9 +147,8 @@ def ceilings_left(
 
 
 def spent_after(path: Path, until: int) -> float | None:
-    """`totalCostUSD` of the last `cost-state` line past the boundary: what the whole session
-    had cost when the CLI exited (`spike.md ## U4`). `None` when the CLI wrote none, as one
-    killed with SIGKILL does -- `cost_unknown` (R11)."""
+    """`totalCostUSD` of the last `cost-state` line past the boundary, or `None` when the CLI
+    wrote none (as after SIGKILL)."""
     try:
         lines = _lines(path)[until:]
     except OSError:

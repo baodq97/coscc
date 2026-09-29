@@ -1,26 +1,9 @@
-"""Who a stage's session is: its glyph, name, meaning and role — resolved in one place.
+"""Who a stage's session is: its glyph, name, meaning and role, resolved in one place.
 
-`0036_stage-agents-do-not-know-who-they-are`. The board has shown a name per stage since
-`0051`; from `0036` the session is told it too, writes it as its `Author:`, signs its commits
-with it, and the run log keeps it. Each field of a row resolves in this order, and the first
-that has an answer wins:
-
-1. **override** — the field in an `agent:<key>` row of the `prefs` table, a JSON object
-   holding some of `FIELDS`, set from Settings (spec R2).
-2. **default** — `coscc/agent/agents.json`, shipped with the package for the reason
-   `models.json` is: a wheel has to carry the data it runs on (spec R1).
-
-`agent_for` is the only lookup: every place that shows or writes an agent's name asks it,
-through `Service._agent` where there may be overrides. The label, the address and the
-commit attribution are built here and nowhere else (spec Design), so a name that passed
-`check_field` is the only thing that ever reaches a trailer.
-
-What it does not hold is the loop's list of stages, as `coscc/agent/models.py` does not:
-Settings shows the rows this table has, and the order of the stages is `cos.mjs`'s.
-
-A name, not an identity: nothing opens, closes or grants anything because of it. Nothing
-here raises on bad data — a broken default or a hand-edited override falls back and is
-named in `problems` (spec R2).
+Each field resolves override first (an `agent:<key>` row of the `prefs` table), then default
+(`agents.json`, shipped with the package). Label, address and commit attribution are built
+here so only a name that passed `check_field` reaches a trailer. Bad data never raises: it
+falls back and is named in `problems`.
 """
 
 from __future__ import annotations
@@ -38,10 +21,9 @@ FIELDS = ("glyph", "name", "meaning", "role")
 OVERRIDE = "override"
 DEFAULT = "default"
 
-# `Service.run_step` takes both names for the one stage.
 _ALIASES = {"implement": "impl"}
 
-# Spec R2. ASCII only, so a name is safe as the local part of the trailer's address.
+# ASCII only, so a name is safe as the local part of the trailer's address.
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9-]*$")
 NAME_MAX = 24
 GLYPH_MAX = 2
@@ -57,8 +39,8 @@ _ANSWERS = "## Answers"
 
 
 def check_field(field: str, value: Any) -> str:
-    """Why `value` may not be `field`'s, or `""`. Spec R2, all but the duplicate-name rule,
-    which needs the other rows (`Service.set_agent`)."""
+    """Why `value` may not be `field`'s, or `""`. The duplicate-name rule needs the other
+    rows (`Service.set_agent`)."""
     if field not in FIELDS:
         return f"no such field: {field} (use one of {', '.join(FIELDS)})"
     if not isinstance(value, str):
@@ -185,7 +167,7 @@ def table(overrides: dict[str, dict[str, str]]) -> dict[str, Any]:
 
 
 def label(row: dict[str, Any]) -> str:
-    """`<Name> (agent, <key>)`: what every `Author:`, trailer and comment names (spec R4)."""
+    """`<Name> (agent, <key>)`: what every `Author:`, trailer and comment names."""
     return f"{row['name']} (agent, {row['key']})"
 
 
@@ -194,8 +176,7 @@ def address(row: dict[str, Any]) -> str:
 
 
 def settings_json(row: dict[str, Any]) -> str:
-    """Spec R8: the `--settings` a preset session gets, as `spike.md ## U4` measured it.
-    `attribution` and nothing else, built by `json.dumps` from a checked row."""
+    """The `--settings` a preset session gets: `attribution` and nothing else."""
     return json.dumps({
         "attribution": {
             "commit": f"Co-authored-by: {label(row)} <{address(row)}>",
@@ -205,7 +186,7 @@ def settings_json(row: dict[str, Any]) -> str:
 
 
 def identity_section(row: dict[str, Any]) -> str:
-    """Spec R3: the section a prompt opens with. An empty field is left out of its sentence."""
+    """The section a prompt opens with. An empty field is left out of its sentence."""
     glyph, name, meaning, role = (str(row.get(f) or "") for f in FIELDS)
     who = " ".join(p for p in (glyph, name) if p)
     if meaning:
@@ -223,8 +204,7 @@ def identity_section(row: dict[str, Any]) -> str:
 
 
 def of_record(record: dict[str, Any], overrides: dict[str, dict[str, str]] | None = None) -> str:
-    """Spec R7. A record's own `agent`; for one written before `0036`, the name its stage
-    has in today's table (`intent.md ## Answers, câu 3`); else `""`."""
+    """A record's own `agent`; for an older one, its stage's name in today's table; else `""`."""
     if record.get("agent"):
         return str(record["agent"])
     row = agent_for(str(record.get("stage") or ""), overrides)
@@ -232,7 +212,7 @@ def of_record(record: dict[str, Any], overrides: dict[str, dict[str, str]] | Non
 
 
 def author_of(text: str) -> str:
-    """Spec R4. The value of the last `Author:` above `## Answers`, or `""`."""
+    """The value of the last `Author:` above `## Answers`, or `""`."""
     found = ""
     for line in text.splitlines():
         if line.strip() == _ANSWERS:

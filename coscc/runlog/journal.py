@@ -1,37 +1,21 @@
-"""Everything about a step that is not the artifact.
+"""Everything about a step that is not the artifact: who ran it, when, in which mode, what it
+cost and how often it was told no.
 
-`spec.md` draws the line this module sits on: what a stage *says* lives in its artifact, on
-disk, in git, in one copy. Who ran it, when, in which mode, what it cost and how often it
-was told no — none of that is an artifact, none of it belongs in a file someone reads to
-understand the work, and committing a token count on every event would make the history
-useless. So it comes here instead.
+The status of a stage is never read from here; it comes from the artifact's `Status:` line via
+`board.py`, so the journal can say only who was there and what it cost.
 
-**The status of a stage is never read from this file.** It is always read from the
-artifact's `Status:` line via `board.py`. That is what keeps the journal unable to lie
-about progress: it can only say who was there and what it cost.
+Append-only, as a safety property: concurrent read-modify-write of a list loses entries
+silently, and an append has no read step. The transaction still frames a record so a reader
+gets a consistent snapshot, but it is the second line of defence.
 
-**Append-only, and that is a safety property rather than a style.** Four processes adding
-five workspace entries each to one working folder left 8 of the 20 behind, with no error
-anywhere (`.cos/0004_silent-concurrent-loss/plan.md:115`) — the loss was interleaved
-read-modify-write, not colliding writes. An append has
-no read step, so that entire class of loss is structurally absent here rather than defended
-against. The transaction is still taken — it frames a record so a reader gets a consistent
-snapshot — but it is the second line of defence, not the first.
+Records are stamped and never edited; a mode change is a new record and the latest wins. The
+one exception is `set_trial_model`, which reads and writes one `start` field inside one
+exclusive transaction.
 
-Records are stamped and never edited. A mode change is a new record; the latest one wins.
-The one exception is `set_trial_model` (`0139` R17), which fills in one field of one `start`
-by its read and its write inside the same exclusive transaction, so nothing interleaves.
-
-**Where it lives now.** It was a JSONL file beside the workspace store, one line
-per record, `O_APPEND` under a `flock`. It is now rows in the app's SQLite database under
-the data root. The record itself is still stored whole, as the JSON the caller composed —
-the columns beside it (`root`, `workspace`, `unit`, `stage`, `kind`) are read out of that
-JSON at insert time so a query can narrow without parsing every row. They are a second
-copy, so they are never written independently of it; the JSON is the record.
-
-A JSONL journal written before the move to SQLite is imported once, on first use, and the
-file is not deleted. That mirrors the workspace store, for the same reason: an import that turns
-out wrong is recoverable only while its source still exists.
+Rows live in the app's SQLite database. The record is stored whole as the JSON the caller
+composed; the columns beside it (`root`, `workspace`, `unit`, `stage`, `kind`) are read out of
+that JSON at insert time so a query can narrow without parsing every row, and are never
+written independently. A legacy JSONL journal is imported once, on first use, and not deleted.
 """
 
 from __future__ import annotations
@@ -49,27 +33,23 @@ from coscc.data import BUSY_TIMEOUT, Busy, Data, now as _now
 
 VERSION = 1
 
-# The file this used to be. Named here only so `_import_legacy` can read it once
-# (`spec.md` R8, extended to the journal). Nothing writes it any more.
+# The old JSONL file. Named here only so `_import_legacy` can read it once.
 JOURNAL_FILENAME = ".cos-journal.jsonl"
 
-# Same reasoning, and the same number, as `store.LOCK_TIMEOUT`: ten seconds turns an
-# indefinite block into an error that names the file. Chosen, not measured.
+# Same as `store.LOCK_TIMEOUT`: turns an indefinite block into an error. Chosen, not measured.
 LOCK_TIMEOUT = BUSY_TIMEOUT
 
 MODES = ("manual", "autonomous")
 
-# How a run ended. `cancelled` and `exhausted` exist so that "no end record" can keep
-# meaning the one thing it should: the app stopped while the step was still running.
-# `stopped` is a person pressing Stop (`0034`), and carries `stopped_by`, the name they
-# typed. `cancelled` is still written by nothing.
+# How a run ended. `cancelled` and `exhausted` exist so that "no end record" keeps meaning one
+# thing: the app stopped while the step was still running. `stopped` is a person pressing Stop
+# and carries `stopped_by`, the name they typed. `cancelled` is written by nothing.
 OUTCOMES = ("done", "failed", "exhausted", "cancelled", "stopped")
 
-# The fields a caller may report about what a turn cost. Anything else in a record is
-# carried through untouched; these are the ones `totals` knows how to add up.
-# The four a turn is billed for. Named apart from the other two because a cost display
-# sums exactly these — cache reads and writes included, or a cache-heavy session reads as
-# nearly free — and `state._tokens` should not retype them.
+# The fields a caller may report about what a turn cost. Anything else in a record is carried
+# through untouched; these are the ones `totals` adds up.
+# The four a turn is billed for, cache reads and writes included (or a cache-heavy session reads
+# as nearly free); `state._tokens` should not retype them.
 TOKEN_FIELDS = (
     "input_tokens",
     "output_tokens",
@@ -79,8 +59,8 @@ TOKEN_FIELDS = (
 
 COST_FIELDS = TOKEN_FIELDS + ("turns", "duration_ms")
 
-# Money is the one field that is not a whole number. A turn can cost less than a cent, so
-# truncating it to an integer would report most of them as free.
+# Money is not a whole number: a turn can cost less than a cent, and truncating would report
+# most as free.
 COST_USD = "cost_usd"
 USD_PLACES = 6
 
@@ -105,12 +85,12 @@ class BadRecord(ValueError):
 
 
 class Bell:
-    """`0113` Design 4. Rung after every append this process commits, from any thread.
+    """Rung after every append this process commits, from any thread.
 
-    A reader `arm`s a ticket *before* it reads, then `wait`s on it: a ring that lands between
-    its read and its wait is not missed. A ring never fails the append that rang it — a
-    ticket whose loop has closed is dropped, not raised. Another process's appends ring
-    nothing here; a reader sees those only when its wait times out.
+    A reader `arm`s a ticket *before* it reads, then `wait`s on it, so a ring between its read and
+    its wait is not missed. A ring never fails the append that rang it: a ticket whose loop has
+    closed is dropped. Another process's appends ring nothing here; a reader sees those only when
+    its wait times out.
     """
 
     def __init__(self) -> None:
@@ -158,14 +138,10 @@ BELL = Bell()
 class Journal:
     """The run log for one working folder, covering every workspace under it.
 
-    It lives in the app's data root rather than inside any repository: a workspace is
-    somebody's git checkout, and dropping a growing log into it would show up in their
-    `git status` forever. Before the data root existed, "not inside a repository" meant
-    the working folder; now it means `~/.cos`, which is also true when there is no
-    working folder at all.
+    It lives in the app's data root, not inside any repository, so a growing log never shows up in
+    a checkout's `git status`.
 
-    `data` is passed in for the same reason it is on `Store`: a test that forgets it would
-    write to the real `~/.cos`.
+    `data` is passed in so a test that forgets it cannot write to the real `~/.cos`.
     """
 
     def __init__(
@@ -179,20 +155,16 @@ class Journal:
         self._root = str(self.working_dir)
         self._imported = False
 
-    # -- locking ------------------------------------------------------------
 
     @contextmanager
     def transaction(self, timeout: float | None = None):
-        """Hold the journal exclusively. Delegates to `Data.write`.
-
-        Kept as a method because `store.Store` has one and callers frame work with it the
-        same way, and because the timeout has to be a value a test can shorten.
+        """Hold the journal exclusively. Delegates to `Data.write`; a method so callers frame work as
+        with `store.Store`, and so a test can shorten the timeout.
         """
         with self.data.write(timeout=LOCK_TIMEOUT if timeout is None else timeout) as conn:
             self._import_legacy(conn)
             yield conn
 
-    # -- migration ----------------------------------------------------------
 
     def _migration_key(self) -> str:
         return f"import-jsonl:{self._root}"
@@ -200,9 +172,8 @@ class Journal:
     def _import_legacy(self, conn) -> None:
         """Bring a pre-SQLite JSONL log in, once, for this working folder.
 
-        `Data.import_once` owns the guard, the mark and the not-deleting, exactly as it
-        does for `store.Store`. This supplies only the parse: lines that will not parse are
-        skipped rather than repaired, as `records` used to skip them on every read.
+        `Data.import_once` owns the guard, the mark and the not-deleting. This supplies only the
+        parse: lines that will not parse are skipped rather than repaired.
         """
         if self._imported:
             return
@@ -228,7 +199,6 @@ class Journal:
     def _needs_import(self) -> bool:
         return self.legacy_path.is_file() and not self._imported
 
-    # -- writing ------------------------------------------------------------
 
     def _insert(self, conn, record: dict[str, Any]) -> None:
         """One row. The columns are read out of the record, never supplied beside it."""
@@ -256,8 +226,7 @@ class Journal:
 
         stamped = {"v": VERSION, "at": _now(), **record}
         try:
-            # Serialised here rather than at insert time so an unstorable record is
-            # refused before anything is written, as it was when this was a text file.
+            # Serialised here so an unstorable record is refused before anything is written.
             json.dumps(stamped, ensure_ascii=False, sort_keys=False)
         except (TypeError, ValueError) as e:
             raise BadRecord(f"record is not JSON-serialisable: {e}") from e
@@ -271,9 +240,10 @@ class Journal:
     def append_with(
         self, records: list[dict[str, Any]], also: Callable[[Any], None], timeout: float | None = None,
     ) -> list[dict[str, Any]]:
-        """`0135` C8. `append` of every record, with `also(conn)` written in the same
-        transaction: a hold's row in `unit_holds` and its `hold` record here, or each
-        answer's row in `unit_answers` and its `answer` record, are all written or none is."""
+        """`append` of every record, with `also(conn)` written in the same transaction: a hold's row in
+        `unit_holds` and its `hold` record here, or each answer's row in `unit_answers` and its
+        `answer` record, are all written or none is.
+        """
         stamped = []
         for record in records:
             if not isinstance(record, dict) or not record.get("kind"):
@@ -309,13 +279,13 @@ class Journal:
     def set_trial_model(
         self, workspace: str, unit: str, stage: str, at: str, model: str, timeout: float | None = None,
     ) -> bool:
-        """`0139` R17. The one field of a written `start` this log ever fills in afterwards:
-        `model_trial.model`, the model the session's `init` named, which the `start` could
-        not know when it was written before the session opened (`0139 spike.md ## U2`).
+        """The one field of a written `start` this log ever fills in afterwards: `model_trial.model`,
+        the model the session's `init` named, which the `start` could not know when it was written.
 
-        Only one row is touched: the latest `start` of `workspace`, `unit` and `stage` stamped
-        at `at` (the `at` of the record `started` returned), and only while it carries a
-        `model_trial` with no `model` yet. Whether a row was written is returned."""
+        Only one row is touched: the latest `start` of `workspace`, `unit` and `stage` stamped at `at`
+        (the `at` of the record `started` returned), and only while it carries a `model_trial` with no
+        `model` yet. Whether a row was written is returned.
+        """
         with self.transaction(timeout) as conn:
             row = conn.execute(
                 "SELECT id, record FROM runs WHERE root = ? AND workspace = ? AND unit = ? AND stage = ? "
@@ -347,39 +317,39 @@ class Journal:
         )
 
     def attempted(self, workspace: str, unit: str, stage: str, **extra: Any) -> dict[str, Any]:
-        """`0019`. What a stopped step left behind, written just before its `end` record.
+        """What a stopped step left behind, written just before its `end` record.
 
-        Never read for a stage's status — `board.py` still reads only `Status:` in the
-        artifact (`.claude/CLAUDE.md` invariant). This is only ever read back by
-        `failed_attempts`, to build the next run's prompt.
+        Never read for a stage's status; `board.py` reads only `Status:` in the artifact. Only read
+        back by `failed_attempts`, to build the next run's prompt.
         """
         return self.append(
             {"kind": "attempt", "workspace": workspace, "unit": unit, "stage": stage, **extra}
         )
 
     def suspended(self, workspace: str, unit: str, stage: str, **fields: Any) -> dict[str, Any]:
-        """`0138` R6. One session an update paused, with a `suspend_id` of its own. Written
-        between a step's `start` and its `end`, and closing neither (R15)."""
+        """One session an update paused, with a `suspend_id` of its own. Written between a step's
+        `start` and its `end`, and closing neither.
+        """
         return self.append({
             "kind": "suspend", "workspace": workspace, "unit": unit, "stage": stage,
             "suspend_id": uuid.uuid4().hex, **fields,
         })
 
     def resumed(self, workspace: str, unit: str, stage: str, suspend_id: str, **fields: Any) -> dict[str, Any]:
-        """`0138` R7. The next start took `suspend_id` up; written before it runs anything,
-        so a start after this one never takes it up again."""
+        """The next start took `suspend_id` up; written before it runs anything, so a start after this
+        one never takes it up again.
+        """
         return self.append({
             "kind": "resume", "workspace": workspace, "unit": unit, "stage": stage,
             "suspend_id": suspend_id, **fields,
         })
 
     def unresumed(self, timeout: float | None = None) -> list[dict[str, Any]]:
-        """`0138` R7. Every `suspend` row, in every workspace, with no `resume` naming it."""
+        """Every `suspend` row, in every workspace, with no `resume` naming it."""
         rows = self.records(timeout=timeout, kinds=("suspend", "resume"))
         taken = {r.get("suspend_id") for r in rows if r.get("kind") == "resume"}
         return [r for r in rows if r.get("kind") == "suspend" and r.get("suspend_id") not in taken]
 
-    # -- reading ------------------------------------------------------------
 
     def records(
         self,
@@ -391,12 +361,8 @@ class Journal:
     ) -> list[dict[str, Any]]:
         """Every record for this working folder, oldest first, optionally narrowed.
 
-        A row whose JSON will not parse is skipped rather than repaired. The database is
-        editable by hand like the file before it, and rewriting somebody's edit would lose
-        whatever they meant by it.
-
-        Ordered by `id`. `at` is only second-resolution, so two records written in the same
-        second would have no order at all if it were the key.
+        A row whose JSON will not parse is skipped rather than repaired (the database is editable by
+        hand). Ordered by `id`: `at` is only second-resolution.
         """
         if self._needs_import():
             with self.transaction(timeout):
@@ -433,10 +399,10 @@ class Journal:
         return out
 
     def last_id(self, timeout: float | None = None) -> int:
-        """`0113` R6. The largest `runs.id` in the database, 0 when there is none.
+        """The largest `runs.id` in the database, 0 when there is none.
 
-        Every root's, not this one's: ids are one sequence, so "past this one" means the same
-        whichever root wrote it."""
+        Every root's, not this one's: ids are one sequence.
+        """
         if self._needs_import():
             with self.transaction(timeout):
                 pass
@@ -448,9 +414,10 @@ class Journal:
         self, after: int, kinds: Iterable[str], workspace: str | None = None, limit: int = 500,
         timeout: float | None = None,
     ) -> list[tuple[int, dict[str, Any]]]:
-        """`0113` Design 1. `(id, record)` for this root's rows of `kinds` past `after`, by `id`,
-        at most `limit`, optionally in one workspace. A row whose JSON will not parse is
-        skipped, as `records` skips it; its id is then never handed out."""
+        """`(id, record)` for this root's rows of `kinds` past `after`, by `id`, at most `limit`,
+        optionally in one workspace. A row whose JSON will not parse is skipped, as `records` skips
+        it; its id is then never handed out.
+        """
         if self._needs_import():
             with self.transaction(timeout):
                 pass
@@ -480,8 +447,7 @@ class Journal:
     def modes(self, workspace: str, timeout: float | None = None) -> dict[tuple[str, str], str]:
         """Current mode of every step that has ever had one set. Latest record wins.
 
-        Narrowed in SQL: the `kind` column exists so this does not fetch and parse every
-        start, end and denial in the working folder to keep the handful that are modes.
+        Narrowed in SQL by the `kind` column rather than parsing every row.
         """
         found: dict[tuple[str, str], str] = {}
         for item in self.records(workspace, timeout=timeout, kind="mode"):
@@ -491,32 +457,29 @@ class Journal:
         return found
 
     def timeline(self, workspace: str, unit: str, timeout: float | None = None) -> list[dict[str, Any]]:
-        """One row per run of a step, oldest first (`spec.md` R15).
+        """One row per run of a step, oldest first.
 
-        A `start` with no `end` is a run that is still going — or one the app was killed
-        during. Both look the same from here, and the row says so by leaving `ended` unset
-        rather than guessing.
+        A `start` with no `end` is a run still going or one the app was killed during; the row leaves
+        `ended` unset rather than guessing.
         """
         return _fold(self.records(workspace, unit, timeout=timeout))
 
     def timelines(
         self, workspace: str, timeout: float | None = None
     ) -> dict[str, list[dict[str, Any]]]:
-        """`timeline` for every unit at once, from a single read.
-
-        The board needs one of these per unit. Asking `timeline` for each would open a
-        connection and re-scan the working folder per unit — the same rows, N times.
+        """`timeline` for every unit at once, from a single read, so the board does not open a
+        connection and re-scan the folder per unit.
         """
         return timelines_of(self.records(workspace, timeout=timeout))
 
     def append_checked(
         self, record: dict[str, Any], kinds: Iterable[str], check: Any, timeout: float | None = None,
     ) -> dict[str, Any]:
-        """`0074`. Read the records of `kinds`, let `check` refuse, and append — in one transaction.
+        """Read the records of `kinds`, let `check` refuse, and append, in one transaction.
 
-        `check(rows)` raises `BadRecord` to refuse; nothing is written then. The read happens
-        on the transaction's own connection after `BEGIN IMMEDIATE`, so two writers checking
-        against each other's rows run one after the other.
+        `check(rows)` raises `BadRecord` to refuse; nothing is written then. The read happens on the
+        transaction's own connection after `BEGIN IMMEDIATE`, so two writers checking against each
+        other's rows run one after the other.
         """
         if not isinstance(record, dict) or not record.get("kind"):
             raise BadRecord("a journal record needs a 'kind'")
@@ -548,13 +511,11 @@ class Journal:
     def open_starts(
         self, workspace: str, timeout: float | None = None
     ) -> dict[str, dict[str, Any]]:
-        """`0051`. Per unit, the runs with a `start` and no `end`, and the unit's last `start`.
+        """Per unit, the runs with a `start` and no `end`, and the unit's last `start`.
 
-        `{unit: {"open": [row…], "last_start": at}}`, only for units with an open row. A
-        row is `_fold`'s, so this can never disagree with `timeline` about what is open.
-        Narrowed in SQL to the two kinds that decide it, like `modes`: the board asks this
-        every few seconds, and nothing else in the run log bears on the answer. Writes
-        nothing — a `start` nobody ended stays one (`0051 spec.md`, out of scope).
+        `{unit: {"open": [row...], "last_start": at}}`, only for units with an open row. A row is
+        `_fold`'s, so this cannot disagree with `timeline` about what is open. Narrowed in SQL to the
+        two kinds that decide it, since the board asks every few seconds. Writes nothing.
         """
         by_unit: dict[str, list[dict[str, Any]]] = {}
         for item in self.records(workspace, timeout=timeout, kinds=("start", "end")):
@@ -569,17 +530,15 @@ class Journal:
         return out
 
     def totals(self, workspace: str, unit: str, timeout: float | None = None) -> dict[str, Any]:
-        """What one unit has cost, added up from its steps (`spec.md` R17).
-
-        Added rather than stored. A stored total is a second number that can disagree with
-        the first, and the point of the requirement is that it cannot.
+        """What one unit has cost, added up from its steps. Added rather than stored, so it cannot
+        disagree with a stored total.
         """
         per_stage: dict[str, dict[str, Any]] = {}
         for row in self.timeline(workspace, unit, timeout=timeout):
             stage = row.get("stage") or ""
             bucket = per_stage.setdefault(stage, {**zero_cost(), "unknown": 0})
             add_cost(bucket, row.get("cost") or {})
-            # `0092` R7: how many of these runs have no known cost.
+            # How many of these runs have no known cost.
             bucket["unknown"] += int(_cost_unknown(row))
 
         total = {**zero_cost(), "unknown": 0}
@@ -591,8 +550,8 @@ class Journal:
     def failed_attempts(
         self, workspace: str, unit: str, stage: str, timeout: float | None = None
     ) -> dict[str, Any] | None:
-        """What the runs of `stage` before this one left behind, or `None` when there is
-        nothing to tell — no run yet, or the most recent one is `done` (`0019` plan step 4).
+        """What the runs of `stage` before this one left behind, or `None` when there is nothing to
+        tell: no run yet, or the most recent one is `done`.
         """
         seq = [
             r
@@ -608,9 +567,8 @@ class Journal:
 
         attempt = None
         for i in range(last - 1, -1, -1):
-            # Only the attempt written by *this* run: an earlier run's `end` ends the
-            # search, so a run whose capture failed is described as having none, rather
-            # than with the tree of a run before it.
+            # Only the attempt written by *this* run: an earlier run's `end` ends the search, so a run
+            # whose capture failed is described as having none, not with the tree of a run before it.
             if seq[i].get("kind") == "end":
                 break
             if seq[i].get("kind") == "attempt":
@@ -637,10 +595,10 @@ class Journal:
 
         found = {"attempt": attempt, "latest": _brief(seq[last]), "earlier": earlier}
         latest = seq[last]
-        # `0085` R11. A review that ran out of turns and whose closing turn wrote nothing left
-        # no round; what it had opened is kept in its events, never in `review.md`. A round
-        # the app wrote later leaves a newer `end`, so this stops being the latest. `closing`
-        # says whether a closing turn ran at all: none does with no session id or no head.
+        # A review that ran out of turns and whose closing turn wrote nothing left no round; what it
+        # had opened is kept in its events, never in `review.md`. A round the app wrote later leaves a
+        # newer `end`, so this stops being the latest. `closing` says whether a closing turn ran at
+        # all: none does with no session id or no head.
         if (
             stage == "review" and latest.get("outcome") == "exhausted"
             and latest.get("review_md") == "none" and latest.get("run")
@@ -649,8 +607,9 @@ class Journal:
         return found
 
     def _opened(self, run: str, timeout: float | None) -> dict[str, Any]:
-        """The paths `run`'s `tool_use` events named, `{"purged": True}` when its events are
-        gone, or `{"error": ...}`: a reason to show, never one to refuse the step for."""
+        """The paths `run`'s `tool_use` events named, `{"purged": True}` when its events are gone, or
+        `{"error": ...}`: a reason to show, never one to refuse the step for.
+        """
         try:
             row = self.data.step_run(run)
             if row is None or row.get("purged_at"):
@@ -678,9 +637,8 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Records in order, folded into one row per run. Shared by `timeline`/`timelines`."""
     rows: list[dict[str, Any]] = []
     open_runs: dict[str, dict[str, Any]] = {}
-    # `0092` R6. The same open rows by their `run`, so an `end` that names one closes that
-    # one: two runs of a stage can be open at once, and the latest is not always the one
-    # that ended.
+    # The same open rows by their `run`, so an `end` that names one closes that one: two runs of a
+    # stage can be open at once, and the latest is not always the one that ended.
     open_by_run: dict[str, dict[str, Any]] = {}
     for item in items:
         kind = item.get("kind")
@@ -697,20 +655,17 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 "cost": {},
                 "denials": 0,
                 "detail": None,
-                # Which model the step was started on, and why that one (`override`,
-                # `default` or `COS_MODEL`). A start written before
-                # `0004_no-setting-says-which-model-runs-a-stage` has neither: None.
+                # Which model the step was started on, and why that one (`override`, `default` or
+                # `COS_MODEL`). An older start has neither: None.
                 "model": item.get("model"),
                 "model_source": item.get("model_source"),
-                # `0073`. The id of the step's events, and how many never reached disk. A run
-                # written before `0073`, or not from the board, has neither: None.
+                # The id of the step's events, and how many never reached disk. A run not from the board has
+                # neither: None.
                 "run": item.get("run"),
                 "events_lost": None,
-                # `0093` R8. What state opened an `integrate` session. Any other stage, or an
-                # `integrate` started before `0093`, has none: None.
+                # What state opened an `integrate` session. Any other stage has none: None.
                 "integrate_state": item.get("integrate_state"),
-                # `0036` R7. The agent's name when the step began. A start written before
-                # `0036`, or of a session no agent row names, has none: None.
+                # The agent's name when the step began. A session no agent row names has none: None.
                 "agent": item.get("agent"),
             }
             rows.append(row)
@@ -723,37 +678,32 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 if open_runs.get(stage) is row:
                     del open_runs[stage]
             else:
-                # An `end` with no `run`, or one naming no open row: by stage, as before `0092`.
+                # An `end` with no `run`, or one naming no open row: by stage.
                 row = open_runs.pop(stage, None)
                 if row is not None and row.get("run"):
                     open_by_run.pop(str(row["run"]), None)
             if row is None:
-                # An end with no start: keep it rather than drop it, so a half-written
-                # history still shows that something happened.
+                # An end with no start: keep it, so a half-written history still shows that something happened.
                 row = {"stage": stage, "mode": item.get("mode"), "started": None, "detail": None}
                 rows.append(row)
             row["ended"] = item.get("at")
             row["outcome"] = item.get("outcome")
             row["artifact"] = item.get("artifact")
             row["denials"] = int(item.get("denials") or 0)
-            # Why it ended this way, carried through to the row the page reads. `finished`
-            # has stored this since `0005` and `_fold` dropped it, so every failure arrived
-            # at the board as an outcome with no reason -- and `0014` found out the
-            # expensive way, when a paid `spec` step failed inside a proof run and the only
-            # account of it was the word "failed".
+            # Why it ended this way, carried through to the row the page reads, so a failure reaches the
+            # board with its reason.
             row["detail"] = item.get("detail")
             if item.get("session_id"):
                 row["session_id"] = item.get("session_id")
             cost = zero_cost()
             add_cost(cost, item)
             row["cost"] = cost
-            # `0019`. Whether this `end` actually carried a cost, as opposed to one
-            # `add_cost` filled in as zero because the session died before reporting any.
-            # Without this a step that failed before its first billed turn reads on the
-            # board as a run that cost nothing, rather than one nobody measured.
+            # Whether this `end` actually carried a cost, as opposed to one `add_cost` filled in as zero
+            # because the session died before reporting any. Without it a step that failed before its first
+            # billed turn reads as a run that cost nothing, not one nobody measured.
             row["reported"] = "cost_usd" in item
-            # `0092` R7. Whether it carried `turns`, known apart from its cost: a step that
-            # died after three turns knows them, and not what they cost.
+            # Whether it carried `turns`, known apart from its cost: a step that died after three turns
+            # knows them, and not what they cost.
             row["turns_reported"] = "turns" in item
             if "events_lost" in item:
                 row["events_lost"] = item.get("events_lost")
@@ -761,7 +711,7 @@ def _fold(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def timelines_of(items: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """`Journal.timelines` over records already read, so the board reads the run log once (`0074`)."""
+    """`Journal.timelines` over records already read, so the board reads the run log once."""
     by_unit: dict[str, list[dict[str, Any]]] = {}
     for item in items:
         by_unit.setdefault(str(item.get("unit") or ""), []).append(item)
@@ -769,15 +719,15 @@ def timelines_of(items: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, An
 
 
 def _cost_unknown(row: dict[str, Any]) -> bool:
-    """`0092` R7. A run that ended with no `cost_usd`: what it cost is not known, not zero."""
+    """A run that ended with no `cost_usd`: what it cost is not known, not zero."""
     return row.get("ended") is not None and not row.get("reported", True)
 
 
 def totals_of(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Add the cost of some timeline rows. Exposed so a caller can total a subset.
 
-    Only known costs are added; `unknown` counts the ended runs whose cost is not known
-    (`0092` R7), so the sum is never shown as the whole of it.
+    Only known costs are added; `unknown` counts the ended runs whose cost is not known, so the
+    sum is never shown as the whole of it.
     """
     out = zero_cost()
     out["unknown"] = 0
@@ -788,11 +738,10 @@ def totals_of(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
 
 def last_runs(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """`0019`. For each stage, its most recently *ended* timeline row, keyed by stage.
+    """For each stage, its most recently *ended* timeline row, keyed by stage.
 
-    A run still in progress (`ended` unset) is skipped: it is not a "last run" yet, it is
-    the current one. `rows` is `timeline`/`timelines`'s output, oldest first, so the last
-    assignment to a stage in iteration order is the most recent one.
+    A run still in progress (`ended` unset) is skipped. `rows` is `timeline`/`timelines`'s output,
+    oldest first, so the last assignment to a stage is the most recent one.
     """
     out: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -800,8 +749,7 @@ def last_runs(rows: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             continue
         stage = str(row.get("stage") or "")
         cost = row.get("cost") or {}
-        # `0092` R7. Each known or not on its own: a step can report its turns and not what
-        # they cost.
+        # Each known or not on its own: a step can report its turns and not what they cost.
         out[stage] = {
             "outcome": row.get("outcome"),
             "ended": row.get("ended"),

@@ -1,34 +1,9 @@
 """Where a workspace's work units live, and how a new one is started.
 
-**The units are the product's, not the repository's.** `.cos/0013_.../intent.md` settled
-that on 2026-09-22 in the originator's own words: a repository is a whole team's and this
-loop is one person's, so nothing of coscc's goes into a shared repository's tree. Until
-this module that was a decision written down; here it becomes the one enforced.
-
-So a unit's artifacts sit under this app's data root, and the repository being worked on
-receives only four things: the branch, the commits a step's own session makes to its code,
-the pull request body, and — since `0021` — one review comment per review round on that
-pull request. `scripts/verify_0014.py` claim 5 is the check for the tree; comments are not
-in the tree, and `scripts/verify_0021.py` is the check for them.
-
-**The review comment is a deliberate exception to `0013`/`0014`.** The pull request is
-where the team reads, and a round that found a high-severity problem looked, there, exactly
-like a round that found nothing (`0021` intent). Only text already in `review.md` goes out,
-verbatim, as an ordinary comment the app posts under this machine's `gh` login
-(`coscc/github/prcomment.py`). It is not an approval, and no gate reads it.
-
-**Nothing here re-implements the loop.** `.claude/CLAUDE.md` says `cos.mjs` is the one
-place it is defined and nothing may hold a second copy. Numbering a unit and validating a
-slug are its job, and `create` below is a shell around `new-path` rather than a Python
-version of it. The `--root` flag already exists for exactly this: `.claude/CLAUDE.md`
-records that it is there so the app can read a `.cos/` elsewhere with this repository's
-rules. This module only changes which directory that is.
-
-**One function answers where units live, and that is the whole of R3.** `coscc/units/board.py`,
-`coscc/runner/__init__.py` and `coscc/service/__init__.py` each computed a unit's path for themselves before
-this. Three copies of one formula is precisely the shape of `0012`, where two modules each
-worked out where `.claude/` was and one packaging omission arrived as two unrelated-looking
-symptoms (`coscc/agent/harness.py:47-50`).
+Units live under the app's data root, never in the repository: the repository receives only
+the branch, a step's own code commits, the pull request body and one review comment per round.
+`cos.mjs` stays the one place the loop is defined; `create` is a shell around `new-path`, and
+`unit_dir` is the one function that answers where a unit's directory is.
 """
 
 from __future__ import annotations
@@ -47,19 +22,15 @@ from coscc.data import Data
 # The directory `cos.mjs` reads, inside whatever root it is given.
 COS_DIR = ".cos"
 
-# Where the store sits under the data root. One level, named for what it holds.
 UNITS_DIR = "units"
 
-# `NNNN_slug`, the only shape `cos.mjs new-path` produces and the only one accepted back.
+# `NNNN_slug`: the only shape `cos.mjs new-path` produces and the only one accepted back.
 UNIT_RE = re.compile(r"\d{4}_[a-z0-9]+(?:-[a-z0-9]+)*")
 
-# Seconds. `cos.mjs` reads files and prints one line; the timeout exists to turn a hung
-# child into an error, not to bound the work -- the same argument as `coscc/units/board.py:38`.
+# Turns a hung `cos.mjs` child into an error; it does not bound the work.
 TIMEOUT = 10.0
 
-# How much of the workspace path's digest goes into the directory name. Twelve hex
-# characters is 48 bits; these are names in one person's data directory, not a namespace
-# anyone else writes into.
+# Hex characters of the workspace path digest kept in the directory name (48 bits).
 _DIGEST = 12
 
 
@@ -72,23 +43,12 @@ class CannotCreate(RuntimeError):
 
 
 def key(workspace: str | os.PathLike[str]) -> str:
-    """How a workspace is identified. The resolved path, and nothing else.
-
-    The same convention `coscc/service/__init__.py:241-248` uses for the journal, and deliberately
-    not a second one: a workspace declared by the environment has no name at all, and a
-    path is the one identifier both kinds have. The cost is the same too — moving a
-    workspace detaches its units from it.
-    """
+    """How a workspace is identified: the resolved path, and nothing else."""
     return str(Path(workspace).expanduser().resolve())
 
 
 def slot(workspace: str | os.PathLike[str]) -> str:
-    """The directory name for one workspace: its basename, then a digest of its path.
-
-    The identity is the path — the digest is a rendering of it, not a second identity.
-    The basename is carried only so that a person looking in the data directory can tell
-    which one is which; two workspaces with the same basename differ in the digest.
-    """
+    """The directory name for one workspace: its basename, then a digest of its path."""
     identity = key(workspace)
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:_DIGEST]
     name = Path(identity).name or "workspace"
@@ -97,23 +57,14 @@ def slot(workspace: str | os.PathLike[str]) -> str:
 
 
 def root(workspace: str | os.PathLike[str], data_dir: str | os.PathLike[str] | None = None) -> Path:
-    """The directory to hand `cos.mjs --root`. Its `.cos/` holds this workspace's units.
-
-    `Data` turns the setting into a path, here as everywhere else — `coscc/data.py` is the
-    only module allowed to do that, and borrowing it rather than expanding `~` again is
-    what keeps that true.
-    """
+    """The directory to hand `cos.mjs --root`. Its `.cos/` holds this workspace's units."""
     return Data(data_dir).root / UNITS_DIR / slot(workspace)
 
 
 def spike_dir(
     workspace: str | os.PathLike[str], unit: str, data_dir: str | os.PathLike[str] | None = None
 ) -> Path:
-    """`0039` R11. The throwaway directory a `spike` step runs in, outside every checkout.
-
-    Under the data root, beside `units/` and never inside it, so a probe's files cannot be
-    read as a unit's artifacts. `coscc/service/__init__.py` makes it and removes it around the step.
-    """
+    """The throwaway directory a `spike` step runs in, beside `units/` and outside every checkout."""
     return Data(data_dir).root / "spikes" / slot(workspace) / unit
 
 
@@ -126,11 +77,7 @@ def unit_dir(
     unit: str,
     data_dir: str | os.PathLike[str] | None = None,
 ) -> Path:
-    """One unit's directory. The name is validated, never trusted.
-
-    A unit name reaches this from a request. Checking its shape here means a caller cannot
-    walk out of the store with one, whatever else it forgets.
-    """
+    """One unit's directory. The name is validated, never trusted, so a request cannot walk out."""
     if not UNIT_RE.fullmatch(unit or ""):
         raise BadUnit(f"not a work unit name: {unit!r}")
     return cos_dir(workspace, data_dir) / unit
@@ -139,10 +86,7 @@ def unit_dir(
 def _cos(root_path: Path, *args: str, stdin: str | None = None) -> str:
     """Run `cos.mjs` against a root and return its stdout, or raise `CannotCreate`.
 
-    The script that runs is **this app's copy**, never one found inside a workspace —
-    `coscc/units/board.py:8-14` made that decision and `coscc/agent/harness.py` is what keeps it true.
-    Here it matters slightly less (the root is the app's own directory) and is kept
-    identical anyway, because two answers to "which copy" is how one of them drifts.
+    Always this app's copy of the script, never one found inside a workspace.
     """
     script = harness.script()
     if not script.exists():
@@ -164,9 +108,7 @@ def _cos(root_path: Path, *args: str, stdin: str | None = None) -> str:
     except subprocess.TimeoutExpired as e:
         raise CannotCreate(f"cos.mjs {' '.join(args)} did not finish in {TIMEOUT:.0f}s") from e
     if done.returncode != 0:
-        # Its words, not ours. `new-path` explains a malformed slug better than a second
-        # validator here could, and a second validator is what `intent.md` constraint 4
-        # forbids.
+        # Its words, not ours: `new-path` explains a malformed slug better than a second validator.
         raise CannotCreate((done.stderr or done.stdout or "").strip() or "cos.mjs refused")
     return done.stdout.strip()
 
@@ -179,18 +121,13 @@ def branch_name(
 ) -> str:
     """The branch this unit's `Type:` implies, from `cos.mjs unit-branch`.
 
-    `state` is the app's snapshot, where the `Type:` is (`0135`); `intent.md` must still be
-    on disk, so it cannot answer before the intent stage has run — and the refusal it raises
-    says that, rather than this module guessing a name.
+    `state` is the app's snapshot, where the `Type:` is; `intent.md` must be on disk too.
     """
     directory = unit_dir(workspace, unit, data_dir)  # validates before it reaches a command
     if not directory.is_dir():
         raise CannotCreate(f"no such work unit in this workspace: {unit}")
     if not (directory / "intent.md").is_file():
-        # `cos.mjs unit-branch` answers `No such work unit` here, which is true of the
-        # file it reads and false of the unit -- the directory is right there. Measured
-        # 2026-09-22. Saying which of the two is missing is the difference between a
-        # person fixing it and a person looking for a unit they just made.
+        # `cos.mjs unit-branch` says `No such work unit` here, false of the unit; say what is missing.
         raise CannotCreate(
             f"{unit} has no intent.md yet, and the branch name comes from the Type: "
             "declared in it — run the intent stage first"
@@ -209,18 +146,10 @@ def create(
 ) -> dict[str, Any]:
     """Start a work unit: allocate the number, make the directory, record the brief.
 
-    `reserve_from` names directories whose `.cos/` numbers count as taken — the host
-    repository, from `coscc/service/__init__.py`. They reach `cos.mjs` as `--reserve-from`, which
-    reads them; this module neither lists them nor compares a number. The flags go
-    **before** `new-path` on purpose: an older `cos.mjs` would read a trailing flag as
-    nothing and hand out a duplicate number silently, whereas a leading one is taken for the
-    command, refused with exit 2, and arrives on the page as `CannotCreate`.
-
-    `brief` is the originator's own words and is written as `idea.md`. That is not a new
-    mechanism: `idea` is the loop's optional first stage, and `coscc/runner/__init__.py:112-121`
-    already puts the stage before `intent` into the intent step's prompt. It is also what
-    `write-intent` invariant 1 asks for — *"The originator states the problem in their own
-    words first"* — landing in the one file that exists for it.
+    `reserve_from` names directories whose `.cos/` numbers count as taken. The flags go
+    **before** `new-path`: a trailing flag would be read as nothing and hand out a duplicate
+    number silently, a leading one is refused with exit 2 and arrives as `CannotCreate`.
+    `brief` is the originator's own words, written as `idea.md`.
     """
     store = root(workspace, data_dir)
     (store / COS_DIR).mkdir(parents=True, exist_ok=True)
@@ -231,9 +160,7 @@ def create(
     if not relative:
         raise CannotCreate("cos.mjs new-path printed nothing")
 
-    # `new-path` prints a path **relative to the root** (measured 2026-09-22 with
-    # `--root`: `.cos/0001_first-problem`). Joining is therefore right and checking the
-    # join is not paranoia -- `plan.md` Risk 6 is this line.
+    # `new-path` prints a path relative to the root; check the join stays inside the store.
     directory = (store / relative).resolve()
     if store.resolve() not in directory.parents:
         raise CannotCreate(f"cos.mjs named a path outside the store: {relative}")
@@ -252,10 +179,7 @@ def create(
 def host_unit_count(workspace: str | os.PathLike[str]) -> int:
     """How many directories in the host repository's own `.cos/` are named like units.
 
-    Read-only, and names only: no file is opened, so a malformed unit over there still
-    counts. It exists so the empty board can say *why* it is empty when the repository
-    plainly is not (`0001_product-describes-a-state-it-is-not-in` R6). Counted on every
-    call and never cached — that is R8, and the cost on a large `.cos/` is unmeasured.
+    Names only, no file opened, never cached. It lets the empty board say why it is empty.
     """
     directory = Path(key(workspace)) / COS_DIR
     try:
@@ -264,19 +188,12 @@ def host_unit_count(workspace: str | os.PathLike[str]) -> int:
         return 0
 
 
-# `^\d{4}_`, the spec's wording (R6). Looser than `UNIT_RE` on purpose: a directory whose
-# slug the grammar would refuse is still a unit that somebody made there.
+# Looser than `UNIT_RE` on purpose: a directory whose slug the grammar refuses still counts.
 _HOST_UNIT_RE = re.compile(r"\d{4}_")
 
 
 def _idea(unit: str, brief: str) -> str:
-    """The brief as an `idea.md` the loop can read.
-
-    `Status: accepted.` because these are the originator's words, and there is nothing for
-    an agent to accept about them. `cos.mjs` accepts `draft`, `accepted` or `rejected` for
-    this file (`.claude/scripts/cos.mjs:26`); a `draft` here would block the gate on a
-    judgement nobody is making.
-    """
+    """The brief as an `idea.md` the loop can read, `Status: accepted` (nothing for an agent to accept)."""
     title = unit.split("_", 1)[-1].replace("-", " ")
     return (
         f"# Idea: {title}\n"

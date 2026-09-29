@@ -1,19 +1,13 @@
-"""The project's own instructions, read by the app rather than by the CLI.
-
-Since `0088` every session the app opens runs with no settings source at all
-(`coscc/agent/sessions.py` `_options`), so the CLI no longer loads `CLAUDE.md` or the rules under
-`.claude/rules/` by itself. What a stage needs of them comes back through here, into the
-system prompt, and nothing else does:
+"""The project's own instructions, read by the app: sessions run with no settings source, so
+the CLI loads no `CLAUDE.md` or rules itself and what a stage needs comes back through here.
 
 - `<cwd>/CLAUDE.md` and `<cwd>/.claude/CLAUDE.md`, verbatim.
-- Every `<cwd>/.claude/rules/**/*.md` whose front-matter has no `paths:`, verbatim.
-- Every rule that has one, as one line of a table of contents and never its contents.
-  `0088` `spike.md ## U7` measured that with no sources the CLI does not load a scoped rule
-  even after the session reads a file it matches, so the session is told to `Read` it.
+- Every `<cwd>/.claude/rules/**/*.md` without `paths:` in its front-matter, verbatim.
+- Every rule with `paths:`, as one table-of-contents line; the CLI does not load a scoped
+  rule with no sources, so the session is told to `Read` it.
 
-No parent directory, no `CLAUDE.local.md` (the `local` source is cut by the intent's
-answer 1), nothing under `~/.claude/`. An `@path` stays the text it is, for the reason
-`verbatim_prompts` is set: nothing this app sends may pull in a file by naming it.
+No parent directory, no `CLAUDE.local.md`, nothing under `~/.claude/`. An `@path` stays text:
+nothing this app sends may pull in a file by naming it.
 """
 
 from __future__ import annotations
@@ -24,7 +18,6 @@ from pathlib import Path
 HEADING = "# Project instructions"
 SCOPED_HEADING = "## Scoped rules"
 
-# Instructions to the model, so English (`.claude/CLAUDE.md`, *Invariants*).
 SCOPED_LINE = (
     "- {path} (paths: {patterns}): read this file with Read before editing a file "
     "matching one of these patterns."
@@ -43,7 +36,7 @@ class Instructions:
     scoped: tuple[str, ...] = ()
 
     def record(self) -> dict[str, list[str]]:
-        """The `instructions` field of a board step's `start` row (`0088` R13)."""
+        """The `instructions` field of a board step's `start` row."""
         return {"verbatim": list(self.verbatim), "scoped": list(self.scoped)}
 
 
@@ -57,11 +50,8 @@ def _strip_quotes(value: str) -> str:
 def scoped_patterns(text: str) -> list[str] | None:
     """The patterns under `paths:` in the front-matter, or `None` when there are none.
 
-    Only the one key is looked for, by hand: the app has no YAML parser and this unit adds
-    no dependency. Both `paths: ["a", "b"]` and a block of `  - "a"` lines are read.
-    Anything this cannot make sense of -- a front-matter never closed, a `[` with no `]`,
-    a `paths:` with nothing under it -- is `None`, so the file goes in whole: a typo costs
-    context, never a rule.
+    Read by hand (no YAML parser): `paths: ["a", "b"]` and a block of `  - "a"` lines.
+    Anything unreadable is `None`, so the file goes in whole: a typo costs context, never a rule.
     """
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -94,7 +84,7 @@ def scoped_patterns(text: str) -> list[str] | None:
 
 
 def read(cwd: str | Path) -> Instructions:
-    """Everything a session in `cwd` is given of its project's instructions (`0088` R5, R7)."""
+    """Everything a session in `cwd` is given of its project's instructions."""
     root = Path(cwd)
     candidates = [root / "CLAUDE.md", root / ".claude" / "CLAUDE.md"]
     rules = root / ".claude" / "rules"
@@ -116,7 +106,7 @@ def read(cwd: str | Path) -> Instructions:
         except (OSError, UnicodeDecodeError):
             verbatim.append(name + UNREADABLE)
             continue
-        # Only a rule can be scoped; a `CLAUDE.md` is always read whole, as the CLI did.
+        # Only a rule can be scoped; a `CLAUDE.md` is always read whole.
         patterns = scoped_patterns(body) if rules in path.parents else None
         if patterns is None:
             sections.append(f"## {name}\n\n{body}")

@@ -1,8 +1,4 @@
-"""The *Knowledge* screen (`0131` R24-R26): what `Service.knowledge_page` read, made readable.
-
-`StudioState` inherits it and reads it once per arrival at `/knowledge`, as *Cost* is read.
-Nothing here decides or writes: no button, no route, no gather.
-"""
+"""The *Knowledge* screen: what `Service.knowledge_page` read, made readable. Read-only."""
 
 from __future__ import annotations
 
@@ -12,16 +8,16 @@ import reflex as rx
 
 from coscc.web import present
 
-# R26: a status nobody has checked says so, rather than "pass".
+# A status nobody has checked says so, rather than "pass".
 NOT_CHECKED = "not checked yet"
-# R22's verdicts, for the reader of an English screen (S6).
+# The verdicts, for the reader of an English screen.
 VERDICTS = {"đạt": "passes", "không đạt": "fails", "chưa đủ mẫu": "too few units yet"}
 
 
 @dataclasses.dataclass
 class KnowledgeEntry:
-    """One entry: its sources without their workspace, which only `slots` names (S3). `reason`
-    may name a slot (`admit.health`), so the page shows it only in a detail."""
+    """One entry: its sources without their workspace, which only `slots` names. `reason`
+    may name a slot, so the page shows it only in a detail."""
 
     id: str = ""
     scope: str = ""
@@ -36,7 +32,7 @@ class KnowledgeEntry:
 
 @dataclasses.dataclass
 class KnowledgeGather:
-    """`reason` may carry a path (`admit.fresh_main`, `gather.read_store`): a detail only (S3)."""
+    """`reason` may carry a path: a detail only."""
 
     at: str = ""
     unit: str = ""
@@ -47,8 +43,8 @@ class KnowledgeGather:
 
 @dataclasses.dataclass
 class KnowledgeStep:
-    """`withheld` is the ids; `why` their reasons, which may carry a path (`knowledge.for_step`)
-    and so are a detail keyed by `key` (S3)."""
+    """`withheld` is the ids; `why` their reasons, which may carry a path and so are a
+    detail keyed by `key`."""
 
     key: str = ""
     unit: str = ""
@@ -83,7 +79,7 @@ def knowledge_fields(page: dict) -> dict:
         status, color = ((NOT_CHECKED, "gray") if broken is None else ("pass", "grass") if not broken
                          else ("broken", "red"))
         sources = e.get("sources") or []
-        # R25, S3: a `workspace:` scope names its slot, which only the details show.
+        # A `workspace:` scope names its slot, which only the details show.
         own = e["scope"][len("workspace:"):] if e["scope"].startswith("workspace:") else ""
         entries.append(KnowledgeEntry(
             id=e["id"], scope="workspace" if own else e["scope"], statement=e["statement"],
@@ -142,7 +138,7 @@ class KnowledgeMixin(rx.State, mixin=True):
     kn_deadline: str = ""
 
     def _load_knowledge(self) -> None:
-        """R24: one read of the store, `health.json` and the run log per arrival."""
+        """One read of the store, `health.json` and the run log per arrival."""
         from coscc.service import Invalid
         from coscc.state import SERVICE
 
