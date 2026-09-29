@@ -182,6 +182,38 @@ class ALaneThatWouldDisableAGuardIsRefused(unittest.TestCase):
     def test_the_packaged_lanes_load(self):
         self.assertIn("full", states.load_lanes().lanes)
 
+    def test_the_packaged_lanes_load_fast(self):
+        lanes = states.load_lanes().lanes
+        self.assertIn("fast", lanes)
+        self.assertEqual(lanes["fast"].guards, lanes["full"].guards)
+
+    def test_the_fast_lane_matches_the_stages_cos_mjs_requires(self):
+        # Asked of `cos.mjs`, as the stage table above is: it decides the lane, and this file
+        # only declares it. `pr` and `ship` are the app's PR machine, on no lane's path.
+        intent = (
+            "# Intent: x\nAuthor: t. Type: fix. Status: accepted.\n\n"
+            "## Reproduction\n\n```\nnode --test x.test.mjs\n```\n\n"
+            "## Expected\n\nSource: README.md\nIt says so.\n\n"
+            "## Actual\n\nIt does not.\n"
+        )
+        snapshot = json.dumps({
+            "workspace": "",
+            "units": {"/0001_x": {"artifacts": {"intent.md": {"status": "accepted"}}, "type": "fix"}},
+        })
+        walked = []
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / ".cos" / "0001_x").mkdir(parents=True)
+            (Path(tmp) / ".cos" / "0001_x" / "intent.md").write_text(intent, encoding="utf-8")
+            for stage in states.default().stage_names:
+                out = subprocess.run(
+                    ["node", str(REPO / ".claude" / "scripts" / "cos.mjs"), "--root", tmp, "--state", "-",
+                     "gate", "0001_x", stage, "--json"],
+                    input=snapshot, cwd=REPO, capture_output=True, text=True,
+                ).stdout
+                if "not-in-lane" not in json.loads(out)["reasons"] and stage not in ("pr", "ship"):
+                    walked.append(stage)
+        self.assertEqual(walked, [stage for stage, _ in states.load_lanes().lanes["fast"].path])
+
     def test_a_lane_missing_a_guard_the_machine_needs_is_refused(self):
         raw = self.packaged()
         del raw["lanes"]["full"]["guards"]["unit"]["ship"]
