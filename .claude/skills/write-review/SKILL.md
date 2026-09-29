@@ -39,6 +39,11 @@ label it: `[needs-person]` (the grant really lacks it or it costs money), or `[c
 `review.md ## Answers` holds a `### F<k>` block that settles it; if not, keep it `[open]` and
 say what is missing. An `[answered]` never returns to `[needs-person]`: raise a new id.
 
+**The `fast` lane** (a `Type: fix` with no `spec.md` or `plan.md`): check three things, and a
+missing one is a finding of `medium` or more, never `low`: the commit holding only the
+reproducing test comes before the fix; `impl.md` shows that same test failing at the first
+and passing at the fix; the file `Source:` names says what `intent.md ## Expected` says.
+
 **Rebase before a round, not after a pass**: a rebase that changes the patch voids a pass.
 
 ## Screens

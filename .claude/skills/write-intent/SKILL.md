@@ -49,6 +49,27 @@ Author: <name>. Type: <type>. Status: accepted.
   sentence, never an item. Keep the heading when none is left.
 - `Status: accepted` records your judgement, not approval; `draft` if something is missing.
 
+**A fix the originator showed you.** Only for `Type: fix`, and only when they gave all three,
+add these after `## Problem`, copying their command, log and words as they wrote them:
+
+````markdown
+## Reproduction
+```
+<the command, test or log they gave>
+```
+
+## Expected
+Source: <path>[:<L1>-<L2>]
+<what that file says should happen>
+
+## Actual
+<what happens instead>
+````
+
+`Source:` is a path they or an answer under `## Answers` named: relative, outside `.cos/`,
+never one you inferred. With all three, `cos.mjs` puts the unit in the `fast` lane, with no
+spec, spike or plan. If one is missing, write none of them: the unit walks the full lane.
+
 ## Done when
 
 Someone outside the conversation can state the problem and tell whether the outcome was met.

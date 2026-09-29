@@ -39,6 +39,22 @@ non-zero.
    fixed which finding. A `low` need not be fixed; never list one under `## Needs a person`.
 5. Write `impl.md`.
 
+**The `fast` lane** (a `Type: fix` with no spec or plan: `intent.md` is the plan). The gate
+opening is what lets you code. In this order:
+
+1. Check the file `intent.md ## Expected` names under `Source:` in the checkout: it must say
+   what `## Expected` says.
+2. Commit a test that reproduces the bug, and nothing else; run it and keep its failing output.
+3. Commit the fix; run the same test and keep its passing output.
+4. `## What was measured` gives both shas, the test command, the failing output at the first
+   and the passing output at the second. The header names no `Plan:`.
+
+Leave the lane when the source does not say what `## Expected` says, when something cannot be
+measured from here, or when the fix fails criterion 1, 2, 3 or 5 of `write-spec`'s `## Skip`:
+add `Lane: full` to the header of `impl.md` and a `## Why full`, set `Status: draft` (submit
+`not-ready`), and keep the code on the branch. `next` then offers `spec`; after the plan, impl
+runs again and rewrites `impl.md` without the `Lane:` line. There is no way back.
+
 **A finding this stage cannot close** (needs real money, a command the grant lacks, a person's
 measurement): one line under `## Needs a person`, exactly `- F<k>: <reason>`; `cos.mjs`
 reads only the id, a line of another shape is not read. It is a claim: the review accepts or

@@ -27,9 +27,8 @@ Tests green before done. Never skip or delete a failing test: fix the code. No l
 - Branches and tags: `<type>/<slug>` (feat fix docs refactor test chore perf build ci revert),
   `vX.Y.Z`, `vX.Y.Z-rc.N`. Never compose one by hand: `unit-branch`, `check-branch`, `check-tag`.
 - One branch and one PR per change, squashed, rebased onto `main` (never merge `main` in).
-  `main` is not a work branch.
 - No unit or requirement ids in comments, docstrings or rules (`coscc/comments_test.py`).
-- Code little and simple; split a file only when truly needed.
+- Code little and simple; split a file only when needed.
 - Take unit paths from `new-path`. Cite only committed files, by path and line range. Cut a
   figure that has no source.
 
@@ -37,15 +36,15 @@ Tests green before done. Never skip or delete a failing test: fix the code. No l
 
 A unit is `.cos/NNNN_<slug>/` holding its artifacts. Its status, `Type:`, links, questions,
 answers and holds live in the app's `cos.db`. `.claude/scripts/cos.mjs` is the one definition
-of the loop. The app runs the stages and does `pr` and `ship` itself. `spike` runs only when
+of the loop. The app runs every stage, `pr` and `ship` too. `spike` runs only when
 `spec` has an `[unmeasured] U<n>` concern. `Status: accepted` means the agent judged the
 artifact ready; nothing here is a person's approval.
 
 ## Things agents get wrong
 
-- Re-asking a gate the prompt already answered. From the board it was asked; at a terminal, ask
-  `cos.mjs gate` and stop on non-zero.
-- No code while `plan.md` is `draft`; accept the plan in its own commit.
+- Re-asking a gate the prompt answered; at a terminal, ask `cos.mjs gate` and stop on non-zero.
+- No code while `plan.md` is `draft` (accept it in its own commit), or in the `fast` lane while
+  `gate <unit> impl` is closed; there the first commit is the failing test.
 - `plan.md: done` is terminal: set it only after the proof command passed.
 - A skip is a person's: `uv run coscc skip <workspace> <unit> spec [--delegated] <reason>`.
 - Committing on `main`: cut the branch from `unit-branch` first.

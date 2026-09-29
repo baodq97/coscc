@@ -23,7 +23,7 @@ REASONS = (
     "ship-refused", "draft", "awaits-person", "person-answered", "changes-requested",
     # `gate-closed`: a gate closed for a reason with no code of its own; its words say which.
     "ci-pending", "ci-red", "ci-unfixable", "waiting-on", "recording-ship", "closed",
-    "overlap-pr", "needs-idea", "gate-closed",
+    "overlap-pr", "needs-idea", "gate-closed", "not-in-lane",
     # The guards' own refusals.
     "wrong-run", "stale-revision", "no-head", "head-moved", "not-open-finding",
     "agent-cannot-skip", "no-submission", "bad-branch", "not-merged", "not-closed",
