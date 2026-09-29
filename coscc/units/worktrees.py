@@ -335,7 +335,7 @@ def prepare_env(
     `data_dir` is the app's data root, `None` meaning `~/.cos`.
 
     No `CLAUDE*`, `ANTHROPIC*`, `COS_*` or `__REFLEX_*` name reaches the command because none of
-    the names below is one; nothing filters. `worktrees_test.py` asserts this.
+    the names below is one; nothing filters. `test_worktrees.py` asserts this.
     """
     return {
         "PATH": harness.clean_path(workspace),

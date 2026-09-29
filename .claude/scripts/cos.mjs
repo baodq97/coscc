@@ -1279,7 +1279,7 @@ function linkNeeds(unit) {
 export const WAITING_ON = 'waiting on '
 
 // `0136` R11: a reason code `gate` and `next` hand out beside their words. The one table is
-// `coscc/units/guards.py` `REASONS`, and `guards_test.py` reads every `code('…')` and every
+// `coscc/units/guards.py` `REASONS`, and `test_guards.py` reads every `code('…')` and every
 // `why: '…'` here back against it. The autopilot branches on these, never on the words.
 const code = (c) => c
 

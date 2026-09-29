@@ -27,7 +27,7 @@ paths:
     `coscc/agent/instructions.py`, handed over as a file in the session's data root, never as an
     argument (Linux refuses one past 128 KiB with `E2BIG`).
   - A rule with `paths:` arrives as one line telling the session to `Read` it; nothing checks
-    that it did. `coscc/rules_budget_test.py` holds sizes, not the count.
+    that it did. `tests/test_rules_budget.py` holds sizes, not the count.
   - `@path` imports, `CLAUDE.local.md`, parent directories and the project's
     `.claude/settings*.json` are not read.
   - A session with a preset also gets `--settings` holding only `attribution`

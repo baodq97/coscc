@@ -10,7 +10,7 @@
     2  no wheel was named, or the path is not there
 
 The decision lives in `coscc.agent.harness.wheel_complaints`, not here, so the same answer is
-available to a test (`coscc/agent/harness_test.py`) without running a subprocess. This file is
+available to a test (`tests/agent/test_harness.py`) without running a subprocess. This file is
 only the part that turns it into an exit code.
 
 **Why this exists as a file rather than as four lines of `grep` in a workflow.**

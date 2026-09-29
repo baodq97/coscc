@@ -4650,7 +4650,7 @@ test('0049: next offers ship when a differing title is the only thing closing it
 })
 
 // `0139` R12 removed `write-pr`, whose title grammar the test below also held; the PR
-// machine's title is `coscc/github/prmachine.py` `title_of`, held by `prmachine_test.py`.
+// machine's title is `coscc/github/prmachine.py` `title_of`, held by `test_prmachine.py`.
 test('0049 R1: no skill opens a pull request with --fill', () => {
   const skills = join(REPO, '.claude', 'skills')
   const files = readdirSync(skills, { recursive: true }).filter((p) => p.endsWith('.md'))
@@ -4672,8 +4672,8 @@ test('0139 R12: next never names write-pr or write-ship', () => {
 
 // --- 0135: metadata read once, by `meta` ----------------------------------------
 
-const META_STORE = fileURLToPath(new URL('../../coscc/units/testdata/meta_store', import.meta.url))
-const META_BEFORE = fileURLToPath(new URL('../../coscc/units/testdata/meta_store_before.json', import.meta.url))
+const META_STORE = fileURLToPath(new URL('../../tests/units/testdata/meta_store', import.meta.url))
+const META_BEFORE = fileURLToPath(new URL('../../tests/units/testdata/meta_store_before.json', import.meta.url))
 const metaOf = (...args) => {
   const out = cli('--root', META_STORE, 'meta', ...args)
   assert.equal(out.status, 0, out.stderr)

@@ -6,13 +6,13 @@
 
 ```
 uv run ruff format && uv run ruff check --fix   # then npm test
-uv run pytest coscc/<pkg>/<module>_test.py      # while working: the file you changed
+uv run pytest tests/<pkg>/test_<module>.py      # while working: the module you changed
 ```
 
 - `ruff check`: the pyflakes rules only (`F`): unused imports and variables, undefined names,
   redefinitions. No style rule.
 - `ruff format --check`: one format, line length 100. Never format by hand.
-- `ty check`: types, on code and `scripts/`, not on tests (running them checks them).
+- `ty check`: types, on `coscc/` and `scripts/`, not on `tests/` (running them checks them).
   - Off everywhere: `unresolved-attribute`, `invalid-argument-type`, `invalid-assignment` and
     `not-subscriptable`. Reflex `Var` fields and the `Service` mixins make them report about
     2,000 false findings.
@@ -20,18 +20,19 @@ uv run pytest coscc/<pkg>/<module>_test.py      # while working: the file you ch
     `deprecated`, `no-matching-overload` and `invalid-return-type`.
   - What stays on catches a name that does not import, a call with wrong arguments and an
     `await` on what cannot be awaited.
-- `coscc/comments_test.py`: no unit or requirement id (`0088`, `R3`, `spec.md C7`,
-  `review round 2`) in a comment, a docstring or a function or class name, tests included.
-- `coscc/citations_test.py`: every `NAME` `path:N` under `.claude/` points at its name. A
+- `tests/test_comments.py`: no unit or requirement id (`0088`, `R3`, `spec.md C7`,
+  `review round 2`) in a comment, a docstring or a function or class name, in `coscc/` or
+  `tests/`.
+- `tests/test_citations.py`: every `NAME` `path:N` under `.claude/` points at its name. A
   change that moves lines fixes the citations in the same commit.
-- `coscc/layers_test.py`: no import goes up a layer (below).
+- `tests/test_layers.py`: no import goes up a layer (below).
 
 Fix the code, not the check. A rule is switched off only in `pyproject.toml`, with its reason. A
 `# noqa` or `# ty: ignore` names its rule and says why on the same line.
 
 ## Layers
 
-`LAYERS` in `coscc/layers_test.py`, from the top:
+`LAYERS` in `tests/test_layers.py`, from the top:
 
 ```
 coscc.py, run.py        the page app, the command line
@@ -65,15 +66,19 @@ config.py
 
 ## Tests
 
-- **Where a test goes.** A test sits beside its module as `<module>_test.py`. A package's
-  `__init__.py` is tested by `<package>_test.py`. A file too big to read splits by aspect, as
-  `<module>_<aspect>_test.py` (`steps_integrate_test.py`), so `<module>*_test.py` finds every
-  test of a module.
+- **Where a test goes.** `tests/` mirrors `coscc/`: `coscc/<pkg>/<module>.py` is tested by
+  `tests/<pkg>/test_<module>.py`, a root module `coscc/<module>.py` by `tests/test_<module>.py`,
+  and a package's `__init__.py` by `test_<package>.py`. A file too big to read splits by aspect,
+  as `test_<module>_<aspect>.py` (`test_steps_integrate.py`), so `test_<module>*.py` finds every
+  test of a module. Moving a module moves its tests to the mirrored place in the same commit.
+- **Packages.** Each directory under `tests/` has an empty `__init__.py`, so two packages can
+  both hold a `test_backlog.py`, and a test imports another's helper as
+  `from tests.github.test_prmachine import FakeGh`.
 - **Tests that span modules.**
-  - Tests that check the whole repository sit in `coscc/`: `comments_test.py`,
-    `citations_test.py`, `layers_test.py`, `rules_budget_test.py`, `repository_test.py`.
+  - Tests that check the whole repository sit in `tests/`: `test_comments.py`,
+    `test_citations.py`, `test_layers.py`, `test_rules_budget.py`, `test_repository.py`.
   - A test that spans one package's modules is named for what it checks
-    (`units/seven_places_test.py`).
+    (`units/test_seven_places.py`).
 - **Classes.** A test class subclasses `unittest.TestCase`, and its name is a sentence with no
   `Test` prefix (`OverridesComeFirst`). pytest collects `TestCase` subclasses only by type, so
   a plain class named that way is skipped without a word.
@@ -82,6 +87,6 @@ config.py
 - **Names.** A test method's name says the behaviour
   (`test_a_second_press_while_one_runs_is_refused`), never the unit or requirement that asked
   for it.
-- **Fixtures.** Fixture files go in a `testdata/` directory beside the test; `pyproject.toml`
-  keeps them out of the wheel. A fixture class stays in its own test file.
+- **Fixtures.** Fixture files go in a `testdata/` directory beside the test. A fixture class
+  stays in its own test file.
 - **Speed.** `npm test` runs everything with `pytest -n auto`, in about two minutes.
