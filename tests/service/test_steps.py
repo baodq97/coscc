@@ -692,7 +692,9 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
 
             task = await self._ended(slow)
             settle = asyncio.create_task(self.service.settle_after_suspend(5))
-            await asyncio.sleep(0.3)
+            # Its first look found the `after_end` still running.
+            for _ in range(3):
+                await asyncio.sleep(0)
             self.assertFalse(settle.done())
             gate.set()
             left = await settle
@@ -2894,16 +2896,14 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
         from coscc.units import board as board_reader
         from coscc.units import retake
 
-        running, most = [0], [0]
+        # Each take ran holding the one app-wide lock.
+        held: list[bool] = []
 
         async def asked(*a, **kw):
             return {"retake": True, "manifest": self.OLD}
 
         async def take(tree, addresses, **kw):
-            running[0] += 1
-            most[0] = max(most[0], running[0])
-            await asyncio.sleep(0.05)
-            running[0] -= 1
+            held.append(self.service.steps._screens_lock.locked())
             return {
                 "code": 0,
                 "seconds": 0.05,
@@ -2930,7 +2930,7 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
             mock.patch.object(retake, "take", take),
         ):
             asyncio.run(go())
-        self.assertEqual(most[0], 1)
+        self.assertEqual(held, [True, True, True])
 
     def test_activity_shows_no_screens_record(self):
         journal = self.service.ws.journal()

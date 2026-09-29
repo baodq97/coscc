@@ -85,8 +85,14 @@ class AStepCanBeWatched(unittest.TestCase):
                     self.assertEqual(kind, "events")
                     followed.extend(e["seq"] for e in batch)
 
+            # The follower is subscribed before the step goes on.
+            recorder = self.service.steps.recorders[run]
+            others = len(recorder.subscribers)
             follower = asyncio.create_task(follow())
-            await asyncio.sleep(0.05)
+            for _ in range(500):
+                if len(recorder.subscribers) > others:
+                    break
+                await asyncio.sleep(0.01)
             self.release.set()
             await reader
             await asyncio.wait_for(follower, 10)

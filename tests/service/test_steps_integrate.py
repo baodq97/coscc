@@ -804,7 +804,11 @@ class AStaleOriginMain(unittest.TestCase):
             self.service.steps.next_step = next_step
             before = (await self.service.board(self.cwd))["units"][0]
             await self.service.autopilot.run_pass(self.key)
-            await asyncio.sleep(0.05)
+            # Every launch of the pass has ended.
+            for _ in range(500):
+                if not self.service.autopilot.runs.get(self.key):
+                    break
+                await asyncio.sleep(0.01)
             after = next(
                 u for u in (await self.service.board(self.cwd))["units"] if u["name"] == self.unit
             )

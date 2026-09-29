@@ -111,7 +111,7 @@ class TheUpdateWindow(unittest.IsolatedAsyncioTestCase):
         rid = self.s.holds.mark_running("/w", "0001_a", "review", "step")
 
         async def posts_its_round():
-            await asyncio.sleep(0.05)
+            # It runs while the settle waits between two looks.
             self.s.holds.running.pop(rid, None)
 
         task = asyncio.create_task(posts_its_round())

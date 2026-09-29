@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from coscc.git import fetches, gitops
 from coscc.git.fetches import FetchFailed, Fetches
@@ -48,19 +49,41 @@ class Clock:
 
 class FakeRun:
     """Stands in for `gitops.fetch`: fails with each queued error in turn, then succeeds.
-    Holds briefly, so a second call started together has time to find it running."""
+    `held`: each call waits until the test opens `gate`."""
 
-    def __init__(self, *errors: str, hold: float = 0.2):
+    def __init__(self, *errors: str, held: bool = False):
         self.errors = list(errors)
-        self.hold = hold
+        self.gate = asyncio.Event()
+        if not held:
+            self.gate.set()
         self.calls = 0
 
     async def __call__(self, path, remote, branch):
         self.calls += 1
-        await asyncio.sleep(self.hold)
+        await self.gate.wait()
         if self.errors:
             raise GitError(self.errors.pop(0))
         return ""
+
+
+async def until(predicate, what: str) -> None:
+    for _ in range(500):
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+def counting_joins() -> tuple[list, mock._patch]:
+    """A call joins the fetch already running through `asyncio.shield`: one element per join."""
+    joins: list = []
+    real = asyncio.shield
+
+    def shield(future):
+        joins.append(future)
+        return real(future)
+
+    return joins, mock.patch.object(fetches.asyncio, "shield", shield)
 
 
 class Slept:
@@ -83,12 +106,21 @@ class WithAFakeRun(unittest.TestCase):
     def coordinator(self, run: FakeRun) -> Fetches:
         return Fetches(run=run, clock=self.clock, sleep=self.slept)
 
+    async def _both(self, run: FakeRun, f: Fetches, **gather) -> list:
+        """Two calls together; the fetch is let go once the second has joined it."""
+        joins, counting = counting_joins()
+        with counting:
+            calls = [asyncio.create_task(f.fetch(self.repo)) for _ in range(2)]
+            await until(lambda: run.calls == 1 and len(joins) == 1, "the second call to join")
+            run.gate.set()
+            return await asyncio.gather(*calls, **gather)
+
     def test_two_calls_together_run_one_fetch(self):
-        run = FakeRun()
+        run = FakeRun(held=True)
         f = self.coordinator(run)
 
         async def both():
-            return await asyncio.gather(f.fetch(self.repo), f.fetch(self.repo))
+            return await self._both(run, f)
 
         got = asyncio.run(both())
         self.assertEqual(run.calls, 1)
@@ -96,13 +128,11 @@ class WithAFakeRun(unittest.TestCase):
         self.assertEqual([g["attempts"] for g in got], [1, 1])
 
     def test_a_call_that_joined_a_failed_fetch_gets_the_same_failure(self):
-        run = FakeRun("fatal: could not read from remote")
+        run = FakeRun("fatal: could not read from remote", held=True)
         f = self.coordinator(run)
 
         async def both():
-            return await asyncio.gather(
-                f.fetch(self.repo), f.fetch(self.repo), return_exceptions=True
-            )
+            return await self._both(run, f, return_exceptions=True)
 
         got = asyncio.run(both())
         self.assertEqual(run.calls, 1)
@@ -112,7 +142,7 @@ class WithAFakeRun(unittest.TestCase):
             self.assertIn("could not read from remote", str(e))
 
     def test_a_success_is_reused_under_thirty_seconds_and_not_at_thirty(self):
-        run = FakeRun(hold=0)
+        run = FakeRun()
         f = self.coordinator(run)
         first = asyncio.run(f.fetch(self.repo))
         self.assertEqual((first["outcome"], first["attempts"], first["age"]), ("fetched", 1, 0.0))
@@ -126,19 +156,19 @@ class WithAFakeRun(unittest.TestCase):
         self.assertEqual(run.calls, 2)
 
     def test_one_ref_lock_race_is_retried_after_one_second(self):
-        run = FakeRun(RACE, hold=0)
+        run = FakeRun(RACE)
         got = asyncio.run(self.coordinator(run).fetch(self.repo))
         self.assertEqual((got["outcome"], got["attempts"]), ("fetched", 2))
         self.assertEqual(self.slept.delays, [1.0])
         self.assertEqual(run.calls, 2)
 
     def test_cannot_lock_ref_is_retried_too(self):
-        run = FakeRun("error: cannot lock ref 'refs/remotes/origin/main'", hold=0)
+        run = FakeRun("error: cannot lock ref 'refs/remotes/origin/main'")
         got = asyncio.run(self.coordinator(run).fetch(self.repo))
         self.assertEqual(got["attempts"], 2)
 
     def test_a_second_race_is_not_retried_and_the_reason_says_it_was(self):
-        run = FakeRun(RACE, RACE + " (again)", hold=0)
+        run = FakeRun(RACE, RACE + " (again)")
         with self.assertRaises(FetchFailed) as caught:
             asyncio.run(self.coordinator(run).fetch(self.repo))
         self.assertEqual(caught.exception.attempts, 2)
@@ -151,7 +181,7 @@ class WithAFakeRun(unittest.TestCase):
             "fatal: 'gone.git' does not appear to be a git repository",
             "git timed out after 20s: git -C",
         ):
-            run = FakeRun(error, hold=0)
+            run = FakeRun(error)
             with self.assertRaises(FetchFailed, msg=error) as caught:
                 asyncio.run(self.coordinator(run).fetch(self.repo))
             self.assertEqual(caught.exception.attempts, 1)
@@ -159,7 +189,7 @@ class WithAFakeRun(unittest.TestCase):
         self.assertEqual(self.slept.delays, [])
 
     def test_a_failure_is_never_reused(self):
-        run = FakeRun("fatal: no", hold=0)
+        run = FakeRun("fatal: no")
         f = self.coordinator(run)
         with self.assertRaises(FetchFailed):
             asyncio.run(f.fetch(self.repo))
@@ -168,21 +198,23 @@ class WithAFakeRun(unittest.TestCase):
         self.assertEqual(run.calls, 2)
 
     def test_a_cancelled_leader_fails_the_calls_that_joined_it_instead_of_hanging(self):
-        run = FakeRun(hold=5)
+        run = FakeRun(held=True)
         f = self.coordinator(run)
+        joins, counting = counting_joins()
 
         async def scene():
-            leader = asyncio.create_task(f.fetch(self.repo))
-            while run.calls == 0:
-                await asyncio.sleep(0.01)
-            follower = asyncio.create_task(f.fetch(self.repo))
-            await asyncio.sleep(0.2)
-            leader.cancel()
-            return await asyncio.wait_for(follower, timeout=2)
+            with counting:
+                leader = asyncio.create_task(f.fetch(self.repo))
+                await until(lambda: run.calls == 1, "the leader to fetch")
+                follower = asyncio.create_task(f.fetch(self.repo))
+                await until(lambda: len(joins) == 1, "the follower to join")
+                leader.cancel()
+                return await asyncio.wait_for(follower, timeout=2)
 
         with self.assertRaises(FetchFailed) as caught:
             asyncio.run(scene())
         self.assertIn("cancelled", str(caught.exception))
+        run.gate.set()
         # Nothing left behind: the next call fetches afresh.
         self.assertEqual(asyncio.run(f.fetch(self.repo))["outcome"], "fetched")
 

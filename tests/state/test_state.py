@@ -370,6 +370,15 @@ class OneLoopPerTab(unittest.TestCase):
         token = "state-test-one-loop"
         calls: list[str] = []
 
+        class Loops(set):
+            """`_POLLING`, counting the loops that began: a second start returns before `add`."""
+
+            began = 0
+
+            def add(self, item):
+                Loops.began += 1
+                super().add(item)
+
         def running(cwd):
             calls.append(cwd)
             return {"running": {}, "unknown_end": {}}
@@ -381,26 +390,23 @@ class OneLoopPerTab(unittest.TestCase):
             arrive = _arrival(manager, processor, token)
             async with processor:
                 await _somewhere(manager, token)
-                for _ in range(3):
-                    await arrive("/board?ws=somewhere", settle=0.05)
-                await asyncio.sleep(0.3)
-                alive = token in page._POLLING
-                asked = len(calls)
-                await arrive("/sessions?ws=somewhere", settle=0.05)
-                await asyncio.sleep(0.3)
-                return alive, asked, token in page._POLLING
+                arrivals = [await arrive("/board?ws=somewhere") for _ in range(3)]
+                await _until(lambda: calls, "the loop's first ask")
+                # The second and third `poll_running` return at once, the first loop still on.
+                await asyncio.gather(*(c for a in arrivals[1:] for c in a.children))
+                alive, began = token in page._POLLING, Loops.began
+                await arrive("/sessions?ws=somewhere")
+                await _loop_ended(token)
+                return alive, began
 
         with (
             mock.patch.object(page, "RUNNING_POLL", 0.1),
+            mock.patch.object(page, "_POLLING", Loops()),
             mock.patch.object(page.SERVICE.boards, "running", running),
         ):
-            alive, asked, still = asyncio.run(go())
+            alive, began = asyncio.run(go())
         self.assertTrue(alive)
-        # One loop, asking every 0.1s over roughly 0.45s: about five asks. Three loops
-        # would have asked about three times as often.
-        self.assertLessEqual(asked, 8)
-        self.assertGreaterEqual(asked, 2)
-        self.assertFalse(still)
+        self.assertEqual(began, 1)
 
     def test_a_socket_drop_does_not_end_the_loop_a_closed_tab_does(self):
         """Reflex unmaps a token on every drop and maps it back on reconnect, so one miss must not
@@ -411,34 +417,38 @@ class OneLoopPerTab(unittest.TestCase):
         from coscc import state as page
 
         token = "state-test-drop"
-        gone = {"now": False}
+        # What `_tab_gone` answers, one ask at a time: three misses (under `GONE_AFTER`), the
+        # socket back, then gone for good once `closed` is set.
+        drop = [True, True, True, False]
+        asked = {"n": 0, "closed": False}
+
+        def gone(t):
+            asked["n"] += 1
+            if drop:
+                return drop.pop(0)
+            return asked["closed"]
 
         async def go():
             manager, processor, _ = _processor(token)
             arrive = _arrival(manager, processor, token)
             async with processor:
                 await _somewhere(manager, token)
-                await arrive("/board?ws=somewhere", settle=0.05)
-                gone["now"] = True
-                await asyncio.sleep(0.08)  # one or two misses, under GONE_AFTER
-                gone["now"] = False
-                await asyncio.sleep(0.3)
+                await arrive("/board?ws=somewhere")
+                await _until(lambda: asked["n"] > 4, "the ask after the socket came back")
                 after_drop = token in page._POLLING
-                gone["now"] = True
-                await asyncio.sleep(0.5)
-                return after_drop, token in page._POLLING
+                asked["closed"] = True
+                await _loop_ended(token)
+                return after_drop
 
         with (
-            mock.patch.object(page, "RUNNING_POLL", 0.05),
+            mock.patch.object(page, "RUNNING_POLL", 0.01),
             mock.patch.object(page, "GONE_AFTER", 4),
-            mock.patch.object(page, "_tab_gone", lambda t: gone["now"]),
+            mock.patch.object(page, "_tab_gone", gone),
             mock.patch.object(
                 page.SERVICE.boards, "running", lambda cwd: {"running": {}, "unknown_end": {}}
             ),
         ):
-            after_drop, after_close = asyncio.run(go())
-        self.assertTrue(after_drop)
-        self.assertFalse(after_close)
+            self.assertTrue(asyncio.run(go()))
 
 
 class ChangingWorkspaceForgetsTheOldRead(unittest.TestCase):
@@ -506,7 +516,7 @@ class ChangingWorkspaceForgetsTheOldRead(unittest.TestCase):
                     studio._running_read = running_in["/a"]
                     studio._loaded_sid = "s1"
                 # What `choose_workspace("/b")` redirects to, on the same socket.
-                await arrive("/sessions?ws=b", settle=0.05)
+                await arrive("/sessions?ws=b")
                 async with manager.modify_state(_key(token)) as root:
                     studio = await root.get_state(page.StudioState)
                     return [(u.id, len(u.live)) for u in studio.cards]
@@ -580,9 +590,8 @@ def _key(token: str):
 
 
 def _processor(token: str):
-    """Reflex's own event processor over a memory state manager, and a `fire` for it."""
-    import asyncio
-
+    """Reflex's own event processor over a memory state manager, and a `fire` for it that
+    returns once the handler and every event it chained have ended."""
     from reflex.event import Event
     from reflex.istate.manager.memory import StateManagerMemory
     from reflex_base.event.processor import BaseStateEventProcessor
@@ -595,8 +604,8 @@ def _processor(token: str):
 
     async def fire(handler: str, **payload):
         name = format_event_handler(page.StudioState.event_handlers[handler])
-        await processor.enqueue(token, Event(name=name, payload=payload))
-        await asyncio.sleep(0.05)
+        future = await processor.enqueue(token, Event(name=name, payload=payload))
+        await future.wait_all()
 
     return manager, processor, fire
 
@@ -604,9 +613,10 @@ def _processor(token: str):
 def _arrival(manager, processor, token: str):
     """An `arrive` the way a route's `on_load` sends it: the address and the socket's id in the
     event's `router_data`, the keys `self.router.url` and `.session` are built from
-    (`reflex/istate/data.py`, `URLData.from_router_data`, `SessionData`)."""
-    import asyncio
+    (`reflex/istate/data.py`, `URLData.from_router_data`, `SessionData`).
 
+    It returns once the handler has ended, unless `wait` is false; what the handler chains
+    (`load_next`, `poll_running`) runs on in the background."""
     from reflex.event import Event
     from reflex_base.constants import RouteVar
     from reflex_base.utils.format import format_event_handler
@@ -615,7 +625,7 @@ def _arrival(manager, processor, token: str):
 
     name = format_event_handler(page.StudioState.event_handlers["arrive"])
 
-    async def arrive(address: str, sid: str = "s1", settle: float = 0.15):
+    async def arrive(address: str, sid: str = "s1", wait: bool = True):
         async with manager.modify_state(_key(token)) as root:
             if not root.router_data:
                 # A state that never saw a route is rehydrated first, and rehydrating runs
@@ -632,10 +642,33 @@ def _arrival(manager, processor, token: str):
         future = await processor.enqueue(
             token, Event(name=name, payload={}, router_data=router_data)
         )
-        await asyncio.sleep(settle)
+        if wait:
+            await future
         return future
 
     return arrive
+
+
+async def _until(predicate, what: str) -> None:
+    """Wait for `predicate()`, a few seconds at most; `predicate` may be a coroutine function."""
+    import asyncio
+    import inspect
+
+    for _ in range(500):
+        got = predicate()
+        if inspect.isawaitable(got):
+            got = await got
+        if got:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+async def _loop_ended(token: str) -> None:
+    """The tab's `poll_running` has returned, after an arrival away from the Board."""
+    from coscc import state as page
+
+    await _until(lambda: token not in page._POLLING, "the Board's loop to end")
 
 
 async def _somewhere(manager, token: str) -> None:
@@ -788,7 +821,7 @@ class AnArrivalReadsOnce(unittest.TestCase):
                     )
                     fake.redirects.clear()
                 await arrive("/sessions?ws=a", "s9")  # leave the Board, so the loop ends
-                await asyncio.sleep(0.15)
+                await _loop_ended(token)
 
         with fake.patches():
             asyncio.run(go())
@@ -923,7 +956,7 @@ class AnArrivalReadsOnce(unittest.TestCase):
                 studio = await _studio(manager, token)
                 after = (studio.cwd, studio.unit_id)
                 await arrive("/sessions?ws=a", "s9")
-                await asyncio.sleep(0.15)
+                await _loop_ended(token)
                 return after
 
         with fake.patches(), mock.patch.object(page.StudioState, "_load_board", spy):
@@ -956,15 +989,16 @@ class AnArrivalReadsOnce(unittest.TestCase):
                 arrive = _arrival(manager, processor, token)
                 async with processor:
                     await arrive(start, "s1")
-                    pending = await arrive("/board?ws=b", "s1")
-                    self.assertEqual(read[-1], "/b")  # the read of `b` is under way
+                    pending = await arrive("/board?ws=b", "s1", wait=False)
+                    # The read of `b` is under way.
+                    await _until(lambda: read[-1:] == ["/b"], "the read of b")
                     pending.cancel()  # what `_supersede_previous` does to it
-                    await asyncio.sleep(0.05)
+                    # Queued behind the cancelled arrival, so it runs once that one has ended.
                     await arrive(start, "s1")  # Back
                     studio = await _studio(manager, token)
                     got = (list(read), len(studio.cards), studio.unit_id, studio.unit_missing)
                     await arrive("/sessions?ws=a", "s9")
-                    await asyncio.sleep(0.15)
+                    await _loop_ended(token)
                     return got
 
             with fake.patches(), mock.patch.object(page.SERVICE, "board", board):
@@ -1000,11 +1034,15 @@ class AnArrivalReadsOnce(unittest.TestCase):
                     await arrive("/unit?ws=a&id=0009_x", "s1")
                     await arrive("/unit?ws=a&id=0009_x&tab=timeline", "s1")
                     gate.set()
-                    await asyncio.sleep(0.15)
+
+                    async def answered():
+                        return (await _studio(manager, token)).run_stage
+
+                    await _until(answered, "the ask's answer")
                     studio = await _studio(manager, token)
                     got = (studio.run_stage, studio._asked, dict(views._ASKING))
                     await arrive("/sessions?ws=a", "s9")
-                    await asyncio.sleep(0.15)
+                    await _loop_ended(token)
                     return got
 
         with fake.patches():
@@ -1342,12 +1380,16 @@ def _sample_read(token: str, then=None, fake: _Page | None = None):
         arrive = _arrival(manager, processor, token)
         async with processor:
             await arrive("/board?ws=a", "s1")
-            await asyncio.sleep(0.2)
+
+            async def polled():
+                return (await _studio(manager, token))._running_read == _LIVE
+
+            await _until(polled, "a poll applying the sample's sessions")
             studio = await _studio(manager, token)
             full, cards = dict(studio.get_value("_full")), list(studio.get_value("cards"))
             more = await then(arrive, manager) if then else None
             await arrive("/sessions?ws=a", "s9")  # leave the Board, so the loop ends
-            await asyncio.sleep(0.15)
+            await _loop_ended(token)
             return full, cards, more
 
     with fake.patches(), mock.patch.object(page.SERVICE.boards, "running", lambda cwd: _LIVE):
@@ -1813,7 +1855,7 @@ class SessionsAreReadWhereTheyAreShown(unittest.TestCase):
                 for address, sid in steps:
                     await arrive(address, sid)
                     seen.append(fake.calls["sessions_for"])
-                await asyncio.sleep(0.15)
+                await _loop_ended(token)
 
         with fake.patches():
             asyncio.run(go())
@@ -1848,7 +1890,7 @@ class CostIsReadWhereItIsShown(unittest.TestCase):
                     await arrive(address, sid)
                     seen.append((fake.calls["cost"], fake.calls["unit_cost"]))
                 await arrive("/sessions?ws=a", "s9")
-                await asyncio.sleep(0.15)
+                await _loop_ended(token)
 
         with fake.patches():
             asyncio.run(go())
@@ -1999,10 +2041,9 @@ class TheBoardNoteNamesNoVariable(unittest.TestCase):
             arrive = _arrival(manager, processor, token)
             async with processor:
                 await arrive("/board?ws=a", "s1")
-                await asyncio.sleep(0.2)
                 note = (await _studio(manager, token)).board_note
                 await arrive("/sessions?ws=a", "s9")
-                await asyncio.sleep(0.15)
+                await _loop_ended(token)
                 return note
 
         with _ReadOnly().patches():

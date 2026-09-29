@@ -195,12 +195,10 @@ class TenAtOnce(_OneUnit):
 
         async def fake_worktree(cwd, unit, strict=False):
             self.calls["_worktree"] += 1
-            await asyncio.sleep(0.01)
             return {"path": self.ws, "branch": ""}  # detached, so `refresh_base` is asked
 
         async def fake_refresh_base(cwd, unit, data_dir=None):
             self.calls["refresh_base"] += 1
-            await asyncio.sleep(0.05)
             return None
 
         with (

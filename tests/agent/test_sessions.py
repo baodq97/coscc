@@ -942,7 +942,8 @@ class ACliThatOutlastsTheSdksCloseIsStillEnded(unittest.IsolatedAsyncioTestCase)
         client = _StubbornClient(process)
         h = sessions.StepHandle(client=client)
         caller = asyncio.create_task(h.close())
-        await asyncio.sleep(0.01)
+        while not client.disconnects:
+            await asyncio.sleep(0)
         caller.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await caller
@@ -955,10 +956,12 @@ class ACliThatOutlastsTheSdksCloseIsStillEnded(unittest.IsolatedAsyncioTestCase)
         SIGTERM: this is what reads `_transport` and `_process` against the installed SDK."""
         with tempfile.TemporaryDirectory() as tmp:
             cli = Path(tmp) / "claude"
+            ready = Path(tmp) / "ready"
             cli.write_text(
                 f"#!{sys.executable}\n"
                 "import signal, time\n"
                 "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                f"open({str(ready)!r}, 'w').close()\n"
                 "time.sleep(60)\n"
             )
             cli.chmod(0o755)
@@ -977,7 +980,11 @@ class ACliThatOutlastsTheSdksCloseIsStillEnded(unittest.IsolatedAsyncioTestCase)
                 async def disconnect(self):
                     await self._transport.close()
 
-            await asyncio.sleep(0.2)  # let the script install its handler
+            # The script has installed its handler.
+            for _ in range(500):
+                if ready.exists():
+                    break
+                await asyncio.sleep(0.01)
             await sessions.StepHandle(client=Client()).close()
             await asyncio.wait_for(process.wait(), 2)
             self.assertEqual(process.returncode, -9)

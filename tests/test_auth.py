@@ -616,10 +616,23 @@ class HashConcurrency(Door):
             await asyncio.sleep(0.01)
 
     async def test_no_more_than_two_hash_at_once(self):
+        asked = []
+        slots = self.guard._slots
+        real_acquire = slots.acquire
+
+        async def acquire():
+            asked.append(1)
+            return await real_acquire()
+
+        slots.acquire = acquire
         tasks = [asyncio.ensure_future(self.login(client=(f"10.0.1.{i}", 1))) for i in range(3)]
         await self._wait_active(2)
-        await asyncio.sleep(0.2)
-        self.assertEqual(self.hasher.active, 2)
+        for _ in range(200):
+            if len(asked) == 3:
+                break
+            await asyncio.sleep(0.01)
+        # The third has asked for a slot, and waits for one.
+        self.assertEqual((len(asked), self.hasher.active, slots.locked()), (3, 2, True))
         self.hasher.release.set()
         replies = await asyncio.gather(*tasks)
         self.assertEqual([r.status for r in replies], [303, 303, 303])

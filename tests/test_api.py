@@ -551,6 +551,11 @@ class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((line["type"], line["status"]), ("status", "ended"))
 
 
+async def _drain(lines):
+    async for _ in lines:
+        pass
+
+
 class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
     """Its refusals, and how long a stream outlives the session it opened on; what it sends is
     `service/test_notices.py`'s, which reads the generator itself."""
@@ -621,14 +626,16 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
             transport=httpx.ASGITransport(app=guard), base_url="http://t"
         ) as client:
             with mock.patch.object(notices, "LIFETIME_SECONDS", 0.5):
-                going = asyncio.ensure_future(client.get("/api/notices/follow", headers=cookie))
                 began = time.monotonic()
-                await asyncio.sleep(0.1)
-                data.auth_session_delete(auth._sha(token))
-                r = await asyncio.wait_for(going, 5)
+                async with client.stream("GET", "/api/notices/follow", headers=cookie) as r:
+                    lines = r.aiter_lines()
+                    # The stream is open past the door: its head has come.
+                    head = await asyncio.wait_for(anext(lines), 5)
+                    data.auth_session_delete(auth._sha(token))
+                    await asyncio.wait_for(_drain(lines), 5)
                 self.assertLess(time.monotonic() - began, 0.5 + 1.5)
                 self.assertEqual(r.status_code, 200)
-                self.assertEqual(json.loads(r.text.splitlines()[0])["type"], "head")
+                self.assertEqual(json.loads(head)["type"], "head")
                 Journal(self.config.working_dir, self.config.data_dir).append(
                     {
                         "kind": "autopilot-stop",
