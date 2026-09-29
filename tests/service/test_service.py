@@ -30,39 +30,55 @@ def _service(**kw) -> Service:
     return Service(config, Sessions(config))
 
 
+def use_sessions(service, fake) -> None:
+    """`fake` in place of `service.sessions`, in every part that holds it."""
+    old = service.sessions
+    for part in [service, *vars(service).values()]:
+        if getattr(part, "sessions", None) is old:
+            part.sessions = fake
+
+
+def use_config(service, config) -> None:
+    """`config` in place of `service.config`, in every part that holds it."""
+    old = service.config
+    for part in [service, *vars(service).values()]:
+        if getattr(part, "config", None) is old:
+            part.config = config
+
+
 class TheGate(unittest.TestCase):
     def test_a_directory_outside_the_list_is_refused_everywhere(self):
         s = _service()
         for call in (
-            lambda: s.sessions_for("/etc"),
-            lambda: s.history("/etc", "abc"),
-            lambda: s.check_send("/etc", "hi"),
+            lambda: s.chat.sessions_for("/etc"),
+            lambda: s.chat.history("/etc", "abc"),
+            lambda: s.chat.check_send("/etc", "hi"),
         ):
             with self.assertRaises(Invalid):
                 call()
 
     def test_the_reason_names_the_directory_so_a_caller_can_show_it(self):
         with self.assertRaises(Invalid) as e:
-            _service().sessions_for("/nope")
+            _service().chat.sessions_for("/nope")
         self.assertIn("/nope", str(e.exception))
 
     def test_a_configured_workspace_passes_the_gate(self):
-        self.assertEqual(_service().sessions_for(REPO)["cwd"], REPO)
+        self.assertEqual(_service().chat.sessions_for(REPO)["cwd"], REPO)
 
 
 class WhatCountsAsInvalid(unittest.TestCase):
     def test_history_needs_a_session_id(self):
         with self.assertRaises(Invalid):
-            _service().history(REPO, "")
+            _service().chat.history(REPO, "")
 
     def test_empty_prompt_is_refused_before_anything_is_spent(self):
         # Quota matters here: this refusal must land before a session is created.
         for text in ("", "   ", "\n"):
             with self.assertRaises(Invalid):
-                _service().check_send(REPO, text)
+                _service().chat.check_send(REPO, text)
 
     def test_check_send_accepts_real_text(self):
-        self.assertIsNone(_service().check_send(REPO, "hello"))
+        self.assertIsNone(_service().chat.check_send(REPO, "hello"))
 
 
 class TheGateWithAStore(unittest.TestCase):
@@ -82,7 +98,9 @@ class TheGateWithAStore(unittest.TestCase):
         (self.root / "repo").mkdir()
         s = self._svc()
         s.ws.store.add("repo", "My repo")
-        self.assertEqual(s.sessions_for(str(self.root / "repo"))["cwd"], str(self.root / "repo"))
+        self.assertEqual(
+            s.chat.sessions_for(str(self.root / "repo"))["cwd"], str(self.root / "repo")
+        )
 
     def test_a_hand_edited_entry_pointing_outside_closes_every_path(self):
         s = self._svc()
@@ -96,9 +114,9 @@ class TheGateWithAStore(unittest.TestCase):
                     (str(s.ws.store.working_dir), name),
                 )
         for call in (
-            lambda: s.sessions_for("/etc"),
-            lambda: s.history("/etc", "abc"),
-            lambda: s.check_send("/etc", "hi"),
+            lambda: s.chat.sessions_for("/etc"),
+            lambda: s.chat.history("/etc", "abc"),
+            lambda: s.chat.check_send("/etc", "hi"),
         ):
             with self.assertRaises(Invalid):
                 call()
@@ -107,22 +125,22 @@ class TheGateWithAStore(unittest.TestCase):
         s = self._svc()
         s.ws.store.add("repo")
         with self.assertRaises(Invalid):
-            s.check_send(str(self.root.parent), "hi")
+            s.chat.check_send(str(self.root.parent), "hi")
 
     def test_a_subdirectory_nobody_added_is_refused(self):
         (self.root / "stray").mkdir()
         s = self._svc()
         with self.assertRaises(Invalid):
-            s.check_send(str(self.root / "stray"), "hi")
+            s.chat.check_send(str(self.root / "stray"), "hi")
 
     def test_removing_a_workspace_closes_the_gate_again(self):
         (self.root / "repo").mkdir()
         s = self._svc()
         s.ws.store.add("repo")
-        s.sessions_for(str(self.root / "repo"))
+        s.chat.sessions_for(str(self.root / "repo"))
         s.ws.store.remove("repo")
         with self.assertRaises(Invalid):
-            s.check_send(str(self.root / "repo"), "hi")
+            s.chat.check_send(str(self.root / "repo"), "hi")
 
     def test_no_working_folder_means_no_store_and_behaviour(self):
         config = Config(workspaces=(REPO,))

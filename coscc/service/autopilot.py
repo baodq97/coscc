@@ -6,6 +6,7 @@ A mixin with no fields, inherited by `Service` (`coscc/service/__init__.py`).
 from __future__ import annotations
 
 import asyncio
+import math
 import logging
 import sqlite3
 import uuid
@@ -19,9 +20,65 @@ from coscc.github import integrate, prmachine
 from coscc.git.gitops import GitError
 from coscc.runlog.journal import BadRecord
 from coscc.data import Busy
-from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid
+from coscc.config import LOOPBACK, Config
+from coscc.data import Data
+from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, log_setting
 
 log = logging.getLogger(__name__)
+
+
+# The autopilot's settings live in the data root's `prefs`, not the workspace's repository. Three per workspace, keyed by
+# the journal key; the cap is one for the whole app, since the quota is the machine's account.
+# Not in `PREFERENCES`: those are the page's.
+
+SETTINGS = ("autopilot", "autopilot_may_ship", "max_parallel", "daily_cap_usd")
+CAP_PREF = "autopilot_daily_cap_usd"
+
+
+def _whole_at_least_one(value: Any) -> bool:
+    """`max_parallel`: an int, not a bool, 1 or more."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def _positive_number(value: Any) -> bool:
+    """`daily_cap_usd`: a finite number above 0, not a bool."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
+    )
+
+
+def pref_name(name: str, key: str) -> str:
+    return CAP_PREF if name == "daily_cap_usd" else f"{name}:{key}"
+
+
+def autopilot_values(config: Config, key: str) -> dict[str, Any]:
+    """The four values in effect. A hand-edited value of the wrong type reads as its
+    default, and the default of both switches is off."""
+    data = Data(config.data_dir)
+
+    def read(name: str, ok: Any, default: Any) -> Any:
+        value = data.pref(pref_name(name, key), default)
+        return value if ok(value) else default
+
+    return {
+        "autopilot": read("autopilot", lambda v: v is True or v is False, False),
+        "autopilot_may_ship": read("autopilot_may_ship", lambda v: v is True or v is False, False),
+        "max_parallel": read("max_parallel", _whole_at_least_one, autopilot.DEFAULT_MAX_PARALLEL),
+        "daily_cap_usd": float(
+            read("daily_cap_usd", _positive_number, autopilot.DEFAULT_DAILY_CAP_USD)
+        ),
+    }
+
+
+def off_loopback(config: Config) -> str:
+    """Why the autopilot may not run on this bind, or `""`."""
+    if config.host in LOOPBACK:
+        return ""
+    # No variable name here: the page shows it verbatim.
+    return f"The app listens on {config.host}, beyond this machine; restart it on 127.0.0.1 to use the autopilot."
 
 
 class AutopilotMixin:
@@ -65,7 +122,7 @@ class AutopilotMixin:
         for row in self.ws.all()["workspaces"]:
             if row["missing"]:
                 continue
-            if self._autopilot_values(self.ws.key(row["path"]))["autopilot"]:
+            if autopilot_values(self.config, self.ws.key(row["path"]))["autopilot"]:
                 self.autopilot_start(row["path"])
                 started.append(row["path"])
         return started
@@ -249,10 +306,10 @@ class AutopilotMixin:
             return
         lock = self._autopilot_locks.setdefault(key, asyncio.Lock())
         async with lock:
-            settings = self._autopilot_values(key)
+            settings = autopilot_values(self.config, key)
             if not settings["autopilot"]:
                 return
-            refused = self._off_loopback()
+            refused = off_loopback(self.config)
             if refused:
                 # `COS_HOST` can change after the switch was turned on.
                 self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": refused}})
@@ -280,7 +337,10 @@ class AutopilotMixin:
             listed, n = backlog.shortlist_of(r for r in records if r.get("workspace") == key)
             if listed is None or not listed["units"]:
                 # Nothing is asked and nothing starts.
-                if not self._autopilot_on(key) or not self._autopilot_values(key)["autopilot"]:
+                if (
+                    not self._autopilot_on(key)
+                    or not autopilot_values(self.config, key)["autopilot"]
+                ):
                     return
                 self._autopilot_set_stops(
                     key, {"": {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST}}
@@ -517,7 +577,7 @@ class AutopilotMixin:
             passed = autopilot.passed_for(names, [c["unit"] for c in picked["chosen"]], reasons)
             # The switch may have been turned off while this pass read the board and `next`. Nothing from
             # here on awaits, so nothing starts once it is off.
-            if not self._autopilot_on(key) or not self._autopilot_values(key)["autopilot"]:
+            if not self._autopilot_on(key) or not autopilot_values(self.config, key)["autopilot"]:
                 return
             self._autopilot_set_stops(key, found)
             self._autopilot_held[key] = dict(picked["held"])
@@ -599,7 +659,7 @@ class AutopilotMixin:
 
     def _autopilot_block(self, key: str) -> dict[str, Any]:
         """What the board shows of the autopilot. Display only; decides nothing."""
-        values = self._autopilot_values(key)
+        values = autopilot_values(self.config, key)
         on = values["autopilot"]
         block: dict[str, Any] = {
             "on": on,
@@ -607,7 +667,7 @@ class AutopilotMixin:
             "max_parallel": values["max_parallel"],
             "cap": None,
             "stops": [],
-            "refused_because": self._off_loopback() if on else "",
+            "refused_because": off_loopback(self.config) if on else "",
         }
         if not on:
             return block
@@ -629,7 +689,7 @@ class AutopilotMixin:
         """The board's guide: `{on, running, needs_you}`, or `{on: False}` alone while the
         autopilot is off. What runs is read from memory. Display only; decides nothing.
         """
-        if not self._autopilot_values(key)["autopilot"]:
+        if not autopilot_values(self.config, key)["autopilot"]:
             return {"on": False}
         stops = sorted(
             (self._autopilot_stops.get(key) or {}).values(),
@@ -637,6 +697,47 @@ class AutopilotMixin:
         )
         return {
             "on": True,
-            "running": guide.running(self._running_here(key, self._agent_overrides()[0])),
+            "running": guide.running(self._running_here(key, self.agents.agent_overrides()[0])),
             "needs_you": guide.needs_you(stops),
         }
+
+    def autopilot_settings(self, cwd: str) -> dict[str, Any]:
+        """The four settings of one workspace, and whether the bind lets the autopilot run."""
+        self.ws.check(cwd)
+        return {
+            "cwd": cwd,
+            **autopilot_values(self.config, self.ws.key(cwd)),
+            "refused_because": off_loopback(self.config),
+        }
+
+    def set_autopilot(self, cwd: str, name: Any, value: Any) -> dict[str, Any]:
+        """Set one of the four. A wrong value is refused and nothing is written.
+
+        Behind the password like every route: whoever holds it can turn the autopilot on,
+        raise the cap, or let it ship. The trace is the `setting` record. Turning it on is
+        refused while the app listens beyond loopback.
+        """
+        self.ws.check(cwd)
+        if name not in SETTINGS:
+            raise Invalid(f"no such setting: {name} (use one of {', '.join(SETTINGS)})")
+        if name in ("autopilot", "autopilot_may_ship"):
+            if value is not True and value is not False:
+                raise Invalid(f"{name} must be true or false")
+        elif name == "max_parallel":
+            if not _whole_at_least_one(value):
+                raise Invalid("max_parallel must be a whole number, 1 or more")
+        elif not _positive_number(value):
+            raise Invalid("daily_cap_usd must be a number above 0")
+        if name == "autopilot" and value and off_loopback(self.config):
+            raise Invalid(f"the autopilot was not turned on: {off_loopback(self.config)}")
+        key = self.ws.key(cwd)
+        old = autopilot_values(self.config, key)[name]
+        stored = float(value) if name == "daily_cap_usd" else value
+        Data(self.config.data_dir).set_pref(pref_name(name, key), stored)
+        log_setting(self.ws.journal(), pref_name(name, key), old, stored)
+        if name == "autopilot":
+            if value:
+                self.autopilot_start(cwd)
+            else:
+                self.autopilot_stop(key)
+        return self.autopilot_settings(cwd)

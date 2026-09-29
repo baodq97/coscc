@@ -23,6 +23,7 @@ from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from tests.service.test_service import create_sync
 from tests.units.test_submit import submits as _submits
+from tests.service.test_service import use_sessions
 
 
 class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
@@ -200,7 +201,7 @@ class AUnitsBaseIsTheRemoteTrunk(unittest.TestCase):
         test exists to catch."""
         tip = self._advance_remote()
         unit = self._typed_unit()
-        got = asyncio.run(self.service.start_branch(str(self.repo), unit))
+        got = asyncio.run(self.service.backlog.start_branch(str(self.repo), unit))
         tree = got["worktree"]
         branch = got["branch"]
         self.assertEqual(
@@ -442,7 +443,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
     def test_the_row_names_the_stage_and_the_real_session(self):
         self._run("spec")
-        found = self.service.unit_history(str(self.repo), self.made["unit"])
+        found = self.service.backlog.unit_history(str(self.repo), self.made["unit"])
         [row] = [r for r in found["transitions"] if r["artifact"] == "spec.md"]
         self.assertEqual(row["to_state"], "accepted")
         self.assertEqual(row["actor"], "stage:spec")
@@ -451,13 +452,13 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
 
     def test_the_projection_moves_with_it(self):
         self._run("spec")
-        found = self.service.unit_history(str(self.repo), self.made["unit"])
+        found = self.service.backlog.unit_history(str(self.repo), self.made["unit"])
         self.assertEqual(found["state"]["spec.md"], "accepted")
 
     def test_running_the_same_stage_twice_is_two_events_not_one(self):
         self._run("spec")
         self._run("spec")
-        found = self.service.unit_history(str(self.repo), self.made["unit"])
+        found = self.service.backlog.unit_history(str(self.repo), self.made["unit"])
         rows = [r for r in found["transitions"] if r["artifact"] == "spec.md"]
         self.assertEqual(len(rows), 2)
         self.assertEqual(found["settled_edits"], 1)
@@ -518,7 +519,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
                 await _submits(kw)
                 yield ("done", {"session_id": "sess-0", "cost": {}})
 
-        self.service.sessions = Empty()
+        use_sessions(self.service, Empty())
 
         async def go():
             out = []
@@ -531,7 +532,7 @@ class AStepRecordsTheTransitionItCaused(unittest.TestCase):
         # what says whether anything happened.
         _, payload = asyncio.run(go())[-1]
         self.assertNotEqual(payload["outcome"], "done")
-        found = self.service.unit_history(str(self.repo), self.made["unit"])
+        found = self.service.backlog.unit_history(str(self.repo), self.made["unit"])
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
 
 
@@ -600,15 +601,17 @@ class AStepThatEndsRecordsWhatANoticeSays(unittest.TestCase):
         self.assertEqual(asked["questions"], [{"artifact": "spec.md", "n": 1}])
 
     def test_a_done_step_with_every_question_answered_records_none(self):
-        self.service.sessions = self.replies(
-            "# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n"
+        use_sessions(
+            self.service,
+            self.replies("# Spec: a problem\nAuthor: t. Status: accepted.\n\n## Body\n"),
         )
         self._run()
         self.assertNotIn("questions", [r["kind"] for r in self.records()])
 
     def test_a_failed_or_stopped_step_records_no_questions(self):
-        self.service.sessions = self.replies(
-            self.ASKS, {"session_id": "s", "terminal_reason": "error_max_turns"}
+        use_sessions(
+            self.service,
+            self.replies(self.ASKS, {"session_id": "s", "terminal_reason": "error_max_turns"}),
         )
         _, payload = self._run()[-1]
         self.assertNotEqual(payload["outcome"], "done")
@@ -841,7 +844,7 @@ class AStepOutlivesItsReaderAndCanBeStopped(unittest.TestCase):
         self.assertFalse((Path(a["path"]) / "spec.md").exists())
         [end] = self._ends(a["unit"])
         self.assertEqual((end["outcome"], end["stopped_by"]), ("stopped", "Lan"))
-        found = self.service.unit_history(self.ws, a["unit"])
+        found = self.service.backlog.unit_history(self.ws, a["unit"])
         self.assertEqual([r for r in found["transitions"] if r["artifact"] == "spec.md"], [])
         self.assertIn("Status: accepted.", (Path(a["path"]) / "intent.md").read_text())
         self.assertEqual(self.service.running_steps(self.ws), [])
@@ -924,7 +927,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
                 yield ("done", {"session_id": "sess-ok", "cost": {}})
 
         probe = Probe()
-        self.service.sessions = probe
+        use_sessions(self.service, probe)
         self._run("spec")
         self.assertIn("# The attempt before this one", probe.seen)
         self.assertIn("sess-fail", probe.seen)
@@ -936,7 +939,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
                 await _submits(kw)
                 yield ("done", {"session_id": "sess-1", "cost": {}})
 
-        self.service.sessions = Replies()
+        use_sessions(self.service, Replies())
         self._run("spec")
 
         class Probe:
@@ -950,7 +953,7 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
                 yield ("done", {"session_id": "sess-2", "cost": {}})
 
         probe = Probe()
-        self.service.sessions = probe
+        use_sessions(self.service, probe)
         self._run("spec")
         self.assertNotIn("# The attempt before this one", probe.seen)
 
@@ -974,10 +977,10 @@ class AFailedAttemptReachesTheNextRunAndTheBoard(unittest.TestCase):
 
         unit = self.made["unit"]
         board = asyncio.run(self.service.board(str(self.repo)))
-        timeline = self.service.timeline(str(self.repo), unit)
-        activity = self.service.activity(str(self.repo))
-        usage = self.service.usage(str(self.repo))
-        combo = self.service.activity_and_usage(str(self.repo))
+        timeline = self.service.backlog.timeline(str(self.repo), unit)
+        activity = self.service.activity.activity(str(self.repo))
+        usage = self.service.activity.usage(str(self.repo))
+        combo = self.service.activity.activity_and_usage(str(self.repo))
         for payload in (board, timeline, activity, usage, combo):
             self.assertNotIn("CANARY-0019-EXCERPT", json.dumps(payload))
         # And the attempt record itself does carry it — otherwise this test would pass
@@ -1312,7 +1315,7 @@ class AnImplStepUnderTheModelTrial(unittest.TestCase):
 
     def test_an_override_keeps_the_arm_and_records_the_real_model(self):
         self._unit()
-        asyncio.run(self.service.set_stage_model("impl", "claude-other"))
+        asyncio.run(self.service.models.set_stage_model("impl", "claude-other"))
         before = self._prefs()
         self._run(arm="opus-5-5")
         start = self._starts()[0]
@@ -1740,7 +1743,7 @@ class APrStepIsMechanical(unittest.TestCase):
 
         unit = self._typed_unit()
         self._git("branch", "fix/a-problem")
-        self.service.sessions = self.NoSession()
+        use_sessions(self.service, self.NoSession())
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, "open: pr may proceed"
@@ -1928,7 +1931,7 @@ class APrStepPutsPrMdOntoItsPullRequest(unittest.TestCase):
             prepare(directory)
         replies = self.Replies(text, hold)
         replies.directory = directory
-        self.service.sessions = replies
+        use_sessions(self.service, replies)
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, f"open: {stage} may proceed"
@@ -2939,9 +2942,9 @@ class ReviewTakesTheScreenshotsAgainAfterARewrite(_AReviewStep, unittest.TestCas
                 "mode": "manual",
             }
         )
-        kinds = [e["kind"] for e in self.service.activity(str(self.repo))["events"]]
+        kinds = [e["kind"] for e in self.service.activity.activity(str(self.repo))["events"]]
         self.assertEqual(kinds, ["start"])
-        both = self.service.activity_and_usage(str(self.repo))
+        both = self.service.activity.activity_and_usage(str(self.repo))
         self.assertEqual([e["kind"] for e in both["events"]], ["start"])
 
 

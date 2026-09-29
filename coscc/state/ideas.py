@@ -43,7 +43,7 @@ class IdeasMixin(rx.State, mixin=True):
 
         self.idea_id, self.idea_note, self.idea_units, self.idea_depends = idea_id, "", [], []
         try:
-            page = await SERVICE.idea(self.cwd, idea_id)
+            page = await SERVICE.ideas.idea(self.cwd, idea_id)
         except Invalid as e:
             self.idea_title, self.idea_brief, self.idea_ref = idea_id, "", ""
             self.idea_note = str(e)
@@ -84,7 +84,9 @@ class IdeasMixin(rx.State, mixin=True):
         from coscc.state import SERVICE
 
         try:
-            made = SERVICE.create_idea(self.cwd, self.new_idea_slug.strip(), self.new_idea_brief)
+            made = SERVICE.ideas.create_idea(
+                self.cwd, self.new_idea_slug.strip(), self.new_idea_brief
+            )
         except Invalid as e:
             self.notice = str(e)
             return

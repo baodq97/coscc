@@ -23,6 +23,7 @@ from coscc.service.common import Invalid
 from coscc.service.common import Refused
 from coscc.agent.sessions import Sessions
 from tests.units.test_submit import submits as _submits
+from tests.service.test_service import use_sessions, use_config
 
 
 class _Replies:
@@ -152,7 +153,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
 
 class OnTheRealLoop(_Base):
     async def test_off_starts_nothing(self):
-        self.service.sessions = _Replies(accepted=5)
+        use_sessions(self.service, _Replies(accepted=5))
         await self.unit("off")
         unit = (await self.service.board(self.ws))["units"][0]["name"]
         [_ async for _ in self.service.run_step(self.ws, unit, "spec")]
@@ -162,7 +163,7 @@ class OnTheRealLoop(_Base):
         self.assertFalse((await self.service.board(self.ws))["autopilot"]["on"])
 
     async def test_a_done_step_starts_the_next_stage_and_a_draft_stops_it(self):
-        self.service.sessions = _Replies(accepted=1)
+        use_sessions(self.service, _Replies(accepted=1))
         unit = await self.unit("chain")
         self.listed(unit)
         self.service.set_autopilot(self.ws, "autopilot", True)
@@ -184,7 +185,7 @@ class OnTheRealLoop(_Base):
         self.assertEqual([(r["unit"], r["stop"]) for r in logged], [(unit, "f")])
 
     async def test_a_open_question_stops_it(self):
-        self.service.sessions = _Replies(accepted=5)
+        use_sessions(self.service, _Replies(accepted=5))
         unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
         self.listed(unit)
         self.service.set_autopilot(self.ws, "autopilot", True)
@@ -196,7 +197,7 @@ class OnTheRealLoop(_Base):
 
     async def test_a_note_under_open_questions_does_not_stop_it(self):
         """A bullet and a numbered line with no `?` are notes, so (a) never fires."""
-        self.service.sessions = _Replies(accepted=1)
+        use_sessions(self.service, _Replies(accepted=1))
         unit = await self.unit(
             "notes",
             "Status: accepted.\n\n## Open questions\n\n"
@@ -213,7 +214,7 @@ class OnTheRealLoop(_Base):
         self.assertEqual((stop["unit"], stop["kind"]), (unit, "f"))
 
     async def test_e_a_failed_step_is_not_run_again(self):
-        self.service.sessions = _Replies(accepted=5)
+        use_sessions(self.service, _Replies(accepted=5))
         unit = await self.unit("failed")
         Journal(self.config.working_dir, self.config.data_dir).finished(
             self.key, unit, "spec", "failed"
@@ -226,7 +227,7 @@ class OnTheRealLoop(_Base):
         self.assertEqual(stop["kind"], "e")
 
     async def test_the_cap_holds_the_autopilot_and_not_a_person(self):
-        self.service.sessions = _Replies(accepted=5)
+        use_sessions(self.service, _Replies(accepted=5))
         unit = await self.unit("capped")
         self.listed(unit)
         self.service.set_autopilot(self.ws, "daily_cap_usd", 1.0)
@@ -240,7 +241,7 @@ class OnTheRealLoop(_Base):
         self.assertEqual([s["started_by"] for s in self.starts()], ["person"])
 
     async def test_turning_it_off_cancels_the_loop(self):
-        self.service.sessions = _Replies(accepted=0)
+        use_sessions(self.service, _Replies(accepted=0))
         await self.unit("off-again")
         self.service.set_autopilot(self.ws, "autopilot", True)
         task = self.service._autopilot_tasks[self.key]
@@ -303,7 +304,7 @@ class OnTheRealLoop(_Base):
         self.assertEqual(self.starts(), [])
 
     async def test_the_last_answer_runs_the_draft_again_in_the_pass_it_wakes(self):
-        self.service.sessions = _Intents()
+        use_sessions(self.service, _Intents())
         unit = await self.unit("rerun", "Status: draft.\n\n## Open questions\n\n1. Một?")
         self.listed(unit)
         self.service.set_autopilot(self.ws, "autopilot", True)
@@ -342,8 +343,8 @@ class OnTheRealLoop(_Base):
     async def test_a_rerun_that_keeps_its_answered_question_is_not_run_again(self):
         # The draft the rerun writes still asks question 1, which the kept block answers, so `next`
         # says `rerun` again with no new answer behind it.
-        self.service.sessions = _Intents(
-            "\n## Open questions\n\n1. Một?\n", questions=((1, "Một?"),)
+        use_sessions(
+            self.service, _Intents("\n## Open questions\n\n1. Một?\n", questions=((1, "Một?"),))
         )
         unit = await self.unit("kept", "Status: draft.\n\n## Open questions\n\n1. Một?")
         self.listed(unit)
@@ -365,7 +366,7 @@ class OnTheRealLoop(_Base):
 
     async def test_an_open_question_stops_the_unit_and_opens_no_session(self):
         """The stop `a` is what a person sees; nothing answers for them."""
-        self.service.sessions = _Intents()
+        use_sessions(self.service, _Intents())
         unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
         self.listed(unit)
         self.service.set_autopilot(self.ws, "autopilot", True)
@@ -1105,7 +1106,7 @@ class Scripted(_Base):
             self.assertEqual(self.stops(), stops, error)
 
     async def test_off_loopback_nothing_runs_and_the_board_says_why(self):
-        self.service.config = dataclasses.replace(self.config, host="0.0.0.0")
+        use_config(self.service, dataclasses.replace(self.config, host="0.0.0.0"))
         self.add("0001_a", "spec")
         await self.pass_()
         self.assertEqual(self.launched, [])
@@ -1141,7 +1142,7 @@ class Scripted(_Base):
         self.assertEqual((row["workspace"], row["reason"]), (self.key, autopilot.NO_SHORTLIST))
 
     async def test_off_loopback_is_logged_with_no_unit(self):
-        self.service.config = dataclasses.replace(self.config, host="0.0.0.0")
+        use_config(self.service, dataclasses.replace(self.config, host="0.0.0.0"))
         self.add("0001_a", "spec")
         await self.pass_()
         await self.pass_()

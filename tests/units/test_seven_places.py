@@ -26,6 +26,7 @@ from coscc.units import board as board_reader
 from coscc.units import guards
 from tests.units.test_board import _store
 from tests.units.test_meta import snapshot_of
+from tests.service.test_service import use_sessions
 
 
 class _Nobody:
@@ -65,7 +66,7 @@ class Place1(unittest.TestCase):
                 await submits(kw, judgement=judgement)
                 yield ("done", {"session_id": "sess-1", "cost": {}})
 
-        self.service.sessions = Replies()
+        use_sessions(self.service, Replies())
 
         async def go():
             return [item async for item in self.service.run_step(str(self.repo), self.unit, "spec")]
@@ -85,7 +86,7 @@ class Place1(unittest.TestCase):
         return opened
 
     def _spec_row(self) -> dict:
-        rows = self.service.unit_history(str(self.repo), self.unit)["transitions"]
+        rows = self.service.backlog.unit_history(str(self.repo), self.unit)["transitions"]
         return [r for r in rows if r["artifact"] == "spec.md"][-1]
 
     def test_prose_saying_accepted_does_not_open_the_gate_an_object_saying_not_ready_closes(self):
@@ -116,7 +117,7 @@ class Place1(unittest.TestCase):
                 await submits(kw, judgement="ready", unmeasured=["U1"])
                 yield ("done", {"session_id": "sess-1", "cost": {}})
 
-        self.service.sessions = Replies()
+        use_sessions(self.service, Replies())
 
         async def go():
             return [item async for item in self.service.run_step(str(self.repo), self.unit, "spec")]
@@ -142,7 +143,7 @@ class Place1(unittest.TestCase):
                 yield ("chunk", "# Spec: a problem\nAuthor: t. Status: accepted.\n")
                 yield ("done", {"session_id": "sess-1", "cost": {}})
 
-        self.service.sessions = Silent()
+        use_sessions(self.service, Silent())
 
         async def go():
             return [item async for item in self.service.run_step(str(self.repo), self.unit, "spec")]
@@ -153,7 +154,7 @@ class Place1(unittest.TestCase):
         self.assertIn("without handing back its object", Silent.prompts[1])
         self.assertEqual(done["outcome"], "failed")
         self.assertIn("no-submission", done["error"])
-        rows = self.service.unit_history(str(self.repo), self.unit)["transitions"]
+        rows = self.service.backlog.unit_history(str(self.repo), self.unit)["transitions"]
         self.assertEqual([r for r in rows if r["artifact"] == "spec.md"], [])
         self.assertFalse(self._plan_gate())
 
@@ -200,7 +201,7 @@ class _Review(unittest.TestCase):
                 await submits(kw, **obj)
                 yield ("done", {"session_id": "sess-1", "cost": {}})
 
-        self.service.sessions = Replies()
+        use_sessions(self.service, Replies())
 
         async def open_gate(units_root, unit, stage, repo=None, **kw):
             return True, f"open: {stage} may proceed"
@@ -212,7 +213,7 @@ class _Review(unittest.TestCase):
             return asyncio.run(go())[-1][1]
 
     def _row(self, artifact: str) -> dict:
-        rows = self.service.unit_history(str(self.repo), self.unit)["transitions"]
+        rows = self.service.backlog.unit_history(str(self.repo), self.unit)["transitions"]
         row = dict([r for r in rows if r["artifact"] == artifact][-1])
         return {
             **row,
@@ -355,7 +356,7 @@ class Place4(unittest.TestCase):
         async def act(tree, gate):
             return reply
 
-        self.service.sessions = StandIn(act, said=said)
+        use_sessions(self.service, StandIn(act, said=said))
 
         async def go():
             done = {}
@@ -413,7 +414,7 @@ class _Asked(unittest.TestCase):
                     await submits(kw, **obj)
                 yield ("done", {"session_id": "s1", "cost": {"cost_usd": 0.02, "turns": 1}})
 
-        self.service.sessions = Session()
+        use_sessions(self.service, Session())
 
     def _end(self, stage: str, unit: str) -> dict:
         from coscc.runlog.journal import Journal
@@ -434,7 +435,7 @@ class Place5(_Asked):
         self._stream(prose, obj)
 
         async def go():
-            return [item async for item in self.service.propose_estimates(str(self.repo))]
+            return [item async for item in self.service.backlog.propose_estimates(str(self.repo))]
 
         return asyncio.run(go())[-1][1]["estimate"]
 

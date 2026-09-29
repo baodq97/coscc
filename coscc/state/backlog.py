@@ -125,7 +125,7 @@ class BacklogMixin(rx.State, mixin=True):
         from coscc.state import SERVICE
 
         await self._backlog_write(
-            SERVICE.record_shortlist(
+            SERVICE.backlog.record_shortlist(
                 self.cwd, list(self.shortlist_draft), self.shortlist_reason, ""
             )
         )
@@ -135,7 +135,7 @@ class BacklogMixin(rx.State, mixin=True):
         from coscc.state import SERVICE
 
         await self._backlog_write(
-            SERVICE.record_estimate(
+            SERVICE.backlog.record_estimate(
                 self.cwd,
                 self.est_unit.strip(),
                 self.est_value.strip(),
@@ -150,7 +150,7 @@ class BacklogMixin(rx.State, mixin=True):
         from coscc.state import SERVICE
 
         await self._backlog_write(
-            SERVICE.record_relation(
+            SERVICE.backlog.record_relation(
                 self.cwd,
                 self.rel_unit.strip(),
                 self.rel_other.strip(),
@@ -172,7 +172,7 @@ class BacklogMixin(rx.State, mixin=True):
         yield
         done: dict = {}
         try:
-            async for kind, payload in SERVICE.propose_estimates(self.cwd):
+            async for kind, payload in SERVICE.backlog.propose_estimates(self.cwd):
                 if kind == "done":
                     done = payload.get("estimate") or {}
         except Invalid as e:
@@ -229,7 +229,7 @@ class BacklogMixin(rx.State, mixin=True):
         if not self.unit_id:
             return
         try:
-            cut = await SERVICE.start_branch(self.cwd, self.unit_id)
+            cut = await SERVICE.backlog.start_branch(self.cwd, self.unit_id)
         except Invalid as e:
             self.notice = str(e)
             return

@@ -72,24 +72,26 @@ def update_words(status: dict[str, Any]) -> dict[str, Any]:
     return {"line": line, "local_line": local_line, "actions": actions}
 
 
+def refuse_while_updating(updater: updater_mod.Updater) -> None:
+    try:
+        updater.refuse_while_updating()
+    except updater_mod.Refused as e:
+        raise _as_invalid(e) from e
+
+
+def refuse_mechanical_while_updating(updater: updater_mod.Updater) -> None:
+    """A mechanical integration or a retake is refused once Apply is pressed."""
+    try:
+        updater.refuse_mechanical_while_updating()
+    except updater_mod.Refused as e:
+        raise _as_invalid(e) from e
+
+
 class UpdateMixin:
     # -- updating the app -----------------------------------------------------
     #
     # Every decision is `Updater`'s; these translate its refusals into `Invalid`, so a route
     # maps one exception type.
-
-    def _refuse_while_updating(self) -> None:
-        try:
-            self.updater.refuse_while_updating()
-        except updater_mod.Refused as e:
-            raise _as_invalid(e) from e
-
-    def _refuse_mechanical_while_updating(self) -> None:
-        """A mechanical integration or a retake is refused once Apply is pressed."""
-        try:
-            self.updater.refuse_mechanical_while_updating()
-        except updater_mod.Refused as e:
-            raise _as_invalid(e) from e
 
     def _update_waited(self) -> list[dict[str, Any]]:
         """What an Apply waits for: a mechanical integration and a screenshot retake.

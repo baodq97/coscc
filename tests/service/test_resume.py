@@ -215,7 +215,7 @@ class TakingUpAfterAnUpdate(_Base):
 
         with (
             mock.patch.object(self.service, "resume_integration", lambda r: integration(r)),
-            mock.patch.object(self.service, "propose_estimates", estimates),
+            mock.patch.object(self.service.backlog, "propose_estimates", estimates),
             mock.patch.object(self.service, "_resume_chat", chat),
         ):
             for kind in resume_mod.KINDS:
@@ -338,7 +338,7 @@ class TakingUpAfterAnUpdate(_Base):
             ),
         }
         with (
-            mock.patch.object(self.service, "propose_estimates", estimates),
+            mock.patch.object(self.service.backlog, "propose_estimates", estimates),
             mock.patch.object(self.service, "_resume_chat", chat),
         ):
             for why, refusal in cases.items():
@@ -574,7 +574,7 @@ class APausedOwnerEndsNothing(_Base):
                 pass
 
         async def estimate():
-            async for _ in self.service.propose_estimates(self.cwd):
+            async for _ in self.service.backlog.propose_estimates(self.cwd):
                 pass
 
         for name, run in (("integrate", gebo), ("estimate", estimate)):

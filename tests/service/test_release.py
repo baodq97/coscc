@@ -219,7 +219,11 @@ def press(service: Service, phase: str, cwd: str, version: str) -> dict:
     """One press, as the route makes it: an `Invalid` before the first item, else the record."""
 
     async def go() -> dict:
-        run = service.release_prepare if phase == "prepare" else service.release_publish
+        run = (
+            service.release.release_prepare
+            if phase == "prepare"
+            else service.release.release_publish
+        )
         done: dict = {}
         async for kind, payload in run(cwd, version):
             if kind == "done":
@@ -281,7 +285,7 @@ class ReleasingThroughTheService(unittest.TestCase):
             self.assertIn(said, str(caught.exception))
         self.assertEqual([r["outcome"] for r in self.records()], ["refused", "refused"])
         self.assertEqual(self.fx.remote_ref("refs/heads/chore/release-0-1-0"), "")
-        self.assertFalse(self.service._releasing)
+        self.assertFalse(self.service.release._releasing)
 
     def test_gh_offline_is_named_as_gh_not_as_check_version(self):
         self.fx.state.write_text(json.dumps({"offline": True}), encoding="utf-8")
@@ -332,7 +336,7 @@ class ReleasingThroughTheService(unittest.TestCase):
         self.assertEqual(rec["outcome"], "failed")
         self.assertIn("no credentials here", rec["detail"])
         self.assertEqual(git(self.fx.workspace, "branch", "--list", "chore/release-0-2-0"), "")
-        self.assertFalse(self.service._release_tree_path(self.fx.cwd).exists())
+        self.assertFalse(self.service.release.release_tree_path(self.fx.cwd).exists())
         hook.unlink()
         rec = press(self.service, "prepare", self.fx.cwd, "0.2.0")
         self.assertEqual(rec["outcome"], "opened", rec.get("detail"))

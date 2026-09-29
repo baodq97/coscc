@@ -17,6 +17,7 @@ from coscc.service import Service
 from coscc.agent.sessions import Sessions
 from tests.service.test_service import create_sync
 from tests.units.test_submit import a_head, finding, submits as _submits
+from tests.service.test_service import use_sessions
 
 
 REVIEW_ONE = (
@@ -150,7 +151,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         self.assertNotIn("ingest_error", done)
         rows = [
             r
-            for r in self.service.unit_history(str(self.repo), self.unit)["transitions"]
+            for r in self.service.backlog.unit_history(str(self.repo), self.unit)["transitions"]
             if r["artifact"] == "review.md"
         ]
         self.assertEqual(
@@ -200,7 +201,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
         (self.dir / "intent.md").write_text(
             "# Intent: a problem\nAuthor: t. Type: feat. Status: accepted.\n", encoding="utf-8"
         )
-        self.service.sessions = Spec()
+        use_sessions(self.service, Spec())
         gh = FakeGh()
 
         async def go():
@@ -275,7 +276,7 @@ class ReviewRoundsReachThePullRequest(unittest.TestCase):
 
     def test_a_comment_row_does_not_disturb_the_cost_timeline(self):
         self._post(FakeGh(), 1)
-        tl = self.service.timeline(str(self.repo), self.unit)
+        tl = self.service.backlog.timeline(str(self.repo), self.unit)
         self.assertEqual(tl.get("runs") or [], [])
 
 
@@ -474,4 +475,4 @@ class RecordingAnOutcome(unittest.TestCase):
         self.assertEqual(self.board_unit()["outcome_label"]["kind"], "due")
         self.board_unit()
         self.assertEqual(len(journal.records(key)), before)
-        self.assertEqual(self.service.sessions_for(self.cwd)["sessions"], [])
+        self.assertEqual(self.service.chat.sessions_for(self.cwd)["sessions"], [])

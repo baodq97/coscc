@@ -312,7 +312,7 @@ def idea_rows(data: dict, home: str) -> list[IdeaRow]:
 
 
 def child_rows(page: dict) -> list[ChildRow]:
-    """`Service.idea`'s rows, as the page draws them. Copies; decides nothing."""
+    """`Ideas.idea`'s rows, as the page draws them. Copies; decides nothing."""
     return [
         ChildRow(
             ref=str(r["ref"]),
@@ -962,7 +962,7 @@ NO_AUTHORITY = "Author not recorded"
 
 
 def _moves(rows: list[dict]) -> list[Move]:
-    """The timeline's transitions, as `Service.timeline` sent them, newest first. Copies."""
+    """The timeline's transitions, as `Backlog.timeline` sent them, newest first. Copies."""
     out = []
     for i, r in reversed(list(enumerate(rows))):
         authority = str(r.get("authority") or "")
@@ -1089,7 +1089,7 @@ class Knob:
 
 @dataclasses.dataclass
 class ModelRow:
-    """One stage, or chat, as Settings shows it. Every field is copied from `Service.stage_models`; nothing is resolved here."""
+    """One stage, or chat, as Settings shows it. Every field is copied from `Models.stage_models`; nothing is resolved here."""
 
     name: str = ""
     agents: int = 1
@@ -1106,7 +1106,7 @@ class ModelRow:
 @dataclasses.dataclass
 class AgentRow:
     """One row of the agent table as Settings shows it: each field and where it
-    came from. Copied from `Service.agent_table`; nothing is resolved here."""
+    came from. Copied from `Agents.agent_table`; nothing is resolved here."""
 
     key: str = ""
     glyph: str = ""
@@ -1141,7 +1141,7 @@ class DecisionRow:
 
 @dataclasses.dataclass
 class ImportRow:
-    """One field an import could not read, as `Service.settings` returned it."""
+    """One field an import could not read, as `Activity.settings` returned it."""
 
     workspace: str = ""
     unit: str = ""

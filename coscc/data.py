@@ -881,7 +881,7 @@ class Data:
 
     # -- a step's events ----------------------------------------------------
     #
-    # Written by `coscc/runlog/events.py`'s recorder from a thread, read by `Service.events_page`.
+    # Written by `coscc/runlog/events.py`'s recorder from a thread, read by `Watch.events_page`.
 
     def step_run_open(
         self,

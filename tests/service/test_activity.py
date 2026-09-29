@@ -1,4 +1,4 @@
-"""Tests for `ActivityMixin` in `coscc/service/activity.py`, split from
+"""Tests for `Activity` in `coscc/service/activity.py`, split from
 `tests/service/test_service.py`."""
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ class UsageCountsWhatItCouldNotAdd(unittest.TestCase):
             {"kind": "end", "unit": "0005_c", "cost_usd": 1.0},
             {"kind": "attempt", "unit": "0005_c"},
         ]
-        got = _service()._usage_of("w", rows)
+        got = _service().activity._usage_of("w", rows)
         self.assertEqual((got["total"]["cost_usd"], got["total"]["unknown"]), (1.52, 2))
         self.assertEqual(got["total"]["turns"], 113)
         self.assertEqual(

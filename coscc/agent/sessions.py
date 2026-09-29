@@ -966,7 +966,7 @@ class Sessions:
             # session's own record of the model it ran on.
             used: list[str] = []
             # Yielded once, the first moment `resolved` has a value, so a caller that dies before
-            # `done` still has a session id to read a transcript excerpt back with. `Service.stream`
+            # `done` still has a session id to read a transcript excerpt back with. `Chat.stream`
             # (chat) drops this kind; `api.py` would turn it into a spurious `done` line.
             told_session = bool(resolved)
             if told_session:

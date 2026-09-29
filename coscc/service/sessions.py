@@ -9,13 +9,28 @@ from coscc.agent import transcript
 from coscc.runlog.journal import BadRecord
 from coscc.data import Busy
 from coscc.agent import models
+from coscc.service.update import refuse_while_updating
 from coscc.service.common import Invalid
 
 # A chat turn's ceiling: `Sessions.stream`'s default, since chat names none, and no budget.
 CHAT_TURNS = 1
+from coscc.config import Config
+from coscc.service.workspaces import Workspaces
+from coscc.agent.sessions import Sessions
+from coscc.update.updater import Updater
+from coscc.service.models import Models
 
 
-class SessionsMixin:
+class Chat:
+    def __init__(
+        self, config: Config, ws: Workspaces, sessions: Sessions, updater: Updater, models: Models
+    ) -> None:
+        self.config = config
+        self.ws = ws
+        self.sessions = sessions
+        self.updater = updater
+        self.models = models
+
     # -- sessions -----------------------------------------------------------
 
     def sessions_for(self, cwd: str, limit: int | None = None) -> dict[str, Any]:
@@ -42,7 +57,7 @@ class SessionsMixin:
         caller has committed to streaming, when the status line is gone.
         """
         self.ws.check(cwd)
-        self._refuse_while_updating()
+        refuse_while_updating(self.updater)
         if not text.strip():
             raise Invalid("text is required")
 
@@ -61,7 +76,7 @@ class SessionsMixin:
         """
         self.check_send(cwd, text)
         # Chat is a row of the same table as the stages.
-        model, model_source = self._model_for(models.CHAT)
+        model, model_source = self.models.model_for(models.CHAT)
         extra: dict[str, Any] = {
             "owner": {
                 "kind": "chat",

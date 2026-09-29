@@ -39,7 +39,7 @@ class WatchMixin(rx.State, mixin=True):
     watch_open_text: str = ""
     _watch_token: int = 0
 
-    # -- watching a step. Every read is `Service.events_page` or `.follow_events`; the page
+    # -- watching a step. Every read is `Watch.events_page` or `.follow_events`; the page
     # only keeps the list under `WATCH_WINDOW`.
 
     def _watch_reset(self, run: str, title: str, unit: str) -> None:
@@ -54,7 +54,9 @@ class WatchMixin(rx.State, mixin=True):
         from coscc.state import SERVICE
 
         try:
-            return SERVICE.events_page(self.cwd, self.watch_unit, self.watch_run, before=before)
+            return SERVICE.watch.events_page(
+                self.cwd, self.watch_unit, self.watch_run, before=before
+            )
         except Invalid as e:
             self.watch_note = str(e)
             return None
@@ -124,7 +126,7 @@ class WatchMixin(rx.State, mixin=True):
         if page["status"] != "running":
             return
         try:
-            async for kind, value in SERVICE.follow_events(
+            async for kind, value in SERVICE.watch.follow_events(
                 cwd, unit, run, after=last, gather=WATCH_GATHER
             ):
                 async with self:
@@ -180,7 +182,9 @@ class WatchMixin(rx.State, mixin=True):
         from coscc.state import SERVICE
 
         try:
-            page = SERVICE.events_page(self.cwd, self.watch_unit, self.watch_run, seq=int(seq))
+            page = SERVICE.watch.events_page(
+                self.cwd, self.watch_unit, self.watch_run, seq=int(seq)
+            )
         except Invalid as e:
             self.watch_note = str(e)
             return

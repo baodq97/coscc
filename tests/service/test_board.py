@@ -66,7 +66,7 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
 
     def test_every_stage_column_carries_its_glyph_and_label(self):
         # Every stage the board read names, from the table, overrides included.
-        self.service.set_agent("review", {"name": "Judge"})
+        self.service.agents.set_agent("review", {"name": "Judge"})
         data = asyncio.run(self.service.board(str(self.repo)))
         self.assertEqual(set(data["stage_agents"]), set(data["stages"]) - {"pr", "ship"})
         self.assertEqual(
@@ -175,7 +175,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
 
     def test_an_override_reaches_the_running_line(self):
         # The running line reads the one lookup, overrides included.
-        self.service.set_agent("impl", {"name": "Builder", "glyph": "ᛒ"})
+        self.service.agents.set_agent("impl", {"name": "Builder", "glyph": "ᛒ"})
         self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
         [row] = self.service.running(self.cwd)["running"]["0009_x"]
         self.assertEqual(row["agent"], {"glyph": "ᛒ", "name": "Builder"})
@@ -265,7 +265,9 @@ class TheGuide(unittest.TestCase):
         self.journal = self.service.ws.journal()
 
     def block(self) -> dict:
-        with mock.patch.object(self.service, "_autopilot_values", return_value={"autopilot": True}):
+        with mock.patch(
+            "coscc.service.autopilot.autopilot_values", return_value={"autopilot": True}
+        ):
             return self.service._guide_block(self.key)
 
     def test_guide_lists_running_steps(self):

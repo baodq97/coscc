@@ -1,4 +1,4 @@
-"""Tests for `WatchMixin` in `coscc/service/watch.py`, split from `tests/service/test_service.py`."""
+"""Tests for `Watch` in `coscc/service/watch.py`, split from `tests/service/test_service.py`."""
 
 from __future__ import annotations
 
@@ -69,17 +69,19 @@ class AStepCanBeWatched(unittest.TestCase):
             [run] = list(self.service._recorders)
             listed = self.service.running(ws)["running"][self.unit][0]["run"]
             steps_run = self.service.running_steps(ws)[0]["run"]
-            live = self.service.events_page(ws, self.unit, run)
-            older = self.service.events_page(
+            live = self.service.watch.events_page(ws, self.unit, run)
+            older = self.service.watch.events_page(
                 ws, self.unit, run, before=live["first_seq"], limit=9999
             )
-            one = self.service.events_page(ws, self.unit, run, seq=7)
+            one = self.service.watch.events_page(ws, self.unit, run, seq=7)
             with self.assertRaises(Invalid):
-                self.service.events_page(ws, self.other, run)
+                self.service.watch.events_page(ws, self.other, run)
             followed: list[int] = []
 
             async def follow():
-                async for kind, batch in self.service.follow_events(ws, self.unit, run, after=100):
+                async for kind, batch in self.service.watch.follow_events(
+                    ws, self.unit, run, after=100
+                ):
                     self.assertEqual(kind, "events")
                     followed.extend(e["seq"] for e in batch)
 
@@ -88,11 +90,11 @@ class AStepCanBeWatched(unittest.TestCase):
             self.release.set()
             await reader
             await asyncio.wait_for(follower, 10)
-            after = self.service.events_page(ws, self.unit, run)
-            after_older = self.service.events_page(
+            after = self.service.watch.events_page(ws, self.unit, run)
+            after_older = self.service.watch.events_page(
                 ws, self.unit, run, before=live["first_seq"], limit=9999
             )
-            ended = [i async for i in self.service.follow_events(ws, self.unit, run, after=0)]
+            ended = [i async for i in self.service.watch.follow_events(ws, self.unit, run, after=0)]
             return run, listed, steps_run, live, older, one, followed, after, after_older, ended
 
         run, listed, steps_run, live, older, one, followed, after, after_older, ended = asyncio.run(
@@ -125,9 +127,9 @@ class AStepCanBeWatched(unittest.TestCase):
 
     def test_a_run_nobody_knows_is_refused_and_a_step_the_gate_closes_leaves_no_recorder(self):
         with self.assertRaises(Invalid):
-            self.service.events_page(str(self.repo), self.unit, "nope")
+            self.service.watch.events_page(str(self.repo), self.unit, "nope")
         with self.assertRaises(Invalid):
-            self.service.events_page(str(self.repo), self.unit, "")
+            self.service.watch.events_page(str(self.repo), self.unit, "")
 
         async def refused():
             async for _ in self.service.run_step(str(self.repo), self.unit, "ship"):
@@ -141,5 +143,5 @@ class AStepCanBeWatched(unittest.TestCase):
         journal = self.service.ws.journal()
         key = self.service.ws.key(str(self.repo))
         journal.started(key, self.unit, "spec", "manual", run="r-lost")
-        page = self.service.events_page(str(self.repo), self.unit, "r-lost")
+        page = self.service.watch.events_page(str(self.repo), self.unit, "r-lost")
         self.assertEqual((page["status"], page["events"]), ("none", []))

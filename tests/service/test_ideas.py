@@ -1,4 +1,4 @@
-"""Tests for `IdeasMixin` in `coscc/service/ideas.py` and the peers `BoardMixin` passes."""
+"""Tests for `Ideas` in `coscc/service/ideas.py` and the peers `BoardMixin` passes."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ class PeersAreEveryWorkspaceByName(Fixture):
 class AUnitOpenedFromAnIdea(Fixture):
     def setUp(self):
         super().setUp()
-        self.idea = self.service.create_idea(
+        self.idea = self.service.ideas.create_idea(
             self.proj, "one-feature", "backend adds, frontend calls"
         )
         self.back = self.run_(self.service.create_unit(self.api, "backend", idea=self.idea["ref"]))
@@ -97,7 +97,7 @@ class AUnitOpenedFromAnIdea(Fixture):
         )
 
     def test_the_intent_note_carries_the_idea_text_the_siblings_and_the_three_header_lines(self):
-        note = self.service._idea_note(self.proj, self.front["unit"])
+        note = self.service.ideas.idea_note(self.proj, self.front["unit"])
         self.assertIn("backend adds, frontend calls", note)
         self.assertIn(f"- api/{self.back['unit']} (Repo: api)", note)
         self.assertIn(
@@ -106,19 +106,19 @@ class AUnitOpenedFromAnIdea(Fixture):
         )
         self.assertNotIn(
             "Depends on",
-            self.service._idea_note(self.api, self.back["unit"]).split("must carry")[1],
+            self.service.ideas.idea_note(self.api, self.back["unit"]).split("must carry")[1],
         )
 
     def test_a_brief_opened_unit_has_no_note_and_no_siblings(self):
         plain = self.run_(self.service.create_unit(self.proj, "plain", "words"))
-        self.assertEqual(self.service._idea_note(self.proj, plain["unit"]), "")
-        self.assertEqual(self.run_(self.service._siblings(self.proj, plain["unit"])), ((), ""))
+        self.assertEqual(self.service.ideas.idea_note(self.proj, plain["unit"]), "")
+        self.assertEqual(self.run_(self.service.ideas.siblings(self.proj, plain["unit"])), ((), ""))
 
     def test_the_impl_prompt_names_each_sibling_and_its_head(self):
         head = subprocess.run(
             ["git", "-C", self.api, "rev-parse", "HEAD"], capture_output=True, text=True
         ).stdout.strip()
-        paths, note = self.run_(self.service._siblings(self.proj, self.front["unit"]))
+        paths, note = self.run_(self.service.ideas.siblings(self.proj, self.front["unit"]))
         self.assertEqual(paths, (str(Path(self.api).resolve()),))
         self.assertIn(f"- api: {Path(self.api).resolve()} (HEAD {head[:12]} on main)", note)
         self.assertNotIn("- proj:", note)
@@ -132,7 +132,7 @@ class AUnitOpenedFromAnIdea(Fixture):
         )
 
     def test_the_idea_page_lists_each_child_with_repo_stage_and_waits_for(self):
-        page = self.run_(self.service.idea(self.proj, "0001_one-feature"))
+        page = self.run_(self.service.ideas.idea(self.proj, "0001_one-feature"))
         self.assertEqual(page["title"], "one feature")
         self.assertEqual(
             [(r["unit"], r["repo"], r["missing"]) for r in page["units"]],
@@ -145,7 +145,7 @@ class AUnitOpenedFromAnIdea(Fixture):
 
     def test_a_workspace_that_is_gone_is_a_missing_row(self):
         service = self.make(self.proj)
-        page = self.run_(service.idea(self.proj, "0001_one-feature"))
+        page = self.run_(service.ideas.idea(self.proj, "0001_one-feature"))
         self.assertEqual(
             [(r["repo"], r["missing"], r["state"]) for r in page["units"]][0],
             ("api", True, "missing"),

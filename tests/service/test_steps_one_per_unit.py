@@ -24,6 +24,7 @@ from coscc.api import build
 from coscc.config import Config
 from coscc.service.common import Invalid
 from tests.units.test_submit import submits as _submits
+from tests.service.test_service import use_sessions
 
 N = 10
 
@@ -86,7 +87,7 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
         )
         self.service = self.app.state.service
         self.fake = _Sessions()
-        self.service.sessions = self.fake
+        use_sessions(self.service, self.fake)
         self.ws = str(workspace)
         made = await self.service.create_unit(self.ws, "raced", "words for the proof")
         (Path(made["path"]) / "intent.md").write_text(

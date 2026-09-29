@@ -115,7 +115,7 @@ def build(config: Config | None = None) -> FastAPI:
     @api.get("/api/settings/models")
     async def get_stage_models() -> Any:
         """Each stage, then chat, with its agent count, its model and where that model came from."""
-        return await service.stage_models()
+        return await service.models.stage_models()
 
     @api.post("/api/settings/models")
     async def set_stage_model(request: Request) -> Any:
@@ -131,7 +131,7 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("body must be a JSON object")
         try:
-            return await service.set_stage_model(body.get("name"), body.get("model"))
+            return await service.models.set_stage_model(body.get("name"), body.get("model"))
         except Invalid as e:
             return _bad(str(e))
 
@@ -148,14 +148,14 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("body must be a JSON object")
         try:
-            return await service.set_stage_effort(body.get("name"), body.get("effort"))
+            return await service.models.set_stage_effort(body.get("name"), body.get("effort"))
         except Invalid as e:
             return _bad(str(e))
 
     @api.get("/api/settings/agents")
     async def get_agents() -> Any:
         """Every agent row, each field with where it came from, and what was wrong."""
-        return service.agent_table()
+        return service.agents.agent_table()
 
     @api.post("/api/settings/agents")
     async def set_agent(request: Request) -> Any:
@@ -171,7 +171,9 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("body must be a JSON object")
         try:
-            return service.set_agent(body.get("key"), {k: v for k, v in body.items() if k != "key"})
+            return service.agents.set_agent(
+                body.get("key"), {k: v for k, v in body.items() if k != "key"}
+            )
         except Invalid as e:
             return _bad(str(e))
 
@@ -243,7 +245,7 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("send a JSON object")
         try:
-            return service.create_idea(
+            return service.ideas.create_idea(
                 str(body.get("cwd") or ""),
                 str(body.get("slug") or ""),
                 str(body.get("brief") or ""),
@@ -382,7 +384,7 @@ def build(config: Config | None = None) -> FastAPI:
         if isinstance(body, JSONResponse):
             return body
         try:
-            return await service.record_estimate(
+            return await service.backlog.record_estimate(
                 str(body.get("cwd") or ""),
                 str(body.get("unit") or ""),
                 body.get("value"),
@@ -400,7 +402,7 @@ def build(config: Config | None = None) -> FastAPI:
         if isinstance(body, JSONResponse):
             return body
         try:
-            return await service.record_relation(
+            return await service.backlog.record_relation(
                 *(
                     str(body.get(k) or "")
                     for k in ("cwd", "unit", "other", "type", "op", "reason", "by")
@@ -420,7 +422,7 @@ def build(config: Config | None = None) -> FastAPI:
         if isinstance(body, JSONResponse):
             return body
         try:
-            return await service.record_shortlist(
+            return await service.backlog.record_shortlist(
                 str(body.get("cwd") or ""),
                 body.get("units"),
                 str(body.get("reason") or ""),
@@ -437,7 +439,7 @@ def build(config: Config | None = None) -> FastAPI:
         body = await _object(request)
         if isinstance(body, JSONResponse):
             return body
-        stream = service.propose_estimates(str(body.get("cwd") or ""))
+        stream = service.backlog.propose_estimates(str(body.get("cwd") or ""))
         try:
             first = await stream.__anext__()
         except Updating as e:
@@ -503,7 +505,7 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("send a JSON object")
         try:
-            return await service.start_branch(
+            return await service.backlog.start_branch(
                 str(body.get("cwd") or ""), str(body.get("unit") or "")
             )
         except Invalid as e:
@@ -513,7 +515,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def get_branch(request: Request) -> Any:
         """Which branch the workspace is on."""
         try:
-            return await service.branch_here(request.query_params.get("cwd", ""))
+            return await service.backlog.branch_here(request.query_params.get("cwd", ""))
         except Invalid as e:
             return _bad(str(e))
 
@@ -666,7 +668,7 @@ def build(config: Config | None = None) -> FastAPI:
         if nums is None:
             return _bad("before, limit and seq must be whole numbers")
         try:
-            return service.events_page(
+            return service.watch.events_page(
                 q.get("cwd", ""),
                 q.get("unit", ""),
                 q.get("run", ""),
@@ -686,7 +688,7 @@ def build(config: Config | None = None) -> FastAPI:
         nums = _ints(request, "after")
         if nums is None:
             return _bad("after must be a whole number")
-        stream = service.follow_events(
+        stream = service.watch.follow_events(
             q.get("cwd", ""), q.get("unit", ""), q.get("run", ""), nums["after"] or 0
         )
         try:
@@ -729,10 +731,10 @@ def build(config: Config | None = None) -> FastAPI:
         if nums is None or (nums["after"] is not None and nums["after"] < 0):
             return _bad("after must be a whole number")
         try:
-            scope = service.notice_scope(request.query_params.get("workspace", ""))
+            scope = service.notices.notice_scope(request.query_params.get("workspace", ""))
         except Invalid as e:
             return _bad(str(e))
-        stream = service.follow_notices(scope, nums["after"])
+        stream = service.notices.follow_notices(scope, nums["after"])
 
         async def lines() -> AsyncIterator[bytes]:
             try:
@@ -789,7 +791,11 @@ def build(config: Config | None = None) -> FastAPI:
             return _bad("body must be JSON")
         if not isinstance(body, dict):
             return _bad("body must be a JSON object")
-        run = service.release_prepare if phase == "prepare" else service.release_publish
+        run = (
+            service.release.release_prepare
+            if phase == "prepare"
+            else service.release.release_publish
+        )
         stream = run(str(body.get("cwd", "")), str(body.get("version", "")))
         try:
             first = await stream.__anext__()
@@ -838,7 +844,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def get_timeline(request: Request) -> Any:
         """What happened to one unit, oldest first."""
         try:
-            return service.timeline(
+            return service.backlog.timeline(
                 request.query_params.get("cwd", ""),
                 request.query_params.get("unit", ""),
             )
@@ -849,7 +855,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def get_unit_history(request: Request) -> Any:
         """Every transition of one unit, and the projection over them. Read-only."""
         try:
-            return service.unit_history(
+            return service.backlog.unit_history(
                 request.query_params.get("cwd", ""),
                 request.query_params.get("unit", ""),
             )
@@ -860,7 +866,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def get_units_with_history(request: Request) -> Any:
         """Every unit the log knows, including ones no longer in the working tree."""
         try:
-            return service.units_with_history(request.query_params.get("cwd", ""))
+            return service.backlog.units_with_history(request.query_params.get("cwd", ""))
         except Invalid as e:
             return _bad(str(e))
 
@@ -868,7 +874,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def get_sessions(request: Request) -> Any:
         """Sessions of one project, and only that project."""
         try:
-            return service.sessions_for(
+            return service.chat.sessions_for(
                 request.query_params.get("cwd", ""),
                 limit=_limit(request.query_params.get("limit")),
             )
@@ -879,7 +885,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def get_history(request: Request) -> Any:
         """Read back from the SDK's store, never from a copy of our own."""
         try:
-            return service.history(
+            return service.chat.history(
                 request.query_params.get("cwd", ""),
                 request.query_params.get("session_id", ""),
             )
@@ -904,7 +910,7 @@ def build(config: Config | None = None) -> FastAPI:
 
         try:
             # Only what can be decided before any output.
-            service.check_send(cwd, text)
+            service.chat.check_send(cwd, text)
         except Updating as e:
             return _bad(str(e), 503)
         except Invalid as e:
@@ -915,7 +921,7 @@ def build(config: Config | None = None) -> FastAPI:
                 return json.dumps(obj).encode() + b"\n"
 
             try:
-                async for kind, payload in service.stream(cwd, text, session_id):
+                async for kind, payload in service.chat.stream(cwd, text, session_id):
                     if kind == "chunk":
                         yield out({"type": "chunk", "text": payload})
                     else:

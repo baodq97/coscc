@@ -1,24 +1,31 @@
-"""An idea several units share, each unit in its own workspace.
-
-A mixin with no fields, which `Service` inherits. What an idea *means* to a gate is `cos.mjs`'s; this module writes
+"""An idea several units share, each unit in its own workspace. What an idea *means* to a gate is `cos.mjs`'s; this module writes
 the file, links a unit to it, and gathers what the `/idea` page and a step's prompt show.
 """
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any
 
 from coscc.git import gitops
 from coscc.git.gitops import GitError
+from coscc.data import Busy
 from coscc.service.common import Invalid, unit_state
+from coscc.units.meta import MetaError
 from coscc.service.store import valid_name
 from coscc.units import CannotCreate, ideas
 from coscc.units import board as board_reader
 from coscc.units.board import Unavailable
+from coscc.config import Config
+from coscc.service.workspaces import Workspaces
 
 
-class IdeasMixin:
+class Ideas:
+    def __init__(self, config: Config, ws: Workspaces) -> None:
+        self.config = config
+        self.ws = ws
+
     def _workspace_by_name(self, name: str) -> str | None:
         """The one workspace called `name`, or None when there is none or more than one."""
         rows = [r for r in self.ws.all()["workspaces"] if r["name"] == name]
@@ -34,14 +41,14 @@ class IdeasMixin:
             made = ideas.create_idea(cwd, slug, brief, self.config.data_dir)
         except CannotCreate as e:
             raise Invalid(str(e)) from e
-        self._refresh_ideas(cwd)
+        self.refresh_ideas(cwd)
         return {
             "cwd": cwd,
             "id": made["id"],
             "ref": ideas.idea_ref(name, made["id"]) if name else "",
         }
 
-    def _idea_link(self, cwd: str, idea: str, brief: str, depends_on: str) -> dict[str, Any]:
+    def idea_link(self, cwd: str, idea: str, brief: str, depends_on: str) -> dict[str, Any]:
         """Every check a unit opened from `idea` needs, before anything is made."""
         ref = ideas.parse_idea_ref(idea)
         if ref is None:
@@ -112,7 +119,7 @@ class IdeasMixin:
                 }
         return None
 
-    def _idea_note(self, cwd: str, unit: str) -> str:
+    def idea_note(self, cwd: str, unit: str) -> str:
         """The idea's text, its units with their `Repo`, and the three header lines."""
         found = self._idea_of(cwd, unit)
         if found is None:
@@ -131,7 +138,7 @@ class IdeasMixin:
             + "".join(f"    {h}\n" for h in header)
         )
 
-    async def _siblings(self, cwd: str, unit: str) -> tuple[tuple[str, ...], str]:
+    async def siblings(self, cwd: str, unit: str) -> tuple[tuple[str, ...], str]:
         """The checkouts `impl` may read, and the note naming each with its HEAD.
 
         The other workspaces the idea lists, and those of the unit's dependencies; never the
@@ -234,3 +241,11 @@ class IdeasMixin:
             "units": rows,
             "workspaces": [n for n, _ in peers],
         }
+
+    def refresh_ideas(self, cwd: str) -> None:
+        """`cwd`'s ideas into `cos.db` again, after the app wrote one. A failure is left to
+        the board: `cos.mjs` then reports the idea link it cannot find."""
+        try:
+            self.ws.unit_meta().refresh_ideas(self.ws.key(cwd), self.ws.units_root(cwd))
+        except MetaError, Busy, sqlite3.Error, OSError:
+            pass

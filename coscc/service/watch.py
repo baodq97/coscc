@@ -10,9 +10,18 @@ from coscc.runlog import events
 from coscc.data import Data
 from coscc.data import Busy
 from coscc.service.common import Invalid
+from coscc.config import Config
+from coscc.service.workspaces import Workspaces
 
 
-class WatchMixin:
+class Watch:
+    def __init__(
+        self, config: Config, ws: Workspaces, recorders: dict[str, events.Recorder]
+    ) -> None:
+        self.config = config
+        self.ws = ws
+        self.recorders = recorders
+
     # -- watching a step ------------------------------------------------------
     #
     # Two reads and nothing else: no row, no transition, no artifact, no gate, and nothing
@@ -28,7 +37,7 @@ class WatchMixin:
         key = self.ws.key(cwd)
         if not run:
             raise Invalid("a run is required")
-        recorder = self._recorders.get(run)
+        recorder = self.recorders.get(run)
         if recorder is not None:
             if (recorder.workspace, recorder.unit) != (key, unit):
                 raise Invalid(f"run {run} is not a step of {unit}")

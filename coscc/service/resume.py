@@ -21,6 +21,7 @@ from coscc.runlog import events
 from coscc.runlog.journal import BadRecord
 from coscc.runner import Runner
 from coscc.data import Busy
+from coscc.service.update import refuse_while_updating
 from coscc.service.common import Invalid
 from coscc.service.sessions import CHAT_TURNS
 
@@ -223,7 +224,7 @@ class ResumeMixin:
         cwd, key = str(owner.get("workspace_dir") or ""), str(owner.get("workspace") or "")
         try:
             self.ws.check(cwd)
-            self._refuse_while_updating()
+            refuse_while_updating(self.updater)
         except Invalid as e:
             return str(e)
         held = self.holds.marks.get((key, "")) if kind == "estimate" else None
@@ -263,7 +264,7 @@ class ResumeMixin:
         if kind == "integrate":
             return self.resume_integration(record)
         if kind == "estimate":
-            return _drain(self.propose_estimates(cwd, resume=record))
+            return _drain(self.backlog.propose_estimates(cwd, resume=record))
         return self._resume_chat(cwd, record)
 
     def resume_step(self, record: dict[str, Any]) -> steps_mod.Running:
@@ -295,7 +296,7 @@ class ResumeMixin:
         if rounds is not None:
 
             async def end_fields() -> dict[str, Any]:
-                return await self._findings_added(cwd, unit, rounds)
+                return await self.models.findings_added(cwd, unit, rounds)
 
         extra = {
             k: owner.get(k)
@@ -322,7 +323,7 @@ class ResumeMixin:
             model=record.get("model"),
             effort=owner.get("effort"),
             label=owner.get("label"),
-            agent=self._agent(stage),
+            agent=self.agents.agent(stage),
             end_fields=end_fields,
             pr_before=owner.get("pr_before"),
             read_also=tuple(owner.get("read_also") or ()),
@@ -403,7 +404,7 @@ class ResumeMixin:
     async def _resume_chat(self, cwd: str, record: dict[str, Any]) -> None:
         """Nobody is reading this turn now; its reply is in the session, and its `chat`
         row is written as any turn's is."""
-        async for _ in self.stream(
+        async for _ in self.chat.stream(
             cwd,
             str(record.get("message") or ""),
             str(record.get("session_id") or ""),
