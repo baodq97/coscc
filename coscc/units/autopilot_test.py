@@ -1,10 +1,7 @@
-"""`0043`. The autopilot's decisions, with no session, no `gh` and no run log on disk — but for
-`VerifyScript`, which writes one to a temporary directory for `scripts/verify_0104.py`."""
+"""The autopilot's decisions, with no session, no `gh` and no run log on disk."""
 
 import os
 import re
-import subprocess
-import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -15,7 +12,6 @@ from coscc.runlog.journal import Journal
 from coscc.agent.policy import GRANTS, NOVEL_CEILINGS
 
 COS_MJS = Path(__file__).resolve().parents[2] / ".claude" / "scripts" / "cos.mjs"
-SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc).astimezone()
 # `0126`: `next`'s two actions for `ship`, one after the merge and one before it.
 RECORDING_SHIP = "ship — #95 was merged as abc1234 at 2026-09-20T00:00:00Z: record it in ship.md; do not merge"
@@ -1204,69 +1200,6 @@ class AWorkspaceStopIsNoUnitsStop(unittest.TestCase):
         self.assertEqual([q["n"] for q in ap.open_questions(asked)], [1])
         self.assertEqual(ap.stop_for(asked, nxt(), None, False)["kind"], "a")
         self.assertEqual(ap.open_questions(unit()), [])
-
-
-class VerifyScript(unittest.TestCase):
-    """`scripts/verify_0104.py`'s exit codes, on a run log written through `Journal`."""
-
-    def run_script(self, rows):
-        with tempfile.TemporaryDirectory() as tmp:
-            data = Path(tmp) / "data"
-            if rows is not None:
-                log = Journal(str(Path(tmp) / "work"), str(data))
-                for r in rows:
-                    log.append(r)
-            env = {**os.environ, "COS_DATA_DIR": str(data)}
-            return subprocess.run(
-                [sys.executable, str(SCRIPTS / "verify_0104.py"), "--workspace", "w",
-                 "--until", ap.today(NOW + timedelta(days=1))],
-                env=env, capture_output=True, text=True, timeout=60,
-            )
-
-    def test_nine_clean_steps_is_1(self):
-        done = self.run_script(clean_log(9))
-        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
-        self.assertIn("9 of 10 steps needed, 0 violations", done.stdout)
-
-    def test_ten_clean_steps_is_0(self):
-        done = self.run_script(clean_log(10))
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-
-    def test_no_cos_db_is_2(self):
-        self.assertEqual(self.run_script(None).returncode, 2)
-
-
-class VerifyReruns(unittest.TestCase):
-    """`scripts/verify_0106.py`'s exit codes, on a run log written through `Journal`."""
-
-    def run_script(self, rows):
-        with tempfile.TemporaryDirectory() as tmp:
-            data = Path(tmp) / "data"
-            if rows is not None:
-                log = Journal(str(Path(tmp) / "work"), str(data))
-                for r in rows:
-                    log.append(r)
-            env = {**os.environ, "COS_DATA_DIR": str(data)}
-            return subprocess.run(
-                [sys.executable, str(SCRIPTS / "verify_0106.py"), "--workspace", "w", "--until", "2099-12-31"],
-                env=env, capture_output=True, text=True, timeout=60,
-            )
-
-    def test_on_time_is_0(self):
-        done = self.run_script([answer_row(), row("autopilot-pick", seconds=1)])
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertIn("1 cases", done.stdout)
-
-    def test_none_is_1(self):
-        done = self.run_script([answer_row()])
-        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
-        self.assertIn("none", done.stdout)
-
-    def test_no_case_is_3(self):
-        self.assertEqual(self.run_script([row("start")]).returncode, 3)
-
-    def test_no_cos_db_is_2(self):
-        self.assertEqual(self.run_script(None).returncode, 2)
 
 
 if __name__ == "__main__":

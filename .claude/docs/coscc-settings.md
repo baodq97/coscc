@@ -61,8 +61,7 @@ Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST
   of which may call `gh` at `review` or `ship`. The run log's `start` and `integration` rows
   carry `started_by` (`person` for any request, `autopilot` for its own), an
   `autopilot-stop` row each time a unit's stop changes, and an `autopilot-pick` row before
-  each start, naming the shortlist it followed and why every unit above was passed over;
-  `scripts/verify_0043.py` reads the first two and `scripts/verify_0104.py` the picks.
+  each start, naming the shortlist it followed and why every unit above was passed over.
 - **`POST /api/backlog/*` writes the backlog's order, and `propose` opens a paid session, for
   whoever holds the password.** Since `0074`. `estimate`, `relation` and `shortlist` each
   append one run-log row (`estimate-value`, `relation`, `shortlist`) with `by` — `owner` from
@@ -74,7 +73,7 @@ Read this before changing `POST /api/settings/*`, `coscc/agent/models.py`, `POST
   `stage: "estimate"`, one `estimate` row, and each valid part of the reply. A second press in
   the same workspace is refused, in this process only (`_active`). *Apply* waits for it
   like an integration. No gate, no `next` and no run button reads any of it; every board
-  step's `start` row carries `shortlist` (R14), read only by `verify_0074 --measure`. A step
+  step's `start` row carries `shortlist` (R14). A step
   started at a terminal has none, so the outcome's measurement cannot see it (`spec.md ##
   Answers, câu 3`). The password is what stands in front; `COS_HOST=127.0.0.1` still narrows
   who can try it.

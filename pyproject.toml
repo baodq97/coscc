@@ -47,7 +47,7 @@ dev = [
 # loopback-only until 0011; the default is now 0.0.0.0.
 coscc = "coscc.run:main"
 # Building through here rather than calling `reflex export` directly is what leaves the
-# fingerprint that `run.py` and `scripts/verify_0003.py` check. See coscc/build.py.
+# fingerprint that `run.py` checks. See coscc/build.py.
 coscc-build = "coscc.build:main"
 
 [tool.pytest.ini_options]

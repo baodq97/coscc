@@ -123,7 +123,6 @@ def _topbar() -> rx.Component:
                   display=rx.breakpoints(initial="none", md="flex")),
         rx.cond(P.loading, rx.spinner(size="2")),
         # The mode has to be changeable from the page and survive a reload.
-        # `scripts/verify_0003.py` looks for this id.
         rx.box(rx.color_mode.button(), id="color-mode"),
         align="center", gap="12px", width="100%", min_height="68px",
         padding=rx.breakpoints(initial="12px 18px", md="12px 32px"),

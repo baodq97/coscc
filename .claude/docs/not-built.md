@@ -144,8 +144,7 @@ Read this before adding a route, a button or a grant, and before copying this ha
   `by` is `owner` since `0082` (a fixed word, not an identity; older rows keep the name
   someone typed); an agent's estimate says `agent:<session>`, and a
   person's estimate wins over an agent's whichever came later. *Propose estimates* opens one paid session under the grant
-  `estimate`. Each board step's `start` row records where its unit stood in the shortlist,
-  so `verify_0074 --measure` can tell afterwards whether work was taken from it.
+  `estimate`. Each board step's `start` row records where its unit stood in the shortlist.
 - **An answer from precedent is not a person's, and the autopilot starts it unpressed.**
   Since `0044` *Ask Jera* on a unit's Questions tab (`POST /api/units/precedent`) opens one
   paid session under the grant `precedent` — no tool but `submit` — that answers the unit's

@@ -66,14 +66,12 @@ reply. The Settings screen says so, because otherwise it looks like the agent wr
 ## Proofs
 
 ```sh
-uv run python scripts/verify_0003.py   # the page renders, and the check can fail
-uv run python scripts/verify_0006.py   # five flows on real data, and a restart
+npm run e2e   # the board in a browser, on temporary workspaces
 ```
 
-Both need a browser and a free `COS_PORT` — in a checkout the compiled bundle hardcodes the
-address it opens its WebSocket against, so neither can move to a spare port. Stop the app
-first, and do not run them at the same time. (An installed wheel is the other case: it
-rewrites that address at startup. See [installing coscc](install.md).) `verify_0003.py` spends no quota; `verify_0006.py` sends
-one short prompt.
+It needs a browser and a free `COS_PORT` — in a checkout the compiled bundle hardcodes the
+address it opens its WebSocket against, so it cannot move to a spare port. Stop the app
+first. (An installed wheel is the other case: it rewrites that address at startup. See
+[installing coscc](install.md).) It spends no quota.
 
 Exit codes: `0` pass, `1` the page is broken, `2` the environment is not ready.

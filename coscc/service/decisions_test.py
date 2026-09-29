@@ -8,19 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
-import subprocess
-import sys
 import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
-from coscc.agent import precedent
 from coscc.config import Config
 from coscc.data import Data
-from coscc.runlog.journal import Journal
 from coscc.service import Service
 from coscc.service.common import Invalid
 from coscc.agent.sessions import Sessions
@@ -198,62 +193,6 @@ class NoRouteReachesThem(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             for writer in self.WRITERS:
                 self.assertNotIn(f".{writer}(", text, f"{path.name} calls {writer}")
-
-
-class TheMeasure(Fixture):
-    """R12, run as a person runs it: a subprocess on a data root."""
-
-    def run_script(self) -> subprocess.CompletedProcess:
-        env = {**os.environ, "COS_DATA_DIR": str(self.data), "COS_WORKING_DIR": str(self.work),
-               "COS_WORKSPACES": self.cwd}
-        env.pop("COSCC_PROTECTED_DB", None)
-        return subprocess.run([sys.executable, str(REPO / "scripts" / "verify_0137.py"), "--measure"],
-                              env=env, capture_output=True, text=True, timeout=120)
-
-    def precedent_row(self, **over) -> None:
-        Journal(str(self.work), str(self.data)).append({
-            "kind": "precedent", "workspace": self.service._journal_key(self.cwd), "unit": self.asked,
-            "artifact": "spec.md", "n": 1, "verdict": "answer", "category": "other", "text": "x",
-            "reason": "", "cites": ["a"], "session_id": "s", "written": True, **over,
-        })
-
-    def test_verify_0137_counts_by_code_and_exits_0_on_a_clean_fixture_and_1_on_a_row_resting_only_on_inferences(self):
-        # An agent's name marked "This was me" by hand, past `set_name_mine`: still not the person's.
-        Data(self.data).set_pref("answer_names_mine", ["kenaz", "minh"])
-        self.precedent_row(cite_who={"a": "originator"})
-        self.precedent_row(cite_who={"a": "inferred"}, written=False, verdict="needs-person",
-                           reason=precedent.ONLY_INFERRED)
-        self.precedent_row()  # before `0137`: no `cite_who`, not counted
-        done = self.run_script()
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        # owner and Minh are the person's; Phong twice, Leif, Kenaz and Jera are not.
-        self.assertIn("(a) 7 answers in force in intent.md and spec.md: originator 2, delegated 0, inferred 5",
-                      done.stdout)
-        for line in ("(b) 0 ", "(c) 0 ", "(d) 0 written precedent rows", "of 2 rows with cite_who", "(e) 1 "):
-            self.assertIn(line, done.stdout)
-        self.precedent_row(cite_who={"a": "inferred", "b": "unknown"})
-        done = self.run_script()
-        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
-        self.assertIn("(d) 1 written precedent rows", done.stdout)
-
-    def test_verify_0137_writes_nothing_under_the_data_root(self):
-        """SQLite may remove an empty `cos.db-wal` and its `-shm` when the script's read-only
-        connection is the last to close, as it does for `verify_0106`: those two are left out,
-        and the WAL must have held nothing. Every other file keeps its bytes and its mtime."""
-        sidecars = ("cos.db-wal", "cos.db-shm")
-
-        def state() -> dict[str, tuple[str, int]]:
-            return {str(p): (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
-                    for p in sorted(self.data.rglob("*")) if p.is_file() and p.name not in sidecars}
-
-        self.precedent_row(cite_who={"a": "originator"})
-        wal = self.data / "cos.db-wal"
-        before = state()
-        self.assertIn(str(self.data / "cos.db"), before)
-        self.assertTrue(not wal.exists() or wal.stat().st_size == 0)
-        done = self.run_script()
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertEqual(state(), before)
 
 
 if __name__ == "__main__":
