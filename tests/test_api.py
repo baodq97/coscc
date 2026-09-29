@@ -88,51 +88,13 @@ class Surface(unittest.IsolatedAsyncioTestCase):
         for leak in ("TOKEN", "bypass", "permission_mode", "tools"):
             self.assertNotIn(leak, body)
 
-    async def test_sessions_refuses_a_directory_outside_the_workspaces(self):
-        r = await self.client.get("/api/sessions", params={"cwd": "/etc"})
-        self.assertEqual(r.status_code, 400)
-        self.assertIn("workspace", r.json()["error"])
-
-    async def test_history_refuses_a_directory_outside_the_workspaces(self):
-        r = await self.client.get("/api/history", params={"cwd": "/etc", "session_id": "s1"})
-        self.assertEqual(r.status_code, 400)
-
-    async def test_history_requires_a_session_id(self):
-        r = await self.client.get("/api/history", params={"cwd": "/tmp"})
-        self.assertEqual(r.status_code, 400)
-
-    async def test_send_refuses_a_directory_outside_the_workspaces(self):
-        r = await self.client.post("/api/send", json={"cwd": "/etc", "text": "hi"})
-        self.assertEqual(r.status_code, 400)
-
-    async def test_send_requires_text(self):
-        r = await self.client.post("/api/send", json={"cwd": "/tmp", "text": "  "})
-        self.assertEqual(r.status_code, 400)
-
-    async def test_send_rejects_a_non_json_body(self):
-        r = await self.client.post(
-            "/api/send", content="notjson", headers={"Content-Type": "application/json"}
-        )
-        self.assertEqual(r.status_code, 400)
-
     async def test_a_foreign_session_is_marked_read_only_not_hidden(self):
         # Terminal sessions are visible because the read layer sees them, but the page has to be
         # able to tell which ones it may write to.
         with mock.patch.object(sdk, "list_sessions", return_value=[_info()]):
-            body = (await self.client.get("/api/sessions", params={"cwd": "/tmp"})).json()
+            body = self.app.state.service.chat.sessions_for("/tmp")
         self.assertEqual(len(body["sessions"]), 1)
         self.assertFalse(body["sessions"][0]["resumable"])
-
-    async def test_refusing_to_resume_arrives_as_an_ndjson_error_line(self):
-        # The status line is committed before streaming starts, so the caller only learns
-        # of this by reading to the end. verify_0001.py depends on that being true.
-        r = await self.client.post(
-            "/api/send", json={"cwd": "/tmp", "text": "hi", "session_id": "not-ours"}
-        )
-        self.assertEqual(r.status_code, 200)
-        lines = [json.loads(x) for x in r.text.splitlines() if x.strip()]
-        self.assertEqual(lines[-1]["type"], "error")
-        self.assertIn("not created by this app", lines[-1]["error"])
 
     async def test_the_api_app_does_not_own_the_page(self):
         """`/` must stay unclaimed here. Reflex mounts this app as the outer one, so a route
@@ -191,16 +153,14 @@ class WorkspaceRoutes(unittest.IsolatedAsyncioTestCase):
     async def test_label_can_be_changed_and_read_back(self):
         (self.root / "repo").mkdir()
         await self.client.post("/api/workspaces", json={"name": "repo"})
-        r = await self.client.patch("/api/workspaces/repo", json={"label": "Renamed"})
-        self.assertEqual(r.status_code, 200)
+        self.app.state.service.ws.set_label("repo", "Renamed")
         body = (await self.client.get("/api/workspaces")).json()
         self.assertEqual(body["workspaces"][0]["label"], "Renamed")
 
     async def test_remove_delists_but_leaves_the_directory(self):
         (self.root / "repo").mkdir()
         await self.client.post("/api/workspaces", json={"name": "repo"})
-        r = await self.client.delete("/api/workspaces/repo")
-        self.assertEqual(r.status_code, 200)
+        self.app.state.service.ws.remove("repo")
         self.assertEqual((await self.client.get("/api/workspaces")).json()["count"], 0)
         self.assertTrue((self.root / "repo").is_dir())
 
@@ -485,72 +445,6 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
 
 
-class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
-    """Two routes that translate `events_page` and `follow_events`, and write nothing. Neither is
-    exempt from the login (`auth_test` walks every route for that)."""
-
-    async def asyncSetUp(self):
-        from coscc.runlog import events
-        from coscc.data import Data
-
-        self.app = build(_tmp_config(self))
-        self.service = self.app.state.service
-        self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
-        )
-        self.key = self.service.ws.key("/tmp")
-        data = Data(self.service.config.data_dir)
-        self.ended = events.Recorder("r-ended", data, "/w", self.key, "0001_a", "spec")
-        for i in range(3):
-            self.ended.denied("Bash", {"n": i}, "no")
-        await self.ended.close("done", "")
-        self.live = events.Recorder("r-live", data, "/w", self.key, "0001_a", "impl")
-        self.live.denied("Bash", {}, "no")
-        self.live._emit("end", outcome="done", detail="")
-        self.live.closed = True
-        self.service.steps.recorders["r-live"] = self.live
-
-    async def asyncTearDown(self):
-        await self.client.aclose()
-
-    def get(self, path, **params):
-        return self.client.get(path, params={"cwd": "/tmp", "unit": "0001_a", **params})
-
-    async def test_a_page_of_a_finished_step(self):
-        r = await self.get("/api/board/events", run="r-ended", limit="2")
-        self.assertEqual(r.status_code, 200)
-        body = r.json()
-        self.assertEqual((body["status"], [e["seq"] for e in body["events"]]), ("ended", [3, 4]))
-        one = (await self.get("/api/board/events", run="r-ended", seq="1")).json()
-        self.assertEqual(one["events"][0]["input"], {"n": 0})
-
-    async def test_refusals_are_400(self):
-        from coscc import auth
-
-        for params in (
-            {"run": "r-ended", "limit": "many"},
-            {"run": "nope"},
-            {"run": "r-ended", "unit": "0002_b"},
-        ):
-            r = await self.get("/api/board/events", **params)
-            self.assertEqual(r.status_code, 400, params)
-        r = await self.get("/api/board/events/follow", run="nope")
-        self.assertEqual(r.status_code, 400)
-        r = await self.get("/api/board/events/follow", run="r-live", after="x")
-        self.assertEqual(r.status_code, 400)
-        exempt = {path for _, path in auth.EXEMPT}
-        self.assertFalse({"/api/board/events", "/api/board/events/follow"} & exempt)
-
-    async def test_following_is_ndjson_that_ends_with_the_step(self):
-        r = await self.get("/api/board/events/follow", run="r-live", after="0")
-        lines = [json.loads(line) for line in r.text.splitlines()]
-        self.assertEqual([(x["type"], x["seq"]) for x in lines], [("event", 1), ("event", 2)])
-        self.assertEqual(lines[-1]["kind"], "end")
-        r = await self.get("/api/board/events/follow", run="r-ended", after="0")
-        [line] = [json.loads(line) for line in r.text.splitlines()]
-        self.assertEqual((line["type"], line["status"]), ("status", "ended"))
-
-
 async def _drain(lines):
     async for _ in lines:
         pass
@@ -653,58 +547,6 @@ class FollowingNoticesOverHttp(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class UnitHistoryRoutes(unittest.IsolatedAsyncioTestCase):
-    """The route decides nothing; it only translates."""
-
-    async def asyncSetUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        root = Path(self._tmp.name)
-        (root / "work").mkdir()
-        self.cwd = str(root / "work")
-        self.app = build(
-            Config(
-                workspaces=(self.cwd,),
-                working_dir=self.cwd,
-                data_dir=str(root / "data"),
-            )
-        )
-        self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url="http://t"
-        )
-        from coscc.units.history import History
-
-        self.log = History(self.cwd, root / "data")
-
-    async def asyncTearDown(self):
-        await self.client.aclose()
-
-    async def test_a_directory_outside_the_list_is_refused_with_400(self):
-        for path in ("/api/unit-history?cwd=/etc&unit=0001_a", "/api/units-with-history?cwd=/etc"):
-            got = await self.client.get(path)
-            self.assertEqual(got.status_code, 400, path)
-            self.assertIn("/etc", got.json()["error"])
-
-    async def test_it_returns_the_transitions_and_the_projection_over_them(self):
-        self.log.record(self.cwd, "0001_a-problem", "intent.md", "draft")
-        self.log.record(self.cwd, "0001_a-problem", "intent.md", "accepted", session="s1")
-        got = await self.client.get(
-            "/api/unit-history", params={"cwd": self.cwd, "unit": "0001_a-problem"}
-        )
-        self.assertEqual(got.status_code, 200)
-        body = got.json()
-        self.assertEqual(len(body["transitions"]), 2)
-        self.assertEqual(body["state"]["intent.md"], "accepted")
-        self.assertEqual(body["machine"], "coscc-default")
-        self.assertEqual([s["session"] for s in body["sessions"]], ["s1"])
-        self.assertEqual(body["unknown_transitions"], 1)
-
-    async def test_the_list_of_units_with_a_history_is_its_own_route(self):
-        self.log.record(self.cwd, "0001_a-problem", "intent.md", "draft")
-        got = await self.client.get("/api/units-with-history", params={"cwd": self.cwd})
-        self.assertEqual(got.json()["units"], ["0001_a-problem"])
 
 
 QUESTIONS = (
@@ -1467,7 +1309,6 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         for call in (
             self.client.post("/api/units", json={"cwd": "/etc", "slug": "a-problem"}),
             self.client.post("/api/units/branch", json={"cwd": "/etc", "unit": "0001_a"}),
-            self.client.get("/api/branch", params={"cwd": "/etc"}),
         ):
             got = await call
             self.assertEqual(got.status_code, 400, got.text)
@@ -1478,7 +1319,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.status_code, 400)
         self.assertIn("Bad_Slug", got.json()["error"])
 
-    async def test_the_branch_route_cuts_it_and_the_read_route_sees_it(self):
+    async def test_the_branch_route_cuts_it_and_the_board_sees_it(self):
         made = (
             await self.client.post(
                 "/api/units", json={"cwd": self.cwd, "slug": "a-problem", "brief": "x"}
@@ -1496,7 +1337,7 @@ class StartingAUnitOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(cut.json()["sha"]), 7)
         # The workspace stays on `main`; the branch is on the unit's worktree, and the board says
         # so.
-        seen = (await self.client.get("/api/branch", params={"cwd": self.cwd})).json()
+        seen = await self.app.state.service.backlog.branch_here(self.cwd)
         self.assertEqual(seen["branch"], "main")
         board = (await self.client.get("/api/board", params={"cwd": self.cwd})).json()
         tree = next(u["worktree"] for u in board["units"] if u["name"] == made["unit"])
@@ -1703,14 +1544,13 @@ class UpdateRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((a.status_code, a.json()), (b.status_code, b.json()))
         self.assertEqual(seen, [("release", "an")] * 2)
 
-    async def test_is_503_on_run_integrate_send_and_build(self):
+    async def test_is_503_on_run_integrate_and_build(self):
         self.as_a_service()
         self.updater.window = True
         cwd = self.tmp.name
         for path, body in (
             ("/api/board/run", {"cwd": cwd, "unit": "0001_a", "stage": "impl"}),
             ("/api/units/integrate", {"cwd": cwd, "unit": "0001_a"}),
-            ("/api/send", {"cwd": cwd, "text": "hi"}),
             ("/api/update/build-local", {"by": "an"}),
         ):
             with self.subTest(path=path):

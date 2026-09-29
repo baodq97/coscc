@@ -1,8 +1,8 @@
 # Board steps: what they record, stop and share
 
-Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/board/running`, `Steps.run_step`, `coscc/agent/steps.py` or `runner.describe_attempt`. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `Backlog.timeline`, `POST /api/board/stop`, `GET /api/board/running`, `Steps.run_step`, `coscc/agent/steps.py` or `runner.describe_attempt`. Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
-- **`/api/timeline` returns what a failed paid step replied.** A step whose reply
+- **A unit's timeline (`Backlog.timeline`) returns what a failed paid step replied.** A step whose reply
   could not be used (`0014`) keeps the last `REPLY_KEPT` characters of it, 2000
   (`coscc/runner/reply.py:41`), and
   that text reaches the board as `detail`, for whoever holds the password or a live
@@ -17,7 +17,7 @@ Read this before changing `/api/timeline`, `POST /api/board/stop`, `GET /api/boa
   101788 characters from the end — the unit's `impl.md` says why it was left) characters of what the session's own
   turns produced, and append it to the run log as one `kind: "attempt"` row, read back only
   by `journal.failed_attempts` and placed in the *next* run's prompt
-  (`runner.describe_attempt`), never in an artifact. No route returns it — `/api/timeline`,
+  (`runner.describe_attempt`), never in an artifact. Nothing returns it — `Backlog.timeline`,
   `Service.board`, `.activity`, `.usage` and `.activity_and_usage` all project a fixed set
   of fields that does not include it — but it still sits in `cos.db` under the data root,
   and a tool's own output can carry a token or a local path. Capturing is best-effort:

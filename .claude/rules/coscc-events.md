@@ -5,7 +5,7 @@ paths:
 
 # Things that break here
 
-- `GET /api/board/events` hands out everything a step saw (commands, paths, thinking, tool
+- The step view on the board hands out everything a step saw (commands, paths, thinking, tool
   output) to whoever holds the password, for `KEEP_DAYS` and `KEEP_BYTES` of stored JSON
   (`coscc/runlog/events.py:73-74`); each field is cut at `FIELD_MAX` (`coscc/runlog/events.py:45`).
   `updates/cos.db.bak` carries a copy. Events go to `step_runs` and `step_events`, never the run log.
