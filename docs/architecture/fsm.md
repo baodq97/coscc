@@ -199,7 +199,7 @@ Units never leave the shortlist when finished, and an empty shortlist is refused
 | **Ship** | open → merged → recorded | AGENT ship session runs `gh pr merge --match-head-commit`; merged outside → "record, do not merge" (0116) | ship.md, `ship` row |
 | **Update** | idle → pending → applying → handoff / fail; release channel (6 h check), local channel (build-local) | CODE checks; PERSON applies (`update/updater.py:148-757`) | `update` rows |
 | **Knowledge** | gather (AGENT batches, terminal only), baseline / measure / check (CODE) | injected into spec, spike, plan when `COS_KNOWLEDGE` is on | `knowledge` rows |
-| **Effort trial** | arm = SHA-256(unit) | CODE | `start.effort_trial` |
+| **Model trial** (routine `impl`, since `0139`; the effort trial of `0123` ended) | arm = SHA-256(unit): `opus-5-5` / `sonnet-5-5` | CODE; `model` from the session's `init` | `start.model_trial` |
 | **Notices** | stream of autopilot-stop, questions, end, ship | CODE, read-only (`runlog/notices.py`) | — |
 | **Artifact history** | a transition table in the DB already exists (`units/history.py`, `machine.refuse`) | fed after each step from the file's `Status:` | history table |
 

@@ -14,7 +14,7 @@ from typing import Any, AsyncIterator
 
 from coscc.units import autopilot, backlog
 from coscc.units import board as board_reader
-from coscc.knowledge import efforttrial
+from coscc.knowledge import efforttrial, modeltrial
 from coscc.runlog import events
 from coscc.git import drift, fetches, gitops
 from coscc import knowledge
@@ -998,10 +998,11 @@ class StepsMixin:
                 failed = journal.failed_attempts(key, unit, stage)
             except Busy as e:
                 raise Invalid(str(e)) from e
-            # `0123` R7. A return to `impl` with the trial on asks `next` once whether CI sent it
-            # back; `_ci_red` never raises, so nothing here refuses the step. `0131` R19: with
-            # `COS_KNOWLEDGE` on too, into the same field.
-            if (self.config.effort_trial or self.config.knowledge) and (config.get("impl_run") or 0) > 1:
+            # `0123` R7. A return to `impl` in the model trial (`0139` R16) asks `next` once
+            # whether CI sent it back; `_ci_red` never raises, so nothing here refuses the step.
+            # `0131` R19: with `COS_KNOWLEDGE` on too, into the same field.
+            in_trial = modeltrial.FIELD in (config.get("trial_record") or {})
+            if (in_trial or self.config.knowledge) and (config.get("impl_run") or 0) > 1:
                 config.setdefault("trial_record", {})[efforttrial.CI_RED] = await self._ci_red(cwd, unit, work)
             end_fields = None
             if rounds_before is not None:

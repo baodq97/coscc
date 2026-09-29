@@ -214,12 +214,10 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         self.assertEqual(rows["precedent"]["budget"], "$1.00–$3.00")
         self.assertEqual(rows["impl"]["budget"], "$8.00")
 
-    def test_settings_are_the_same_with_the_trial_on(self):
-        """`0123` spec C11: Settings never shows the trial, whatever arm anything is in."""
-        on = Service(dataclasses.replace(self.service.config, effort_trial=True), self.probe)
-        self.assertEqual(asyncio.run(on.stage_models()), asyncio.run(self.service.stage_models()))
-        asyncio.run(self.service.set_stage_effort("impl", "low"))
-        self.assertEqual(asyncio.run(on.stage_models()), asyncio.run(self.service.stage_models()))
+    def test_settings_never_show_the_trial(self):
+        """`0139` R16: Settings shows `models.json` and the overrides, never an arm's model."""
+        rows = asyncio.run(self.service.stage_models())["rows"]
+        self.assertFalse([r for r in rows if r["source"] == "trial"])
 
     def test_a_grants_tools_and_commands_are_also_lists(self):
         """`0082` F2: the page lists them; the joined strings stay in the API as they were."""

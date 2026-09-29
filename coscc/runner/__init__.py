@@ -39,6 +39,7 @@ from coscc.units import guards
 from coscc.units import states as unit_states
 from coscc.agent.sessions import Refused, Sessions, Suspended
 from coscc.knowledge import TRIAL_FIELD as KNOWLEDGE_TRIAL_FIELD
+from coscc.knowledge import modeltrial
 
 # `0095`: these moved to modules of their own. Every name is imported back, so
 # `coscc.runner.<name>` still resolves; a patch reaches only the module that looks it up.
@@ -476,10 +477,10 @@ class Runner:
         `service.run_step` read, for the prompt, and its `{version, entries, bytes}`, for
         `start`. `None` leaves the record without the field, which is what the flag off is.
 
-        `trial_record` is `0123` R6/R7's: `{effort_trial, ci_red}` as `service.run_step` worked
-        them out for an `impl` step, for `start` and nowhere else. `None` leaves the record
-        without either field, which is what the flag off is. Since `0131` R19 `ci_red` may come
-        alone, with `COS_KNOWLEDGE` on and the effort trial off.
+        `trial_record` is `{model_trial, ci_red}` as `service.run_step` worked them out for an
+        `impl` step (`0139` R17, `0123` R7), for `start` and nowhere else; `model_trial.model`
+        is filled in once the session's `init` names it. `None` leaves the record without
+        either field. Since `0131` R19 `ci_red` may come alone, with `COS_KNOWLEDGE` on.
 
         `knowledge_trial` is `0131` R18's `{arm}`, for `start` under `knowledge.TRIAL_FIELD`
         beside `knowledge`, and nowhere else. `None`, the flag off, leaves the record without it.
@@ -660,7 +661,7 @@ class Runner:
                 **({"knowledge": knowledge_record} if knowledge_record is not None else {}),
                 # `0131` R18. Every stage, only with `COS_KNOWLEDGE` on.
                 **({KNOWLEDGE_TRIAL_FIELD: knowledge_trial} if knowledge_trial is not None else {}),
-                # `0123` R6/R7. The same: only an `impl` step with the flag on.
+                # `0139` R17: every routine `impl`'s `model_trial`; `0123` R7's `ci_red`.
                 **(trial_record or {}),
                 # `0110` R7. Every `impl` start from this build, `bytes: 0` when nothing
                 # matched, so `verify_0110` tells "nothing to hand" from an older build.
@@ -696,6 +697,20 @@ class Runner:
             **({"run": recorder.run} if recorder is not None else {}),
             **(owner_extra or {}),
         }
+        # `0139` R17. A routine `impl` in the model trial has its `start` told the model the
+        # session's `init` named, once, when it comes, or `never-started` at the end (C10).
+        trial_at = start_at if (trial_record or {}).get(modeltrial.FIELD) and start_at else None
+
+        def trial_model(said: str) -> None:
+            nonlocal trial_at
+            if trial_at is None or self.journal is None:
+                return
+            try:
+                self.journal.set_trial_model(journal_key, unit, stage, trial_at, said)
+            except Exception:  # noqa: BLE001 — a measurement, never a reason to fail the step
+                pass
+            trial_at = None
+
         # R10. What is left of the two ceilings after the part of the session before the cut.
         turns_left, budget_left = grant.max_turns, grant.max_budget_usd or None
         used_up = ""
@@ -830,6 +845,8 @@ class Runner:
                     # before the step is over. Not forwarded — see the `else` branch's own
                     # note on why only `chunk` may cross this boundary as itself.
                     session_id = str(payload)
+                    if running is not None and running.handle.init_model:
+                        trial_model(running.handle.init_model)
                 elif kind == "tool":
                     # Kept: what comes after a tool call is the next piece, and `_joined`
                     # puts it on a line of its own. `plan` got `Read`, `Glob` and `Grep` on 2026-09-23,
@@ -1315,6 +1332,10 @@ class Runner:
                 except Exception:
                     # The same rule as the attempt record: the `end` row never depends on it.
                     extra = {}
+            if record and trial_at is not None:
+                trial_model(
+                    (running.handle.init_model if running is not None else "") or modeltrial.NEVER_STARTED
+                )
             if record:
                 self.journal.finished(
                     journal_key, unit, stage, outcome,

@@ -410,6 +410,9 @@ class StepHandle:
     session_id: str = ""
     model: str | None = None
     suspended: bool = False
+    # `0139` R17. The model the session's `init` named: what the CLI resolved and will run,
+    # `[1m]` and all (`0139 spike.md ## U2`). `""` until it arrives.
+    init_model: str = ""
 
     async def close(self) -> None:
         self.closed = True
@@ -1065,6 +1068,9 @@ class Sessions:
                     # `0138`. The id is known here, before the first reply, so an update
                     # that pauses the session now can still name it.
                     said = str((message.data or {}).get("session_id") or "")
+                    if step is not None and (message.data or {}).get("model"):
+                        # Set before `session` is yielded below, so the caller reads it there.
+                        step.init_model = str(message.data["model"])
                     if said and session_id and said != session_id:
                         # R8: a resume that came back as another session is refused.
                         await _begin(_shut(live.client, getattr(live.client, "_transport", None), True))

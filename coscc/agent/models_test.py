@@ -72,27 +72,29 @@ class TheFiveStepsOfR6(unittest.TestCase):
 
 
 class TheTrialTier(unittest.TestCase):
-    """`0123` R3, R4: override, then the trial, then `models.json`; the model as it was."""
+    """`0139` R16, R17: override, `COS_MODEL`, then the trial, then `models.json`; the effort
+    as it was."""
 
     DEFAULTS = {"impl": row("base-d", "medium"), "impl:novel": row("novel-d", "high")}
 
-    def test_without_a_trial_effort_resolve_is_what_it_was(self):
+    def test_without_a_trial_model_resolve_is_what_it_was(self):
         for label in (None, "routine", "novel"):
-            for efforts in ({}, {"impl": "low"}, {"impl:novel": "max"}):
+            for overrides in ({}, {"impl": "m"}, {"impl:novel": "n"}):
                 for defaults in ({}, self.DEFAULTS):
-                    with self.subTest(label=label, efforts=efforts, defaults=defaults):
-                        args = ("impl", label, {"impl": "m"}, efforts, defaults, "env")
-                        self.assertEqual(models.resolve(*args), models.resolve(*args, trial_effort=None))
+                    with self.subTest(label=label, overrides=overrides, defaults=defaults):
+                        args = ("impl", label, overrides, {"impl": "low"}, defaults, "env")
+                        self.assertEqual(models.resolve(*args), models.resolve(*args, trial_model=None))
 
-    def test_the_trial_effort_sits_between_override_and_default(self):
+    def test_the_trial_model_sits_between_cos_model_and_default(self):
         plain = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, None)
-        tried = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, None, trial_effort="high")
-        self.assertEqual(tried[2:], ("high", "trial"))
-        self.assertEqual(tried[:2], plain[:2])
-        overridden = models.resolve("impl", "routine", {}, {"impl": "low"}, self.DEFAULTS, None,
-                                    trial_effort="high")
-        self.assertEqual(overridden[2:], ("low", "override"))
-        self.assertEqual(overridden[:2], plain[:2])
+        tried = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, None, trial_model="t")
+        self.assertEqual(tried[:2], ("t", "trial"))
+        # R16: both arms run the default's effort, so the model is the only variable.
+        self.assertEqual(tried[2:], plain[2:])
+        overridden = models.resolve("impl", "routine", {"impl": "o"}, {}, self.DEFAULTS, None, trial_model="t")
+        self.assertEqual(overridden[:2], ("o", "override"))
+        env = models.resolve("impl", "routine", {}, {}, self.DEFAULTS, "env", trial_model="t")
+        self.assertEqual(env[:2], ("env", "COS_MODEL"))
 
     def test_the_settings_table_never_shows_the_trial(self):
         defaults, _ = models.load_defaults()

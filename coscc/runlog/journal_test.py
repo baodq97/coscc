@@ -191,6 +191,30 @@ class TheTimelineSaysWhatItKnows(unittest.TestCase):
             self.assertEqual(j.open_starts("w")["0009_x"]["open"][0]["agent"], "Uruz")
 
 
+class TheTrialModelFillsInOneStart(unittest.TestCase):
+    """`0139` R17, plan Risk 6: the one field a written `start` is ever given afterwards."""
+
+    def test_set_trial_model_touches_only_that_start(self):
+        with tempfile.TemporaryDirectory() as d:
+            j = Journal(d, d)
+            trial = {"model_trial": {"arm": "opus-5-5", "requested": "m"}}
+            j.started("w", "0002_b", "impl", "manual", **trial)
+            j.started("w", "0001_a", "review", "manual", **trial)
+            j.started("w", "0001_a", "impl", "manual")
+            mine = j.started("w", "0001_a", "impl", "manual", **trial)
+            before = j.records("w", kind="start")
+            self.assertTrue(j.set_trial_model("w", "0001_a", "impl", mine["at"], "claude-opus-5-5[1m]"))
+            # Set once: a second answer, and a `start` stamped at another time, change nothing.
+            self.assertFalse(j.set_trial_model("w", "0001_a", "impl", mine["at"], "never-started"))
+            self.assertFalse(j.set_trial_model("w", "0001_a", "impl", "1999-01-01T00:00:00Z", "x"))
+            after = j.records("w", kind="start")
+        self.assertEqual(after[-1]["model_trial"],
+                         {"arm": "opus-5-5", "requested": "m", "model": "claude-opus-5-5[1m]"})
+        self.assertEqual(after[:-1], before[:-1])
+        self.assertEqual({k: v for k, v in after[-1].items() if k != "model_trial"},
+                         {k: v for k, v in before[-1].items() if k != "model_trial"})
+
+
 class OpenStartsAreTheRunsNobodyEnded(unittest.TestCase):
     """`0051` plan step 2."""
 

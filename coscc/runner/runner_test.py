@@ -21,7 +21,7 @@ from pathlib import Path
 from unittest import mock
 
 from coscc.agent import harness, policy
-from coscc.knowledge import efforttrial
+from coscc.knowledge import efforttrial, modeltrial
 from coscc.git import gitops
 from coscc.runlog.journal import Journal
 from coscc.agent.policy import decide, grant_for
@@ -1813,8 +1813,19 @@ class AStepRecordsTheKnowledgeItCarried(AStepRecordsTheBaseItRanOn):
             self.assertNotIn(knowledge.TRIAL_FIELD, self._start_record(d))
 
 
-class AStepRecordsTheEffortTrial(AStepRecordsTheBaseItRanOn):
-    """`0123` R6, R7: the record handed in lands in `start` as given, and none is no field."""
+class AStepRecordsTheModelTrial(AStepRecordsTheBaseItRanOn):
+    """`0139` R17: the record handed in lands in `start`, none is no field, and its `model` is
+    what the session's `init` named, or `never-started` (C10)."""
+
+    TRIAL = {modeltrial.FIELD: {"arm": modeltrial.OPUS_ARM, "requested": "claude-opus-5-5[1m]"}}
+
+    class Initialised:
+        async def stream(self, cwd, text, session_id=None, max_turns=1, step=None, **kw):
+            step.init_model = "claude-opus-5-5[1m]"
+            yield ("session", "s-init")
+            yield ("chunk", "# Spec: x\nStatus: accepted.\n")
+            await _submits(kw)
+            yield ("done", {"session_id": "s-init", "cost": {}})
 
     def test_no_trial_record_leaves_the_start_record_as_it_was(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1822,16 +1833,37 @@ class AStepRecordsTheEffortTrial(AStepRecordsTheBaseItRanOn):
         with tempfile.TemporaryDirectory() as d:
             none = self._start_record(d, trial_record=None)
         self.assertEqual(set(unnamed), set(none))
-        for field in (efforttrial.FIELD, efforttrial.CI_RED):
+        for field in (modeltrial.FIELD, efforttrial.FIELD, efforttrial.CI_RED):
             self.assertNotIn(field, unnamed)
 
-    def test_a_trial_record_lands_in_start_as_given(self):
-        record = {efforttrial.FIELD: {"arm": "trial", "applied": True}, efforttrial.CI_RED: None}
+    def test_a_session_that_never_named_its_model_is_recorded_never_started(self):
+        record = {**self.TRIAL, efforttrial.CI_RED: None}
         with tempfile.TemporaryDirectory() as d:
             start = self._start_record(d, trial_record=record)
-        self.assertEqual(start[efforttrial.FIELD], {"arm": "trial", "applied": True})
+        self.assertEqual(start[modeltrial.FIELD], {**self.TRIAL[modeltrial.FIELD], "model": "never-started"})
         self.assertIn(efforttrial.CI_RED, start)
         self.assertIsNone(start[efforttrial.CI_RED])
+
+    def test_the_model_init_named_reaches_the_start(self):
+        from coscc.agent import steps as steps_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            make_unit(Path(d), intent_md="Status: accepted.\nI")
+            journal = Journal(d, d)
+            r = Runner(sessions=self.Initialised(), journal=journal)
+            running = steps_mod.Running(d, UNIT, "spec", "")
+
+            async def go():
+                async for _ in r.run(
+                    workspace=d, directory=Path(d) / ".cos" / UNIT, journal_key=d, unit=UNIT,
+                    stage="spec", artifact="spec.md", stages=STAGES, mode="manual",
+                    trial_record=self.TRIAL, running=running,
+                ):
+                    pass
+
+            asyncio.run(go())
+            [start] = journal.records(d, kind="start")
+        self.assertEqual(start[modeltrial.FIELD]["model"], "claude-opus-5-5[1m]")
 
 
 class AStepRecordsThePriorFindingsItCarried(AStepRecordsTheBaseItRanOn):

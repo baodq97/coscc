@@ -15,7 +15,7 @@ from coscc.units.board import Unavailable
 from coscc.data import Data
 from coscc.runlog.journal import BadRecord, Busy, Journal
 from coscc.agent import labels, models
-from coscc.knowledge import efforttrial
+from coscc.knowledge import modeltrial
 from coscc.config import LOOPBACK
 from coscc.runner import SESSIONS_PER_STEP
 from coscc.service.common import Invalid
@@ -70,10 +70,10 @@ class ModelsMixin:
 
         `Busy` from the run log is left to the caller, as `failed_attempts` is.
 
-        `0123` R2-R6. With `COS_EFFORT_TRIAL` on and `stage` `impl`, the unit's arm picks
-        whether the trial's effort is handed to `resolve`, and `trial_record` says which arm
-        and whether it was taken. Off, or any other stage, `resolve` is called as before and
-        there is no `trial_record` key, so `Runner.run` is handed nothing new.
+        `0139` R16, R17. On a routine `impl`, with no flag, the unit's arm names the model
+        handed to `resolve`, and `trial_record` says which arm and what was asked for; the
+        model the session really ran is filled in once its `init` names it. Any other step
+        calls `resolve` as before and has no `trial_record` key.
         """
         try:
             plan_text: str | None = (Path(directory) / "plan.md").read_text(encoding="utf-8", errors="replace")
@@ -81,15 +81,14 @@ class ModelsMixin:
             plan_text = None
         history = [r for r in journal.records(key, unit) if r.get("stage") == "impl"]
         label_declared, label, label_source = labels.label_for(stage, stages, plan_text, history)
-        trial = self.config.effort_trial and stage == efforttrial.STAGE
-        arm = efforttrial.arm(unit) if trial else None
-        trial_kw = {"trial_effort": efforttrial.effort_for(stage, label, arm)} if arm else {}
+        arm = modeltrial.arm(unit) if modeltrial.applies(stage, label) else None
+        trial_kw = {"trial_model": modeltrial.model_for(stage, label, arm)} if arm else {}
         model, model_source, effort, effort_source = models.resolve(
             stage, label, self._model_overrides()[0], self._effort_overrides()[0],
             models.load_defaults()[0], self.config.model, **trial_kw,
         )
         trial_record = (
-            {"trial_record": {efforttrial.FIELD: {"arm": arm, "applied": effort_source == models.TRIAL}}}
+            {"trial_record": {modeltrial.FIELD: {"arm": arm, "requested": model}}}
             if arm else {}
         )
         return {
