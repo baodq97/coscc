@@ -25,7 +25,7 @@ class PullStopsAtALiveSession(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         config = Config(workspaces=(), working_dir=str(self.root), data_dir=str(self.root))
         self.s = Service(config, Sessions(config))
-        self.s.store.add("repo")
+        self.s.ws.store.add("repo")
         self._repo(self.root / "repo")
 
     @staticmethod
@@ -40,11 +40,11 @@ class PullStopsAtALiveSession(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(path)], check=True)
 
     def _open_session_in(self, name: str) -> None:
-        target = str(self.s.store.path_of(name))
+        target = str(self.s.ws.store.path_of(name))
         self.s.sessions._live["live-1"] = Live(client=object(), session_id="live-1", cwd=target)
 
     def _pull(self, name: str = "repo"):
-        return asyncio.run(self.s.pull_workspace(name))
+        return asyncio.run(self.s.ws.pull(name))
 
     def test_no_git_process_is_spawned_while_a_session_is_live(self):
         """A refusal after the fetch would have already moved files."""
@@ -74,7 +74,7 @@ class PullStopsAtALiveSession(unittest.TestCase):
         self.assertNotIn("live session", str(e.exception))
 
     def test_a_session_in_another_workspace_does_not_block_this_one(self):
-        self.s.store.add("other")
+        self.s.ws.store.add("other")
         self._repo(self.root / "other")
         self._open_session_in("other")
         with self.assertRaises(Invalid) as e:

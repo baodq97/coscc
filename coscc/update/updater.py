@@ -208,7 +208,7 @@ class Updater:
         name = self.config.update_local_from
         if not name:
             self.local = {"state": "unconfigured", "reason": "no workspace is set to build from"}
-        elif self.service.store is None:
+        elif self.service.ws.store is None:
             self.local = {"state": "unconfigured", "reason": "no working folder is set"}
         else:
             found = update.verified_wheel(self.root / "local")
@@ -259,7 +259,7 @@ class Updater:
 
     def _record(self, event: str, by: str, **extra: Any) -> None:
         """One `update` row, workspace `""` like `setting`. No working folder, no row: the log file and `last.json` still say what happened."""
-        journal = self.service._journal()
+        journal = self.service.ws.journal()
         if journal is None:
             return
         try:
@@ -765,7 +765,7 @@ class Updater:
         try:
             name = self.config.update_local_from or ""
             try:
-                workspace = self.service.store.path_of(name)
+                workspace = self.service.ws.store.path_of(name)
             except Exception as e:
                 raise _BuildFailed(f"workspace {name!r}: {e}") from e
             if not (workspace / ".git").exists():

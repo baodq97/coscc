@@ -13,7 +13,6 @@ from typing import Any
 from coscc.runlog import events
 from coscc.config import Config
 from coscc.agent.sessions import Sessions
-from coscc.service.store import Store
 from coscc.agent import steps as steps_mod
 from coscc.update import updater as updater_mod
 
@@ -25,9 +24,7 @@ from coscc.service.models import ModelsMixin
 from coscc.service.agents import (
     AgentsMixin,
 )
-from coscc.service.workspaces import (
-    WorkspacesMixin,
-)
+from coscc.service.workspaces import Workspaces
 from coscc.service.watch import (
     WatchMixin,
 )
@@ -62,7 +59,6 @@ from coscc.service.resume import (
 
 @dataclass
 class Service(
-    WorkspacesMixin,
     BoardMixin,
     StepsMixin,
     WatchMixin,
@@ -81,7 +77,6 @@ class Service(
 ):
     config: Config
     sessions: Sessions
-    store: Store | None = field(default=None, init=False)
     # Held across read-check-append so two answers arriving together cannot interleave.
     # The page and the API share this instance, so one lock covers both.
     _answer_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
@@ -102,9 +97,6 @@ class Service(
         default_factory=dict, init=False, repr=False
     )
     _integrate_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
-    # Journal keys whose `cos.db` store was imported: an import is never undone, so
-    # `_snapshot` stops asking once it is.
-    _imported: set[str] = field(default_factory=set, init=False, repr=False)
     # Journal keys with a release press running now, checked and marked with no `await` between.
     _releasing: set[str] = field(default_factory=set, init=False, repr=False)
     # What is running now, for the board to show, by an id private to this process.
@@ -151,14 +143,10 @@ class Service(
     _pr_readers: dict[str, asyncio.Task] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        # No working folder means no store.
-        self.store = (
-            Store(self.config.working_dir, self.config.data_dir)
-            if self.config.working_dir
-            else None
-        )
+        # Which workspaces there are, and where each keeps its units.
+        self.ws = Workspaces(self.config, self.sessions)
         # One question, asked in two places. See `Sessions.membership`.
-        self.sessions.membership = self._is_member
+        self.sessions.membership = self.ws.is_member
         # Told of every step, integration and chat turn that ends.
         self.updater = updater_mod.Updater(self.config, self)
         self.sessions.on_turn_end = self.updater.job_ended

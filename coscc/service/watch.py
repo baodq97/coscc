@@ -24,8 +24,8 @@ class WatchMixin:
     ) -> tuple[events.Recorder | None, dict[str, Any] | None]:
         """The recorder running `run`, or its index row; refused unless it is `unit`'s, in this
         workspace. `(None, None)` for a `run` the run log names with no index row yet."""
-        self._workspace_or_refuse(cwd)
-        key = self._journal_key(cwd)
+        self.ws.check(cwd)
+        key = self.ws.key(cwd)
         if not run:
             raise Invalid("a run is required")
         recorder = self._recorders.get(run)
@@ -41,7 +41,7 @@ class WatchMixin:
             if (row["workspace"], row["unit"]) != (key, unit):
                 raise Invalid(f"run {run} is not a step of {unit}")
             return None, row
-        journal = self._journal()
+        journal = self.ws.journal()
         try:
             started = journal.records(key, unit, kind="start") if journal is not None else []
         except Busy as e:
@@ -183,4 +183,4 @@ class WatchMixin:
 
     async def purge_events(self) -> tuple[int, int]:
         """For a caller that holds a `Service`; `coscc/run.py` calls `events.purge_on_start`."""
-        return await events.purge(Data(self.config.data_dir), self._journal())
+        return await events.purge(Data(self.config.data_dir), self.ws.journal())

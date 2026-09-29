@@ -448,7 +448,7 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r.status_code, 400)
 
     async def test_a_stop_of_a_running_step_is_a_200_naming_it(self):
-        running = self.service.steps.claim(self.service._journal_key("/tmp"), "0001_a", "spec")
+        running = self.service.steps.claim(self.service.ws.key("/tmp"), "0001_a", "spec")
         r = await self.client.post(
             "/api/board/stop", json={"cwd": "/tmp", "unit": "0001_a", "by": "Lan"}
         )
@@ -460,13 +460,13 @@ class StoppingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json(), []
         )
-        self.service.steps.claim(self.service._journal_key("/tmp"), "0001_a", "plan")
+        self.service.steps.claim(self.service.ws.key("/tmp"), "0001_a", "plan")
         [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual((row["unit"], row["stage"], row["stopping"]), ("0001_a", "plan", False))
         self.assertEqual(row["kind"], "step")
 
     async def test_an_integration_is_on_the_running_list_until_it_ends(self):
-        key = self.service._journal_key("/tmp")
+        key = self.service.ws.key("/tmp")
         rid = self.service._mark_running(key, "0001_a", "integrate", "gebo")
         [row] = (await self.client.get("/api/board/steps", params={"cwd": "/tmp"})).json()
         self.assertEqual(
@@ -497,7 +497,7 @@ class WatchingAStepOverHttp(unittest.IsolatedAsyncioTestCase):
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://t"
         )
-        self.key = self.service._journal_key("/tmp")
+        self.key = self.service.ws.key("/tmp")
         data = Data(self.service.config.data_dir)
         self.ended = events.Recorder("r-ended", data, "/w", self.key, "0001_a", "spec")
         for i in range(3):
@@ -1545,9 +1545,9 @@ class WhatIsRunningOverHttp(unittest.IsolatedAsyncioTestCase):
 
     async def test_both_keys_and_no_session_id_prompt_or_path(self):
         service = self.app.state.service
-        key = service._journal_key(self.cwd)
+        key = service.ws.key(self.cwd)
         service._mark_running(key, self.unit, "impl", "step")
-        service._journal().started(
+        service.ws.journal().started(
             key,
             "0099_other",
             "plan",
@@ -1593,7 +1593,7 @@ class IntegratingOverHttp(PostingAReviewRoundOverHttp):
 
     async def test_a_unit_outside_the_window_is_a_400_and_leaves_a_record(self):
         # A draft pr.md: `cos.mjs` says the unit is not between pr and ship, so no gh is asked.
-        pr_md = Path(self.app.state.service._unit_dir(self.cwd, self.unit)) / "pr.md"
+        pr_md = Path(self.app.state.service.ws.unit_dir(self.cwd, self.unit)) / "pr.md"
         pr_md.write_text(f"# PR\nStatus: draft.\nPR: {self.PR_URL}\n", encoding="utf-8")
         got = await self.client.post(
             "/api/units/integrate", json={"cwd": self.cwd, "unit": self.unit}
@@ -1601,7 +1601,7 @@ class IntegratingOverHttp(PostingAReviewRoundOverHttp):
         self.assertEqual(got.status_code, 400)
         self.assertIn("not between pr and ship", got.json()["error"])
         service = self.app.state.service
-        rows = service._journal().records(service._journal_key(self.cwd), kind="integration")
+        rows = service.ws.journal().records(service.ws.key(self.cwd), kind="integration")
         self.assertEqual([r["outcome"] for r in rows], ["refused"])
 
     async def test_unknown_arguments_are_a_400(self):
@@ -2188,7 +2188,7 @@ class ReleasingOverHttp(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(got.status_code, 400)
                 self.assertIn("prerelease", got.json()["error"])
         service = self.app.state.service
-        rows = service._journal().records(service._journal_key(self.fx.cwd), kind="release")
+        rows = service.ws.journal().records(service.ws.key(self.fx.cwd), kind="release")
         self.assertEqual(
             [(r["phase"], r["outcome"]) for r in rows],
             [("prepare", "refused"), ("publish", "refused")],

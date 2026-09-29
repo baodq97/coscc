@@ -50,7 +50,7 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
             data_dir=str(root / "data"),
         )
         self.service = Service(self.config, Sessions(self.config))
-        self.key = self.service._journal_key(str(self.ws))
+        self.key = self.service.ws.key(str(self.ws))
         self.journal = Journal(self.config.working_dir, self.config.data_dir)
         self.streams = []
 
@@ -194,7 +194,7 @@ class FollowingNotices(unittest.IsolatedAsyncioTestCase):
         self.assertLess(notices.BEAT_SECONDS, notices.LIFETIME_SECONDS)
 
     async def test_one_workspace_sees_only_its_own(self):
-        other = self.service._journal_key(str(self.other))
+        other = self.service.ws.key(str(self.other))
         self.append(stop(other))
         mine = self.append(stop(self.key))
         got = await self.notices(self.follow(after=0, workspace=str(self.ws)), 1)

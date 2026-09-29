@@ -103,8 +103,8 @@ class TheUnitHistoryReadPath(unittest.TestCase):
         self.assertEqual(self.service.units_with_history(REPO)["units"], ["0099_retired"])
 
     def test_cost_and_unit_cost_read_the_run_log(self):
-        j = self.service._journal()
-        key = self.service._journal_key(REPO)
+        j = self.service.ws.journal()
+        key = self.service.ws.key(REPO)
         j.finished(key, "0001_a-problem", "spec", "done", cost_usd=2.0)
         j.finished(key, "0001_a-problem", "spec", "failed")
         j.finished(key, "0002_other", "plan", "done", cost_usd=20.0)
@@ -517,14 +517,14 @@ class TheBacklogIsDisplayOnly(unittest.TestCase):
             (done / f"{name}.md").write_text(
                 f"# {name}\nAuthor: t. Status: {status}.\n", encoding="utf-8"
             )
-        self.journal = self.service._journal()
-        self.key = self.service._journal_key(self.cwd)
+        self.journal = self.service.ws.journal()
+        self.key = self.service.ws.key(self.cwd)
 
     def board(self):
         return asyncio.run(self.service.board(self.cwd))
 
     def store_hash(self):
-        units_root = self.service._units_root(self.cwd)
+        units_root = self.service.ws.units_root(self.cwd)
         return {
             str(p): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(units_root.rglob("*"))

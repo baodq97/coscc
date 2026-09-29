@@ -27,7 +27,7 @@ class AnOverrideIsCheckedSavedAndLogged(unittest.TestCase):
     def _settings(self):
         return [
             (r["name"], r["old"], r["new"])
-            for r in self.service._journal().records("", kind="setting")
+            for r in self.service.ws.journal().records("", kind="setting")
         ]
 
     def _rows(self, table):

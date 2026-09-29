@@ -93,7 +93,7 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
             "# Intent: x\nAuthor: proof. Type: fix. Status: accepted.\n", encoding="utf-8"
         )
         self.unit = made["unit"]
-        self.key = self.service._journal_key(self.ws)
+        self.key = self.service.ws.key(self.ws)
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="http://proof"
         )
@@ -142,7 +142,7 @@ class _OneUnit(unittest.IsolatedAsyncioTestCase):
     def records(self, kind: str) -> list[dict]:
         return [
             r
-            for r in self.service._journal().records()
+            for r in self.service.ws.journal().records()
             if r["kind"] == kind and r["unit"] == self.unit
         ]
 

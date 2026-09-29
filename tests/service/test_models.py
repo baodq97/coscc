@@ -57,8 +57,8 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         return asyncio.run(go())
 
     def _start(self):
-        journal = self.service._journal()
-        return journal.records(self.service._journal_key(str(self.repo)), kind="start")[-1]
+        journal = self.service.ws.journal()
+        return journal.records(self.service.ws.key(str(self.repo)), kind="start")[-1]
 
     def test_the_shipped_default_reaches_the_session(self):
         self._run("spec")
@@ -125,7 +125,7 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
         asyncio.run(self.service.set_stage_model("impl", "a"))
         asyncio.run(self.service.set_stage_model("impl", "b"))
         asyncio.run(self.service.set_stage_model("impl", None))
-        records = self.service._journal().records("", kind="setting")
+        records = self.service.ws.journal().records("", kind="setting")
         self.assertEqual(
             [(r["name"], r["old"], r["new"]) for r in records],
             [("model:impl", None, "a"), ("model:impl", "a", "b"), ("model:impl", "b", None)],
@@ -163,7 +163,7 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
     def test_an_effort_override_of_max_is_taken_and_logged(self):
         asyncio.run(self.service.set_stage_effort("impl:novel", "max"))
         asyncio.run(self.service.set_stage_effort("impl:novel", None))
-        records = self.service._journal().records("", kind="setting")
+        records = self.service.ws.journal().records("", kind="setting")
         self.assertEqual(
             [(r["name"], r["old"], r["new"]) for r in records],
             [("effort:impl:novel", None, "max"), ("effort:impl:novel", "max", None)],
@@ -207,7 +207,7 @@ class AStageRunsOnTheModelSettingsNames(unittest.TestCase):
 
         asyncio.run(go())
         self.assertEqual(self.probe.models[-1], "env-model")
-        [rec] = service._journal().records(service._journal_key(str(self.repo)), kind="chat")
+        [rec] = service.ws.journal().records(service.ws.key(str(self.repo)), kind="chat")
         self.assertEqual((rec["model"], rec["model_source"]), ("env-model", "COS_MODEL"))
 
     def test_settings_names_cos_model_as_the_fallback(self):

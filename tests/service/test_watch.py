@@ -115,8 +115,8 @@ class AStepCanBeWatched(unittest.TestCase):
         self.assertEqual([k for k, _ in ended], ["status"])
         self.assertEqual(ended[0][1]["status"], "ended")
         self.assertEqual(self.service._recorders, {})
-        [start] = [r for r in self.service._journal().records(kind="start")]
-        [end] = [r for r in self.service._journal().records(kind="end")]
+        [start] = [r for r in self.service.ws.journal().records(kind="start")]
+        [end] = [r for r in self.service.ws.journal().records(kind="end")]
         self.assertEqual((start["run"], end["run"], end["events_lost"]), (run, run, 0))
 
     async def _drain(self):
@@ -138,8 +138,8 @@ class AStepCanBeWatched(unittest.TestCase):
         self.assertEqual(self.service._recorders, {})
 
     def test_a_run_the_run_log_names_with_no_index_row_is_none(self):
-        journal = self.service._journal()
-        key = self.service._journal_key(str(self.repo))
+        journal = self.service.ws.journal()
+        key = self.service.ws.key(str(self.repo))
         journal.started(key, self.unit, "spec", "manual", run="r-lost")
         page = self.service.events_page(str(self.repo), self.unit, "r-lost")
         self.assertEqual((page["status"], page["events"]), ("none", []))

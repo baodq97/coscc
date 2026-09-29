@@ -21,15 +21,15 @@ from coscc.units.board import Unavailable
 class IdeasMixin:
     def _workspace_by_name(self, name: str) -> str | None:
         """The one workspace called `name`, or None when there is none or more than one."""
-        rows = [r for r in self.workspaces()["workspaces"] if r["name"] == name]
+        rows = [r for r in self.ws.all()["workspaces"] if r["name"] == name]
         return str(rows[0]["path"]) if len(rows) == 1 else None
 
     def create_idea(self, cwd: str, slug: str, brief: str) -> dict[str, Any]:
         """The idea's home is `cwd`'s store; its text is the brief, and nothing else."""
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         if not str(brief or "").strip():
             raise Invalid("An idea needs a brief.")
-        name = self._workspace_name(cwd)
+        name = self.ws.name(cwd)
         try:
             made = ideas.create_idea(cwd, slug, brief, self.config.data_dir)
         except CannotCreate as e:
@@ -57,8 +57,8 @@ class IdeasMixin:
             raise Invalid(str(e)) from e
         if not path.is_file():
             raise Invalid(f"{idea} does not exist.")
-        name = self._workspace_name(cwd)
-        if not name or not valid_name(name) or name not in dict(self._peers()):
+        name = self.ws.name(cwd)
+        if not name or not valid_name(name) or name not in dict(self.ws.peers()):
             raise Invalid("This workspace has no name of its own that another unit could refer to.")
         if depends_on and depends_on not in [
             u["ref"] for u in ideas.read_units(ideas.read_text(path))
@@ -69,7 +69,7 @@ class IdeasMixin:
     def _ideas_everywhere(self) -> list[dict[str, Any]]:
         """Every idea file in every workspace's store, `{ws, id, path, text, units}`."""
         out: list[dict[str, Any]] = []
-        for name, store in self._peers():
+        for name, store in self.ws.peers():
             folder = store / ".cos" / ideas.IDEAS_DIR
             if not folder.is_dir():
                 continue
@@ -97,7 +97,7 @@ class IdeasMixin:
         Read off the files in each store, never `cos.mjs`: which idea a unit was opened from is the
         app's own record, and asking the script would read every workspace's board.
         """
-        name = self._workspace_name(cwd)
+        name = self.ws.name(cwd)
         if not name:
             return None
         me = f"{name}/{unit}"
@@ -173,8 +173,8 @@ class IdeasMixin:
         Each row reads the board of the unit's own workspace, once per workspace; a workspace
         that is gone is a `missing` row, not a refusal.
         """
-        self._workspace_or_refuse(cwd)
-        name = self._workspace_name(cwd)
+        self.ws.check(cwd)
+        name = self.ws.name(cwd)
         try:
             path = ideas.idea_path(cwd, idea_id, self.config.data_dir)
         except CannotCreate as e:
@@ -183,7 +183,7 @@ class IdeasMixin:
             raise Invalid(f"No idea {idea_id} in this workspace.")
         text = ideas.read_text(path)
         listed = ideas.read_units(text)
-        peers = self._peer_table()[0]
+        peers = self.ws.peer_table()[0]
         boards: dict[str, dict[str, Any] | None] = {}
         rows: list[dict[str, Any]] = []
         for line in listed:
@@ -195,7 +195,7 @@ class IdeasMixin:
                         None
                         if where is None
                         else await board_reader.read(
-                            self._units_root(where), state=self._snapshot(where, peers=peers)
+                            self.ws.units_root(where), state=self.ws.snapshot(where, peers=peers)
                         )
                     )
                 except Unavailable:

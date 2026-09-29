@@ -115,7 +115,7 @@ class ModelsMixin:
         `autopilot.is_ci_red`; `None` when it could not be asked. Never raises."""
         try:
             found = await board_reader.next_step(
-                self._units_root(cwd), unit, repo=repo, state=self._snapshot(cwd, [unit])
+                self.ws.units_root(cwd), unit, repo=repo, state=self.ws.snapshot(cwd, [unit])
             )
             return autopilot.is_ci_red(found)
         except Exception:
@@ -126,7 +126,7 @@ class ModelsMixin:
     async def _findings_added(self, cwd: str, unit: str, before: set[Any]) -> dict[str, Any]:
         """The findings in the rounds a `review` step added, off the board (`parseReview`'s
         count, read the way `_post_new_rounds` reads it), and those rounds' verdicts."""
-        data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+        data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
         found = next((u for u in data["units"] if u["name"] == unit), None) or {}
         added = [r for r in found.get("rounds") or [] if r.get("n") not in before]
         return {
@@ -173,7 +173,7 @@ class ModelsMixin:
         return name
 
     def _log_setting(self, key: str, old: Any, new: Any) -> None:
-        journal = self._journal()
+        journal = self.ws.journal()
         if journal is not None:
             try:
                 journal.append(
@@ -277,10 +277,10 @@ class ModelsMixin:
 
     def autopilot_settings(self, cwd: str) -> dict[str, Any]:
         """The four settings of one workspace, and whether the bind lets the autopilot run."""
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         return {
             "cwd": cwd,
-            **self._autopilot_values(self._journal_key(cwd)),
+            **self._autopilot_values(self.ws.key(cwd)),
             "refused_because": self._off_loopback(),
         }
 
@@ -291,7 +291,7 @@ class ModelsMixin:
         raise the cap, or let it ship. The trace is the `setting` record. Turning it on is
         refused while the app listens beyond loopback.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         if name not in self.AUTOPILOT_SETTINGS:
             raise Invalid(
                 f"no such setting: {name} (use one of {', '.join(self.AUTOPILOT_SETTINGS)})"
@@ -306,7 +306,7 @@ class ModelsMixin:
             raise Invalid("daily_cap_usd must be a number above 0")
         if name == "autopilot" and value and self._off_loopback():
             raise Invalid(f"the autopilot was not turned on: {self._off_loopback()}")
-        key = self._journal_key(cwd)
+        key = self.ws.key(cwd)
         old = self._autopilot_values(key)[name]
         stored = float(value) if name == "daily_cap_usd" else value
         Data(self.config.data_dir).set_pref(self._autopilot_pref(name, key), stored)

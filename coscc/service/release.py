@@ -188,14 +188,14 @@ class ReleaseMixin:
         return block
 
     def _release_start(self, cwd: str) -> tuple[Journal, str, Path]:
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         self._refuse_while_updating()
-        journal = self._journal()
+        journal = self.ws.journal()
         if journal is None:
             raise Invalid(
                 "no working folder is set, so a release cannot be recorded — set COS_WORKING_DIR"
             )
-        return journal, self._journal_key(cwd), Path(cwd).expanduser().resolve()
+        return journal, self.ws.key(cwd), Path(cwd).expanduser().resolve()
 
     def _release_tree_path(self, cwd: str) -> Path:
         """`worktrees.release_path` for `cwd`, worked out again on every call: it is the `expected`
@@ -258,7 +258,7 @@ class ReleaseMixin:
         try:
             try:
                 await gitops.fetch_with_tags(root)
-                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+                data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
             except (GitError, Unavailable) as e:
                 write("failed", detail=f"could not read the workspace: {e}")
                 raise Invalid(f"could not read the workspace: {e}") from e

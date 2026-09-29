@@ -57,17 +57,17 @@ class BacklogMixin:
     async def _backlog_context(self, cwd: str) -> tuple[Journal, str, dict[str, Any]]:
         """The run log, its key and one board read. The read is `node`, so it happens before any
         transaction is opened; only the run log's part of a check is read inside one."""
-        self._workspace_or_refuse(cwd)
-        journal = self._journal()
+        self.ws.check(cwd)
+        journal = self.ws.journal()
         if journal is None:
             raise Invalid(
                 "no working folder is set, so nothing can be recorded — set COS_WORKING_DIR"
             )
         try:
-            data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+            data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
         except Unavailable as e:
             raise Invalid(str(e)) from e
-        return journal, self._journal_key(cwd), data
+        return journal, self.ws.key(cwd), data
 
     @staticmethod
     def _append_checked(journal: Journal, record: dict[str, Any], check: Any) -> dict[str, Any]:
@@ -202,14 +202,14 @@ class BacklogMixin:
         session over a ceiling, or one that handed back no object through `submit`, writes
         no estimate.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         self._refuse_while_updating()
-        journal = self._journal()
+        journal = self.ws.journal()
         if journal is None:
             raise Invalid(
                 "no working folder is set, so a proposal cannot be recorded — set COS_WORKING_DIR"
             )
-        key = self._journal_key(cwd)
+        key = self.ws.key(cwd)
         held = self._active.get((key, ""))
         if held is not None:
             raise Invalid(
@@ -221,7 +221,7 @@ class BacklogMixin:
         started = ended = False
         try:
             try:
-                data = await board_reader.read(self._units_root(cwd), state=self._snapshot(cwd))
+                data = await board_reader.read(self.ws.units_root(cwd), state=self.ws.snapshot(cwd))
                 rows = journal.records(key)
             except Unavailable as e:
                 raise Invalid(str(e)) from e
@@ -234,7 +234,7 @@ class BacklogMixin:
             waiting = [u["name"] for u in data["units"] if backlog.in_backlog(u)]
             if not waiting:
                 raise Invalid("the backlog is empty; there is nothing to estimate")
-            root = self._units_root(cwd)
+            root = self.ws.units_root(cwd)
 
             def read(unit: str, name: str) -> str:
                 try:
@@ -450,9 +450,9 @@ class BacklogMixin:
         since cutting from a stale `main` would open the pull request on the wrong base. The
         result names the ref and the commit. The remote and the trunk are constants here.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         try:
-            name = units.branch_name(cwd, unit, self.config.data_dir, self._snapshot(cwd, [unit]))
+            name = units.branch_name(cwd, unit, self.config.data_dir, self.ws.snapshot(cwd, [unit]))
         except (CannotCreate, BadUnit) as e:
             raise Invalid(str(e)) from e
         # Cut in the unit's own worktree, never in the workspace: cutting there took one unit's
@@ -494,7 +494,7 @@ class BacklogMixin:
 
     async def branch_here(self, cwd: str) -> dict[str, Any]:
         """Which branch the workspace is on. A read."""
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         try:
             return {
                 "cwd": cwd,
@@ -509,12 +509,12 @@ class BacklogMixin:
         `transitions` beside `runs`, each row of the log with the one-sentence label of the
         guard that decided it; `""` for a row that names none.
         """
-        self._workspace_or_refuse(cwd)
-        journal = self._journal()
+        self.ws.check(cwd)
+        journal = self.ws.journal()
         history = self._history()
         if journal is None or history is None:
             return {"cwd": cwd, "unit": unit, "runs": [], "cost": {}, "transitions": []}
-        key = self._journal_key(cwd)
+        key = self.ws.key(cwd)
         try:
             runs = journal.timeline(key, unit)
             rows = history.transitions(key, unit)
@@ -531,7 +531,7 @@ class BacklogMixin:
     def _history(self) -> History | None:
         """The transition log, or `None` when there is no working folder to keep it in.
 
-        Same reasoning as `_journal`: with nothing set, the safe direction to fail in is read-only.
+        Same reasoning as `Workspaces.journal`: with nothing set, the safe direction to fail in is read-only.
         """
         return (
             History(self.config.working_dir, self.config.data_dir)
@@ -551,9 +551,9 @@ class BacklogMixin:
 
         `settled_edits` is the number of times an artifact was rewritten after it had been settled.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         history = self._history()
-        key = self._journal_key(cwd)
+        key = self.ws.key(cwd)
         if history is None:
             return {
                 "cwd": cwd,
@@ -613,7 +613,7 @@ class BacklogMixin:
         Not the same list as `board()`'s: a unit retired from the working tree still has a
         history, and this is the only place it can be seen.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         history = self._history()
         if history is None:
             return {"cwd": cwd, "recording": False, "units": []}
@@ -621,7 +621,7 @@ class BacklogMixin:
             return {
                 "cwd": cwd,
                 "recording": True,
-                "units": history.units(self._journal_key(cwd)),
+                "units": history.units(self.ws.key(cwd)),
             }
         except Busy as e:
             raise Invalid(str(e)) from e

@@ -75,7 +75,7 @@ def snapshot_of(root, peers=(), units_=None) -> dict:
 class WithSnapshot:
     """Test glue (plan step 8): `coscc/units/board.py` as a test module sees it, each question
     to `cos.mjs` handed `snapshot_of` its store when the test gave no `state` — what
-    `Service._snapshot` hands it in the app. Every other attribute, and every patch a test
+    `Workspaces.snapshot` hands it in the app. Every other attribute, and every patch a test
     sets on it, is the module's own."""
 
     ASKS = ("read", "gate", "next_step", "pr_text", "rerun", "screens")
@@ -498,8 +498,8 @@ class TheImportReport(unittest.TestCase):
     def test_settings_lists_each_unreadable_field_by_workspace_name_and_not_a_failed_ingest(self):
         shutil.copytree(FIXTURE, self.store)
         asyncio.run(self.service.board(self.cwd))
-        self.service._unit_meta().ingest_failed(
-            self.service._journal_key(self.cwd), "0013_open-question", "boom"
+        self.service.ws.unit_meta().ingest_failed(
+            self.service.ws.key(self.cwd), "0013_open-question", "boom"
         )
         report = self.service.settings()["import_report"]
         self.assertEqual(report["problem"], "")
@@ -538,10 +538,10 @@ class TheImportReport(unittest.TestCase):
             self.assertLogs("coscc", "WARNING") as log,
         ):
             with self.assertRaises(Invalid) as said:
-                self.service._snapshot(self.cwd)
+                self.service.ws.snapshot(self.cwd)
         self.assertEqual(str(said.exception), "the units of proj could not be imported")
         self.assertIn("cos.db", log.output[-1])
-        self.assertIn(self.service._journal_key(self.cwd), log.output[-1])
+        self.assertIn(self.service.ws.key(self.cwd), log.output[-1])
 
 
 if __name__ == "__main__":

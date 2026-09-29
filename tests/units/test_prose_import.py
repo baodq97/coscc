@@ -46,7 +46,7 @@ class TheRoundsOnlyTheProseHoldsAreImportedOnce(_Review):
     def setUp(self):
         super().setUp()
         (self.dir / "review.md").write_text(PROSE, encoding="utf-8")
-        self.service._imported.clear()
+        self.service.ws.imported.clear()
 
     def rounds(self) -> list[dict]:
         """`cos.mjs`'s rounds, two things aside that every row carries apart from the file,
@@ -64,7 +64,7 @@ class TheRoundsOnlyTheProseHoldsAreImportedOnce(_Review):
         return out
 
     def rows(self) -> list[tuple]:
-        with self.service._unit_meta().data.connect() as conn:
+        with self.service.ws.unit_meta().data.connect() as conn:
             return [
                 tuple(r)
                 for r in conn.execute(
@@ -100,8 +100,8 @@ class TheRoundsOnlyTheProseHoldsAreImportedOnce(_Review):
 
     def test_a_second_read_imports_nothing(self):
         self._unit()
-        meta = self.service._unit_meta()
-        key = self.service._journal_key(str(self.repo))
+        meta = self.service.ws.unit_meta()
+        key = self.service.ws.key(str(self.repo))
         self.assertIsNone(prose_import.import_rounds(meta, key, [], {}))
         (self.dir / "review.md").write_text(
             PROSE.replace("## Round 3", "## Round 4"), encoding="utf-8"
@@ -113,8 +113,8 @@ class TheRoundsOnlyTheProseHoldsAreImportedOnce(_Review):
         from coscc.github import prmachine
 
         self._unit()
-        history = self.service._unit_meta().history
-        key = self.service._journal_key(str(self.repo))
+        history = self.service.ws.unit_meta().history
+        key = self.service.ws.key(str(self.repo))
         self.assertEqual(
             prmachine.last_round(history, key, self.unit),
             {"n": 2, "head": "abc1234", "verdict": "pass"},

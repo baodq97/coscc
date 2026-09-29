@@ -41,6 +41,17 @@ class _Sessions:
         self.order.append("close_all")
 
 
+class _Workspaces:
+    """What `Updater` asks of `Service.ws`: no store, and the run log."""
+
+    def __init__(self, rows: list[dict]):
+        self.store = None
+        self.rows = rows
+
+    def journal(self):
+        return _Journal(self.rows)
+
+
 class StandIn:
     """What `Updater` asks of `Service`, and nothing else."""
 
@@ -50,14 +61,11 @@ class StandIn:
         # What `settle_after_suspend` says still runs once its wait is over.
         self.unsettled: list[dict] = []
         self.rows: list[dict] = []
-        self.store = None
+        self.ws = _Workspaces(self.rows)
         # What happened after the trial, in order: pausing, shutting down, closing.
         self.order: list[str] = []
         self.sessions = _Sessions(self.order)
         self.shut = 0
-
-    def _journal(self):
-        return _Journal(self.rows)
 
     def _update_waited(self):
         return list(self.jobs)

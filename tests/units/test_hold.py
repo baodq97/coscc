@@ -296,7 +296,7 @@ class Repo(unittest.TestCase):
             encoding="utf-8",
         )
         self.tree = Path(asyncio.run(self.service._worktree(self.cwd, self.unit))["path"])
-        self.key = self.service._journal_key(self.cwd)
+        self.key = self.service.ws.key(self.cwd)
         self.gh = FakeGh()
         gh_patch = mock.patch("coscc.git.gh.run", self.gh)
         gh_patch.start()
@@ -316,7 +316,7 @@ class Repo(unittest.TestCase):
         return next(u for u in data["units"] if u["name"] == self.unit)
 
     def records(self) -> list[dict]:
-        return self.service._journal().records(self.key, kind="hold")
+        return self.service.ws.journal().records(self.key, kind="hold")
 
     def holds(self) -> list[dict]:
         with Data(self.config.data_dir).connect() as conn:
@@ -410,7 +410,7 @@ class HoldThroughTheService(Repo):
         self.assertIsNotNone(self.find())
         self.move("active")
         self.assertEqual(self.sessions.opened, 0)
-        self.assertEqual(self.service._journal().records(self.key, kind="start"), [])
+        self.assertEqual(self.service.ws.journal().records(self.key, kind="start"), [])
 
     def test_a_refusal_changes_no_byte(self):
         before = self.intent()

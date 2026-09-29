@@ -127,7 +127,7 @@ class UpdateMixin:
         hands off. With no working folder there is nowhere to write one, and the sessions end
         as a restart ends them."""
         records = await self.sessions.suspend_all()
-        journal = self._journal()
+        journal = self.ws.journal()
         written: list[dict[str, Any]] = []
         for record in records:
             owner = record.get("owner") or {}

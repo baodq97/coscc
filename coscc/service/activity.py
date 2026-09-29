@@ -27,12 +27,12 @@ class ActivityMixin:
 
         Shared by `activity` and `usage`; see `activity_and_usage` for why it is read once.
         """
-        self._workspace_or_refuse(cwd)
-        journal = self._journal()
+        self.ws.check(cwd)
+        journal = self.ws.journal()
         if journal is None:
             return None
         try:
-            return journal.records(self._journal_key(cwd))
+            return journal.records(self.ws.key(cwd))
         except Busy as e:
             raise Invalid(str(e)) from e
 
@@ -215,11 +215,9 @@ class ActivityMixin:
 
     def _import_report(self) -> dict[str, Any]:
         """Every field an import could not read, its workspace by name, not a failed ingest: the card shows that one. A database that cannot be read is `problem`, in place of a Settings screen that does not load. What went wrong goes to the log, not the screen: `Busy` and `Incompatible` name the database's path."""
-        names = {
-            self._journal_key(r["path"]): str(r["name"]) for r in self.workspaces()["workspaces"]
-        }
+        names = {self.ws.key(r["path"]): str(r["name"]) for r in self.ws.all()["workspaces"]}
         try:
-            found = self._unit_meta().unknowns()
+            found = self.ws.unit_meta().unknowns()
         except Exception:
             log.exception("the import report could not be read")
             return {"rows": [], "problem": "The import report could not be read."}
@@ -237,11 +235,11 @@ class ActivityMixin:
 
         The path is built by `runner.unit_dir`, which validates the unit name against the `NNNN_slug` shape, so a name this refuses is one no step could run against either.
         """
-        self._workspace_or_refuse(cwd)
+        self.ws.check(cwd)
         if stage not in STAGE_FILES:
             raise Invalid(f"no such stage: {stage}")
         filename = f"{stage}.md"
-        path = self._unit_dir(cwd, unit) / filename
+        path = self.ws.unit_dir(cwd, unit) / filename
         if not path.is_file():
             return {"unit": unit, "stage": stage, "file": filename, "text": "", "exists": False}
         try:

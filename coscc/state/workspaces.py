@@ -64,9 +64,9 @@ class WorkspacesMixin(rx.State, mixin=True):
         yield
         try:
             if self.editing:
-                SERVICE.set_label(self.editing, self.new_label)
+                SERVICE.ws.set_label(self.editing, self.new_label)
             else:
-                await SERVICE.add_workspace(
+                await SERVICE.ws.add(
                     self.new_name, label=self.new_label, repo_url=self.new_url or None
                 )
             self._load_workspaces()
@@ -98,7 +98,7 @@ class WorkspacesMixin(rx.State, mixin=True):
         if not name:
             return
         try:
-            SERVICE.remove_workspace(name)
+            SERVICE.ws.remove(name)
             self._load_workspaces()
             self.notice = f"{name} is off the list. Its folder is untouched."
         except Invalid as e:
@@ -113,7 +113,7 @@ class WorkspacesMixin(rx.State, mixin=True):
         self.busy, self.error = True, ""
         yield
         try:
-            await SERVICE.pull_workspace(name)
+            await SERVICE.ws.pull(name)
             self.notice = f"{name} is up to date."
         except Invalid as e:
             # A failed fast-forward is normal and must be visible, not swallowed.
