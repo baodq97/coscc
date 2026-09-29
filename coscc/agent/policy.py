@@ -226,7 +226,7 @@ GRANTS: dict[str, Grant] = {
     # The first grant that both holds commands and has the app write its artifact from the
     # reply. `beyond_reading` guards only `PROSE_STAGES`, which this is not, so `policy_test`
     # pins `git` out of `commands` instead. Writing is held to the session's `cwd`, a throwaway
-    # directory `service.run_step` makes and removes; the worktree and the unit are read
+    # directory `service.steps.run_step` makes and removes; the worktree and the unit are read
     # through `read_also`.
     #
     # Ceilings chosen, not measured. Spikes that finished were recorded at 36-44 turns and 40

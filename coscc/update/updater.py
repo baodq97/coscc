@@ -630,7 +630,7 @@ class Updater:
     async def _take_up_again(self) -> None:
         """Every session was paused and the hand-off then failed, so this process goes on serving: it takes them up now, `_fail` having closed the window, rather than leave their rows to whichever start comes next, over units that moved on."""
         try:
-            await self.service.resume_after_update()
+            await self.service.resume.resume_after_update()
         except Exception as e:
             # The panel says what went wrong.
             logger.exception("the paused sessions were not taken up again")

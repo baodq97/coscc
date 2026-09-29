@@ -510,7 +510,7 @@ class Runner:
         # Only beside a preset: a tool-less session's argv is unchanged.
         settings = agents.settings_json(agent) if agent is not None and preset else None
 
-        # The step's recorder, when `Service.run_step` gave it one: its `run` goes into `start` and
+        # The step's recorder, when `Steps.run_step` gave it one: its `run` goes into `start` and
         # `end`, and it is closed, everything on disk, before `end` is written.
         recorder = getattr(running.handle, "recorder", None) if running is not None else None
 
@@ -848,7 +848,7 @@ class Runner:
             if not stopped():
                 shutting_down = True
                 raise
-            # The cancel was `Service.stop_step`'s own. Taken back, so the `end` below is written and the
+            # The cancel was `Steps.stop_step`'s own. Taken back, so the `end` below is written and the
             # step's reader still gets its `done` row.
             task = asyncio.current_task()
             if task is not None:
@@ -885,7 +885,7 @@ class Runner:
                 outcome, detail = "exhausted", f"stopped at the ceiling: {terminal}"
         finally:
             # A spike whose reply was not written gets its progress file read here, before
-            # `service.run_step` removes `cwd`. Here and not in the `except` branches: an exception raised
+            # `service.steps.run_step` removes `cwd`. Here and not in the `except` branches: an exception raised
             # inside one (a Stop's cancel landing on an `await`) is not caught by its siblings and would
             # leave with no `end`. Wrapped like `snapshot` below; `outcome` is never changed.
             progress_pending: BaseException | None = None
@@ -1255,7 +1255,7 @@ class Runner:
             if stage == "review" and not shutting_down and review_md is None:
                 # The same way.
                 review_md = "withheld" if outcome == "stopped" else "none"
-            # Not for an app going down: `_drive` writes what it can, and no `end`. Closed before the
+            # Not for an app going down: `drive` writes what it can, and no `end`. Closed before the
             # attempt record rather than after it, so the turns it counts go into both.
             run_fields: dict[str, Any] = {}
             stored: int | None = None
@@ -1429,7 +1429,7 @@ class Runner:
                 "model": model,
                 "model_source": model_source,
                 **({"stopped_by": running.stopped_by} if outcome == "stopped" else {}),
-                # What guard `stage-result` read, for `Service._ingest` to apply.
+                # What guard `stage-result` read, for `Answers.ingest` to apply.
                 **(
                     {
                         "submitted": channel.inputs(

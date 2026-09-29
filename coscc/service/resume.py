@@ -1,6 +1,4 @@
-"""Taking up again every session an update paused.
-
-A mixin with no fields, which `Service` inherits. The pausing is `Sessions.suspend_all`'s and the rows are the
+"""Taking up again every session an update paused. The pausing is `Sessions.suspend_all`'s and the rows are the
 updater's; this reads them at the next start, whatever version that is, and hands each to
 the owner of its kind, which ends it as if nothing had come between.
 
@@ -12,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from coscc.agent import transcript
 from coscc.agent import steps as steps_mod
@@ -24,6 +22,20 @@ from coscc.data import Busy
 from coscc.service.update import refuse_while_updating
 from coscc.service.common import Invalid
 from coscc.service.sessions import CHAT_TURNS
+from coscc.config import Config
+from coscc.agent.sessions import Sessions
+from coscc.update.updater import Updater
+
+if TYPE_CHECKING:
+    # `backlog` takes estimates up again with the functions below, so the parts are types only.
+    from coscc.service.agents import Agents
+    from coscc.service.autopilot import Autopilot
+    from coscc.service.backlog import Backlog
+    from coscc.service.common import Holds
+    from coscc.service.models import Models
+    from coscc.service.sessions import Chat
+    from coscc.service.steps import Steps
+    from coscc.service.workspaces import Workspaces
 
 # The kinds `Sessions.stream`'s `owner` names, and which of them hold a unit.
 STEP_KINDS = ("step", "opening", "closing")
@@ -129,7 +141,33 @@ def _spawn(coro: Any) -> asyncio.Task:
     return task
 
 
-class ResumeMixin:
+class Resume:
+    def __init__(
+        self,
+        config: Config,
+        ws: Workspaces,
+        holds: Holds,
+        sessions: Sessions,
+        updater: Updater,
+        agents: Agents,
+        models: Models,
+        backlog: Backlog,
+        chat: Chat,
+        steps: Steps,
+        autopilot: Autopilot,
+    ) -> None:
+        self.config = config
+        self.ws = ws
+        self.holds = holds
+        self.sessions = sessions
+        self.updater = updater
+        self.agents = agents
+        self.models = models
+        self.backlog = backlog
+        self.chat = chat
+        self.steps = steps
+        self.autopilot = autopilot
+
     async def resume_after_update(self) -> list[dict[str, Any]]:
         """At start-up: each `suspend` row no start took up is taken up once, then the
         autopilot starts again. What happened to each row is returned.
@@ -162,7 +200,7 @@ class ResumeMixin:
                 # What the claim would refuse, asked before the `resume` row
                 # so that row says what happened. Nothing awaits from here to the claim.
                 key, unit = str(owner.get("workspace") or ""), str(owner.get("unit") or "")
-                held = self.steps.get(key, unit)
+                held = self.steps.registry.get(key, unit)
                 problem = self.holds.busy(key, unit) or (
                     steps_mod.describe(
                         unit, steps_mod.Mark("step", held.stage, "running", held.started_at)
@@ -213,8 +251,8 @@ class ResumeMixin:
                 _spawn(start)
         # A merge asked for before the app went down is recorded before the
         # autopilot could ask for it again.
-        await self.reconcile_prs()
-        self.autopilot_resume()
+        await self.steps.reconcile_prs()
+        self.autopilot.resume()
         return said
 
     def _owner_refuses(self, kind: str, owner: dict[str, Any]) -> str:
@@ -265,10 +303,10 @@ class ResumeMixin:
             return self.resume_integration(record)
         if kind == "estimate":
             return _drain(self.backlog.propose_estimates(cwd, resume=record))
-        return self._resume_chat(cwd, record)
+        return self.resume_chat(cwd, record)
 
     def resume_step(self, record: dict[str, Any]) -> steps_mod.Running:
-        """A board step, as `run_step` hands one to `_drive`: the unit claimed, a new
+        """A board step, as `run_step` hands one to `drive`: the unit claimed, a new
         recorder and `run`, and `Runner.run` with the row instead of a prompt. Synchronous up
         to the task, so the unit is held when this returns."""
         owner = record["owner"]
@@ -278,7 +316,7 @@ class ResumeMixin:
         directory = self.ws.unit_dir(cwd, unit)
         mark = self.holds.take(key, unit, "step", stage)
         try:
-            running = self.steps.claim(key, unit, stage, started_at=mark.started_at)
+            running = self.steps.registry.claim(key, unit, stage, started_at=mark.started_at)
         except steps_mod.Busy as e:
             self.holds.release(key, unit, mark)
             raise Invalid(str(e)) from e
@@ -289,7 +327,7 @@ class ResumeMixin:
             run, Data(self.config.data_dir), str(journal.working_dir), key, unit, stage
         )
         running.run, running.handle.recorder = run, recorder
-        self._recorders[run] = recorder
+        self.steps.recorders[run] = recorder
         self.holds.running[rid]["run"] = run
         rounds = set(owner["rounds_before"]) if owner.get("rounds_before") is not None else None
         end_fields = None
@@ -334,10 +372,10 @@ class ResumeMixin:
         tree = {"path": str(record.get("cwd") or "")} if owner.get("tree") else None
         scratch = Path(owner["scratch"]) if owner.get("scratch") else None
         running.task = asyncio.create_task(
-            self._drive(
+            self.steps.drive(
                 running,
                 mark,
-                Runner(self.sessions, journal, app=self._app_identity()),
+                Runner(self.sessions, journal, app=self.steps.app_identity()),
                 cwd,
                 unit,
                 stage,
@@ -352,7 +390,7 @@ class ResumeMixin:
                 resumed=True,
             )
         )
-        running.task.add_done_callback(lambda _task: self._never_driven(running, mark, rid))
+        running.task.add_done_callback(lambda _task: self.steps.never_driven(running, mark, rid))
         return running
 
     def resume_integration(self, record: dict[str, Any]) -> Any:
@@ -372,7 +410,7 @@ class ResumeMixin:
 
         async def go() -> None:
             try:
-                async for _ in self._integrate_gebo(
+                async for _ in self.steps.integrate_gebo(
                     cwd,
                     key,
                     unit,
@@ -397,11 +435,11 @@ class ResumeMixin:
                 self.holds.release(key, unit, mark)
                 self.holds.running.pop(rid, None)
                 self.updater.job_ended()
-                self._autopilot_nudge(key)
+                self.autopilot.nudge(key)
 
         return go()
 
-    async def _resume_chat(self, cwd: str, record: dict[str, Any]) -> None:
+    async def resume_chat(self, cwd: str, record: dict[str, Any]) -> None:
         """Nobody is reading this turn now; its reply is in the session, and its `chat`
         row is written as any turn's is."""
         async for _ in self.chat.stream(

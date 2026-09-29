@@ -1,5 +1,5 @@
 """Pausing, dropping and resuming a unit: the pure shapes, the two side effects of a drop, and the
-whole move through `Service.hold` on a real repository with a bare-directory remote. `gh` is a
+whole move through `Answers.hold` on a real repository with a bare-directory remote. `gh` is a
 stand-in throughout; no session is opened and nothing is paid for."""
 
 from __future__ import annotations
@@ -284,7 +284,7 @@ class Repo(unittest.TestCase):
         )
         self.sessions = NoSession()
         self.service = Service(self.config, self.sessions)
-        made = asyncio.run(self.service.create_unit(self.cwd, SLUG, "fixture"))
+        made = asyncio.run(self.service.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, self.directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
@@ -295,7 +295,7 @@ class Repo(unittest.TestCase):
             f"# PR: fixture\nPR: https://github.com/o/r/pull/{PR}. Status: accepted.\n",
             encoding="utf-8",
         )
-        self.tree = Path(asyncio.run(self.service._worktree(self.cwd, self.unit))["path"])
+        self.tree = Path(asyncio.run(self.service.answers.worktree(self.cwd, self.unit))["path"])
         self.key = self.service.ws.key(self.cwd)
         self.gh = FakeGh()
         gh_patch = mock.patch("coscc.git.gh.run", self.gh)
@@ -309,7 +309,7 @@ class Repo(unittest.TestCase):
         return (self.directory / "intent.md").read_bytes()
 
     def move(self, to: str, reason: str = "lý do", by: str = "Leif") -> dict:
-        return asyncio.run(self.service.hold(self.cwd, self.unit, to, reason, by))
+        return asyncio.run(self.service.answers.hold(self.cwd, self.unit, to, reason, by))
 
     def board_unit(self) -> dict:
         data = asyncio.run(self.service.board(self.cwd))
@@ -465,13 +465,13 @@ class HoldThroughTheService(Repo):
         self.assertIn(BRANCH, git(self.workspace, "branch", "--list", BRANCH))
         rec = self.records()[-1]
         self.assertEqual([e["effect"] for e in rec["effects"]], ["close-pr", "remove-worktree"])
-        nxt = asyncio.run(self.service.next_step(self.cwd, self.unit))
+        nxt = asyncio.run(self.service.steps.next_step(self.cwd, self.unit))
         self.assertEqual(nxt["stage"], "")
         self.assertEqual(nxt["hold"]["state"], "dropped")
         self.assertEqual(self.board_unit()["hold"]["state"], "dropped")
 
         async def run():
-            async for _ in self.service.run_step(self.cwd, self.unit, "review"):
+            async for _ in self.service.steps.run_step(self.cwd, self.unit, "review"):
                 pass
 
         with self.assertRaises(Invalid) as said:

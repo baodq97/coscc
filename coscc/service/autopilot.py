@@ -1,7 +1,4 @@
-"""The autopilot: the loop that asks `cos.mjs next` and starts the stages it names.
-
-A mixin with no fields, inherited by `Service` (`coscc/service/__init__.py`).
-"""
+"""The autopilot: the loop that asks `cos.mjs next` and starts the stages it names.py`)."""
 
 from __future__ import annotations
 
@@ -12,7 +9,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from coscc.units import autopilot, backlog, guide, states
 from coscc.git import fetches
@@ -23,6 +20,14 @@ from coscc.data import Busy
 from coscc.config import LOOPBACK, Config
 from coscc.data import Data
 from coscc.service.common import BRANCH_REMOTE, BRANCH_TRUNK, Invalid, log_setting
+from coscc.service.workspaces import Workspaces
+from coscc.service.common import Holds
+from coscc.service.agents import Agents
+
+if TYPE_CHECKING:
+    # `steps` imports `answers`, which reads the settings below.
+    from coscc.service.board import Board
+    from coscc.service.steps import Steps
 
 log = logging.getLogger(__name__)
 
@@ -81,70 +86,97 @@ def off_loopback(config: Config) -> str:
     return f"The app listens on {config.host}, beyond this machine; restart it on 127.0.0.1 to use the autopilot."
 
 
-class AutopilotMixin:
+class Autopilot:
+    def __init__(
+        self,
+        config: Config,
+        ws: Workspaces,
+        holds: Holds,
+        agents: Agents,
+        steps: Steps,
+        boards: Board,
+    ) -> None:
+        self.config = config
+        self.ws = ws
+        self.holds = holds
+        self.agents = agents
+        self.steps = steps
+        self.boards = boards
+        # Per journal key: the lock every pass holds, the poll loop, the workspace directory it
+        # was turned on for, the reader of each step it started, the stops the last pass found
+        # by unit, and the passes scheduled but not yet run.
+        self.locks: dict[str, asyncio.Lock] = {}
+        self.tasks: dict[str, asyncio.Task] = {}
+        self.cwds: dict[str, str] = {}
+        self.runs: dict[str, dict[str, tuple[str, asyncio.Task]]] = {}
+        self.stops: dict[str, dict[str, dict[str, str]]] = {}
+        self.pending: set[asyncio.Task] = set()
+        # What the last pass held back by unit, `(code, detail)`, for the card to show.
+        self.held: dict[str, dict[str, tuple[str, str]]] = {}
+        # The reader of each workspace's pull requests, while it is on.
+        self.pr_readers: dict[str, asyncio.Task] = {}
+
     # The autopilot holds no rule of the loop. Each pass reads the board, the run log, the settings
     # and the workspace's last shortlist, and asks `next` for every unit on it and no other; with no
     # shortlist it asks nothing. `coscc/units/autopilot.py` decides where to stop and what to start;
     # what it starts goes through `run_step` and `integrate`, which ask the gate themselves. A
     # refusal from them is a stop line, never a second way past the gate.
 
-    def autopilot_start(self, cwd: str) -> None:
+    def start(self, cwd: str) -> None:
         """Run a pass now and every `POLL_SECONDS` after, for as long as the switch is on. A second
         call for a workspace already running does nothing.
         """
         key = self.ws.key(cwd)
-        self._autopilot_cwd[key] = cwd
-        task = self._autopilot_tasks.get(key)
+        self.cwds[key] = cwd
+        task = self.tasks.get(key)
         if task is not None and not task.done():
             return
-        self._autopilot_tasks[key] = asyncio.get_running_loop().create_task(
-            self._autopilot_loop(key)
-        )
+        self.tasks[key] = asyncio.get_running_loop().create_task(self._loop(key))
         # The reader of the workspace's pull requests lives and dies with it.
-        self._pr_readers[key] = asyncio.get_running_loop().create_task(self._pr_reader_loop(key))
+        self.pr_readers[key] = asyncio.get_running_loop().create_task(self._pr_reader_loop(key))
 
-    def autopilot_stop(self, key: str) -> None:
+    def stop(self, key: str) -> None:
         """Turned off: no more passes and no more `gh` calls for it. A step it already started runs on
         to its end, as a person's would.
         """
-        task = self._autopilot_tasks.pop(key, None)
+        task = self.tasks.pop(key, None)
         if task is not None:
             task.cancel()
-        reader = self._pr_readers.pop(key, None)
+        reader = self.pr_readers.pop(key, None)
         if reader is not None:
             reader.cancel()
-        self._autopilot_stops.pop(key, None)
-        self._autopilot_held.pop(key, None)
+        self.stops.pop(key, None)
+        self.held.pop(key, None)
 
-    def autopilot_resume(self) -> list[str]:
+    def resume(self) -> list[str]:
         """At start-up, every workspace whose switch is on starts again. Returns them."""
         started = []
         for row in self.ws.all()["workspaces"]:
             if row["missing"]:
                 continue
             if autopilot_values(self.config, self.ws.key(row["path"]))["autopilot"]:
-                self.autopilot_start(row["path"])
+                self.start(row["path"])
                 started.append(row["path"])
         return started
 
-    def _autopilot_on(self, key: str) -> bool:
-        task = self._autopilot_tasks.get(key)
+    def _on(self, key: str) -> bool:
+        task = self.tasks.get(key)
         return task is not None and not task.done()
 
-    def _autopilot_nudge(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
+    def nudge(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
         """A step or an integration ended, or an answer was written. One pass is scheduled and not
         waited for; nothing happens when the switch is off. `woken_by`: the transitions of the PR
         machine that scheduled it, which its picks record.
         """
-        if not self._autopilot_on(key):
+        if not self._on(key):
             return
-        task = asyncio.get_running_loop().create_task(self._autopilot_guarded(key, woken_by))
-        self._autopilot_pending.add(task)
-        task.add_done_callback(self._autopilot_pending.discard)
+        task = asyncio.get_running_loop().create_task(self._guarded(key, woken_by))
+        self.pending.add(task)
+        task.add_done_callback(self.pending.discard)
 
-    async def _autopilot_loop(self, key: str) -> None:
+    async def _loop(self, key: str) -> None:
         while True:
-            await self._autopilot_guarded(key)
+            await self._guarded(key)
             await asyncio.sleep(autopilot.POLL_SECONDS)
 
     async def _pr_reader_loop(self, key: str) -> None:
@@ -155,20 +187,20 @@ class AutopilotMixin:
         while True:
             await asyncio.sleep(poll)
             try:
-                await self._pr_read(key)
+                await self.pr_read(key)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 # The next read tries again; the pass is the net.
                 log.exception("the pull request reader of %s failed", key)
 
-    async def _pr_read(self, key: str) -> prmachine.Read:
+    async def pr_read(self, key: str) -> prmachine.Read:
         """One read of the workspace's pull requests. Whatever it recorded schedules one pass for this
         workspace, however many transitions that was; a merge also schedules one for every other
         workspace the autopilot is on in, where a unit may depend on it.
         """
-        cwd = self._autopilot_cwd.get(key)
-        if cwd is None or not self._autopilot_on(key):
+        cwd = self.cwds.get(key)
+        if cwd is None or not self._on(key):
             return prmachine.Read()
         root = Path(cwd).expanduser().resolve()
 
@@ -178,37 +210,35 @@ class AutopilotMixin:
             except Invalid:
                 return self.ws.units_root(cwd) / unit
 
-        got = await self._pr_machine().read(str(root), key, directory_of)
+        got = await self.steps.pr_machine().read(str(root), key, directory_of)
         if not got.moved:
             return got
         merged = [c for c in got.causes if c["transition"] == "merged"]
         # A merge made on GitHub is followed by no `ship` step, so its `ship` row and cleanup
         # are the reader's, before the pass it schedules.
         for c in merged:
-            await self._shipped(cwd, key, c["unit"], "shipped")
-        self._autopilot_nudge(key, got.causes)
+            await self.steps.shipped(cwd, key, c["unit"], "shipped")
+        self.nudge(key, got.causes)
         if merged:
-            for other in list(self._autopilot_tasks):
+            for other in list(self.tasks):
                 if other != key:
-                    self._autopilot_nudge(other, merged)
+                    self.nudge(other, merged)
         return got
 
-    async def _autopilot_guarded(
-        self, key: str, woken_by: list[dict[str, Any]] | None = None
-    ) -> None:
+    async def _guarded(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
         """A pass that raises leaves a stop line saying so, not a dead loop."""
         try:
-            await (self._autopilot_pass(key, woken_by) if woken_by else self._autopilot_pass(key))
+            await (self.run_pass(key, woken_by) if woken_by else self.run_pass(key))
         except asyncio.CancelledError:
             raise
         except Exception as e:
             # Shown on the board, never swallowed.
             log.exception("the autopilot pass of %s failed", key)
-            self._autopilot_set_stops(
+            self.set_stops(
                 key, {"": {"unit": "", "kind": "f", "reason": f"the autopilot's pass failed: {e}"}}
             )
 
-    def _autopilot_running(self, key: str) -> list[dict[str, Any]]:
+    def _running(self, key: str) -> list[dict[str, Any]]:
         """What runs in this workspace now, by unit, a person's steps included."""
         out: dict[str, dict[str, Any]] = {}
         for (k, unit), mark in self.holds.marks.items():
@@ -217,12 +247,12 @@ class AutopilotMixin:
                     "unit": unit,
                     "stage": "integrate" if mark.kind == "integrate" else mark.stage,
                 }
-        for unit, (stage, task) in (self._autopilot_runs.get(key) or {}).items():
+        for unit, (stage, task) in (self.runs.get(key) or {}).items():
             if not task.done() and unit not in out:
                 out[unit] = {"unit": unit, "stage": stage}
         return list(out.values())
 
-    def _autopilot_files(self, cwd: str, unit: str) -> set[str] | None:
+    def _files(self, cwd: str, unit: str) -> set[str] | None:
         try:
             return autopilot.files_of(
                 (self.ws.unit_dir(cwd, unit) / "plan.md").read_text(encoding="utf-8")
@@ -230,7 +260,7 @@ class AutopilotMixin:
         except Invalid, OSError:
             return None
 
-    def _autopilot_cap(self, records: list[dict[str, Any]], limit: float) -> dict[str, Any]:
+    def cap(self, records: list[dict[str, Any]], limit: float) -> dict[str, Any]:
         """The figures for a pass and for the board: every workspace, every starter."""
         now = datetime.now().astimezone()
         spent = autopilot.spent_today(records, now)
@@ -240,7 +270,7 @@ class AutopilotMixin:
         }
         # A launch holds no mark until `run_step` or `integrate` takes one (`integrate` only after its
         # fetch and `gh` reads) and is counted from the moment it was chosen.
-        for k, runs in self._autopilot_runs.items():
+        for k, runs in self.runs.items():
             for unit, (stage, task) in runs.items():
                 if not task.done():
                     active.setdefault((k, unit), stage)
@@ -257,7 +287,7 @@ class AutopilotMixin:
             "day": autopilot.today(now),
         }
 
-    def _autopilot_set_stops(
+    def set_stops(
         self,
         key: str,
         found: dict[str, dict[str, str]],
@@ -270,12 +300,12 @@ class AutopilotMixin:
         change, `stop` empty once it cleared, which tells a person's press at a stop from one outside
         them. The workspace's own stop, unit `""`, is logged the same way, so a notice can say it.
         """
-        before = self._autopilot_stops.get(key, {})
+        before = self.stops.get(key, {})
         if asked is None:
             after = dict(found)
         else:
             after = {**{u: s for u, s in before.items() if u not in asked}, **found}
-        self._autopilot_stops[key] = after
+        self.stops[key] = after
         journal = self.ws.journal()
         if journal is None:
             return
@@ -297,14 +327,14 @@ class AutopilotMixin:
             except BadRecord, Busy:
                 pass
 
-    async def _autopilot_pass(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
+    async def run_pass(self, key: str, woken_by: list[dict[str, Any]] | None = None) -> None:
         """One look at a workspace: follow its shortlist, find each listed unit's stop or why it waits,
         then start what may start, highest first, each after its record.
         """
-        cwd = self._autopilot_cwd.get(key)
-        if cwd is None or not self._autopilot_on(key):
+        cwd = self.cwds.get(key)
+        if cwd is None or not self._on(key):
             return
-        lock = self._autopilot_locks.setdefault(key, asyncio.Lock())
+        lock = self.locks.setdefault(key, asyncio.Lock())
         async with lock:
             settings = autopilot_values(self.config, key)
             if not settings["autopilot"]:
@@ -312,12 +342,12 @@ class AutopilotMixin:
             refused = off_loopback(self.config)
             if refused:
                 # `COS_HOST` can change after the switch was turned on.
-                self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": refused}})
+                self.set_stops(key, {"": {"unit": "", "kind": "f", "reason": refused}})
                 return
             journal = self.ws.journal()
             if journal is None:
                 return
-            data = await self.board(cwd)
+            data = await self.boards.read(cwd)
             try:
                 records = journal.records(
                     kinds=(
@@ -331,18 +361,15 @@ class AutopilotMixin:
                     ),
                 )
             except Busy as e:
-                self._autopilot_set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
+                self.set_stops(key, {"": {"unit": "", "kind": "f", "reason": str(e)}})
                 return
             # The last well-formed shortlist, read again on every pass.
             listed, n = backlog.shortlist_of(r for r in records if r.get("workspace") == key)
             if listed is None or not listed["units"]:
                 # Nothing is asked and nothing starts.
-                if (
-                    not self._autopilot_on(key)
-                    or not autopilot_values(self.config, key)["autopilot"]
-                ):
+                if not self._on(key) or not autopilot_values(self.config, key)["autopilot"]:
                     return
-                self._autopilot_set_stops(
+                self.set_stops(
                     key, {"": {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST}}
                 )
                 return
@@ -365,7 +392,7 @@ class AutopilotMixin:
                 except GitError as e:
                     unfetched = {"outcome": "failed", "detail": str(e)}
                 else:
-                    data = await self.board(cwd)
+                    data = await self.boards.read(cwd)
             last: dict[str, dict[str, Any]] = {}
             integrations: dict[str, dict[str, Any]] = {}
             # The `start` of the step each unit's last `end` closed, the latest of that unit and stage
@@ -390,7 +417,7 @@ class AutopilotMixin:
                             (str(r.get("unit") or ""), str(r.get("stage") or ""))
                         )
 
-            running = self._autopilot_running(key)
+            running = self._running(key)
             here = {r["unit"]: r["stage"] for r in running}
             board = {u["name"]: u for u in data["units"]}
             found: dict[str, dict[str, str]] = {}
@@ -404,7 +431,7 @@ class AutopilotMixin:
                     reasons[name] = ("missing", "")
                     continue
                 try:
-                    nxt = await self.next_step(cwd, name)
+                    nxt = await self.steps.next_step(cwd, name)
                 except Invalid as e:
                     found[name] = {"unit": name, "kind": "f", "reason": str(e)}
                     reasons[name] = (
@@ -512,7 +539,7 @@ class AutopilotMixin:
                     continue
                 if not stage:
                     continue
-                files = self._autopilot_files(cwd, name) if stage in autopilot.CODE_STAGES else None
+                files = self._files(cwd, name) if stage in autopilot.CODE_STAGES else None
                 # The exhausted `ship` this pick went past. Not once the stage became `integrate`, which
                 # skipped nothing.
                 skipped = stage == "ship" and autopilot.skips_exhausted(
@@ -532,7 +559,7 @@ class AutopilotMixin:
 
             for r in running:
                 if r["stage"] in autopilot.CODE_STAGES:
-                    r["files"] = self._autopilot_files(cwd, r["unit"])
+                    r["files"] = self._files(cwd, r["unit"])
             now = datetime.now().astimezone()
             # A `start` with no `end`, from a process before this one, counts against N for 24 hours.
             elsewhere = sum(
@@ -540,11 +567,11 @@ class AutopilotMixin:
                 for (k, unit) in autopilot.open_starts(records, now)
                 if k == key and unit not in here
             )
-            cap = self._autopilot_cap(records, settings["daily_cap_usd"])
+            cap = self.cap(records, settings["daily_cap_usd"])
             room = cap["limit"] - cap["spent"] - cap["running"]
             # The pull requests the PR machine holds open, with the files it read.
             try:
-                prs = prmachine.open_prs(self._pr_machine().history, key)
+                prs = prmachine.open_prs(self.steps.pr_machine().history, key)
             except sqlite3.Error, OSError, Busy:
                 prs = []
             picked = autopilot.pick(
@@ -573,14 +600,14 @@ class AutopilotMixin:
                     }
                     reasons[c["unit"]] = autopilot.reason_for({}, c["stage"], found[c["unit"]])
             # Raises before anything is recorded or started when a unit above one chosen has no
-            # reason; `_autopilot_guarded` shows it as a stop line.
+            # reason; `_guarded` shows it as a stop line.
             passed = autopilot.passed_for(names, [c["unit"] for c in picked["chosen"]], reasons)
             # The switch may have been turned off while this pass read the board and `next`. Nothing from
             # here on awaits, so nothing starts once it is off.
-            if not self._autopilot_on(key) or not autopilot_values(self.config, key)["autopilot"]:
+            if not self._on(key) or not autopilot_values(self.config, key)["autopilot"]:
                 return
-            self._autopilot_set_stops(key, found)
-            self._autopilot_held[key] = dict(picked["held"])
+            self.set_stops(key, found)
+            self.held[key] = dict(picked["held"])
             run_id = uuid.uuid4().hex
             shortlist = {"n": n, "at": listed.get("at"), "units": names}
             for c, over in zip(picked["chosen"], passed):
@@ -607,7 +634,7 @@ class AutopilotMixin:
                         }
                     )
                 except (BadRecord, Busy) as e:
-                    self._autopilot_set_stops(
+                    self.set_stops(
                         key,
                         {
                             **found,
@@ -620,11 +647,11 @@ class AutopilotMixin:
                     )
                     return
                 task = asyncio.get_running_loop().create_task(
-                    self._autopilot_launch(key, cwd, c["unit"], c["stage"])
+                    self._launch(key, cwd, c["unit"], c["stage"])
                 )
-                self._autopilot_runs.setdefault(key, {})[c["unit"]] = (c["stage"], task)
+                self.runs.setdefault(key, {})[c["unit"]] = (c["stage"], task)
 
-    async def _autopilot_launch(self, key: str, cwd: str, unit: str, stage: str) -> None:
+    async def _launch(self, key: str, cwd: str, unit: str, stage: str) -> None:
         """Start one step or integration and read it to its end, since no client will.
 
         A refusal is a stop line with the gate's words, unless it is CI still running, or the unit
@@ -632,12 +659,12 @@ class AutopilotMixin:
         """
         try:
             # Turned off between the pass and this task's first turn.
-            if not self._autopilot_on(key):
+            if not self._on(key):
                 return
             stream = (
-                self.integrate(cwd, unit, started_by="autopilot")
+                self.steps.integrate(cwd, unit, started_by="autopilot")
                 if stage == "integrate"
-                else self.run_step(cwd, unit, stage, started_by="autopilot")
+                else self.steps.run_step(cwd, unit, stage, started_by="autopilot")
             )
             async for _ in stream:
                 pass
@@ -649,15 +676,13 @@ class AutopilotMixin:
             said = str(e)
             # A gate's refusal carries its codes (`Refused`); anything else has none.
             if not autopilot.is_ci_pending(e) and not self.holds.busy(key, unit):
-                self._autopilot_set_stops(
-                    key, {unit: {"unit": unit, "kind": "f", "reason": said}}, {unit}
-                )
+                self.set_stops(key, {unit: {"unit": unit, "kind": "f", "reason": said}}, {unit})
         finally:
-            runs = self._autopilot_runs.get(key) or {}
+            runs = self.runs.get(key) or {}
             if runs.get(unit, ("", None))[1] is asyncio.current_task():
                 del runs[unit]
 
-    def _autopilot_block(self, key: str) -> dict[str, Any]:
+    def _block(self, key: str) -> dict[str, Any]:
         """What the board shows of the autopilot. Display only; decides nothing."""
         values = autopilot_values(self.config, key)
         on = values["autopilot"]
@@ -674,34 +699,46 @@ class AutopilotMixin:
         journal = self.ws.journal()
         if journal is not None:
             try:
-                block["cap"] = self._autopilot_cap(
+                block["cap"] = self.cap(
                     journal.records(kinds=("start", "end")), values["daily_cap_usd"]
                 )
             except Busy:
                 block["cap"] = None
         block["stops"] = sorted(
-            (self._autopilot_stops.get(key) or {}).values(),
+            (self.stops.get(key) or {}).values(),
             key=lambda s: (autopilot.unit_number(s["unit"]), s["unit"]),
         )
         return block
 
-    def _guide_block(self, key: str) -> dict[str, Any]:
+    def show(self, key: str, data: dict[str, Any]) -> None:
+        """What the board shows of the autopilot, on a board `read` returned. Display only."""
+        for unit in data["units"]:
+            # The code the last autopilot pass held the unit back with, and its
+            # detail (`overlap-pr #7`); display only, and nothing while the autopilot is off.
+            held = (self.held.get(key) or {}).get(unit["name"])
+            unit["held"] = " ".join(p for p in held if p) if held else ""
+        data["autopilot"] = self._block(key)
+        data["guide"] = self.guide_block(key)
+
+    def guide_block(self, key: str) -> dict[str, Any]:
         """The board's guide: `{on, running, needs_you}`, or `{on: False}` alone while the
         autopilot is off. What runs is read from memory. Display only; decides nothing.
         """
         if not autopilot_values(self.config, key)["autopilot"]:
             return {"on": False}
         stops = sorted(
-            (self._autopilot_stops.get(key) or {}).values(),
+            (self.stops.get(key) or {}).values(),
             key=lambda s: (autopilot.unit_number(s["unit"]), s["unit"]),
         )
         return {
             "on": True,
-            "running": guide.running(self._running_here(key, self.agents.agent_overrides()[0])),
+            "running": guide.running(
+                self.boards.running_here(key, self.agents.agent_overrides()[0])
+            ),
             "needs_you": guide.needs_you(stops),
         }
 
-    def autopilot_settings(self, cwd: str) -> dict[str, Any]:
+    def settings(self, cwd: str) -> dict[str, Any]:
         """The four settings of one workspace, and whether the bind lets the autopilot run."""
         self.ws.check(cwd)
         return {
@@ -710,7 +747,7 @@ class AutopilotMixin:
             "refused_because": off_loopback(self.config),
         }
 
-    def set_autopilot(self, cwd: str, name: Any, value: Any) -> dict[str, Any]:
+    def set_setting(self, cwd: str, name: Any, value: Any) -> dict[str, Any]:
         """Set one of the four. A wrong value is refused and nothing is written.
 
         Behind the password like every route: whoever holds it can turn the autopilot on,
@@ -737,7 +774,7 @@ class AutopilotMixin:
         log_setting(self.ws.journal(), pref_name(name, key), old, stored)
         if name == "autopilot":
             if value:
-                self.autopilot_start(cwd)
+                self.start(cwd)
             else:
-                self.autopilot_stop(key)
-        return self.autopilot_settings(cwd)
+                self.stop(key)
+        return self.settings(cwd)

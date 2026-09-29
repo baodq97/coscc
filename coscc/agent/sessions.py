@@ -330,7 +330,7 @@ class StepHandle:
     """The one client a board step spawned, and the one way to close it.
 
     A step is never resumed, so `stream(step=...)` closes it however the step ends and
-    `Service.stop_step` closes it early. `close` may be called before the client exists: the
+    `Steps.stop_step` closes it early. `close` may be called before the client exists: the
     client is then closed the moment it connects and the prompt is never sent. Every later
     call waits on the one closing the first began; cancelling a caller does not cancel it.
     """
@@ -341,7 +341,7 @@ class StepHandle:
     _closing: asyncio.Task | None = None
     # The step's own `COS_DATA_DIR`, removed by `stream` once the client is closed.
     scratch: Path | None = None
-    # The step's `coscc/runlog/events.py` recorder, set by `Service.run_step`. `_stream` hands
+    # The step's `coscc/runlog/events.py` recorder, set by `Steps.run_step`. `_stream` hands
     # it every message first; chat has no handle, so none.
     recorder: Any = None
     # Whose session this is (`stream`'s `owner`), its id once `init` names it, the model it was

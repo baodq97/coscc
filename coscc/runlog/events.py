@@ -139,7 +139,7 @@ def _system_fields(thing: Any) -> dict[str, Any]:
 
 
 class Recorder:
-    """The events of one board step's `run`. One per step, made by `Service.run_step`.
+    """The events of one board step's `run`. One per step, made by `Steps.run_step`.
 
     `events` holds every event of the run until it ends; `pending` what is not on disk yet;
     `subscribers` the followers' queues. All three are touched only on the event loop, and never

@@ -7,7 +7,7 @@ import unittest
 
 class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
     """The page shows `Service.board`'s `outcome_label` and decides nothing; a refusal from
-    `Service.record_outcome` reaches the page as its words."""
+    `Answers.record_outcome` reaches the page as its words."""
 
     def test_the_fields_map_from_the_label(self):
         from coscc.state import _outcome_fields
@@ -85,7 +85,9 @@ class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
             notice="",
             _load_board=never,
         )
-        with mock.patch.object(state, "SERVICE", SimpleNamespace(record_outcome=refuse)):
+        with mock.patch.object(
+            state, "SERVICE", SimpleNamespace(answers=SimpleNamespace(record_outcome=refuse))
+        ):
             asyncio.run(state.StudioState.record_outcome.fn(page))
         self.assertEqual(
             page.notice, "the result needs a source: where the figure it rests on came from"
@@ -135,7 +137,9 @@ class TheOutcomeIsCopiedFromTheService(unittest.TestCase):
                 _load_board=board,
                 _load_artifact=lambda: None,
             )
-            with mock.patch.object(state, "SERVICE", SimpleNamespace(record_outcome=record)):
+            with mock.patch.object(
+                state, "SERVICE", SimpleNamespace(answers=SimpleNamespace(record_outcome=record))
+            ):
                 asyncio.run(state.StudioState.record_outcome.fn(page))
             self.assertEqual(sent[-1][2:4], (word, stored))
             self.assertEqual(page.notice, f"Recorded {label} for 0001_x, measured by {who}.")
@@ -173,7 +177,7 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
         return page
 
     def press(self, page, key, answer):
-        """Run the handler to its end with `answer` standing in for `Service.answer`.
+        """Run the handler to its end with `answer` standing in for `Answers.answer`.
         Returns what `answering_key` was at each `yield`."""
         import asyncio
         from types import SimpleNamespace
@@ -187,7 +191,9 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
             async for _ in state.StudioState.answer_question.fn(page, key):
                 seen.append(page.answering_key)
 
-        with mock.patch.object(state, "SERVICE", SimpleNamespace(answer=answer)):
+        with mock.patch.object(
+            state, "SERVICE", SimpleNamespace(answers=SimpleNamespace(answer=answer))
+        ):
             asyncio.run(drive())
         return seen
 
@@ -314,7 +320,9 @@ class AnsweringAlwaysSaysSomething(unittest.TestCase):
             await gen.aclose()
             return at_yield
 
-        with mock.patch.object(state, "SERVICE", SimpleNamespace(answer=answer)):
+        with mock.patch.object(
+            state, "SERVICE", SimpleNamespace(answers=SimpleNamespace(answer=answer))
+        ):
             self.assertEqual(asyncio.run(first_step()), ("intent.md#1", None))
 
     def test_opening_a_unit_clears_the_last_notice(self):

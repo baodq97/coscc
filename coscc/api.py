@@ -181,7 +181,7 @@ def build(config: Config | None = None) -> FastAPI:
     async def get_autopilot(request: Request) -> Any:
         """One workspace's autopilot switches, `max_parallel`, and the app's daily cap."""
         try:
-            return service.autopilot_settings(request.query_params.get("cwd", ""))
+            return service.autopilot.settings(request.query_params.get("cwd", ""))
         except Invalid as e:
             return _bad(str(e))
 
@@ -200,7 +200,7 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("body must be a JSON object")
         try:
-            return service.set_autopilot(
+            return service.autopilot.set_setting(
                 str(body.get("cwd", "")), body.get("name"), body.get("value")
             )
         except Invalid as e:
@@ -224,7 +224,7 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("send a JSON object")
         try:
-            return await service.create_unit(
+            return await service.answers.create_unit(
                 str(body.get("cwd") or ""),
                 str(body.get("slug") or ""),
                 str(body.get("brief") or ""),
@@ -275,7 +275,7 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("send a JSON object")
         try:
-            return await service.answer(
+            return await service.answers.answer(
                 str(body.get("cwd") or ""),
                 str(body.get("unit") or ""),
                 str(body.get("artifact") or ""),
@@ -303,7 +303,7 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("send a JSON object")
         try:
-            return await service.record_outcome(
+            return await service.answers.record_outcome(
                 str(body.get("cwd") or ""),
                 str(body.get("unit") or ""),
                 str(body.get("result") or ""),
@@ -333,7 +333,7 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("send a JSON object")
         try:
-            return await service.hold(
+            return await service.answers.hold(
                 str(body.get("cwd") or ""),
                 str(body.get("unit") or ""),
                 str(body.get("to") or ""),
@@ -359,7 +359,7 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("send a JSON object")
         try:
-            return await service.more_rounds(
+            return await service.answers.more_rounds(
                 str(body.get("cwd") or ""),
                 str(body.get("unit") or ""),
                 str(body.get("by") or ""),
@@ -483,7 +483,7 @@ def build(config: Config | None = None) -> FastAPI:
         if not isinstance(body, dict):
             return _bad("send a JSON object")
         try:
-            return await service.post_review_comment(
+            return await service.answers.post_review_comment(
                 str(body.get("cwd") or ""),
                 str(body.get("unit") or ""),
                 body.get("round"),
@@ -534,7 +534,7 @@ def build(config: Config | None = None) -> FastAPI:
         Cheap enough to ask every few seconds: memory and the run log, no `git` or `gh`.
         """
         try:
-            return service.running(request.query_params.get("cwd", ""))
+            return service.boards.running(request.query_params.get("cwd", ""))
         except Invalid as e:
             return _bad(str(e))
 
@@ -545,7 +545,7 @@ def build(config: Config | None = None) -> FastAPI:
         `/api/board/run` still asks the gate."""
         q = request.query_params
         try:
-            return await service.next_step(q.get("cwd", ""), q.get("unit", ""))
+            return await service.steps.next_step(q.get("cwd", ""), q.get("unit", ""))
         except Invalid as e:
             return _bad(str(e))
 
@@ -557,7 +557,7 @@ def build(config: Config | None = None) -> FastAPI:
         except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         try:
-            return await service.set_mode(
+            return await service.steps.set_mode(
                 str(body.get("cwd", "")),
                 str(body.get("unit", "")),
                 str(body.get("stage", "")),
@@ -583,7 +583,7 @@ def build(config: Config | None = None) -> FastAPI:
         # `rerun` only when the body says `true` itself.
         rerun = body.get("rerun") is True
         extra = {"rerun": True, "note": str(body.get("note") or "")} if rerun else {}
-        stream = service.run_step(cwd, unit, stage, **extra)
+        stream = service.steps.run_step(cwd, unit, stage, **extra)
         try:
             # Pull the first item here so a refusal before any output is still a 400.
             first = await stream.__anext__()
@@ -625,7 +625,7 @@ def build(config: Config | None = None) -> FastAPI:
         except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
         try:
-            return await service.stop_step(
+            return await service.steps.stop_step(
                 str(body.get("cwd", "")), str(body.get("unit", "")), str(body.get("by", ""))
             )
         except Invalid as e:
@@ -638,7 +638,7 @@ def build(config: Config | None = None) -> FastAPI:
         beside a step's `kind: "step"`, so whatever restarts the app on an empty list sees
         them). This process only. Not `/api/board/running`, which is the display."""
         try:
-            return service.running_steps(request.query_params.get("cwd", ""))
+            return service.steps.running_steps(request.query_params.get("cwd", ""))
         except Invalid as e:
             return _bad(str(e))
 
@@ -756,7 +756,7 @@ def build(config: Config | None = None) -> FastAPI:
             body = await request.json()
         except json.JSONDecodeError, ValueError:
             return _bad("body must be JSON")
-        stream = service.integrate(str(body.get("cwd", "")), str(body.get("unit", "")))
+        stream = service.steps.integrate(str(body.get("cwd", "")), str(body.get("unit", "")))
         try:
             first = await stream.__anext__()
         except Updating as e:

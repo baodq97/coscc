@@ -106,7 +106,7 @@ class IdeasMixin(rx.State, mixin=True):
             self.notice = "Choose a workspace for the unit."
             return
         try:
-            made = await SERVICE.create_unit(
+            made = await SERVICE.answers.create_unit(
                 where,
                 self.child_slug.strip(),
                 idea=self.idea_ref,

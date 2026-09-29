@@ -154,7 +154,7 @@ class _Base(unittest.TestCase):
 
     def up(self) -> list[dict]:
         async def go():
-            said = await self.service.resume_after_update()
+            said = await self.service.resume.resume_after_update()
             for _ in range(20):
                 await asyncio.sleep(0)
             return said
@@ -164,7 +164,7 @@ class _Base(unittest.TestCase):
     def taken(self) -> list[dict]:
         """`resume_step` replaced: what it was handed, and nothing run."""
         calls: list[dict] = []
-        patcher = mock.patch.object(self.service, "resume_step", calls.append)
+        patcher = mock.patch.object(self.service.resume, "resume_step", calls.append)
         patcher.start()
         self.addCleanup(patcher.stop)
         return calls
@@ -214,9 +214,9 @@ class TakingUpAfterAnUpdate(_Base):
             got["chat"].append(record)
 
         with (
-            mock.patch.object(self.service, "resume_integration", lambda r: integration(r)),
+            mock.patch.object(self.service.resume, "resume_integration", lambda r: integration(r)),
             mock.patch.object(self.service.backlog, "propose_estimates", estimates),
-            mock.patch.object(self.service, "_resume_chat", chat),
+            mock.patch.object(self.service.resume, "resume_chat", chat),
         ):
             for kind in resume_mod.KINDS:
                 self.paused(kind)
@@ -339,7 +339,7 @@ class TakingUpAfterAnUpdate(_Base):
         }
         with (
             mock.patch.object(self.service.backlog, "propose_estimates", estimates),
-            mock.patch.object(self.service, "_resume_chat", chat),
+            mock.patch.object(self.service.resume, "resume_chat", chat),
         ):
             for why, refusal in cases.items():
                 with self.subTest(why), refusal():
@@ -383,7 +383,7 @@ class TakingUpAfterAnUpdate(_Base):
 
         self.paused(cwd=self.root / "gone", write=False)
         self.paused("integrate")
-        with mock.patch.object(self.service, "resume_integration", lambda r: integration(r)):
+        with mock.patch.object(self.service.resume, "resume_integration", lambda r: integration(r)):
             said = self.up()
         self.assertEqual(
             [(s["kind"], s["result"]) for s in said], [("step", "failed"), ("integrate", "resumed")]
@@ -483,18 +483,18 @@ class TakingUpAfterAnUpdate(_Base):
                 yield
 
         def autopilot_resume():
-            held.append([r.unit for r in self.service.steps.all()])
+            held.append([r.unit for r in self.service.steps.registry.all()])
             gate.set()
             return []
 
         self.paused()
         with (
             mock.patch("coscc.runner.Runner", Waits),
-            mock.patch.object(self.service, "autopilot_resume", autopilot_resume),
+            mock.patch.object(self.service.autopilot, "resume", autopilot_resume),
         ):
             self.up()
         self.assertEqual(held, [[self.unit]])
-        self.assertEqual(self.service.steps.all(), [])
+        self.assertEqual(self.service.steps.registry.all(), [])
 
     def test_resume_runs_no_git_command_on_the_worktree(self):
         # Nothing reads or cleans the worktree before the session goes on.
@@ -553,7 +553,7 @@ class APausedOwnerEndsNothing(_Base):
         row = {**self.paused("integrate"), "message": "MSG"}
 
         async def gebo():
-            async for _ in self.service._integrate_gebo(
+            async for _ in self.service.steps.integrate_gebo(
                 self.cwd,
                 self.key,
                 self.unit,

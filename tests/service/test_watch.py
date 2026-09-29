@@ -62,13 +62,13 @@ class AStepCanBeWatched(unittest.TestCase):
             self.release = asyncio.Event()
             reader = asyncio.create_task(self._drain())
             while (
-                not self.service._recorders
-                or next(iter(self.service._recorders.values())).seq < self.N
+                not self.service.steps.recorders
+                or next(iter(self.service.steps.recorders.values())).seq < self.N
             ):
                 await asyncio.sleep(0.01)
-            [run] = list(self.service._recorders)
-            listed = self.service.running(ws)["running"][self.unit][0]["run"]
-            steps_run = self.service.running_steps(ws)[0]["run"]
+            [run] = list(self.service.steps.recorders)
+            listed = self.service.boards.running(ws)["running"][self.unit][0]["run"]
+            steps_run = self.service.steps.running_steps(ws)[0]["run"]
             live = self.service.watch.events_page(ws, self.unit, run)
             older = self.service.watch.events_page(
                 ws, self.unit, run, before=live["first_seq"], limit=9999
@@ -116,13 +116,13 @@ class AStepCanBeWatched(unittest.TestCase):
         self.assertEqual(after_older["events"], older["events"])
         self.assertEqual([k for k, _ in ended], ["status"])
         self.assertEqual(ended[0][1]["status"], "ended")
-        self.assertEqual(self.service._recorders, {})
+        self.assertEqual(self.service.steps.recorders, {})
         [start] = [r for r in self.service.ws.journal().records(kind="start")]
         [end] = [r for r in self.service.ws.journal().records(kind="end")]
         self.assertEqual((start["run"], end["run"], end["events_lost"]), (run, run, 0))
 
     async def _drain(self):
-        async for _ in self.service.run_step(str(self.repo), self.unit, "spec"):
+        async for _ in self.service.steps.run_step(str(self.repo), self.unit, "spec"):
             pass
 
     def test_a_run_nobody_knows_is_refused_and_a_step_the_gate_closes_leaves_no_recorder(self):
@@ -132,12 +132,12 @@ class AStepCanBeWatched(unittest.TestCase):
             self.service.watch.events_page(str(self.repo), self.unit, "")
 
         async def refused():
-            async for _ in self.service.run_step(str(self.repo), self.unit, "ship"):
+            async for _ in self.service.steps.run_step(str(self.repo), self.unit, "ship"):
                 pass
 
         with self.assertRaises(Invalid):
             asyncio.run(refused())
-        self.assertEqual(self.service._recorders, {})
+        self.assertEqual(self.service.steps.recorders, {})
 
     def test_a_run_the_run_log_names_with_no_index_row_is_none(self):
         journal = self.service.ws.journal()

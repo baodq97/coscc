@@ -119,7 +119,7 @@ class GeboThroughTheService(unittest.TestCase):
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
         self.service = Service(config, StandIn(self._no_act))
-        made = asyncio.run(self.service.create_unit(self.cwd, SLUG, "fixture"))
+        made = asyncio.run(self.service.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
         self.directory = directory
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
@@ -138,7 +138,7 @@ class GeboThroughTheService(unittest.TestCase):
         commit(seed, "main\n", "main")
         git(self.workspace, "fetch", "-q", "origin")
         git(self.workspace, "branch", BRANCH, f"origin/{BRANCH}")
-        self.tree = Path(asyncio.run(self.service._worktree(self.cwd, self.unit))["path"])
+        self.tree = Path(asyncio.run(self.service.answers.worktree(self.cwd, self.unit))["path"])
         self.head_before = self.remote_head()
         self.key = self.service.ws.key(self.cwd)
         patch = mock.patch.object(integrate, "_gh", self._gh)
@@ -185,7 +185,7 @@ class GeboThroughTheService(unittest.TestCase):
 
         async def go():
             done = {}
-            async for kind, payload in self.service.integrate(self.cwd, self.unit):
+            async for kind, payload in self.service.steps.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done
@@ -270,7 +270,7 @@ class GeboThroughTheService(unittest.TestCase):
             return "[needs-person] f.txt: both"
 
         build = {"version": "9.9.9", "commit": "0123456789abcdef0123456789abcdef01234567"}
-        with mock.patch.object(self.service, "_app_identity", return_value=build):
+        with mock.patch.object(self.service.steps, "app_identity", return_value=build):
             self.integrate_with(act)
         starts = [r for r in self.records("start") if r.get("stage") == "integrate"]
         self.assertEqual(len(starts), 1)
@@ -323,7 +323,7 @@ class GeboThroughTheService(unittest.TestCase):
 
         async def act(tree, gate):
             try:
-                async for _ in self.service.run_step(self.cwd, self.unit, "review"):
+                async for _ in self.service.steps.run_step(self.cwd, self.unit, "review"):
                     pass
             except Invalid as e:
                 said["step"] = str(e)
@@ -339,7 +339,7 @@ class GeboThroughTheService(unittest.TestCase):
         seen = {}
 
         async def act(tree, gate):
-            seen["running"] = self.service.running(self.cwd)["running"]
+            seen["running"] = self.service.boards.running(self.cwd)["running"]
             return "[needs-person] stand-in"
 
         self.integrate_with(act)
@@ -354,9 +354,9 @@ class GeboThroughTheService(unittest.TestCase):
         seen = {}
 
         async def act(tree, gate):
-            seen["listed"] = self.service.running_steps(self.cwd)
+            seen["listed"] = self.service.steps.running_steps(self.cwd)
             try:
-                await self.service.stop_step(self.cwd, self.unit, "")
+                await self.service.steps.stop_step(self.cwd, self.unit, "")
             except Invalid as e:
                 seen["stop"] = str(e)
             return "[needs-person] stand-in"
@@ -369,7 +369,7 @@ class GeboThroughTheService(unittest.TestCase):
         )
         self.assertIn("being integrated", seen["stop"])
         self.assertNotIn("has no step running", seen["stop"])
-        self.assertEqual(self.service.running_steps(self.cwd), [])
+        self.assertEqual(self.service.steps.running_steps(self.cwd), [])
 
     def test_a_mechanical_rebase_is_rebasing_with_no_agent_and_not_after(self):
         """The mechanical road: `behind` with no conflict.
@@ -384,7 +384,7 @@ class GeboThroughTheService(unittest.TestCase):
                 code, out, err = await conflicting(argv, cwd)
                 return code, out.replace("CONFLICTING", "MERGEABLE"), err
             if argv[:2] == ["pr", "update-branch"]:
-                seen["running"] = self.service.running(self.cwd)["running"]
+                seen["running"] = self.service.boards.running(self.cwd)["running"]
                 return 1, "", "stand-in gh: refused"
             return await conflicting(argv, cwd)
 
@@ -419,7 +419,7 @@ class GeboThroughTheService(unittest.TestCase):
             return 1, "", "stand-in gh: refused"
 
         async def act(tree, gate):
-            seen["running"] = self.service.running(self.cwd)["running"]
+            seen["running"] = self.service.boards.running(self.cwd)["running"]
             return "[needs-person] stand-in"
 
         with mock.patch.object(integrate, "_gh", self.mergeable_gh(refused)):
@@ -605,7 +605,7 @@ class AStaleOriginMain(unittest.TestCase):
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
         self.service = Service(config, StandIn(self._no_act))
-        made = asyncio.run(self.service.create_unit(self.cwd, SLUG, "fixture"))
+        made = asyncio.run(self.service.answers.create_unit(self.cwd, SLUG, "fixture"))
         self.unit, directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
@@ -626,7 +626,7 @@ class AStaleOriginMain(unittest.TestCase):
         git(self.workspace, "branch", BRANCH, f"origin/{BRANCH}")
         # The order is the point: the tree first, since `worktrees` fetches through the same
         # coordinator; then a fresh coordinator; then `main` moves with no fetch here.
-        self.tree = Path(asyncio.run(self.service._worktree(self.cwd, self.unit))["path"])
+        self.tree = Path(asyncio.run(self.service.answers.worktree(self.cwd, self.unit))["path"])
         shared = mock.patch.object(fetches, "shared", fetches.Fetches())
         shared.start()
         self.addCleanup(shared.stop)
@@ -685,7 +685,7 @@ class AStaleOriginMain(unittest.TestCase):
     def press(self) -> dict:
         async def go():
             done = {}
-            async for kind, payload in self.service.integrate(self.cwd, self.unit):
+            async for kind, payload in self.service.steps.integrate(self.cwd, self.unit):
                 if kind == "done":
                     done = payload["integration"]
             return done
@@ -784,12 +784,12 @@ class AStaleOriginMain(unittest.TestCase):
             }
 
         async def go():
-            self.service.set_autopilot(self.cwd, "autopilot_may_ship", True)
-            self.service.set_autopilot(self.cwd, "autopilot", True)
+            self.service.autopilot.set_setting(self.cwd, "autopilot_may_ship", True)
+            self.service.autopilot.set_setting(self.cwd, "autopilot", True)
             # A loop that never passes on its own: this test asks for the one pass.
-            self.service.autopilot_stop(self.key)
-            self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
-            self.service._autopilot_cwd[self.key] = self.cwd
+            self.service.autopilot.stop(self.key)
+            self.service.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
+            self.service.autopilot.cwds[self.key] = self.cwd
             self.service.ws.journal().append(
                 {
                     "kind": "shortlist",
@@ -800,16 +800,16 @@ class AStaleOriginMain(unittest.TestCase):
                     "by": "proof",
                 }
             )
-            self.service.integrate = integrate_
-            self.service.next_step = next_step
+            self.service.steps.integrate = integrate_
+            self.service.steps.next_step = next_step
             before = (await self.service.board(self.cwd))["units"][0]
-            await self.service._autopilot_pass(self.key)
+            await self.service.autopilot.run_pass(self.key)
             await asyncio.sleep(0.05)
             after = next(
                 u for u in (await self.service.board(self.cwd))["units"] if u["name"] == self.unit
             )
-            stops = dict(self.service._autopilot_stops.get(self.key) or {})
-            self.service.autopilot_stop(self.key)
+            stops = dict(self.service.autopilot.stops.get(self.key) or {})
+            self.service.autopilot.stop(self.key)
             return before, after, stops
 
         before, after, stops = asyncio.run(go())
@@ -864,7 +864,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
             workspaces=(self.cwd,), working_dir=str(root / "work"), data_dir=str(root / "data")
         )
         self.service = Service(config, StandIn(None))
-        made = await self.service.create_unit(self.cwd, SLUG, "fixture")
+        made = await self.service.answers.create_unit(self.cwd, SLUG, "fixture")
         self.unit, directory = made["unit"], Path(made["path"])
         for name in ("intent.md", "spec.md", "plan.md", "impl.md"):
             extra = " Type: feat." if name == "intent.md" else ""
@@ -928,12 +928,12 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         # (a)
         self.assertEqual(u["state"]["state"], "awaiting")
         self.assertEqual(u["state"]["ci"], {"read": False, "red": [], "at": ""})
-        self.assertEqual(len(self.service._ci_asks), 1)
+        self.assertEqual(len(self.service.steps.ci_asks), 1)
         self.assertEqual(self.asked(), 1)
         # (b) A second read opens no second ask while the first is out.
         await self.read()
         await self.settle()
-        self.assertEqual((len(self.service._ci_asks), self.asked()), (1, 1))
+        self.assertEqual((len(self.service.steps.ci_asks), self.asked()), (1, 1))
 
     async def test_a_red_check_is_an_error_from_the_next_read(self):
         """(d)"""
@@ -941,7 +941,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         first = await self.read()
         self.assertEqual(first["state"]["state"], "awaiting")
         await self.settle()
-        self.assertEqual(self.service._ci_asks, {}, "the ask removed itself once done")
+        self.assertEqual(self.service.steps.ci_asks, {}, "the ask removed itself once done")
         u = await self.read()
         self.assertEqual(u["state"]["state"], "error")
         self.assertEqual(u["state"]["ci"]["red"], ["tests"])
@@ -955,7 +955,7 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
         self.checks = [{"name": "tests", "bucket": "fail"}]
         await self.read()
         await self.settle()
-        self.assertEqual(self.service._ci, {}, "an answer is not held in memory")
+        self.assertEqual(self.service.steps.ci, {}, "an answer is not held in memory")
         held = prmachine.ci_held(
             self.service.ws.unit_meta().history, self.service.ws.key(self.cwd), PR, self.head
         )
@@ -991,10 +991,10 @@ class TheCiAnswerIsNeverWaitedOn(unittest.IsolatedAsyncioTestCase):
     async def test_a_cancelled_ask_is_removed_so_the_unit_is_asked_again(self):
         await self.read()
         await self.settle()
-        [task] = self.service._ci_asks.values()
+        [task] = self.service.steps.ci_asks.values()
         task.cancel()
         await self.settle()
-        self.assertEqual(self.service._ci_asks, {})
+        self.assertEqual(self.service.steps.ci_asks, {})
         await self.read()
         await self.settle()
         self.assertEqual(self.asked(), 2)

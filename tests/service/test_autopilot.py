@@ -75,7 +75,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.service.shutdown)
 
     async def unit(self, slug: str, intent: str = "Status: accepted.") -> str:
-        made = await self.service.create_unit(self.ws, slug, "words for the proof")
+        made = await self.service.answers.create_unit(self.ws, slug, "words for the proof")
         (Path(made["path"]) / "intent.md").write_text(
             f"# Intent: x\nAuthor: proof. Type: fix. {intent}\n", encoding="utf-8"
         )
@@ -85,7 +85,8 @@ class _Base(unittest.IsolatedAsyncioTestCase):
     async def ingest(self, unit: str) -> None:
         """Files written here by hand reach `cos.db` as a step's would."""
         self.assertEqual(
-            await self.service._ingest(self.ws, unit, {"outcome": "done", "stage": "test"}), {}
+            await self.service.answers.ingest(self.ws, unit, {"outcome": "done", "stage": "test"}),
+            {},
         )
 
     def rows(self, unit: str) -> list[tuple]:
@@ -136,10 +137,10 @@ class _Base(unittest.IsolatedAsyncioTestCase):
                 self.service.holds.marks
                 or any(
                     not t.done()
-                    for _, t in (self.service._autopilot_runs.get(self.key) or {}).values()
+                    for _, t in (self.service.autopilot.runs.get(self.key) or {}).values()
                 )
-                or self.service._autopilot_pending
-                or self.service._autopilot_locks.get(self.key, asyncio.Lock()).locked()
+                or self.service.autopilot.pending
+                or self.service.autopilot.locks.get(self.key, asyncio.Lock()).locked()
             )
 
         for _ in range(3000):
@@ -156,17 +157,17 @@ class OnTheRealLoop(_Base):
         use_sessions(self.service, _Replies(accepted=5))
         await self.unit("off")
         unit = (await self.service.board(self.ws))["units"][0]["name"]
-        [_ async for _ in self.service.run_step(self.ws, unit, "spec")]
+        [_ async for _ in self.service.steps.run_step(self.ws, unit, "spec")]
         await self.settled()
         self.assertEqual([s["started_by"] for s in self.starts()], ["person"])
-        self.assertEqual(self.service._autopilot_tasks, {})
+        self.assertEqual(self.service.autopilot.tasks, {})
         self.assertFalse((await self.service.board(self.ws))["autopilot"]["on"])
 
     async def test_a_done_step_starts_the_next_stage_and_a_draft_stops_it(self):
         use_sessions(self.service, _Replies(accepted=1))
         unit = await self.unit("chain")
         self.listed(unit)
-        self.service.set_autopilot(self.ws, "autopilot", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
         await self.until(lambda: len(self.starts()) >= 2, "two steps")
         await self.settled()
         self.assertEqual(
@@ -188,7 +189,7 @@ class OnTheRealLoop(_Base):
         use_sessions(self.service, _Replies(accepted=5))
         unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
         self.listed(unit)
-        self.service.set_autopilot(self.ws, "autopilot", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
         await self.settled()
         self.assertEqual(self.starts(), [])
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
@@ -205,7 +206,7 @@ class OnTheRealLoop(_Base):
             "7. Người khởi xướng vẫn nên đọc lại file này.",
         )
         self.listed(unit)
-        self.service.set_autopilot(self.ws, "autopilot", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
         await self.until(lambda: len(self.starts()) >= 2, "two steps")
         await self.settled()
         self.assertEqual(self.starts()[0]["stage"], "spec")
@@ -220,7 +221,7 @@ class OnTheRealLoop(_Base):
             self.key, unit, "spec", "failed"
         )
         self.listed(unit)
-        self.service.set_autopilot(self.ws, "autopilot", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
         await self.settled()
         self.assertEqual(self.starts(), [])
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
@@ -230,35 +231,35 @@ class OnTheRealLoop(_Base):
         use_sessions(self.service, _Replies(accepted=5))
         unit = await self.unit("capped")
         self.listed(unit)
-        self.service.set_autopilot(self.ws, "daily_cap_usd", 1.0)
-        self.service.set_autopilot(self.ws, "autopilot", True)
+        self.service.autopilot.set_setting(self.ws, "daily_cap_usd", 1.0)
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
         await self.settled()
         self.assertEqual(self.starts(), [])
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
         self.assertEqual((stop["unit"], stop["kind"]), (unit, "cap"))
-        self.service.set_autopilot(self.ws, "autopilot", False)
-        [_ async for _ in self.service.run_step(self.ws, unit, "spec")]
+        self.service.autopilot.set_setting(self.ws, "autopilot", False)
+        [_ async for _ in self.service.steps.run_step(self.ws, unit, "spec")]
         self.assertEqual([s["started_by"] for s in self.starts()], ["person"])
 
     async def test_turning_it_off_cancels_the_loop(self):
         use_sessions(self.service, _Replies(accepted=0))
         await self.unit("off-again")
-        self.service.set_autopilot(self.ws, "autopilot", True)
-        task = self.service._autopilot_tasks[self.key]
-        reader = self.service._pr_readers[self.key]
-        self.service.set_autopilot(self.ws, "autopilot", False)
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
+        task = self.service.autopilot.tasks[self.key]
+        reader = self.service.autopilot.pr_readers[self.key]
+        self.service.autopilot.set_setting(self.ws, "autopilot", False)
         await asyncio.sleep(0)
         self.assertTrue(task.cancelled() or task.done())
-        self.assertNotIn(self.key, self.service._autopilot_tasks)
+        self.assertNotIn(self.key, self.service.autopilot.tasks)
         # And its pull request reader, so no `gh` call is made for it.
         self.assertTrue(reader.cancelled() or reader.done())
-        self.assertNotIn(self.key, self.service._pr_readers)
+        self.assertNotIn(self.key, self.service.autopilot.pr_readers)
 
     async def test_start_up_resumes_a_workspace_left_on(self):
-        self.service.set_autopilot(self.ws, "autopilot", True)
-        self.service.autopilot_stop(self.key)
-        self.assertEqual(self.service.autopilot_resume(), [self.ws])
-        self.assertIn(self.key, self.service._autopilot_tasks)
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
+        self.service.autopilot.stop(self.key)
+        self.assertEqual(self.service.autopilot.resume(), [self.ws])
+        self.assertIn(self.key, self.service.autopilot.tasks)
 
     # --- , an answered draft runs again ------------------------------------
 
@@ -267,9 +268,9 @@ class OnTheRealLoop(_Base):
 
     async def test_each_block_writes_an_answer_record_and_only_the_last_completes(self):
         unit = await self.unit("asked", "Status: draft.\n\n## Open questions\n\n1. Một?\n2. Hai?")
-        await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.service.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
         self.assertEqual([r["completes"] for r in self.answers()], [False])
-        await self.service.answer(self.ws, unit, "intent.md", 2, "hai", "")
+        await self.service.answers.answer(self.ws, unit, "intent.md", 2, "hai", "")
         first, last = self.answers()
         self.assertEqual(
             {
@@ -307,13 +308,13 @@ class OnTheRealLoop(_Base):
         use_sessions(self.service, _Intents())
         unit = await self.unit("rerun", "Status: draft.\n\n## Open questions\n\n1. Một?")
         self.listed(unit)
-        self.service.set_autopilot(self.ws, "autopilot", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
         await self.settled()
         self.assertEqual(self.starts(), [])
         [stop] = (await self.service.board(self.ws))["autopilot"]["stops"]
         self.assertEqual(stop["kind"], "a")
         # The loop's next poll is 300 s away: only the pass the answer wakes can start it.
-        await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.service.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
         await self.until(lambda: self.starts(), "the rerun's start")
         await self.settled()
         self.assertEqual(
@@ -348,13 +349,13 @@ class OnTheRealLoop(_Base):
         )
         unit = await self.unit("kept", "Status: draft.\n\n## Open questions\n\n1. Một?")
         self.listed(unit)
-        self.service.set_autopilot(self.ws, "autopilot", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
         await self.settled()
-        await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.service.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
         await self.until(lambda: self.starts(), "the rerun's start")
         await self.settled()
-        self.assertEqual((await self.service.next_step(self.ws, unit))["rerun"], "intent")
-        await self.service._autopilot_pass(self.key)
+        self.assertEqual((await self.service.steps.next_step(self.ws, unit))["rerun"], "intent")
+        await self.service.autopilot.run_pass(self.key)
         await self.settled()
         self.assertEqual(
             [(s["stage"], s["started_by"]) for s in self.starts()], [("intent", "autopilot")]
@@ -369,7 +370,7 @@ class OnTheRealLoop(_Base):
         use_sessions(self.service, _Intents())
         unit = await self.unit("asks", "Status: accepted.\n\n## Open questions\n\n1. Which one?")
         self.listed(unit)
-        self.service.set_autopilot(self.ws, "autopilot", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
         await self.settled()
         self.assertEqual(self.starts(), [])
         self.assertEqual(
@@ -393,7 +394,7 @@ class OnTheRealLoop(_Base):
         before = "# Impl: x\nAuthor: proof. Status: draft.\n\n## Open questions\n\n1. Chạy lệnh X rồi đưa kết quả?\n"
         (d / "impl.md").write_text(before, encoding="utf-8")
         await self.ingest(unit)
-        await self.service.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "Leif")
+        await self.service.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "Leif")
         # A row, and not one byte of `impl.md`.
         self.assertEqual((d / "impl.md").read_text(encoding="utf-8"), before)
         self.assertEqual(self.rows(unit), [("impl.md", "1", "Leif", "product", "Đã chạy, ra 0.")])
@@ -429,13 +430,13 @@ class OnTheRealLoop(_Base):
         with self.assertRaisesRegex(
             Invalid, r"^impl\.md cannot be answered while the impl step that writes it is running"
         ):
-            await self.service.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
+            await self.service.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
         self.assertEqual((d / "impl.md").read_text(encoding="utf-8"), before)
         self.assertEqual(self.answers(), [])
         # Another artifact of the same unit is not the step's to write.
-        await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+        await self.service.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
         self.service.holds.release(self.key, unit, mark)
-        await self.service.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
+        await self.service.answers.answer(self.ws, unit, "impl.md", 1, "Đã chạy, ra 0.", "")
         self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md", "impl.md"])
 
     async def test_a_prose_step_does_not_refuse_an_answer_to_its_artifact(self):
@@ -444,7 +445,7 @@ class OnTheRealLoop(_Base):
         unit, d, before = await self.impl_asks("intent-busy")
         mark = self.service.holds.take(self.key, unit, "step", "intent")
         try:
-            await self.service.answer(self.ws, unit, "intent.md", 1, "một", "")
+            await self.service.answers.answer(self.ws, unit, "intent.md", 1, "một", "")
         finally:
             self.service.holds.release(self.key, unit, mark)
         self.assertEqual([r["artifact"] for r in self.answers()], ["intent.md"])
@@ -509,18 +510,18 @@ class Scripted(_Base):
 
             return go
 
-        self.service.board = board
-        self.service.next_step = next_step
-        self.service.run_step = fake("step")
-        self.service.integrate = lambda cwd, unit, started_by="person": fake("integrate")(
+        self.service.boards.read = board
+        self.service.steps.next_step = next_step
+        self.service.steps.run_step = fake("step")
+        self.service.steps.integrate = lambda cwd, unit, started_by="person": fake("integrate")(
             cwd, unit, started_by=started_by
         )
-        self.service._autopilot_cwd[self.key] = self.ws
-        self.service.set_autopilot(self.ws, "autopilot", True)
-        self.service.autopilot_stop(self.key)
+        self.service.autopilot.cwds[self.key] = self.ws
+        self.service.autopilot.set_setting(self.ws, "autopilot", True)
+        self.service.autopilot.stop(self.key)
         # A loop that never passes on its own: each test asks for a pass.
-        self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
-        self.service._autopilot_cwd[self.key] = self.ws
+        self.service.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
+        self.service.autopilot.cwds[self.key] = self.ws
         self.addCleanup(self.release.set)
 
     def add(self, name, stage, action="", plan=None, reasons=(), **unit):
@@ -552,19 +553,19 @@ class Scripted(_Base):
     async def pass_(self):
         if not self.shortlisted:
             self.listed()
-        await self.service._autopilot_pass(self.key)
+        await self.service.autopilot.run_pass(self.key)
         await asyncio.sleep(0.05)
 
     def picks(self) -> list[dict]:
         return Journal(self.config.working_dir, self.config.data_dir).records(kind="autopilot-pick")
 
     def stops(self):
-        return {u: s["kind"] for u, s in self.service._autopilot_stops.get(self.key, {}).items()}
+        return {u: s["kind"] for u, s in self.service.autopilot.stops.get(self.key, {}).items()}
 
     async def test_max_parallel_one(self):
-        self.service.set_autopilot(self.ws, "max_parallel", 1)
-        self.service.autopilot_stop(self.key)
-        self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
+        self.service.autopilot.set_setting(self.ws, "max_parallel", 1)
+        self.service.autopilot.stop(self.key)
+        self.service.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
         self.add("0001_a", "spec")
         self.add("0002_b", "spec")
         await self.pass_()
@@ -593,7 +594,7 @@ class Scripted(_Base):
         self.assertEqual([u for u, _, _ in self.launched], ["0002_b"])
 
     async def test_turned_off_in_the_middle_of_a_pass_starts_nothing(self):
-        read = self.service.board
+        read = self.service.boards.read
         reading, go_on = asyncio.Event(), asyncio.Event()
 
         async def slow_board(cwd):
@@ -601,12 +602,12 @@ class Scripted(_Base):
             await go_on.wait()
             return await read(cwd)
 
-        self.service.board = slow_board
+        self.service.boards.read = slow_board
         self.add("0001_a", "spec")
         self.listed()
-        passing = asyncio.get_running_loop().create_task(self.service._autopilot_pass(self.key))
+        passing = asyncio.get_running_loop().create_task(self.service.autopilot.run_pass(self.key))
         await reading.wait()
-        self.service.set_autopilot(self.ws, "autopilot", False)
+        self.service.autopilot.set_setting(self.ws, "autopilot", False)
         go_on.set()
         await passing
         await asyncio.sleep(0.05)
@@ -615,8 +616,8 @@ class Scripted(_Base):
     async def test_turned_off_before_a_launch_runs_starts_nothing(self):
         self.add("0001_a", "spec")
         self.listed()
-        await self.service._autopilot_pass(self.key)
-        self.service.set_autopilot(self.ws, "autopilot", False)
+        await self.service.autopilot.run_pass(self.key)
+        self.service.autopilot.set_setting(self.ws, "autopilot", False)
         await asyncio.sleep(0.05)
         self.assertEqual(self.launched, [])
 
@@ -625,7 +626,7 @@ class Scripted(_Base):
         self.add("0002_b", "ship")
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "c", "0002_b": "c"}))
-        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
         await self.pass_()
         self.assertEqual(self.launched, [("0001_a", "ship", "autopilot")])
 
@@ -660,7 +661,7 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertIn(
-            "spec step ended failed", self.service._autopilot_stops[self.key]["0001_a"]["reason"]
+            "spec step ended failed", self.service.autopilot.stops[self.key]["0001_a"]["reason"]
         )
         self.assertEqual([(u, s) for u, s, _ in self.launched], [("0002_b", "plan")])
 
@@ -675,7 +676,7 @@ class Scripted(_Base):
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "e"}))
         self.assertIn(
             "screenshots could not be taken again",
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"],
         )
         journal.append({**screens, "outcome": "taken"})
         await self.pass_()
@@ -711,7 +712,7 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0001_a", "integrate", "autopilot")])
         self.assertEqual(self.stops(), {"0003_c": "f"})
         self.assertIn(
-            "behind origin/main", self.service._autopilot_stops[self.key]["0003_c"]["reason"]
+            "behind origin/main", self.service.autopilot.stops[self.key]["0003_c"]["reason"]
         )
 
         self.release.set()
@@ -727,7 +728,7 @@ class Scripted(_Base):
             between_pr_and_ship=True,
         )
         self.listed("0002_b")
-        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
         await self.pass_()
         self.assertEqual(self.launched, [("0002_b", "integrate", "autopilot")])
         self.assertEqual(self.stops(), {})
@@ -735,7 +736,7 @@ class Scripted(_Base):
     async def test_a_pass_behind_main_is_integrated_not_shipped(self):
         """`next` names no stage — the `ship` gate is closed on a head behind `origin/main` — and
         the board reads the unit `behind`. The pass integrates."""
-        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
         self.add(
             "0001_a",
             "",
@@ -752,7 +753,7 @@ class Scripted(_Base):
 
     async def test_a_refused_ship_stops_on_what_gh_said(self):
         """The stop, and the `autopilot-stop` record, carry the `Refused` line's words."""
-        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
         said = "ship was refused: you do not have permission to merge — finish and accept ship.md"
         self.add(
             "0001_a",
@@ -766,7 +767,7 @@ class Scripted(_Base):
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "f"}))
         self.assertIn(
             "you do not have permission to merge",
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"],
         )
         [logged] = Journal(self.config.working_dir, self.config.data_dir).records(
             kind="autopilot-stop"
@@ -777,7 +778,7 @@ class Scripted(_Base):
     async def test_a_merge_github_refused_behind_main_is_integrated_not_stopped(self):
         """The merge GitHub refused is the unit's last word; behind `main` the pass integrates, and
         current it stops `f` on what `gh` said."""
-        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
         said = "the head branch is not up to date with the base branch"
         behind = (
             "#7 is 2 commit(s) behind origin/main — integrate, then review again; "
@@ -810,7 +811,7 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [("0001_a", "integrate", "autopilot")])
         self.assertEqual(self.stops(), {"0002_b": "f"})
-        self.assertIn(said, self.service._autopilot_stops[self.key]["0002_b"]["reason"])
+        self.assertIn(said, self.service.autopilot.stops[self.key]["0002_b"]["reason"])
 
     async def test_red_after_its_own_integration_is_not_integrated_again(self):
         """CI red on its own integration runs the `impl` that `next` names, once. A person's
@@ -882,13 +883,13 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [])
         self.assertEqual(self.stops(), {"0001_a": "b"})
-        self.assertEqual(self.service._autopilot_stops[self.key]["0001_a"]["reason"], action)
+        self.assertEqual(self.service.autopilot.stops[self.key]["0001_a"]["reason"], action)
 
     async def _impl_after_a_red_rebase(self, outcome: str = "done") -> Journal:
         """0115/#120 up to its `impl`: a `pass`, the autopilot's mechanical rebase, CI red on
         it, and `next` naming `impl` with `cos.mjs`'s words. Returns once that `impl` ended
         `outcome`."""
-        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
         red = "CI is red on #120: tests — back to impl: fix on the branch and push"
         self.add(
             "0001_a",
@@ -940,7 +941,7 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(len(self.launched), 2)
         self.assertEqual(self.stops(), {"0001_a": "e"})
-        reason = self.service._autopilot_stops[self.key]["0001_a"]["reason"]
+        reason = self.service.autopilot.stops[self.key]["0001_a"]["reason"]
         self.assertEqual(reason, "the last impl step ended exhausted")
 
     async def test_the_impl_after_an_exhausted_one_is_the_one(self):
@@ -953,7 +954,7 @@ class Scripted(_Base):
         self.assertEqual(len(self.launched), 2)
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
         )
 
     async def test_a_rebase_that_turns_ci_red_runs_impl_once_then_stops(self):
@@ -964,7 +965,7 @@ class Scripted(_Base):
         self.assertEqual(len(self.launched), 1)
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
         )
 
     async def test_red_still_on_the_integrated_head_after_impl_stops(self):
@@ -974,7 +975,7 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
         )
 
     async def _still_red_once_main_moved(self, state: str) -> None:
@@ -986,7 +987,7 @@ class Scripted(_Base):
         self.assertEqual(self.launched, [("0001_a", "impl", "autopilot")])
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"], autopilot.STILL_RED
         )
 
     async def test_still_red_and_behind_after_impl_stops(self):
@@ -1004,9 +1005,9 @@ class Scripted(_Base):
             await reading.wait()
             yield ("done", {})
 
-        self.service.integrate = slow
+        self.service.steps.integrate = slow
         need = autopilot.reservation("integrate")
-        self.service.set_autopilot(
+        self.service.autopilot.set_setting(
             self.ws, "daily_cap_usd", need + autopilot.reservation("spec") / 2
         )
         self.add(
@@ -1020,7 +1021,7 @@ class Scripted(_Base):
         )
         await self.pass_()
         self.assertNotIn((self.key, "0001_a"), self.service.holds.marks)
-        self.assertEqual(self.service._autopilot_cap([], 100.0)["running"], need)
+        self.assertEqual(self.service.autopilot.cap([], 100.0)["running"], need)
         self.add("0002_b", "spec")
         self.listed()
         await self.pass_()
@@ -1039,14 +1040,14 @@ class Scripted(_Base):
         Journal(self.config.working_dir, self.config.data_dir).finished(
             self.key, "0009_z", "spec", "done"
         )
-        self.service.set_autopilot(
+        self.service.autopilot.set_setting(
             self.ws,
             "daily_cap_usd",
             autopilot.estimate("spec") + autopilot.reservation("spec") - 0.01,
         )
         self.add("0001_a", "spec")
         await self.pass_()
-        stop = self.service._autopilot_stops[self.key]["0001_a"]
+        stop = self.service.autopilot.stops[self.key]["0001_a"]
         self.assertEqual((self.launched, stop["kind"]), ([], "cap"))
         self.assertIn("estimated", stop["reason"])
         self.assertNotIn("cost_usd", stop["reason"])
@@ -1055,7 +1056,7 @@ class Scripted(_Base):
     async def test_the_cap_block_carries_the_estimate(self):
         log = Journal(self.config.working_dir, self.config.data_dir)
         log.finished(self.key, "0009_z", "spec", "done")
-        cap = self.service._autopilot_cap(log.records(), 80.0)
+        cap = self.service.autopilot.cap(log.records(), 80.0)
         self.assertEqual(
             set(cap), {"limit", "spent", "known", "estimated", "estimated_count", "running", "day"}
         )
@@ -1080,11 +1081,11 @@ class Scripted(_Base):
             raise Invalid("blocked: plan.md is draft")
             yield  # pragma: no cover
 
-        self.service.run_step = refused
+        self.service.steps.run_step = refused
         self.add("0001_a", "impl", plan="- `a/b.py`")
         await self.pass_()
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"],
+            self.service.autopilot.stops[self.key]["0001_a"],
             {"unit": "0001_a", "kind": "f", "reason": "blocked: plan.md is draft"},
         )
 
@@ -1099,8 +1100,8 @@ class Scripted(_Base):
                 raise error
                 yield  # pragma: no cover
 
-            self.service.run_step = refused
-            self.service._autopilot_stops.pop(self.key, None)
+            self.service.steps.run_step = refused
+            self.service.autopilot.stops.pop(self.key, None)
             self.add("0001_a", "review")
             await self.pass_()
             self.assertEqual(self.stops(), stops, error)
@@ -1110,7 +1111,7 @@ class Scripted(_Base):
         self.add("0001_a", "spec")
         await self.pass_()
         self.assertEqual(self.launched, [])
-        self.assertIn("127.0.0.1", self.service._autopilot_stops[self.key][""]["reason"])
+        self.assertIn("127.0.0.1", self.service.autopilot.stops[self.key][""]["reason"])
 
     # --- , the workspace's own stop in the run log ---------------------
 
@@ -1125,11 +1126,11 @@ class Scripted(_Base):
     async def test_an_empty_shortlist_is_logged_once_and_its_clearing_once(self):
         self.add("0001_a", "spec")
         for _ in range(2):
-            await self.service._autopilot_pass(self.key)
+            await self.service.autopilot.run_pass(self.key)
             await asyncio.sleep(0.05)
         self.assertEqual(self.logged(), [("", "shortlist")])
         self.listed()
-        await self.service._autopilot_pass(self.key)
+        await self.service.autopilot.run_pass(self.key)
         await asyncio.sleep(0.05)
         self.assertEqual(self.logged(), [("", "shortlist"), ("", "")])
         [row] = [
@@ -1151,21 +1152,21 @@ class Scripted(_Base):
     async def test_a_unit_s_launch_failing_keeps_the_workspace_stop_and_logs_only_the_unit(self):
         # A call that looked at one unit did not look at the workspace.
         workspace = {"unit": "", "kind": "shortlist", "reason": autopilot.NO_SHORTLIST}
-        self.service._autopilot_set_stops(self.key, {"": workspace})
-        self.service._autopilot_set_stops(
+        self.service.autopilot.set_stops(self.key, {"": workspace})
+        self.service.autopilot.set_stops(
             self.key,
             {"0001_a": {"unit": "0001_a", "kind": "f", "reason": "said"}},
             {"0001_a"},
         )
-        self.assertEqual(self.service._autopilot_stops[self.key][""], workspace)
+        self.assertEqual(self.service.autopilot.stops[self.key][""], workspace)
         self.assertEqual(self.logged(), [("", "shortlist"), ("0001_a", "f")])
 
     # --- , the shortlist's order -----------------------------------------
 
     def one_at_a_time(self):
-        self.service.set_autopilot(self.ws, "max_parallel", 1)
-        self.service.autopilot_stop(self.key)
-        self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
+        self.service.autopilot.set_setting(self.ws, "max_parallel", 1)
+        self.service.autopilot.stop(self.key)
+        self.service.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
 
     async def test_the_last_shortlist_record_orders_the_pass(self):
         self.one_at_a_time()
@@ -1188,14 +1189,14 @@ class Scripted(_Base):
 
     async def test_no_shortlist_starts_nothing_and_says_so(self):
         self.add("0001_a", "spec")
-        await self.service._autopilot_pass(self.key)
+        await self.service.autopilot.run_pass(self.key)
         await asyncio.sleep(0.05)
         self.assertEqual((self.launched, self.asked, self.stops()), ([], [], {"": "shortlist"}))
         self.assertEqual(
-            self.service._autopilot_stops[self.key][""]["reason"], autopilot.NO_SHORTLIST
+            self.service.autopilot.stops[self.key][""]["reason"], autopilot.NO_SHORTLIST
         )
         self.listed()
-        await self.service._autopilot_pass(self.key)
+        await self.service.autopilot.run_pass(self.key)
         await asyncio.sleep(0.05)
         self.assertEqual((self.launched, self.stops()), ([("0001_a", "spec", "autopilot")], {}))
 
@@ -1270,7 +1271,7 @@ class Scripted(_Base):
         with mock.patch.object(Journal, "append", refusing):
             await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {"": "f"}))
-        self.assertIn("could not record", self.service._autopilot_stops[self.key][""]["reason"])
+        self.assertIn("could not record", self.service.autopilot.stops[self.key][""]["reason"])
 
     async def test_a_held_unit_is_no_candidate(self):
         """And a shortlisted unit whose gate is closed is still not started."""
@@ -1288,7 +1289,7 @@ class Scripted(_Base):
             raise Invalid("blocked: plan.md is draft")
             yield  # pragma: no cover
 
-        self.service.run_step = refused
+        self.service.steps.run_step = refused
         self.add("0002_b", "impl", plan="- `a/b.py`")
         self.listed()
         await self.pass_()
@@ -1344,11 +1345,11 @@ class Scripted(_Base):
             raise Invalid("blocked: idea.md is draft")
             yield  # pragma: no cover
 
-        self.service.run_step = refused
+        self.service.steps.run_step = refused
         self.add_rerun("0001_a")
         await self.pass_()
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"],
+            self.service.autopilot.stops[self.key]["0001_a"],
             {"unit": "0001_a", "kind": "f", "reason": "blocked: idea.md is draft"},
         )
 
@@ -1361,7 +1362,7 @@ class Scripted(_Base):
         )
         self.assertEqual(self.stops(), {"0001_a": "reruns"})
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"],
             "spec.md was run again 2 times after its answers; a person decides the next run.",
         )
         self.assertEqual(self.picks()[0]["passed"][0]["reason"], "stop")
@@ -1387,7 +1388,7 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [("0002_b", "spec", "autopilot")])
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"],
+            self.service.autopilot.stops[self.key]["0001_a"],
             {"unit": "0001_a", "kind": "f", "reason": "finish and accept intent.md"},
         )
         await self.pass_()
@@ -1420,7 +1421,7 @@ class Scripted(_Base):
         # Only the rerun says so; an ordinary candidate held back the same way still does not.
         self.assertEqual(self.stops(), {"0002_b": "full"})
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0002_b"]["reason"],
+            self.service.autopilot.stops[self.key]["0002_b"]["reason"],
             "intent waits to run again: 1 step is already running, the most this workspace allows.",
         )
         self.release.set()
@@ -1453,7 +1454,7 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual((self.launched, self.stops()), ([], {"0001_a": "reruns"}))
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"],
             "impl.md was run again 2 times after its answers; a person decides the next run.",
         )
 
@@ -1471,13 +1472,13 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [])
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"],
+            self.service.autopilot.stops[self.key]["0001_a"],
             {"unit": "0001_a", "kind": "f", "reason": "finish and accept impl.md"},
         )
 
     async def test_off_starts_no_impl(self):
         self.add_rerun("0001_a", "impl", "start", plan="- `coscc/x.py`")
-        self.service.set_autopilot(self.ws, "autopilot", False)
+        self.service.autopilot.set_setting(self.ws, "autopilot", False)
         await self.pass_()
         self.assertEqual(self.launched, [])
 
@@ -1507,13 +1508,13 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"],
             "the last plan step ended exhausted",
         )
         self.assertEqual((len(self.picks()), len(self.launched)), (1, 1))
 
     async def test_an_exhausted_ship_stops_the_first_time(self):
-        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
         self.ran_out("0001_a", "ship")
         self.add("0001_a", "ship")
         await self.pass_()
@@ -1533,14 +1534,14 @@ class Scripted(_Base):
             raise Invalid("blocked: plan.md is draft")
             yield  # pragma: no cover
 
-        self.service.run_step = refused
+        self.service.steps.run_step = refused
         self.ran_out("0002_b", "impl")
         self.add("0002_b", "impl", plan="- `a/b.py`")
         await self.pass_()
         self.assertEqual([p["unit"] for p in self.picks()], ["0002_b"])
         self.assertEqual(self.stops(), {"0002_b": "f"})
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0002_b"],
+            self.service.autopilot.stops[self.key]["0002_b"],
             {"unit": "0002_b", "kind": "f", "reason": "blocked: plan.md is draft"},
         )
 
@@ -1561,7 +1562,7 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [])
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"],
+            self.service.autopilot.stops[self.key]["0001_a"],
             {"unit": "0001_a", "kind": "f", "reason": "finish and accept plan.md"},
         )
 
@@ -1593,7 +1594,7 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.stops(), {"0001_a": "e"})
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"],
             "the last plan step ended failed",
         )
         self.assertEqual((len(self.picks()), len(self.launched)), (1, 1))
@@ -1630,7 +1631,7 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual(self.launched, [])
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"],
+            self.service.autopilot.stops[self.key]["0001_a"],
             {"unit": "0001_a", "kind": "f", "reason": "finish and accept plan.md"},
         )
 
@@ -1659,7 +1660,7 @@ class Scripted(_Base):
         ]
 
     async def test_an_old_exhausted_ship_starts_a_recording_ship(self):
-        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
         self.shipped("0001_a")
         self.add("0001_a", "ship", action=self.RECORDING, reasons=["recording-ship"])
         await self.pass_()
@@ -1670,18 +1671,18 @@ class Scripted(_Base):
         )
 
     async def test_an_old_exhausted_ship_still_stops_a_merging_ship(self):
-        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
         self.shipped("0001_a")
         self.add("0001_a", "ship", action=self.MERGING)
         await self.pass_()
         self.assertEqual((self.launched, self.picks(), self.stops()), ([], [], {"0001_a": "e"}))
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"],
             "the last ship step ended exhausted",
         )
 
     async def test_a_recording_ship_that_ran_out_is_not_run_again(self):
-        self.service.set_autopilot(self.ws, "autopilot_may_ship", True)
+        self.service.autopilot.set_setting(self.ws, "autopilot_may_ship", True)
         self.shipped("0001_a", ship_mode="record")
         self.add("0001_a", "ship", action=self.RECORDING, reasons=["recording-ship"])
         await self.pass_()
@@ -1717,15 +1718,15 @@ class Scripted(_Base):
         await self.pass_()
         self.assertEqual((self.launched, self.stops(), self.picks()), ([], {"0001_a": "a"}, []))
         self.assertEqual(
-            self.service._autopilot_stops[self.key]["0001_a"]["reason"],
+            self.service.autopilot.stops[self.key]["0001_a"]["reason"],
             "open questions: intent.md question 1, intent.md question 2",
         )
 
     async def test_a_unit_that_waits_for_a_person_takes_no_place_under_max_parallel(self):
-        self.service.set_autopilot(self.ws, "max_parallel", 1)
-        self.service.autopilot_stop(self.key)
-        self.service._autopilot_tasks[self.key] = asyncio.get_running_loop().create_future()
-        self.service._autopilot_cwd[self.key] = self.ws
+        self.service.autopilot.set_setting(self.ws, "max_parallel", 1)
+        self.service.autopilot.stop(self.key)
+        self.service.autopilot.tasks[self.key] = asyncio.get_running_loop().create_future()
+        self.service.autopilot.cwds[self.key] = self.ws
         self.asks("0001_a")
         self.add("0002_b", "spec")
         await self.pass_()
@@ -1758,7 +1759,7 @@ class Scripted(_Base):
             head=head,
             files=read_files,
         )
-        self.service._pr_machine = lambda: machine
+        self.service.steps.pr_machine = lambda: machine
         return machine
 
     async def an_open_pr(self, machine, name):
@@ -1778,7 +1779,7 @@ class Scripted(_Base):
                 return self.nexts[unit]
             return {"stage": "", "action": reason, "waiting": [], "hold": None, "reasons": [reason]}
 
-        self.service.next_step = next_step
+        self.service.steps.next_step = next_step
 
     async def test_green_ci_starts_a_pass_before_the_poll(self):
         gh = test_prmachine.FakeGh(buckets=("pending",))
@@ -1791,13 +1792,13 @@ class Scripted(_Base):
             "ci-pending",
         )
         self.listed()
-        self.assertEqual((await self.service._pr_read(self.key)).moved, [("0001_a", "ci")])
+        self.assertEqual((await self.service.autopilot.pr_read(self.key)).moved, [("0001_a", "ci")])
         await self.settled()
         self.assertEqual(
             (self.asked, self.launched), (["0001_a"], []), "pending scheduled one pass"
         )
         gh.buckets = ("pass",)
-        green = await self.service._pr_read(self.key)
+        green = await self.service.autopilot.pr_read(self.key)
         self.assertEqual(green.moved, [("0001_a", "ci")])
         await self.until(lambda: self.launched, "the pass the green read scheduled")
         self.assertEqual(self.launched, [("0001_a", "review", "autopilot")])
@@ -1812,7 +1813,7 @@ class Scripted(_Base):
             pick["woken_by"], [{"unit": "0001_a", "transition": "ci", "id": row["id"]}]
         )
         # Green at the same head is settled: the next read asks only for the list.
-        got = await self.service._pr_read(self.key)
+        got = await self.service.autopilot.pr_read(self.key)
         self.assertEqual((got.moved, got.calls), ([], 1))
 
     async def test_a_merge_frees_a_unit_waiting_on_it(self):
@@ -1835,8 +1836,10 @@ class Scripted(_Base):
             cleaned.append(unit)
             return {"removed": True}
 
-        self.service._cleanup = cleanup
-        self.assertEqual((await self.service._pr_read(self.key)).moved, [("0001_a", "merged")])
+        self.service.steps.cleanup = cleanup
+        self.assertEqual(
+            (await self.service.autopilot.pr_read(self.key)).moved, [("0001_a", "merged")]
+        )
         await self.until(lambda: self.launched, "the pass the merge scheduled")
         self.assertEqual(self.launched, [("0002_b", "impl", "autopilot")])
         self.assertEqual(gh.count("pr", "merge"), 0, "a merge made elsewhere is only recorded")
@@ -1866,8 +1869,8 @@ class Scripted(_Base):
             cleaned.append(unit)
             return {"removed": True}
 
-        self.service._cleanup = cleanup
-        got = await self.service.reconcile_prs()
+        self.service.steps.cleanup = cleanup
+        got = await self.service.steps.reconcile_prs()
         self.assertEqual([o["result"] for o in got], ["recorded"])
         ships = [(r["unit"], r["result"]) for r in self.service.ws.journal().records(kind="ship")]
         self.assertEqual(
@@ -1879,7 +1882,7 @@ class Scripted(_Base):
         gh = test_prmachine.FakeGh(buckets=("pass",))
         machine = self.a_machine(gh)
         await self.an_open_pr(machine, "0001_a")
-        await self.service._pr_read(self.key)
+        await self.service.autopilot.pr_read(self.key)
         await self.settled()
         self.add("0002_b", "impl", plan="- `coscc/a.py`")
         self.add("0003_c", "impl", plan="- `coscc/c.py`")
@@ -1890,22 +1893,22 @@ class Scripted(_Base):
             pick["passed"], [{"unit": "0002_b", "reason": "overlap-pr", "detail": "#7"}]
         )
         # What the board's card shows, kept from the same pass.
-        self.assertEqual(self.service._autopilot_held[self.key].get("0002_b"), ("overlap-pr", "#7"))
+        self.assertEqual(self.service.autopilot.held[self.key].get("0002_b"), ("overlap-pr", "#7"))
         gh.open_prs, gh.state = [], "MERGED"
-        await self.service._pr_read(self.key)
+        await self.service.autopilot.pr_read(self.key)
         await self.until(lambda: len(self.launched) == 2, "the pass the merge scheduled")
         self.assertEqual(self.launched[1], ("0002_b", "impl", "autopilot"))
-        self.assertNotIn("0002_b", self.service._autopilot_held[self.key])
-        self.service.autopilot_stop(self.key)
-        self.assertNotIn(self.key, self.service._autopilot_held)
+        self.assertNotIn("0002_b", self.service.autopilot.held[self.key])
+        self.service.autopilot.stop(self.key)
+        self.assertNotIn(self.key, self.service.autopilot.held)
 
     async def test_off_the_reader_calls_no_gh(self):
         gh = test_prmachine.FakeGh()
         machine = self.a_machine(gh)
         await self.an_open_pr(machine, "0001_a")
         calls = len(gh.calls)
-        self.service.autopilot_stop(self.key)
-        got = await self.service._pr_read(self.key)
+        self.service.autopilot.stop(self.key)
+        got = await self.service.autopilot.pr_read(self.key)
         self.assertEqual((got.calls, len(gh.calls)), (0, calls))
 
 
@@ -1925,6 +1928,9 @@ class ResumedAtStartUp(unittest.TestCase):
         calls: list[int] = []
 
         class Stand:
+            def __init__(self):
+                self.resume = self
+
             async def resume_after_update(self):
                 calls.append(1)
                 return []

@@ -32,4 +32,4 @@ paths:
   `POST /setup` and needs `200` from `/api/workspaces` and `/` with that cookie. An updater that
   asks without a cookie fails every trial against a build with the login.
 - `update.identity` supplies a step's `start` row `app_version` and `app_commit`
-  (`Service._app_identity`), which measuring scripts split on.
+  (`Steps.app_identity`), which measuring scripts split on.

@@ -56,7 +56,7 @@ class OneStepPerUnit(unittest.TestCase):
         [row] = r.listing("w")
         self.assertEqual(set(row), {"unit", "stage", "started_at", "stopping", "run"})
         self.assertFalse(row["stopping"])
-        # `Service.run_step` sets it as it hands the step over.
+        # `Steps.run_step` sets it as it hands the step over.
         self.assertEqual(row["run"], "")
         running.run = "r-1"
         self.assertEqual(r.listing("w")[0]["run"], "r-1")

@@ -1,6 +1,6 @@
 # Routes that write into a unit's artifacts
 
-Read this before changing `POST /api/units/answer`, `/outcome`, `/hold` or `/more-rounds`, `POST /api/board/run`'s `rerun`, `coscc/units/hold.py`, `Service._append_answers` or `_append_to_answers`, `cos.mjs rerun`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
+Read this before changing `POST /api/units/answer`, `/outcome`, `/hold` or `/more-rounds`, `POST /api/board/run`'s `rerun`, `coscc/units/hold.py`, `Answers._append_answers` or `append_to_answers`, `cos.mjs rerun`, or the runner's `## Answers` guard (`answers_section`, `strip_answers`, `with_answers`). Moved here whole from `.claude/rules/coscc-app.md` (`0094`); the history ("Since `00xx`") is kept at this tier.
 
 - **`POST /api/units/answer` writes a stranger's words into a paid prompt.** Since `0016`
   it records an answer to an artifact, and the next stage's prompt carries it. Since `0135`
@@ -39,7 +39,7 @@ Read this before changing `POST /api/units/answer`, `/outcome`, `/hold` or `/mor
   says under its own `## Answers` heading — copied from the artifact, forged, or a model
   answering its own question — never reaches disk, and nothing records that a reply tried.
   A window remains between the answer route's read and the runner's: the two hold no lock
-  in common (the lock is `Service._answer_lock`, `coscc/service/__init__.py:51`, and `Runner` carries
+  in common (the lock is `Answers._answer_lock` in `coscc/service/answers.py`, and `Runner` carries
   no reference to it). Byte-identical is not meaning-identical: a re-run that renumbers
   `## Open questions` leaves `### Câu N` on disk pointing at whichever question now
   carries that number, not the one a person answered
@@ -79,7 +79,7 @@ Read this before changing `POST /api/units/answer`, `/outcome`, `/hold` or `/mor
 - **`POST /api/units/more-rounds` opens a paid review round.** Since `0081`. On a unit
   `cos.mjs` marks `moreRounds`, it appends one `### More rounds` block (`Decided by: owner.
   Date: …. Via: product.`, `Rounds: 1`) under `review.md ## Answers` through
-  `_append_to_answers`, and `cos.mjs` adds its rounds to that unit's review limit. It writes
+  `append_to_answers`, and `cos.mjs` adds its rounds to that unit's review limit. It writes
   no run-log row, runs no step and does not wake the autopilot; the only trace is the block.
   A review the app runs keeps it, as it keeps every `## Answers` (the runner's guard above,
   `with_answers`); a review at a terminal or in a second app that
@@ -87,8 +87,8 @@ Read this before changing `POST /api/units/answer`, `/outcome`, `/hold` or `/mor
 - **`POST /api/board/run` with `rerun: true` makes every later artifact stale.** Since
   `0054`. For a stage `cos.mjs rerun <unit>` offers — `intent`, `spec`, `spike`, `plan` or
   `pr`, accepted, on a unit neither finished, held nor closed, its gate open —
-  `Service.run_step` appends the `### Rerun` block `cos.mjs rerun <unit> <stage>` composed
-  under `intent.md ## Answers` through `_append_to_answers` (the path `hold` writes by),
+  `Steps.run_step` appends the `### Rerun` block `cos.mjs rerun <unit> <stage>` composed
+  under `intent.md ## Answers` through `append_to_answers` (the path `hold` writes by),
   after the gate and before the session. The block is `Requested by: owner. Date: …. Via:
   product.`, `Stage: <s>.`, and one `Stale: <file> sha256:<hex>` for the stage's artifact
   and each later one on disk: the hash of the text above that file's `## Answers`, trailing

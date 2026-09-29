@@ -203,7 +203,7 @@ class Unit:
     outcome_invalid: int = 0
     outcome_form: bool = False
     # What is running on this unit now, or ended unseen: one line each, copied from
-    # `Service.running` by `_activities`.
+    # `Board.running` by `_activities`.
     live: list[Activity] = dataclasses.field(default_factory=list)
     # The hold `cos.mjs` read (`paused`, `dropped`, or empty) and the moves it allows from
     # there, copied from the board. The page offers one button per move and decides none.
@@ -412,7 +412,7 @@ def _ci_line(ci: dict | None) -> str:
 
 
 def _shown(u: Unit, read: dict) -> dict:
-    """The `state*` fields of `u` under one `Service.running` answer: the service's own
+    """The `state*` fields of `u` under one `Board.running` answer: the service's own
     choice between its two answers, never one made here."""
     shown = shown_state(
         {"state": u.decided_state, "label": u.decided_label, "color": u.decided_color},
@@ -729,7 +729,7 @@ def _outcome_fields(label: dict | None) -> dict:
 class Activity:
     """One line on a card: a session running on the unit, or one that ended unseen.
 
-    Every field is copied from `Service.running`; the page chooses only the words.
+    Every field is copied from `Board.running`; the page chooses only the words.
     """
 
     # `running`, `rebasing` or `ended, unknown`.
@@ -748,7 +748,7 @@ class Activity:
 
 
 def _activities(unit: str, read: dict) -> list[Activity]:
-    """`Service.running`'s answer for one unit, as the lines its card shows."""
+    """`Board.running`'s answer for one unit, as the lines its card shows."""
     out: list[Activity] = []
     for row in (read.get("running") or {}).get(unit) or []:
         agent = row.get("agent") or {}
@@ -777,7 +777,7 @@ def _activities(unit: str, read: dict) -> list[Activity]:
     return out
 
 
-# Seconds between two asks of `Service.running` while the Board is shown.
+# Seconds between two asks of `Board.running` while the Board is shown.
 RUNNING_POLL = 5
 
 # The tabs (client tokens) with a `poll_running` loop alive in this process. Kept here, not in
@@ -898,7 +898,7 @@ class AutopilotStop:
 
 @dataclasses.dataclass
 class RunningStep:
-    """One board step running now, as `Service.running_steps` lists it."""
+    """One board step running now, as `Steps.running_steps` lists it."""
 
     unit: str = ""
     stage: str = ""
@@ -1029,7 +1029,7 @@ AUTOPILOT_STOP_LABEL = {
 
 @dataclasses.dataclass
 class GuideItem:
-    """One line of the board's guide, copied from `Service._guide_block`: a unit,
+    """One line of the board's guide, copied from `Autopilot.guide_block`: a unit,
     what it is (a stage and its agent, or a thing to do), a line
     below it, and where the link goes (`""` for none)."""
 
@@ -1123,7 +1123,7 @@ class AgentRow:
 @dataclasses.dataclass
 class DecisionRow:
     """One of the person's decisions as Settings shows it. Copied from
-    `Service.decisions_table`, the days through `present.day`; nothing is decided here."""
+    `Answers.decisions_table`, the days through `present.day`; nothing is decided here."""
 
     id: str = ""
     kind: str = ""
@@ -1168,7 +1168,7 @@ class GrantRow:
 
 def _run_target(data: dict) -> tuple[str, str]:
     """The stage the run button offers and the sentence beside it, copied from
-    `Service.next_step`, which is `cos.mjs next`'s answer.
+    `Steps.next_step`, which is `cos.mjs next`'s answer.
 
     The page must not work the stage out itself: that would be a second copy of the loop.
     Nothing here reads `action` to pick a stage.

@@ -1,4 +1,4 @@
-"""Tests for `BoardMixin` in `coscc/service/board.py`, split from `tests/service/test_service.py`."""
+"""Tests for `Board` in `coscc/service/board.py`, split from `tests/service/test_service.py`."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ class WhatIsRunningIsKeptWhileItRuns(unittest.TestCase):
     def _run(self, stage: str, stop_after: int | None = None):
         async def go():
             out = []
-            agen = self.service.run_step(str(self.repo), self.unit, stage)
+            agen = self.service.steps.run_step(str(self.repo), self.unit, stage)
             try:
                 async for item in agen:
                     out.append(item)
@@ -149,7 +149,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
     def test_an_entry_and_its_own_start_show_only_as_running(self):
         self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
         self.journal.started(self.key, "0009_x", "impl", "manual")
-        got = self.service.running(self.cwd)
+        got = self.service.boards.running(self.cwd)
         [row] = got["running"]["0009_x"]
         self.assertEqual(row["stage"], "impl")
         self.assertEqual(row["agent"], {"glyph": "ᚢ", "name": "Uruz"})
@@ -160,7 +160,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
 
     def test_an_orphan_start_shows_as_ended_unknown(self):
         rec = self.journal.started(self.key, "0009_x", "plan", "manual")
-        got = self.service.running(self.cwd)
+        got = self.service.boards.running(self.cwd)
         self.assertEqual(got["running"], {})
         # A start with no `agent` is named from its stage.
         self.assertEqual(
@@ -170,14 +170,14 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
 
     def test_an_orphan_start_keeps_the_name_it_was_written_with(self):
         self.journal.started(self.key, "0009_x", "plan", "manual", agent="Wayfarer")
-        [row] = self.service.running(self.cwd)["unknown_end"]["0009_x"]
+        [row] = self.service.boards.running(self.cwd)["unknown_end"]["0009_x"]
         self.assertEqual(row["agent"], "Wayfarer")
 
     def test_an_override_reaches_the_running_line(self):
         # The running line reads the one lookup, overrides included.
         self.service.agents.set_agent("impl", {"name": "Builder", "glyph": "ᛒ"})
         self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
-        [row] = self.service.running(self.cwd)["running"]["0009_x"]
+        [row] = self.service.boards.running(self.cwd)["running"]["0009_x"]
         self.assertEqual(row["agent"], {"glyph": "ᛒ", "name": "Builder"})
 
     def test_a_later_start_retires_the_orphan(self):
@@ -193,7 +193,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
         )
         self.journal.started(self.key, "0009_x", "impl", "manual")
         self.journal.finished(self.key, "0009_x", "impl", "done")
-        self.assertEqual(self.service.running(self.cwd)["unknown_end"], {})
+        self.assertEqual(self.service.boards.running(self.cwd)["unknown_end"], {})
 
     def test_an_orphan_older_than_a_day_is_not_shown(self):
         self.journal.append(
@@ -206,28 +206,28 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
                 "at": "2020-01-01T00:00:00+00:00",
             }
         )
-        self.assertEqual(self.service.running(self.cwd)["unknown_end"], {})
+        self.assertEqual(self.service.boards.running(self.cwd)["unknown_end"], {})
 
     def test_two_workspaces_do_not_mix(self):
         other_key = self.service.ws.key(str(self.other))
         self.service.holds.mark_running(other_key, "0009_x", "spec", "step")
         self.journal.started(other_key, "0010_y", "spec", "manual")
-        self.assertEqual(self.service.running(self.cwd), {"running": {}, "unknown_end": {}})
-        got = self.service.running(str(self.other))
+        self.assertEqual(self.service.boards.running(self.cwd), {"running": {}, "unknown_end": {}})
+        got = self.service.boards.running(str(self.other))
         self.assertEqual(list(got["running"]), ["0009_x"])
         self.assertEqual(list(got["unknown_end"]), ["0010_y"])
 
     def test_gebo_is_named_and_a_rebase_is_not(self):
         self.service.holds.mark_running(self.key, "0009_x", "integrate", "gebo")
         self.service.holds.mark_running(self.key, "0010_y", "integrate", "rebase")
-        got = self.service.running(self.cwd)["running"]
+        got = self.service.boards.running(self.cwd)["running"]
         self.assertEqual(got["0009_x"][0]["agent"], {"glyph": "ᚷ", "name": "Gebo"})
         self.assertIsNone(got["0010_y"][0]["agent"])
         self.assertEqual(got["0010_y"][0]["kind"], "rebase")
 
     def test_a_workspace_outside_the_list_is_refused(self):
         with self.assertRaises(Invalid):
-            self.service.running("/nonexistent/elsewhere")
+            self.service.boards.running("/nonexistent/elsewhere")
 
     def test_a_busy_run_log_is_a_note_not_a_refusal(self):
         from coscc.runlog.journal import Journal
@@ -235,7 +235,7 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
 
         self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
         with mock.patch.object(Journal, "open_starts", side_effect=Busy("locked")):
-            got = self.service.running(self.cwd)
+            got = self.service.boards.running(self.cwd)
         self.assertEqual(got["note"], "locked")
         self.assertEqual(list(got["running"]), ["0009_x"])
         self.assertEqual(got["unknown_end"], {})
@@ -243,11 +243,11 @@ class RunningAnswersFromMemoryAndTheRunLog(unittest.TestCase):
     def test_no_working_folder_means_no_unknown_end(self):
         config = Config(workspaces=(self.cwd,))
         service = Service(config, Sessions(config))
-        self.assertEqual(service.running(self.cwd), {"running": {}, "unknown_end": {}})
+        self.assertEqual(service.boards.running(self.cwd), {"running": {}, "unknown_end": {}})
 
 
 class TheGuide(unittest.TestCase):
-    """`_guide_block` on memory."""
+    """`guide_block` on memory."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -268,7 +268,7 @@ class TheGuide(unittest.TestCase):
         with mock.patch(
             "coscc.service.autopilot.autopilot_values", return_value={"autopilot": True}
         ):
-            return self.service._guide_block(self.key)
+            return self.service.autopilot.guide_block(self.key)
 
     def test_guide_lists_running_steps(self):
         self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
@@ -283,11 +283,11 @@ class TheGuide(unittest.TestCase):
 
     def test_guide_turns_every_stop_but_full_into_one_thing_to_do(self):
         kinds = ("a", "b", "c", "d", "e", "f", "cap", "reruns", "full")
-        self.service._autopilot_stops[self.key] = {
+        self.service.autopilot.stops[self.key] = {
             f"00{n:02d}_u": {"unit": f"00{n:02d}_u", "kind": k, "reason": f"why {k}"}
             for n, k in enumerate(kinds, 1)
         }
-        self.service._autopilot_stops[self.key][""] = {
+        self.service.autopilot.stops[self.key][""] = {
             "unit": "",
             "kind": "shortlist",
             "reason": "none",
@@ -303,5 +303,5 @@ class TheGuide(unittest.TestCase):
 
     def test_guide_says_only_that_the_autopilot_is_off_when_it_is(self):
         self.service.holds.mark_running(self.key, "0009_x", "impl", "step")
-        self.assertEqual(self.service._guide_block(self.key), {"on": False})
+        self.assertEqual(self.service.autopilot.guide_block(self.key), {"on": False})
         self.assertEqual(asyncio.run(self.service.board(self.cwd))["guide"], {"on": False})
